@@ -431,31 +431,28 @@ impl<'a> Iterator for Lexer<'a> {
                     }
                 }
             }
-            c @ '0'..='9' => {
+            c @ '0'..='9' => 'exit: {
                 if c == '0' {
                     if self.advance_if('x') {
-                        Token::Int(16, self.advance_while(|ch| ch.is_ascii_hexdigit()))
+                        break 'exit Token::Int(16, self.advance_while(|ch| ch.is_ascii_hexdigit()))
                     } else if self.advance_if('o') {
-                        Token::Int(8, self.advance_while(|ch| ch.is_digit(8)))
+                        break 'exit Token::Int(8, self.advance_while(|ch| ch.is_digit(8)))
                     } else if self.advance_if('b') {
-                        Token::Int(2, self.advance_while(|ch| ch.is_digit(2)))
-                    } else {
-                        return Some(Err(Located::new(
-                            Error::LeadingZero,
-                            Span {
-                                loc: self.loc,
-                                len: 0,
-                            },
-                        )));
+                        break 'exit Token::Int(2, self.advance_while(|ch| ch.is_digit(2)))
                     }
-                } else {
+                }
+
+                self.advance_while(|ch| ch.is_ascii_digit());
+                if self.advance_if('.') {
                     self.advance_while(|ch| ch.is_ascii_digit());
-                    if self.advance_if('.') {
-                        self.advance_while(|ch| ch.is_ascii_digit());
-                        Token::Float(self.src[start.pos..self.loc.pos].into())
-                    } else {
-                        Token::Int(10, self.src[start.pos..self.loc.pos].into())
+                    Token::Float(&self.src[start.pos..self.loc.pos])
+                } else {
+                    let src = &self.src[start.pos..self.loc.pos];
+                    if src.len() == 1 {
+                        // TODO: warn about leading zero, dont make it an error
                     }
+
+                    Token::Int(10, src)
                 }
             }
             '_' | 'a'..='z' | 'A'..='Z' => {
