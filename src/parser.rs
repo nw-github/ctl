@@ -8,6 +8,7 @@ use crate::{
     lexer::{Lexer, Located as L, Location, Span, Token},
 };
 
+#[derive(Debug)]
 pub struct Error {
     diagnostic: &'static str,
 }
@@ -56,6 +57,7 @@ impl<'a> Parser<'a> {
                     "expected array size",
                 )?;
 
+                self.expect_kind(Token::RBrace, "expected ']'")?;
                 Type::Array(
                     inner.into(),
                     count
@@ -63,7 +65,9 @@ impl<'a> Parser<'a> {
                         .expect("base 10 integer literal should be convertible to usize"),
                 )
             } else if self.advance_if_kind(Token::Colon).is_some() {
-                Type::Map(inner.into(), self.parse_type()?.into())
+                let value = self.parse_type()?;
+                self.expect_kind(Token::RBrace, "expected ']'")?;
+                Type::Map(inner.into(), value.into())
             } else {
                 return Err(self.advance()?.map(Error {
                     diagnostic: "expected ']', ';', or ':'",
@@ -78,9 +82,11 @@ impl<'a> Parser<'a> {
                 }
             }
 
+            self.expect_kind(Token::RParen, "expected ')'")?;
             Type::Tuple(members)
         } else {
-            let ident = self.expect_id("expected type name")?;
+            let is_dyn = self.advance_if_kind(Token::Dyn);
+            let name = self.expect_id("expected type name")?;
             if self.advance_if_kind(Token::LAngle).is_some() {
                 let mut params = Vec::new();
                 loop {
@@ -91,9 +97,17 @@ impl<'a> Parser<'a> {
                 }
 
                 self.expect_kind(Token::RAngle, "expected '>'")?;
-                Type::Generic(ident.into(), params)
+                Type::Regular {
+                    name: name.into(),
+                    is_dyn: is_dyn.is_some(),
+                    type_params: params,
+                }
             } else {
-                Type::Regular(ident.into())
+                Type::Regular {
+                    name: name.into(),
+                    is_dyn: is_dyn.is_some(),
+                    type_params: Vec::new(),
+                }
             }
         };
 
@@ -153,6 +167,20 @@ impl<'a> Parser<'a> {
         start: Span,
     ) -> Result<L<Stmt>> {
         let name = self.expect_id("expected name")?;
+        let type_params = Vec::new();
+//         if self.advance_if_kind(Token::LAngle).is_some() {
+//             loop {
+//                 
+// 
+//                 if self.advance_if_kind(Token::Comma).is_none() {
+//                     break;
+//                 }
+//             }
+// 
+//             self.expect_kind(Token::RAngle, "expected '>'")?;
+//         }
+
+
         self.expect_kind(Token::LParen, "expected parameter list")?;
 
         let mut params = Vec::new();
@@ -182,6 +210,7 @@ impl<'a> Parser<'a> {
             Stmt::Fn {
                 name: name.into(),
                 is_async: false,
+                type_params,
                 params,
                 body,
             },
@@ -307,3 +336,17 @@ impl<'a> Parser<'a> {
         self.matches(|t| t == &kind)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn it_works() {
+        let parser = Parser::new("
+fn everything(x: [dyn Into<i32>!(i44, [u70: str], str?); 3]?) {}
+        ");
+        _ = dbg!(parser.parse());
+    }
+}
+

@@ -4,6 +4,7 @@ type Expr = Located<expr::Expr>;
 type Stmt = Located<stmt::Stmt>;
 
 pub mod expr {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum BinaryOp {
         Add,
         Sub,
@@ -23,6 +24,7 @@ pub mod expr {
         NotEqual,
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum UnaryOp {
         Plus,
         Neg,
@@ -35,6 +37,7 @@ pub mod expr {
         AddrOf,
     }
     
+    #[derive(Debug)]
     pub enum Expr {
         Binary {
             op: BinaryOp,
@@ -97,9 +100,13 @@ pub mod expr {
 }
 
 pub mod stmt {
+    #[derive(Debug)]
     pub enum Type {
-        Regular(String),
-        Generic(String, Vec<String>),
+        Regular {
+            is_dyn: bool,
+            name: String,
+            type_params: Vec<String>,
+        },
         Array(Box<Type>, usize),
         Slice(Box<Type>),
         Tuple(Vec<Type>),
@@ -110,12 +117,14 @@ pub mod stmt {
         Anon(super::Stmt),
     }
 
+    #[derive(Debug)]
     pub struct Param {
         pub mutable: bool,
         pub name: String,
         pub ty: Type,
     }
 
+    #[derive(Debug)]
     pub enum Stmt {
         Expr(super::Expr),
         Let {
@@ -126,6 +135,7 @@ pub mod stmt {
         Fn {
             name: String,
             is_async: bool,
+            type_params: Vec<String>,
             params: Vec<Param>,
             body: Vec<super::Stmt>,
         },
