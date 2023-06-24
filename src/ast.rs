@@ -98,7 +98,8 @@ pub mod expr {
 
 pub mod stmt {
     pub enum Type {
-        Ident,
+        Regular(String),
+        Generic(String, Vec<String>),
         Array(Box<Type>, usize),
         Slice(Box<Type>),
         Tuple(Vec<Type>),

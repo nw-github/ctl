@@ -43,7 +43,67 @@ impl<'a> Parser<'a> {
     //
 
     fn parse_type(&mut self) -> Result<Type> {
-        todo!()
+        let ty = if self.advance_if_kind(Token::LBrace).is_some() {
+            let inner = self.parse_type()?;
+            if self.advance_if_kind(Token::RBrace).is_some() {
+                Type::Slice(inner.into())
+            } else if self.advance_if_kind(Token::Semicolon).is_some() {
+                let count = self.expect(
+                    |t| {
+                        let Token::Int(10, num) = t.data else { return None; };
+                        Some(num)
+                    },
+                    "expected array size",
+                )?;
+
+                Type::Array(
+                    inner.into(),
+                    count
+                        .parse()
+                        .expect("base 10 integer literal should be convertible to usize"),
+                )
+            } else if self.advance_if_kind(Token::Colon).is_some() {
+                Type::Map(inner.into(), self.parse_type()?.into())
+            } else {
+                return Err(self.advance()?.map(Error {
+                    diagnostic: "expected ']', ';', or ':'",
+                }));
+            }
+        } else if self.advance_if_kind(Token::LParen).is_some() {
+            let mut members = Vec::new();
+            loop {
+                members.push(self.parse_type()?);
+                if self.advance_if_kind(Token::Comma).is_none() {
+                    break;
+                }
+            }
+
+            Type::Tuple(members)
+        } else {
+            let ident = self.expect_id("expected type name")?;
+            if self.advance_if_kind(Token::LAngle).is_some() {
+                let mut params = Vec::new();
+                loop {
+                    params.push(self.expect_id("expected type name")?.into());
+                    if self.advance_if_kind(Token::Comma).is_none() {
+                        break;
+                    }
+                }
+
+                self.expect_kind(Token::RAngle, "expected '>'")?;
+                Type::Generic(ident.into(), params)
+            } else {
+                Type::Regular(ident.into())
+            }
+        };
+
+        if self.advance_if_kind(Token::Question).is_some() {
+            Ok(Type::Option(ty.into()))
+        } else if self.advance_if_kind(Token::Exclamation).is_some() {
+            Ok(Type::Result(ty.into(), self.parse_type()?.into()))
+        } else {
+            Ok(ty)
+        }
     }
 
     fn parse_block(&mut self, mut span: Span) -> Result<(Vec<L<Stmt>>, Span)> {

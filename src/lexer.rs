@@ -8,6 +8,9 @@ pub enum Token<'a> {
     RBrace,
     LParen,
     RParen,
+    LAngle,
+    RAngle,
+
     Dot,
     Range,
     RangeInclusive,
@@ -44,9 +47,7 @@ pub enum Token<'a> {
     Exclamation,
     NotEqual,
     ErrCoalesce,
-    Gt,
     GtEqual,
-    Lt,
     LtEqual,
     Assign,
     Equal,
@@ -373,14 +374,14 @@ impl<'a> Iterator for Lexer<'a> {
                 if self.advance_if('=') {
                     Token::GtEqual
                 } else {
-                    Token::Gt
+                    Token::RAngle
                 }
             }
             '<' => {
                 if self.advance_if('=') {
                     Token::LtEqual
                 } else {
-                    Token::Lt
+                    Token::LAngle
                 }
             }
             '=' => {
