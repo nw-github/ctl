@@ -75,10 +75,13 @@ pub enum Token<'a> {
     Break,
     Continue,
     Yield,
+    True,
+    False,
+    Static,
 
-    Ident(Cow<'a, str>),
-    Int(u8, Cow<'a, str>),
-    Float(Cow<'a, str>),
+    Ident(&'a str),
+    Int(u8, &'a str),
+    Float(&'a str),
     String(Cow<'a, str>),
 }
 
@@ -91,6 +94,18 @@ pub enum Error {
     LeadingZero,
 }
 
+impl Error {
+    pub fn tell(&self) -> &'static str {
+        match self {
+            Error::UnterminatedStr => "unterminated string literal",
+            Error::UnterminatedComment => "unterminated block comment",
+            Error::UnrecognizedChar => "unexpected character",
+            Error::InvalidEscape => "invalid UTF-8 escape sequence",
+            Error::LeadingZero => "invalid integer literal (leading zero without x, o, or b)",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Location {
     pub row: usize,
@@ -101,12 +116,29 @@ pub struct Location {
 #[derive(Debug, Clone, Copy)]
 pub struct Span {
     pub loc: Location,
-    pub width: usize,
+    pub len: usize,
 }
 
 impl Span {
+    pub fn combine(a: impl Into<Span>, b: impl Into<Span>) -> Self {
+        a.into().extended_to(b)
+    }
+
+    pub fn extend_to(&mut self, b: impl Into<Span>) {
+        *self = self.extended_to(b);
+    }
+
+    pub fn extended_to(&mut self, b: impl Into<Span>) -> Self {
+        let b: Span = b.into();
+        assert!(b.loc.pos >= self.loc.pos);
+        Self {
+            loc: self.loc,
+            len: b.loc.pos - self.loc.pos + b.len,
+        }
+    }
+
     pub fn text<'a>(&self, text: &'a str) -> &'a str {
-        &text[self.loc.pos..][..self.width]
+        &text[self.loc.pos..][..self.len]
     }
 }
 
@@ -114,6 +146,12 @@ impl Span {
 pub struct Located<T> {
     pub data: T,
     pub span: Span,
+}
+
+impl<T> Located<T> {
+    pub fn map<U>(&self, u: U) -> Located<U> {
+        Located { data: u, span: self.span }
+    }
 }
 
 pub struct Lexer<'a> {
@@ -205,7 +243,7 @@ impl<'a> Iterator for Lexer<'a> {
                             Error::UnterminatedComment,
                             Span {
                                 loc: self.loc,
-                                width: 0,
+                                len: 0,
                             },
                         )));
                     } else {
@@ -369,7 +407,7 @@ impl<'a> Iterator for Lexer<'a> {
                                         Error::InvalidEscape,
                                         Span {
                                             loc: self.loc,
-                                            width: 1,
+                                            len: 1,
                                         },
                                     )))
                                 }
@@ -385,7 +423,7 @@ impl<'a> Iterator for Lexer<'a> {
                                 Error::UnterminatedStr,
                                 Span {
                                     loc: self.loc,
-                                    width: 0,
+                                    len: 0,
                                 },
                             )))
                         }
@@ -395,17 +433,17 @@ impl<'a> Iterator for Lexer<'a> {
             c @ '0'..='9' => {
                 if c == '0' {
                     if self.advance_if('x') {
-                        Token::Int(16, self.advance_while(|ch| ch.is_ascii_hexdigit()).into())
+                        Token::Int(16, self.advance_while(|ch| ch.is_ascii_hexdigit()))
                     } else if self.advance_if('o') {
-                        Token::Int(8, self.advance_while(|ch| ch.is_digit(8)).into())
+                        Token::Int(8, self.advance_while(|ch| ch.is_digit(8)))
                     } else if self.advance_if('b') {
-                        Token::Int(2, self.advance_while(|ch| ch.is_digit(2)).into())
+                        Token::Int(2, self.advance_while(|ch| ch.is_digit(2)))
                     } else {
                         return Some(Err(Located::new(
                             Error::LeadingZero,
                             Span {
                                 loc: self.loc,
-                                width: 0,
+                                len: 0,
                             },
                         )));
                     }
@@ -446,7 +484,10 @@ impl<'a> Iterator for Lexer<'a> {
                     "break" => Token::Break,
                     "continue" => Token::Continue,
                     "yield" => Token::Yield,
-                    id => Token::Ident(id.into()),
+                    "true" => Token::True,
+                    "false" => Token::False,
+                    "static" => Token::Static,
+                    id => Token::Ident(id),
                 }
             }
             _ => {
@@ -454,7 +495,7 @@ impl<'a> Iterator for Lexer<'a> {
                     Error::UnrecognizedChar,
                     Span {
                         loc: self.loc,
-                        width: 0,
+                        len: 0,
                     },
                 )))
             }
@@ -464,7 +505,7 @@ impl<'a> Iterator for Lexer<'a> {
             token,
             Span {
                 loc: start,
-                width: self.loc.pos - start.pos,
+                len: self.loc.pos - start.pos,
             },
         )))
     }
