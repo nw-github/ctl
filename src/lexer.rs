@@ -58,6 +58,7 @@ pub enum Token<'a> {
     Keyword,
     Pub,
     Struct,
+    Union,
     Enum,
     Interface,
     Dyn,
@@ -79,6 +80,7 @@ pub enum Token<'a> {
     True,
     False,
     Static,
+    Void,
 
     Ident(&'a str),
     Int(u8, &'a str),
@@ -150,8 +152,18 @@ pub struct Located<T> {
 }
 
 impl<T> Located<T> {
-    pub fn map<U>(&self, u: U) -> Located<U> {
-        Located { data: u, span: self.span }
+    pub fn replace<U>(&self, u: U) -> Located<U> {
+        Located {
+            data: u,
+            span: self.span,
+        }
+    }
+
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Located<U> {
+        Located {
+            data: f(self.data),
+            span: self.span,
+        }
     }
 }
 
@@ -434,11 +446,11 @@ impl<'a> Iterator for Lexer<'a> {
             c @ '0'..='9' => 'exit: {
                 if c == '0' {
                     if self.advance_if('x') {
-                        break 'exit Token::Int(16, self.advance_while(|ch| ch.is_ascii_hexdigit()))
+                        break 'exit Token::Int(16, self.advance_while(|ch| ch.is_ascii_hexdigit()));
                     } else if self.advance_if('o') {
-                        break 'exit Token::Int(8, self.advance_while(|ch| ch.is_digit(8)))
+                        break 'exit Token::Int(8, self.advance_while(|ch| ch.is_digit(8)));
                     } else if self.advance_if('b') {
-                        break 'exit Token::Int(2, self.advance_while(|ch| ch.is_digit(2)))
+                        break 'exit Token::Int(2, self.advance_while(|ch| ch.is_digit(2)));
                     }
                 }
 
@@ -464,6 +476,7 @@ impl<'a> Iterator for Lexer<'a> {
                     "keyword" => Token::Keyword,
                     "pub" => Token::Pub,
                     "struct" => Token::Struct,
+                    "union" => Token::Union,
                     "enum" => Token::Enum,
                     "interface" => Token::Interface,
                     "dyn" => Token::Dyn,
@@ -485,6 +498,7 @@ impl<'a> Iterator for Lexer<'a> {
                     "true" => Token::True,
                     "false" => Token::False,
                     "static" => Token::Static,
+                    "void" => Token::Void,
                     id => Token::Ident(id),
                 }
             }

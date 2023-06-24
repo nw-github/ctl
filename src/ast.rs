@@ -1,7 +1,7 @@
 use crate::lexer::Located;
 
-type Expr = Located<expr::Expr>;
-type Stmt = Located<stmt::Stmt>;
+pub type Expr = Located<expr::Expr>;
+pub type Stmt = Located<stmt::Stmt>;
 
 pub mod expr {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,9 +34,10 @@ pub mod expr {
         PreDecrement,
         Not,
         Deref,
-        AddrOf,
+        Addr,
+        AddrMut,
     }
-    
+
     #[derive(Debug)]
     pub enum Expr {
         Binary {
@@ -55,12 +56,12 @@ pub mod expr {
         Array(Vec<super::Expr>),
         Tuple(Vec<super::Expr>),
         Map(Vec<(super::Expr, super::Expr)>),
-        Literal/*(???)*/,
+        Literal, /*(???)*/
         Symbol(String),
         Assign {
             target: String,
             binary: Option<BinaryOp>,
-            value: Box<Expr>,
+            value: Box<super::Expr>,
         },
         Block(Vec<super::Stmt>),
         If {
@@ -83,18 +84,18 @@ pub mod expr {
             binary: Option<BinaryOp>,
         },
         Subscript {
-            callee: Box<Expr>,
-            args: Vec<Expr>,
+            callee: Box<super::Expr>,
+            args: Vec<super::Expr>,
         },
         SubscriptAssign {
-            callee: Box<Expr>,
-            args: Vec<Expr>,
-            value: Box<Expr>,
+            callee: Box<super::Expr>,
+            args: Vec<super::Expr>,
+            value: Box<super::Expr>,
             binary: Option<BinaryOp>,
         },
-        Return(Box<Expr>),
-        Yield(Box<Expr>),
-        Break(Box<Expr>),
+        Return(Box<super::Expr>),
+        Yield(Box<super::Expr>),
+        Break(Box<super::Expr>),
         Continue,
     }
 }
@@ -113,8 +114,11 @@ pub mod stmt {
         Map(Box<Type>, Box<Type>),
         Option(Box<Type>),
         Result(Box<Type>, Box<Type>),
-        Reference(Box<Type>),
-        Anon(super::Stmt),
+        Ref(Box<Type>),
+        RefMut(Box<Type>),
+        Anon(Box<super::Stmt>),
+        Void,
+        This,
     }
 
     #[derive(Debug)]
@@ -125,22 +129,68 @@ pub mod stmt {
     }
 
     #[derive(Debug)]
+    pub struct FnDecl {
+        pub name: String,
+        pub is_async: bool,
+        pub is_extern: bool,
+        pub type_params: Vec<String>,
+        pub params: Vec<Param>,
+        pub ret: Type,
+    }
+
+    #[derive(Debug)]
+    pub struct Fn {
+        pub header: FnDecl,
+        pub body: Vec<super::Stmt>,
+    }
+
+    #[derive(Debug)]
+    pub struct MemVar {
+        pub name: String,
+        pub ty: Option<Type>,
+        pub value: Option<super::Expr>,
+    }
+
+    #[derive(Debug)]
+    pub struct Struct {
+        pub name: String,
+        pub type_params: Vec<String>,
+        pub members: Vec<MemVar>,
+        pub impls: Vec<String>,
+        pub functions: Vec<Fn>,
+    }
+
+    #[derive(Debug)]
     pub enum Stmt {
         Expr(super::Expr),
         Let {
             name: String,
+            ty: Option<Type>,
             mutable: bool,
             value: Option<super::Expr>,
         },
-        Fn {
-            name: String,
-            is_async: bool,
-            type_params: Vec<String>,
-            params: Vec<Param>,
-            body: Vec<super::Stmt>,
+        Fn(Fn),
+        Struct(Struct),
+        Union {
+            tag: Option<String>,
+            base: Struct,
         },
-        Struct(Vec<super::Stmt>),
-        Interface(Vec<super::Stmt>),
-        Enum(Vec<super::Stmt>),
+        Interface {
+            name: String,
+            type_params: Vec<String>,
+            impls: Vec<String>,
+            functions: Vec<FnDecl>,
+        },
+        Enum {
+            name: String,
+            impls: Vec<String>,
+            variants: Vec<(String, Option<super::Expr>)>,
+            functions: Vec<Fn>,
+        },
+        Static {
+            name: String,
+            ty: Option<Type>,
+            value: super::Expr,
+        },
     }
 }
