@@ -269,6 +269,112 @@ impl<'a> Lexer<'a> {
             false
         }
     }
+
+    fn string_literal(&mut self, start: usize) -> Result<Token<'a>, Located<Error>> {
+        let mut result = Cow::from("");
+        loop {
+            match self.advance() {
+                Some('\\') => {
+                    result.to_mut().push(match self.advance() {
+                        Some('"') => '"',
+                        Some('\\') => '\\',
+                        Some('n') => '\n',
+                        Some('t') => '\t',
+                        _ => {
+                            return Err(Located::new(
+                                Error::InvalidEscape,
+                                Span {
+                                    loc: self.loc,
+                                    len: 1,
+                                },
+                            ));
+                        }
+                    });
+                }
+                Some('"') => break Ok(Token::String(result)),
+                Some(ch) => match &mut result {
+                    Cow::Borrowed(str) => *str = &self.src[start + 1..self.loc.pos],
+                    Cow::Owned(str) => str.push(ch),
+                },
+                None => {
+                    return Err(Located::new(
+                        Error::UnterminatedStr,
+                        Span {
+                            loc: self.loc,
+                            len: 0,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+
+    fn numeric_literal(&mut self, start: usize) -> Token<'a> {
+        if self.src.chars().nth(start) == Some('0') {
+            if self.advance_if('x') {
+                return Token::Int(16, self.advance_while(|ch| ch.is_ascii_hexdigit()));
+            } else if self.advance_if('o') {
+                return Token::Int(8, self.advance_while(|ch| ch.is_digit(8)));
+            } else if self.advance_if('b') {
+                return Token::Int(2, self.advance_while(|ch| ch.is_digit(2)));
+            }
+        }
+
+        self.advance_while(|ch| ch.is_ascii_digit());
+        if self.peek() == Some('.') && self.peek_next().map_or(false, |f| f.is_ascii_digit()) {
+            self.advance();
+            self.advance_while(|ch| ch.is_ascii_digit());
+            Token::Float(&self.src[start..self.loc.pos])
+        } else {
+            let src = &self.src[start..self.loc.pos];
+            if src.len() == 1 {
+                // TODO: warn about leading zero, dont make it an error
+            }
+
+            Token::Int(10, src)
+        }
+    }
+
+    fn identifier(&mut self, start: usize) -> Token<'a> {
+        self.advance_while(|ch| matches!(ch, '_' | 'a'..='z' | 'A'..='Z' | '0'..='9'));
+        match &self.src[start..self.loc.pos] {
+            "let" => Token::Let,
+            "mut" => Token::Mut,
+            "fn" => Token::Fn,
+            "keyword" => Token::Keyword,
+            "pub" => Token::Pub,
+            "struct" => Token::Struct,
+            "union" => Token::Union,
+            "enum" => Token::Enum,
+            "interface" => Token::Interface,
+            "dyn" => Token::Dyn,
+            "type" => Token::Type,
+            "this" => Token::This,
+            "if" => Token::If,
+            "else" => Token::Else,
+            "loop" => Token::Loop,
+            "for" => Token::For,
+            "in" => Token::In,
+            "while" => Token::While,
+            "match" => Token::Match,
+            "sizeof" => Token::Sizeof,
+            "extern" => Token::Extern,
+            "mod" => Token::Mod,
+            "async" => Token::Async,
+            "await" => Token::Await,
+            "break" => Token::Break,
+            "continue" => Token::Continue,
+            "yield" => Token::Yield,
+            "return" => Token::Return,
+            "true" => Token::True,
+            "false" => Token::False,
+            "static" => Token::Static,
+            "void" => Token::Void,
+            "none" => Token::None,
+            "unsafe" => Token::Unsafe,
+            id => Token::Ident(id),
+        }
+    }
 }
 
 impl<'a> Iterator for Lexer<'a> {
@@ -452,114 +558,12 @@ impl<'a> Iterator for Lexer<'a> {
                     Token::Assign
                 }
             }
-            '"' => {
-                let mut result = Cow::from("");
-                loop {
-                    match self.advance() {
-                        Some('\\') => {
-                            result.to_mut().push(match self.advance() {
-                                Some('"') => '"',
-                                Some('\\') => '\\',
-                                Some('n') => '\n',
-                                Some('t') => '\t',
-                                _ => {
-                                    return Some(Err(Located::new(
-                                        Error::InvalidEscape,
-                                        Span {
-                                            loc: self.loc,
-                                            len: 1,
-                                        },
-                                    )))
-                                }
-                            });
-                        }
-                        Some('"') => break Token::String(result),
-                        Some(ch) => match &mut result {
-                            Cow::Borrowed(str) => *str = &self.src[start.pos + 1..self.loc.pos],
-                            Cow::Owned(str) => str.push(ch),
-                        },
-                        None => {
-                            return Some(Err(Located::new(
-                                Error::UnterminatedStr,
-                                Span {
-                                    loc: self.loc,
-                                    len: 0,
-                                },
-                            )))
-                        }
-                    }
-                }
-            }
-            c @ '0'..='9' => 'exit: {
-                if c == '0' {
-                    if self.advance_if('x') {
-                        break 'exit Token::Int(
-                            16,
-                            self.advance_while(|ch| ch.is_ascii_hexdigit()),
-                        );
-                    } else if self.advance_if('o') {
-                        break 'exit Token::Int(8, self.advance_while(|ch| ch.is_digit(8)));
-                    } else if self.advance_if('b') {
-                        break 'exit Token::Int(2, self.advance_while(|ch| ch.is_digit(2)));
-                    }
-                }
-
-                self.advance_while(|ch| ch.is_ascii_digit());
-                if self.peek() == Some('.')
-                    && self.peek_next().map_or(false, |f| f.is_ascii_digit())
-                {
-                    self.advance();
-                    self.advance_while(|ch| ch.is_ascii_digit());
-                    Token::Float(&self.src[start.pos..self.loc.pos])
-                } else {
-                    let src = &self.src[start.pos..self.loc.pos];
-                    if src.len() == 1 {
-                        // TODO: warn about leading zero, dont make it an error
-                    }
-
-                    Token::Int(10, src)
-                }
-            }
-            '_' | 'a'..='z' | 'A'..='Z' => {
-                self.advance_while(|ch| matches!(ch, '_' | 'a'..='z' | 'A'..='Z' | '0'..='9'));
-                match &self.src[start.pos..self.loc.pos] {
-                    "let" => Token::Let,
-                    "mut" => Token::Mut,
-                    "fn" => Token::Fn,
-                    "keyword" => Token::Keyword,
-                    "pub" => Token::Pub,
-                    "struct" => Token::Struct,
-                    "union" => Token::Union,
-                    "enum" => Token::Enum,
-                    "interface" => Token::Interface,
-                    "dyn" => Token::Dyn,
-                    "type" => Token::Type,
-                    "this" => Token::This,
-                    "if" => Token::If,
-                    "else" => Token::Else,
-                    "loop" => Token::Loop,
-                    "for" => Token::For,
-                    "in" => Token::In,
-                    "while" => Token::While,
-                    "match" => Token::Match,
-                    "sizeof" => Token::Sizeof,
-                    "extern" => Token::Extern,
-                    "mod" => Token::Mod,
-                    "async" => Token::Async,
-                    "await" => Token::Await,
-                    "break" => Token::Break,
-                    "continue" => Token::Continue,
-                    "yield" => Token::Yield,
-                    "return" => Token::Return,
-                    "true" => Token::True,
-                    "false" => Token::False,
-                    "static" => Token::Static,
-                    "void" => Token::Void,
-                    "none" => Token::None,
-                    "unsafe" => Token::Unsafe,
-                    id => Token::Ident(id),
-                }
-            }
+            '"' => match self.string_literal(start.pos) {
+                Ok(token) => token,
+                Err(err) => return Some(Err(err)),
+            },
+            '0'..='9' => self.numeric_literal(start.pos),
+            '_' | 'a'..='z' | 'A'..='Z' => self.identifier(start.pos),
             _ => {
                 return Some(Err(Located::new(
                     Error::UnrecognizedChar,
