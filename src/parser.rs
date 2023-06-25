@@ -3,7 +3,7 @@ use std::iter::Peekable;
 use crate::{
     ast::{
         expr::{Expr, UnaryOp},
-        stmt::{self, Fn, FnDecl, Param, Stmt, Type},
+        stmt::{self, Fn, FnDecl, Param, Stmt, Type, UserType},
     },
     lexer::{Lexer, Located as L, Location, Span, Token},
 };
@@ -282,6 +282,11 @@ impl<'a> Parser<'a> {
                 functions.push(Fn { header, body });
             } else {
                 let (name, ty) = this.parse_var_name()?;
+                let ty = match ty {
+                    Some(ty) => ty,
+                    None => return this.error("expected type"),
+                };
+
                 let value = if this.advance_if_kind(Token::Assign).is_some() {
                     Some(this.expression()?)
                 } else {
@@ -413,10 +418,10 @@ impl<'a> Parser<'a> {
         } else if let Some(mut token) = self.advance_if_kind(Token::Struct) {
             Some((|| {
                 Ok(L::new(
-                    Stmt::Struct(stmt::Struct {
+                    Stmt::UserType(UserType::Struct(stmt::Struct {
                         name: self.expect_id("expected name")?.into(),
                         ..self.parse_struct_body(public.is_some(), &mut token.span)?
-                    }),
+                    })),
                     token.span,
                 ))
             })())
@@ -431,13 +436,13 @@ impl<'a> Parser<'a> {
                 };
 
                 Ok(L::new(
-                    Stmt::Union {
+                    Stmt::UserType(UserType::Union {
                         tag,
                         base: stmt::Struct {
                             name: self.expect_id("expected name")?.into(),
                             ..self.parse_struct_body(public.is_some(), &mut token.span)?
                         },
-                    },
+                    }),
                     token.span,
                 ))
             })())
@@ -458,13 +463,13 @@ impl<'a> Parser<'a> {
                 })?;
 
                 Ok(L::new(
-                    Stmt::Interface {
+                    Stmt::UserType(UserType::Interface {
                         public: public.is_some(),
                         name,
                         type_params,
                         impls,
                         functions,
-                    },
+                    }),
                     span,
                 ))
             })())
@@ -510,13 +515,13 @@ impl<'a> Parser<'a> {
                 })?;
 
                 Ok(L::new(
-                    Stmt::Enum {
+                    Stmt::UserType(UserType::Enum {
                         public: public.is_some(),
                         name,
                         impls,
                         variants,
                         functions,
-                    },
+                    }),
                     span,
                 ))
             })())

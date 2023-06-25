@@ -184,7 +184,7 @@ pub mod stmt {
         Result(Box<Type>, Box<Type>),
         Ref(Box<Type>),
         RefMut(Box<Type>),
-        Anon(Box<super::Stmt>),
+        Anon(UserType),
         Void,
         This,
     }
@@ -218,7 +218,7 @@ pub mod stmt {
     pub struct MemVar {
         pub public: bool,
         pub name: String,
-        pub ty: Option<Type>,
+        pub ty: Type,
         pub value: Option<super::Expr>,
     }
 
@@ -233,15 +233,7 @@ pub mod stmt {
     }
 
     #[derive(Debug)]
-    pub enum Stmt {
-        Expr(super::Expr),
-        Let {
-            name: String,
-            ty: Option<Type>,
-            mutable: bool,
-            value: Option<super::Expr>,
-        },
-        Fn(Fn),
+    pub enum UserType {
         Struct(Struct),
         Union {
             tag: Option<String>,
@@ -260,7 +252,20 @@ pub mod stmt {
             impls: Vec<String>,
             variants: Vec<(String, Option<super::Expr>)>,
             functions: Vec<Fn>,
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum Stmt {
+        Expr(super::Expr),
+        Let {
+            name: String,
+            ty: Option<Type>,
+            mutable: bool,
+            value: Option<super::Expr>,
         },
+        Fn(Fn),
+        UserType(UserType),
         Static {
             public: bool,
             name: String,

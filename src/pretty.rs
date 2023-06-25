@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         expr::Expr,
-        stmt::{Fn, FnDecl, Stmt, Struct},
+        stmt::{Fn, FnDecl, Stmt, Struct, UserType},
     },
     lexer::Located,
 };
@@ -39,77 +39,85 @@ pub fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
             }
         }
         Stmt::Fn(f) => print_fn(f, indent),
-        Stmt::Struct(base) => print_struct("Struct", base, indent),
-        Stmt::Union { tag, base } => {
-            if let Some(tag) = tag {
-                print_struct(&format!("Union({tag})"), base, indent);
-            } else {
-                print_struct("Union", base, indent)
+        Stmt::UserType(ty) => match ty {
+            UserType::Struct(base) => print_struct("Struct", base, indent),
+            UserType::Union { tag, base } => {
+                if let Some(tag) = tag {
+                    print_struct(&format!("Union({tag})"), base, indent);
+                } else {
+                    print_struct("Union", base, indent)
+                }
             }
-        }
-        Stmt::Interface {
-            public,
+            UserType::Interface {
+                public,
+                name,
+                type_params,
+                impls,
+                functions,
+            } => {
+                print!("{tabs}Interface[{name}]");
+                print_bool!(public);
+                println!();
+
+                let plus_1 = INDENT.repeat(indent + 1);
+                if !type_params.is_empty() {
+                    println!("{tabs}Type Params:");
+                    for param in type_params {
+                        println!("{plus_1}{param}");
+                    }
+                }
+
+                if !impls.is_empty() {
+                    println!("{tabs}Impls: ");
+                    for i in impls {
+                        println!("{plus_1}{i:?}");
+                    }
+                }
+
+                println!("{tabs}Functions:");
+                for f in functions {
+                    print_fn_decl(f, indent + 1);
+                }
+            }
+            UserType::Enum {
+                name,
+                impls,
+                variants,
+                functions,
+                public,
+            } => {
+                print!("{tabs}Enum[{name}]");
+                print_bool!(public);
+                println!();
+
+                let plus_1 = INDENT.repeat(indent + 1);
+                if !impls.is_empty() {
+                    println!("{tabs}Impls: ");
+                    for i in impls {
+                        println!("{plus_1}{i:?}");
+                    }
+                }
+
+                println!("{tabs}Variants:");
+                for (name, expr) in variants {
+                    println!("{plus_1}{name}");
+                    if let Some(expr) = expr {
+                        print_expr(expr, indent + 2);
+                    }
+                }
+
+                for f in functions {
+                    print_fn(f, indent + 1);
+                }
+            }
+        },
+
+        Stmt::Static {
             name,
-            type_params,
-            impls,
-            functions,
-        } => {
-            print!("{tabs}Interface[{name}]");
-            print_bool!(public);
-            println!();
-
-            let plus_1 = INDENT.repeat(indent + 1);
-            if !type_params.is_empty() {
-                println!("{tabs}Type Params:");
-                for param in type_params {
-                    println!("{plus_1}{param}");
-                }
-            }
-
-            if !impls.is_empty() {
-                println!("{tabs}Impls: ");
-                for i in impls {
-                    println!("{plus_1}{i:?}");
-                }
-            }
-
-            println!("{tabs}Functions:");
-            for f in functions {
-                print_fn_decl(f, indent + 1);
-            }
-        }
-        Stmt::Enum {
-            name,
-            impls,
-            variants,
-            functions,
+            ty,
+            value,
             public,
         } => {
-            print!("{tabs}Enum[{name}]");
-            print_bool!(public);
-            println!();
-
-            let plus_1 = INDENT.repeat(indent + 1);
-            if !impls.is_empty() {
-                println!("{tabs}Impls: ");
-                for i in impls {
-                    println!("{plus_1}{i:?}");
-                }
-            }
-
-            println!("{tabs}Variants:");
-            for (name, expr) in variants {
-                println!("{plus_1}{name}");
-                if let Some(expr) = expr {
-                    print_expr(expr, indent + 2);
-                }
-            }
-
-            for f in functions {
-                print_fn(f, indent + 1);
-            }
-        }
-        Stmt::Static { name, ty, value, public } => {
             print!("{tabs}Static[{name}]");
             print_bool!(public);
             println!();
@@ -139,7 +147,11 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
             print_expr(left, indent + 1);
             print_expr(right, indent + 1);
         }
-        Expr::Range { start, end, inclusive  } => {
+        Expr::Range {
+            start,
+            end,
+            inclusive,
+        } => {
             print!("{tabs}Range");
             print_bool!(inclusive);
             println!();
@@ -170,7 +182,7 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
                     if let Some(name) = name {
                         println!("{tabs}{INDENT}{name}:");
                         print_expr(expr, indent + 3);
-                    } else  {
+                    } else {
                         print_expr(expr, indent + 2);
                     }
                 }
@@ -219,7 +231,11 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
         Expr::Symbol(value) => {
             println!("{tabs}Symbol[{value}]");
         }
-        Expr::Assign { target, binary, value } => {
+        Expr::Assign {
+            target,
+            binary,
+            value,
+        } => {
             println!("{tabs}Assign({binary:?})");
             let tabs = INDENT.repeat(indent + 1);
             println!("{tabs}Target: ");
@@ -231,7 +247,11 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
             println!("{tabs}Block");
             print_stmts(expr, indent + 1);
         }
-        Expr::If { cond, if_branch, else_branch } => {
+        Expr::If {
+            cond,
+            if_branch,
+            else_branch,
+        } => {
             println!("{tabs}If");
 
             let tabs = INDENT.repeat(indent + 1);
@@ -246,7 +266,11 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
                 print_expr(else_branch, indent + 2);
             }
         }
-        Expr::Loop { cond, body, do_while } => {
+        Expr::Loop {
+            cond,
+            body,
+            do_while,
+        } => {
             print!("{tabs}Loop");
             print_bool!(do_while);
             println!();
@@ -383,7 +407,7 @@ fn print_struct(
     println!("{tabs}{type_name}[{name}]");
     print_bool!(public);
     println!();
-    
+
     let plus_1 = INDENT.repeat(indent + 1);
     if !type_params.is_empty() {
         println!("{tabs}Type Params:");
