@@ -89,6 +89,7 @@ pub enum Token<'a> {
     Static,
     Void,
     None,
+    Unsafe,
 
     Ident(&'a str),
     Int(u8, &'a str),
@@ -555,6 +556,7 @@ impl<'a> Iterator for Lexer<'a> {
                     "static" => Token::Static,
                     "void" => Token::Void,
                     "none" => Token::None,
+                    "unsafe" => Token::Unsafe,
                     id => Token::Ident(id),
                 }
             }
