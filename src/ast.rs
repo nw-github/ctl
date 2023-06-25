@@ -111,6 +111,10 @@ pub mod expr {
             args: Vec<super::Expr>,
         },
         Array(Vec<super::Expr>),
+        ArrayWithInit {
+            init: Box<super::Expr>,
+            count: Box<super::Expr>,
+        },
         Tuple(Vec<super::Expr>),
         Map(Vec<(super::Expr, super::Expr)>),
         Bool(bool),

@@ -177,6 +177,15 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
                 print_expr(el, indent + 1);
             }
         }
+        Expr::ArrayWithInit { init, count } => {
+            println!("{tabs}ArrayWithInit");
+
+            let tabs = INDENT.repeat(indent + 1);
+            println!("{tabs}Init: ");
+            print_expr(init, indent + 2);
+            println!("{tabs}Count: ");
+            print_expr(count, indent + 2);
+        }
         Expr::Tuple(elements) => {
             println!("{tabs}Tuple");
             for el in elements {

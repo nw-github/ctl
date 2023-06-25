@@ -970,7 +970,37 @@ impl<'a> Parser<'a> {
             }
             Token::LBrace => {
                 let expr = self.expression()?;
-                if self.advance_if_kind(Token::Comma).is_some() {
+                if self.advance_if_kind(Token::Colon).is_some() {
+                    let mut exprs = vec![(expr, self.expression()?)];
+                    let span = if self.advance_if_kind(Token::Comma).is_some() {
+                        self.advance_until(Token::RBrace, token.span, |this| {
+                            let key = this.expression()?;
+                            this.expect_kind(Token::Colon, "expected ':'")?;
+                            let value = this.expression()?;
+                            exprs.push((key, value));
+    
+                            if !this.matches_kind(Token::RBrace) {
+                                this.expect_kind(Token::Comma, "expected ','")?;
+                            }
+                            Ok(())
+                        })?
+                    } else {
+                        self.expect_kind(Token::RBrace, "expected ']' or ','")?.span
+                    };
+
+                    L::new(Expr::Map(exprs), span)
+                } else if self.advance_if_kind(Token::Semicolon).is_some() {
+                    let count = self.expression()?;
+                    let rbrace = self.expect_kind(Token::RBrace, "expected ']'")?;
+                    L::new(
+                        Expr::ArrayWithInit {
+                            init: expr.into(),
+                            count: count.into(),
+                        },
+                        Span::combine(token.span, rbrace.span),
+                    )
+                } else {
+                    self.expect_kind(Token::Comma, "expected ':', ';', or ','")?;
                     let mut exprs = vec![expr];
                     let span = self.advance_until(Token::RBrace, token.span, |this| {
                         exprs.push(this.expression()?);
@@ -982,22 +1012,6 @@ impl<'a> Parser<'a> {
                     })?;
 
                     L::new(Expr::Array(exprs), span)
-                } else {
-                    self.expect_kind(Token::Colon, "expected ':' or ','")?;
-                    let mut exprs = vec![(expr, self.expression()?)];
-                    let span = self.advance_until(Token::RBrace, token.span, |this| {
-                        let key = this.expression()?;
-                        this.expect_kind(Token::Colon, "expected ':'")?;
-                        let value = this.expression()?;
-                        exprs.push((key, value));
-
-                        if !this.matches_kind(Token::RBrace) {
-                            this.expect_kind(Token::Comma, "expected ','")?;
-                        }
-                        Ok(())
-                    })?;
-
-                    L::new(Expr::Map(exprs), span)
                 }
             }
             _ => {
@@ -1159,5 +1173,23 @@ struct Hello<T, E> : Add + Sub {
         );
 
         _ = dbg!(parser.item());
+    }
+
+    #[test]
+    fn square_bracket_literals() {
+        let mut parser = Parser::new("let x = [5; 10];");
+        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
+
+        parser = Parser::new("let x = [1, 2, 3, 4];");
+        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
+
+        parser = Parser::new("let x = [1, 2, 3, 4, ];");
+        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
+
+        parser = Parser::new("let x = [1: 2, 3: 4];");
+        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
+
+        parser = Parser::new("let x = [1: 2, 3: 4, ];");
+        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
     }
 }

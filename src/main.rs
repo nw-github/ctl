@@ -31,6 +31,11 @@ fn main() -> anyhow::Result<()> {
                     let token = token.unwrap();
                     println!("{:?} '{}'", token.data, token.span.text(buffer));
                 }
+
+                match Parser::new(buffer).parse() {
+                    Ok(module) => pretty::print_stmt(&module, 0),
+                    Err(errors) => eprintln!("{errors:?}"),
+                }
             }
             _ => {}
         }
