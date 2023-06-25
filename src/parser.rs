@@ -880,7 +880,32 @@ impl<'a> Parser<'a> {
                     L::new(expr.data, Span::combine(token.span, end.span))
                 }
             }
-            Token::Ident(ident) => L::new(Expr::Symbol(ident.into()), token.span),
+            Token::Ident(ident) => {
+                if self.advance_if_kind(Token::LCurly).is_some() {
+                    let mut members = Vec::new();
+                    let span = self.advance_until(Token::RCurly, token.span, |this| {
+                        let name = this.expect_id("expected member name")?;
+                        this.expect_kind(Token::Colon, "expected ':'")?;
+                        members.push((name.into(), this.expression()?));
+
+                        if !this.matches_kind(Token::RCurly) {
+                            this.expect_kind(Token::Comma, "expected ','")?;
+                        }
+
+                        Ok(())
+                    })?;
+
+                    L::new(
+                        Expr::Instance {
+                            name: ident.into(),
+                            members,
+                        },
+                        span,
+                    )
+                } else {
+                    L::new(Expr::Symbol(ident.into()), token.span)
+                }
+            }
             Token::This => L::new(Expr::Symbol("this".into()), token.span),
             Token::Range => {
                 if self.is_range_end() {
@@ -981,10 +1006,16 @@ impl<'a> Parser<'a> {
             }
             Token::LBrace => {
                 if let Some(rbrace) = self.advance_if_kind(Token::RBrace) {
-                    L::new(Expr::Array(Vec::new()), Span::combine(token.span, rbrace.span))
+                    L::new(
+                        Expr::Array(Vec::new()),
+                        Span::combine(token.span, rbrace.span),
+                    )
                 } else if self.advance_if_kind(Token::Colon).is_some() {
                     let rbrace = self.expect_kind(Token::RBrace, "expected ']'")?;
-                    L::new(Expr::Map(Vec::new()), Span::combine(token.span, rbrace.span))
+                    L::new(
+                        Expr::Map(Vec::new()),
+                        Span::combine(token.span, rbrace.span),
+                    )
                 } else {
                     let expr = self.expression()?;
                     if self.advance_if_kind(Token::Colon).is_some() {
@@ -1224,8 +1255,17 @@ struct Hello<T, E> : Add + Sub {
 
         parser = Parser::new("let x = foo(a: bar, b: quux);");
         crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
- 
+
         parser = Parser::new("let x = foo(a: bar, b, c: quux);");
+        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
+    }
+
+    #[test]
+    fn instances() {
+        let mut parser = Parser::new("let x = Foo { bar: 10, quux: 15 };");
+        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
+
+        parser = Parser::new("let x = Foo { bar: 10, quux: 15, };");
         crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
     }
 }

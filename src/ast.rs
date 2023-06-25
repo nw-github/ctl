@@ -122,6 +122,10 @@ pub mod expr {
         Float(String),
         String(String),
         Symbol(String),
+        Instance {
+            name: String,
+            members: Vec<(String, super::Expr)>,
+        },
         None,
         Assign {
             target: Box<super::Expr>,
