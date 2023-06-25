@@ -969,49 +969,56 @@ impl<'a> Parser<'a> {
                 )
             }
             Token::LBrace => {
-                let expr = self.expression()?;
-                if self.advance_if_kind(Token::Colon).is_some() {
-                    let mut exprs = vec![(expr, self.expression()?)];
-                    let span = if self.advance_if_kind(Token::Comma).is_some() {
-                        self.advance_until(Token::RBrace, token.span, |this| {
-                            let key = this.expression()?;
-                            this.expect_kind(Token::Colon, "expected ':'")?;
-                            let value = this.expression()?;
-                            exprs.push((key, value));
-    
+                if let Some(rbrace) = self.advance_if_kind(Token::RBrace) {
+                    L::new(Expr::Array(Vec::new()), Span::combine(token.span, rbrace.span))
+                } else if self.advance_if_kind(Token::Colon).is_some() {
+                    let rbrace = self.expect_kind(Token::RBrace, "expected ']'")?;
+                    L::new(Expr::Map(Vec::new()), Span::combine(token.span, rbrace.span))
+                } else {
+                    let expr = self.expression()?;
+                    if self.advance_if_kind(Token::Colon).is_some() {
+                        let mut exprs = vec![(expr, self.expression()?)];
+                        let span = if self.advance_if_kind(Token::Comma).is_some() {
+                            self.advance_until(Token::RBrace, token.span, |this| {
+                                let key = this.expression()?;
+                                this.expect_kind(Token::Colon, "expected ':'")?;
+                                let value = this.expression()?;
+                                exprs.push((key, value));
+
+                                if !this.matches_kind(Token::RBrace) {
+                                    this.expect_kind(Token::Comma, "expected ','")?;
+                                }
+                                Ok(())
+                            })?
+                        } else {
+                            self.expect_kind(Token::RBrace, "expected ']' or ','")?.span
+                        };
+
+                        L::new(Expr::Map(exprs), span)
+                    } else if self.advance_if_kind(Token::Semicolon).is_some() {
+                        let count = self.expression()?;
+                        let rbrace = self.expect_kind(Token::RBrace, "expected ']'")?;
+                        L::new(
+                            Expr::ArrayWithInit {
+                                init: expr.into(),
+                                count: count.into(),
+                            },
+                            Span::combine(token.span, rbrace.span),
+                        )
+                    } else {
+                        self.expect_kind(Token::Comma, "expected ':', ';', or ','")?;
+                        let mut exprs = vec![expr];
+                        let span = self.advance_until(Token::RBrace, token.span, |this| {
+                            exprs.push(this.expression()?);
                             if !this.matches_kind(Token::RBrace) {
                                 this.expect_kind(Token::Comma, "expected ','")?;
                             }
+
                             Ok(())
-                        })?
-                    } else {
-                        self.expect_kind(Token::RBrace, "expected ']' or ','")?.span
-                    };
+                        })?;
 
-                    L::new(Expr::Map(exprs), span)
-                } else if self.advance_if_kind(Token::Semicolon).is_some() {
-                    let count = self.expression()?;
-                    let rbrace = self.expect_kind(Token::RBrace, "expected ']'")?;
-                    L::new(
-                        Expr::ArrayWithInit {
-                            init: expr.into(),
-                            count: count.into(),
-                        },
-                        Span::combine(token.span, rbrace.span),
-                    )
-                } else {
-                    self.expect_kind(Token::Comma, "expected ':', ';', or ','")?;
-                    let mut exprs = vec![expr];
-                    let span = self.advance_until(Token::RBrace, token.span, |this| {
-                        exprs.push(this.expression()?);
-                        if !this.matches_kind(Token::RBrace) {
-                            this.expect_kind(Token::Comma, "expected ','")?;
-                        }
-
-                        Ok(())
-                    })?;
-
-                    L::new(Expr::Array(exprs), span)
+                        L::new(Expr::Array(exprs), span)
+                    }
                 }
             }
             _ => {
@@ -1190,6 +1197,12 @@ struct Hello<T, E> : Add + Sub {
         crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
 
         parser = Parser::new("let x = [1: 2, 3: 4, ];");
+        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
+
+        parser = Parser::new("let x = [];");
+        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
+
+        parser = Parser::new("let x = [:];");
         crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
     }
 }
