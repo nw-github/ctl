@@ -121,7 +121,165 @@ fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
 }
 
 fn print_expr(expr: &Located<Expr>, indent: usize) {
-    todo!()
+    let tabs = INDENT.repeat(indent);
+    match &expr.data {
+        Expr::Binary { op, left, right } => {
+            println!("{tabs}Binary({op:?})");
+            print_expr(left, indent + 1);
+            print_expr(right, indent + 1);
+        }
+        Expr::Range { start, end, inclusive  } => {
+            print!("{tabs}Range");
+            print_bool!(inclusive);
+            println!();
+
+            let tabs = INDENT.repeat(indent + 1);
+            if let Some(start) = start {
+                println!("{tabs}From:");
+                print_expr(start, indent + 2);
+            }
+            if let Some(end) = end {
+                println!("{tabs}To:");
+                print_expr(end, indent + 2);
+            }
+        }
+        Expr::Unary { op, expr } => {
+            println!("{tabs}Unary({op:?})");
+            print_expr(expr, indent + 1);
+        }
+        Expr::Call { callee, args } => {
+            println!("{tabs}Call");
+            let tabs = INDENT.repeat(indent + 1);
+            println!("{tabs}Callee: ");
+            print_expr(callee, indent + 2);
+
+            if !args.is_empty() {
+                println!("{tabs}Args: ");
+                for expr in args {
+                    print_expr(expr, indent + 2);
+                }
+            }
+        }
+        Expr::Array(elements) => {
+            println!("{tabs}Array");
+            for el in elements {
+                print_expr(el, indent + 1);
+            }
+        }
+        Expr::Tuple(elements) => {
+            println!("{tabs}Tuple");
+            for el in elements {
+                print_expr(el, indent + 1);
+            }
+        }
+        Expr::Map(expr) => {
+            println!("{tabs}Map");
+            let tabs = INDENT.repeat(indent + 1);
+            for (key, value) in expr {
+                println!("{tabs}Key: ");
+                print_expr(key, indent + 2);
+                println!("{tabs}Value: ");
+                print_expr(value, indent + 2);
+            }
+        }
+        Expr::Integer(base, value) => {
+            println!("{tabs}Integer(base {base}) = {value}");
+        }
+        Expr::Float(value) => {
+            println!("{tabs}Float = {value}");
+        }
+        Expr::String(value) => {
+            println!("{tabs}String = \'{value}\'");
+        }
+        Expr::Symbol(value) => {
+            println!("{tabs}Symbol[{value}]");
+        }
+        Expr::Assign { target, binary, value } => {
+            println!("{tabs}Assign({binary:?})");
+            let tabs = INDENT.repeat(indent + 1);
+            println!("{tabs}Target: ");
+            print_expr(target, indent + 2);
+            println!("{tabs}Value: ");
+            print_expr(value, indent + 2);
+        }
+        Expr::Block(expr) => {
+            println!("{tabs}Block");
+            dump_ast(expr, indent + 1);
+        }
+        Expr::If { cond, if_branch, else_branch } => {
+            println!("{tabs}If");
+
+            let tabs = INDENT.repeat(indent + 1);
+            println!("{tabs}Condition: ");
+            print_expr(cond, indent + 2);
+
+            println!("{tabs}Body: ");
+            print_expr(if_branch, indent + 2);
+
+            if let Some(else_branch) = else_branch {
+                println!("{tabs}Else: ");
+                print_expr(else_branch, indent + 2);
+            }
+        }
+        Expr::Loop { cond, body, do_while } => {
+            print!("{tabs}Loop");
+            print_bool!(do_while);
+            println!();
+
+            let tabs = INDENT.repeat(indent + 1);
+            println!("{tabs}Condition: ");
+            print_expr(cond, indent + 2);
+
+            println!("{tabs}Body: ");
+            dump_ast(body, indent + 2);
+        }
+        Expr::Member { source, member } => {
+            println!("{tabs}Member[{member}]");
+            print_expr(source, indent + 1);
+        }
+        Expr::Subscript { callee, args } => {
+            println!("{tabs}Subscript");
+            let tabs = INDENT.repeat(indent + 1);
+            println!("{tabs}Callee: ");
+            print_expr(callee, indent + 2);
+
+            if !args.is_empty() {
+                println!("{tabs}Args: ");
+                for expr in args {
+                    print_expr(expr, indent + 2);
+                }
+            }
+        }
+        Expr::Return(expr) => {
+            println!("{tabs}Return");
+            print_expr(expr, indent + 1);
+        }
+        Expr::Yield(expr) => {
+            println!("{tabs}Yield");
+            print_expr(expr, indent + 1);
+        }
+        Expr::Break(expr) => {
+            println!("{tabs}Break");
+            print_expr(expr, indent + 1);
+        }
+        Expr::Bool(value) => {
+            println!("{tabs}Bool = {value}");
+        }
+        Expr::Continue => {
+            println!("{tabs}Continue");
+        }
+        Expr::None => {
+            println!("{tabs}None");
+        }
+        Expr::For { var, iter, body } => {
+            println!("{tabs}For[{var}]");
+            let tabs = INDENT.repeat(indent + 1);
+            println!("{tabs}In: ");
+            print_expr(iter, indent + 2);
+            println!("{tabs}Body: ");
+            dump_ast(body, indent + 2);
+        }
+    }
 }
 
 fn print_fn_decl(

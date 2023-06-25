@@ -4,6 +4,8 @@ pub type Expr = Located<expr::Expr>;
 pub type Stmt = Located<stmt::Stmt>;
 
 pub mod expr {
+    use crate::lexer::Token;
+
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum BinaryOp {
         Add,
@@ -14,7 +16,9 @@ pub mod expr {
         And,
         Xor,
         Or,
-        NullCoalesce,
+        Shl,
+        Shr,
+        NoneCoalesce,
         ErrCoalesce,
         Gt,
         GtEqual,
@@ -22,6 +26,38 @@ pub mod expr {
         LtEqual,
         Equal,
         NotEqual,
+        LogicalOr,
+        LogicalAnd,
+    }
+
+    impl TryFrom<Token<'_>> for BinaryOp {
+        type Error = ();
+
+        fn try_from(value: Token<'_>) -> Result<Self, Self::Error> {
+            match value {
+                Token::Plus | Token::AddAssign => Ok(BinaryOp::Add),
+                Token::Minus | Token::SubAssign => Ok(BinaryOp::Sub),
+                Token::Asterisk | Token::MulAssign => Ok(BinaryOp::Mul),
+                Token::Div | Token::DivAssign => Ok(BinaryOp::Div),
+                Token::Rem | Token::RemAssign => Ok(BinaryOp::Rem),
+                Token::Ampersand | Token::AndAssign => Ok(BinaryOp::And),
+                Token::Caret | Token::XorAssign => Ok(BinaryOp::Xor),
+                Token::Or | Token::OrAssign => Ok(BinaryOp::Or),
+                Token::NoneCoalesce | Token::NoneCoalesceAssign => Ok(BinaryOp::NoneCoalesce),
+                Token::ErrCoalesce => Ok(BinaryOp::ErrCoalesce),
+                Token::RAngle => Ok(BinaryOp::Gt),
+                Token::GtEqual => Ok(BinaryOp::GtEqual),
+                Token::LAngle => Ok(BinaryOp::Lt),
+                Token::Shl | Token::ShlAssign => Ok(BinaryOp::Shl),
+                Token::Shr | Token::ShrAssign => Ok(BinaryOp::Shr),
+                Token::LtEqual => Ok(BinaryOp::LtEqual),
+                Token::Equal => Ok(BinaryOp::Equal),
+                Token::NotEqual => Ok(BinaryOp::NotEqual),
+                Token::LogicalAnd => Ok(BinaryOp::LogicalAnd),
+                Token::LogicalOr => Ok(BinaryOp::LogicalOr),
+                _ => Err(()),
+            }
+        }
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +72,23 @@ pub mod expr {
         Deref,
         Addr,
         AddrMut,
+    }
+
+    impl TryFrom<Token<'_>> for UnaryOp {
+        type Error = ();
+
+        fn try_from(value: Token<'_>) -> Result<Self, Self::Error> {
+            match value {
+                Token::Plus => Ok(UnaryOp::Plus),
+                Token::Minus => Ok(UnaryOp::Neg),
+                Token::Asterisk => Ok(UnaryOp::Deref),
+                Token::Ampersand => Ok(UnaryOp::Addr),
+                Token::Increment => Ok(UnaryOp::PreIncrement),
+                Token::Decrement => Ok(UnaryOp::PreDecrement),
+                Token::Exclamation => Ok(UnaryOp::Not),
+                _ => Err(())
+            }
+        }
     }
 
     #[derive(Debug)]
@@ -56,10 +109,14 @@ pub mod expr {
         Array(Vec<super::Expr>),
         Tuple(Vec<super::Expr>),
         Map(Vec<(super::Expr, super::Expr)>),
-        Literal, /*(???)*/
+        Bool(bool),
+        Integer(u8, String),
+        Float(String),
+        String(String),
         Symbol(String),
+        None,
         Assign {
-            target: String,
+            target: Box<super::Expr>,
             binary: Option<BinaryOp>,
             value: Box<super::Expr>,
         },
@@ -67,35 +124,34 @@ pub mod expr {
         If {
             cond: Box<super::Expr>,
             if_branch: Box<super::Expr>,
-            else_branch: Box<super::Expr>,
+            else_branch: Option<Box<super::Expr>>,
         },
         Loop {
             cond: Box<super::Expr>,
+            body: Vec<super::Stmt>,
+            do_while: bool,
+        },
+        For {
+            var: String,
+            iter: Box<super::Expr>,
             body: Vec<super::Stmt>,
         },
         Member {
             source: Box<super::Expr>,
             member: String,
         },
-        MemberAssign {
-            source: Box<super::Expr>,
-            member: String,
-            value: Box<super::Expr>,
-            binary: Option<BinaryOp>,
-        },
         Subscript {
             callee: Box<super::Expr>,
             args: Vec<super::Expr>,
         },
-        SubscriptAssign {
-            callee: Box<super::Expr>,
-            args: Vec<super::Expr>,
-            value: Box<super::Expr>,
-            binary: Option<BinaryOp>,
-        },
         Return(Box<super::Expr>),
         Yield(Box<super::Expr>),
         Break(Box<super::Expr>),
+        Range {
+            start: Option<Box<super::Expr>>,
+            end: Option<Box<super::Expr>>,
+            inclusive: bool,
+        },
         Continue,
     }
 }

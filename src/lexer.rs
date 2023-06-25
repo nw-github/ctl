@@ -48,7 +48,11 @@ pub enum Token<'a> {
     NotEqual,
     ErrCoalesce,
     GtEqual,
+    Shr,
+    ShrAssign,
     LtEqual,
+    Shl,
+    ShlAssign,
     Assign,
     Equal,
 
@@ -65,8 +69,10 @@ pub enum Token<'a> {
     Type,
     This,
     If,
+    Else,
     Loop,
     For,
+    In,
     While,
     Match,
     Sizeof,
@@ -77,15 +83,38 @@ pub enum Token<'a> {
     Break,
     Continue,
     Yield,
+    Return,
     True,
     False,
     Static,
     Void,
+    None,
 
     Ident(&'a str),
     Int(u8, &'a str),
     Float(&'a str),
     String(Cow<'a, str>),
+}
+
+impl Token<'_> {
+    pub fn is_assignment(&self) -> bool {
+        use Token::*;
+        matches!(
+            self,
+            Assign
+                | AddAssign
+                | SubAssign
+                | MulAssign
+                | DivAssign
+                | RemAssign
+                | AndAssign
+                | OrAssign
+                | XorAssign
+                | ShlAssign
+                | ShrAssign
+                | NoneCoalesceAssign
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -187,6 +216,11 @@ impl<'a> Lexer<'a> {
     #[inline]
     fn peek(&self) -> Option<char> {
         self.src.chars().nth(self.loc.pos)
+    }
+
+    #[inline]
+    fn peek_next(&self) -> Option<char> {
+        self.src.chars().nth(self.loc.pos + 1)
     }
 
     fn advance(&mut self) -> Option<char> {
@@ -385,6 +419,12 @@ impl<'a> Iterator for Lexer<'a> {
             '>' => {
                 if self.advance_if('=') {
                     Token::GtEqual
+                } else if self.advance_if('>') {
+                    if self.advance_if('=') {
+                        Token::ShrAssign
+                    } else {
+                        Token::Shr
+                    }
                 } else {
                     Token::RAngle
                 }
@@ -392,6 +432,12 @@ impl<'a> Iterator for Lexer<'a> {
             '<' => {
                 if self.advance_if('=') {
                     Token::LtEqual
+                } else if self.advance_if('<') {
+                    if self.advance_if('=') {
+                        Token::ShlAssign
+                    } else {
+                        Token::Shl
+                    }
                 } else {
                     Token::LAngle
                 }
@@ -446,7 +492,10 @@ impl<'a> Iterator for Lexer<'a> {
             c @ '0'..='9' => 'exit: {
                 if c == '0' {
                     if self.advance_if('x') {
-                        break 'exit Token::Int(16, self.advance_while(|ch| ch.is_ascii_hexdigit()));
+                        break 'exit Token::Int(
+                            16,
+                            self.advance_while(|ch| ch.is_ascii_hexdigit()),
+                        );
                     } else if self.advance_if('o') {
                         break 'exit Token::Int(8, self.advance_while(|ch| ch.is_digit(8)));
                     } else if self.advance_if('b') {
@@ -455,7 +504,10 @@ impl<'a> Iterator for Lexer<'a> {
                 }
 
                 self.advance_while(|ch| ch.is_ascii_digit());
-                if self.advance_if('.') {
+                if self.peek() == Some('.')
+                    && self.peek_next().map_or(false, |f| f.is_ascii_digit())
+                {
+                    self.advance();
                     self.advance_while(|ch| ch.is_ascii_digit());
                     Token::Float(&self.src[start.pos..self.loc.pos])
                 } else {
@@ -483,8 +535,10 @@ impl<'a> Iterator for Lexer<'a> {
                     "type" => Token::Type,
                     "this" => Token::This,
                     "if" => Token::If,
+                    "else" => Token::Else,
                     "loop" => Token::Loop,
                     "for" => Token::For,
+                    "in" => Token::In,
                     "while" => Token::While,
                     "match" => Token::Match,
                     "sizeof" => Token::Sizeof,
@@ -495,10 +549,12 @@ impl<'a> Iterator for Lexer<'a> {
                     "break" => Token::Break,
                     "continue" => Token::Continue,
                     "yield" => Token::Yield,
+                    "return" => Token::Return,
                     "true" => Token::True,
                     "false" => Token::False,
                     "static" => Token::Static,
                     "void" => Token::Void,
+                    "none" => Token::None,
                     id => Token::Ident(id),
                 }
             }

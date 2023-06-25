@@ -7,10 +7,11 @@ use ctl::{lexer::Lexer, parser::Parser, pretty};
 
 fn main() -> anyhow::Result<()> {
     if let Some(file) = env::args_os().nth(1) {
-        let file = std::fs::read_to_string(file)?;
-        let stmts = Parser::new(&file).parse().unwrap();
-
-        pretty::dump_ast(&stmts, 0);
+        let buffer = std::fs::read_to_string(file)?;
+        match Parser::new(&buffer).parse() {
+            Ok(stmts) => pretty::dump_ast(&stmts, 0),
+            Err(errors) => eprintln!("{errors:?}"),
+        }
 
         return Ok(());
     }
