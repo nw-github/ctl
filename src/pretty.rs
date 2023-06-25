@@ -48,12 +48,15 @@ pub fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
             }
         }
         Stmt::Interface {
+            public,
             name,
             type_params,
             impls,
             functions,
         } => {
-            println!("{tabs}Interface[{name}]");
+            print!("{tabs}Interface[{name}]");
+            print_bool!(public);
+            println!();
 
             let plus_1 = INDENT.repeat(indent + 1);
             if !type_params.is_empty() {
@@ -80,8 +83,11 @@ pub fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
             impls,
             variants,
             functions,
+            public,
         } => {
-            println!("{tabs}Enum[{name}]");
+            print!("{tabs}Enum[{name}]");
+            print_bool!(public);
+            println!();
 
             let plus_1 = INDENT.repeat(indent + 1);
             if !impls.is_empty() {
@@ -103,8 +109,11 @@ pub fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
                 print_fn(f, indent + 1);
             }
         }
-        Stmt::Static { name, ty, value } => {
-            println!("{tabs}Static[{name}]");
+        Stmt::Static { name, ty, value, public } => {
+            print!("{tabs}Static[{name}]");
+            print_bool!(public);
+            println!();
+
             let tabs = INDENT.repeat(indent + 1);
             if let Some(ty) = ty {
                 println!("{tabs}Type: {ty:?}");
@@ -112,8 +121,11 @@ pub fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
 
             print_expr(value, indent + 1);
         }
-        Stmt::Module { name, body } => {
-            println!("{tabs}Module[{name}]");
+        Stmt::Module { name, body, public } => {
+            print!("{tabs}Module[{name}]");
+            print_bool!(public);
+            println!();
+
             print_stmts(body, indent + 1);
         }
     }
@@ -295,6 +307,7 @@ fn print_fn_decl(
         type_params,
         params,
         ret,
+        public,
     }: &FnDecl,
     indent: usize,
 ) {
@@ -302,6 +315,7 @@ fn print_fn_decl(
     print!("{tabs}Fn[{name}]");
     print_bool!(is_async);
     print_bool!(is_extern);
+    print_bool!(public);
     println!();
 
     let plus_1 = INDENT.repeat(indent + 1);
@@ -336,12 +350,15 @@ fn print_struct(
         members,
         impls,
         functions,
+        public,
     }: &Struct,
     indent: usize,
 ) {
     let tabs = INDENT.repeat(indent);
     println!("{tabs}{type_name}[{name}]");
-
+    print_bool!(public);
+    println!();
+    
     let plus_1 = INDENT.repeat(indent + 1);
     if !type_params.is_empty() {
         println!("{tabs}Type Params:");

@@ -191,6 +191,7 @@ pub mod stmt {
 
     #[derive(Debug)]
     pub struct FnDecl {
+        pub public: bool,
         pub name: String,
         pub is_async: bool,
         pub is_extern: bool,
@@ -207,6 +208,7 @@ pub mod stmt {
 
     #[derive(Debug)]
     pub struct MemVar {
+        pub public: bool,
         pub name: String,
         pub ty: Option<Type>,
         pub value: Option<super::Expr>,
@@ -214,6 +216,7 @@ pub mod stmt {
 
     #[derive(Debug)]
     pub struct Struct {
+        pub public: bool,
         pub name: String,
         pub type_params: Vec<String>,
         pub members: Vec<MemVar>,
@@ -237,23 +240,27 @@ pub mod stmt {
             base: Struct,
         },
         Interface {
+            public: bool,
             name: String,
             type_params: Vec<String>,
             impls: Vec<String>,
             functions: Vec<FnDecl>,
         },
         Enum {
+            public: bool,
             name: String,
             impls: Vec<String>,
             variants: Vec<(String, Option<super::Expr>)>,
             functions: Vec<Fn>,
         },
         Static {
+            public: bool,
             name: String,
             ty: Option<Type>,
             value: super::Expr,
         },
         Module {
+            public: bool,
             name: String,
             body: Vec<super::Stmt>,
         }

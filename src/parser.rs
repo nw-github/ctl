@@ -67,6 +67,7 @@ impl<'a> Parser<'a> {
             .is_empty()
             .then_some(L::new(
                 Stmt::Module {
+                    public: true,
                     name: "tmpname".into(),
                     body: stmts,
                 },
@@ -130,23 +131,27 @@ impl<'a> Parser<'a> {
         Ok((v, tok.span))
     }
 
-    fn try_function_decl(&mut self, allow_method: bool) -> Option<Result<(FnDecl, Span)>> {
+    fn try_function_decl(
+        &mut self,
+        is_public: bool,
+        allow_method: bool,
+    ) -> Option<Result<(FnDecl, Span)>> {
         if let Some(token) = self.advance_if_kind(Token::Extern) {
             Some((|| {
                 self.expect_kind(Token::Fn, "expected 'fn'")?;
-                self.function_decl(allow_method, false, true)
+                self.function_decl(allow_method, is_public, false, true)
                     .map(|r| (r, token.span))
             })())
         } else if let Some(token) = self.advance_if_kind(Token::Fn) {
             Some(
-                self.function_decl(allow_method, false, false)
+                self.function_decl(allow_method, is_public, false, false)
                     .map(|r| (r, token.span)),
             )
         } else {
             self.advance_if_kind(Token::Async).map(|token| {
                 (|| {
                     self.expect_kind(Token::Fn, "expected 'fn'")?;
-                    self.function_decl(allow_method, true, false)
+                    self.function_decl(allow_method, is_public, true, false)
                         .map(|r| (r, token.span))
                 })()
             })
@@ -274,7 +279,7 @@ impl<'a> Parser<'a> {
         Ok((stmts, span))
     }
 
-    fn parse_struct_body(&mut self, span: &mut Span) -> Result<stmt::Struct> {
+    fn parse_struct_body(&mut self, public: bool, span: &mut Span) -> Result<stmt::Struct> {
         let type_params = self.parse_generic_params()?;
         let impls = self.parse_interface_impl()?;
 
@@ -289,8 +294,8 @@ impl<'a> Parser<'a> {
             }
             None => true,
         } {
-            let public = self.advance_if_kind(Token::Pub);
-            if let Some(header) = self.try_function_decl(true) {
+            let public = self.advance_if_kind(Token::Pub).is_some();
+            if let Some(header) = self.try_function_decl(public, true) {
                 let (header, _) = header?;
                 let lcurly = self.expect_kind(Token::LCurly, "expected '{'")?;
                 let (body, _) = self.parse_block(lcurly.span)?;
@@ -305,11 +310,17 @@ impl<'a> Parser<'a> {
                 };
                 self.expect_kind(Token::Comma, "expected ','")?;
 
-                members.push(stmt::MemVar { name, ty, value });
+                members.push(stmt::MemVar {
+                    public,
+                    name,
+                    ty,
+                    value,
+                });
             }
         }
 
         Ok(stmt::Struct {
+            public,
             name: String::new(),
             type_params,
             members,
@@ -321,6 +332,7 @@ impl<'a> Parser<'a> {
     fn function_decl(
         &mut self,
         allow_method: bool,
+        is_public: bool,
         is_async: bool,
         is_extern: bool,
     ) -> Result<FnDecl> {
@@ -367,6 +379,7 @@ impl<'a> Parser<'a> {
 
         Ok(FnDecl {
             name: name.into(),
+            public: is_public,
             is_async,
             is_extern,
             type_params,
@@ -379,8 +392,12 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn expect_function_decl(&mut self, allow_method: bool) -> Result<(FnDecl, Span)> {
-        match self.try_function_decl(allow_method) {
+    fn expect_function_decl(
+        &mut self,
+        is_public: bool,
+        allow_method: bool,
+    ) -> Result<(FnDecl, Span)> {
+        match self.try_function_decl(is_public, allow_method) {
             Some(f) => Ok(f?),
             None => Err(self.advance()?.map(|_| Error {
                 diagnostic: "expected function",
@@ -392,7 +409,7 @@ impl<'a> Parser<'a> {
 
     fn try_item(&mut self) -> Option<Result<L<Stmt>>> {
         let public = self.advance_if_kind(Token::Pub);
-        if let Some(header) = self.try_function_decl(false) {
+        if let Some(header) = self.try_function_decl(public.is_some(), false) {
             Some((|| {
                 let (header, span) = header?;
                 if header.is_extern {
@@ -419,7 +436,7 @@ impl<'a> Parser<'a> {
                 Ok(L::new(
                     Stmt::Struct(stmt::Struct {
                         name: self.expect_id("expected name")?.into(),
-                        ..self.parse_struct_body(&mut token.span)?
+                        ..self.parse_struct_body(public.is_some(), &mut token.span)?
                     }),
                     token.span,
                 ))
@@ -439,7 +456,7 @@ impl<'a> Parser<'a> {
                         tag,
                         base: stmt::Struct {
                             name: self.expect_id("expected name")?.into(),
-                            ..self.parse_struct_body(&mut token.span)?
+                            ..self.parse_struct_body(public.is_some(), &mut token.span)?
                         },
                     },
                     token.span,
@@ -454,7 +471,7 @@ impl<'a> Parser<'a> {
 
                 let mut functions = Vec::new();
                 while self.advance_if_kind(Token::RCurly).is_none() {
-                    let header = self.expect_function_decl(true)?;
+                    let header = self.expect_function_decl(true, true)?;
                     self.expect_kind(Token::Semicolon, "expected ';'")?;
 
                     functions.push(header.0);
@@ -462,6 +479,7 @@ impl<'a> Parser<'a> {
 
                 Ok(L::new(
                     Stmt::Interface {
+                        public: public.is_some(),
                         name,
                         type_params,
                         impls,
@@ -485,7 +503,20 @@ impl<'a> Parser<'a> {
                     }
                     None => true,
                 } {
-                    if let Some(header) = self.try_function_decl(true) {
+                    if self.advance_if_kind(Token::Pub).is_some() {
+                        let header = match self.try_function_decl(true, true) {
+                            Some(header) => header,
+                            None => {
+                                return Err(self.advance()?.map(|_| Error {
+                                    diagnostic: "expected function",
+                                }));
+                            }
+                        };
+                        let (header, _) = header?;
+                        let lcurly = self.expect_kind(Token::LCurly, "expected '{'")?;
+                        let (body, _) = self.parse_block(lcurly.span)?;
+                        functions.push(Fn { header, body });
+                    } else if let Some(header) = self.try_function_decl(false, true) {
                         let (header, _) = header?;
                         let lcurly = self.expect_kind(Token::LCurly, "expected '{'")?;
                         let (body, _) = self.parse_block(lcurly.span)?;
@@ -506,6 +537,7 @@ impl<'a> Parser<'a> {
 
                 Ok(L::new(
                     Stmt::Enum {
+                        public: public.is_some(),
                         name,
                         impls,
                         variants,
@@ -529,7 +561,14 @@ impl<'a> Parser<'a> {
                     body.push(self.item()?);
                 }
 
-                Ok(L::new(Stmt::Module { name, body }, token.span))
+                Ok(L::new(
+                    Stmt::Module {
+                        public: public.is_some(),
+                        name,
+                        body,
+                    },
+                    token.span,
+                ))
             })())
         } else {
             self.advance_if_kind(Token::Static).map(|token| {
@@ -543,7 +582,12 @@ impl<'a> Parser<'a> {
                     let semi = self.expect_kind(Token::Semicolon, "expected ';'")?;
 
                     Ok(L::new(
-                        Stmt::Static { name, ty, value },
+                        Stmt::Static {
+                            public: public.is_some(),
+                            name,
+                            ty,
+                            value,
+                        },
                         Span::combine(token.span, semi.span),
                     ))
                 })()
