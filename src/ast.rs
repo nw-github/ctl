@@ -72,6 +72,9 @@ pub mod expr {
         Deref,
         Addr,
         AddrMut,
+        IntoError,
+        Try,
+        Sizeof,
     }
 
     impl TryFrom<Token<'_>> for UnaryOp {
@@ -86,6 +89,7 @@ pub mod expr {
                 Token::Increment => Ok(UnaryOp::PreIncrement),
                 Token::Decrement => Ok(UnaryOp::PreDecrement),
                 Token::Exclamation => Ok(UnaryOp::Not),
+                Token::Sizeof => Ok(UnaryOp::Sizeof),
                 _ => Err(())
             }
         }

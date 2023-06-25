@@ -557,8 +557,10 @@ impl<'a> Parser<'a> {
     fn statement(&mut self) -> Result<L<Stmt>> {
         let expr = self.expression()?;
         let mut span = expr.span;
-        if !(matches!(expr.data, Expr::If { .. } | Expr::For { .. } | Expr::Block(_))
-            || matches!(expr.data, Expr::Loop { do_while, .. } if !do_while ))
+        if !(matches!(
+            expr.data,
+            Expr::If { .. } | Expr::For { .. } | Expr::Block(_)
+        ) || matches!(expr.data, Expr::Loop { do_while, .. } if !do_while ))
         {
             span.extend_to(self.expect_kind(Token::Semicolon, "expected ';'")?.span);
         }
@@ -664,13 +666,9 @@ impl<'a> Parser<'a> {
             | Token::LtEqual
             | Token::Equal
             | Token::NotEqual,
-            coalesce
+        coalesce
     );
-    binary!(
-        coalesce,
-        Token::NoneCoalesce | Token::ErrCoalesce,
-        or
-    );
+    binary!(coalesce, Token::NoneCoalesce | Token::ErrCoalesce, or);
     binary!(or, Token::Or, xor);
     binary!(xor, Token::Caret, and);
     binary!(and, Token::Ampersand, shift);
@@ -689,6 +687,7 @@ impl<'a> Parser<'a> {
                     | Token::Increment
                     | Token::Decrement
                     | Token::Exclamation
+                    | Token::Sizeof
             )
         }) {
             let op = if t.data == Token::Ampersand && self.advance_if_kind(Token::Mut).is_some() {
@@ -747,6 +746,42 @@ impl<'a> Parser<'a> {
                     Expr::Subscript {
                         callee: expr.into(),
                         args,
+                    },
+                    span,
+                );
+            } else if let Some(inc) = self.advance_if_kind(Token::Increment) {
+                let span = Span::combine(expr.span, inc.span);
+                expr = L::new(
+                    Expr::Unary {
+                        op: UnaryOp::PostIncrement,
+                        expr: expr.into(),
+                    },
+                    span,
+                );
+            } else if let Some(dec) = self.advance_if_kind(Token::Decrement) {
+                let span = Span::combine(expr.span, dec.span);
+                expr = L::new(
+                    Expr::Unary {
+                        op: UnaryOp::PostDecrement,
+                        expr: expr.into(),
+                    },
+                    span,
+                );
+            } else if let Some(dec) = self.advance_if_kind(Token::Exclamation) {
+                let span = Span::combine(expr.span, dec.span);
+                expr = L::new(
+                    Expr::Unary {
+                        op: UnaryOp::IntoError,
+                        expr: expr.into(),
+                    },
+                    span,
+                );
+            } else if let Some(dec) = self.advance_if_kind(Token::Question) {
+                let span = Span::combine(expr.span, dec.span);
+                expr = L::new(
+                    Expr::Unary {
+                        op: UnaryOp::Try,
+                        expr: expr.into(),
                     },
                     span,
                 );
