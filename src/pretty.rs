@@ -166,8 +166,13 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
 
             if !args.is_empty() {
                 println!("{tabs}Args: ");
-                for expr in args {
-                    print_expr(expr, indent + 2);
+                for (name, expr) in args {
+                    if let Some(name) = name {
+                        println!("{tabs}{INDENT}{name}:");
+                        print_expr(expr, indent + 3);
+                    } else  {
+                        print_expr(expr, indent + 2);
+                    }
                 }
             }
         }

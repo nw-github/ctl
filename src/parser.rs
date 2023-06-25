@@ -771,7 +771,18 @@ impl<'a> Parser<'a> {
                 let (args, span) = if let Some(rparen) = self.advance_if_kind(Token::RParen) {
                     (Vec::new(), rparen.span)
                 } else {
-                    self.comma_separated(Token::RParen, "expected ')'", Self::expression)?
+                    self.comma_separated(Token::RParen, "expected ')'", |this| {
+                        let mut expr = this.expression()?;
+                        if let Expr::Symbol(name) = expr.data {
+                            if this.advance_if_kind(Token::Colon).is_some() {
+                                return Ok((Some(name), this.expression()?));
+                            }
+
+                            expr.data = Expr::Symbol(name);
+                        }
+
+                        Ok((None, expr))
+                    })?
                 };
 
                 let span = Span::combine(expr.span, span);
@@ -1203,6 +1214,18 @@ struct Hello<T, E> : Add + Sub {
         crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
 
         parser = Parser::new("let x = [:];");
+        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
+    }
+
+    #[test]
+    fn function_calls() {
+        let mut parser = Parser::new("let x = foo(a, b);");
+        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
+
+        parser = Parser::new("let x = foo(a: bar, b: quux);");
+        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
+ 
+        parser = Parser::new("let x = foo(a: bar, b, c: quux);");
         crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
     }
 }
