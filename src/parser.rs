@@ -107,6 +107,10 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn error<T>(&mut self, diagnostic: &'static str) -> Result<T> {
+        Err(self.advance()?.map(|_| Error { diagnostic }))
+    }
+
     // helpers
 
     fn path(&mut self) -> Result<String> {
@@ -217,9 +221,7 @@ impl<'a> Parser<'a> {
                 self.expect_kind(Token::RBrace, "expected ']'")?;
                 Type::Map(inner.into(), value.into())
             } else {
-                return Err(self.advance()?.map(|_| Error {
-                    diagnostic: "expected ']', ';', or ':'",
-                }));
+                return self.error("expected ']', ';', or ':'");
             }
         } else if self.advance_if_kind(Token::LParen).is_some() {
             Type::Tuple(
@@ -263,18 +265,12 @@ impl<'a> Parser<'a> {
         Ok((name.into(), ty))
     }
 
-    fn parse_block(&mut self, mut span: Span) -> Result<(Vec<L<Stmt>>, Span)> {
+    fn parse_block(&mut self, span: Span) -> Result<(Vec<L<Stmt>>, Span)> {
         let mut stmts = Vec::new();
-        if self.advance_if_kind(Token::RCurly).is_none() {
-            loop {
-                stmts.push(self.declaration()?);
-                if self.matches_kind(Token::RCurly) {
-                    break;
-                }
-            }
-
-            span.extend_to(self.expect_kind(Token::RCurly, "expected '}'")?.span);
-        }
+        let span = self.advance_until(Token::RCurly, span, |this| {
+            stmts.push(this.declaration()?);
+            Ok(())
+        })?;
 
         Ok((stmts, span))
     }
@@ -287,28 +283,22 @@ impl<'a> Parser<'a> {
 
         let mut functions = Vec::new();
         let mut members = Vec::new();
-        while match self.advance_if_kind(Token::RCurly) {
-            Some(c) => {
-                span.extend_to(c.span);
-                false
-            }
-            None => true,
-        } {
-            let public = self.advance_if_kind(Token::Pub).is_some();
-            if let Some(header) = self.try_function_decl(public, true) {
+        *span = self.advance_until(Token::RCurly, *span, |this| {
+            let public = this.advance_if_kind(Token::Pub).is_some();
+            if let Some(header) = this.try_function_decl(public, true) {
                 let (header, _) = header?;
-                let lcurly = self.expect_kind(Token::LCurly, "expected '{'")?;
-                let (body, _) = self.parse_block(lcurly.span)?;
+                let lcurly = this.expect_kind(Token::LCurly, "expected '{'")?;
+                let (body, _) = this.parse_block(lcurly.span)?;
 
                 functions.push(Fn { header, body });
             } else {
-                let (name, ty) = self.parse_var_name()?;
-                let value = if self.advance_if_kind(Token::Assign).is_some() {
-                    Some(self.expression()?)
+                let (name, ty) = this.parse_var_name()?;
+                let value = if this.advance_if_kind(Token::Assign).is_some() {
+                    Some(this.expression()?)
                 } else {
                     None
                 };
-                self.expect_kind(Token::Comma, "expected ','")?;
+                this.expect_kind(Token::Comma, "expected ','")?;
 
                 members.push(stmt::MemVar {
                     public,
@@ -317,7 +307,9 @@ impl<'a> Parser<'a> {
                     value,
                 });
             }
-        }
+
+            Ok(())
+        })?;
 
         Ok(stmt::Struct {
             public,
@@ -399,9 +391,7 @@ impl<'a> Parser<'a> {
     ) -> Result<(FnDecl, Span)> {
         match self.try_function_decl(is_public, allow_method) {
             Some(f) => Ok(f?),
-            None => Err(self.advance()?.map(|_| Error {
-                diagnostic: "expected function",
-            })),
+            None => self.error("expected function"),
         }
     }
 
@@ -470,12 +460,13 @@ impl<'a> Parser<'a> {
                 self.expect_kind(Token::LCurly, "expected '{'")?;
 
                 let mut functions = Vec::new();
-                while self.advance_if_kind(Token::RCurly).is_none() {
-                    let header = self.expect_function_decl(true, true)?;
-                    self.expect_kind(Token::Semicolon, "expected ';'")?;
+                let span = self.advance_until(Token::RCurly, token.span, |this| {
+                    let header = this.expect_function_decl(true, true)?;
+                    this.expect_kind(Token::Semicolon, "expected ';'")?;
 
                     functions.push(header.0);
-                }
+                    Ok(())
+                })?;
 
                 Ok(L::new(
                     Stmt::Interface {
@@ -485,10 +476,10 @@ impl<'a> Parser<'a> {
                         impls,
                         functions,
                     },
-                    token.span,
+                    span,
                 ))
             })())
-        } else if let Some(mut token) = self.advance_if_kind(Token::Enum) {
+        } else if let Some(token) = self.advance_if_kind(Token::Enum) {
             Some((|| {
                 let name = self.expect_id("expected name")?.into();
                 let impls = self.parse_interface_impl()?;
@@ -496,44 +487,38 @@ impl<'a> Parser<'a> {
 
                 let mut functions = Vec::new();
                 let mut variants = Vec::new();
-                while match self.advance_if_kind(Token::RCurly) {
-                    Some(c) => {
-                        token.span.extend_to(c.span);
-                        false
-                    }
-                    None => true,
-                } {
-                    if self.advance_if_kind(Token::Pub).is_some() {
-                        let header = match self.try_function_decl(true, true) {
+                let span = self.advance_until(Token::RCurly, token.span, |this| {
+                    if this.advance_if_kind(Token::Pub).is_some() {
+                        let header = match this.try_function_decl(true, true) {
                             Some(header) => header,
                             None => {
-                                return Err(self.advance()?.map(|_| Error {
-                                    diagnostic: "expected function",
-                                }));
+                                return this.error("expected function");
                             }
                         };
                         let (header, _) = header?;
-                        let lcurly = self.expect_kind(Token::LCurly, "expected '{'")?;
-                        let (body, _) = self.parse_block(lcurly.span)?;
+                        let lcurly = this.expect_kind(Token::LCurly, "expected '{'")?;
+                        let (body, _) = this.parse_block(lcurly.span)?;
                         functions.push(Fn { header, body });
-                    } else if let Some(header) = self.try_function_decl(false, true) {
+                    } else if let Some(header) = this.try_function_decl(false, true) {
                         let (header, _) = header?;
-                        let lcurly = self.expect_kind(Token::LCurly, "expected '{'")?;
-                        let (body, _) = self.parse_block(lcurly.span)?;
+                        let lcurly = this.expect_kind(Token::LCurly, "expected '{'")?;
+                        let (body, _) = this.parse_block(lcurly.span)?;
                         functions.push(Fn { header, body });
                     } else {
                         variants.push((
-                            self.expect_id("expected variant name")?.into(),
-                            if self.advance_if_kind(Token::Assign).is_some() {
-                                Some(self.expression()?)
+                            this.expect_id("expected variant name")?.into(),
+                            if this.advance_if_kind(Token::Assign).is_some() {
+                                Some(this.expression()?)
                             } else {
                                 None
                             },
                         ));
 
-                        self.expect_kind(Token::Comma, "expected ','")?;
+                        this.expect_kind(Token::Comma, "expected ','")?;
                     }
-                }
+
+                    Ok(())
+                })?;
 
                 Ok(L::new(
                     Stmt::Enum {
@@ -543,23 +528,18 @@ impl<'a> Parser<'a> {
                         variants,
                         functions,
                     },
-                    token.span,
+                    span,
                 ))
             })())
-        } else if let Some(mut token) = self.advance_if_kind(Token::Mod) {
+        } else if let Some(token) = self.advance_if_kind(Token::Mod) {
             Some((|| {
                 let name = self.expect_id("expected name")?.into();
                 let mut body = Vec::new();
                 self.expect_kind(Token::LCurly, "expected '{'")?;
-                while match self.advance_if_kind(Token::RCurly) {
-                    Some(c) => {
-                        token.span.extend_to(c.span);
-                        false
-                    }
-                    None => true,
-                } {
-                    body.push(self.item()?);
-                }
+                let span = self.advance_until(Token::RCurly, token.span, |this| {
+                    body.push(this.item()?);
+                    Ok(())
+                })?;
 
                 Ok(L::new(
                     Stmt::Module {
@@ -567,7 +547,7 @@ impl<'a> Parser<'a> {
                         name,
                         body,
                     },
-                    token.span,
+                    span,
                 ))
             })())
         } else {
@@ -596,11 +576,8 @@ impl<'a> Parser<'a> {
     }
 
     fn item(&mut self) -> Result<L<Stmt>> {
-        self.try_item().unwrap_or_else(|| {
-            Err(self.advance()?.map(|_| Error {
-                diagnostic: "expected item",
-            }))
-        })
+        self.try_item()
+            .unwrap_or_else(|| self.error("expected item"))
     }
 
     fn declaration(&mut self) -> Result<L<Stmt>> {
@@ -881,16 +858,10 @@ impl<'a> Parser<'a> {
                 let expr = self.expression()?;
                 if self.advance_if_kind(Token::Comma).is_some() {
                     let mut exprs = vec![expr];
-                    let mut span = token.span;
-                    while match self.advance_if_kind(Token::RParen) {
-                        Some(lparen) => {
-                            span.extend_to(lparen.span);
-                            false
-                        }
-                        None => true,
-                    } {
-                        exprs.push(self.expression()?);
-                    }
+                    let span = self.advance_until(Token::RParen, token.span, |this| {
+                        exprs.push(this.expression()?);
+                        Ok(())
+                    })?;
 
                     L::new(Expr::Tuple(exprs), span)
                 } else {
@@ -1001,34 +972,30 @@ impl<'a> Parser<'a> {
                 let expr = self.expression()?;
                 if self.advance_if_kind(Token::Comma).is_some() {
                     let mut exprs = vec![expr];
-                    let mut span = token.span;
-                    while match self.advance_if_kind(Token::RBrace) {
-                        Some(lparen) => {
-                            span.extend_to(lparen.span);
-                            false
+                    let span = self.advance_until(Token::RBrace, token.span, |this| {
+                        exprs.push(this.expression()?);
+                        if !this.matches_kind(Token::RBrace) {
+                            this.expect_kind(Token::Comma, "expected ','")?;
                         }
-                        None => true,
-                    } {
-                        exprs.push(self.expression()?);
-                    }
+
+                        Ok(())
+                    })?;
 
                     L::new(Expr::Array(exprs), span)
                 } else {
                     self.expect_kind(Token::Colon, "expected ':' or ','")?;
                     let mut exprs = vec![(expr, self.expression()?)];
-                    let mut span = token.span;
-                    while match self.advance_if_kind(Token::RBrace) {
-                        Some(lparen) => {
-                            span.extend_to(lparen.span);
-                            false
-                        }
-                        None => true,
-                    } {
-                        let key = self.expression()?;
-                        self.expect_kind(Token::Colon, "expected ':'")?;
-                        let value = self.expression()?;
+                    let span = self.advance_until(Token::RBrace, token.span, |this| {
+                        let key = this.expression()?;
+                        this.expect_kind(Token::Colon, "expected ':'")?;
+                        let value = this.expression()?;
                         exprs.push((key, value));
-                    }
+
+                        if !this.matches_kind(Token::RBrace) {
+                            this.expect_kind(Token::Comma, "expected ','")?;
+                        }
+                        Ok(())
+                    })?;
 
                     L::new(Expr::Map(exprs), span)
                 }
@@ -1087,6 +1054,25 @@ impl<'a> Parser<'a> {
 
     fn advance_if_kind(&mut self, kind: Token) -> Option<L<Token<'a>>> {
         self.advance_if(|t| t == &kind)
+    }
+
+    fn advance_until(
+        &mut self,
+        token: Token,
+        mut span: Span,
+        mut f: impl FnMut(&mut Self) -> Result<()>,
+    ) -> Result<Span> {
+        while match self.advance_if_kind(token.clone()) {
+            Some(c) => {
+                span.extend_to(c.span);
+                false
+            }
+            None => true,
+        } {
+            f(self)?;
+        }
+
+        Ok(span)
     }
 
     fn expect<T>(
