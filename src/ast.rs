@@ -253,5 +253,9 @@ pub mod stmt {
             ty: Option<Type>,
             value: super::Expr,
         },
+        Module {
+            name: String,
+            body: Vec<super::Stmt>,
+        }
     }
 }

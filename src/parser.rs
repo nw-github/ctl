@@ -50,7 +50,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(mut self) -> std::result::Result<Vec<L<Stmt>>, Vec<L<Error>>> {
+    pub fn parse(mut self) -> std::result::Result<L<Stmt>, Vec<L<Error>>> {
         let mut stmts = Vec::new();
         let mut errors = Vec::new();
         while self.lexer.peek().is_some() {
@@ -63,7 +63,23 @@ impl<'a> Parser<'a> {
             }
         }
 
-        errors.is_empty().then_some(stmts).ok_or(errors)
+        errors
+            .is_empty()
+            .then_some(L::new(
+                Stmt::Module {
+                    name: "tmpname".into(),
+                    body: stmts,
+                },
+                Span {
+                    loc: Location {
+                        row: 1,
+                        col: 1,
+                        pos: 0,
+                    },
+                    len: self.src.len(),
+                },
+            ))
+            .ok_or(errors)
     }
 
     fn synchronize(&mut self) {
@@ -497,6 +513,23 @@ impl<'a> Parser<'a> {
                     },
                     token.span,
                 ))
+            })())
+        } else if let Some(mut token) = self.advance_if_kind(Token::Mod) {
+            Some((|| {
+                let name = self.expect_id("expected name")?.into();
+                let mut body = Vec::new();
+                self.expect_kind(Token::LCurly, "expected '{'")?;
+                while match self.advance_if_kind(Token::RCurly) {
+                    Some(c) => {
+                        token.span.extend_to(c.span);
+                        false
+                    }
+                    None => true,
+                } {
+                    body.push(self.item()?);
+                }
+
+                Ok(L::new(Stmt::Module { name, body }, token.span))
             })())
         } else {
             self.advance_if_kind(Token::Static).map(|token| {

@@ -9,7 +9,7 @@ fn main() -> anyhow::Result<()> {
     if let Some(file) = env::args_os().nth(1) {
         let buffer = std::fs::read_to_string(file)?;
         match Parser::new(&buffer).parse() {
-            Ok(stmts) => pretty::dump_ast(&stmts, 0),
+            Ok(module) => pretty::print_stmt(&module, 0),
             Err(errors) => eprintln!("{errors:?}"),
         }
 

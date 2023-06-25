@@ -16,13 +16,7 @@ macro_rules! print_bool {
     };
 }
 
-pub fn dump_ast(stmts: &[Located<Stmt>], indent: usize) {
-    for stmt in stmts {
-        print_stmt(stmt, indent);
-    }
-}
-
-fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
+pub fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
     let tabs = INDENT.repeat(indent);
     match &stmt.data {
         Stmt::Expr(expr) => {
@@ -111,16 +105,21 @@ fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
         }
         Stmt::Static { name, ty, value } => {
             println!("{tabs}Static[{name}]");
+            let tabs = INDENT.repeat(indent + 1);
             if let Some(ty) = ty {
-                println!("Type: {ty:?}");
+                println!("{tabs}Type: {ty:?}");
             }
 
             print_expr(value, indent + 1);
         }
+        Stmt::Module { name, body } => {
+            println!("{tabs}Module[{name}]");
+            print_stmts(body, indent + 1);
+        }
     }
 }
 
-fn print_expr(expr: &Located<Expr>, indent: usize) {
+pub fn print_expr(expr: &Located<Expr>, indent: usize) {
     let tabs = INDENT.repeat(indent);
     match &expr.data {
         Expr::Binary { op, left, right } => {
@@ -204,7 +203,7 @@ fn print_expr(expr: &Located<Expr>, indent: usize) {
         }
         Expr::Block(expr) => {
             println!("{tabs}Block");
-            dump_ast(expr, indent + 1);
+            print_stmts(expr, indent + 1);
         }
         Expr::If { cond, if_branch, else_branch } => {
             println!("{tabs}If");
@@ -231,7 +230,7 @@ fn print_expr(expr: &Located<Expr>, indent: usize) {
             print_expr(cond, indent + 2);
 
             println!("{tabs}Body: ");
-            dump_ast(body, indent + 2);
+            print_stmts(body, indent + 2);
         }
         Expr::Member { source, member } => {
             println!("{tabs}Member[{member}]");
@@ -277,8 +276,14 @@ fn print_expr(expr: &Located<Expr>, indent: usize) {
             println!("{tabs}In: ");
             print_expr(iter, indent + 2);
             println!("{tabs}Body: ");
-            dump_ast(body, indent + 2);
+            print_stmts(body, indent + 2);
         }
+    }
+}
+
+fn print_stmts(stmts: &[Located<Stmt>], indent: usize) {
+    for stmt in stmts {
+        print_stmt(stmt, indent);
     }
 }
 
@@ -320,7 +325,7 @@ fn print_fn_decl(
 fn print_fn(Fn { header, body }: &Fn, indent: usize) {
     print_fn_decl(header, indent);
     println!("{}Body: ", INDENT.repeat(indent));
-    dump_ast(body, indent + 1);
+    print_stmts(body, indent + 1);
 }
 
 fn print_struct(
