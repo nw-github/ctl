@@ -180,6 +180,7 @@ pub mod stmt {
     #[derive(Debug)]
     pub struct Param {
         pub mutable: bool,
+        pub keyword: bool,
         pub name: String,
         pub ty: Type,
     }

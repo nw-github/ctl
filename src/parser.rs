@@ -324,10 +324,12 @@ impl<'a> Parser<'a> {
             self.comma_separated(Token::RParen, "expected ')'", |this| {
                 count += 1;
 
+                let keyword = this.advance_if_kind(Token::Keyword).is_some();
                 let mutable = this.advance_if_kind(Token::Mut).is_some();
                 if allow_method && count == 1 && this.advance_if_kind(Token::This).is_some() {
                     Ok(Param {
                         mutable,
+                        keyword,
                         name: "this".into(),
                         ty: Type::This,
                     })
@@ -336,6 +338,7 @@ impl<'a> Parser<'a> {
                     this.expect_kind(Token::Colon, "expected type")?;
                     Ok(Param {
                         mutable,
+                        keyword,
                         name,
                         ty: this.parse_type()?,
                     })
