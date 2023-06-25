@@ -176,7 +176,7 @@ pub mod stmt {
             name: String,
             type_params: Vec<String>,
         },
-        Array(Box<Type>, usize),
+        Array(Box<Type>, super::Expr),
         Slice(Box<Type>),
         Tuple(Vec<Type>),
         Map(Box<Type>, Box<Type>),
