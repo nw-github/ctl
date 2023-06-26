@@ -6,14 +6,8 @@ use crate::{
         stmt::{self, Fn, FnDecl, Param, Stmt, Type, UserType},
     },
     lexer::{Lexer, Located as L, Location, Span, Token},
+    Error, Result,
 };
-
-#[derive(Debug)]
-pub struct Error {
-    pub diagnostic: &'static str,
-}
-
-type Result<T> = std::result::Result<T, L<Error>>;
 
 macro_rules! binary {
     ($name: ident, $patt: pat, $next: ident) => {
@@ -50,7 +44,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(src: &'a str) -> (L<Stmt>, Vec<L<Error>>) {
+    pub fn parse(src: &'a str) -> (L<Stmt>, Vec<Error>) {
         let mut this = Self::new(src);
         let mut stmts = Vec::new();
         let mut errors = Vec::new();
@@ -64,21 +58,24 @@ impl<'a> Parser<'a> {
             }
         }
 
-        (L::new(
-            Stmt::Module {
-                public: true,
-                name: "tmpname".into(),
-                body: stmts,
-            },
-            Span {
-                loc: Location {
-                    row: 1,
-                    col: 1,
-                    pos: 0,
+        (
+            L::new(
+                Stmt::Module {
+                    public: true,
+                    name: "tmpname".into(),
+                    body: stmts,
                 },
-                len: src.len(),
-            },
-        ), errors)
+                Span {
+                    loc: Location {
+                        row: 1,
+                        col: 1,
+                        pos: 0,
+                    },
+                    len: src.len(),
+                },
+            ),
+            errors,
+        )
     }
 
     fn synchronize(&mut self) {
@@ -106,7 +103,7 @@ impl<'a> Parser<'a> {
     }
 
     fn error<T>(&mut self, diagnostic: &'static str) -> Result<T> {
-        Err(self.advance()?.map(|_| Error { diagnostic }))
+        Err(Error::new(diagnostic, self.advance()?.span))
     }
 
     // helpers
@@ -647,12 +644,7 @@ impl<'a> Parser<'a> {
                 expr.data,
                 Expr::Symbol(_) | Expr::Call { .. } | Expr::Subscript { .. }
             ) {
-                return Err(L::new(
-                    Error {
-                        diagnostic: "invalid assignment target",
-                    },
-                    expr.span,
-                ));
+                return Err(Error::new("invalid assignment target", expr.span));
             }
 
             let value = self.expression()?;
@@ -1056,9 +1048,7 @@ impl<'a> Parser<'a> {
                 }
             }
             _ => {
-                return Err(token.map(|_| Error {
-                    diagnostic: "unexpected token",
-                }))
+                return Err(Error::new("unexpected token", token.span));
             }
         })
     }
@@ -1082,13 +1072,9 @@ impl<'a> Parser<'a> {
     fn advance(&mut self) -> Result<L<Token<'a>>> {
         match self.lexer.next() {
             Some(Ok(tok)) => Ok(tok),
-            Some(Err(err)) => Err(err.map(|data| Error {
-                diagnostic: data.tell(),
-            })),
-            None => Err(L::new(
-                Error {
-                    diagnostic: "unexpected eof ",
-                },
+            Some(Err(err)) => Err(Error::new(err.data.tell(), err.span)),
+            None => Err(Error::new(
+                "unexpected eof ",
                 Span {
                     loc: Location {
                         row: 0,
@@ -1139,7 +1125,7 @@ impl<'a> Parser<'a> {
         let span = token.span;
         match pred(token) {
             Some(t) => Ok(t),
-            None => Err(L::new(Error { diagnostic: msg }, span)),
+            None => Err(Error::new(msg, span)),
         }
     }
 

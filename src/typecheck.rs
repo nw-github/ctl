@@ -33,10 +33,11 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
-    pub fn check(stmt: Located<Stmt>) -> (CheckedAst, Vec<()>) {
+    pub fn check(stmt: Located<Stmt>) -> (CheckedAst, Vec<Error>) {
         let mut this = Self {
             scopes: vec![Scope::default()],
             types: vec![],
+            errors: vec![],
             // we depend on parser wrapping up the generated code in a Stmt::Module
             current: 0,
         };
@@ -50,7 +51,7 @@ impl TypeChecker {
                 scopes: this.scopes,
                 stmt,
             },
-            Vec::new(),
+            this.errors,
         )
     }
 

@@ -22,7 +22,7 @@ fn main() -> anyhow::Result<()> {
     let args = Arguments::parse();
 
     let buffer = std::fs::read_to_string(&args.input)?;
-    let result = Pipeline::new(&buffer, args.input)
+    let result = Pipeline::new(&buffer, args.input.clone())
         .parse()
         .inspect(|ast| {
             if args.dump_ast {
@@ -60,7 +60,7 @@ fn main() -> anyhow::Result<()> {
         Err(errors) => {
             eprintln!("Compilation failed: ");
             for err in errors {
-                eprintln!("{err}");
+                err.display(args.input.to_string_lossy().as_ref());
             }
         }
     }

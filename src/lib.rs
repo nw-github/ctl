@@ -6,15 +6,13 @@ mod parser;
 mod pretty;
 mod typecheck;
 
-use std::{error::Error, path::PathBuf};
+use std::path::PathBuf;
 
 use compiler::Compiler;
+use lexer::Span;
 use typecheck::CheckedAst;
 
-use crate::{
-    ast::Stmt, lexer::Located, parser::Parser,
-    typecheck::TypeChecker,
-};
+use crate::{ast::Stmt, parser::Parser, typecheck::TypeChecker};
 
 pub trait CompileState {}
 
@@ -26,8 +24,29 @@ impl CompileState for Source<'_> {}
 impl CompileState for Ast {}
 impl CompileState for Checked {}
 
+#[derive(Debug)]
+pub struct Error {
+    diagnostic: String,
+    span: Span,
+}
+
+impl Error {
+    pub fn new(diagnostic: impl Into<String>, span: impl Into<Span>) -> Self {
+        Self {
+            diagnostic: diagnostic.into(),
+            span: span.into(),
+        }
+    }
+
+    pub fn display(&self, file: &str) {
+        eprintln!("{file}:{}{} {}", self.span.loc.col, self.span.loc.row, self.diagnostic)
+    }
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
 pub struct Pipeline<S: CompileState> {
-    errors: Vec<Box<dyn Error>>,
+    errors: Vec<Error>,
     file: PathBuf,
     state: S,
 }
@@ -44,17 +63,10 @@ impl<'a> Pipeline<Source<'a>> {
     pub fn parse(self) -> Pipeline<Ast> {
         let (ast, errors) = Parser::parse(self.state.0);
         Pipeline {
-            errors: errors
-                .into_iter()
-                .map(|err| self.box_parse_error(err))
-                .collect(),
+            errors,
             file: self.file,
             state: Ast(ast),
         }
-    }
-
-    fn box_parse_error(&self, err: Located<crate::parser::Error>) -> Box<dyn Error> {
-        todo!("{err:?}")
     }
 }
 
@@ -65,7 +77,7 @@ impl Pipeline<Ast> {
 
     pub fn typecheck(mut self) -> Pipeline<Checked> {
         let (checked, errors) = TypeChecker::check(self.state.0);
-        self.errors.extend(errors.into_iter().map(|err| todo!()));
+        self.errors.extend(errors);
         Pipeline {
             errors: self.errors,
             file: self.file,
@@ -75,7 +87,7 @@ impl Pipeline<Ast> {
 }
 
 impl Pipeline<Checked> {
-    pub fn codegen(self) -> Result<String, Vec<Box<dyn Error>>> {
+    pub fn codegen(self) -> std::result::Result<String, Vec<Error>> {
         if self.errors.is_empty() {
             Ok(Compiler::compile(self.state.0))
         } else {
