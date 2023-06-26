@@ -682,7 +682,12 @@ impl TypeChecker {
         })
     }
 
-    fn create_block_with(&mut self, body: Vec<Located<Stmt>>, target: Target, f: impl FnOnce(&mut Self)) -> Block {
+    fn create_block_with(
+        &mut self,
+        body: Vec<Located<Stmt>>,
+        target: Target,
+        f: impl FnOnce(&mut Self),
+    ) -> Block {
         self.enter_scope(target, |this| {
             f(this);
 
@@ -701,14 +706,14 @@ impl TypeChecker {
     }
 
     fn type_mismatch<T: Default>(&mut self, a: TypeId, b: TypeId, span: Span) -> T {
-        return self.error(Error::new(
+        self.error(Error::new(
             format!(
                 "type mismatch: expected type {}, got {}",
                 self.type_name(a),
                 self.type_name(b)
             ),
             span,
-        ));
+        ))
     }
 
     //
@@ -758,11 +763,11 @@ impl TypeChecker {
         }
     }
 
-    fn find_type_in_scope(&self, name: &str, mut id: ScopeId) -> Option<TypeId> {
+    fn find_type_in_scope(&self, name: &str, id: ScopeId) -> Option<TypeId> {
         self.traverse_scopes(id, |scope| scope.types.get(name).copied())
     }
 
-    fn find_var_in_scope(&self, name: &str, mut id: ScopeId) -> Option<TypeId> {
+    fn find_var_in_scope(&self, name: &str, id: ScopeId) -> Option<TypeId> {
         self.traverse_scopes(id, |scope| scope.vars.get(name).copied())
     }
 
@@ -792,7 +797,7 @@ impl TypeChecker {
             parent: Some(self.current),
             types: Default::default(),
             vars: Default::default(),
-            target
+            target,
         });
 
         self.current += 1;
