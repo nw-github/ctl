@@ -422,7 +422,7 @@ impl TypeChecker {
 
                 match &self.types[ty] {
                     Type::Int(bits) => {
-                        let result = match i128::from_str_radix(&value, *bits as u32) {
+                        let result = match i128::from_str_radix(&value, base as u32) {
                             Ok(result) => result,
                             Err(_) => {
                                 return self.error_expr(Error::new(
@@ -448,7 +448,7 @@ impl TypeChecker {
                         CheckedExpr::new(ty, ExprData::Signed(result))
                     }
                     Type::Uint(bits) => {
-                        let result = match u128::from_str_radix(&value, *bits as u32) {
+                        let result = match u128::from_str_radix(&value, base as u32) {
                             Ok(result) => result,
                             Err(_) => {
                                 return self.error_expr(Error::new(
