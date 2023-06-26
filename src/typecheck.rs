@@ -10,7 +10,7 @@ use crate::{
         stmt::{CheckedFn, CheckedFnDecl, CheckedParam, CheckedStmt},
         Block, ScopeId, TypeId,
     },
-    lexer::Located,
+    lexer::{Located, Span},
     Error,
 };
 
@@ -44,7 +44,10 @@ pub enum Type {
     },
     Enum {},
     Interface {},
-    Function {},
+    Function {
+        params: Vec<(String, TypeId)>,
+        ret: TypeId,
+    },
 }
 
 impl Type {
@@ -113,18 +116,18 @@ impl TypeChecker {
             current: 0,
         };
 
-        this.insert_type("void".into(), Type::Void);
-        this.insert_type("{integer}".into(), Type::IntGeneric);
-        this.insert_type("{float}".into(), Type::FloatGeneric);
-        this.insert_type("f32".into(), Type::F32);
-        this.insert_type("f64".into(), Type::F64);
-        this.insert_type("bool".into(), Type::Bool);
+        this.insert_type_in_scope("void".into(), Type::Void);
+        this.insert_type_in_scope("{integer}".into(), Type::IntGeneric);
+        this.insert_type_in_scope("{float}".into(), Type::FloatGeneric);
+        this.insert_type_in_scope("f32".into(), Type::F32);
+        this.insert_type_in_scope("f64".into(), Type::F64);
+        this.insert_type_in_scope("bool".into(), Type::Bool);
         for i in 1..=128 {
             if i > 1 {
-                this.insert_type(format!("i{i}"), Type::Int(i));
+                this.insert_type_in_scope(format!("i{i}"), Type::Int(i));
             }
 
-            this.insert_type(format!("u{i}"), Type::Uint(i));
+            this.insert_type_in_scope(format!("u{i}"), Type::Uint(i));
         }
 
         let stmt = this.check_stmt(stmt);
@@ -185,14 +188,7 @@ impl TypeChecker {
                     if let Some(value) = value {
                         let value = self.check_expr(value, Some(ty));
                         if value.ty != ty {
-                            return self.error_stmt(Error::new(
-                                format!(
-                                    "type mismatch: expected type {}, got {}",
-                                    self.type_name(ty),
-                                    self.type_name(value.ty)
-                                ),
-                                stmt.span,
-                            ));
+                            return self.type_mismatch(ty, value.ty, stmt.span);
                         }
 
                         CheckedStmt::Let {
@@ -211,7 +207,9 @@ impl TypeChecker {
                     }
                 } else if let Some(value) = value {
                     let value = self.check_expr(value, None);
-                    self.scopes[self.current].vars.insert(name.clone(), value.ty);
+                    self.scopes[self.current]
+                        .vars
+                        .insert(name.clone(), value.ty);
 
                     CheckedStmt::Let {
                         name,
@@ -220,7 +218,7 @@ impl TypeChecker {
                         value: Some(value),
                     }
                 } else {
-                    return self.error_stmt(Error::new("cannot infer type", stmt.span));
+                    return self.error(Error::new("cannot infer type", stmt.span));
                 }
             }
             Stmt::Fn(Fn {
@@ -253,6 +251,19 @@ impl TypeChecker {
                         .collect(),
                     ret: self.resolve_type(&ret),
                 };
+
+                let ty = self.insert_type(Type::Function {
+                    params: header
+                        .params
+                        .iter()
+                        .map(|param| (param.name.clone(), param.ty))
+                        .collect(),
+                    ret: header.ret,
+                });
+
+                self.scopes[self.current]
+                    .vars
+                    .insert(header.name.clone(), ty);
                 CheckedStmt::Fn(CheckedFn {
                     body: self.create_block_with(body, |this| {
                         for param in header.params.iter() {
@@ -276,14 +287,7 @@ impl TypeChecker {
 
                     let value = self.check_expr(value, Some(ty));
                     if value.ty != ty {
-                        return self.error_stmt(Error::new(
-                            format!(
-                                "type mismatch: expected type {}, got {}",
-                                self.type_name(ty),
-                                self.type_name(value.ty)
-                            ),
-                            stmt.span,
-                        ));
+                        return self.type_mismatch(ty, value.ty, stmt.span);
                     }
 
                     CheckedStmt::Static {
@@ -294,7 +298,9 @@ impl TypeChecker {
                     }
                 } else {
                     let value = self.check_expr(value, None);
-                    self.scopes[self.current].vars.insert(name.clone(), value.ty);
+                    self.scopes[self.current]
+                        .vars
+                        .insert(name.clone(), value.ty);
 
                     CheckedStmt::Static {
                         public,
@@ -315,16 +321,9 @@ impl TypeChecker {
                 let right = self.check_expr(*right, Some(left.ty));
 
                 if left.ty != right.ty {
-                    self.error_expr(Error::new(
-                        format!(
-                            "type mismatch: expected type {}, got {}",
-                            self.type_name(left.ty),
-                            self.type_name(right.ty),
-                        ),
-                        span,
-                    ))
+                    self.type_mismatch(left.ty, right.ty, span)
                 } else if !self.types[left.ty].supports_binop(op) {
-                    self.error_expr(Error::new(
+                    self.error(Error::new(
                         format!(
                             "operator '{op}' is invalid for values of type {} and {}",
                             self.type_name(left.ty),
@@ -384,7 +383,7 @@ impl TypeChecker {
                         PostIncrement | PostDecrement | PreIncrement | PreDecrement
                     )
                 {
-                    self.error_expr(Error::new(
+                    self.error(Error::new(
                         format!("operator '{op}' cannot be used on literals"),
                         span,
                     ))
@@ -397,7 +396,7 @@ impl TypeChecker {
                         },
                     )
                 } else {
-                    self.error_expr(Error::new(
+                    self.error(Error::new(
                         format!(
                             "operator '{op}' is invalid for value of type {}",
                             self.type_name(rhs.ty)
@@ -406,7 +405,43 @@ impl TypeChecker {
                     ))
                 }
             }
-            Expr::Call { callee, args } => todo!(),
+            Expr::Call { callee, args } => {
+                let callee = self.check_expr(*callee, None);
+                if let Type::Function { params, ret } = &self.types[callee.ty] {
+                    // TODO: default arguments
+                    if params.len() != args.len() {
+                        return self.error(Error::new(
+                            format!("expected {} arguments, found {}", params.len(), args.len()),
+                            span,
+                        ));
+                    }
+
+                    let ret = *ret;
+                    let params = params.clone();
+                    let mut result_args = Vec::with_capacity(args.len());
+                    // TODO: keyword arguments
+                    for ((_, ptype), (_, expr)) in params.into_iter().zip(args.into_iter()) {
+                        let expr = self.check_expr(expr, Some(ptype));
+                        if expr.ty != ptype {
+                            return self.type_mismatch(ptype, expr.ty, span);
+                        }
+                        result_args.push(expr);
+                    }
+
+                    CheckedExpr::new(
+                        ret,
+                        ExprData::Call {
+                            callee: callee.into(),
+                            args: result_args,
+                        },
+                    )
+                } else {
+                    self.error(Error::new(
+                        format!("cannot call value of type {}", self.type_name(callee.ty)),
+                        span,
+                    ))
+                }
+            }
             Expr::Array(_) => todo!(),
             Expr::ArrayWithInit { init, count } => todo!(),
             Expr::Tuple(_) => todo!(),
@@ -431,7 +466,7 @@ impl TypeChecker {
                         let result = match i128::from_str_radix(&value, base as u32) {
                             Ok(result) => result,
                             Err(_) => {
-                                return self.error_expr(Error::new(
+                                return self.error(Error::new(
                                     "Integer literal is too large for any type.",
                                     expr.span,
                                 ));
@@ -439,13 +474,13 @@ impl TypeChecker {
                         };
 
                         if result >= 1 << (bits - 1) {
-                            return self.error_expr(Error::new(
+                            return self.error(Error::new(
                                 "Integer literal is larger than its type allows",
                                 expr.span,
                             ));
                         }
                         if result <= -(1 << (bits - 1)) {
-                            return self.error_expr(Error::new(
+                            return self.error(Error::new(
                                 "Integer literal is smaller than its type allows",
                                 expr.span,
                             ));
@@ -457,7 +492,7 @@ impl TypeChecker {
                         let result = match u128::from_str_radix(&value, base as u32) {
                             Ok(result) => result,
                             Err(_) => {
-                                return self.error_expr(Error::new(
+                                return self.error(Error::new(
                                     "Integer literal is too large for any type.",
                                     expr.span,
                                 ));
@@ -465,7 +500,7 @@ impl TypeChecker {
                         };
 
                         if result >= 1 << bits {
-                            return self.error_expr(Error::new(
+                            return self.error(Error::new(
                                 "Integer literal is larger than its type allows",
                                 expr.span,
                             ));
@@ -493,7 +528,7 @@ impl TypeChecker {
                 if let Some(ty) = self.find_var(&name) {
                     CheckedExpr::new(ty, ExprData::Symbol(name))
                 } else {
-                    self.error_expr(Error::new(format!("undefined variable: {name}"), span))
+                    self.error(Error::new(format!("undefined variable: {name}"), span))
                 }
             }
             Expr::Instance { name, members } => todo!(),
@@ -629,15 +664,23 @@ impl TypeChecker {
 
     //
 
-    fn error_stmt(&mut self, error: Error) -> CheckedStmt {
+    fn error<T: Default>(&mut self, error: Error) -> T {
         self.errors.push(error);
-        CheckedStmt::Error
+        T::default()
     }
 
-    fn error_expr(&mut self, error: Error) -> CheckedExpr {
-        self.errors.push(error);
-        CheckedExpr::new(0, ExprData::Error)
+    fn type_mismatch<T: Default>(&mut self, a: TypeId, b: TypeId, span: Span) -> T {
+        return self.error(Error::new(
+            format!(
+                "type mismatch: expected type {}, got {}",
+                self.type_name(a),
+                self.type_name(b)
+            ),
+            span,
+        ));
     }
+
+    //
 
     fn type_name(&self, ty: TypeId) -> String {
         match &self.types[ty] {
@@ -654,7 +697,18 @@ impl TypeChecker {
             Type::Union { tag, base } => todo!(),
             Type::Enum {} => todo!(),
             Type::Interface {} => todo!(),
-            Type::Function {} => todo!(),
+            Type::Function { params, ret } => {
+                let mut result = "Fn(".to_owned();
+                for (i, (name, ty)) in params.iter().enumerate() {
+                    if i > 0 {
+                        result.push_str(", ");
+                    }
+
+                    result.push_str(&format!("{name}: "));
+                    result.push_str(&self.type_name(*ty));
+                }
+                format!("{result}) {}", self.type_name(*ret))
+            }
         }
     }
 
@@ -688,10 +742,16 @@ impl TypeChecker {
         self.find_var_in_scope(name, self.current)
     }
 
-    fn insert_type(&mut self, name: String, data: Type) -> TypeId {
+    fn insert_type_in_scope(&mut self, name: String, data: Type) -> TypeId {
         let id = self.types.len();
         self.types.push(data);
         self.scopes[self.current].types.insert(name, id);
+        id
+    }
+
+    fn insert_type(&mut self, data: Type) -> TypeId {
+        let id = self.types.len();
+        self.types.push(data);
         id
     }
 

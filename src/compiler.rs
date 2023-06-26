@@ -147,7 +147,18 @@ impl Compiler {
                     UnaryOp::Sizeof => todo!(),
                 }
             }
-            ExprData::Call { callee, args } => todo!(),
+            ExprData::Call { callee, args } => {
+                self.compile_expr(callee);
+                self.emit("(");
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        self.emit(", ");
+                    }
+
+                    self.compile_expr(arg);
+                }
+                self.emit(")");
+            }
             ExprData::Array(_) => todo!(),
             ExprData::ArrayWithInit { init, count } => todo!(),
             ExprData::Tuple(_) => todo!(),
@@ -167,7 +178,7 @@ impl Compiler {
                     "ICE: ExprData::Signed with non-int type {:?}",
                     self.types[expr.ty]
                 ),
-            },
+            }
             ExprData::Unsigned(value) => match &self.types[expr.ty] {
                 Type::Uint(base) => {
                     self.emit(format!("{value}_u{base}"));
@@ -176,7 +187,7 @@ impl Compiler {
                     "ICE: ExprData::Unsigned with non-uint type {:?}",
                     self.types[expr.ty]
                 ),
-            },
+            }
             ExprData::Float(value) => {
                 // TODO: probably should check the range or something
                 match &self.types[expr.ty] {
@@ -249,7 +260,7 @@ impl Compiler {
             Type::Union { tag, base } => todo!(),
             Type::Enum {} => todo!(),
             Type::Interface {} => todo!(),
-            Type::Function {} => todo!(),
+            Type::Function {..} => todo!(),
         }
     }
 

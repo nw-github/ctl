@@ -13,6 +13,7 @@ pub mod expr {
 
     use super::{Block, TypeId};
 
+    #[derive(Default)]
     pub enum ExprData {
         Binary {
             op: BinaryOp,
@@ -25,7 +26,7 @@ pub mod expr {
         },
         Call {
             callee: Box<CheckedExpr>,
-            args: Vec<(Option<String>, CheckedExpr)>,
+            args: Vec<CheckedExpr>,
         },
         Array(Vec<CheckedExpr>),
         ArrayWithInit {
@@ -83,10 +84,11 @@ pub mod expr {
             inclusive: bool,
         },
         Continue,
+        #[default]
         Error,
     }
 
-    #[derive(derive_more::Constructor)]
+    #[derive(Default, derive_more::Constructor)]
     pub struct CheckedExpr {
         pub ty: TypeId,
         pub data: ExprData,
@@ -156,6 +158,7 @@ pub mod stmt {
         },
     }
 
+    #[derive(Default)]
     pub enum CheckedStmt {
         Expr(CheckedExpr),
         Let {
@@ -177,6 +180,7 @@ pub mod stmt {
             name: String,
             body: Block,
         },
+        #[default]
         Error,
     }
 }
