@@ -190,7 +190,9 @@ impl Compiler {
                 self.emit(value);
             }
             ExprData::String(_) => todo!(),
-            ExprData::Symbol(_) => todo!(),
+            ExprData::Symbol(name) => {
+                self.emit(name);
+            }
             ExprData::Instance { name, members } => todo!(),
             ExprData::None => todo!(),
             ExprData::Assign {

@@ -181,6 +181,7 @@ impl TypeChecker {
             } => {
                 if let Some(ty) = ty {
                     let ty = self.resolve_type(&ty);
+                    self.scopes[self.current].vars.insert(name.clone(), ty);
                     if let Some(value) = value {
                         let value = self.check_expr(value, Some(ty));
                         if value.ty != ty {
@@ -210,6 +211,8 @@ impl TypeChecker {
                     }
                 } else if let Some(value) = value {
                     let value = self.check_expr(value, None);
+                    self.scopes[self.current].vars.insert(name.clone(), value.ty);
+
                     CheckedStmt::Let {
                         name,
                         ty: value.ty,
@@ -269,8 +272,9 @@ impl TypeChecker {
             } => {
                 if let Some(ty) = ty {
                     let ty = self.resolve_type(&ty);
-                    let value = self.check_expr(value, Some(ty));
+                    self.scopes[self.current].vars.insert(name.clone(), ty);
 
+                    let value = self.check_expr(value, Some(ty));
                     if value.ty != ty {
                         return self.error_stmt(Error::new(
                             format!(
@@ -290,6 +294,8 @@ impl TypeChecker {
                     }
                 } else {
                     let value = self.check_expr(value, None);
+                    self.scopes[self.current].vars.insert(name.clone(), value.ty);
+
                     CheckedStmt::Static {
                         public,
                         name,
@@ -483,7 +489,13 @@ impl TypeChecker {
                 CheckedExpr::new(ty, ExprData::Float(value))
             }
             Expr::String(_) => todo!(),
-            Expr::Symbol(_) => todo!(),
+            Expr::Symbol(name) => {
+                if let Some(ty) = self.find_var(&name) {
+                    CheckedExpr::new(ty, ExprData::Symbol(name))
+                } else {
+                    self.error_expr(Error::new(format!("undefined variable: {name}"), span))
+                }
+            }
             Expr::Instance { name, members } => todo!(),
             Expr::None => todo!(),
             Expr::Assign {
@@ -646,16 +658,34 @@ impl TypeChecker {
         }
     }
 
-    fn find_type(&self, name: &str) -> Option<TypeId> {
-        self.scopes
-            .iter()
-            .rev()
-            .filter_map(|scope| scope.types.get(name).copied())
-            .next()
+    fn find_type_in_scope(&self, name: &str, mut id: ScopeId) -> Option<TypeId> {
+        loop {
+            let scope = &self.scopes[id];
+            if let Some(ty) = scope.types.get(name) {
+                return Some(*ty);
+            }
+
+            id = scope.parent?;
+        }
     }
 
-    fn find_type_in_scope(&self, name: &str, scope: ScopeId) -> Option<TypeId> {
-        self.scopes[scope].types.get(name).copied()
+    fn find_var_in_scope(&self, name: &str, mut id: ScopeId) -> Option<TypeId> {
+        loop {
+            let scope = &self.scopes[id];
+            if let Some(ty) = scope.vars.get(name) {
+                return Some(*ty);
+            }
+
+            id = scope.parent?;
+        }
+    }
+
+    fn find_type(&self, name: &str) -> Option<TypeId> {
+        self.find_type_in_scope(name, self.current)
+    }
+
+    fn find_var(&self, name: &str) -> Option<TypeId> {
+        self.find_var_in_scope(name, self.current)
     }
 
     fn insert_type(&mut self, name: String, data: Type) -> TypeId {
