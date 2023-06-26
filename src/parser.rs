@@ -43,44 +43,42 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(src: &'a str) -> Self {
+    fn new(src: &'a str) -> Self {
         Self {
             lexer: Lexer::new(src).peekable(),
             src,
         }
     }
 
-    pub fn parse(mut self) -> std::result::Result<L<Stmt>, Vec<L<Error>>> {
+    pub fn parse(src: &'a str) -> (L<Stmt>, Vec<L<Error>>) {
+        let mut this = Self::new(src);
         let mut stmts = Vec::new();
         let mut errors = Vec::new();
-        while self.lexer.peek().is_some() {
-            match self.item() {
+        while this.lexer.peek().is_some() {
+            match this.item() {
                 Ok(stmt) => stmts.push(stmt),
                 Err(err) => {
                     errors.push(err);
-                    self.synchronize();
+                    this.synchronize();
                 }
             }
         }
 
-        errors
-            .is_empty()
-            .then_some(L::new(
-                Stmt::Module {
-                    public: true,
-                    name: "tmpname".into(),
-                    body: stmts,
+        (L::new(
+            Stmt::Module {
+                public: true,
+                name: "tmpname".into(),
+                body: stmts,
+            },
+            Span {
+                loc: Location {
+                    row: 1,
+                    col: 1,
+                    pos: 0,
                 },
-                Span {
-                    loc: Location {
-                        row: 1,
-                        col: 1,
-                        pos: 0,
-                    },
-                    len: self.src.len(),
-                },
-            ))
-            .ok_or(errors)
+                len: src.len(),
+            },
+        ), errors)
     }
 
     fn synchronize(&mut self) {

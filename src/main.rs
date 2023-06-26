@@ -1,43 +1,46 @@
-use std::{
-    env,
-    io::{self, BufRead, Write},
-};
+use std::{fs::File, io::Write, path::PathBuf};
 
-use ctl::{lexer::Lexer, parser::Parser, pretty};
+use clap::Parser;
+use ctl::Pipeline;
+
+#[derive(Parser)]
+struct Arguments {
+    input: PathBuf,
+    output: Option<PathBuf>,
+    #[clap(action, short, long)]
+    dump_ast: bool,
+}
 
 fn main() -> anyhow::Result<()> {
-    if let Some(file) = env::args_os().nth(1) {
-        let buffer = std::fs::read_to_string(file)?;
-        match Parser::new(&buffer).parse() {
-            Ok(module) => pretty::print_stmt(&module, 0),
-            Err(errors) => eprintln!("{errors:?}"),
-        }
+    let args = Arguments::parse();
 
-        return Ok(());
-    }
-
-    let mut stdout = io::stdout().lock();
-    let mut stdin = io::stdin().lock();
-    let mut buffer = String::new();
-    loop {
-        print!(">> ");
-        stdout.flush().unwrap();
-        buffer.clear();
-        match stdin.read_line(&mut buffer) {
-            Ok(0) => break Ok(()),
-            Ok(len) => {
-                let buffer = &buffer[..len];
-                for token in Lexer::new(buffer) {
-                    let token = token.unwrap();
-                    println!("{:?} '{}'", token.data, token.span.text(buffer));
-                }
-
-                match Parser::new(buffer).parse() {
-                    Ok(module) => pretty::print_stmt(&module, 0),
-                    Err(errors) => eprintln!("{errors:?}"),
-                }
+    let buffer = std::fs::read_to_string(&args.input)?;
+    let result = Pipeline::new(&buffer, args.input)
+        .parse()
+        .inspect(|ast| {
+            if args.dump_ast {
+                ast.dump()
             }
-            _ => {}
+        })
+        .typecheck()
+        .codegen();
+
+    match result {
+        Ok(result) => {
+            if let Some(output) = args.output {
+                let mut output = File::create(output)?;
+                output.write_all(result.as_bytes())?;
+            } else {
+                println!("{result}");
+            }
+        }
+        Err(errors) => {
+            eprintln!("Compilation failed: ");
+            for err in errors {
+                eprintln!("{err}");
+            }
         }
     }
+
+    Ok(())
 }
