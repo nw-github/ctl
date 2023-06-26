@@ -86,15 +86,15 @@ impl Type {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub enum Target {
-    Block(TypeId),
+    Block(Option<TypeId>),
     Function(TypeId),
     #[default]
     None,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Scope {
     parent: Option<ScopeId>,
     vars: HashMap<String, TypeId>,
@@ -548,7 +548,16 @@ impl TypeChecker {
                 binary,
                 value,
             } => todo!(),
-            Expr::Block(_) => todo!(),
+            Expr::Block(body) => {
+                let block = self.create_block(body, Target::Block(target));
+                let Target::Block(target) = &self.scopes[block.scope].target else {
+                    panic!("ICE: target of block changed from block to something else");
+                };
+                CheckedExpr::new(
+                    target.unwrap_or(self.find_type_in_scope("void", 0).unwrap()),
+                    ExprData::Block(block),
+                )
+            }
             Expr::If {
                 cond,
                 if_branch,
@@ -584,7 +593,22 @@ impl TypeChecker {
                     )
                 }
             }
-            Expr::Yield(_) => todo!(),
+            Expr::Yield(expr) => {
+                let Target::Block(target) = self.scopes[self.current].target else {
+                    return self.error(Error::new("yield outside of block", span));
+                };
+
+                let expr = self.check_expr(*expr, target);
+                if let Some(target) = target {
+                    if target != expr.ty {
+                        return self.type_mismatch(target, expr.ty, span);
+                    }
+                } else {
+                    self.scopes[self.current].target = Target::Block(Some(expr.ty));
+                }
+
+                CheckedExpr::new(expr.ty, ExprData::Yield(expr.into()))
+            }
             Expr::Break(_) => todo!(),
             Expr::Range {
                 start,
@@ -800,9 +824,10 @@ impl TypeChecker {
             target,
         });
 
-        self.current += 1;
+        let prev = self.current;
+        self.current = self.scopes.len() - 1;
         let result = f(self);
-        self.current -= 1;
+        self.current = prev;
         result
     }
 }
