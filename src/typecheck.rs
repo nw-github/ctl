@@ -2,17 +2,50 @@ use std::{collections::HashMap, vec};
 
 use crate::{
     ast::{
-        expr::{BinaryOp, Expr},
-        stmt::{Fn, FnDecl, Stmt, Struct, Type, UserType},
+        expr::{BinaryOp, Expr, UnaryOp},
+        stmt::{Fn, FnDecl, Stmt, Struct, TypeHint, UserType},
     },
     checked_ast::{
         expr::{CheckedExpr, ExprData},
         stmt::{CheckedFn, CheckedFnDecl, CheckedParam, CheckedStmt},
-        Block, ResolvedStruct, ResolvedType, ScopeId, TypeId,
+        Block, ScopeId, TypeId,
     },
     lexer::Located,
     Error,
 };
+
+#[derive(Debug)]
+pub struct Member {
+    pub public: bool,
+    pub name: String,
+    pub ty: TypeId,
+}
+
+#[derive(Debug)]
+pub struct ResolvedStruct {
+    pub members: Vec<Member>,
+}
+
+#[derive(Debug)]
+pub enum Type {
+    Void,
+    Never,
+    Int(u8),
+    Uint(u8),
+    F32,
+    F64,
+    Bool,
+    IntGeneric,
+    FloatGeneric,
+    Struct(ResolvedStruct),
+    Union {
+        tag: Option<Option<TypeId>>,
+        base: ResolvedStruct,
+    },
+    Enum {},
+    Interface {},
+    Function {},
+}
 
 #[derive(Default)]
 pub struct Scope {
@@ -22,13 +55,13 @@ pub struct Scope {
 }
 
 pub struct CheckedAst {
-    pub types: Vec<ResolvedType>,
+    pub types: Vec<Type>,
     pub scopes: Vec<Scope>,
     pub stmt: CheckedStmt,
 }
 
 pub struct TypeChecker {
-    types: Vec<ResolvedType>,
+    types: Vec<Type>,
     scopes: Vec<Scope>,
     errors: Vec<Error>,
     current: ScopeId,
@@ -44,18 +77,18 @@ impl TypeChecker {
             current: 0,
         };
 
-        this.insert_type("void".into(), ResolvedType::Void);
-        this.insert_type("{integer}".into(), ResolvedType::IntGeneric);
-        this.insert_type("{float}".into(), ResolvedType::FloatGeneric);
-        this.insert_type("f32".into(), ResolvedType::F32);
-        this.insert_type("f64".into(), ResolvedType::F64);
-        this.insert_type("bool".into(), ResolvedType::Bool);
+        this.insert_type("void".into(), Type::Void);
+        this.insert_type("{integer}".into(), Type::IntGeneric);
+        this.insert_type("{float}".into(), Type::FloatGeneric);
+        this.insert_type("f32".into(), Type::F32);
+        this.insert_type("f64".into(), Type::F64);
+        this.insert_type("bool".into(), Type::Bool);
         for i in 1..=128 {
             if i > 1 {
-                this.insert_type(format!("i{i}"), ResolvedType::Int(i));
+                this.insert_type(format!("i{i}"), Type::Int(i));
             }
 
-            this.insert_type(format!("u{i}"), ResolvedType::Uint(i));
+            this.insert_type(format!("u{i}"), Type::Uint(i));
         }
 
         let stmt = this.check_stmt(stmt);
@@ -245,10 +278,10 @@ impl TypeChecker {
 
                     if !matches!(
                         self.types[right.ty],
-                        ResolvedType::F64
-                            | ResolvedType::F32
-                            | ResolvedType::Int(_)
-                            | ResolvedType::Uint(_)
+                        Type::F64
+                            | Type::F32
+                            | Type::Int(_)
+                            | Type::Uint(_)
                     ) || left.ty != right.ty
                     {
                         self.error_expr(Error::new(
@@ -272,7 +305,25 @@ impl TypeChecker {
                     }
                 }
             },
-            Expr::Unary { op, expr } => todo!(),
+            Expr::Unary { op, expr } => {
+                let rhs = self.check_expr(*expr, target);
+                match op {
+                    UnaryOp::Plus => todo!(),
+                    UnaryOp::Neg => todo!(),
+                    UnaryOp::PostIncrement => todo!(),
+                    UnaryOp::PostDecrement => todo!(),
+                    UnaryOp::PreIncrement => todo!(),
+                    UnaryOp::PreDecrement => todo!(),
+                    UnaryOp::Not => todo!(),
+                    UnaryOp::Deref => todo!(),
+                    UnaryOp::Addr => todo!(),
+                    UnaryOp::AddrMut => todo!(),
+                    UnaryOp::IntoError => todo!(),
+                    UnaryOp::Try => todo!(),
+                    UnaryOp::Sizeof => todo!(),
+                }
+
+            }
             Expr::Call { callee, args } => todo!(),
             Expr::Array(_) => todo!(),
             Expr::ArrayWithInit { init, count } => todo!(),
@@ -294,7 +345,7 @@ impl TypeChecker {
                 }
 
                 match &self.types[ty] {
-                    ResolvedType::Int(bits) => {
+                    Type::Int(bits) => {
                         let result = match i128::from_str_radix(&value, *bits as u32) {
                             Ok(result) => result,
                             Err(_) => {
@@ -320,7 +371,7 @@ impl TypeChecker {
 
                         CheckedExpr::new(ty, ExprData::Signed(result))
                     }
-                    ResolvedType::Uint(bits) => {
+                    Type::Uint(bits) => {
                         let result = match u128::from_str_radix(&value, *bits as u32) {
                             Ok(result) => result,
                             Err(_) => {
@@ -393,12 +444,12 @@ impl TypeChecker {
     fn coerces_to(&self, ty: TypeId, target: TypeId) -> bool {
         if ty == self.find_type_in_scope("{integer}", 0).unwrap() {
             match self.types[target] {
-                ResolvedType::Int(_) | ResolvedType::Uint(_) => return true,
+                Type::Int(_) | Type::Uint(_) => return true,
                 _ => {}
             }
         } else if ty == self.find_type_in_scope("{float}", 0).unwrap() {
             match self.types[target] {
-                ResolvedType::F32 | ResolvedType::F64 => return true,
+                Type::F32 | Type::F64 => return true,
                 _ => {}
             }
         }
@@ -454,18 +505,18 @@ impl TypeChecker {
         // }
     }
 
-    fn resolve_type(&mut self, ty: &Type) -> TypeId {
+    fn resolve_type(&mut self, ty: &TypeHint) -> TypeId {
         match ty {
-            Type::Regular { name, .. } => self.find_type(name),
-            Type::Array(_, _) => self.find_type_in_scope("Array", 0),
-            Type::Slice(_) => self.find_type_in_scope("Slice", 0),
-            Type::Tuple(_) => todo!(),
-            Type::Map(_, _) => self.find_type_in_scope("Map", 0),
-            Type::Option(_) => self.find_type_in_scope("Option", 0),
-            Type::Result(_, _) => self.find_type_in_scope("Result", 0),
-            Type::Anon(ty) => Some(self.resolve_usertype(ty)),
-            Type::Void => self.find_type_in_scope("void", 0),
-            Type::Ref(_) | Type::RefMut(_) | Type::This => unreachable!(),
+            TypeHint::Regular { name, .. } => self.find_type(name),
+            TypeHint::Array(_, _) => self.find_type_in_scope("Array", 0),
+            TypeHint::Slice(_) => self.find_type_in_scope("Slice", 0),
+            TypeHint::Tuple(_) => todo!(),
+            TypeHint::Map(_, _) => self.find_type_in_scope("Map", 0),
+            TypeHint::Option(_) => self.find_type_in_scope("Option", 0),
+            TypeHint::Result(_, _) => self.find_type_in_scope("Result", 0),
+            TypeHint::Anon(ty) => Some(self.resolve_usertype(ty)),
+            TypeHint::Void => self.find_type_in_scope("void", 0),
+            TypeHint::Ref(_) | TypeHint::RefMut(_) | TypeHint::This => unreachable!(),
         }
         .unwrap()
     }
@@ -502,20 +553,20 @@ impl TypeChecker {
 
     fn type_name(&self, ty: &TypeId) -> String {
         match &self.types[*ty] {
-            ResolvedType::Void => "void".into(),
-            ResolvedType::Never => todo!(),
-            ResolvedType::Int(bits) => format!("i{bits}"),
-            ResolvedType::Uint(bits) => format!("u{bits}"),
-            ResolvedType::F32 => "f32".into(),
-            ResolvedType::F64 => "f64".into(),
-            ResolvedType::Bool => "bool".into(),
-            ResolvedType::IntGeneric => "{integer}".into(),
-            ResolvedType::FloatGeneric => "{float}".into(),
-            ResolvedType::Struct(_) => todo!(),
-            ResolvedType::Union { tag, base } => todo!(),
-            ResolvedType::Enum {} => todo!(),
-            ResolvedType::Interface {} => todo!(),
-            ResolvedType::Function {} => todo!(),
+            Type::Void => "void".into(),
+            Type::Never => todo!(),
+            Type::Int(bits) => format!("i{bits}"),
+            Type::Uint(bits) => format!("u{bits}"),
+            Type::F32 => "f32".into(),
+            Type::F64 => "f64".into(),
+            Type::Bool => "bool".into(),
+            Type::IntGeneric => "{integer}".into(),
+            Type::FloatGeneric => "{float}".into(),
+            Type::Struct(_) => todo!(),
+            Type::Union { tag, base } => todo!(),
+            Type::Enum {} => todo!(),
+            Type::Interface {} => todo!(),
+            Type::Function {} => todo!(),
         }
     }
 
@@ -531,7 +582,7 @@ impl TypeChecker {
         self.scopes[scope].types.get(name).copied()
     }
 
-    fn insert_type(&mut self, name: String, data: ResolvedType) -> TypeId {
+    fn insert_type(&mut self, name: String, data: Type) -> TypeId {
         let id = self.types.len();
         self.types.push(data);
         self.scopes[self.current].types.insert(name, id);

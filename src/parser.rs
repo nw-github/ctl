@@ -3,7 +3,7 @@ use std::iter::Peekable;
 use crate::{
     ast::{
         expr::{Expr, UnaryOp},
-        stmt::{self, Fn, FnDecl, Param, Stmt, Type, UserType},
+        stmt::{self, Fn, FnDecl, Param, Stmt, TypeHint, UserType},
     },
     lexer::{Lexer, Located as L, Location, Span, Token},
     Error, Result,
@@ -182,42 +182,42 @@ impl<'a> Parser<'a> {
         Ok(impls)
     }
 
-    fn parse_type(&mut self) -> Result<Type> {
+    fn parse_type(&mut self) -> Result<TypeHint> {
         let wrapper = self.advance_if_kind(Token::Asterisk).map(|_| {
             if self.advance_if_kind(Token::Mut).is_some() {
-                Type::RefMut
+                TypeHint::RefMut
             } else {
-                Type::Ref
+                TypeHint::Ref
             }
         });
 
         let ty = if self.advance_if_kind(Token::LBrace).is_some() {
             let inner = self.parse_type()?;
             if self.advance_if_kind(Token::RBrace).is_some() {
-                Type::Slice(inner.into())
+                TypeHint::Slice(inner.into())
             } else if self.advance_if_kind(Token::Semicolon).is_some() {
                 let count = self.expression()?;
 
                 self.expect_kind(Token::RBrace, "expected ']'")?;
-                Type::Array(inner.into(), count)
+                TypeHint::Array(inner.into(), count)
             } else if self.advance_if_kind(Token::Colon).is_some() {
                 let value = self.parse_type()?;
                 self.expect_kind(Token::RBrace, "expected ']'")?;
-                Type::Map(inner.into(), value.into())
+                TypeHint::Map(inner.into(), value.into())
             } else {
                 return self.error("expected ']', ';', or ':'");
             }
         } else if self.advance_if_kind(Token::LParen).is_some() {
-            Type::Tuple(
+            TypeHint::Tuple(
                 self.comma_separated(Token::RParen, "expected ')'", Self::parse_type)?
                     .0,
             )
         } else if self.advance_if_kind(Token::Void).is_some() {
-            Type::Void
+            TypeHint::Void
         } else {
             let is_dyn = self.advance_if_kind(Token::Dyn);
             let name = self.expect_id("expected type name")?;
-            Type::Regular {
+            TypeHint::Regular {
                 name: name.into(),
                 is_dyn: is_dyn.is_some(),
                 type_params: self.parse_generic_params()?,
@@ -230,15 +230,15 @@ impl<'a> Parser<'a> {
             ty
         };
         if self.advance_if_kind(Token::Question).is_some() {
-            Ok(Type::Option(ty.into()))
+            Ok(TypeHint::Option(ty.into()))
         } else if self.advance_if_kind(Token::Exclamation).is_some() {
-            Ok(Type::Result(ty.into(), self.parse_type()?.into()))
+            Ok(TypeHint::Result(ty.into(), self.parse_type()?.into()))
         } else {
             Ok(ty)
         }
     }
 
-    fn parse_var_name(&mut self) -> Result<(String, Option<Type>)> {
+    fn parse_var_name(&mut self) -> Result<(String, Option<TypeHint>)> {
         let name = self.expect_id("expected name")?;
         let ty = if self.advance_if_kind(Token::Colon).is_some() {
             Some(self.parse_type()?)
@@ -340,7 +340,7 @@ impl<'a> Parser<'a> {
                         mutable,
                         keyword,
                         name: "this".into(),
-                        ty: Type::This,
+                        ty: TypeHint::This,
                     })
                 } else {
                     let name = this.expect_id("expected name")?.into();
@@ -368,7 +368,7 @@ impl<'a> Parser<'a> {
             ret: if !self.matches(|kind| matches!(kind, Token::Semicolon | Token::LCurly)) {
                 self.parse_type()?
             } else {
-                Type::Void
+                TypeHint::Void
             },
         })
     }

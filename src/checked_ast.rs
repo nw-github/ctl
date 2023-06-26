@@ -3,39 +3,6 @@ use self::stmt::CheckedStmt;
 pub type TypeId = usize;
 pub type ScopeId = usize;
 
-#[derive(Debug)]
-pub struct Member {
-    pub public: bool,
-    pub name: String,
-    pub ty: TypeId,
-}
-
-#[derive(Debug)]
-pub struct ResolvedStruct {
-    pub members: Vec<Member>,
-}
-
-#[derive(Debug)]
-pub enum ResolvedType {
-    Void,
-    Never,
-    Int(u8),
-    Uint(u8),
-    F32,
-    F64,
-    Bool,
-    IntGeneric,
-    FloatGeneric,
-    Struct(ResolvedStruct),
-    Union {
-        tag: Option<Option<TypeId>>,
-        base: ResolvedStruct,
-    },
-    Enum {},
-    Interface {},
-    Function {},
-}
-
 pub struct Block {
     pub body: Vec<CheckedStmt>,
     pub scope: ScopeId,
@@ -44,7 +11,7 @@ pub struct Block {
 pub mod expr {
     use crate::ast::expr::{BinaryOp, UnaryOp};
 
-    use super::{stmt::CheckedStmt, Block, TypeId};
+    use super::{Block, TypeId};
 
     pub enum ExprData {
         Binary {

@@ -197,20 +197,20 @@ pub mod expr {
 
 pub mod stmt {
     #[derive(Debug)]
-    pub enum Type {
+    pub enum TypeHint {
         Regular {
             is_dyn: bool,
             name: String,
             type_params: Vec<String>,
         },
-        Array(Box<Type>, super::Expr),
-        Slice(Box<Type>),
-        Tuple(Vec<Type>),
-        Map(Box<Type>, Box<Type>),
-        Option(Box<Type>),
-        Result(Box<Type>, Box<Type>),
-        Ref(Box<Type>),
-        RefMut(Box<Type>),
+        Array(Box<TypeHint>, super::Expr),
+        Slice(Box<TypeHint>),
+        Tuple(Vec<TypeHint>),
+        Map(Box<TypeHint>, Box<TypeHint>),
+        Option(Box<TypeHint>),
+        Result(Box<TypeHint>, Box<TypeHint>),
+        Ref(Box<TypeHint>),
+        RefMut(Box<TypeHint>),
         Anon(UserType),
         Void,
         This,
@@ -221,7 +221,7 @@ pub mod stmt {
         pub mutable: bool,
         pub keyword: bool,
         pub name: String,
-        pub ty: Type,
+        pub ty: TypeHint,
     }
 
     #[derive(Debug)]
@@ -232,7 +232,7 @@ pub mod stmt {
         pub is_extern: bool,
         pub type_params: Vec<String>,
         pub params: Vec<Param>,
-        pub ret: Type,
+        pub ret: TypeHint,
     }
 
     #[derive(Debug)]
@@ -245,7 +245,7 @@ pub mod stmt {
     pub struct MemVar {
         pub public: bool,
         pub name: String,
-        pub ty: Type,
+        pub ty: TypeHint,
         pub value: Option<super::Expr>,
     }
 
@@ -287,7 +287,7 @@ pub mod stmt {
         Expr(super::Expr),
         Let {
             name: String,
-            ty: Option<Type>,
+            ty: Option<TypeHint>,
             mutable: bool,
             value: Option<super::Expr>,
         },
@@ -296,7 +296,7 @@ pub mod stmt {
         Static {
             public: bool,
             name: String,
-            ty: Option<Type>,
+            ty: Option<TypeHint>,
             value: super::Expr,
         },
         Module {

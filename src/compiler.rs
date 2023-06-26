@@ -6,16 +6,16 @@ use crate::{
     checked_ast::{
         expr::{CheckedExpr, ExprData},
         stmt::{CheckedFnDecl, CheckedParam, CheckedStmt},
-        ResolvedType, TypeId,
+        TypeId,
     },
-    typecheck::{CheckedAst, Scope},
+    typecheck::{CheckedAst, Scope, Type},
 };
 
 const RT_NAMESPACE: &str = "::ctl_runtime";
 
 pub struct Compiler {
     buffer: String,
-    types: Vec<ResolvedType>,
+    types: Vec<Type>,
     scopes: Vec<Scope>,
 }
 
@@ -118,7 +118,7 @@ impl Compiler {
                 }
             }
             ExprData::Signed(value) => match &self.types[expr.ty] {
-                ResolvedType::Int(base) => {
+                Type::Int(base) => {
                     self.emit(format!("{value}_i{base}"));
                 }
                 _ => panic!(
@@ -127,7 +127,7 @@ impl Compiler {
                 ),
             },
             ExprData::Unsigned(value) => match &self.types[expr.ty] {
-                ResolvedType::Uint(base) => {
+                Type::Uint(base) => {
                     self.emit(format!("{value}_u{base}"));
                 }
                 _ => panic!(
@@ -138,8 +138,8 @@ impl Compiler {
             ExprData::Float(value) => {
                 // TODO: probably should check the range or something
                 match &self.types[expr.ty] {
-                    ResolvedType::F32 => self.emit(format!("{value}_f32")),
-                    ResolvedType::F64 => self.emit(format!("{value}_f64")),
+                    Type::F32 => self.emit(format!("{value}_f32")),
+                    Type::F64 => self.emit(format!("{value}_f64")),
                     _ => panic!(
                         "ICE: ExprData::Float with non-float type {:?}",
                         self.types[expr.ty]
@@ -191,21 +191,21 @@ impl Compiler {
 
     pub fn emit_type(&mut self, id: TypeId) {
         match &self.types[id] {
-            ResolvedType::Void => self.emit("void"),
-            ResolvedType::Never => todo!(),
-            ResolvedType::Int(bits) => self.emit(format!("{RT_NAMESPACE}::i{bits}")),
-            ResolvedType::Uint(bits) => self.emit(format!("{RT_NAMESPACE}::u{bits}")),
-            ResolvedType::F32 => self.emit(format!("{RT_NAMESPACE}::f32")),
-            ResolvedType::F64 => self.emit(format!("{RT_NAMESPACE}::f64")),
-            ResolvedType::Bool => self.emit(format!("{RT_NAMESPACE}::boolean")),
-            ResolvedType::IntGeneric | ResolvedType::FloatGeneric => {
+            Type::Void => self.emit("void"),
+            Type::Never => todo!(),
+            Type::Int(bits) => self.emit(format!("{RT_NAMESPACE}::i{bits}")),
+            Type::Uint(bits) => self.emit(format!("{RT_NAMESPACE}::u{bits}")),
+            Type::F32 => self.emit(format!("{RT_NAMESPACE}::f32")),
+            Type::F64 => self.emit(format!("{RT_NAMESPACE}::f64")),
+            Type::Bool => self.emit(format!("{RT_NAMESPACE}::boolean")),
+            Type::IntGeneric | Type::FloatGeneric => {
                 panic!("ICE: Int/FloatGeneric in emit_type");
             }
-            ResolvedType::Struct(_) => todo!(),
-            ResolvedType::Union { tag, base } => todo!(),
-            ResolvedType::Enum {} => todo!(),
-            ResolvedType::Interface {} => todo!(),
-            ResolvedType::Function {} => todo!(),
+            Type::Struct(_) => todo!(),
+            Type::Union { tag, base } => todo!(),
+            Type::Enum {} => todo!(),
+            Type::Interface {} => todo!(),
+            Type::Function {} => todo!(),
         }
     }
 
