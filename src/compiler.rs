@@ -6,35 +6,45 @@ use crate::{
     checked_ast::{
         expr::{CheckedExpr, ExprData},
         stmt::{CheckedFnDecl, CheckedParam, CheckedStmt},
-        TypeId,
+        Block, TypeId,
     },
     typecheck::{CheckedAst, Scope, Type},
 };
 
 const RT_NAMESPACE: &str = "::ctl_runtime";
 
+pub struct BlockInfo {
+    variable: String,
+    label: String,
+}
+
 pub struct Compiler {
     buffer: String,
     types: Vec<Type>,
     scopes: Vec<Scope>,
+    current_block: Option<BlockInfo>,
+    block_number: usize,
 }
 
 impl Compiler {
-    pub fn compile(ast: CheckedAst) -> String {
+    pub fn compile(mut ast: CheckedAst) -> String {
         let mut this = Self {
             buffer: String::new(),
             types: ast.types,
             scopes: ast.scopes,
+            current_block: None,
+            block_number: 0,
         };
         this.emit("#include <ctl/runtime.hpp>\n\n");
         this.emit(format!("using namespace {RT_NAMESPACE}::literals;\n\n"));
-        this.compile_stmt(&ast.stmt);
+        this.compile_stmt(&mut ast.stmt);
         this.buffer
     }
 
-    pub fn compile_stmt(&mut self, stmt: &CheckedStmt) {
+    pub fn compile_stmt(&mut self, stmt: &mut CheckedStmt) {
         match stmt {
             CheckedStmt::Expr(expr) => {
+                self.hoist_blocks(expr);
                 self.compile_expr(expr);
                 self.emit(";");
             }
@@ -44,26 +54,28 @@ impl Compiler {
                 mutable,
                 value,
             } => {
-                if !mutable {
-                    self.emit("const ");
-                }
-
-                self.emit_type(*ty);
                 if let Some(value) = value {
+                    self.hoist_blocks(value);
+                    if !*mutable {
+                        self.emit("const ");
+                    }
+
+                    self.emit_type(*ty);
                     self.emit(format!(" {name} = "));
                     self.compile_expr(value);
                 } else {
+                    if !*mutable {
+                        self.emit("const ");
+                    }
+
+                    self.emit_type(*ty);
                     self.emit(format!(" {name}"));
                 }
                 self.emit(";");
             }
             CheckedStmt::Fn(f) => {
                 self.emit_fn_decl(&f.header);
-                self.emit("{");
-                for stmt in f.body.body.iter() {
-                    self.compile_stmt(stmt);
-                }
-                self.emit("}");
+                self.emit_block(&mut f.body);
             }
             CheckedStmt::UserType(_) => todo!(),
             CheckedStmt::Static {
@@ -75,6 +87,8 @@ impl Compiler {
                 self.emit("static const ");
                 self.emit_type(*ty);
                 self.emit(format!(" {name} = "));
+                // FIXME: blocks in statics...
+                self.hoist_blocks(value);
                 self.compile_expr(value);
                 self.emit(";");
             }
@@ -83,11 +97,8 @@ impl Compiler {
                 name,
                 body,
             } => {
-                self.emit(format!("namespace {name} {{"));
-                for stmt in body.body.iter() {
-                    self.compile_stmt(stmt);
-                }
-                self.emit("}");
+                self.emit(format!("namespace {name} "));
+                self.emit_block(body);
             }
             CheckedStmt::Error => {
                 panic!("ICE: CheckedStmt::Error in compile_stmt");
@@ -104,49 +115,47 @@ impl Compiler {
                 self.compile_expr(right);
                 self.emit(")");
             }
-            ExprData::Unary { op, expr } => {
-                match op {
-                    UnaryOp::Plus => {
-                        self.emit("+");
-                        self.compile_expr(expr);
-                    }
-                    UnaryOp::Neg => {
-                        self.emit("-");
-                        self.compile_expr(expr);
-                    }
-                    UnaryOp::PostIncrement => {
-                        self.compile_expr(expr);
-                        self.emit("++");
-                    }
-                    UnaryOp::PostDecrement => {
-                        self.compile_expr(expr);
-                        self.emit("--");
-                    }
-                    UnaryOp::PreIncrement => {
-                        self.emit("++");
-                        self.compile_expr(expr);
-                    }
-                    UnaryOp::PreDecrement => {
-                        self.emit("--");
-                        self.compile_expr(expr);
-                    }
-                    UnaryOp::Not => {
-                        if self.types[expr.ty].is_numeric() {
-                            self.emit("~");
-                            self.compile_expr(expr);
-                        } else {
-                            self.emit("!");
-                            self.compile_expr(expr);
-                        }
-                    }
-                    UnaryOp::Deref => todo!(),
-                    UnaryOp::Addr => todo!(),
-                    UnaryOp::AddrMut => todo!(),
-                    UnaryOp::IntoError => todo!(),
-                    UnaryOp::Try => todo!(),
-                    UnaryOp::Sizeof => todo!(),
+            ExprData::Unary { op, expr } => match op {
+                UnaryOp::Plus => {
+                    self.emit("+");
+                    self.compile_expr(expr);
                 }
-            }
+                UnaryOp::Neg => {
+                    self.emit("-");
+                    self.compile_expr(expr);
+                }
+                UnaryOp::PostIncrement => {
+                    self.compile_expr(expr);
+                    self.emit("++");
+                }
+                UnaryOp::PostDecrement => {
+                    self.compile_expr(expr);
+                    self.emit("--");
+                }
+                UnaryOp::PreIncrement => {
+                    self.emit("++");
+                    self.compile_expr(expr);
+                }
+                UnaryOp::PreDecrement => {
+                    self.emit("--");
+                    self.compile_expr(expr);
+                }
+                UnaryOp::Not => {
+                    if self.types[expr.ty].is_numeric() {
+                        self.emit("~");
+                        self.compile_expr(expr);
+                    } else {
+                        self.emit("!");
+                        self.compile_expr(expr);
+                    }
+                }
+                UnaryOp::Deref => todo!(),
+                UnaryOp::Addr => todo!(),
+                UnaryOp::AddrMut => todo!(),
+                UnaryOp::IntoError => todo!(),
+                UnaryOp::Try => todo!(),
+                UnaryOp::Sizeof => todo!(),
+            },
             ExprData::Call { callee, args } => {
                 self.compile_expr(callee);
                 self.emit("(");
@@ -178,7 +187,7 @@ impl Compiler {
                     "ICE: ExprData::Signed with non-int type {:?}",
                     self.types[expr.ty]
                 ),
-            }
+            },
             ExprData::Unsigned(value) => match &self.types[expr.ty] {
                 Type::Uint(base) => {
                     self.emit(format!("{value}_u{base}"));
@@ -187,7 +196,7 @@ impl Compiler {
                     "ICE: ExprData::Unsigned with non-uint type {:?}",
                     self.types[expr.ty]
                 ),
-            }
+            },
             ExprData::Float(value) => {
                 // TODO: probably should check the range or something
                 match &self.types[expr.ty] {
@@ -211,7 +220,7 @@ impl Compiler {
                 binary,
                 value,
             } => todo!(),
-            ExprData::Block(_) => todo!(),
+            ExprData::Block(body) => panic!("ICE: ExprData::Block in compile_expr"),
             ExprData::If {
                 cond,
                 if_branch,
@@ -231,7 +240,18 @@ impl Compiler {
                 self.emit("return ");
                 self.compile_expr(expr);
             }
-            ExprData::Yield(_) => todo!(),
+            ExprData::Yield(expr) => {
+                let Some(block) = &self.current_block else {
+                    panic!("ICE: compiling yield, but there is no hoisted block");
+                };
+
+                let assign = format!("{} = ", block.variable);
+                let goto = format!("; goto {}", block.label);
+
+                self.emit(assign);
+                self.compile_expr(expr);
+                self.emit(goto);
+            }
             ExprData::Break(_) => todo!(),
             ExprData::Range {
                 start,
@@ -242,6 +262,118 @@ impl Compiler {
             ExprData::Error => {
                 panic!("ICE: ExprData::Error in compile_expr");
             }
+        }
+    }
+
+    pub fn hoist_blocks(&mut self, expr: &mut CheckedExpr) {
+        match &mut expr.data {
+            ExprData::Binary { op: _, left, right } => {
+                self.hoist_blocks(left);
+                self.hoist_blocks(right);
+            }
+            ExprData::Unary { op: _, expr } => {
+                self.hoist_blocks(expr);
+            }
+            ExprData::Call { callee, args } | ExprData::Subscript { callee, args } => {
+                self.hoist_blocks(&mut *callee);
+                for arg in args.iter_mut() {
+                    self.hoist_blocks(arg);
+                }
+            }
+            ExprData::Array(args) => {
+                for arg in args.iter_mut() {
+                    self.hoist_blocks(arg);
+                }
+            }
+            ExprData::ArrayWithInit { init, count } => {
+                self.hoist_blocks(init);
+                self.hoist_blocks(count);
+            }
+            ExprData::Tuple(args) => {
+                for arg in args.iter_mut() {
+                    self.hoist_blocks(arg);
+                }
+            }
+            ExprData::Map(args) => {
+                for (key, value) in args.iter_mut() {
+                    self.hoist_blocks(key);
+                    self.hoist_blocks(value);
+                }
+            }
+            ExprData::Instance { name: _, members } => {
+                for (_, value) in members.iter_mut() {
+                    self.hoist_blocks(value);
+                }
+            }
+            ExprData::Assign {
+                target,
+                binary: _,
+                value,
+            } => {
+                self.hoist_blocks(target);
+                self.hoist_blocks(value);
+            }
+            ExprData::If { cond, .. } => {
+                self.hoist_blocks(cond);
+            }
+            ExprData::Loop { .. } => {
+                /*
+                    in a situation like:
+
+                loop { if a { return; } else { true } }
+                {
+
+                }
+
+                    if we hoist the block here, the condition wont be executed every iteration
+                 */
+
+                todo!()
+            }
+            ExprData::For {
+                var: _,
+                iter,
+                body: _,
+            } => {
+                self.hoist_blocks(iter);
+            }
+            ExprData::Member { source, member: _ } => {
+                self.hoist_blocks(source);
+            }
+            ExprData::Return(expr) | ExprData::Yield(expr) | ExprData::Break(expr) => {
+                self.hoist_blocks(expr)
+            }
+            ExprData::Range {
+                start,
+                end,
+                inclusive: _,
+            } => {
+                if let Some(start) = start {
+                    self.hoist_blocks(start);
+                }
+
+                if let Some(end) = end {
+                    self.hoist_blocks(end);
+                }
+            }
+            ExprData::Block(block) => {
+                let variable = format!("$ctl_block{}", self.block_number);
+                let label = format!("$ctl_label{}", self.block_number);
+                let old_block = self.current_block.replace(BlockInfo {
+                    variable: variable.clone(),
+                    label: label.clone(),
+                });
+                self.block_number += 1;
+
+                self.emit_type(expr.ty);
+                self.emit(format!(" {variable};"));
+                self.emit_block(block);
+                self.emit(format!("{label}:\n"));
+                self.current_block = old_block;
+
+                expr.data = ExprData::Symbol(variable);
+            }
+            _ => {}
         }
     }
 
@@ -265,7 +397,7 @@ impl Compiler {
             Type::Union { tag, base } => todo!(),
             Type::Enum {} => todo!(),
             Type::Interface {} => todo!(),
-            Type::Function {..} => todo!(),
+            Type::Function { .. } => todo!(),
         }
     }
 
@@ -296,5 +428,13 @@ impl Compiler {
             self.emit(format!(" {}", param.name));
         }
         self.emit(")");
+    }
+
+    pub fn emit_block(&mut self, block: &mut Block) {
+        self.emit("{");
+        for stmt in block.body.iter_mut() {
+            self.compile_stmt(stmt);
+        }
+        self.emit("}");
     }
 }
