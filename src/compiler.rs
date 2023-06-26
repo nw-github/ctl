@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        expr::Expr,
+        expr::{Expr, UnaryOp},
         stmt::{FnDecl, Param, Stmt},
     },
     checked_ast::{
@@ -100,11 +100,53 @@ impl Compiler {
             ExprData::Binary { op, left, right } => {
                 self.emit("(");
                 self.compile_expr(left);
-                self.emit(format!(" {} ", op.token()));
+                self.emit(format!(" {op} "));
                 self.compile_expr(right);
                 self.emit(")");
             }
-            ExprData::Unary { op, expr } => todo!(),
+            ExprData::Unary { op, expr } => {
+                match op {
+                    UnaryOp::Plus => {
+                        self.emit("+");
+                        self.compile_expr(expr);
+                    }
+                    UnaryOp::Neg => {
+                        self.emit("-");
+                        self.compile_expr(expr);
+                    }
+                    UnaryOp::PostIncrement => {
+                        self.compile_expr(expr);
+                        self.emit("++");
+                    }
+                    UnaryOp::PostDecrement => {
+                        self.compile_expr(expr);
+                        self.emit("--");
+                    }
+                    UnaryOp::PreIncrement => {
+                        self.emit("++");
+                        self.compile_expr(expr);
+                    }
+                    UnaryOp::PreDecrement => {
+                        self.emit("--");
+                        self.compile_expr(expr);
+                    }
+                    UnaryOp::Not => {
+                        if self.types[expr.ty].is_numeric() {
+                            self.emit("~");
+                            self.compile_expr(expr);
+                        } else {
+                            self.emit("!");
+                            self.compile_expr(expr);
+                        }
+                    }
+                    UnaryOp::Deref => todo!(),
+                    UnaryOp::Addr => todo!(),
+                    UnaryOp::AddrMut => todo!(),
+                    UnaryOp::IntoError => todo!(),
+                    UnaryOp::Try => todo!(),
+                    UnaryOp::Sizeof => todo!(),
+                }
+            }
             ExprData::Call { callee, args } => todo!(),
             ExprData::Array(_) => todo!(),
             ExprData::ArrayWithInit { init, count } => todo!(),
@@ -112,9 +154,9 @@ impl Compiler {
             ExprData::Map(_) => todo!(),
             ExprData::Bool(value) => {
                 if *value {
-                    self.emit(format!("{RT_NAMESPACE}::CTL_TRUE"));
+                    self.emit(format!("{RT_NAMESPACE}::boolean::TRUE"));
                 } else {
-                    self.emit(format!("{RT_NAMESPACE}::CTL_FALSE"));
+                    self.emit(format!("{RT_NAMESPACE}::boolean::FALSE"));
                 }
             }
             ExprData::Signed(value) => match &self.types[expr.ty] {

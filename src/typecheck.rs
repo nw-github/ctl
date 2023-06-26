@@ -47,6 +47,42 @@ pub enum Type {
     Function {},
 }
 
+impl Type {
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, Type::Int(_) | Type::Uint(_) | Type::F32 | Type::F64)
+    }
+
+    pub fn supports_binop(&self, op: BinaryOp) -> bool {
+        match op {
+            BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::Rem
+            | BinaryOp::Gt
+            | BinaryOp::GtEqual
+            | BinaryOp::Lt
+            | BinaryOp::LtEqual => {
+                matches!(self, Type::Int(_) | Type::Uint(_) | Type::F32 | Type::F64)
+            }
+            BinaryOp::And | BinaryOp::Xor | BinaryOp::Or | BinaryOp::Shl | BinaryOp::Shr => {
+                matches!(self, Type::Int(_) | Type::Uint(_))
+            }
+            BinaryOp::Equal | BinaryOp::NotEqual => {
+                matches!(
+                    self,
+                    Type::Int(_) | Type::Uint(_) | Type::F32 | Type::F64 | Type::Bool
+                )
+            }
+            BinaryOp::LogicalOr | BinaryOp::LogicalAnd => {
+                matches!(self, Type::Bool)
+            }
+            BinaryOp::NoneCoalesce => todo!(),
+            BinaryOp::ErrCoalesce => todo!(),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Scope {
     parent: Option<ScopeId>,
@@ -135,9 +171,7 @@ impl TypeChecker {
                 name,
                 body: self.create_block(body),
             },
-            Stmt::UserType(ty) => {
-                todo!()
-            }
+            Stmt::UserType(_) => todo!(),
             Stmt::Expr(expr) => CheckedStmt::Expr(self.check_expr(expr, None)),
             Stmt::Let {
                 name,
@@ -153,8 +187,8 @@ impl TypeChecker {
                             return self.error_stmt(Error::new(
                                 format!(
                                     "type mismatch: expected type {}, got {}",
-                                    self.type_name(&ty),
-                                    self.type_name(&value.ty)
+                                    self.type_name(ty),
+                                    self.type_name(value.ty)
                                 ),
                                 stmt.span,
                             ));
@@ -241,8 +275,8 @@ impl TypeChecker {
                         return self.error_stmt(Error::new(
                             format!(
                                 "type mismatch: expected type {}, got {}",
-                                self.type_name(&ty),
-                                self.type_name(&value.ty)
+                                self.type_name(ty),
+                                self.type_name(value.ty)
                             ),
                             stmt.span,
                         ));
@@ -268,61 +302,103 @@ impl TypeChecker {
     }
 
     fn check_expr(&mut self, expr: Located<Expr>, target: Option<TypeId>) -> CheckedExpr {
+        let span = expr.span;
         match expr.data {
-            Expr::Binary { op, left, right } => match op {
-                BinaryOp::NoneCoalesce => todo!(),
-                BinaryOp::ErrCoalesce => todo!(),
-                _ => {
-                    let left = self.check_expr(*left, target);
-                    let right = self.check_expr(*right, Some(left.ty));
+            Expr::Binary { op, left, right } => {
+                let left = self.check_expr(*left, target);
+                let right = self.check_expr(*right, Some(left.ty));
 
-                    if !matches!(
-                        self.types[right.ty],
-                        Type::F64
-                            | Type::F32
-                            | Type::Int(_)
-                            | Type::Uint(_)
-                    ) || left.ty != right.ty
-                    {
-                        self.error_expr(Error::new(
-                            format!(
-                                "operator '{}' is invalid for types {} and {}",
-                                op.token(),
-                                self.type_name(&left.ty),
-                                self.type_name(&right.ty)
-                            ),
-                            expr.span,
-                        ))
-                    } else {
-                        CheckedExpr::new(
-                            left.ty,
-                            ExprData::Binary {
-                                op,
-                                left: left.into(),
-                                right: right.into(),
-                            },
-                        )
-                    }
+                if left.ty != right.ty {
+                    self.error_expr(Error::new(
+                        format!(
+                            "type mismatch: expected type {}, got {}",
+                            self.type_name(left.ty),
+                            self.type_name(right.ty),
+                        ),
+                        span,
+                    ))
+                } else if !self.types[left.ty].supports_binop(op) {
+                    self.error_expr(Error::new(
+                        format!(
+                            "operator '{op}' is invalid for values of type {} and {}",
+                            self.type_name(left.ty),
+                            self.type_name(right.ty)
+                        ),
+                        span,
+                    ))
+                } else {
+                    CheckedExpr::new(
+                        match op {
+                            BinaryOp::NoneCoalesce => todo!(),
+                            BinaryOp::ErrCoalesce => todo!(),
+                            BinaryOp::Gt
+                            | BinaryOp::GtEqual
+                            | BinaryOp::Lt
+                            | BinaryOp::LtEqual
+                            | BinaryOp::Equal
+                            | BinaryOp::NotEqual
+                            | BinaryOp::LogicalOr
+                            | BinaryOp::LogicalAnd => self.find_type_in_scope("bool", 0).unwrap(),
+                            _ => left.ty,
+                        },
+                        ExprData::Binary {
+                            op,
+                            left: left.into(),
+                            right: right.into(),
+                        },
+                    )
                 }
-            },
+            }
             Expr::Unary { op, expr } => {
-                let rhs = self.check_expr(*expr, target);
-                match op {
-                    UnaryOp::Plus => todo!(),
-                    UnaryOp::Neg => todo!(),
-                    UnaryOp::PostIncrement => todo!(),
-                    UnaryOp::PostDecrement => todo!(),
-                    UnaryOp::PreIncrement => todo!(),
-                    UnaryOp::PreDecrement => todo!(),
-                    UnaryOp::Not => todo!(),
-                    UnaryOp::Deref => todo!(),
-                    UnaryOp::Addr => todo!(),
-                    UnaryOp::AddrMut => todo!(),
-                    UnaryOp::IntoError => todo!(),
-                    UnaryOp::Try => todo!(),
-                    UnaryOp::Sizeof => todo!(),
-                }
+                use UnaryOp::*;
 
+                let rhs = self.check_expr(*expr, target);
+                let matches = match &self.types[rhs.ty] {
+                    Type::Int(_) => matches!(
+                        op,
+                        Plus | Neg
+                            | Not
+                            | PostIncrement
+                            | PostDecrement
+                            | PreIncrement
+                            | PreDecrement
+                    ),
+                    Type::Uint(_) => matches!(
+                        op,
+                        Plus | PostIncrement | PostDecrement | PreIncrement | PreDecrement | Not
+                    ),
+                    Type::F32 | Type::F64 => matches!(op, Plus | Neg),
+                    Type::Bool => matches!(op, Not),
+                    _ => false,
+                };
+
+                if matches!(rhs.data, ExprData::Unsigned(_) | ExprData::Signed(_))
+                    && matches!(
+                        op,
+                        PostIncrement | PostDecrement | PreIncrement | PreDecrement
+                    )
+                {
+                    self.error_expr(Error::new(
+                        format!("operator '{op}' cannot be used on literals"),
+                        span,
+                    ))
+                } else if matches {
+                    CheckedExpr::new(
+                        rhs.ty,
+                        ExprData::Unary {
+                            op,
+                            expr: rhs.into(),
+                        },
+                    )
+                } else {
+                    self.error_expr(Error::new(
+                        format!(
+                            "operator '{op}' is invalid for value of type {}",
+                            self.type_name(rhs.ty)
+                        ),
+                        span,
+                    ))
+                }
             }
             Expr::Call { callee, args } => todo!(),
             Expr::Array(_) => todo!(),
@@ -551,8 +627,8 @@ impl TypeChecker {
         CheckedExpr::new(0, ExprData::Error)
     }
 
-    fn type_name(&self, ty: &TypeId) -> String {
-        match &self.types[*ty] {
+    fn type_name(&self, ty: TypeId) -> String {
+        match &self.types[ty] {
             Type::Void => "void".into(),
             Type::Never => todo!(),
             Type::Int(bits) => format!("i{bits}"),

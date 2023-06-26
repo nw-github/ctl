@@ -4,57 +4,52 @@ pub type Expr = Located<expr::Expr>;
 pub type Stmt = Located<stmt::Stmt>;
 
 pub mod expr {
+    use derive_more::Display;
+
     use crate::lexer::Token;
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
     pub enum BinaryOp {
+        #[display(fmt = "+")]
         Add,
+        #[display(fmt = "-")] 
         Sub,
+        #[display(fmt = "*")] 
         Mul,
+        #[display(fmt = "/")] 
         Div,
+        #[display(fmt = "%")] 
         Rem,
+        #[display(fmt = "&")] 
         And,
+        #[display(fmt = "^")] 
         Xor,
+        #[display(fmt = "|")] 
         Or,
+        #[display(fmt = "<<")] 
         Shl,
+        #[display(fmt = ">>")] 
         Shr,
+        #[display(fmt = "??")] 
         NoneCoalesce,
+        #[display(fmt = "!!")] 
         ErrCoalesce,
+        #[display(fmt = ">")] 
         Gt,
+        #[display(fmt = ">=")] 
         GtEqual,
+        #[display(fmt = "<")] 
         Lt,
+        #[display(fmt = "<=")] 
         LtEqual,
+        #[display(fmt = "==")] 
         Equal,
+        #[display(fmt = "!=")] 
         NotEqual,
+        #[display(fmt = "||")] 
         LogicalOr,
+        #[display(fmt = "&&")] 
         LogicalAnd,
-    }
-
-    impl BinaryOp {
-        pub fn token(&self) -> &'static str {
-            match self {
-                BinaryOp::Add => "+",
-                BinaryOp::Sub => "-",
-                BinaryOp::Mul => "*",
-                BinaryOp::Div => "/",
-                BinaryOp::Rem => "%",
-                BinaryOp::And => "&",
-                BinaryOp::Xor => "^",
-                BinaryOp::Or => "|",
-                BinaryOp::Shl => "<<",
-                BinaryOp::Shr => ">>",
-                BinaryOp::NoneCoalesce => "??",
-                BinaryOp::ErrCoalesce => "!!",
-                BinaryOp::Gt => ">",
-                BinaryOp::GtEqual => ">=",
-                BinaryOp::Lt => "<",
-                BinaryOp::LtEqual => "<=",
-                BinaryOp::Equal => "==",
-                BinaryOp::NotEqual => "!=",
-                BinaryOp::LogicalOr => "||",
-                BinaryOp::LogicalAnd => "&&",
-            }
-        }
     }
 
     impl TryFrom<Token<'_>> for BinaryOp {
@@ -87,20 +82,33 @@ pub mod expr {
         }
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
     pub enum UnaryOp {
+        #[display(fmt = "+")]
         Plus,
+        #[display(fmt = "-")]
         Neg,
+        #[display(fmt = "++")]
         PostIncrement,
+        #[display(fmt = "--")]
         PostDecrement,
+        #[display(fmt = "++")]
         PreIncrement,
+        #[display(fmt = "--")]
         PreDecrement,
+        #[display(fmt = "!")]
         Not,
+        #[display(fmt = "*")]
         Deref,
+        #[display(fmt = "&")]
         Addr,
+        #[display(fmt = "&mut")]
         AddrMut,
+        #[display(fmt = "!")]
         IntoError,
+        #[display(fmt = "?")]
         Try,
+        #[display(fmt = "sizeof")]
         Sizeof,
     }
 
