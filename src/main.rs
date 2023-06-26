@@ -1,7 +1,12 @@
-use std::{fs::File, io::Write, path::PathBuf};
-
+use anyhow::anyhow;
 use clap::Parser;
 use ctl::Pipeline;
+use std::{
+    fs::File,
+    io::{Read, Write},
+    path::PathBuf,
+    process::{Command, Stdio},
+};
 
 #[derive(Parser)]
 struct Arguments {
@@ -9,6 +14,8 @@ struct Arguments {
     output: Option<PathBuf>,
     #[clap(action, short, long)]
     dump_ast: bool,
+    #[clap(action, short, long)]
+    format: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -26,7 +33,23 @@ fn main() -> anyhow::Result<()> {
         .codegen();
 
     match result {
-        Ok(result) => {
+        Ok(mut result) => {
+            if args.format {
+                let command = Command::new("clang-format")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .spawn()?;
+                command
+                    .stdin
+                    .ok_or(anyhow!("clang-format closed stdin"))?
+                    .write_all(result.as_bytes())?;
+                result.clear();
+                command
+                    .stdout
+                    .ok_or(anyhow!("clang-format closed stdout"))?
+                    .read_to_string(&mut result)?;
+            }
+
             if let Some(output) = args.output {
                 let mut output = File::create(output)?;
                 output.write_all(result.as_bytes())?;
