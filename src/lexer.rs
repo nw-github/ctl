@@ -124,7 +124,6 @@ pub enum Error {
     UnterminatedComment,
     UnrecognizedChar,
     InvalidEscape,
-    LeadingZero,
 }
 
 impl Error {
@@ -134,7 +133,6 @@ impl Error {
             Error::UnterminatedComment => "unterminated block comment",
             Error::UnrecognizedChar => "unexpected character",
             Error::InvalidEscape => "invalid UTF-8 escape sequence",
-            Error::LeadingZero => "invalid integer literal (leading zero without x, o, or b)",
         }
     }
 }
@@ -179,22 +177,6 @@ impl Span {
 pub struct Located<T> {
     pub data: T,
     pub span: Span,
-}
-
-impl<T> Located<T> {
-    pub fn replace<U>(&self, u: U) -> Located<U> {
-        Located {
-            data: u,
-            span: self.span,
-        }
-    }
-
-    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Located<U> {
-        Located {
-            data: f(self.data),
-            span: self.span,
-        }
-    }
 }
 
 pub struct Lexer<'a> {

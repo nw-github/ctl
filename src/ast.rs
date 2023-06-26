@@ -30,6 +30,33 @@ pub mod expr {
         LogicalAnd,
     }
 
+    impl BinaryOp {
+        pub fn token(&self) -> &'static str {
+            match self {
+                BinaryOp::Add => "+",
+                BinaryOp::Sub => "-",
+                BinaryOp::Mul => "*",
+                BinaryOp::Div => "/",
+                BinaryOp::Rem => "%",
+                BinaryOp::And => "&",
+                BinaryOp::Xor => "^",
+                BinaryOp::Or => "|",
+                BinaryOp::Shl => "<<",
+                BinaryOp::Shr => ">>",
+                BinaryOp::NoneCoalesce => "??",
+                BinaryOp::ErrCoalesce => "!!",
+                BinaryOp::Gt => ">",
+                BinaryOp::GtEqual => ">=",
+                BinaryOp::Lt => "<",
+                BinaryOp::LtEqual => "<=",
+                BinaryOp::Equal => "==",
+                BinaryOp::NotEqual => "!=",
+                BinaryOp::LogicalOr => "||",
+                BinaryOp::LogicalAnd => "&&",
+            }
+        }
+    }
+
     impl TryFrom<Token<'_>> for BinaryOp {
         type Error = ();
 

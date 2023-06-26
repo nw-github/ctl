@@ -3,16 +3,19 @@ use self::stmt::CheckedStmt;
 pub type TypeId = usize;
 pub type ScopeId = usize;
 
+#[derive(Debug)]
 pub struct Member {
     pub public: bool,
     pub name: String,
     pub ty: TypeId,
 }
 
+#[derive(Debug)]
 pub struct ResolvedStruct {
     pub members: Vec<Member>,
 }
 
+#[derive(Debug)]
 pub enum ResolvedType {
     Void,
     Never,
@@ -20,6 +23,7 @@ pub enum ResolvedType {
     Uint(u8),
     F32,
     F64,
+    Bool,
     IntGeneric,
     FloatGeneric,
     Struct(ResolvedStruct),
@@ -40,7 +44,7 @@ pub struct Block {
 pub mod expr {
     use crate::ast::expr::{BinaryOp, UnaryOp};
 
-    use super::{stmt::CheckedStmt, TypeId, Block};
+    use super::{stmt::CheckedStmt, Block, TypeId};
 
     pub enum ExprData {
         Binary {
@@ -64,7 +68,8 @@ pub mod expr {
         Tuple(Vec<CheckedExpr>),
         Map(Vec<(CheckedExpr, CheckedExpr)>),
         Bool(bool),
-        Integer(u8, String),
+        Signed(i128),
+        Unsigned(u128),
         Float(String),
         String(String),
         Symbol(String),
@@ -111,8 +116,10 @@ pub mod expr {
             inclusive: bool,
         },
         Continue,
+        Error,
     }
 
+    #[derive(derive_more::Constructor)]
     pub struct CheckedExpr {
         pub ty: TypeId,
         pub data: ExprData,
@@ -120,7 +127,7 @@ pub mod expr {
 }
 
 pub mod stmt {
-    use super::{expr::CheckedExpr, TypeId, ScopeId, Block};
+    use super::{expr::CheckedExpr, Block, TypeId};
 
     pub struct CheckedParam {
         pub mutable: bool,
@@ -179,7 +186,7 @@ pub mod stmt {
             impls: Vec<String>,
             variants: Vec<(String, Option<CheckedExpr>)>,
             functions: Vec<CheckedFn>,
-        }
+        },
     }
 
     pub enum CheckedStmt {

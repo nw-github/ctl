@@ -1,16 +1,17 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, vec};
 
 use crate::{
     ast::{
-        expr::Expr,
+        expr::{BinaryOp, Expr},
         stmt::{Fn, FnDecl, Stmt, Struct, Type, UserType},
     },
     checked_ast::{
-        expr::CheckedExpr,
+        expr::{CheckedExpr, ExprData},
         stmt::{CheckedFn, CheckedFnDecl, CheckedParam, CheckedStmt},
         Block, ResolvedStruct, ResolvedType, ScopeId, TypeId,
     },
     lexer::Located,
+    Error,
 };
 
 #[derive(Default)]
@@ -29,6 +30,7 @@ pub struct CheckedAst {
 pub struct TypeChecker {
     types: Vec<ResolvedType>,
     scopes: Vec<Scope>,
+    errors: Vec<Error>,
     current: ScopeId,
 }
 
@@ -43,7 +45,19 @@ impl TypeChecker {
         };
 
         this.insert_type("void".into(), ResolvedType::Void);
-        this.insert_type("i32".into(), ResolvedType::Int(32));
+        this.insert_type("{integer}".into(), ResolvedType::IntGeneric);
+        this.insert_type("{float}".into(), ResolvedType::FloatGeneric);
+        this.insert_type("f32".into(), ResolvedType::F32);
+        this.insert_type("f64".into(), ResolvedType::F64);
+        this.insert_type("bool".into(), ResolvedType::Bool);
+        for i in 1..=128 {
+            if i > 1 {
+                this.insert_type(format!("i{i}"), ResolvedType::Int(i));
+            }
+
+            this.insert_type(format!("u{i}"), ResolvedType::Uint(i));
+        }
+
         let stmt = this.check_stmt(stmt);
         (
             CheckedAst {
@@ -91,7 +105,7 @@ impl TypeChecker {
             Stmt::UserType(ty) => {
                 todo!()
             }
-            Stmt::Expr(expr) => CheckedStmt::Expr(self.check_expr(expr)),
+            Stmt::Expr(expr) => CheckedStmt::Expr(self.check_expr(expr, None)),
             Stmt::Let {
                 name,
                 ty,
@@ -101,9 +115,16 @@ impl TypeChecker {
                 if let Some(ty) = ty {
                     let ty = self.resolve_type(&ty);
                     if let Some(value) = value {
-                        let value = self.check_expr(value);
+                        let value = self.check_expr(value, Some(ty));
                         if value.ty != ty {
-                            todo!("type mismatch");
+                            return self.error_stmt(Error::new(
+                                format!(
+                                    "type mismatch: expected type {}, got {}",
+                                    self.type_name(&ty),
+                                    self.type_name(&value.ty)
+                                ),
+                                stmt.span,
+                            ));
                         }
 
                         CheckedStmt::Let {
@@ -121,7 +142,7 @@ impl TypeChecker {
                         }
                     }
                 } else if let Some(value) = value {
-                    let value = self.check_expr(value);
+                    let value = self.check_expr(value, None);
                     CheckedStmt::Let {
                         name,
                         ty: value.ty,
@@ -129,7 +150,7 @@ impl TypeChecker {
                         value: Some(value),
                     }
                 } else {
-                    todo!("cannot infer type");
+                    return self.error_stmt(Error::new("cannot infer type", stmt.span));
                 }
             }
             Stmt::Fn(Fn {
@@ -165,7 +186,9 @@ impl TypeChecker {
                 CheckedStmt::Fn(CheckedFn {
                     body: self.create_block_with(body, |this| {
                         for param in header.params.iter() {
-                            this.scopes[this.current].vars.insert(param.name.clone(), param.ty);
+                            this.scopes[this.current]
+                                .vars
+                                .insert(param.name.clone(), param.ty);
                         }
                     }),
                     header,
@@ -176,22 +199,162 @@ impl TypeChecker {
                 name,
                 ty,
                 value,
-            } => todo!(),
+            } => {
+                if let Some(ty) = ty {
+                    let ty = self.resolve_type(&ty);
+                    let value = self.check_expr(value, Some(ty));
+
+                    if value.ty != ty {
+                        return self.error_stmt(Error::new(
+                            format!(
+                                "type mismatch: expected type {}, got {}",
+                                self.type_name(&ty),
+                                self.type_name(&value.ty)
+                            ),
+                            stmt.span,
+                        ));
+                    }
+
+                    CheckedStmt::Static {
+                        public,
+                        name,
+                        ty,
+                        value,
+                    }
+                } else {
+                    let value = self.check_expr(value, None);
+                    CheckedStmt::Static {
+                        public,
+                        name,
+                        ty: value.ty,
+                        value,
+                    }
+                }
+            }
         }
     }
 
-    fn check_expr(&mut self, expr: Located<Expr>) -> CheckedExpr {
+    fn check_expr(&mut self, expr: Located<Expr>, target: Option<TypeId>) -> CheckedExpr {
         match expr.data {
-            Expr::Binary { op, left, right } => todo!(),
+            Expr::Binary { op, left, right } => match op {
+                BinaryOp::NoneCoalesce => todo!(),
+                BinaryOp::ErrCoalesce => todo!(),
+                _ => {
+                    let left = self.check_expr(*left, target);
+                    let right = self.check_expr(*right, Some(left.ty));
+
+                    if !matches!(
+                        self.types[right.ty],
+                        ResolvedType::F64
+                            | ResolvedType::F32
+                            | ResolvedType::Int(_)
+                            | ResolvedType::Uint(_)
+                    ) || left.ty != right.ty
+                    {
+                        self.error_expr(Error::new(
+                            format!(
+                                "operator '{}' is invalid for types {} and {}",
+                                op.token(),
+                                self.type_name(&left.ty),
+                                self.type_name(&right.ty)
+                            ),
+                            expr.span,
+                        ))
+                    } else {
+                        CheckedExpr::new(
+                            left.ty,
+                            ExprData::Binary {
+                                op,
+                                left: left.into(),
+                                right: right.into(),
+                            },
+                        )
+                    }
+                }
+            },
             Expr::Unary { op, expr } => todo!(),
             Expr::Call { callee, args } => todo!(),
             Expr::Array(_) => todo!(),
             Expr::ArrayWithInit { init, count } => todo!(),
             Expr::Tuple(_) => todo!(),
             Expr::Map(_) => todo!(),
-            Expr::Bool(_) => todo!(),
-            Expr::Integer(_, _) => todo!(),
-            Expr::Float(_) => todo!(),
+            Expr::Bool(value) => CheckedExpr {
+                ty: self.find_type_in_scope("bool", 0).unwrap(),
+                data: ExprData::Bool(value),
+            },
+            Expr::Integer(base, value) => {
+                let mut ty = self.find_type_in_scope("{integer}", 0).unwrap();
+                if let Some(target) = target {
+                    if self.coerces_to(ty, target) {
+                        ty = target;
+                    }
+                } else {
+                    // TODO: attempt to promote the literal if its too large for i32
+                    ty = self.find_type_in_scope("i32", 0).unwrap();
+                }
+
+                match &self.types[ty] {
+                    ResolvedType::Int(bits) => {
+                        let result = match i128::from_str_radix(&value, *bits as u32) {
+                            Ok(result) => result,
+                            Err(_) => {
+                                return self.error_expr(Error::new(
+                                    "Integer literal is too large for any type.",
+                                    expr.span,
+                                ));
+                            }
+                        };
+
+                        if result >= 1 << (bits - 1) {
+                            return self.error_expr(Error::new(
+                                "Integer literal is larger than its type allows",
+                                expr.span,
+                            ));
+                        }
+                        if result <= -(1 << (bits - 1)) {
+                            return self.error_expr(Error::new(
+                                "Integer literal is smaller than its type allows",
+                                expr.span,
+                            ));
+                        }
+
+                        CheckedExpr::new(ty, ExprData::Signed(result))
+                    }
+                    ResolvedType::Uint(bits) => {
+                        let result = match u128::from_str_radix(&value, *bits as u32) {
+                            Ok(result) => result,
+                            Err(_) => {
+                                return self.error_expr(Error::new(
+                                    "Integer literal is too large for any type.",
+                                    expr.span,
+                                ));
+                            }
+                        };
+
+                        if result >= 1 << bits {
+                            return self.error_expr(Error::new(
+                                "Integer literal is larger than its type allows",
+                                expr.span,
+                            ));
+                        }
+
+                        CheckedExpr::new(ty, ExprData::Unsigned(result))
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            Expr::Float(value) => {
+                let mut ty = self.find_type_in_scope("{float}", 0).unwrap();
+                if let Some(target) = target {
+                    if self.coerces_to(ty, target) {
+                        ty = target;
+                    }
+                } else {
+                    ty = self.find_type_in_scope("f64", 0).unwrap();
+                }
+
+                CheckedExpr::new(ty, ExprData::Float(value))
+            }
             Expr::String(_) => todo!(),
             Expr::Symbol(_) => todo!(),
             Expr::Instance { name, members } => todo!(),
@@ -225,6 +388,22 @@ impl TypeChecker {
             } => todo!(),
             Expr::Continue => todo!(),
         }
+    }
+
+    fn coerces_to(&self, ty: TypeId, target: TypeId) -> bool {
+        if ty == self.find_type_in_scope("{integer}", 0).unwrap() {
+            match self.types[target] {
+                ResolvedType::Int(_) | ResolvedType::Uint(_) => return true,
+                _ => {}
+            }
+        } else if ty == self.find_type_in_scope("{float}", 0).unwrap() {
+            match self.types[target] {
+                ResolvedType::F32 | ResolvedType::F64 => return true,
+                _ => {}
+            }
+        }
+
+        false
     }
 
     fn resolve_usertype(&mut self, ty: &UserType) -> TypeId {
@@ -310,6 +489,35 @@ impl TypeChecker {
     }
 
     //
+
+    fn error_stmt(&mut self, error: Error) -> CheckedStmt {
+        self.errors.push(error);
+        CheckedStmt::Error
+    }
+
+    fn error_expr(&mut self, error: Error) -> CheckedExpr {
+        self.errors.push(error);
+        CheckedExpr::new(0, ExprData::Error)
+    }
+
+    fn type_name(&self, ty: &TypeId) -> String {
+        match &self.types[*ty] {
+            ResolvedType::Void => "void".into(),
+            ResolvedType::Never => todo!(),
+            ResolvedType::Int(bits) => format!("i{bits}"),
+            ResolvedType::Uint(bits) => format!("u{bits}"),
+            ResolvedType::F32 => "f32".into(),
+            ResolvedType::F64 => "f64".into(),
+            ResolvedType::Bool => "bool".into(),
+            ResolvedType::IntGeneric => "{integer}".into(),
+            ResolvedType::FloatGeneric => "{float}".into(),
+            ResolvedType::Struct(_) => todo!(),
+            ResolvedType::Union { tag, base } => todo!(),
+            ResolvedType::Enum {} => todo!(),
+            ResolvedType::Interface {} => todo!(),
+            ResolvedType::Function {} => todo!(),
+        }
+    }
 
     fn find_type(&self, name: &str) -> Option<TypeId> {
         self.scopes
