@@ -225,7 +225,12 @@ impl Compiler {
             ExprData::For { var, iter, body } => todo!(),
             ExprData::Member { source, member } => todo!(),
             ExprData::Subscript { callee, args } => todo!(),
-            ExprData::Return(_) => todo!(),
+            ExprData::Return(expr) => {
+                // TODO: when return is used as anything except a StmtExpr, we will have to change
+                // the generated code to accomodate it
+                self.emit("return ");
+                self.compile_expr(expr);
+            }
             ExprData::Yield(_) => todo!(),
             ExprData::Break(_) => todo!(),
             ExprData::Range {

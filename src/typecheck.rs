@@ -87,10 +87,19 @@ impl Type {
 }
 
 #[derive(Default)]
+pub enum Target {
+    Block(TypeId),
+    Function(TypeId),
+    #[default]
+    None,
+}
+
+#[derive(Default)]
 pub struct Scope {
     parent: Option<ScopeId>,
     vars: HashMap<String, TypeId>,
     types: HashMap<String, TypeId>,
+    target: Target,
 }
 
 pub struct CheckedAst {
@@ -117,6 +126,7 @@ impl TypeChecker {
         };
 
         this.insert_type_in_scope("void".into(), Type::Void);
+        this.insert_type_in_scope("never".into(), Type::Never);
         this.insert_type_in_scope("{integer}".into(), Type::IntGeneric);
         this.insert_type_in_scope("{float}".into(), Type::FloatGeneric);
         this.insert_type_in_scope("f32".into(), Type::F32);
@@ -172,7 +182,7 @@ impl TypeChecker {
             Stmt::Module { public, name, body } => CheckedStmt::Module {
                 public,
                 name,
-                body: self.create_block(body),
+                body: self.create_block(body, Target::None),
             },
             Stmt::UserType(_) => todo!(),
             Stmt::Expr(expr) => CheckedStmt::Expr(self.check_expr(expr, None)),
@@ -265,7 +275,7 @@ impl TypeChecker {
                     .vars
                     .insert(header.name.clone(), ty);
                 CheckedStmt::Fn(CheckedFn {
-                    body: self.create_block_with(body, |this| {
+                    body: self.create_block_with(body, Target::Function(header.ret), |this| {
                         for param in header.params.iter() {
                             this.scopes[this.current]
                                 .vars
@@ -552,7 +562,28 @@ impl TypeChecker {
             Expr::For { var, iter, body } => todo!(),
             Expr::Member { source, member } => todo!(),
             Expr::Subscript { callee, args } => todo!(),
-            Expr::Return(_) => todo!(),
+            Expr::Return(expr) => {
+                let Some(target) = self.traverse_scopes(self.current, |scope| {
+                    if let Target::Function(id) = scope.target {
+                        Some(id)
+                    } else {
+                        None
+                    }
+                }) else {
+                    // the parser ensures return only happens inside functions
+                    return self.error(Error::new("return outside of function", span));
+                };
+
+                let expr = self.check_expr(*expr, Some(target));
+                if expr.ty != target {
+                    self.type_mismatch(target, expr.ty, span)
+                } else {
+                    CheckedExpr::new(
+                        self.find_type_in_scope("never", 0).unwrap(),
+                        ExprData::Return(expr.into()),
+                    )
+                }
+            }
             Expr::Yield(_) => todo!(),
             Expr::Break(_) => todo!(),
             Expr::Range {
@@ -644,15 +675,15 @@ impl TypeChecker {
         .unwrap()
     }
 
-    fn create_block(&mut self, body: Vec<Located<Stmt>>) -> Block {
-        self.enter_scope(|this| Block {
+    fn create_block(&mut self, body: Vec<Located<Stmt>>, target: Target) -> Block {
+        self.enter_scope(target, |this| Block {
             body: body.into_iter().map(|stmt| this.check_stmt(stmt)).collect(),
             scope: this.current,
         })
     }
 
-    fn create_block_with(&mut self, body: Vec<Located<Stmt>>, f: impl FnOnce(&mut Self)) -> Block {
-        self.enter_scope(|this| {
+    fn create_block_with(&mut self, body: Vec<Located<Stmt>>, target: Target, f: impl FnOnce(&mut Self)) -> Block {
+        self.enter_scope(target, |this| {
             f(this);
 
             Block {
@@ -712,26 +743,27 @@ impl TypeChecker {
         }
     }
 
-    fn find_type_in_scope(&self, name: &str, mut id: ScopeId) -> Option<TypeId> {
+    fn traverse_scopes<T>(
+        &self,
+        mut id: ScopeId,
+        mut f: impl FnMut(&Scope) -> Option<T>,
+    ) -> Option<T> {
         loop {
             let scope = &self.scopes[id];
-            if let Some(ty) = scope.types.get(name) {
-                return Some(*ty);
+            if let Some(item) = f(scope) {
+                return Some(item);
             }
 
             id = scope.parent?;
         }
     }
 
-    fn find_var_in_scope(&self, name: &str, mut id: ScopeId) -> Option<TypeId> {
-        loop {
-            let scope = &self.scopes[id];
-            if let Some(ty) = scope.vars.get(name) {
-                return Some(*ty);
-            }
+    fn find_type_in_scope(&self, name: &str, mut id: ScopeId) -> Option<TypeId> {
+        self.traverse_scopes(id, |scope| scope.types.get(name).copied())
+    }
 
-            id = scope.parent?;
-        }
+    fn find_var_in_scope(&self, name: &str, mut id: ScopeId) -> Option<TypeId> {
+        self.traverse_scopes(id, |scope| scope.vars.get(name).copied())
     }
 
     fn find_type(&self, name: &str) -> Option<TypeId> {
@@ -755,11 +787,12 @@ impl TypeChecker {
         id
     }
 
-    fn enter_scope<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+    fn enter_scope<T>(&mut self, target: Target, f: impl FnOnce(&mut Self) -> T) -> T {
         self.scopes.push(Scope {
             parent: Some(self.current),
             types: Default::default(),
             vars: Default::default(),
+            target
         });
 
         self.current += 1;
