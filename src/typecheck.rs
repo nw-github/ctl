@@ -3,7 +3,7 @@ use std::{collections::HashMap, vec};
 use crate::{
     ast::{
         expr::{BinaryOp, Expr, UnaryOp},
-        stmt::{Fn, FnDecl, MemVar, Stmt, Struct, TypeHint, UserType},
+        stmt::{Fn, FnDecl, Stmt, TypeHint, UserType},
     },
     checked_ast::{
         expr::{CheckedExpr, ExprData},
@@ -16,8 +16,6 @@ use crate::{
     lexer::{Located, Span},
     Error,
 };
-
-pub type TypeId = usize;
 
 #[derive(Debug)]
 pub struct Member {
@@ -32,8 +30,9 @@ pub struct ResolvedStruct {
     pub name: String,
 }
 
-#[derive(Debug)]
-pub enum Type {
+#[derive(Debug, Default, PartialEq, Eq, Clone)]
+pub enum TypeId {
+    #[default]
     Void,
     Never,
     Int(u8),
@@ -43,24 +42,17 @@ pub enum Type {
     Bool,
     IntGeneric,
     FloatGeneric,
-    Ref(TypeId),
-    RefMut(TypeId),
-    Struct(ResolvedStruct),
-    Union {
-        tag: Option<Option<TypeId>>,
-        base: ResolvedStruct,
-    },
-    Enum {},
-    Interface {},
-    Function {
-        params: Vec<(String, TypeId)>,
-        ret: TypeId,
-    },
+    Type(usize),
+    Ref(Box<TypeId>),
+    RefMut(Box<TypeId>),
 }
 
-impl Type {
+impl TypeId {
     pub fn is_numeric(&self) -> bool {
-        matches!(self, Type::Int(_) | Type::Uint(_) | Type::F32 | Type::F64)
+        matches!(
+            self,
+            TypeId::Int(_) | TypeId::Uint(_) | TypeId::F32 | TypeId::F64
+        )
     }
 
     pub fn supports_binop(&self, op: BinaryOp) -> bool {
@@ -74,19 +66,22 @@ impl Type {
             | BinaryOp::GtEqual
             | BinaryOp::Lt
             | BinaryOp::LtEqual => {
-                matches!(self, Type::Int(_) | Type::Uint(_) | Type::F32 | Type::F64)
+                matches!(
+                    self,
+                    TypeId::Int(_) | TypeId::Uint(_) | TypeId::F32 | TypeId::F64
+                )
             }
             BinaryOp::And | BinaryOp::Xor | BinaryOp::Or | BinaryOp::Shl | BinaryOp::Shr => {
-                matches!(self, Type::Int(_) | Type::Uint(_))
+                matches!(self, TypeId::Int(_) | TypeId::Uint(_))
             }
             BinaryOp::Equal | BinaryOp::NotEqual => {
                 matches!(
                     self,
-                    Type::Int(_) | Type::Uint(_) | Type::F32 | Type::F64 | Type::Bool
+                    TypeId::Int(_) | TypeId::Uint(_) | TypeId::F32 | TypeId::F64 | TypeId::Bool
                 )
             }
             BinaryOp::LogicalOr | BinaryOp::LogicalAnd => {
-                matches!(self, Type::Bool)
+                matches!(self, TypeId::Bool)
             }
             BinaryOp::NoneCoalesce => todo!(),
             BinaryOp::ErrCoalesce => todo!(),
@@ -94,7 +89,16 @@ impl Type {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
+pub enum Type {
+    Function {
+        params: Vec<(String, TypeId)>,
+        ret: TypeId,
+    },
+    Struct(ResolvedStruct),
+}
+
+#[derive(Default, Debug, Clone)]
 pub enum Target {
     Block(Option<TypeId>),
     Function(TypeId),
@@ -103,7 +107,7 @@ pub enum Target {
     None,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub struct Variable {
     ty: TypeId,
     mutable: bool,
@@ -139,21 +143,6 @@ impl TypeChecker {
             // we depend on parser wrapping up the generated code in a Stmt::Module
             current: 0,
         };
-
-        this.insert_type_in_scope("void".into(), Type::Void);
-        this.insert_type_in_scope("never".into(), Type::Never);
-        this.insert_type_in_scope("{integer}".into(), Type::IntGeneric);
-        this.insert_type_in_scope("{float}".into(), Type::FloatGeneric);
-        this.insert_type_in_scope("f32".into(), Type::F32);
-        this.insert_type_in_scope("f64".into(), Type::F64);
-        this.insert_type_in_scope("bool".into(), Type::Bool);
-        for i in 1..=128 {
-            if i > 1 {
-                this.insert_type_in_scope(format!("i{i}"), Type::Int(i));
-            }
-
-            this.insert_type_in_scope(format!("u{i}"), Type::Uint(i));
-        }
 
         let stmt = this.check_stmt(stmt);
         (
@@ -220,9 +209,9 @@ impl TypeChecker {
                             let ty = this.resolve_type(&member.ty);
                             let value = if let Some(value) = member.value {
                                 let span = value.span;
-                                let expr = this.check_expr(value, Some(ty));
+                                let expr = this.check_expr(value, Some(&ty));
                                 if ty != expr.ty {
-                                    return this.type_mismatch(ty, expr.ty, span);
+                                    return this.type_mismatch(&ty, &expr.ty, span);
                                 }
 
                                 Some(expr)
@@ -263,27 +252,29 @@ impl TypeChecker {
             } => {
                 if let Some(ty) = ty {
                     let ty = self.resolve_type(&ty);
-                    self.scopes[self.current]
-                        .vars
-                        .insert(name.clone(), Variable { ty, mutable });
+                    self.scopes[self.current].vars.insert(
+                        name.clone(),
+                        Variable {
+                            ty: ty.clone(),
+                            mutable,
+                        },
+                    );
                     if let Some(value) = value {
-                        let value = self.check_expr(value, Some(ty));
+                        let value = self.check_expr(value, Some(&ty));
                         if value.ty != ty {
-                            return self.type_mismatch(ty, value.ty, stmt.span);
+                            return self.type_mismatch(&ty, &value.ty, stmt.span);
                         }
 
                         CheckedStmt::Let {
                             name,
-                            ty,
                             mutable,
-                            value: Some(value),
+                            value: Ok(value),
                         }
                     } else {
                         CheckedStmt::Let {
                             name,
-                            ty,
                             mutable,
-                            value: None,
+                            value: Err(ty),
                         }
                     }
                 } else if let Some(value) = value {
@@ -291,16 +282,15 @@ impl TypeChecker {
                     self.scopes[self.current].vars.insert(
                         name.clone(),
                         Variable {
-                            ty: value.ty,
+                            ty: value.ty.clone(),
                             mutable,
                         },
                     );
 
                     CheckedStmt::Let {
                         name,
-                        ty: value.ty,
                         mutable,
-                        value: Some(value),
+                        value: Ok(value),
                     }
                 } else {
                     return self.error(Error::new("cannot infer type", stmt.span));
@@ -315,19 +305,22 @@ impl TypeChecker {
             } => {
                 if let Some(ty) = ty {
                     let ty = self.resolve_type(&ty);
-                    self.scopes[self.current]
-                        .vars
-                        .insert(name.clone(), Variable { ty, mutable: false });
+                    self.scopes[self.current].vars.insert(
+                        name.clone(),
+                        Variable {
+                            ty: ty.clone(),
+                            mutable: false,
+                        },
+                    );
 
-                    let value = self.check_expr(value, Some(ty));
+                    let value = self.check_expr(value, Some(&ty));
                     if value.ty != ty {
-                        return self.type_mismatch(ty, value.ty, stmt.span);
+                        return self.type_mismatch(&ty, &value.ty, stmt.span);
                     }
 
                     CheckedStmt::Static {
                         public,
                         name,
-                        ty,
                         value,
                     }
                 } else {
@@ -335,7 +328,7 @@ impl TypeChecker {
                     self.scopes[self.current].vars.insert(
                         name.clone(),
                         Variable {
-                            ty: value.ty,
+                            ty: value.ty.clone(),
                             mutable: false,
                         },
                     );
@@ -343,7 +336,6 @@ impl TypeChecker {
                     CheckedStmt::Static {
                         public,
                         name,
-                        ty: value.ty,
                         value,
                     }
                 }
@@ -351,21 +343,21 @@ impl TypeChecker {
         }
     }
 
-    fn check_expr(&mut self, expr: Located<Expr>, target: Option<TypeId>) -> CheckedExpr {
+    fn check_expr(&mut self, expr: Located<Expr>, target: Option<&TypeId>) -> CheckedExpr {
         let span = expr.span;
         match expr.data {
             Expr::Binary { op, left, right } => {
                 let left = self.check_expr(*left, target);
-                let right = self.check_expr(*right, Some(left.ty));
+                let right = self.check_expr(*right, Some(&left.ty));
 
                 if left.ty != right.ty {
-                    self.type_mismatch(left.ty, right.ty, span)
-                } else if !self.types[left.ty].supports_binop(op) {
+                    self.type_mismatch(&left.ty, &right.ty, span)
+                } else if !left.ty.supports_binop(op) {
                     self.error(Error::new(
                         format!(
                             "operator '{op}' is invalid for values of type {} and {}",
-                            self.type_name(left.ty),
-                            self.type_name(right.ty)
+                            self.type_name(&left.ty),
+                            self.type_name(&right.ty)
                         ),
                         span,
                     ))
@@ -381,8 +373,8 @@ impl TypeChecker {
                             | BinaryOp::Equal
                             | BinaryOp::NotEqual
                             | BinaryOp::LogicalOr
-                            | BinaryOp::LogicalAnd => self.find_type_in_scope("bool", 0).unwrap(),
-                            _ => left.ty,
+                            | BinaryOp::LogicalAnd => TypeId::Bool,
+                            _ => left.ty.clone(),
                         },
                         ExprData::Binary {
                             op,
@@ -397,9 +389,9 @@ impl TypeChecker {
 
                 let value_span = expr.span;
                 let expr = self.check_expr(*expr, target);
-                let mut out_ty = expr.ty;
-                let valid = match &self.types[expr.ty] {
-                    Type::Int(_) => matches!(
+                let mut out_ty = None;
+                let valid = match &expr.ty {
+                    TypeId::Int(_) => matches!(
                         op,
                         Plus | Neg
                             | Not
@@ -408,15 +400,15 @@ impl TypeChecker {
                             | PreIncrement
                             | PreDecrement
                     ),
-                    Type::Uint(_) => matches!(
+                    TypeId::Uint(_) => matches!(
                         op,
                         Plus | PostIncrement | PostDecrement | PreIncrement | PreDecrement | Not
                     ),
-                    Type::F32 | Type::F64 => matches!(op, Plus | Neg),
-                    Type::Bool => matches!(op, Not),
-                    Type::Ref(inner) | Type::RefMut(inner) => {
+                    TypeId::F32 | TypeId::F64 => matches!(op, Plus | Neg),
+                    TypeId::Bool => matches!(op, Not),
+                    TypeId::Ref(inner) | TypeId::RefMut(inner) => {
                         if matches!(op, Deref) {
-                            out_ty = *inner;
+                            out_ty = Some((**inner).clone());
                             true
                         } else {
                             false
@@ -431,10 +423,13 @@ impl TypeChecker {
                         PostIncrement | PostDecrement | PreIncrement | PreDecrement
                     )
                 {
-                    self.error(Error::new(format!("expression is not assignable"), value_span))
+                    self.error(Error::new(
+                        format!("expression is not assignable"),
+                        value_span,
+                    ))
                 } else if valid {
                     CheckedExpr::new(
-                        out_ty,
+                        out_ty.unwrap_or_else(|| expr.ty.clone()),
                         ExprData::Unary {
                             op,
                             expr: expr.into(),
@@ -444,7 +439,7 @@ impl TypeChecker {
                     self.error(Error::new(
                         format!(
                             "operator '{op}' is invalid for value of type {}",
-                            self.type_name(expr.ty)
+                            self.type_name(&expr.ty)
                         ),
                         span,
                     ))
@@ -452,62 +447,64 @@ impl TypeChecker {
             }
             Expr::Call { callee, args } => {
                 let callee = self.check_expr(*callee, None);
-                if let Type::Function { params, ret } = &self.types[callee.ty] {
-                    // TODO: default arguments
-                    if params.len() != args.len() {
-                        return self.error(Error::new(
-                            format!("expected {} arguments, found {}", params.len(), args.len()),
-                            span,
-                        ));
-                    }
-
-                    let ret = *ret;
-                    let params = params.clone();
-                    let mut result_args = Vec::with_capacity(args.len());
-                    // TODO: keyword arguments
-                    for ((_, ptype), (_, expr)) in params.into_iter().zip(args.into_iter()) {
-                        let expr = self.check_expr(expr, Some(ptype));
-                        if expr.ty != ptype {
-                            return self.type_mismatch(ptype, expr.ty, span);
+                if let TypeId::Type(id) = callee.ty {
+                    if let Type::Function { params, ret } = &self.types[id] {
+                        // TODO: default arguments
+                        if params.len() != args.len() {
+                            return self.error(Error::new(
+                                format!(
+                                    "expected {} arguments, found {}",
+                                    params.len(),
+                                    args.len()
+                                ),
+                                span,
+                            ));
                         }
-                        result_args.push(expr);
-                    }
 
-                    CheckedExpr::new(
-                        ret,
-                        ExprData::Call {
-                            callee: callee.into(),
-                            args: result_args,
-                        },
-                    )
-                } else {
-                    self.error(Error::new(
-                        format!("cannot call value of type {}", self.type_name(callee.ty)),
-                        span,
-                    ))
+                        let ret = ret.clone();
+                        let params = params.clone();
+                        let mut result_args = Vec::with_capacity(args.len());
+                        // TODO: keyword arguments
+                        for ((_, ptype), (_, expr)) in params.into_iter().zip(args.into_iter()) {
+                            let expr = self.check_expr(expr, Some(&ptype));
+                            if expr.ty != ptype {
+                                return self.type_mismatch(&ptype, &expr.ty, span);
+                            }
+                            result_args.push(expr);
+                        }
+
+                        return CheckedExpr::new(
+                            ret,
+                            ExprData::Call {
+                                callee: callee.into(),
+                                args: result_args,
+                            },
+                        );
+                    }
                 }
+
+                self.error(Error::new(
+                    format!("cannot call value of type {}", self.type_name(&callee.ty)),
+                    span,
+                ))
             }
             Expr::Array(_) => todo!(),
             Expr::ArrayWithInit { init, count } => todo!(),
             Expr::Tuple(_) => todo!(),
             Expr::Map(_) => todo!(),
             Expr::Bool(value) => CheckedExpr {
-                ty: self.find_type_in_scope("bool", 0).unwrap(),
+                ty: TypeId::Bool,
                 data: ExprData::Bool(value),
             },
             Expr::Integer(base, value) => {
-                let mut ty = self.find_type_in_scope("{integer}", 0).unwrap();
-                if let Some(target) = target {
-                    if self.coerces_to(ty, target) {
-                        ty = target;
-                    }
-                } else {
-                    // TODO: attempt to promote the literal if its too large for i32
-                    ty = self.find_type_in_scope("i32", 0).unwrap();
-                }
+                // TODO: attempt to promote the literal if its too large for i32
+                let ty = target
+                    .filter(|target| self.coerces_to(&TypeId::IntGeneric, &target))
+                    .cloned()
+                    .unwrap_or(TypeId::Int(32));
 
-                match &self.types[ty] {
-                    Type::Int(bits) => {
+                match ty {
+                    TypeId::Int(bits) => {
                         let result = match i128::from_str_radix(&value, base as u32) {
                             Ok(result) => result,
                             Err(_) => {
@@ -533,7 +530,7 @@ impl TypeChecker {
 
                         CheckedExpr::new(ty, ExprData::Signed(result))
                     }
-                    Type::Uint(bits) => {
+                    TypeId::Uint(bits) => {
                         let result = match u128::from_str_radix(&value, base as u32) {
                             Ok(result) => result,
                             Err(_) => {
@@ -556,22 +553,17 @@ impl TypeChecker {
                     _ => unreachable!(),
                 }
             }
-            Expr::Float(value) => {
-                let mut ty = self.find_type_in_scope("{float}", 0).unwrap();
-                if let Some(target) = target {
-                    if self.coerces_to(ty, target) {
-                        ty = target;
-                    }
-                } else {
-                    ty = self.find_type_in_scope("f64", 0).unwrap();
-                }
-
-                CheckedExpr::new(ty, ExprData::Float(value))
-            }
+            Expr::Float(value) => CheckedExpr::new(
+                target
+                    .filter(|target| self.coerces_to(&TypeId::FloatGeneric, &target))
+                    .cloned()
+                    .unwrap_or(TypeId::F64),
+                ExprData::Float(value),
+            ),
             Expr::String(_) => todo!(),
             Expr::Symbol(name) => {
                 if let Some(var) = self.find_var(&name) {
-                    CheckedExpr::new(var.ty, ExprData::Symbol(name))
+                    CheckedExpr::new(var.ty.clone(), ExprData::Symbol(name))
                 } else {
                     self.error(Error::new(format!("undefined variable: {name}"), span))
                 }
@@ -591,13 +583,13 @@ impl TypeChecker {
                     return self.error(Error::new("expression is not assignable", span));
                 }
 
-                let rhs = self.check_expr(*value, Some(lhs.ty));
+                let rhs = self.check_expr(*value, Some(&lhs.ty));
                 if lhs.ty != rhs.ty {
-                    return self.type_mismatch(lhs.ty, rhs.ty, span);
+                    return self.type_mismatch(&lhs.ty, &rhs.ty, span);
                 }
 
                 CheckedExpr::new(
-                    lhs.ty,
+                    lhs.ty.clone(),
                     ExprData::Assign {
                         target: lhs.into(),
                         binary,
@@ -606,12 +598,12 @@ impl TypeChecker {
                 )
             }
             Expr::Block(body) => {
-                let block = self.create_block(body, Target::Block(target));
+                let block = self.create_block(body, Target::Block(target.cloned()));
                 let Target::Block(target) = &self.scopes[block.scope].target else {
                     panic!("ICE: target of block changed from block to something else");
                 };
                 CheckedExpr::new(
-                    target.unwrap_or(self.find_type_in_scope("void", 0).unwrap()),
+                    target.as_ref().cloned().unwrap_or_default(),
                     ExprData::Block(block),
                 )
             }
@@ -630,8 +622,8 @@ impl TypeChecker {
             Expr::Subscript { callee, args } => todo!(),
             Expr::Return(expr) => {
                 let Some(target) = self.traverse_scopes(self.current, |scope| {
-                    if let Target::Function(id) = scope.target {
-                        Some(id)
+                    if let Target::Function(id) = &scope.target {
+                        Some(id.clone())
                     } else {
                         None
                     }
@@ -640,31 +632,28 @@ impl TypeChecker {
                     return self.error(Error::new("return outside of function", span));
                 };
 
-                let expr = self.check_expr(*expr, Some(target));
+                let expr = self.check_expr(*expr, Some(&target));
                 if expr.ty != target {
-                    self.type_mismatch(target, expr.ty, span)
+                    self.type_mismatch(&target, &expr.ty, span)
                 } else {
-                    CheckedExpr::new(
-                        self.find_type_in_scope("never", 0).unwrap(),
-                        ExprData::Return(expr.into()),
-                    )
+                    CheckedExpr::new(TypeId::Never, ExprData::Return(expr.into()))
                 }
             }
             Expr::Yield(expr) => {
-                let Target::Block(target) = self.scopes[self.current].target else {
+                let Target::Block(target) = self.scopes[self.current].target.clone() else {
                     return self.error(Error::new("yield outside of block", span));
                 };
 
-                let expr = self.check_expr(*expr, target);
+                let expr = self.check_expr(*expr, target.as_ref());
                 if let Some(target) = target {
                     if target != expr.ty {
-                        return self.type_mismatch(target, expr.ty, span);
+                        return self.type_mismatch(&target, &expr.ty, span);
                     }
                 } else {
-                    self.scopes[self.current].target = Target::Block(Some(expr.ty));
+                    self.scopes[self.current].target = Target::Block(Some(expr.ty.clone()));
                 }
 
-                CheckedExpr::new(expr.ty, ExprData::Yield(expr.into()))
+                CheckedExpr::new(TypeId::Never, ExprData::Yield(expr.into()))
             }
             Expr::Break(_) => todo!(),
             Expr::Range {
@@ -676,20 +665,20 @@ impl TypeChecker {
         }
     }
 
-    fn coerces_to(&self, ty: TypeId, target: TypeId) -> bool {
-        if ty == self.find_type_in_scope("{integer}", 0).unwrap() {
-            match self.types[target] {
-                Type::Int(_) | Type::Uint(_) => return true,
+    fn coerces_to(&self, ty: &TypeId, target: &TypeId) -> bool {
+        if matches!(ty, TypeId::IntGeneric) {
+            match target {
+                TypeId::Int(_) | TypeId::Uint(_) => return true,
                 _ => {}
             }
-        } else if ty == self.find_type_in_scope("{float}", 0).unwrap() {
-            match self.types[target] {
-                Type::F32 | Type::F64 => return true,
+        } else if matches!(ty, TypeId::FloatGeneric) {
+            match target {
+                TypeId::F32 | TypeId::F64 => return true,
                 _ => {}
             }
-        } else if let Type::RefMut(inner) = self.types[ty] {
-            match self.types[target] {
-                Type::Ref(target) if target == inner => return true,
+        } else if let TypeId::RefMut(inner) = ty {
+            match target {
+                TypeId::Ref(target) if target == inner => return true,
                 _ => {}
             }
         }
@@ -735,21 +724,21 @@ impl TypeChecker {
             params: header
                 .params
                 .iter()
-                .map(|param| (param.name.clone(), param.ty))
+                .map(|param| (param.name.clone(), param.ty.clone()))
                 .collect(),
-            ret: header.ret,
+            ret: header.ret.clone(),
         });
 
         self.scopes[self.current]
             .vars
             .insert(header.name.clone(), Variable { ty, mutable: false });
         CheckedFn {
-            body: self.create_block_with(body, Target::Function(header.ret), |this| {
+            body: self.create_block_with(body, Target::Function(header.ret.clone()), |this| {
                 for param in header.params.iter() {
                     this.scopes[this.current].vars.insert(
                         param.name.clone(),
                         Variable {
-                            ty: param.ty,
+                            ty: param.ty.clone(),
                             mutable: param.mutable,
                         },
                     );
@@ -759,24 +748,62 @@ impl TypeChecker {
         }
     }
 
+    fn match_int_type(name: &str) -> Option<TypeId> {
+        let mut chars = name.chars();
+        let mut i = false;
+        let result = match chars.next()? {
+            'i' => {
+                i = true;
+                TypeId::Int
+            }
+            'u' => TypeId::Uint,
+            _ => return None,
+        };
+
+        match (
+            chars.next().and_then(|c| c.to_digit(10)),
+            chars.next().and_then(|c| c.to_digit(10)),
+            chars.next().and_then(|c| c.to_digit(10)),
+            chars.next(),
+        ) {
+            (Some(a), None, None, None) => (!i || a > 1).then_some(result(a as u8)),
+            (Some(a), Some(b), None, None) => Some(result((a * 10 + b) as u8)),
+            (Some(a), Some(b), Some(c), None) => Some(result((a * 100 + b * 10 + c) as u8)),
+            _ => None,
+        }
+    }
+
     fn resolve_type(&mut self, ty: &TypeHint) -> TypeId {
         match ty {
-            TypeHint::Regular { name, .. } => self.find_type(name),
-            TypeHint::Void => self.find_type_in_scope("void", 0),
-            TypeHint::Ref(_) | TypeHint::RefMut(_) => unreachable!(),
+            TypeHint::Regular { name, .. } => {
+                self.find_type(name)
+                    .cloned()
+                    .unwrap_or_else(|| match name.as_str() {
+                        "void" => TypeId::Void,
+                        "never" => TypeId::Never,
+                        "f32" => TypeId::F32,
+                        "f64" => TypeId::F64,
+                        "bool" => TypeId::Bool,
+                        _ => Self::match_int_type(name).unwrap(),
+                    })
+            }
+            TypeHint::Void => TypeId::Void,
+            TypeHint::Ref(ty) => TypeId::Ref(self.resolve_type(ty).into()),
+            TypeHint::RefMut(_) => TypeId::RefMut(self.resolve_type(ty).into()),
             TypeHint::This => {
                 // the parser ensures methods can only appear in structs/enums/etc
                 self.traverse_scopes(self.current, |scope| {
-                    if let Target::UserType(id) = scope.target {
+                    if let Target::UserType(id) = &scope.target {
                         Some(id)
                     } else {
                         None
                     }
                 })
+                .map(|ty| TypeId::Ref(ty.clone().into()))
+                .unwrap()
             }
             _ => todo!(),
         }
-        .unwrap()
     }
 
     fn create_block(&mut self, body: Vec<Located<Stmt>>, target: Target) -> Block {
@@ -809,12 +836,12 @@ impl TypeChecker {
         T::default()
     }
 
-    fn type_mismatch<T: Default>(&mut self, a: TypeId, b: TypeId, span: Span) -> T {
+    fn type_mismatch<T: Default>(&mut self, a: &TypeId, b: &TypeId, span: Span) -> T {
         self.error(Error::new(
             format!(
                 "type mismatch: expected type {}, got {}",
                 self.type_name(a),
-                self.type_name(b)
+                self.type_name(b),
             ),
             span,
         ))
@@ -825,7 +852,7 @@ impl TypeChecker {
     fn is_assignable(&self, expr: &CheckedExpr) -> bool {
         match &expr.data {
             ExprData::Unary { op, expr } => {
-                matches!(op, UnaryOp::Deref) && matches!(self.types[expr.ty], Type::RefMut(_))
+                matches!(op, UnaryOp::Deref) && matches!(expr.ty, TypeId::RefMut(_))
             }
             ExprData::Symbol(name) => self.find_var(name).unwrap().mutable,
             ExprData::Member { .. } => todo!(),
@@ -834,42 +861,41 @@ impl TypeChecker {
         }
     }
 
-    fn type_name(&self, ty: TypeId) -> String {
-        match &self.types[ty] {
-            Type::Void => "void".into(),
-            Type::Never => todo!(),
-            Type::Int(bits) => format!("i{bits}"),
-            Type::Uint(bits) => format!("u{bits}"),
-            Type::F32 => "f32".into(),
-            Type::F64 => "f64".into(),
-            Type::Bool => "bool".into(),
-            Type::IntGeneric => "{integer}".into(),
-            Type::FloatGeneric => "{float}".into(),
-            Type::Struct(_) => todo!(),
-            Type::Union { tag, base } => todo!(),
-            Type::Enum {} => todo!(),
-            Type::Interface {} => todo!(),
-            Type::Function { params, ret } => {
-                let mut result = "Fn(".to_owned();
-                for (i, (name, ty)) in params.iter().enumerate() {
-                    if i > 0 {
-                        result.push_str(", ");
-                    }
+    fn type_name(&self, ty: &TypeId) -> String {
+        match ty {
+            TypeId::Void => "void".into(),
+            TypeId::Never => todo!(),
+            TypeId::Int(bits) => format!("i{bits}"),
+            TypeId::Uint(bits) => format!("u{bits}"),
+            TypeId::F32 => "f32".into(),
+            TypeId::F64 => "f64".into(),
+            TypeId::Bool => "bool".into(),
+            TypeId::IntGeneric => "{integer}".into(),
+            TypeId::FloatGeneric => "{float}".into(),
+            TypeId::Ref(id) => format!("*{}", self.type_name(id)),
+            TypeId::RefMut(id) => format!("*mut {}", self.type_name(id)),
+            TypeId::Type(id) => match &self.types[*id] {
+                Type::Function { params, ret } => {
+                    let mut result = "Fn(".to_owned();
+                    for (i, (name, ty)) in params.iter().enumerate() {
+                        if i > 0 {
+                            result.push_str(", ");
+                        }
 
-                    result.push_str(&format!("{name}: "));
-                    result.push_str(&self.type_name(*ty));
+                        result.push_str(&format!("{name}: "));
+                        result.push_str(&self.type_name(ty));
+                    }
+                    format!("{result}) {}", self.type_name(ret))
                 }
-                format!("{result}) {}", self.type_name(*ret))
-            }
-            Type::Ref(id) => format!("*{}", self.type_name(*id)),
-            Type::RefMut(id) => format!("*mut {}", self.type_name(*id)),
+                Type::Struct(_) => todo!(),
+            },
         }
     }
 
-    fn traverse_scopes<T>(
-        &self,
+    fn traverse_scopes<'a, T>(
+        &'a self,
         mut id: ScopeId,
-        mut f: impl FnMut(&Scope) -> Option<T>,
+        mut f: impl FnMut(&'a Scope) -> Option<T>,
     ) -> Option<T> {
         loop {
             let scope = &self.scopes[id];
@@ -881,33 +907,25 @@ impl TypeChecker {
         }
     }
 
-    fn find_type_in_scope(&self, name: &str, id: ScopeId) -> Option<TypeId> {
-        self.traverse_scopes(id, |scope| scope.types.get(name).copied())
+    fn find_type(&self, name: &str) -> Option<&TypeId> {
+        self.traverse_scopes(self.current, |scope| scope.types.get(name))
     }
 
-    fn find_var_in_scope(&self, name: &str, id: ScopeId) -> Option<Variable> {
-        self.traverse_scopes(id, |scope| scope.vars.get(name).copied())
-    }
-
-    fn find_type(&self, name: &str) -> Option<TypeId> {
-        self.find_type_in_scope(name, self.current)
-    }
-
-    fn find_var(&self, name: &str) -> Option<Variable> {
-        self.find_var_in_scope(name, self.current)
+    fn find_var(&self, name: &str) -> Option<&Variable> {
+        self.traverse_scopes(self.current, |scope| scope.vars.get(name))
     }
 
     fn insert_type_in_scope(&mut self, name: String, data: Type) -> TypeId {
-        let id = self.types.len();
+        let id = TypeId::Type(self.types.len());
         self.types.push(data);
-        self.scopes[self.current].types.insert(name, id);
+        self.scopes[self.current].types.insert(name, id.clone());
         id
     }
 
     fn insert_type(&mut self, data: Type) -> TypeId {
         let id = self.types.len();
         self.types.push(data);
-        id
+        TypeId::Type(id)
     }
 
     fn enter_scope<T>(&mut self, target: Target, f: impl FnOnce(&mut Self) -> T) -> T {

@@ -56,26 +56,28 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             }
             CheckedStmt::Let {
                 name,
-                ty,
                 mutable,
                 value,
             } => {
-                if let Some(value) = value {
-                    self.hoist_blocks(value);
-                    if !*mutable {
-                        self.emit("const ");
-                    }
+                match value {
+                    Ok(value) => {
+                        self.hoist_blocks(value);
+                        if !*mutable {
+                            self.emit("const ");
+                        }
 
-                    self.emit_type(*ty);
-                    self.emit(format!(" {name} = "));
-                    self.compile_expr(value);
-                } else {
-                    if !*mutable {
-                        self.emit("const ");
+                        self.emit_type(&value.ty);
+                        self.emit(format!(" {name} = "));
+                        self.compile_expr(value);
                     }
-
-                    self.emit_type(*ty);
-                    self.emit(format!(" {name}"));
+                    Err(ty) => {
+                        if !*mutable {
+                            self.emit("const ");
+                        }
+    
+                        self.emit_type(ty);
+                        self.emit(format!(" {name}"));
+                    }
                 }
                 self.emit(";");
             }
@@ -99,7 +101,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                             emitted_priv = true;
                         }
 
-                        self.emit_type(member.ty);
+                        self.emit_type(&member.ty);
                         if let Some(value) = &member.value {
                             self.emit(format!(" {} = ", member.name));
                             // TODO: what if value is a block?
@@ -142,11 +144,10 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             CheckedStmt::Static {
                 public: _,
                 name,
-                ty,
                 value,
             } => {
                 self.emit("static const ");
-                self.emit_type(*ty);
+                self.emit_type(&value.ty);
                 self.emit(format!(" {name} = "));
                 // FIXME: blocks in statics...
                 self.hoist_blocks(value);
@@ -202,7 +203,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     self.compile_expr(expr);
                 }
                 UnaryOp::Not => {
-                    if self.types[expr.ty].is_numeric() {
+                    if expr.ty.is_numeric() {
                         self.emit("~");
                         self.compile_expr(expr);
                     } else {
@@ -240,32 +241,32 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     self.emit(format!("{RT_NAMESPACE}::boolean::FALSE"));
                 }
             }
-            ExprData::Signed(value) => match &self.types[expr.ty] {
-                Type::Int(base) => {
+            ExprData::Signed(value) => match expr.ty {
+                TypeId::Int(base) => {
                     self.emit(format!("{value}_i{base}"));
                 }
                 _ => panic!(
                     "ICE: ExprData::Signed with non-int type {:?}",
-                    self.types[expr.ty]
+                    expr.ty
                 ),
             }
-            ExprData::Unsigned(value) => match &self.types[expr.ty] {
-                Type::Uint(base) => {
+            ExprData::Unsigned(value) => match expr.ty {
+                TypeId::Uint(base) => {
                     self.emit(format!("{value}_u{base}"));
                 }
                 _ => panic!(
                     "ICE: ExprData::Unsigned with non-uint type {:?}",
-                    self.types[expr.ty]
+                    expr.ty
                 ),
             }
             ExprData::Float(value) => {
                 // TODO: probably should check the range or something
-                match &self.types[expr.ty] {
-                    Type::F32 => self.emit(format!("{value}_f32")),
-                    Type::F64 => self.emit(format!("{value}_f64")),
+                match expr.ty {
+                    TypeId::F32 => self.emit(format!("{value}_f32")),
+                    TypeId::F64 => self.emit(format!("{value}_f64")),
                     _ => panic!(
                         "ICE: ExprData::Float with non-float type {:?}",
-                        self.types[expr.ty]
+                        expr.ty
                     ),
                 }
                 self.emit(value);
@@ -434,7 +435,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 });
                 self.block_number += 1;
 
-                self.emit_type(expr.ty);
+                self.emit_type(&expr.ty);
                 self.emit(format!(" {variable};"));
                 self.emit_block(block);
                 self.emit(format!("{label}:\n"));
@@ -450,25 +451,27 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         self.buffer.push_str(source.as_ref());
     }
 
-    pub fn emit_type(&mut self, id: TypeId) {
-        match &self.types[id] {
-            Type::Void => self.emit("void"),
-            Type::Never => todo!(),
-            Type::Int(bits) => self.emit(format!("{RT_NAMESPACE}::i{bits}")),
-            Type::Uint(bits) => self.emit(format!("{RT_NAMESPACE}::u{bits}")),
-            Type::F32 => self.emit(format!("{RT_NAMESPACE}::f32")),
-            Type::F64 => self.emit(format!("{RT_NAMESPACE}::f64")),
-            Type::Bool => self.emit(format!("{RT_NAMESPACE}::boolean")),
-            Type::IntGeneric | Type::FloatGeneric => {
+    pub fn emit_type(&mut self, id: &TypeId) {
+        match id {
+            TypeId::Void => self.emit("void"),
+            TypeId::Never => todo!(),
+            TypeId::Int(bits) => self.emit(format!("{RT_NAMESPACE}::i{bits}")),
+            TypeId::Uint(bits) => self.emit(format!("{RT_NAMESPACE}::u{bits}")),
+            TypeId::F32 => self.emit(format!("{RT_NAMESPACE}::f32")),
+            TypeId::F64 => self.emit(format!("{RT_NAMESPACE}::f64")),
+            TypeId::Bool => self.emit(format!("{RT_NAMESPACE}::boolean")),
+            TypeId::IntGeneric | TypeId::FloatGeneric => {
                 panic!("ICE: Int/FloatGeneric in emit_type");
             }
-            Type::Struct(base) => self.emit(base.name.clone()), // TODO: use fully qualified name
-            Type::Union { tag, base } => todo!(),
-            Type::Enum {} => todo!(),
-            Type::Interface {} => todo!(),
-            Type::Function { .. } => todo!(),
-            Type::Ref(_) => todo!(),
-            Type::RefMut(_) => todo!(),
+            TypeId::Ref(_) => todo!(),
+            TypeId::RefMut(_) => todo!(),
+            TypeId::Type(id) => {
+                match &self.types[*id] {
+                    Type::Function { params, ret } => todo!(),
+                    // TODO: use fully qualified name
+                    Type::Struct(base) => self.emit(base.name.clone()),
+                }
+            }
         }
     }
 
@@ -485,7 +488,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
         }: &CheckedFnDecl,
         path: &str,
     ) {
-        self.emit_type(*ret);
+        self.emit_type(ret);
         let name = if name == "main" { "$ctl_main" } else { name };
         if path.is_empty() {
             self.emit(format!(" {name}("));
@@ -502,7 +505,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 self.emit("const ");
             }
 
-            self.emit_type(param.ty);
+            self.emit_type(&param.ty);
             self.emit(format!(" {}", param.name));
         }
         self.emit(")");

@@ -165,16 +165,14 @@ pub mod stmt {
         Expr(CheckedExpr),
         Let {
             name: String,
-            ty: TypeId,
             mutable: bool,
-            value: Option<CheckedExpr>,
+            value: Result<CheckedExpr, TypeId>,
         },
         Fn(CheckedFn),
         UserType(CheckedUserType),
         Static {
             public: bool,
             name: String,
-            ty: TypeId,
             value: CheckedExpr,
         },
         Module {
