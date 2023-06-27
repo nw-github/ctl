@@ -323,7 +323,7 @@ impl<'a> Lexer<'a> {
             "let" => Token::Let,
             "mut" => Token::Mut,
             "fn" => Token::Fn,
-            "keyword" => Token::Keyword,
+            "kw" => Token::Keyword,
             "pub" => Token::Pub,
             "struct" => Token::Struct,
             "union" => Token::Union,
