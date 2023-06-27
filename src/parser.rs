@@ -339,7 +339,7 @@ impl<'a> Parser<'a> {
                     Ok(Param {
                         mutable,
                         keyword,
-                        name: "this".into(),
+                        name: "$self".into(),
                         ty: TypeHint::This,
                     })
                 } else {
@@ -890,7 +890,7 @@ impl<'a> Parser<'a> {
                     L::new(Expr::Symbol(ident.into()), token.span)
                 }
             }
-            Token::This => L::new(Expr::Symbol("this".into()), token.span),
+            Token::This => L::new(Expr::Symbol("$self".into()), token.span),
             Token::Range => {
                 if self.is_range_end() {
                     L::new(
