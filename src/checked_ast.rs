@@ -1,6 +1,5 @@
 use self::stmt::CheckedStmt;
 
-pub type TypeId = usize;
 pub type ScopeId = usize;
 
 pub struct Block {
@@ -9,9 +8,12 @@ pub struct Block {
 }
 
 pub mod expr {
-    use crate::ast::expr::{BinaryOp, UnaryOp};
+    use crate::{
+        ast::expr::{BinaryOp, UnaryOp},
+        typecheck::TypeId,
+    };
 
-    use super::{Block, TypeId};
+    use super::Block;
 
     #[derive(Default)]
     pub enum ExprData {
@@ -96,7 +98,9 @@ pub mod expr {
 }
 
 pub mod stmt {
-    use super::{expr::CheckedExpr, Block, TypeId};
+    use crate::typecheck::TypeId;
+
+    use super::{expr::CheckedExpr, Block};
 
     pub struct CheckedParam {
         pub mutable: bool,

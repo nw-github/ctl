@@ -11,11 +11,13 @@ use crate::{
             CheckedFn, CheckedFnDecl, CheckedMemVar, CheckedParam, CheckedStmt, CheckedStruct,
             CheckedUserType,
         },
-        Block, ScopeId, TypeId,
+        Block, ScopeId,
     },
     lexer::{Located, Span},
     Error,
 };
+
+pub type TypeId = usize;
 
 #[derive(Debug)]
 pub struct Member {
@@ -41,6 +43,8 @@ pub enum Type {
     Bool,
     IntGeneric,
     FloatGeneric,
+    Ref(TypeId),
+    RefMut(TypeId),
     Struct(ResolvedStruct),
     Union {
         tag: Option<Option<TypeId>>,
@@ -391,8 +395,10 @@ impl TypeChecker {
             Expr::Unary { op, expr } => {
                 use UnaryOp::*;
 
-                let rhs = self.check_expr(*expr, target);
-                let matches = match &self.types[rhs.ty] {
+                let value_span = expr.span;
+                let expr = self.check_expr(*expr, target);
+                let mut out_ty = expr.ty;
+                let valid = match &self.types[expr.ty] {
                     Type::Int(_) => matches!(
                         op,
                         Plus | Neg
@@ -408,32 +414,37 @@ impl TypeChecker {
                     ),
                     Type::F32 | Type::F64 => matches!(op, Plus | Neg),
                     Type::Bool => matches!(op, Not),
+                    Type::Ref(inner) | Type::RefMut(inner) => {
+                        if matches!(op, Deref) {
+                            out_ty = *inner;
+                            true
+                        } else {
+                            false
+                        }
+                    }
                     _ => false,
                 };
 
-                if matches!(rhs.data, ExprData::Unsigned(_) | ExprData::Signed(_))
+                if !self.is_assignable(&expr)
                     && matches!(
                         op,
                         PostIncrement | PostDecrement | PreIncrement | PreDecrement
                     )
                 {
-                    self.error(Error::new(
-                        format!("operator '{op}' cannot be used on literals"),
-                        span,
-                    ))
-                } else if matches {
+                    self.error(Error::new(format!("expression is not assignable"), value_span))
+                } else if valid {
                     CheckedExpr::new(
-                        rhs.ty,
+                        out_ty,
                         ExprData::Unary {
                             op,
-                            expr: rhs.into(),
+                            expr: expr.into(),
                         },
                     )
                 } else {
                     self.error(Error::new(
                         format!(
                             "operator '{op}' is invalid for value of type {}",
-                            self.type_name(rhs.ty)
+                            self.type_name(expr.ty)
                         ),
                         span,
                     ))
@@ -573,19 +584,11 @@ impl TypeChecker {
                 value,
             } => {
                 // TODO: check the binary ops, like += -= etc..
+                let span = lhs.span;
                 let lhs = self.check_expr(*lhs, None);
-                match &lhs.data {
-                    ExprData::Symbol(name) => {
-                        if !self.find_var(name).unwrap().mutable {
-                            return self
-                                .error(Error::new("assignment to immutable variable", span));
-                        }
-                    }
-                    ExprData::Member { .. } => todo!(),
-                    ExprData::Subscript { .. } => todo!(),
-                    _ => {
-                        return self.error(Error::new("invalid assignment target", span));
-                    }
+                if !self.is_assignable(&lhs) {
+                    // TODO: report a better error here
+                    return self.error(Error::new("expression is not assignable", span));
                 }
 
                 let rhs = self.check_expr(*value, Some(lhs.ty));
@@ -684,6 +687,11 @@ impl TypeChecker {
                 Type::F32 | Type::F64 => return true,
                 _ => {}
             }
+        } else if let Type::RefMut(inner) = self.types[ty] {
+            match self.types[target] {
+                Type::Ref(target) if target == inner => return true,
+                _ => {}
+            }
         }
 
         false
@@ -754,13 +762,6 @@ impl TypeChecker {
     fn resolve_type(&mut self, ty: &TypeHint) -> TypeId {
         match ty {
             TypeHint::Regular { name, .. } => self.find_type(name),
-            TypeHint::Array(_, _) => self.find_type_in_scope("Array", 0),
-            TypeHint::Slice(_) => self.find_type_in_scope("Slice", 0),
-            TypeHint::Tuple(_) => todo!(),
-            TypeHint::Map(_, _) => self.find_type_in_scope("Map", 0),
-            TypeHint::Option(_) => self.find_type_in_scope("Option", 0),
-            TypeHint::Result(_, _) => self.find_type_in_scope("Result", 0),
-            TypeHint::Anon(_) => todo!(),
             TypeHint::Void => self.find_type_in_scope("void", 0),
             TypeHint::Ref(_) | TypeHint::RefMut(_) => unreachable!(),
             TypeHint::This => {
@@ -773,6 +774,7 @@ impl TypeChecker {
                     }
                 })
             }
+            _ => todo!(),
         }
         .unwrap()
     }
@@ -820,6 +822,18 @@ impl TypeChecker {
 
     //
 
+    fn is_assignable(&self, expr: &CheckedExpr) -> bool {
+        match &expr.data {
+            ExprData::Unary { op, expr } => {
+                matches!(op, UnaryOp::Deref) && matches!(self.types[expr.ty], Type::RefMut(_))
+            }
+            ExprData::Symbol(name) => self.find_var(name).unwrap().mutable,
+            ExprData::Member { .. } => todo!(),
+            ExprData::Subscript { .. } => todo!(),
+            _ => false,
+        }
+    }
+
     fn type_name(&self, ty: TypeId) -> String {
         match &self.types[ty] {
             Type::Void => "void".into(),
@@ -847,6 +861,8 @@ impl TypeChecker {
                 }
                 format!("{result}) {}", self.type_name(*ret))
             }
+            Type::Ref(id) => format!("*{}", self.type_name(*id)),
+            Type::RefMut(id) => format!("*mut {}", self.type_name(*id)),
         }
     }
 

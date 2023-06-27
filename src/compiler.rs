@@ -2,10 +2,10 @@ use crate::{
     ast::expr::UnaryOp,
     checked_ast::{
         expr::{CheckedExpr, ExprData},
-        stmt::{CheckedFnDecl, CheckedStmt},
-        Block, TypeId,
+        stmt::{CheckedFnDecl, CheckedStmt, CheckedStruct, CheckedUserType},
+        Block,
     },
-    typecheck::{CheckedAst, Scope, Type},
+    typecheck::{CheckedAst, Scope, Type, TypeId},
 };
 
 const RT_NAMESPACE: &str = "::ctl_runtime";
@@ -80,10 +80,65 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 self.emit(";");
             }
             CheckedStmt::Fn(f) => {
-                self.emit_fn_decl(&f.header);
+                self.emit_fn_decl(&f.header, "");
                 self.emit_block(&mut f.body);
             }
-            CheckedStmt::UserType(_) => todo!(),
+            CheckedStmt::UserType(data) => match data {
+                CheckedUserType::Struct(CheckedStruct {
+                    public: _,
+                    name,
+                    members,
+                    functions,
+                }) => {
+                    self.emit(format!("struct {name} {{"));
+                    members.sort_by_key(|member| !member.public);
+                    let mut emitted_priv = false;
+                    for member in members.iter() {
+                        if !emitted_priv && !member.public {
+                            self.emit("private: ");
+                            emitted_priv = true;
+                        }
+
+                        self.emit_type(member.ty);
+                        if let Some(value) = &member.value {
+                            self.emit(format!(" {} = ", member.name));
+                            // TODO: what if value is a block?
+                            // FIXME: instead of filling in default values here, we should do it at
+                            // the construction site
+                            // struct A { a: i32 = 5, b: 132 = 2 };
+                            //   A { a: 0 }   becomes A { a: 0, b: 5 }
+                            self.compile_expr(value);
+                        } else {
+                            self.emit(format!(" {}", member.name));
+                        }
+                        self.emit(";");
+                    }
+
+                    functions.sort_by_key(|function| !function.header.public);
+                    emitted_priv = false;
+                    self.emit("public: ");
+                    for f in functions.iter() {
+                        if !emitted_priv && !f.header.public {
+                            self.emit("private: ");
+                            emitted_priv = true;
+                        }
+
+                        self.emit("static ");
+                        self.emit_fn_decl(&f.header, "");
+                        self.emit(";");
+                    }
+
+                    self.emit("};");
+
+                    for f in functions.iter_mut() {
+                        self.emit_fn_decl(&f.header, name);
+                        self.emit_block(&mut f.body);
+                    }
+                }
+                CheckedUserType::Union { .. } => todo!(),
+                CheckedUserType::Interface { .. } => todo!(),
+                CheckedUserType::Enum { .. } => todo!(),
+            },
             CheckedStmt::Static {
                 public: _,
                 name,
@@ -161,7 +216,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 UnaryOp::IntoError => todo!(),
                 UnaryOp::Try => todo!(),
                 UnaryOp::Sizeof => todo!(),
-            },
+            }
             ExprData::Call { callee, args } => {
                 self.compile_expr(callee);
                 self.emit("(");
@@ -193,7 +248,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     "ICE: ExprData::Signed with non-int type {:?}",
                     self.types[expr.ty]
                 ),
-            },
+            }
             ExprData::Unsigned(value) => match &self.types[expr.ty] {
                 Type::Uint(base) => {
                     self.emit(format!("{value}_u{base}"));
@@ -202,7 +257,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     "ICE: ExprData::Unsigned with non-uint type {:?}",
                     self.types[expr.ty]
                 ),
-            },
+            }
             ExprData::Float(value) => {
                 // TODO: probably should check the range or something
                 match &self.types[expr.ty] {
@@ -407,11 +462,13 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             Type::IntGeneric | Type::FloatGeneric => {
                 panic!("ICE: Int/FloatGeneric in emit_type");
             }
-            Type::Struct(_) => todo!(),
+            Type::Struct(base) => self.emit(base.name.clone()), // TODO: use fully qualified name
             Type::Union { tag, base } => todo!(),
             Type::Enum {} => todo!(),
             Type::Interface {} => todo!(),
             Type::Function { .. } => todo!(),
+            Type::Ref(_) => todo!(),
+            Type::RefMut(_) => todo!(),
         }
     }
 
@@ -426,12 +483,16 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             params,
             ret,
         }: &CheckedFnDecl,
+        path: &str,
     ) {
         self.emit_type(*ret);
-        self.emit(format!(
-            " {}(",
-            if name == "main" { "$ctl_main" } else { name }
-        ));
+        let name = if name == "main" { "$ctl_main" } else { name };
+        if path.is_empty() {
+            self.emit(format!(" {name}("));
+        } else {
+            self.emit(format!(" {path}::{name}("));
+        }
+
         for (i, param) in params.iter().enumerate() {
             if i > 0 {
                 self.emit(", ");
