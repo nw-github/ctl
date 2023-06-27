@@ -94,10 +94,16 @@ pub enum Target {
     None,
 }
 
+#[derive(Default, Debug, Clone, Copy)]
+pub struct Variable {
+    ty: TypeId,
+    mutable: bool,
+}
+
 #[derive(Default, Debug)]
 pub struct Scope {
     parent: Option<ScopeId>,
-    vars: HashMap<String, TypeId>,
+    vars: HashMap<String, Variable>,
     types: HashMap<String, TypeId>,
     target: Target,
 }
@@ -194,7 +200,9 @@ impl TypeChecker {
             } => {
                 if let Some(ty) = ty {
                     let ty = self.resolve_type(&ty);
-                    self.scopes[self.current].vars.insert(name.clone(), ty);
+                    self.scopes[self.current]
+                        .vars
+                        .insert(name.clone(), Variable { ty, mutable });
                     if let Some(value) = value {
                         let value = self.check_expr(value, Some(ty));
                         if value.ty != ty {
@@ -217,9 +225,13 @@ impl TypeChecker {
                     }
                 } else if let Some(value) = value {
                     let value = self.check_expr(value, None);
-                    self.scopes[self.current]
-                        .vars
-                        .insert(name.clone(), value.ty);
+                    self.scopes[self.current].vars.insert(
+                        name.clone(),
+                        Variable {
+                            ty: value.ty,
+                            mutable,
+                        },
+                    );
 
                     CheckedStmt::Let {
                         name,
@@ -273,13 +285,17 @@ impl TypeChecker {
 
                 self.scopes[self.current]
                     .vars
-                    .insert(header.name.clone(), ty);
+                    .insert(header.name.clone(), Variable { ty, mutable: false });
                 CheckedStmt::Fn(CheckedFn {
                     body: self.create_block_with(body, Target::Function(header.ret), |this| {
                         for param in header.params.iter() {
-                            this.scopes[this.current]
-                                .vars
-                                .insert(param.name.clone(), param.ty);
+                            this.scopes[this.current].vars.insert(
+                                param.name.clone(),
+                                Variable {
+                                    ty: param.ty,
+                                    mutable: param.mutable,
+                                },
+                            );
                         }
                     }),
                     header,
@@ -293,7 +309,9 @@ impl TypeChecker {
             } => {
                 if let Some(ty) = ty {
                     let ty = self.resolve_type(&ty);
-                    self.scopes[self.current].vars.insert(name.clone(), ty);
+                    self.scopes[self.current]
+                        .vars
+                        .insert(name.clone(), Variable { ty, mutable: false });
 
                     let value = self.check_expr(value, Some(ty));
                     if value.ty != ty {
@@ -308,9 +326,13 @@ impl TypeChecker {
                     }
                 } else {
                     let value = self.check_expr(value, None);
-                    self.scopes[self.current]
-                        .vars
-                        .insert(name.clone(), value.ty);
+                    self.scopes[self.current].vars.insert(
+                        name.clone(),
+                        Variable {
+                            ty: value.ty,
+                            mutable: false,
+                        },
+                    );
 
                     CheckedStmt::Static {
                         public,
@@ -535,8 +557,8 @@ impl TypeChecker {
             }
             Expr::String(_) => todo!(),
             Expr::Symbol(name) => {
-                if let Some(ty) = self.find_var(&name) {
-                    CheckedExpr::new(ty, ExprData::Symbol(name))
+                if let Some(var) = self.find_var(&name) {
+                    CheckedExpr::new(var.ty, ExprData::Symbol(name))
                 } else {
                     self.error(Error::new(format!("undefined variable: {name}"), span))
                 }
@@ -544,10 +566,39 @@ impl TypeChecker {
             Expr::Instance { name, members } => todo!(),
             Expr::None => todo!(),
             Expr::Assign {
-                target,
+                target: lhs,
                 binary,
                 value,
-            } => todo!(),
+            } => {
+                // TODO: check the binary ops, like += -= etc..
+                let lhs = self.check_expr(*lhs, None);
+                match &lhs.data {
+                    ExprData::Symbol(name) => {
+                        if !self.find_var(&name).unwrap().mutable {
+                            return self.error(Error::new("assignment to immutable variable", span));
+                        }
+                    }
+                    ExprData::Member { .. } => todo!(),
+                    ExprData::Subscript { .. } => todo!(),
+                    _ => {
+                        return self.error(Error::new("invalid assignment target", span));
+                    }
+                }
+
+                let rhs = self.check_expr(*value, Some(lhs.ty));
+                if lhs.ty != rhs.ty {
+                    return self.type_mismatch(lhs.ty, rhs.ty, span);
+                }
+
+                CheckedExpr::new(
+                    lhs.ty,
+                    ExprData::Assign {
+                        target: lhs.into(),
+                        binary,
+                        value: rhs.into(),
+                    },
+                )
+            }
             Expr::Block(body) => {
                 let block = self.create_block(body, Target::Block(target));
                 let Target::Block(target) = &self.scopes[block.scope].target else {
@@ -791,7 +842,7 @@ impl TypeChecker {
         self.traverse_scopes(id, |scope| scope.types.get(name).copied())
     }
 
-    fn find_var_in_scope(&self, name: &str, id: ScopeId) -> Option<TypeId> {
+    fn find_var_in_scope(&self, name: &str, id: ScopeId) -> Option<Variable> {
         self.traverse_scopes(id, |scope| scope.vars.get(name).copied())
     }
 
@@ -799,7 +850,7 @@ impl TypeChecker {
         self.find_type_in_scope(name, self.current)
     }
 
-    fn find_var(&self, name: &str) -> Option<TypeId> {
+    fn find_var(&self, name: &str) -> Option<Variable> {
         self.find_var_in_scope(name, self.current)
     }
 

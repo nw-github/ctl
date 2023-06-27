@@ -652,7 +652,7 @@ impl<'a> Parser<'a> {
             return Ok(L::new(
                 Expr::Assign {
                     target: expr.into(),
-                    binary: Some(assign.data.try_into().unwrap()),
+                    binary: assign.data.try_into().ok(),
                     value: value.into(),
                 },
                 span,

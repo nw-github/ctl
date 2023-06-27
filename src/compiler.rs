@@ -219,8 +219,16 @@ impl Compiler {
                 target,
                 binary,
                 value,
-            } => todo!(),
-            ExprData::Block(body) => panic!("ICE: ExprData::Block in compile_expr"),
+            } => {
+                self.compile_expr(target);
+                if let Some(binary) = binary {
+                    self.emit(format!(" {binary}= "));
+                } else {
+                    self.emit(" = ");
+                }
+                self.compile_expr(value);
+            }
+            ExprData::Block(_) => panic!("ICE: ExprData::Block in compile_expr"),
             ExprData::If {
                 cond,
                 if_branch,
