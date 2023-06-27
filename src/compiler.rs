@@ -1,11 +1,8 @@
 use crate::{
-    ast::{
-        expr::{Expr, UnaryOp},
-        stmt::{FnDecl, Param, Stmt},
-    },
+    ast::expr::UnaryOp,
     checked_ast::{
         expr::{CheckedExpr, ExprData},
-        stmt::{CheckedFnDecl, CheckedParam, CheckedStmt},
+        stmt::{CheckedFnDecl, CheckedStmt},
         Block, TypeId,
     },
     typecheck::{CheckedAst, Scope, Type},
@@ -38,6 +35,15 @@ impl Compiler {
         this.emit("#include <ctl/runtime.hpp>\n\n");
         this.emit(format!("using namespace {RT_NAMESPACE}::literals;\n\n"));
         this.compile_stmt(&mut ast.stmt);
+        this.emit(
+            "
+int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
+    auto result = tmpname::$ctl_main();
+    return result;
+}    
+        ",
+        );
+
         this.buffer
     }
 
@@ -412,17 +418,20 @@ impl Compiler {
     pub fn emit_fn_decl(
         &mut self,
         CheckedFnDecl {
-            public,
+            public: _,
             name,
-            is_async,
-            is_extern,
+            is_async: _,
+            is_extern: _,
             type_params,
             params,
             ret,
         }: &CheckedFnDecl,
     ) {
         self.emit_type(*ret);
-        self.emit(format!(" {name}("));
+        self.emit(format!(
+            " {}(",
+            if name == "main" { "$ctl_main" } else { name }
+        ));
         for (i, param) in params.iter().enumerate() {
             if i > 0 {
                 self.emit(", ");
