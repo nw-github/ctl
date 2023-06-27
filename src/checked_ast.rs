@@ -120,27 +120,25 @@ pub mod stmt {
         pub body: Block,
     }
 
-    pub struct MemVar {
+    pub struct CheckedMemVar {
         pub public: bool,
         pub name: String,
         pub ty: TypeId,
         pub value: Option<CheckedExpr>,
     }
 
-    pub struct Struct {
+    pub struct CheckedStruct {
         pub public: bool,
         pub name: String,
-        pub type_params: Vec<String>,
-        pub members: Vec<MemVar>,
-        pub impls: Vec<String>,
+        pub members: Vec<CheckedMemVar>,
         pub functions: Vec<CheckedFn>,
     }
 
-    pub enum UserType {
-        Struct(Struct),
+    pub enum CheckedUserType {
+        Struct(CheckedStruct),
         Union {
             tag: Option<String>,
-            base: Struct,
+            base: CheckedStruct,
         },
         Interface {
             public: bool,
@@ -168,7 +166,7 @@ pub mod stmt {
             value: Option<CheckedExpr>,
         },
         Fn(CheckedFn),
-        UserType(UserType),
+        UserType(CheckedUserType),
         Static {
             public: bool,
             name: String,

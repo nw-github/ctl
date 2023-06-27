@@ -3,11 +3,14 @@ use std::{collections::HashMap, vec};
 use crate::{
     ast::{
         expr::{BinaryOp, Expr, UnaryOp},
-        stmt::{Fn, FnDecl, Stmt, Struct, TypeHint, UserType},
+        stmt::{Fn, FnDecl, MemVar, Stmt, Struct, TypeHint, UserType},
     },
     checked_ast::{
         expr::{CheckedExpr, ExprData},
-        stmt::{CheckedFn, CheckedFnDecl, CheckedParam, CheckedStmt},
+        stmt::{
+            CheckedFn, CheckedFnDecl, CheckedMemVar, CheckedParam, CheckedStmt, CheckedStruct,
+            CheckedUserType,
+        },
         Block, ScopeId, TypeId,
     },
     lexer::{Located, Span},
@@ -24,6 +27,7 @@ pub struct Member {
 #[derive(Debug)]
 pub struct ResolvedStruct {
     pub members: Vec<Member>,
+    pub name: String,
 }
 
 #[derive(Debug)]
@@ -90,6 +94,7 @@ impl Type {
 pub enum Target {
     Block(Option<TypeId>),
     Function(TypeId),
+    UserType(TypeId),
     #[default]
     None,
 }
@@ -190,7 +195,61 @@ impl TypeChecker {
                 name,
                 body: self.create_block(body, Target::None),
             },
-            Stmt::UserType(_) => todo!(),
+            Stmt::UserType(data) => match data {
+                UserType::Struct(base) => {
+                    let id = ResolvedStruct {
+                        members: base
+                            .members
+                            .iter()
+                            .map(|member| Member {
+                                public: member.public,
+                                name: member.name.clone(),
+                                ty: self.resolve_type(&member.ty),
+                            })
+                            .collect(),
+                        name: base.name.clone(),
+                    };
+                    let id = self.insert_type_in_scope(base.name.clone(), Type::Struct(id));
+                    self.enter_scope(Target::UserType(id), |this| {
+                        let mut members = Vec::new();
+                        for member in base.members {
+                            let ty = this.resolve_type(&member.ty);
+                            let value = if let Some(value) = member.value {
+                                let span = value.span;
+                                let expr = this.check_expr(value, Some(ty));
+                                if ty != expr.ty {
+                                    return this.type_mismatch(ty, expr.ty, span);
+                                }
+
+                                Some(expr)
+                            } else {
+                                None
+                            };
+
+                            members.push(CheckedMemVar {
+                                public: member.public,
+                                name: member.name,
+                                ty,
+                                value,
+                            });
+                        }
+
+                        CheckedStmt::UserType(CheckedUserType::Struct(CheckedStruct {
+                            public: base.public,
+                            name: base.name,
+                            members,
+                            functions: base
+                                .functions
+                                .into_iter()
+                                .map(|f| this.check_fn(f))
+                                .collect(),
+                        }))
+                    })
+                }
+                UserType::Union { .. } => todo!(),
+                UserType::Interface { .. } => todo!(),
+                UserType::Enum { .. } => todo!(),
+            },
             Stmt::Expr(expr) => CheckedStmt::Expr(self.check_expr(expr, None)),
             Stmt::Let {
                 name,
@@ -243,64 +302,7 @@ impl TypeChecker {
                     return self.error(Error::new("cannot infer type", stmt.span));
                 }
             }
-            Stmt::Fn(Fn {
-                header:
-                    FnDecl {
-                        public,
-                        name,
-                        is_async,
-                        is_extern,
-                        type_params,
-                        params,
-                        ret,
-                    },
-                body,
-            }) => {
-                let header = CheckedFnDecl {
-                    public,
-                    name,
-                    is_async,
-                    is_extern,
-                    type_params,
-                    params: params
-                        .into_iter()
-                        .map(|param| CheckedParam {
-                            mutable: param.mutable,
-                            keyword: param.keyword,
-                            name: param.name,
-                            ty: self.resolve_type(&param.ty),
-                        })
-                        .collect(),
-                    ret: self.resolve_type(&ret),
-                };
-
-                let ty = self.insert_type(Type::Function {
-                    params: header
-                        .params
-                        .iter()
-                        .map(|param| (param.name.clone(), param.ty))
-                        .collect(),
-                    ret: header.ret,
-                });
-
-                self.scopes[self.current]
-                    .vars
-                    .insert(header.name.clone(), Variable { ty, mutable: false });
-                CheckedStmt::Fn(CheckedFn {
-                    body: self.create_block_with(body, Target::Function(header.ret), |this| {
-                        for param in header.params.iter() {
-                            this.scopes[this.current].vars.insert(
-                                param.name.clone(),
-                                Variable {
-                                    ty: param.ty,
-                                    mutable: param.mutable,
-                                },
-                            );
-                        }
-                    }),
-                    header,
-                })
-            }
+            Stmt::Fn(f) => CheckedStmt::Fn(self.check_fn(f)),
             Stmt::Static {
                 public,
                 name,
@@ -574,8 +576,9 @@ impl TypeChecker {
                 let lhs = self.check_expr(*lhs, None);
                 match &lhs.data {
                     ExprData::Symbol(name) => {
-                        if !self.find_var(&name).unwrap().mutable {
-                            return self.error(Error::new("assignment to immutable variable", span));
+                        if !self.find_var(name).unwrap().mutable {
+                            return self
+                                .error(Error::new("assignment to immutable variable", span));
                         }
                     }
                     ExprData::Member { .. } => todo!(),
@@ -686,52 +689,66 @@ impl TypeChecker {
         false
     }
 
-    fn resolve_usertype(&mut self, ty: &UserType) -> TypeId {
-        // match ty {
-        //     UserType::Struct(base) => {
-        //         let data = ResolvedType::Struct(self.resolve_struct(base));
-        //         self.insert_type(base.name.clone(), data);
-        //     }
-        //     UserType::Union { tag, base } => {
-        //         let data = ResolvedType::Union {
-        //             tag: tag.as_ref().map(|ty| self.find_type(ty)),
-        //             base: self.resolve_struct(base),
-        //         };
-        //         self.insert_type(base.name.clone(), data);
-        //     }
-        //     UserType::Interface {
-        //         public,
-        //         name,
-        //         type_params,
-        //         impls,
-        //         functions,
-        //     } => todo!(),
-        //     UserType::Enum {
-        //         public,
-        //         name,
-        //         impls,
-        //         variants,
-        //         functions,
-        //     } => todo!(),
-        // }
+    fn check_fn(
+        &mut self,
+        Fn {
+            header:
+                FnDecl {
+                    public,
+                    name,
+                    is_async,
+                    is_extern,
+                    type_params,
+                    params,
+                    ret,
+                },
+            body,
+        }: Fn,
+    ) -> CheckedFn {
+        let header = CheckedFnDecl {
+            public,
+            name,
+            is_async,
+            is_extern,
+            type_params,
+            params: params
+                .into_iter()
+                .map(|param| CheckedParam {
+                    mutable: param.mutable,
+                    keyword: param.keyword,
+                    name: param.name,
+                    ty: self.resolve_type(&param.ty),
+                })
+                .collect(),
+            ret: self.resolve_type(&ret),
+        };
 
-        todo!()
-    }
+        let ty = self.insert_type(Type::Function {
+            params: header
+                .params
+                .iter()
+                .map(|param| (param.name.clone(), param.ty))
+                .collect(),
+            ret: header.ret,
+        });
 
-    fn resolve_struct(&mut self, Struct { members, .. }: &Struct) -> ResolvedStruct {
-        todo!()
-        // ResolvedStruct {
-        //     members: members
-        //         .iter()
-        //         .map(|m| Member {
-        //             public: m.public,
-        //             name: m.name.clone(),
-        //             ty: self
-        //                 .resolve_type(&m.ty)
-        //                 .expect("unable to resolve member type"),
-        //         })
-        //         .collect(),
-        // }
+        self.scopes[self.current]
+            .vars
+            .insert(header.name.clone(), Variable { ty, mutable: false });
+        CheckedFn {
+            body: self.create_block_with(body, Target::Function(header.ret), |this| {
+                for param in header.params.iter() {
+                    this.scopes[this.current].vars.insert(
+                        param.name.clone(),
+                        Variable {
+                            ty: param.ty,
+                            mutable: param.mutable,
+                        },
+                    );
+                }
+            }),
+            header,
+        }
     }
 
     fn resolve_type(&mut self, ty: &TypeHint) -> TypeId {
@@ -743,9 +760,19 @@ impl TypeChecker {
             TypeHint::Map(_, _) => self.find_type_in_scope("Map", 0),
             TypeHint::Option(_) => self.find_type_in_scope("Option", 0),
             TypeHint::Result(_, _) => self.find_type_in_scope("Result", 0),
-            TypeHint::Anon(ty) => Some(self.resolve_usertype(ty)),
+            TypeHint::Anon(_) => todo!(),
             TypeHint::Void => self.find_type_in_scope("void", 0),
-            TypeHint::Ref(_) | TypeHint::RefMut(_) | TypeHint::This => unreachable!(),
+            TypeHint::Ref(_) | TypeHint::RefMut(_) => unreachable!(),
+            TypeHint::This => {
+                // the parser ensures methods can only appear in structs/enums/etc
+                self.traverse_scopes(self.current, |scope| {
+                    if let Target::UserType(id) = scope.target {
+                        Some(id)
+                    } else {
+                        None
+                    }
+                })
+            }
         }
         .unwrap()
     }
