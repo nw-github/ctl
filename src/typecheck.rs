@@ -14,7 +14,7 @@ use crate::{
         Block,
     },
     lexer::{Located, Span},
-    scope::{Scope, ScopeId, Scopes, ScopeKind, Variable},
+    scope::{Scope, ScopeId, ScopeKind, Scopes, Variable},
     Error,
 };
 
@@ -759,7 +759,33 @@ impl TypeChecker {
                     ExprData::Block(block),
                 )
             }
-            Expr::If { .. } => todo!(),
+            Expr::If {
+                cond,
+                if_branch,
+                else_branch,
+            } => {
+                let cond = self.check_expr(*cond, Some(&TypeId::Bool));
+                let if_branch = self.check_expr(*if_branch, target);
+                let else_branch = if let Some(e) = else_branch {
+                    let else_branch = self.check_expr(*e, Some(&if_branch.ty));
+                    if !self.coerces_to(&else_branch.ty, &if_branch.ty) {
+                        return self.type_mismatch(&if_branch.ty, &else_branch.ty, span);
+                    }
+
+                    Some(else_branch)
+                } else {
+                    None
+                };
+
+                CheckedExpr::new(
+                    if_branch.ty.clone(),
+                    ExprData::If {
+                        cond: cond.into(),
+                        if_branch: if_branch.into(),
+                        else_branch: else_branch.map(|e| e.into()),
+                    },
+                )
+            }
             Expr::Loop { .. } => todo!(),
             Expr::For { .. } => todo!(),
             Expr::Member { source, member } => {
