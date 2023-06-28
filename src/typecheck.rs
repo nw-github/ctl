@@ -210,7 +210,7 @@ impl TypeChecker {
                             let value = if let Some(value) = member.value {
                                 let span = value.span;
                                 let expr = this.check_expr(value, Some(&ty));
-                                if ty != expr.ty {
+                                if !this.coerces_to(&expr.ty, &ty) { 
                                     return this.type_mismatch(&ty, &expr.ty, span);
                                 }
 
@@ -261,7 +261,7 @@ impl TypeChecker {
                     );
                     if let Some(value) = value {
                         let value = self.check_expr(value, Some(&ty));
-                        if value.ty != ty {
+                        if !self.coerces_to(&value.ty, &ty) {
                             return self.type_mismatch(&ty, &value.ty, stmt.span);
                         }
 
@@ -314,7 +314,7 @@ impl TypeChecker {
                     );
 
                     let value = self.check_expr(value, Some(&ty));
-                    if value.ty != ty {
+                    if !self.coerces_to(&value.ty, &ty) {
                         return self.type_mismatch(&ty, &value.ty, stmt.span);
                     }
 
@@ -350,7 +350,7 @@ impl TypeChecker {
                 let left = self.check_expr(*left, target);
                 let right = self.check_expr(*right, Some(&left.ty));
 
-                if left.ty != right.ty {
+                if !self.coerces_to(&right.ty, &left.ty) {
                     self.type_mismatch(&left.ty, &right.ty, span)
                 } else if !left.ty.supports_binop(op) {
                     self.error(Error::new(
@@ -390,44 +390,51 @@ impl TypeChecker {
                 let value_span = expr.span;
                 let expr = self.check_expr(*expr, target);
                 let mut out_ty = None;
-                let valid = match &expr.ty {
-                    TypeId::Int(_) => matches!(
-                        op,
-                        Plus | Neg
-                            | Not
-                            | PostIncrement
-                            | PostDecrement
-                            | PreIncrement
-                            | PreDecrement
-                    ),
-                    TypeId::Uint(_) => matches!(
-                        op,
-                        Plus | PostIncrement | PostDecrement | PreIncrement | PreDecrement | Not
-                    ),
-                    TypeId::F32 | TypeId::F64 => matches!(op, Plus | Neg),
-                    TypeId::Bool => matches!(op, Not),
-                    TypeId::Ref(inner) | TypeId::RefMut(inner) => {
-                        if matches!(op, Deref) {
+                let valid = match op {
+                    Plus => expr.ty.is_numeric(),
+                    Neg => matches!(expr.ty, TypeId::Int(_) | TypeId::F32 | TypeId::F64),
+                    PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
+                        if matches!(expr.ty, TypeId::Int(_) | TypeId::Uint(_)) {
+                            if !self.is_assignable(&expr) {
+                                return self
+                                    .error(Error::new("expression is not assignable", value_span));
+                            }
+
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    Not => matches!(expr.ty, TypeId::Int(_) | TypeId::Uint(_) | TypeId::Bool),
+                    Deref => {
+                        if let TypeId::Ref(inner) | TypeId::RefMut(inner) = &expr.ty {
                             out_ty = Some((**inner).clone());
                             true
                         } else {
                             false
                         }
                     }
-                    _ => false,
+                    Addr => {
+                        out_ty = Some(TypeId::Ref(expr.ty.clone().into()));
+                        true
+                    }
+                    AddrMut => {
+                        if !self.is_mutable(&expr) {
+                            return self.error(Error::new(
+                                "cannot take address of immutable memory location",
+                                span,
+                            ));
+                        }
+
+                        out_ty = Some(TypeId::RefMut(expr.ty.clone().into()));
+                        true
+                    }
+                    IntoError => todo!(),
+                    Try => todo!(),
+                    Sizeof => todo!(),
                 };
 
-                if !self.is_assignable(&expr)
-                    && matches!(
-                        op,
-                        PostIncrement | PostDecrement | PreIncrement | PreDecrement
-                    )
-                {
-                    self.error(Error::new(
-                        format!("expression is not assignable"),
-                        value_span,
-                    ))
-                } else if valid {
+                if valid {
                     CheckedExpr::new(
                         out_ty.unwrap_or_else(|| expr.ty.clone()),
                         ExprData::Unary {
@@ -467,7 +474,7 @@ impl TypeChecker {
                         // TODO: keyword arguments
                         for ((_, ptype), (_, expr)) in params.into_iter().zip(args.into_iter()) {
                             let expr = self.check_expr(expr, Some(&ptype));
-                            if expr.ty != ptype {
+                            if !self.coerces_to(&expr.ty, &ptype) {
                                 return self.type_mismatch(&ptype, &expr.ty, span);
                             }
                             result_args.push(expr);
@@ -489,7 +496,7 @@ impl TypeChecker {
                 ))
             }
             Expr::Array(_) => todo!(),
-            Expr::ArrayWithInit { init, count } => todo!(),
+            Expr::ArrayWithInit { .. } => todo!(),
             Expr::Tuple(_) => todo!(),
             Expr::Map(_) => todo!(),
             Expr::Bool(value) => CheckedExpr {
@@ -499,7 +506,7 @@ impl TypeChecker {
             Expr::Integer(base, value) => {
                 // TODO: attempt to promote the literal if its too large for i32
                 let ty = target
-                    .filter(|target| self.coerces_to(&TypeId::IntGeneric, &target))
+                    .filter(|target| self.coerces_to(&TypeId::IntGeneric, target))
                     .cloned()
                     .unwrap_or(TypeId::Int(32));
 
@@ -555,7 +562,7 @@ impl TypeChecker {
             }
             Expr::Float(value) => CheckedExpr::new(
                 target
-                    .filter(|target| self.coerces_to(&TypeId::FloatGeneric, &target))
+                    .filter(|target| self.coerces_to(&TypeId::FloatGeneric, target))
                     .cloned()
                     .unwrap_or(TypeId::F64),
                 ExprData::Float(value),
@@ -568,7 +575,7 @@ impl TypeChecker {
                     self.error(Error::new(format!("undefined variable: {name}"), span))
                 }
             }
-            Expr::Instance { name, members } => todo!(),
+            Expr::Instance { .. } => todo!(),
             Expr::None => todo!(),
             Expr::Assign {
                 target: lhs,
@@ -584,7 +591,7 @@ impl TypeChecker {
                 }
 
                 let rhs = self.check_expr(*value, Some(&lhs.ty));
-                if lhs.ty != rhs.ty {
+                if !self.coerces_to(&rhs.ty, &lhs.ty) {
                     return self.type_mismatch(&lhs.ty, &rhs.ty, span);
                 }
 
@@ -607,19 +614,11 @@ impl TypeChecker {
                     ExprData::Block(block),
                 )
             }
-            Expr::If {
-                cond,
-                if_branch,
-                else_branch,
-            } => todo!(),
-            Expr::Loop {
-                cond,
-                body,
-                do_while,
-            } => todo!(),
-            Expr::For { var, iter, body } => todo!(),
-            Expr::Member { source, member } => todo!(),
-            Expr::Subscript { callee, args } => todo!(),
+            Expr::If { .. } => todo!(),
+            Expr::Loop { .. } => todo!(),
+            Expr::For { .. } => todo!(),
+            Expr::Member { .. } => todo!(),
+            Expr::Subscript { .. } => todo!(),
             Expr::Return(expr) => {
                 let Some(target) = self.traverse_scopes(self.current, |scope| {
                     if let Target::Function(id) = &scope.target {
@@ -633,7 +632,7 @@ impl TypeChecker {
                 };
 
                 let expr = self.check_expr(*expr, Some(&target));
-                if expr.ty != target {
+                if !self.coerces_to(&expr.ty, &target) {
                     self.type_mismatch(&target, &expr.ty, span)
                 } else {
                     CheckedExpr::new(TypeId::Never, ExprData::Return(expr.into()))
@@ -645,9 +644,9 @@ impl TypeChecker {
                 };
 
                 let expr = self.check_expr(*expr, target.as_ref());
-                if let Some(target) = target {
-                    if target != expr.ty {
-                        return self.type_mismatch(&target, &expr.ty, span);
+                if let Some(target) = &target {
+                    if !self.coerces_to(&expr.ty, target) {
+                        return self.type_mismatch(target, &expr.ty, span);
                     }
                 } else {
                     self.scopes[self.current].target = Target::Block(Some(expr.ty.clone()));
@@ -656,11 +655,7 @@ impl TypeChecker {
                 CheckedExpr::new(TypeId::Never, ExprData::Yield(expr.into()))
             }
             Expr::Break(_) => todo!(),
-            Expr::Range {
-                start,
-                end,
-                inclusive,
-            } => todo!(),
+            Expr::Range { .. } => todo!(),
             Expr::Continue => todo!(),
         }
     }
@@ -683,7 +678,7 @@ impl TypeChecker {
             }
         }
 
-        false
+        ty == target
     }
 
     fn check_fn(
@@ -789,7 +784,7 @@ impl TypeChecker {
             }
             TypeHint::Void => TypeId::Void,
             TypeHint::Ref(ty) => TypeId::Ref(self.resolve_type(ty).into()),
-            TypeHint::RefMut(_) => TypeId::RefMut(self.resolve_type(ty).into()),
+            TypeHint::RefMut(ty) => TypeId::RefMut(self.resolve_type(ty).into()),
             TypeHint::This => {
                 // the parser ensures methods can only appear in structs/enums/etc
                 self.traverse_scopes(self.current, |scope| {
@@ -858,6 +853,16 @@ impl TypeChecker {
             ExprData::Member { .. } => todo!(),
             ExprData::Subscript { .. } => todo!(),
             _ => false,
+        }
+    }
+
+    fn is_mutable(&self, expr: &CheckedExpr) -> bool {
+        match &expr.data {
+            ExprData::Unary { op, expr } => !matches!(op, UnaryOp::Deref) || self.is_mutable(expr),
+            ExprData::Symbol(name) => self.find_var(name).unwrap().mutable,
+            ExprData::Member { source, .. } => self.is_mutable(source),
+            ExprData::Subscript { callee, .. } => self.is_mutable(callee),
+            _ => true,
         }
     }
 
