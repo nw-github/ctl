@@ -125,7 +125,6 @@ pub enum Target {
 pub struct Variable {
     ty: TypeId,
     mutable: bool,
-    is_static: bool,
 }
 
 #[derive(Default, Debug)]
@@ -147,10 +146,7 @@ pub struct ScopeStack {
     scopes: Vec<Scope>,
 }
 
-impl ScopeStack {
-    
-}
-
+impl ScopeStack {}
 
 pub struct TypeChecker {
     types: Vec<Type>,
@@ -208,7 +204,11 @@ impl TypeChecker {
 
     fn check_stmt(&mut self, stmt: Located<Stmt>) -> CheckedStmt {
         match stmt.data {
-            Stmt::Module { public: _, name, body } => CheckedStmt::Module {
+            Stmt::Module {
+                public: _,
+                name,
+                body,
+            } => CheckedStmt::Module {
                 name: name.clone(),
                 body: self.create_block(Some(name), body, Target::None),
             },
@@ -289,7 +289,6 @@ impl TypeChecker {
                         Variable {
                             ty: ty.clone(),
                             mutable,
-                            is_static: false,
                         },
                     );
                     if let Some(value) = value {
@@ -317,7 +316,6 @@ impl TypeChecker {
                         Variable {
                             ty: value.ty.clone(),
                             mutable,
-                            is_static: false,
                         },
                     );
 
@@ -344,7 +342,6 @@ impl TypeChecker {
                         Variable {
                             ty: ty.clone(),
                             mutable: false,
-                            is_static: true,
                         },
                     );
 
@@ -365,7 +362,6 @@ impl TypeChecker {
                         Variable {
                             ty: value.ty.clone(),
                             mutable: false,
-                            is_static: true,
                         },
                     );
 
@@ -672,8 +668,14 @@ impl TypeChecker {
             ),
             Expr::String(_) => todo!(),
             Expr::Symbol(name) => {
-                if let Some(var) = self.find_var(&name) {
-                    CheckedExpr::new(var.ty.clone(), ExprData::Symbol(name))
+                if let Some((var, id)) = self.find_var_and_scope(&name) {
+                    CheckedExpr::new(
+                        var.ty.clone(),
+                        ExprData::Symbol {
+                            scope: (id != self.current).then_some(id),
+                            symbol: name,
+                        },
+                    )
                 } else {
                     self.error(Error::new(format!("undefined variable: {name}"), span))
                 }
@@ -831,7 +833,8 @@ impl TypeChecker {
             Expr::Return(expr) => {
                 let Some(target) = self.traverse_scopes(self.current, |scope| {
                     if let Target::Function(id) = &scope.target {
-                        Some(TypeId::Type(*id))
+                        let Type::Function { ret, .. } = &self.types[*id] else { unreachable!() };
+                        Some(ret.clone())
                     } else {
                         None
                     }
@@ -938,7 +941,6 @@ impl TypeChecker {
             Variable {
                 ty: TypeId::Type(ty),
                 mutable: false,
-                is_static: false,
             },
         );
         CheckedFn {
@@ -949,7 +951,6 @@ impl TypeChecker {
                         Variable {
                             ty: param.ty.clone(),
                             mutable: param.mutable,
-                            is_static: false,
                         },
                     );
                 }
@@ -1098,7 +1099,7 @@ impl TypeChecker {
             ExprData::Unary { op, expr } => {
                 matches!(op, UnaryOp::Deref) && matches!(expr.ty, TypeId::RefMut(_))
             }
-            ExprData::Symbol(name) => self.find_var(name).unwrap().mutable,
+            ExprData::Symbol { symbol, .. } => self.find_var(symbol).unwrap().mutable,
             ExprData::Member { source, .. } => {
                 matches!(source.ty, TypeId::RefMut(_)) || self.can_addrmut(source)
             }
@@ -1112,7 +1113,7 @@ impl TypeChecker {
             ExprData::Unary { op, expr } => {
                 !matches!(op, UnaryOp::Deref) || matches!(expr.ty, TypeId::RefMut(_))
             }
-            ExprData::Symbol(name) => self.find_var(name).unwrap().mutable,
+            ExprData::Symbol { symbol, .. } => self.find_var(symbol).unwrap().mutable,
             ExprData::Member { source, .. } => {
                 matches!(source.ty, TypeId::RefMut(_)) || self.can_addrmut(source)
             }
@@ -1168,19 +1169,23 @@ impl TypeChecker {
         }
     }
 
-    fn is_sub_scope(&self, target: ScopeId) -> bool {
-        let mut id = self.current;
+    fn traverse_scope_ids<T>(
+        &self,
+        mut id: ScopeId,
+        mut f: impl FnMut(usize) -> Option<T>,
+    ) -> Option<T> {
         loop {
-            if id == target {
-                return true;
+            if let Some(item) = f(id) {
+                return Some(item);
             }
 
-            if let Some(parent) = self.scopes[id].parent {
-                id = parent;
-            } else {
-                return false;
-            }
+            id = self.scopes[id].parent?;
         }
+    }
+
+    fn is_sub_scope(&self, target: ScopeId) -> bool {
+        self.traverse_scope_ids(self.current, |id| (id == target).then_some(()))
+            .is_some()
     }
 
     fn find_type(&self, name: &str) -> Option<&TypeId> {
@@ -1189,6 +1194,12 @@ impl TypeChecker {
 
     fn find_var(&self, name: &str) -> Option<&Variable> {
         self.traverse_scopes(self.current, |scope| scope.vars.get(name))
+    }
+
+    fn find_var_and_scope(&self, name: &str) -> Option<(&Variable, ScopeId)> {
+        self.traverse_scope_ids(self.current, |id| {
+            self.scopes[id].vars.get(name).map(|var| (var, id))
+        })
     }
 
     fn insert_type_in_scope(&mut self, name: String, data: Type) -> usize {

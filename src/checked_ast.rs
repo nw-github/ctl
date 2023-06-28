@@ -13,7 +13,7 @@ pub mod expr {
         typecheck::TypeId,
     };
 
-    use super::Block;
+    use super::{Block, ScopeId};
 
     #[derive(Default)]
     pub enum ExprData {
@@ -48,7 +48,10 @@ pub mod expr {
         Unsigned(u128),
         Float(String),
         String(String),
-        Symbol(String),
+        Symbol {
+            scope: Option<ScopeId>,
+            symbol: String,
+        },
         Instance {
             members: Vec<(String, CheckedExpr)>,
         },

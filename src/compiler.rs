@@ -35,7 +35,7 @@ impl Compiler {
             block_number: 0,
             current_path: String::new(),
         };
-        this.emit("#include <ctl/runtime.hpp>\n\n");
+        this.emit("#include <ctl/runtime.h>\n\n");
         this.compile_stmt(&mut ast.stmt);
         this.emit(format!(
             "
@@ -45,8 +45,7 @@ int main(int argc, char **argv) {{
     (void)argc;
     (void)argv;
 
-    auto result = {MAIN_NAME}();
-    return result;
+    return {MAIN_NAME}();
 }}   
         ",
         ));
@@ -129,8 +128,7 @@ int main(int argc, char **argv) {{
             } => {
                 self.emit("static ");
                 self.emit_type(&value.ty);
-                // TODO: statics should use self.current_path
-                self.emit(format!(" const {name} = "));
+                self.emit(format!(" const {}{name} = ", self.current_path));
                 // FIXME: blocks in statics...
                 self.hoist_blocks(value);
                 self.compile_expr(value);
@@ -279,8 +277,12 @@ int main(int argc, char **argv) {{
                 self.emit(value);
             }
             ExprData::String(_) => todo!(),
-            ExprData::Symbol(name) => {
-                self.emit(name);
+            ExprData::Symbol { scope, symbol } => {
+                if let Some(scope) = scope {
+                    self.emit(Self::scope_name(*scope, &self.scopes));
+                    self.emit("_");
+                }
+                self.emit(symbol);
             }
             ExprData::Instance { members } => {
                 self.emit("{");
@@ -455,7 +457,7 @@ int main(int argc, char **argv) {{
                 self.emit(format!("{label}:\n"));
                 self.current_block = old_block;
 
-                expr.data = ExprData::Symbol(variable);
+                expr.data = ExprData::Symbol { scope: None, symbol: variable };
             }
             _ => {}
         }
@@ -488,7 +490,7 @@ int main(int argc, char **argv) {{
             TypeId::Type(id) => {
                 match &self.types[*id] {
                     Type::Function { .. } => todo!(),
-                    Type::Struct(base) => self.emit(self.scope_name(base.scope)),
+                    Type::Struct(base) => self.emit(Self::scope_name(base.scope, &self.scopes)),
                     Type::Temporary => panic!("ICE: Type::Temporary in emit_type"),
                 }
             }
@@ -545,20 +547,20 @@ int main(int argc, char **argv) {{
         self.current_path.truncate(self.current_path.len() - name.len() - 1);
     }
 
-    fn scope_name(&self, scope: ScopeId) -> String {
+    fn scope_name(scope: ScopeId, scopes: &[Scope]) -> String {
         let mut scope = Some(scope);
         let mut name = String::new();
         while let Some(id) = scope {
-            if let Some(scope_name) = &self.scopes[id].name {
+            if let Some(scope_name) = &scopes[id].name {
                 for c in scope_name.chars().rev() {
                     name.push(c);
                 }
                 name.push('_');
             }
-
-            scope = self.scopes[id].parent;
+    
+            scope = scopes[id].parent;
         }
-
+    
         name.chars().rev().skip(1).collect::<String>()
     }
 }
