@@ -30,6 +30,7 @@ pub struct Member {
 pub struct ResolvedStruct {
     pub members: HashMap<String, Member>,
     pub name: String,
+    pub scope: ScopeId,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
@@ -98,6 +99,7 @@ pub enum Type {
         ret: TypeId,
     },
     Struct(ResolvedStruct),
+    Temporary,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -192,24 +194,27 @@ impl TypeChecker {
             },
             Stmt::UserType(data) => match data {
                 UserType::Struct(base) => {
-                    let id = ResolvedStruct {
-                        members: base
-                            .members
-                            .iter()
-                            .map(|(name, member)| {
-                                (
-                                    name.clone(),
-                                    Member {
-                                        public: member.public,
-                                        ty: self.resolve_type(&member.ty),
-                                    },
-                                )
-                            })
-                            .collect(),
-                        name: base.name.clone(),
-                    };
-                    let id = self.insert_type_in_scope(base.name.clone(), Type::Struct(id));
-                    self.enter_scope(Target::UserType(id), |this| {
+                    let id = self.insert_type_in_scope(base.name.clone(), Type::Temporary);
+                    self.enter_scope(Target::UserType(id.clone()), |this| {
+                        let TypeId::Type(id) = id else { unreachable!() };
+                        this.types[id] = Type::Struct(ResolvedStruct {
+                            members: base
+                                .members
+                                .iter()
+                                .map(|(name, member)| {
+                                    (
+                                        name.clone(),
+                                        Member {
+                                            public: member.public,
+                                            ty: this.resolve_type(&member.ty),
+                                        },
+                                    )
+                                })
+                                .collect(),
+                            name: base.name.clone(),
+                            scope: this.current,
+                        });
+
                         let mut members = Vec::new();
                         for (name, member) in base.members {
                             let ty = this.resolve_type(&member.ty);
@@ -233,15 +238,17 @@ impl TypeChecker {
                             });
                         }
 
+                        let functions = base
+                            .functions
+                            .into_iter()
+                            .map(|f| this.check_fn(f))
+                            .collect();
+
                         CheckedStmt::UserType(CheckedUserType::Struct(CheckedStruct {
                             public: base.public,
                             name: base.name,
                             members,
-                            functions: base
-                                .functions
-                                .into_iter()
-                                .map(|f| this.check_fn(f))
-                                .collect(),
+                            functions,
                         }))
                     })
                 }
@@ -604,35 +611,44 @@ impl TypeChecker {
                 };
 
                 let members = s.members.clone();
+                if members.iter().any(|member| !member.1.public) && !self.is_sub_scope(s.scope) {
+                    self.error::<()>(Error::new(
+                        "cannot construct type with private members",
+                        span,
+                    ));
+
+                    return CheckedExpr::new(id, ExprData::Error);
+                }
+
                 let mut checked: HashMap<_, _> =
-                    s.members.keys().map(|name| (name.clone(), None)).collect();
-                for (name, value) in arguments {
-                    if let Entry::Occupied(mut entry) = checked.entry(name.clone()) {
-                        if entry.get().is_some() {
+                        s.members.keys().map(|name| (name.clone(), None)).collect();
+                    for (name, value) in arguments {
+                        if let Entry::Occupied(mut entry) = checked.entry(name.clone()) {
+                            if entry.get().is_some() {
+                                self.error::<()>(Error::new(
+                                    format!("field '{name}' declared multiple times"),
+                                    value.span,
+                                ));
+                            } else {
+                                let span = value.span;
+                                let value = self.check_expr(value, Some(&members[&name].ty));
+                                if !self.coerces_to(&value.ty, &members[&name].ty) {
+                                    entry.insert(Some(self.type_mismatch(
+                                        &members[&name].ty,
+                                        &value.ty,
+                                        span,
+                                    )));
+                                } else {
+                                    entry.insert(Some(value));
+                                }
+                            }
+                        } else {
                             self.error::<()>(Error::new(
-                                format!("field '{name}' declared multiple times"),
+                                format!("no field '{name}' on type {}", self.type_name(&id)),
                                 value.span,
                             ));
-                        } else {
-                            let span = value.span;
-                            let value = self.check_expr(value, Some(&members[&name].ty));
-                            if !self.coerces_to(&value.ty, &members[&name].ty) {
-                                entry.insert(Some(self.type_mismatch(
-                                    &members[&name].ty,
-                                    &value.ty,
-                                    span,
-                                )));
-                            } else {
-                                entry.insert(Some(value));
-                            }
                         }
-                    } else {
-                        self.error::<()>(Error::new(
-                            format!("no field '{name}' on type {}", self.type_name(&id)),
-                            value.span,
-                        ));
                     }
-                }
 
                 CheckedExpr::new(
                     id,
@@ -690,7 +706,63 @@ impl TypeChecker {
             Expr::If { .. } => todo!(),
             Expr::Loop { .. } => todo!(),
             Expr::For { .. } => todo!(),
-            Expr::Member { .. } => todo!(),
+            Expr::Member { source, member } => {
+                let source = self.check_expr(*source, None);
+                let mut id = &source.ty;
+                while let TypeId::Ref(inner) | TypeId::RefMut(inner) = id {
+                    id = inner;
+                }
+
+                let TypeId::Type(ty) = id else {
+                    return self.error(Error::new(
+                        format!("type {} has no members", 
+                        self.type_name(id)
+                    ), span));
+                };
+
+                let Type::Struct(s) = &self.types[*ty] else {
+                    return self.error(Error::new(
+                        format!("cannot construct an instance of type {}", 
+                        self.type_name(id)
+                    ), span));
+                };
+
+                if let Some(t) = s.members.get(&member) {
+                    if !t.public && !self.is_sub_scope(s.scope) {
+                        return self.error(Error::new(
+                            format!(
+                                "cannot access private member '{member}' of type {}",
+                                self.type_name(id)
+                            ),
+                            span,
+                        ));
+                    }
+
+                    CheckedExpr::new(
+                        t.ty.clone(),
+                        ExprData::Member {
+                            source: source.into(),
+                            member,
+                        },
+                    )
+                } else if let Some(f) = self.scopes[s.scope].vars.get(&member) {
+                    CheckedExpr::new(
+                        f.ty.clone(),
+                        ExprData::Member {
+                            source: source.into(),
+                            member,
+                        },
+                    )
+                } else {
+                    self.error(Error::new(
+                        format!(
+                            "type {} has no member '{member}'",
+                            self.type_name(&source.ty)
+                        ),
+                        span,
+                    ))
+                }
+            }
             Expr::Subscript { .. } => todo!(),
             Expr::Return(expr) => {
                 let Some(target) = self.traverse_scopes(self.current, |scope| {
@@ -923,7 +995,7 @@ impl TypeChecker {
                 matches!(op, UnaryOp::Deref) && matches!(expr.ty, TypeId::RefMut(_))
             }
             ExprData::Symbol(name) => self.find_var(name).unwrap().mutable,
-            ExprData::Member { .. } => todo!(),
+            ExprData::Member { source, .. } => self.is_assignable(source),
             ExprData::Subscript { .. } => todo!(),
             _ => false,
         }
@@ -966,6 +1038,7 @@ impl TypeChecker {
                     format!("{result}) {}", self.type_name(ret))
                 }
                 Type::Struct(base) => base.name.clone(),
+                Type::Temporary => panic!("ICE: Type::Temporary in type_name"),
             },
         }
     }
@@ -982,6 +1055,21 @@ impl TypeChecker {
             }
 
             id = scope.parent?;
+        }
+    }
+
+    fn is_sub_scope(&self, target: ScopeId) -> bool {
+        let mut id = self.current;
+        loop {
+            if id == target {
+                return true;
+            }
+
+            if let Some(parent) = self.scopes[id].parent {
+                id = parent;
+            } else {
+                return false;
+            }
         }
     }
 

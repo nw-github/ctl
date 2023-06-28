@@ -449,6 +449,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     Type::Function { .. } => todo!(),
                     // TODO: use fully qualified name
                     Type::Struct(base) => self.emit(base.name.clone()),
+                    Type::Temporary => panic!("ICE: Type::Temporary in emit_type"),
                 }
             }
         }
