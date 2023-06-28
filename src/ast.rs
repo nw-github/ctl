@@ -204,6 +204,8 @@ pub mod expr {
 }
 
 pub mod stmt {
+    use std::collections::HashMap;
+
     #[derive(Debug)]
     pub enum TypeHint {
         Regular {
@@ -252,7 +254,6 @@ pub mod stmt {
     #[derive(Debug)]
     pub struct MemVar {
         pub public: bool,
-        pub name: String,
         pub ty: TypeHint,
         pub value: Option<super::Expr>,
     }
@@ -262,7 +263,7 @@ pub mod stmt {
         pub public: bool,
         pub name: String,
         pub type_params: Vec<String>,
-        pub members: Vec<MemVar>,
+        pub members: HashMap<String, MemVar>,
         pub impls: Vec<String>,
         pub functions: Vec<Fn>,
     }

@@ -1,4 +1,4 @@
-use std::iter::Peekable;
+use std::{iter::Peekable, collections::HashMap};
 
 use crate::{
     ast::{
@@ -266,7 +266,7 @@ impl<'a> Parser<'a> {
         self.expect_kind(Token::LCurly, "expected '{'")?;
 
         let mut functions = Vec::new();
-        let mut members = Vec::new();
+        let mut members = HashMap::new();
         *span = self.advance_until(Token::RCurly, *span, |this| {
             let public = this.advance_if_kind(Token::Pub).is_some();
             if let Some(header) = this.try_function_decl(public, true) {
@@ -289,12 +289,11 @@ impl<'a> Parser<'a> {
                 };
                 this.expect_kind(Token::Comma, "expected ','")?;
 
-                members.push(stmt::MemVar {
-                    public,
-                    name,
-                    ty,
-                    value,
-                });
+                if members.contains_key(&name) {
+                    // TODO: report error
+                }
+
+                members.insert(name, stmt::MemVar { public, ty, value });
             }
 
             Ok(())
@@ -641,7 +640,7 @@ impl<'a> Parser<'a> {
         let expr = self.range()?;
         if let Some(assign) = self.advance_if(|k| k.is_assignment()) {
             match expr.data {
-                Expr::Symbol(_) | Expr::Subscript { .. } => {}
+                Expr::Symbol(_) | Expr::Subscript { .. } | Expr::Member { .. } => {}
                 Expr::Unary { op, .. } if op == UnaryOp::Deref => {}
                 _ => return Err(Error::new("invalid assignment target", expr.span)),
             }

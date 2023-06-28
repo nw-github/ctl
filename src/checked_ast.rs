@@ -44,7 +44,6 @@ pub mod expr {
         String(String),
         Symbol(String),
         Instance {
-            name: String,
             members: Vec<(String, CheckedExpr)>,
         },
         None,

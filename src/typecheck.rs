@@ -1,4 +1,7 @@
-use std::{collections::HashMap, vec};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    vec,
+};
 
 use crate::{
     ast::{
@@ -17,16 +20,15 @@ use crate::{
     Error,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Member {
     pub public: bool,
-    pub name: String,
     pub ty: TypeId,
 }
 
 #[derive(Debug)]
 pub struct ResolvedStruct {
-    pub members: Vec<Member>,
+    pub members: HashMap<String, Member>,
     pub name: String,
 }
 
@@ -194,10 +196,14 @@ impl TypeChecker {
                         members: base
                             .members
                             .iter()
-                            .map(|member| Member {
-                                public: member.public,
-                                name: member.name.clone(),
-                                ty: self.resolve_type(&member.ty),
+                            .map(|(name, member)| {
+                                (
+                                    name.clone(),
+                                    Member {
+                                        public: member.public,
+                                        ty: self.resolve_type(&member.ty),
+                                    },
+                                )
                             })
                             .collect(),
                         name: base.name.clone(),
@@ -205,7 +211,7 @@ impl TypeChecker {
                     let id = self.insert_type_in_scope(base.name.clone(), Type::Struct(id));
                     self.enter_scope(Target::UserType(id), |this| {
                         let mut members = Vec::new();
-                        for member in base.members {
+                        for (name, member) in base.members {
                             let ty = this.resolve_type(&member.ty);
                             let value = if let Some(value) = member.value {
                                 let span = value.span;
@@ -221,7 +227,7 @@ impl TypeChecker {
 
                             members.push(CheckedMemVar {
                                 public: member.public,
-                                name: member.name,
+                                name,
                                 ty,
                                 value,
                             });
@@ -575,7 +581,74 @@ impl TypeChecker {
                     self.error(Error::new(format!("undefined variable: {name}"), span))
                 }
             }
-            Expr::Instance { .. } => todo!(),
+            Expr::Instance {
+                name,
+                members: arguments,
+            } => {
+                let Some(id) = self.find_type(&name).cloned() else {
+                    return self.error(Error::new(format!("undefined type: {name}"), span));
+                };
+
+                let TypeId::Type(ty) = id else {
+                    return self.error(Error::new(
+                        format!("cannot construct an instance of type {}", 
+                        self.type_name(&id)
+                    ), span));
+                };
+
+                let Type::Struct(s) = &self.types[ty] else {
+                    return self.error(Error::new(
+                        format!("cannot construct an instance of type {}", 
+                        self.type_name(&id)
+                    ), span));
+                };
+
+                let members = s.members.clone();
+                let mut checked: HashMap<_, _> =
+                    s.members.keys().map(|name| (name.clone(), None)).collect();
+                for (name, value) in arguments {
+                    if let Entry::Occupied(mut entry) = checked.entry(name.clone()) {
+                        if entry.get().is_some() {
+                            self.error::<()>(Error::new(
+                                format!("field '{name}' declared multiple times"),
+                                value.span,
+                            ));
+                        } else {
+                            let span = value.span;
+                            let value = self.check_expr(value, Some(&members[&name].ty));
+                            if !self.coerces_to(&value.ty, &members[&name].ty) {
+                                entry.insert(Some(self.type_mismatch(
+                                    &members[&name].ty,
+                                    &value.ty,
+                                    span,
+                                )));
+                            } else {
+                                entry.insert(Some(value));
+                            }
+                        }
+                    } else {
+                        self.error::<()>(Error::new(
+                            format!("no field '{name}' on type {}", self.type_name(&id)),
+                            value.span,
+                        ));
+                    }
+                }
+
+                CheckedExpr::new(
+                    id,
+                    ExprData::Instance {
+                        members: checked
+                            .into_iter()
+                            .map(|(name, value)| {
+                                let value = value.unwrap_or_else(|| {
+                                    self.error(Error::new(format!("missing field: '{name}'"), span))
+                                });
+                                (name, value)
+                            })
+                            .collect(),
+                    },
+                )
+            }
             Expr::None => todo!(),
             Expr::Assign {
                 target: lhs,
@@ -831,12 +904,12 @@ impl TypeChecker {
         T::default()
     }
 
-    fn type_mismatch<T: Default>(&mut self, a: &TypeId, b: &TypeId, span: Span) -> T {
+    fn type_mismatch<T: Default>(&mut self, expected: &TypeId, actual: &TypeId, span: Span) -> T {
         self.error(Error::new(
             format!(
                 "type mismatch: expected type {}, got {}",
-                self.type_name(a),
-                self.type_name(b),
+                self.type_name(expected),
+                self.type_name(actual),
             ),
             span,
         ))
@@ -892,7 +965,7 @@ impl TypeChecker {
                     }
                     format!("{result}) {}", self.type_name(ret))
                 }
-                Type::Struct(_) => todo!(),
+                Type::Struct(base) => base.name.clone(),
             },
         }
     }

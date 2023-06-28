@@ -349,7 +349,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                     self.hoist_blocks(value);
                 }
             }
-            ExprData::Instance { name: _, members } => {
+            ExprData::Instance { members } => {
                 for (_, value) in members.iter_mut() {
                     self.hoist_blocks(value);
                 }
