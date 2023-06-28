@@ -39,7 +39,10 @@ impl Error {
     }
 
     pub fn display(&self, file: &str) {
-        eprintln!("{file}:{}:{} {}", self.span.loc.row, self.span.loc.col, self.diagnostic)
+        eprintln!(
+            "{file}:{}:{} {}",
+            self.span.loc.row, self.span.loc.col, self.diagnostic
+        )
     }
 }
 

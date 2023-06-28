@@ -210,7 +210,7 @@ impl TypeChecker {
                             let value = if let Some(value) = member.value {
                                 let span = value.span;
                                 let expr = this.check_expr(value, Some(&ty));
-                                if !this.coerces_to(&expr.ty, &ty) { 
+                                if !this.coerces_to(&expr.ty, &ty) {
                                     return this.type_mismatch(&ty, &expr.ty, span);
                                 }
 

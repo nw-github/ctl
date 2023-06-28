@@ -12,43 +12,43 @@ pub mod expr {
     pub enum BinaryOp {
         #[display(fmt = "+")]
         Add,
-        #[display(fmt = "-")] 
+        #[display(fmt = "-")]
         Sub,
-        #[display(fmt = "*")] 
+        #[display(fmt = "*")]
         Mul,
-        #[display(fmt = "/")] 
+        #[display(fmt = "/")]
         Div,
-        #[display(fmt = "%")] 
+        #[display(fmt = "%")]
         Rem,
-        #[display(fmt = "&")] 
+        #[display(fmt = "&")]
         And,
-        #[display(fmt = "^")] 
+        #[display(fmt = "^")]
         Xor,
-        #[display(fmt = "|")] 
+        #[display(fmt = "|")]
         Or,
-        #[display(fmt = "<<")] 
+        #[display(fmt = "<<")]
         Shl,
-        #[display(fmt = ">>")] 
+        #[display(fmt = ">>")]
         Shr,
-        #[display(fmt = "??")] 
+        #[display(fmt = "??")]
         NoneCoalesce,
-        #[display(fmt = "!!")] 
+        #[display(fmt = "!!")]
         ErrCoalesce,
-        #[display(fmt = ">")] 
+        #[display(fmt = ">")]
         Gt,
-        #[display(fmt = ">=")] 
+        #[display(fmt = ">=")]
         GtEqual,
-        #[display(fmt = "<")] 
+        #[display(fmt = "<")]
         Lt,
-        #[display(fmt = "<=")] 
+        #[display(fmt = "<=")]
         LtEqual,
-        #[display(fmt = "==")] 
+        #[display(fmt = "==")]
         Equal,
-        #[display(fmt = "!=")] 
+        #[display(fmt = "!=")]
         NotEqual,
-        #[display(fmt = "||")] 
+        #[display(fmt = "||")]
         LogicalOr,
-        #[display(fmt = "&&")] 
+        #[display(fmt = "&&")]
         LogicalAnd,
     }
 
@@ -125,7 +125,7 @@ pub mod expr {
                 Token::Decrement => Ok(UnaryOp::PreDecrement),
                 Token::Exclamation => Ok(UnaryOp::Not),
                 Token::Sizeof => Ok(UnaryOp::Sizeof),
-                _ => Err(())
+                _ => Err(()),
             }
         }
     }
@@ -287,7 +287,7 @@ pub mod stmt {
             impls: Vec<String>,
             variants: Vec<(String, Option<super::Expr>)>,
             functions: Vec<Fn>,
-        }
+        },
     }
 
     #[derive(Debug)]
@@ -311,6 +311,6 @@ pub mod stmt {
             public: bool,
             name: String,
             body: Vec<super::Stmt>,
-        }
+        },
     }
 }

@@ -74,7 +74,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                         if !*mutable {
                             self.emit("const ");
                         }
-    
+
                         self.emit_type(ty);
                         self.emit(format!(" {name}"));
                     }
@@ -217,7 +217,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 UnaryOp::IntoError => todo!(),
                 UnaryOp::Try => todo!(),
                 UnaryOp::Sizeof => todo!(),
-            }
+            },
             ExprData::Call { callee, args } => {
                 self.compile_expr(callee);
                 self.emit("(");
@@ -231,7 +231,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 self.emit(")");
             }
             ExprData::Array(_) => todo!(),
-            ExprData::ArrayWithInit { init, count } => todo!(),
+            ExprData::ArrayWithInit { .. } => todo!(),
             ExprData::Tuple(_) => todo!(),
             ExprData::Map(_) => todo!(),
             ExprData::Bool(value) => {
@@ -245,29 +245,20 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 TypeId::Int(base) => {
                     self.emit(format!("{value}_i{base}"));
                 }
-                _ => panic!(
-                    "ICE: ExprData::Signed with non-int type {:?}",
-                    expr.ty
-                ),
-            }
+                _ => panic!("ICE: ExprData::Signed with non-int type {:?}", expr.ty),
+            },
             ExprData::Unsigned(value) => match expr.ty {
                 TypeId::Uint(base) => {
                     self.emit(format!("{value}_u{base}"));
                 }
-                _ => panic!(
-                    "ICE: ExprData::Unsigned with non-uint type {:?}",
-                    expr.ty
-                ),
-            }
+                _ => panic!("ICE: ExprData::Unsigned with non-uint type {:?}", expr.ty),
+            },
             ExprData::Float(value) => {
                 // TODO: probably should check the range or something
                 match expr.ty {
                     TypeId::F32 => self.emit(format!("{value}_f32")),
                     TypeId::F64 => self.emit(format!("{value}_f64")),
-                    _ => panic!(
-                        "ICE: ExprData::Float with non-float type {:?}",
-                        expr.ty
-                    ),
+                    _ => panic!("ICE: ExprData::Float with non-float type {:?}", expr.ty),
                 }
                 self.emit(value);
             }
@@ -275,7 +266,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             ExprData::Symbol(name) => {
                 self.emit(name);
             }
-            ExprData::Instance { name, members } => todo!(),
+            ExprData::Instance { .. } => todo!(),
             ExprData::None => todo!(),
             ExprData::Assign {
                 target,
@@ -291,19 +282,11 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 self.compile_expr(value);
             }
             ExprData::Block(_) => panic!("ICE: ExprData::Block in compile_expr"),
-            ExprData::If {
-                cond,
-                if_branch,
-                else_branch,
-            } => todo!(),
-            ExprData::Loop {
-                cond,
-                body,
-                do_while,
-            } => todo!(),
-            ExprData::For { var, iter, body } => todo!(),
-            ExprData::Member { source, member } => todo!(),
-            ExprData::Subscript { callee, args } => todo!(),
+            ExprData::If { .. } => todo!(),
+            ExprData::Loop { .. } => todo!(),
+            ExprData::For { .. } => todo!(),
+            ExprData::Member { .. } => todo!(),
+            ExprData::Subscript { .. } => todo!(),
             ExprData::Return(expr) => {
                 // TODO: when return is used as anything except a StmtExpr, we will have to change
                 // the generated code to accomodate it
@@ -323,11 +306,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 self.emit(goto);
             }
             ExprData::Break(_) => todo!(),
-            ExprData::Range {
-                start,
-                end,
-                inclusive,
-            } => todo!(),
+            ExprData::Range { .. } => todo!(),
             ExprData::Continue => todo!(),
             ExprData::Error => {
                 panic!("ICE: ExprData::Error in compile_expr");
@@ -467,7 +446,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             TypeId::RefMut(_) => todo!(),
             TypeId::Type(id) => {
                 match &self.types[*id] {
-                    Type::Function { params, ret } => todo!(),
+                    Type::Function { .. } => todo!(),
                     // TODO: use fully qualified name
                     Type::Struct(base) => self.emit(base.name.clone()),
                 }
@@ -482,7 +461,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
             name,
             is_async: _,
             is_extern: _,
-            type_params,
+            type_params: _,
             params,
             ret,
         }: &CheckedFnDecl,
