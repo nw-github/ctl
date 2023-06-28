@@ -125,14 +125,16 @@ pub enum Target {
 pub struct Variable {
     ty: TypeId,
     mutable: bool,
+    is_static: bool,
 }
 
 #[derive(Default, Debug)]
 pub struct Scope {
-    parent: Option<ScopeId>,
-    vars: HashMap<String, Variable>,
-    types: HashMap<String, TypeId>,
-    target: Target,
+    pub parent: Option<ScopeId>,
+    pub vars: HashMap<String, Variable>,
+    pub types: HashMap<String, TypeId>,
+    pub target: Target,
+    pub name: Option<String>,
 }
 
 pub struct CheckedAst {
@@ -140,6 +142,15 @@ pub struct CheckedAst {
     pub scopes: Vec<Scope>,
     pub stmt: CheckedStmt,
 }
+
+pub struct ScopeStack {
+    scopes: Vec<Scope>,
+}
+
+impl ScopeStack {
+    
+}
+
 
 pub struct TypeChecker {
     types: Vec<Type>,
@@ -197,15 +208,14 @@ impl TypeChecker {
 
     fn check_stmt(&mut self, stmt: Located<Stmt>) -> CheckedStmt {
         match stmt.data {
-            Stmt::Module { public, name, body } => CheckedStmt::Module {
-                public,
-                name,
-                body: self.create_block(body, Target::None),
+            Stmt::Module { public: _, name, body } => CheckedStmt::Module {
+                name: name.clone(),
+                body: self.create_block(Some(name), body, Target::None),
             },
             Stmt::UserType(data) => match data {
                 UserType::Struct(base) => {
                     let id = self.insert_type_in_scope(base.name.clone(), Type::Temporary);
-                    self.enter_scope(Target::UserType(id), |this| {
+                    self.enter_scope(Some(base.name.clone()), Target::UserType(id), |this| {
                         this.types[id] = Type::Struct(ResolvedStruct {
                             members: base
                                 .members
@@ -279,6 +289,7 @@ impl TypeChecker {
                         Variable {
                             ty: ty.clone(),
                             mutable,
+                            is_static: false,
                         },
                     );
                     if let Some(value) = value {
@@ -306,6 +317,7 @@ impl TypeChecker {
                         Variable {
                             ty: value.ty.clone(),
                             mutable,
+                            is_static: false,
                         },
                     );
 
@@ -332,6 +344,7 @@ impl TypeChecker {
                         Variable {
                             ty: ty.clone(),
                             mutable: false,
+                            is_static: true,
                         },
                     );
 
@@ -352,6 +365,7 @@ impl TypeChecker {
                         Variable {
                             ty: value.ty.clone(),
                             mutable: false,
+                            is_static: true,
                         },
                     );
 
@@ -770,7 +784,7 @@ impl TypeChecker {
                 )
             }
             Expr::Block(body) => {
-                let block = self.create_block(body, Target::Block(target.cloned()));
+                let block = self.create_block(None, body, Target::Block(target.cloned()));
                 let Target::Block(target) = &self.scopes[block.scope].target else {
                     panic!("ICE: target of block changed from block to something else");
                 };
@@ -894,7 +908,7 @@ impl TypeChecker {
     ) -> CheckedFn {
         let header = CheckedFnDecl {
             public,
-            name,
+            name: name.clone(),
             is_async,
             is_extern,
             type_params,
@@ -924,16 +938,18 @@ impl TypeChecker {
             Variable {
                 ty: TypeId::Type(ty),
                 mutable: false,
+                is_static: false,
             },
         );
         CheckedFn {
-            body: self.create_block_with(body, Target::Function(ty), |this| {
+            body: self.create_block_with(Some(name), body, Target::Function(ty), |this| {
                 for param in header.params.iter() {
                     this.scopes[this.current].vars.insert(
                         param.name.clone(),
                         Variable {
                             ty: param.ty.clone(),
                             mutable: param.mutable,
+                            is_static: false,
                         },
                     );
                 }
@@ -1028,8 +1044,13 @@ impl TypeChecker {
         }
     }
 
-    fn create_block(&mut self, body: Vec<Located<Stmt>>, target: Target) -> Block {
-        self.enter_scope(target, |this| Block {
+    fn create_block(
+        &mut self,
+        name: Option<String>,
+        body: Vec<Located<Stmt>>,
+        target: Target,
+    ) -> Block {
+        self.enter_scope(name, target, |this| Block {
             body: body.into_iter().map(|stmt| this.check_stmt(stmt)).collect(),
             scope: this.current,
         })
@@ -1037,11 +1058,12 @@ impl TypeChecker {
 
     fn create_block_with(
         &mut self,
+        name: Option<String>,
         body: Vec<Located<Stmt>>,
         target: Target,
         f: impl FnOnce(&mut Self),
     ) -> Block {
-        self.enter_scope(target, |this| {
+        self.enter_scope(name, target, |this| {
             f(this);
 
             Block {
@@ -1184,12 +1206,18 @@ impl TypeChecker {
         id
     }
 
-    fn enter_scope<T>(&mut self, target: Target, f: impl FnOnce(&mut Self) -> T) -> T {
+    fn enter_scope<T>(
+        &mut self,
+        name: Option<String>,
+        target: Target,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> T {
         self.scopes.push(Scope {
             parent: Some(self.current),
             types: Default::default(),
             vars: Default::default(),
             target,
+            name,
         });
 
         let prev = self.current;

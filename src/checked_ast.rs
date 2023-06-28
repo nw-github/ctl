@@ -181,7 +181,6 @@ pub mod stmt {
             value: CheckedExpr,
         },
         Module {
-            public: bool,
             name: String,
             body: Block,
         },
