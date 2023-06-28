@@ -230,6 +230,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv) {
                 }
                 self.emit(")");
             }
+            ExprData::MemberCall { source, member, ty, args } => todo!(),
             ExprData::Array(_) => todo!(),
             ExprData::ArrayWithInit { .. } => todo!(),
             ExprData::Tuple(_) => todo!(),

@@ -1,4 +1,4 @@
-use std::{iter::Peekable, collections::HashMap};
+use std::{collections::HashMap, iter::Peekable};
 
 use crate::{
     ast::{
@@ -336,10 +336,14 @@ impl<'a> Parser<'a> {
                 let mutable = this.advance_if_kind(Token::Mut).is_some();
                 if allow_method && count == 1 && this.advance_if_kind(Token::This).is_some() {
                     Ok(Param {
-                        mutable,
+                        mutable: false,
                         keyword,
                         name: "$self".into(),
-                        ty: TypeHint::This,
+                        ty: if mutable {
+                            TypeHint::MutThis
+                        } else {
+                            TypeHint::This
+                        },
                     })
                 } else {
                     let name = this.expect_id("expected name")?.into();

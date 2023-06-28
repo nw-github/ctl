@@ -30,6 +30,12 @@ pub mod expr {
             callee: Box<CheckedExpr>,
             args: Vec<CheckedExpr>,
         },
+        MemberCall {
+            source: Box<CheckedExpr>,
+            member: String,
+            ty: TypeId,
+            args: Vec<CheckedExpr>,
+        },
         Array(Vec<CheckedExpr>),
         ArrayWithInit {
             init: Box<CheckedExpr>,

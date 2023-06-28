@@ -224,6 +224,7 @@ pub mod stmt {
         Anon(UserType),
         Void,
         This,
+        MutThis,
     }
 
     #[derive(Debug)]
