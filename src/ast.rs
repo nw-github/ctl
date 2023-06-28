@@ -206,11 +206,13 @@ pub mod expr {
 pub mod stmt {
     use std::collections::HashMap;
 
+    use crate::lexer::Located;
+
     #[derive(Debug)]
     pub enum TypeHint {
         Regular {
             is_dyn: bool,
-            name: String,
+            name: Located<String>,
             type_params: Vec<String>,
         },
         Array(Box<TypeHint>, super::Expr),

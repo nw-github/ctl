@@ -482,6 +482,7 @@ int main(int argc, char **argv) {{
                     Type::Temporary => panic!("ICE: Type::Temporary in emit_type"),
                 }
             }
+            TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
         }
     }
 

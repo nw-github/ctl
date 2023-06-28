@@ -216,9 +216,9 @@ impl<'a> Parser<'a> {
             TypeHint::Void
         } else {
             let is_dyn = self.advance_if_kind(Token::Dyn);
-            let name = self.expect_id("expected type name")?;
+            let (name, span) = self.expect_id_with_span("expected type name")?;
             TypeHint::Regular {
-                name: name.into(),
+                name: L::new(name.into(), span),
                 is_dyn: is_dyn.is_some(),
                 type_params: self.parse_generic_params()?,
             }

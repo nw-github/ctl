@@ -36,6 +36,7 @@ pub struct ResolvedStruct {
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub enum TypeId {
     #[default]
+    Unknown,
     Void,
     Never,
     Int(u8),
@@ -142,12 +143,6 @@ pub struct CheckedAst {
     pub stmt: CheckedStmt,
 }
 
-pub struct ScopeStack {
-    scopes: Vec<Scope>,
-}
-
-impl ScopeStack {}
-
 pub struct TypeChecker {
     types: Vec<Type>,
     scopes: Vec<Scope>,
@@ -216,27 +211,18 @@ impl TypeChecker {
                 UserType::Struct(base) => {
                     let id = self.insert_type_in_scope(base.name.clone(), Type::Temporary);
                     self.enter_scope(Some(base.name.clone()), Target::UserType(id), |this| {
-                        this.types[id] = Type::Struct(ResolvedStruct {
-                            members: base
-                                .members
-                                .iter()
-                                .map(|(name, member)| {
-                                    (
-                                        name.clone(),
-                                        Member {
-                                            public: member.public,
-                                            ty: this.resolve_type(&member.ty),
-                                        },
-                                    )
-                                })
-                                .collect(),
-                            name: base.name.clone(),
-                            scope: this.current,
-                        });
-
+                        let mut rs_members = HashMap::with_capacity(base.members.len());
                         let mut members = Vec::new();
                         for (name, member) in base.members {
                             let ty = this.resolve_type(&member.ty);
+                            rs_members.insert(
+                                name.clone(),
+                                Member {
+                                    public: member.public,
+                                    ty: ty.clone(),
+                                },
+                            );
+
                             let value = if let Some(value) = member.value {
                                 let span = value.span;
                                 let expr = this.check_expr(value, Some(&ty));
@@ -256,6 +242,12 @@ impl TypeChecker {
                                 value,
                             });
                         }
+
+                        this.types[id] = Type::Struct(ResolvedStruct {
+                            members: rs_members,
+                            name: base.name.clone(),
+                            scope: this.current,
+                        });
 
                         let functions = base
                             .functions
@@ -685,7 +677,7 @@ impl TypeChecker {
                 members: arguments,
             } => {
                 let Some(id) = self.find_type(&name).cloned() else {
-                    return self.error(Error::new(format!("undefined type: {name}"), span));
+                    return self.undefined_type(&name, span);
                 };
 
                 let TypeId::Type(ty) = id else {
@@ -1007,16 +999,18 @@ impl TypeChecker {
     fn resolve_type(&mut self, ty: &TypeHint) -> TypeId {
         match ty {
             TypeHint::Regular { name, .. } => {
-                self.find_type(name)
+                return self
+                    .find_type(&name.data)
                     .cloned()
-                    .unwrap_or_else(|| match name.as_str() {
-                        "void" => TypeId::Void,
-                        "never" => TypeId::Never,
-                        "f32" => TypeId::F32,
-                        "f64" => TypeId::F64,
-                        "bool" => TypeId::Bool,
-                        _ => Self::match_int_type(name).unwrap(),
+                    .or_else(|| match name.data.as_str() {
+                        "void" => Some(TypeId::Void),
+                        "never" => Some(TypeId::Never),
+                        "f32" => Some(TypeId::F32),
+                        "f64" => Some(TypeId::F64),
+                        "bool" => Some(TypeId::Bool),
+                        _ => Self::match_int_type(&name.data),
                     })
+                    .unwrap_or_else(|| self.undefined_type(&name.data, name.span));
             }
             TypeHint::Void => TypeId::Void,
             TypeHint::Ref(ty) => TypeId::Ref(self.resolve_type(ty).into()),
@@ -1030,7 +1024,7 @@ impl TypeChecker {
                         None
                     }
                 })
-                .unwrap()
+                .expect("ICE: this outside of method")
             }
             TypeHint::MutThis => self
                 .traverse_scopes(self.current, |scope| {
@@ -1040,7 +1034,7 @@ impl TypeChecker {
                         None
                     }
                 })
-                .unwrap(),
+                .expect("ICE: mut this outside of method"),
             _ => todo!(),
         }
     }
@@ -1092,6 +1086,10 @@ impl TypeChecker {
         ))
     }
 
+    fn undefined_type<T: Default>(&mut self, name: &str, span: Span) -> T {
+        self.error(Error::new(format!("undefined type: {name}"), span))
+    }
+
     //
 
     fn is_assignable(&self, expr: &CheckedExpr) -> bool {
@@ -1128,6 +1126,7 @@ impl TypeChecker {
             TypeId::Never => todo!(),
             TypeId::Int(bits) => format!("i{bits}"),
             TypeId::Uint(bits) => format!("u{bits}"),
+            TypeId::Unknown => "{unknown}".into(),
             TypeId::F32 => "f32".into(),
             TypeId::F64 => "f64".into(),
             TypeId::Bool => "bool".into(),
