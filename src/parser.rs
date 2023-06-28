@@ -196,10 +196,17 @@ impl<'a> Parser<'a> {
             if self.advance_if_kind(Token::RBrace).is_some() {
                 TypeHint::Slice(inner.into())
             } else if self.advance_if_kind(Token::Semicolon).is_some() {
-                let count = self.expression()?;
+                //let count = self.expression()?;
+                let count = self.expect(
+                    |t| {
+                        let Token::Int(10, num) = t.data else { return None; };
+                        Some(num)
+                    },
+                    "expected array size",
+                )?;
 
                 self.expect_kind(Token::RBrace, "expected ']'")?;
-                TypeHint::Array(inner.into(), count)
+                TypeHint::Array(inner.into(), count.parse().unwrap())
             } else if self.advance_if_kind(Token::Colon).is_some() {
                 let value = self.parse_type()?;
                 self.expect_kind(Token::RBrace, "expected ']'")?;

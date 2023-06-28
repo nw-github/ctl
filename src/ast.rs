@@ -215,7 +215,7 @@ pub mod stmt {
             name: Located<String>,
             type_params: Vec<String>,
         },
-        Array(Box<TypeHint>, super::Expr),
+        Array(Box<TypeHint>, usize),
         Slice(Box<TypeHint>),
         Tuple(Vec<TypeHint>),
         Map(Box<TypeHint>, Box<TypeHint>),

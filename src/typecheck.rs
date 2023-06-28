@@ -47,6 +47,7 @@ pub enum TypeId {
     Type(usize),
     Ref(Box<TypeId>),
     RefMut(Box<TypeId>),
+    Array(Box<(TypeId, usize)>),
 }
 
 impl TypeId {
@@ -254,9 +255,10 @@ impl TypeChecker {
                         },
                     );
                     if let Some(value) = value {
+                        let span = value.span;
                         let value = self.check_expr(value, Some(&ty));
                         if !self.coerces_to(&value.ty, &ty) {
-                            return self.type_mismatch(&ty, &value.ty, stmt.span);
+                            return self.type_mismatch(&ty, &value.ty, span);
                         }
 
                         CheckedStmt::Let {
@@ -307,9 +309,10 @@ impl TypeChecker {
                         },
                     );
 
+                    let span = value.span;
                     let value = self.check_expr(value, Some(&ty));
                     if !self.coerces_to(&value.ty, &ty) {
-                        return self.type_mismatch(&ty, &value.ty, stmt.span);
+                        return self.type_mismatch(&ty, &value.ty, span);
                     }
 
                     CheckedStmt::Static {
@@ -556,10 +559,30 @@ impl TypeChecker {
                     ))
                 }
             }
-            Expr::Array(_) => todo!(),
+            Expr::Array(elements) => {
+                let mut checked = Vec::with_capacity(elements.len());
+                let mut elements = elements.into_iter();
+                let inner = if let Some(TypeId::Array(inner)) = target {
+                    inner.0.clone()
+                } else if let Some(expr) = elements.next() {
+                    let expr = self.check_expr(expr, None);
+                    let ty = expr.ty.clone();
+                    checked.push(expr);
+                    ty
+                } else {
+                    return self.error(Error::new("cannot infer type of array literal", expr.span));
+                };
+
+                checked.extend(elements.map(|e| self.check_expr(e, Some(&inner))));
+                CheckedExpr::new(
+                    TypeId::Array(Box::new((inner, checked.len()))),
+                    ExprData::Array(checked),
+                )
+            }
             Expr::ArrayWithInit { .. } => todo!(),
             Expr::Tuple(_) => todo!(),
             Expr::Map(_) => todo!(),
+            Expr::String(_) => todo!(),
             Expr::Bool(value) => CheckedExpr {
                 ty: TypeId::Bool,
                 data: ExprData::Bool(value),
@@ -628,7 +651,6 @@ impl TypeChecker {
                     .unwrap_or(TypeId::F64),
                 ExprData::Float(value),
             ),
-            Expr::String(_) => todo!(),
             Expr::Symbol(name) => {
                 if let Some((id, var)) = self.scopes.find_var(self.current, &name) {
                     CheckedExpr::new(
@@ -833,6 +855,7 @@ impl TypeChecker {
                     return self.error(Error::new("return outside of function", span));
                 };
 
+                let span = expr.span;
                 let expr = self.check_expr(*expr, Some(&target));
                 if !self.coerces_to(&expr.ty, &target) {
                     self.type_mismatch(&target, &expr.ty, span)
@@ -845,6 +868,7 @@ impl TypeChecker {
                     return self.error(Error::new("yield outside of block", span));
                 };
 
+                let span = expr.span;
                 let expr = self.check_expr(*expr, target.as_ref());
                 if let Some(target) = &target {
                     if !self.coerces_to(&expr.ty, target) {
@@ -1038,6 +1062,7 @@ impl TypeChecker {
                     }
                 })
                 .expect("ICE: this outside of method"),
+            TypeHint::Array(ty, n) => TypeId::Array(Box::new((self.resolve_type(ty), *n))),
             _ => todo!(),
         }
     }
@@ -1165,6 +1190,7 @@ impl TypeChecker {
                 Type::Struct(base) => base.name.clone(),
                 Type::Temporary => panic!("ICE: Type::Temporary in type_name"),
             },
+            TypeId::Array(inner) => format!("[{}; {}]", self.type_name(&inner.0), inner.1),
         }
     }
 

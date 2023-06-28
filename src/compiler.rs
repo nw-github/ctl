@@ -484,6 +484,7 @@ int main(int argc, char **argv) {{
                 }
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
+            TypeId::Array(_) => todo!(),
         }
     }
 
