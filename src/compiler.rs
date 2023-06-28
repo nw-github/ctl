@@ -270,7 +270,9 @@ int main(int argc, char **argv) {{
                 self.emit(symbol);
             }
             ExprData::Instance { members } => {
-                self.emit("{");
+                self.emit("(");
+                self.emit_type(&expr.ty);
+                self.emit("){");
                 for (name, value) in members {
                     self.emit(format!(".{name} = "));
                     self.compile_expr(value);
@@ -371,7 +373,7 @@ int main(int argc, char **argv) {{
                     self.hoist_blocks(value);
                 }
             }
-            ExprData::Instance { members } => {
+            ExprData::Instance { members, .. } => {
                 for (_, value) in members.iter_mut() {
                     self.hoist_blocks(value);
                 }

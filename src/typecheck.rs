@@ -14,7 +14,7 @@ use crate::{
         Block,
     },
     lexer::{Located, Span},
-    scope::{Scope, ScopeId, Scopes, Target, Variable},
+    scope::{Scope, ScopeId, Scopes, ScopeKind, Variable},
     Error,
 };
 
@@ -130,7 +130,6 @@ impl TypeChecker {
         // we depend on parser wrapping up the generated code in a Stmt::Module
         let mut this = Self::default();
         this.scopes.push(Scope::default());
-
         let stmt = this.check_stmt(stmt);
         (
             CheckedAst {
@@ -176,12 +175,12 @@ impl TypeChecker {
                 body,
             } => CheckedStmt::Module {
                 name: name.clone(),
-                body: self.create_block(Some(name), body, Target::None),
+                body: self.create_block(Some(name), body, ScopeKind::Module),
             },
             Stmt::UserType(data) => match data {
                 UserType::Struct(base) => {
                     let id = self.insert_type_in_scope(base.name.clone(), Type::Temporary);
-                    self.enter_scope(Some(base.name.clone()), Target::UserType(id), |this| {
+                    self.enter_scope(Some(base.name.clone()), ScopeKind::UserType(id), |this| {
                         let mut rs_members = HashMap::with_capacity(base.members.len());
                         let mut members = Vec::new();
                         for (name, member) in base.members {
@@ -751,8 +750,8 @@ impl TypeChecker {
                 )
             }
             Expr::Block(body) => {
-                let block = self.create_block(None, body, Target::Block(target.cloned()));
-                let Target::Block(target) = &self.scopes[block.scope].target else {
+                let block = self.create_block(None, body, ScopeKind::Block(target.cloned()));
+                let ScopeKind::Block(target) = &self.scopes[block.scope].kind else {
                     panic!("ICE: target of block changed from block to something else");
                 };
                 CheckedExpr::new(
@@ -797,7 +796,7 @@ impl TypeChecker {
             Expr::Subscript { .. } => todo!(),
             Expr::Return(expr) => {
                 let Some(target) = self.scopes.iter_from(self.current).find_map(|(_, scope)| {
-                    if let Target::Function(id) = &scope.target {
+                    if let ScopeKind::Function(id) = &scope.kind {
                         let Type::Function { ret, .. } = &self.types[*id] else { unreachable!() };
                         Some(ret.clone())
                     } else {
@@ -816,7 +815,7 @@ impl TypeChecker {
                 }
             }
             Expr::Yield(expr) => {
-                let Target::Block(target) = self.scopes[self.current].target.clone() else {
+                let ScopeKind::Block(target) = self.scopes[self.current].kind.clone() else {
                     return self.error(Error::new("yield outside of block", span));
                 };
 
@@ -826,7 +825,7 @@ impl TypeChecker {
                         return self.type_mismatch(target, &expr.ty, span);
                     }
                 } else {
-                    self.scopes[self.current].target = Target::Block(Some(expr.ty.clone()));
+                    self.scopes[self.current].kind = ScopeKind::Block(Some(expr.ty.clone()));
                 }
 
                 CheckedExpr::new(TypeId::Never, ExprData::Yield(expr.into()))
@@ -909,7 +908,7 @@ impl TypeChecker {
             },
         );
         CheckedFn {
-            body: self.create_block_with(Some(name), body, Target::Function(ty), |this| {
+            body: self.create_block_with(Some(name), body, ScopeKind::Function(ty), |this| {
                 for param in header.params.iter() {
                     this.scopes[this.current].vars.insert(
                         param.name.clone(),
@@ -994,7 +993,7 @@ impl TypeChecker {
                 self.scopes
                     .iter_from(self.current)
                     .find_map(|(_, scope)| {
-                        if let Target::UserType(id) = &scope.target {
+                        if let ScopeKind::UserType(id) = &scope.kind {
                             Some(TypeId::Ref(TypeId::Type(*id).into()))
                         } else {
                             None
@@ -1006,7 +1005,7 @@ impl TypeChecker {
                 .scopes
                 .iter_from(self.current)
                 .find_map(|(_, scope)| {
-                    if let Target::UserType(id) = &scope.target {
+                    if let ScopeKind::UserType(id) = &scope.kind {
                         Some(TypeId::RefMut(TypeId::Type(*id).into()))
                     } else {
                         None
@@ -1021,7 +1020,7 @@ impl TypeChecker {
         &mut self,
         name: Option<String>,
         body: Vec<Located<Stmt>>,
-        target: Target,
+        target: ScopeKind,
     ) -> Block {
         self.enter_scope(name, target, |this| Block {
             body: body.into_iter().map(|stmt| this.check_stmt(stmt)).collect(),
@@ -1033,7 +1032,7 @@ impl TypeChecker {
         &mut self,
         name: Option<String>,
         body: Vec<Located<Stmt>>,
-        target: Target,
+        target: ScopeKind,
         f: impl FnOnce(&mut Self),
     ) -> Block {
         self.enter_scope(name, target, |this| {
@@ -1161,14 +1160,14 @@ impl TypeChecker {
     fn enter_scope<T>(
         &mut self,
         name: Option<String>,
-        target: Target,
+        target: ScopeKind,
         f: impl FnOnce(&mut Self) -> T,
     ) -> T {
         self.scopes.push(Scope {
             parent: Some(self.current),
             types: Default::default(),
             vars: Default::default(),
-            target,
+            kind: target,
             name,
         });
 

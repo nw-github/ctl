@@ -4,13 +4,13 @@ use derive_more::{Deref, DerefMut};
 
 use crate::typecheck::TypeId;
 
-#[derive(Default, Debug, Clone)]
-pub enum Target {
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub enum ScopeKind {
     Block(Option<TypeId>),
     Function(usize),
     UserType(usize),
     #[default]
-    None,
+    Module,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -24,7 +24,7 @@ pub struct Scope {
     pub parent: Option<ScopeId>,
     pub vars: HashMap<String, Variable>,
     pub types: HashMap<String, TypeId>,
-    pub target: Target,
+    pub kind: ScopeKind,
     pub name: Option<String>,
 }
 
@@ -76,13 +76,31 @@ impl Scopes {
     }
 
     pub fn find_type(&self, id: ScopeId, name: &str) -> Option<&TypeId> {
-        self.iter_from(id)
-            .find_map(|(_, scope)| scope.types.get(name))
+        for (_, scope) in self.iter_from(id) {
+            if let Some(ty) = scope.types.get(name) {
+                return Some(ty);
+            }
+
+            if scope.kind == ScopeKind::Module {
+                break;
+            }
+        }
+
+        None
     }
 
     pub fn find_var(&self, id: ScopeId, name: &str) -> Option<(ScopeId, &Variable)> {
-        self.iter_from(id)
-            .find_map(|(id, scope)| scope.vars.get(name).map(|var| (id, var)))
+        for (id, scope) in self.iter_from(id) {
+            if let Some(var) = scope.vars.get(name) {
+                return Some((id, var));
+            }
+
+            if scope.kind == ScopeKind::Module {
+                break;
+            }
+        }
+
+        None
     }
 
     pub fn is_sub_scope(&self, id: ScopeId, target: ScopeId) -> bool {
