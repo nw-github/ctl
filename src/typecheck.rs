@@ -147,13 +147,23 @@ pub struct TypeChecker {
     current: ScopeId,
 }
 
-macro_rules! type_check {
+macro_rules! type_check_bail {
     ($self: ident, $source: expr, $target: expr, $span: expr) => {
         if !$self.coerces_to($source, $target) {
             return $self.type_mismatch($target, $source, $span);
         }
     };
 }
+
+macro_rules! type_check {
+    ($self: ident, $source: expr, $target: expr, $span: expr) => {
+        if !$self.coerces_to($source, $target) {
+            $self.type_mismatch::<()>($target, $source, $span)
+        }
+    };
+}
+
+
 
 impl TypeChecker {
     pub fn check(stmt: Located<Stmt>) -> (CheckedAst, Vec<Error>) {
@@ -392,7 +402,7 @@ impl TypeChecker {
             Expr::Binary { op, left, right } => {
                 let left = self.check_expr(*left, target);
                 let right = self.check_expr(*right, Some(&left.ty));
-                type_check!(self, &right.ty, &left.ty, span);
+                type_check_bail!(self, &right.ty, &left.ty, span);
 
                 if !left.ty.supports_binop(op) {
                     self.error(Error::new(
@@ -614,7 +624,25 @@ impl TypeChecker {
                     ExprData::Array(checked),
                 )
             }
-            Expr::ArrayWithInit { .. } => todo!(),
+            Expr::ArrayWithInit { init, count } => {
+                let init = if let Some(TypeId::Array(inner)) = target {
+                    let span = init.span;
+                    let init = self.check_expr(*init, Some(&inner.0));
+                    type_check!(self, &init.ty, &inner.0, span);
+                    init
+                } else {
+                    self.check_expr(*init, None)
+                };
+
+                // let span = count.span;
+                // let count = self.check_expr(*count, Some(&TypeId::Isize));
+                // type_check!(self, &count.ty, &TypeId::Isize, span);
+
+                CheckedExpr::new(
+                    TypeId::Array(Box::new((init.ty.clone(), count))),
+                    ExprData::ArrayWithInit { init: init.into(), count },
+                )
+            }
             Expr::Tuple(_) => todo!(),
             Expr::Map(_) => todo!(),
             Expr::String(_) => todo!(),
@@ -797,7 +825,7 @@ impl TypeChecker {
                 }
 
                 let rhs = self.check_expr(*value, Some(&lhs.ty));
-                type_check!(self, &rhs.ty, &lhs.ty, span);
+                type_check_bail!(self, &rhs.ty, &lhs.ty, span);
 
                 CheckedExpr::new(
                     lhs.ty.clone(),
@@ -888,7 +916,7 @@ impl TypeChecker {
                 let arg = args.into_iter().next().unwrap();
                 let arg_span = arg.span;
                 let arg = self.check_expr(arg, Some(&TypeId::Isize));
-                type_check!(self, &arg.ty, &TypeId::Isize, arg_span);
+                type_check_bail!(self, &arg.ty, &TypeId::Isize, arg_span);
 
                 if let TypeId::Array(target) = &callee.ty {
                     CheckedExpr::new(
@@ -932,7 +960,7 @@ impl TypeChecker {
                 let span = expr.span;
                 let expr = self.check_expr(*expr, target.as_ref());
                 if let Some(target) = &target {
-                    type_check!(self, &expr.ty, &target, span);
+                    type_check!(self, &expr.ty, target, span);
                 } else {
                     self.scopes[self.current].kind = ScopeKind::Block(Some(expr.ty.clone()));
                 }

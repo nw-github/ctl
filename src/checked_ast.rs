@@ -39,7 +39,7 @@ pub mod expr {
         Array(Vec<CheckedExpr>),
         ArrayWithInit {
             init: Box<CheckedExpr>,
-            count: Box<CheckedExpr>,
+            count: usize,
         },
         Tuple(Vec<CheckedExpr>),
         Map(Vec<(CheckedExpr, CheckedExpr)>),

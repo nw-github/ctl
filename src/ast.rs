@@ -148,7 +148,7 @@ pub mod expr {
         Array(Vec<super::Expr>),
         ArrayWithInit {
             init: Box<super::Expr>,
-            count: Box<super::Expr>,
+            count: usize,
         },
         Tuple(Vec<super::Expr>),
         Map(Vec<(super::Expr, super::Expr)>),

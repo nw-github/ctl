@@ -1026,12 +1026,20 @@ impl<'a> Parser<'a> {
 
                         L::new(Expr::Map(exprs), span)
                     } else if self.advance_if_kind(Token::Semicolon).is_some() {
-                        let count = self.expression()?;
+                        // let count = self.expression()?;
+                        let count = self.expect(
+                            |t| {
+                                let Token::Int(10, num) = t.data else { return None; };
+                                Some(num)
+                            },
+                            "expected array size",
+                        )?;
+
                         let rbrace = self.expect_kind(Token::RBrace, "expected ']'")?;
                         L::new(
                             Expr::ArrayWithInit {
                                 init: expr.into(),
-                                count: count.into(),
+                                count: count.parse().unwrap(),
                             },
                             Span::combine(token.span, rbrace.span),
                         )

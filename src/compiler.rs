@@ -358,9 +358,9 @@ int main(int argc, char **argv) {{
                     self.hoist_blocks(arg);
                 }
             }
-            ExprData::ArrayWithInit { init, count } => {
+            ExprData::ArrayWithInit { init, count: _ } => {
                 self.hoist_blocks(init);
-                self.hoist_blocks(count);
+                //self.hoist_blocks(count);
             }
             ExprData::Tuple(args) => {
                 for arg in args.iter_mut() {
