@@ -102,7 +102,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn error<T>(&mut self, diagnostic: &'static str) -> Result<T> {
+    fn error<T>(&mut self, diagnostic: &str) -> Result<T> {
         Err(Error::new(diagnostic, self.advance()?.span))
     }
 
@@ -115,7 +115,7 @@ impl<'a> Parser<'a> {
     fn comma_separated<T>(
         &mut self,
         end: Token,
-        msg: &'static str,
+        msg: &str,
         mut f: impl FnMut(&mut Self) -> Result<T>,
     ) -> Result<(Vec<T>, Span)> {
         let mut v = Vec::new();
@@ -640,11 +640,10 @@ impl<'a> Parser<'a> {
     fn assignment(&mut self) -> Result<L<Expr>> {
         let expr = self.range()?;
         if let Some(assign) = self.advance_if(|k| k.is_assignment()) {
-            if !matches!(
-                expr.data,
-                Expr::Symbol(_) | Expr::Call { .. } | Expr::Subscript { .. }
-            ) {
-                return Err(Error::new("invalid assignment target", expr.span));
+            match expr.data {
+                Expr::Symbol(_) | Expr::Subscript { .. } => {}
+                Expr::Unary { op, .. } if op == UnaryOp::Deref => {}
+                _ => return Err(Error::new("invalid assignment target", expr.span)),
             }
 
             let value = self.expression()?;
@@ -1116,11 +1115,7 @@ impl<'a> Parser<'a> {
         Ok(span)
     }
 
-    fn expect<T>(
-        &mut self,
-        pred: impl FnOnce(L<Token<'a>>) -> Option<T>,
-        msg: &'static str,
-    ) -> Result<T> {
+    fn expect<T>(&mut self, pred: impl FnOnce(L<Token<'a>>) -> Option<T>, msg: &str) -> Result<T> {
         let token = self.advance()?;
         let span = token.span;
         match pred(token) {
@@ -1129,11 +1124,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect_kind(&mut self, kind: Token, msg: &'static str) -> Result<L<Token<'a>>> {
+    fn expect_kind(&mut self, kind: Token, msg: &str) -> Result<L<Token<'a>>> {
         self.expect(|t| (t.data == kind).then_some(t), msg)
     }
 
-    fn expect_id(&mut self, msg: &'static str) -> Result<&'a str> {
+    fn expect_id(&mut self, msg: &str) -> Result<&'a str> {
         self.expect(
             |t| {
                 let Token::Ident(ident) = t.data else { return None; };
@@ -1143,7 +1138,7 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn expect_id_with_span(&mut self, msg: &'static str) -> Result<(&'a str, Span)> {
+    fn expect_id_with_span(&mut self, msg: &str) -> Result<(&'a str, Span)> {
         self.expect(
             |t| {
                 let Token::Ident(ident) = t.data else { return None; };
