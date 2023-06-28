@@ -460,6 +460,8 @@ int main(int argc, char **argv) {{
             TypeId::Never => todo!(),
             TypeId::Int(bits) => self.emit(format!("{RT_PREFIX}i{bits}")),
             TypeId::Uint(bits) => self.emit(format!("{RT_PREFIX}u{bits}")),
+            TypeId::Isize => self.emit(format!("{RT_PREFIX}isize")),
+            TypeId::Usize => self.emit(format!("{RT_PREFIX}usize")),
             TypeId::F32 => self.emit(format!("{RT_PREFIX}f32")),
             TypeId::F64 => self.emit(format!("{RT_PREFIX}f64")),
             TypeId::Bool => self.emit(format!("{RT_PREFIX}bool")),

@@ -39,6 +39,8 @@ pub enum TypeId {
     Never,
     Int(u8),
     Uint(u8),
+    Isize,
+    Usize,
     F32,
     F64,
     Bool,
@@ -64,7 +66,12 @@ impl TypeId {
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
-            TypeId::Int(_) | TypeId::Uint(_) | TypeId::F32 | TypeId::F64
+            TypeId::Int(_)
+                | TypeId::Uint(_)
+                | TypeId::F32
+                | TypeId::F64
+                | TypeId::Isize
+                | TypeId::Usize
         )
     }
 
@@ -81,16 +88,30 @@ impl TypeId {
             | BinaryOp::LtEqual => {
                 matches!(
                     self,
-                    TypeId::Int(_) | TypeId::Uint(_) | TypeId::F32 | TypeId::F64
+                    TypeId::Int(_)
+                        | TypeId::Isize
+                        | TypeId::Uint(_)
+                        | TypeId::Usize
+                        | TypeId::F32
+                        | TypeId::F64
                 )
             }
             BinaryOp::And | BinaryOp::Xor | BinaryOp::Or | BinaryOp::Shl | BinaryOp::Shr => {
-                matches!(self, TypeId::Int(_) | TypeId::Uint(_))
+                matches!(
+                    self,
+                    TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize
+                )
             }
             BinaryOp::Equal | BinaryOp::NotEqual => {
                 matches!(
                     self,
-                    TypeId::Int(_) | TypeId::Uint(_) | TypeId::F32 | TypeId::F64 | TypeId::Bool
+                    TypeId::Int(_)
+                        | TypeId::Isize
+                        | TypeId::Uint(_)
+                        | TypeId::Usize
+                        | TypeId::F32
+                        | TypeId::F64
+                        | TypeId::Bool
                 )
             }
             BinaryOp::LogicalOr | BinaryOp::LogicalAnd => {
@@ -124,6 +145,14 @@ pub struct TypeChecker {
     errors: Vec<Error>,
     scopes: Scopes,
     current: ScopeId,
+}
+
+macro_rules! type_check {
+    ($self: ident, $source: expr, $target: expr, $span: expr) => {
+        if !$self.coerces_to($source, $target) {
+            return $self.type_mismatch($target, $source, $span);
+        }
+    };
 }
 
 impl TypeChecker {
@@ -185,21 +214,19 @@ impl TypeChecker {
                         let mut rs_members = HashMap::with_capacity(base.members.len());
                         let mut members = Vec::new();
                         for (name, member) in base.members {
-                            let ty = this.resolve_type(&member.ty);
+                            let target = this.resolve_type(&member.ty);
                             rs_members.insert(
                                 name.clone(),
                                 Member {
                                     public: member.public,
-                                    ty: ty.clone(),
+                                    ty: target.clone(),
                                 },
                             );
 
                             let value = if let Some(value) = member.value {
                                 let span = value.span;
-                                let expr = this.check_expr(value, Some(&ty));
-                                if !this.coerces_to(&expr.ty, &ty) {
-                                    return this.type_mismatch(&ty, &expr.ty, span);
-                                }
+                                let expr = this.check_expr(value, Some(&target));
+                                type_check!(this, &expr.ty, &target, span);
 
                                 Some(expr)
                             } else {
@@ -209,7 +236,7 @@ impl TypeChecker {
                             members.push(CheckedMemVar {
                                 public: member.public,
                                 name,
-                                ty,
+                                ty: target,
                                 value,
                             });
                         }
@@ -257,9 +284,7 @@ impl TypeChecker {
                     if let Some(value) = value {
                         let span = value.span;
                         let value = self.check_expr(value, Some(&ty));
-                        if !self.coerces_to(&value.ty, &ty) {
-                            return self.type_mismatch(&ty, &value.ty, span);
-                        }
+                        type_check!(self, &value.ty, &ty, span);
 
                         CheckedStmt::Let {
                             name,
@@ -311,9 +336,7 @@ impl TypeChecker {
 
                     let span = value.span;
                     let value = self.check_expr(value, Some(&ty));
-                    if !self.coerces_to(&value.ty, &ty) {
-                        return self.type_mismatch(&ty, &value.ty, span);
-                    }
+                    type_check!(self, &value.ty, &ty, span);
 
                     CheckedStmt::Static {
                         public,
@@ -369,10 +392,9 @@ impl TypeChecker {
             Expr::Binary { op, left, right } => {
                 let left = self.check_expr(*left, target);
                 let right = self.check_expr(*right, Some(&left.ty));
+                type_check!(self, &right.ty, &left.ty, span);
 
-                if !self.coerces_to(&right.ty, &left.ty) {
-                    self.type_mismatch(&left.ty, &right.ty, span)
-                } else if !left.ty.supports_binop(op) {
+                if !left.ty.supports_binop(op) {
                     self.error(Error::new(
                         format!(
                             "operator '{op}' is invalid for values of type {} and {}",
@@ -412,9 +434,15 @@ impl TypeChecker {
                 let mut out_ty = None;
                 let valid = match op {
                     Plus => expr.ty.is_numeric(),
-                    Neg => matches!(expr.ty, TypeId::Int(_) | TypeId::F32 | TypeId::F64),
+                    Neg => matches!(
+                        expr.ty,
+                        TypeId::Int(_) | TypeId::Isize | TypeId::F32 | TypeId::F64
+                    ),
                     PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
-                        if matches!(expr.ty, TypeId::Int(_) | TypeId::Uint(_)) {
+                        if matches!(
+                            expr.ty,
+                            TypeId::Int(_) | TypeId::Isize | TypeId::Uint(_) | TypeId::Usize
+                        ) {
                             if !self.is_assignable(&expr) {
                                 return self
                                     .error(Error::new("expression is not assignable", value_span));
@@ -425,7 +453,14 @@ impl TypeChecker {
                             false
                         }
                     }
-                    Not => matches!(expr.ty, TypeId::Int(_) | TypeId::Uint(_) | TypeId::Bool),
+                    Not => matches!(
+                        expr.ty,
+                        TypeId::Int(_)
+                            | TypeId::Isize
+                            | TypeId::Uint(_)
+                            | TypeId::Usize
+                            | TypeId::Bool
+                    ),
                     Deref => {
                         if let TypeId::Ref(inner) | TypeId::RefMut(inner) = &expr.ty {
                             out_ty = Some((**inner).clone());
@@ -440,7 +475,7 @@ impl TypeChecker {
                     }
                     AddrMut => {
                         if !self.can_addrmut(&expr) {
-                            return self.error(Error::new(
+                            self.error::<()>(Error::new(
                                 "cannot take address of immutable memory location",
                                 span,
                             ));
@@ -594,54 +629,58 @@ impl TypeChecker {
                     .cloned()
                     .unwrap_or(TypeId::Int(32));
 
-                match ty {
-                    TypeId::Int(bits) => {
-                        let result = match i128::from_str_radix(&value, base as u32) {
-                            Ok(result) => result,
-                            Err(_) => {
-                                return self.error(Error::new(
-                                    "Integer literal is too large for any type.",
-                                    expr.span,
-                                ));
-                            }
-                        };
-
-                        if result >= 1 << (bits - 1) {
-                            return self.error(Error::new(
-                                "Integer literal is larger than its type allows",
-                                expr.span,
-                            ));
-                        }
-                        if result <= -(1 << (bits - 1)) {
-                            return self.error(Error::new(
-                                "Integer literal is smaller than its type allows",
-                                expr.span,
-                            ));
-                        }
-
-                        CheckedExpr::new(ty, ExprData::Signed(result))
-                    }
-                    TypeId::Uint(bits) => {
-                        let result = match u128::from_str_radix(&value, base as u32) {
-                            Ok(result) => result,
-                            Err(_) => {
-                                return self.error(Error::new(
-                                    "Integer literal is too large for any type.",
-                                    expr.span,
-                                ));
-                            }
-                        };
-
-                        if result >= 1 << bits {
-                            return self.error(Error::new(
-                                "Integer literal is larger than its type allows",
-                                expr.span,
-                            ));
-                        }
-
-                        CheckedExpr::new(ty, ExprData::Unsigned(result))
-                    }
+                let (signed, bits) = match ty {
+                    TypeId::Int(bits) => (true, bits),
+                    TypeId::Uint(bits) => (false, bits),
+                    TypeId::Isize => (true, std::mem::size_of::<isize>() as u8 * 8),
+                    TypeId::Usize => (false, std::mem::size_of::<usize>() as u8 * 8),
                     _ => unreachable!(),
+                };
+
+                if signed {
+                    let result = match i128::from_str_radix(&value, base as u32) {
+                        Ok(result) => result,
+                        Err(_) => {
+                            return self.error(Error::new(
+                                "Integer literal is too large for any type.",
+                                expr.span,
+                            ));
+                        }
+                    };
+
+                    if result >= 1 << (bits - 1) {
+                        return self.error(Error::new(
+                            "Integer literal is larger than its type allows",
+                            expr.span,
+                        ));
+                    }
+                    if result <= -(1 << (bits - 1)) {
+                        return self.error(Error::new(
+                            "Integer literal is smaller than its type allows",
+                            expr.span,
+                        ));
+                    }
+
+                    CheckedExpr::new(ty, ExprData::Signed(result))
+                } else {
+                    let result = match u128::from_str_radix(&value, base as u32) {
+                        Ok(result) => result,
+                        Err(_) => {
+                            return self.error(Error::new(
+                                "Integer literal is too large for any type.",
+                                expr.span,
+                            ));
+                        }
+                    };
+
+                    if result >= 1 << bits {
+                        return self.error(Error::new(
+                            "Integer literal is larger than its type allows",
+                            expr.span,
+                        ));
+                    }
+
+                    CheckedExpr::new(ty, ExprData::Unsigned(result))
                 }
             }
             Expr::Float(value) => CheckedExpr::new(
@@ -758,9 +797,7 @@ impl TypeChecker {
                 }
 
                 let rhs = self.check_expr(*value, Some(&lhs.ty));
-                if !self.coerces_to(&rhs.ty, &lhs.ty) {
-                    return self.type_mismatch(&lhs.ty, &rhs.ty, span);
-                }
+                type_check!(self, &rhs.ty, &lhs.ty, span);
 
                 CheckedExpr::new(
                     lhs.ty.clone(),
@@ -790,9 +827,7 @@ impl TypeChecker {
                 let if_branch = self.check_expr(*if_branch, target);
                 let else_branch = if let Some(e) = else_branch {
                     let else_branch = self.check_expr(*e, Some(&if_branch.ty));
-                    if !self.coerces_to(&else_branch.ty, &if_branch.ty) {
-                        return self.type_mismatch(&if_branch.ty, &else_branch.ty, span);
-                    }
+                    type_check!(self, &else_branch.ty, &if_branch.ty, span);
 
                     Some(else_branch)
                 } else {
@@ -841,7 +876,35 @@ impl TypeChecker {
                     ))
                 }
             }
-            Expr::Subscript { .. } => todo!(),
+            Expr::Subscript { callee, args } => {
+                if args.len() > 1 {
+                    self.error::<()>(Error::new(
+                        "multidimensional subscript is not supported",
+                        args[1].span,
+                    ));
+                }
+
+                let callee = self.check_expr(*callee, None);
+                let arg = args.into_iter().next().unwrap();
+                let arg_span = arg.span;
+                let arg = self.check_expr(arg, Some(&TypeId::Isize));
+                type_check!(self, &arg.ty, &TypeId::Isize, arg_span);
+
+                if let TypeId::Array(target) = &callee.ty {
+                    CheckedExpr::new(
+                        target.0.clone(),
+                        ExprData::Subscript {
+                            callee: callee.into(),
+                            args: vec![arg],
+                        },
+                    )
+                } else {
+                    self.error(Error::new(
+                        format!("type {} cannot be subscripted", self.type_name(&callee.ty)),
+                        span,
+                    ))
+                }
+            }
             Expr::Return(expr) => {
                 let Some(target) = self.scopes.iter_from(self.current).find_map(|(_, scope)| {
                     if let ScopeKind::Function(id) = &scope.kind {
@@ -857,11 +920,9 @@ impl TypeChecker {
 
                 let span = expr.span;
                 let expr = self.check_expr(*expr, Some(&target));
-                if !self.coerces_to(&expr.ty, &target) {
-                    self.type_mismatch(&target, &expr.ty, span)
-                } else {
-                    CheckedExpr::new(TypeId::Never, ExprData::Return(expr.into()))
-                }
+                type_check!(self, &expr.ty, &target, span);
+
+                CheckedExpr::new(TypeId::Never, ExprData::Return(expr.into()))
             }
             Expr::Yield(expr) => {
                 let ScopeKind::Block(target) = self.scopes[self.current].kind.clone() else {
@@ -871,9 +932,7 @@ impl TypeChecker {
                 let span = expr.span;
                 let expr = self.check_expr(*expr, target.as_ref());
                 if let Some(target) = &target {
-                    if !self.coerces_to(&expr.ty, target) {
-                        return self.type_mismatch(target, &expr.ty, span);
-                    }
+                    type_check!(self, &expr.ty, &target, span);
                 } else {
                     self.scopes[self.current].kind = ScopeKind::Block(Some(expr.ty.clone()));
                 }
@@ -889,7 +948,7 @@ impl TypeChecker {
     fn coerces_to(&self, ty: &TypeId, target: &TypeId) -> bool {
         if matches!(ty, TypeId::IntGeneric) {
             match target {
-                TypeId::Int(_) | TypeId::Uint(_) => return true,
+                TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize => return true,
                 _ => {}
             }
         } else if matches!(ty, TypeId::FloatGeneric) {
@@ -1030,6 +1089,8 @@ impl TypeChecker {
                         "never" => Some(TypeId::Never),
                         "f32" => Some(TypeId::F32),
                         "f64" => Some(TypeId::F64),
+                        "usize" => Some(TypeId::Usize),
+                        "isize" => Some(TypeId::Isize),
                         "bool" => Some(TypeId::Bool),
                         _ => Self::match_int_type(&name.data),
                     })
@@ -1135,7 +1196,7 @@ impl TypeChecker {
             ExprData::Member { source, .. } => {
                 matches!(source.ty, TypeId::RefMut(_)) || self.can_addrmut(source)
             }
-            ExprData::Subscript { .. } => todo!(),
+            ExprData::Subscript { callee, .. } => self.is_assignable(callee),
             _ => false,
         }
     }
@@ -1189,8 +1250,10 @@ impl TypeChecker {
                 }
                 Type::Struct(base) => base.name.clone(),
                 Type::Temporary => panic!("ICE: Type::Temporary in type_name"),
-            },
+            }
             TypeId::Array(inner) => format!("[{}; {}]", self.type_name(&inner.0), inner.1),
+            TypeId::Isize => "isize".into(),
+            TypeId::Usize => "usize".into(),
         }
     }
 
