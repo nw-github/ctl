@@ -218,7 +218,10 @@ int main(int argc, char **argv) {{
                 ty,
                 args,
             } => {
-                self.emit_type(ty);
+                let TypeId::Type(id) = ty else { unreachable!() };
+                let Type::Struct(s) = &self.types[*id] else { unreachable!() };
+
+                self.emit(Self::scope_name(s.scope, &self.scopes));
                 self.emit(format!("_{member}"));
                 self.emit("(");
 
@@ -255,27 +258,9 @@ int main(int argc, char **argv) {{
                     self.emit(format!("{RT_PREFIX}::boolean::FALSE"));
                 }
             }
-            ExprData::Signed(value) => match expr.ty {
-                TypeId::Int(base) => {
-                    self.emit(format!("{value}_i{base}"));
-                }
-                _ => panic!("ICE: ExprData::Signed with non-int type {:?}", expr.ty),
-            },
-            ExprData::Unsigned(value) => match expr.ty {
-                TypeId::Uint(base) => {
-                    self.emit(format!("{value}_u{base}"));
-                }
-                _ => panic!("ICE: ExprData::Unsigned with non-uint type {:?}", expr.ty),
-            },
-            ExprData::Float(value) => {
-                // TODO: probably should check the range or something
-                match expr.ty {
-                    TypeId::F32 => self.emit(format!("{value}_f32")),
-                    TypeId::F64 => self.emit(format!("{value}_f64")),
-                    _ => panic!("ICE: ExprData::Float with non-float type {:?}", expr.ty),
-                }
-                self.emit(value);
-            }
+            ExprData::Signed(value) => self.emit(format!("{value}")),
+            ExprData::Unsigned(value) => self.emit(format!("{value}")),
+            ExprData::Float(value) => self.emit(value),
             ExprData::String(_) => todo!(),
             ExprData::Symbol { scope, symbol } => {
                 if let Some(scope) = scope {
@@ -490,7 +475,10 @@ int main(int argc, char **argv) {{
             TypeId::Type(id) => {
                 match &self.types[*id] {
                     Type::Function { .. } => todo!(),
-                    Type::Struct(base) => self.emit(Self::scope_name(base.scope, &self.scopes)),
+                    Type::Struct(base) => {
+                        let name = Self::scope_name(base.scope, &self.scopes);
+                        self.emit(format!("struct {name}"));
+                    }
                     Type::Temporary => panic!("ICE: Type::Temporary in emit_type"),
                 }
             }
