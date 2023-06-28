@@ -183,13 +183,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type(&mut self) -> Result<TypeHint> {
-        let wrapper = self.advance_if_kind(Token::Asterisk).map(|_| {
+        if self.advance_if_kind(Token::Asterisk).is_some() {
             if self.advance_if_kind(Token::Mut).is_some() {
-                TypeHint::RefMut
+                return Ok(TypeHint::RefMut(self.parse_type()?.into()));
             } else {
-                TypeHint::Ref
+                return Ok(TypeHint::Ref(self.parse_type()?.into()));
             }
-        });
+        }
 
         let ty = if self.advance_if_kind(Token::LBrace).is_some() {
             let inner = self.parse_type()?;
@@ -224,11 +224,6 @@ impl<'a> Parser<'a> {
             }
         };
 
-        let ty = if let Some(wrapper) = wrapper {
-            wrapper(ty.into())
-        } else {
-            ty
-        };
         if self.advance_if_kind(Token::Question).is_some() {
             Ok(TypeHint::Option(ty.into()))
         } else if self.advance_if_kind(Token::Exclamation).is_some() {
