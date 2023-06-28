@@ -1,6 +1,6 @@
-use self::stmt::CheckedStmt;
+use crate::scope::ScopeId;
 
-pub type ScopeId = usize;
+use self::stmt::CheckedStmt;
 
 pub struct Block {
     pub body: Vec<CheckedStmt>,

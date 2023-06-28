@@ -1,7 +1,4 @@
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    vec,
-};
+use std::collections::{hash_map::Entry, HashMap};
 
 use crate::{
     ast::{
@@ -14,9 +11,10 @@ use crate::{
             CheckedFn, CheckedFnDecl, CheckedMemVar, CheckedParam, CheckedStmt, CheckedStruct,
             CheckedUserType,
         },
-        Block, ScopeId,
+        Block,
     },
     lexer::{Located, Span},
+    scope::{Scope, ScopeId, Scopes, Target, Variable},
     Error,
 };
 
@@ -113,52 +111,25 @@ pub enum Type {
     Temporary,
 }
 
-#[derive(Default, Debug, Clone)]
-pub enum Target {
-    Block(Option<TypeId>),
-    Function(usize),
-    UserType(usize),
-    #[default]
-    None,
-}
-
-#[derive(Default, Debug, Clone)]
-pub struct Variable {
-    ty: TypeId,
-    mutable: bool,
-}
-
-#[derive(Default, Debug)]
-pub struct Scope {
-    pub parent: Option<ScopeId>,
-    pub vars: HashMap<String, Variable>,
-    pub types: HashMap<String, TypeId>,
-    pub target: Target,
-    pub name: Option<String>,
-}
-
 pub struct CheckedAst {
     pub types: Vec<Type>,
-    pub scopes: Vec<Scope>,
+    pub scopes: Scopes,
     pub stmt: CheckedStmt,
 }
 
+#[derive(Default)]
 pub struct TypeChecker {
     types: Vec<Type>,
-    scopes: Vec<Scope>,
     errors: Vec<Error>,
+    scopes: Scopes,
     current: ScopeId,
 }
 
 impl TypeChecker {
     pub fn check(stmt: Located<Stmt>) -> (CheckedAst, Vec<Error>) {
-        let mut this = Self {
-            scopes: vec![Scope::default()],
-            types: vec![],
-            errors: vec![],
-            // we depend on parser wrapping up the generated code in a Stmt::Module
-            current: 0,
-        };
+        // we depend on parser wrapping up the generated code in a Stmt::Module
+        let mut this = Self::default();
+        this.scopes.push(Scope::default());
 
         let stmt = this.check_stmt(stmt);
         (
@@ -660,7 +631,7 @@ impl TypeChecker {
             ),
             Expr::String(_) => todo!(),
             Expr::Symbol(name) => {
-                if let Some((var, id)) = self.find_var_and_scope(&name) {
+                if let Some((id, var)) = self.scopes.find_var(self.current, &name) {
                     CheckedExpr::new(
                         var.ty.clone(),
                         ExprData::Symbol {
@@ -676,7 +647,7 @@ impl TypeChecker {
                 name,
                 members: arguments,
             } => {
-                let Some(id) = self.find_type(&name).cloned() else {
+                let Some(id) = self.scopes.find_type(self.current, &name).cloned() else {
                     return self.undefined_type(&name, span);
                 };
 
@@ -695,7 +666,9 @@ impl TypeChecker {
                 };
 
                 let members = s.members.clone();
-                if members.iter().any(|member| !member.1.public) && !self.is_sub_scope(s.scope) {
+                if members.iter().any(|member| !member.1.public)
+                    && !self.scopes.is_sub_scope(self.current, s.scope)
+                {
                     self.error::<()>(Error::new(
                         "cannot construct type with private members",
                         span,
@@ -794,7 +767,7 @@ impl TypeChecker {
                 let source = self.check_expr(*source, None);
                 let (s, id) = eval_member_to_struct!(source);
                 if let Some(t) = s.members.get(&member) {
-                    if !t.public && !self.is_sub_scope(s.scope) {
+                    if !t.public && !self.scopes.is_sub_scope(self.current, s.scope) {
                         return self.error(Error::new(
                             format!(
                                 "cannot access private member '{member}' of type {}",
@@ -823,7 +796,7 @@ impl TypeChecker {
             }
             Expr::Subscript { .. } => todo!(),
             Expr::Return(expr) => {
-                let Some(target) = self.traverse_scopes(self.current, |scope| {
+                let Some(target) = self.scopes.iter_from(self.current).find_map(|(_, scope)| {
                     if let Target::Function(id) = &scope.target {
                         let Type::Function { ret, .. } = &self.types[*id] else { unreachable!() };
                         Some(ret.clone())
@@ -1000,7 +973,8 @@ impl TypeChecker {
         match ty {
             TypeHint::Regular { name, .. } => {
                 return self
-                    .find_type(&name.data)
+                    .scopes
+                    .find_type(self.current, &name.data)
                     .cloned()
                     .or_else(|| match name.data.as_str() {
                         "void" => Some(TypeId::Void),
@@ -1017,24 +991,28 @@ impl TypeChecker {
             TypeHint::RefMut(ty) => TypeId::RefMut(self.resolve_type(ty).into()),
             TypeHint::This => {
                 // the parser ensures methods can only appear in structs/enums/etc
-                self.traverse_scopes(self.current, |scope| {
-                    if let Target::UserType(id) = &scope.target {
-                        Some(TypeId::Ref(TypeId::Type(*id).into()))
-                    } else {
-                        None
-                    }
-                })
-                .expect("ICE: this outside of method")
+                self.scopes
+                    .iter_from(self.current)
+                    .find_map(|(_, scope)| {
+                        if let Target::UserType(id) = &scope.target {
+                            Some(TypeId::Ref(TypeId::Type(*id).into()))
+                        } else {
+                            None
+                        }
+                    })
+                    .expect("ICE: this outside of method")
             }
             TypeHint::MutThis => self
-                .traverse_scopes(self.current, |scope| {
+                .scopes
+                .iter_from(self.current)
+                .find_map(|(_, scope)| {
                     if let Target::UserType(id) = &scope.target {
                         Some(TypeId::RefMut(TypeId::Type(*id).into()))
                     } else {
                         None
                     }
                 })
-                .expect("ICE: mut this outside of method"),
+                .expect("ICE: this outside of method"),
             _ => todo!(),
         }
     }
@@ -1097,7 +1075,13 @@ impl TypeChecker {
             ExprData::Unary { op, expr } => {
                 matches!(op, UnaryOp::Deref) && matches!(expr.ty, TypeId::RefMut(_))
             }
-            ExprData::Symbol { symbol, .. } => self.find_var(symbol).unwrap().mutable,
+            ExprData::Symbol { symbol, .. } => {
+                self.scopes
+                    .find_var(self.current, symbol)
+                    .unwrap()
+                    .1
+                    .mutable
+            }
             ExprData::Member { source, .. } => {
                 matches!(source.ty, TypeId::RefMut(_)) || self.can_addrmut(source)
             }
@@ -1111,7 +1095,13 @@ impl TypeChecker {
             ExprData::Unary { op, expr } => {
                 !matches!(op, UnaryOp::Deref) || matches!(expr.ty, TypeId::RefMut(_))
             }
-            ExprData::Symbol { symbol, .. } => self.find_var(symbol).unwrap().mutable,
+            ExprData::Symbol { symbol, .. } => {
+                self.scopes
+                    .find_var(self.current, symbol)
+                    .unwrap()
+                    .1
+                    .mutable
+            }
             ExprData::Member { source, .. } => {
                 matches!(source.ty, TypeId::RefMut(_)) || self.can_addrmut(source)
             }
@@ -1151,54 +1141,6 @@ impl TypeChecker {
                 Type::Temporary => panic!("ICE: Type::Temporary in type_name"),
             },
         }
-    }
-
-    fn traverse_scopes<'a, T>(
-        &'a self,
-        mut id: ScopeId,
-        mut f: impl FnMut(&'a Scope) -> Option<T>,
-    ) -> Option<T> {
-        loop {
-            let scope = &self.scopes[id];
-            if let Some(item) = f(scope) {
-                return Some(item);
-            }
-
-            id = scope.parent?;
-        }
-    }
-
-    fn traverse_scope_ids<T>(
-        &self,
-        mut id: ScopeId,
-        mut f: impl FnMut(usize) -> Option<T>,
-    ) -> Option<T> {
-        loop {
-            if let Some(item) = f(id) {
-                return Some(item);
-            }
-
-            id = self.scopes[id].parent?;
-        }
-    }
-
-    fn is_sub_scope(&self, target: ScopeId) -> bool {
-        self.traverse_scope_ids(self.current, |id| (id == target).then_some(()))
-            .is_some()
-    }
-
-    fn find_type(&self, name: &str) -> Option<&TypeId> {
-        self.traverse_scopes(self.current, |scope| scope.types.get(name))
-    }
-
-    fn find_var(&self, name: &str) -> Option<&Variable> {
-        self.traverse_scopes(self.current, |scope| scope.vars.get(name))
-    }
-
-    fn find_var_and_scope(&self, name: &str) -> Option<(&Variable, ScopeId)> {
-        self.traverse_scope_ids(self.current, |id| {
-            self.scopes[id].vars.get(name).map(|var| (var, id))
-        })
     }
 
     fn insert_type_in_scope(&mut self, name: String, data: Type) -> usize {

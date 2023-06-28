@@ -5,6 +5,7 @@ mod lexer;
 mod parser;
 mod pretty;
 mod typecheck;
+mod scope;
 
 use std::path::PathBuf;
 
@@ -40,7 +41,7 @@ impl Error {
 
     pub fn display(&self, file: &str) {
         eprintln!(
-            "{file}:{}:{} {}",
+            "{file}:{}:{}: {}",
             self.span.loc.row, self.span.loc.col, self.diagnostic
         )
     }

@@ -3,9 +3,9 @@ use crate::{
     checked_ast::{
         expr::{CheckedExpr, ExprData},
         stmt::{CheckedFnDecl, CheckedStmt, CheckedStruct, CheckedUserType},
-        Block, ScopeId,
+        Block,
     },
-    typecheck::{CheckedAst, Scope, Type, TypeId},
+    typecheck::{CheckedAst, Type, TypeId}, scope::Scopes,
 };
 
 const RT_PREFIX: &str = "$CTL_RUNTIME_";
@@ -19,7 +19,7 @@ pub struct BlockInfo {
 pub struct Compiler {
     buffer: String,
     types: Vec<Type>,
-    scopes: Vec<Scope>,
+    scopes: Scopes,
     current_block: Option<BlockInfo>,
     block_number: usize,
     current_path: String,
@@ -221,7 +221,7 @@ int main(int argc, char **argv) {{
                 let TypeId::Type(id) = ty else { unreachable!() };
                 let Type::Struct(s) = &self.types[*id] else { unreachable!() };
 
-                self.emit(Self::scope_name(s.scope, &self.scopes));
+                self.emit(self.scopes.name(s.scope));
                 self.emit(format!("_{member}"));
                 self.emit("(");
 
@@ -264,7 +264,7 @@ int main(int argc, char **argv) {{
             ExprData::String(_) => todo!(),
             ExprData::Symbol { scope, symbol } => {
                 if let Some(scope) = scope {
-                    self.emit(Self::scope_name(*scope, &self.scopes));
+                    self.emit(self.scopes.name(*scope));
                     self.emit("_");
                 }
                 self.emit(symbol);
@@ -476,8 +476,7 @@ int main(int argc, char **argv) {{
                 match &self.types[*id] {
                     Type::Function { .. } => todo!(),
                     Type::Struct(base) => {
-                        let name = Self::scope_name(base.scope, &self.scopes);
-                        self.emit(format!("struct {name}"));
+                        self.emit(format!("struct {}", self.scopes.name(base.scope)));
                     }
                     Type::Temporary => panic!("ICE: Type::Temporary in emit_type"),
                 }
@@ -536,20 +535,5 @@ int main(int argc, char **argv) {{
         self.current_path.truncate(self.current_path.len() - name.len() - 1);
     }
 
-    fn scope_name(scope: ScopeId, scopes: &[Scope]) -> String {
-        let mut scope = Some(scope);
-        let mut name = String::new();
-        while let Some(id) = scope {
-            if let Some(scope_name) = &scopes[id].name {
-                for c in scope_name.chars().rev() {
-                    name.push(c);
-                }
-                name.push('_');
-            }
     
-            scope = scopes[id].parent;
-        }
-    
-        name.chars().rev().skip(1).collect::<String>()
-    }
 }
