@@ -936,6 +936,7 @@ impl TypeChecker {
             Expr::Break(_) => todo!(),
             Expr::Range { .. } => todo!(),
             Expr::Continue => todo!(),
+            Expr::Void => CheckedExpr::new(TypeId::Void, ExprData::Instance { members: Vec::new() }),
         }
     }
 

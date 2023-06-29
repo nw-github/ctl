@@ -157,6 +157,7 @@ pub mod expr {
         Float(String),
         String(String),
         Symbol(String),
+        Void,
         Instance {
             name: String,
             members: Vec<(String, super::Expr)>,

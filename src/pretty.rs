@@ -339,6 +339,7 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
                 }
             }
         }
+        Expr::Void => println!("{tabs}Void")
     }
 }
 

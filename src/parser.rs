@@ -847,6 +847,7 @@ impl<'a> Parser<'a> {
     fn primary(&mut self) -> Result<L<Expr>> {
         let token = self.advance()?;
         Ok(match token.data {
+            Token::Void => L::new(Expr::Void, token.span),
             Token::False => L::new(Expr::Bool(false), token.span),
             Token::True => L::new(Expr::Bool(true), token.span),
             Token::None => L::new(Expr::None, token.span),

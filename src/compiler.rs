@@ -86,8 +86,8 @@ int main(int argc, char **argv) {{
                 self.emit(";");
             }
             CheckedStmt::Fn(f) => {
-                self.add_to_path(&f.header.name);
                 self.emit_fn_decl(&f.header);
+                self.add_to_path(&f.header.name);
                 self.emit_block(&mut f.body);
                 self.remove_from_path(&f.header.name);
             }
@@ -112,8 +112,8 @@ int main(int argc, char **argv) {{
                     self.emit("};");
 
                     for f in functions.iter_mut() {
-                        self.add_to_path(&f.header.name);
                         self.emit_fn_decl(&f.header);
+                        self.add_to_path(&f.header.name);
                         self.emit_block(&mut f.body);
                         self.remove_from_path(&f.header.name);
                     }
