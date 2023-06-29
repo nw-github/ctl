@@ -623,18 +623,28 @@ impl<'a> Parser<'a> {
     }
 
     fn jump(&mut self) -> Result<L<Expr>> {
-        if let Some(token) = self.advance_if_kind(Token::Return) {
-            let expr = self.assignment()?;
-            let span = Span::combine(token.span, expr.span);
-            Ok(L::new(Expr::Return(expr.into()), span))
-        } else if let Some(token) = self.advance_if_kind(Token::Break) {
-            let expr = self.assignment()?;
-            let span = Span::combine(token.span, expr.span);
-            Ok(L::new(Expr::Break(expr.into()), span))
-        } else if let Some(token) = self.advance_if_kind(Token::Yield) {
-            let expr = self.assignment()?;
-            let span = Span::combine(token.span, expr.span);
-            Ok(L::new(Expr::Yield(expr.into()), span))
+        if let Some(token) =
+            self.advance_if(|tk| matches!(tk, Token::Return | Token::Break | Token::Yield))
+        {
+            let (expr, span) = if !self
+                .matches(|tk| matches!(tk, Token::Semicolon | Token::Comma | Token::RBrace))
+            {
+                let expr = self.assignment()?;
+                let span = Span::combine(token.span, expr.span);
+                (expr.into(), span)
+            } else {
+                (L::new(Expr::Void, token.span).into(), token.span)
+            };
+
+            Ok(L::new(
+                match token.data {
+                    Token::Return => Expr::Return(expr),
+                    Token::Break => Expr::Break(expr),
+                    Token::Yield => Expr::Yield(expr),
+                    _ => unreachable!(),
+                },
+                span,
+            ))
         } else if let Some(token) = self.advance_if_kind(Token::Continue) {
             Ok(L::new(Expr::Continue, token.span))
         } else {

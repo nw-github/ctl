@@ -138,32 +138,6 @@ impl TypeChecker {
         (CheckedAst { scopes, stmt }, this.errors)
     }
 
-    //     fn forward_declare(&mut self, stmt: &Located<Stmt>) {
-    //         match &stmt.data {
-    //             Stmt::Fn(_) => {
-    //                 self.enter_scope(name.clone(), *public, |this| {
-    //                     for stmt in body {
-    //                         this.forward_declare(stmt);
-    //                     }
-    //                 });
-    //             }
-    //             Stmt::UserType(_) => todo!(),
-    //             Stmt::Static { public, name, ty, value } => todo!(),
-    //             Stmt::Module { public, name, body } => {
-    //                 self.enter_scope(name.clone(), *public, |this| {
-    //                     for stmt in body {
-    //                         this.forward_declare(stmt);
-    //                     }
-    //                 });
-    //             }
-    //             Stmt::Let { .. } | Stmt::Expr(_) => {}
-    //         }
-    //     }
-    //
-    //     fn forward_declare_fn(&mut self) {
-    //
-    //     }
-
     fn check_stmt(&mut self, scopes: &mut Scopes, stmt: Located<Stmt>) -> CheckedStmt {
         match stmt.data {
             Stmt::Module {
@@ -615,6 +589,14 @@ impl TypeChecker {
             Expr::Tuple(_) => todo!(),
             Expr::Map(_) => todo!(),
             Expr::String(_) => todo!(),
+            Expr::None => todo!(),
+            Expr::Range { .. } => todo!(),
+            Expr::Void => CheckedExpr::new(
+                TypeId::Void,
+                ExprData::Instance {
+                    members: Vec::new(),
+                },
+            ),
             Expr::Bool(value) => CheckedExpr {
                 ty: TypeId::Bool,
                 data: ExprData::Bool(value),
@@ -773,7 +755,6 @@ impl TypeChecker {
                     },
                 )
             }
-            Expr::None => todo!(),
             Expr::Assign {
                 target: lhs,
                 binary,
@@ -835,7 +816,27 @@ impl TypeChecker {
                     },
                 )
             }
-            Expr::Loop { .. } => todo!(),
+            Expr::Loop {
+                cond,
+                body,
+                do_while,
+            } => {
+                let cond = self.check_expr(scopes, *cond, Some(&TypeId::Bool));
+                let body = self.create_block(scopes, None, body, ScopeKind::Loop(target.cloned()));
+                let ScopeKind::Loop(target) = &scopes[body.scope].kind else {
+                    panic!("ICE: target of loop changed from loop to something else");
+                };
+                // TODO: optionals
+
+                CheckedExpr::new(
+                    target.as_ref().cloned().unwrap_or_default(),
+                    ExprData::Loop {
+                        cond: cond.into(),
+                        body,
+                        do_while,
+                    },
+                )
+            }
             Expr::For { .. } => todo!(),
             Expr::Member { source, member } => {
                 let source = self.check_expr(scopes, *source, None);
@@ -933,10 +934,36 @@ impl TypeChecker {
 
                 CheckedExpr::new(TypeId::Never, ExprData::Yield(expr.into()))
             }
-            Expr::Break(_) => todo!(),
-            Expr::Range { .. } => todo!(),
-            Expr::Continue => todo!(),
-            Expr::Void => CheckedExpr::new(TypeId::Void, ExprData::Instance { members: Vec::new() }),
+            Expr::Break(expr) => {
+                let Some(scope) = scopes.iter().find_map(|(id, scope)| {
+                    matches!(scope.kind, ScopeKind::Loop(_)).then_some(id)
+                }) else {
+                    return self.error(Error::new("break outside of loop", span));
+                };
+
+                let ScopeKind::Loop(target) = scopes[scope].kind.clone() else { unreachable!() };
+
+                let span = expr.span;
+                let expr = self.check_expr(scopes, *expr, target.as_ref());
+                if let Some(target) = &target {
+                    type_check!(self, scopes, &expr.ty, target, span);
+                } else {
+                    scopes[scope].kind = ScopeKind::Loop(Some(expr.ty.clone()));
+                }
+
+                CheckedExpr::new(TypeId::Never, ExprData::Break(expr.into()))
+            }
+            Expr::Continue => {
+                if scopes
+                    .iter()
+                    .find_map(|(id, scope)| matches!(scope.kind, ScopeKind::Loop(_)).then_some(id))
+                    .is_none()
+                {
+                    return self.error(Error::new("continue outside of loop", span));
+                }
+
+                CheckedExpr::new(TypeId::Never, ExprData::Continue)
+            }
         }
     }
 
@@ -1084,9 +1111,9 @@ impl TypeChecker {
     fn resolve_type(&mut self, scopes: &Scopes, ty: &TypeHint) -> TypeId {
         match ty {
             TypeHint::Regular { name, .. } => {
-                return scopes
-                    .find_struct(&name.data)
-                    .map(|id| TypeId::Struct(id.0.into()))
+                scopes
+                    .find_struct_maybe_undef(&name.data)
+                    .map(|id| TypeId::Struct(id.into()))
                     .or_else(|| match name.data.as_str() {
                         "void" => Some(TypeId::Void),
                         "never" => Some(TypeId::Never),
@@ -1097,7 +1124,7 @@ impl TypeChecker {
                         "bool" => Some(TypeId::Bool),
                         _ => Self::match_int_type(&name.data),
                     })
-                    .unwrap_or_else(|| self.undefined_type(&name.data, name.span));
+                    .unwrap_or_else(|| self.undefined_type(&name.data, name.span))
             }
             TypeHint::Void => TypeId::Void,
             TypeHint::Ref(ty) => TypeId::Ref(self.resolve_type(scopes, ty).into()),
