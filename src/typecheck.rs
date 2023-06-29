@@ -40,6 +40,7 @@ pub enum TypeId {
     Struct(Box<StructId>),
     Ref(Box<TypeId>),
     RefMut(Box<TypeId>),
+    Option(Box<TypeId>),
     Array(Box<(TypeId, usize)>),
 }
 
@@ -102,6 +103,8 @@ impl TypeId {
                         | TypeId::F32
                         | TypeId::F64
                         | TypeId::Bool
+                        | TypeId::String
+                        | TypeId::Option(_) // TODO: option<T> should be comparable with T
                 )
             }
             BinaryOp::LogicalOr | BinaryOp::LogicalAnd => {
@@ -125,7 +128,7 @@ pub struct TypeChecker {
 
 macro_rules! type_check_bail {
     ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {
-        if !$self.coerces_to($source, $target) {
+        if !Self::coerces_to($source, $target) {
             return $self.type_mismatch($scopes, $target, $source, $span);
         }
     };
@@ -133,7 +136,7 @@ macro_rules! type_check_bail {
 
 macro_rules! type_check {
     ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {
-        if !$self.coerces_to($source, $target) {
+        if !Self::coerces_to($source, $target) {
             $self.type_mismatch::<()>($scopes, $target, $source, $span)
         }
     };
@@ -599,7 +602,13 @@ impl TypeChecker {
             Expr::Tuple(_) => todo!(),
             Expr::Map(_) => todo!(),
             Expr::String(s) => CheckedExpr::new(TypeId::String, ExprData::String(s)),
-            Expr::None => todo!(),
+            Expr::None => {
+                if let Some(TypeId::Option(target)) = target {
+                    CheckedExpr::new(TypeId::Option(target.clone()), ExprData::None)
+                } else {
+                    self.error(Error::new("cannot infer type of option literal none", span))
+                }
+            }
             Expr::Range { .. } => todo!(),
             Expr::Void => CheckedExpr::new(
                 TypeId::Void,
@@ -614,13 +623,17 @@ impl TypeChecker {
             Expr::Integer(base, value) => {
                 // TODO: attempt to promote the literal if its too large for i32
                 let ty = target
-                    .filter(|target| self.coerces_to(&TypeId::IntGeneric, target))
+                    .filter(|target| Self::coerces_to(&TypeId::IntGeneric, target))
                     .cloned()
                     .unwrap_or(TypeId::Int(32));
+                let mut tmp = &ty;
+                while let TypeId::Option(ty) = tmp {
+                    tmp = ty;
+                }
 
-                let (signed, bits) = match ty {
-                    TypeId::Int(bits) => (true, bits),
-                    TypeId::Uint(bits) => (false, bits),
+                let (signed, bits) = match tmp {
+                    TypeId::Int(bits) => (true, *bits),
+                    TypeId::Uint(bits) => (false, *bits),
                     TypeId::Isize => (true, std::mem::size_of::<isize>() as u8 * 8),
                     TypeId::Usize => (false, std::mem::size_of::<usize>() as u8 * 8),
                     _ => unreachable!(),
@@ -674,7 +687,7 @@ impl TypeChecker {
             }
             Expr::Float(value) => CheckedExpr::new(
                 target
-                    .filter(|target| self.coerces_to(&TypeId::FloatGeneric, target))
+                    .filter(|target| Self::coerces_to(&TypeId::FloatGeneric, target))
                     .cloned()
                     .unwrap_or(TypeId::F64),
                 ExprData::Float(value),
@@ -731,7 +744,7 @@ impl TypeChecker {
                         } else {
                             let span = value.span;
                             let value = self.check_expr(scopes, value, Some(&members[&name].ty));
-                            if !self.coerces_to(&value.ty, &members[&name].ty) {
+                            if !Self::coerces_to(&value.ty, &members[&name].ty) {
                                 entry.insert(Some(self.type_mismatch(
                                     scopes,
                                     &members[&name].ty,
@@ -844,15 +857,29 @@ impl TypeChecker {
                 body,
                 do_while,
             } => {
+                /* TODO: fix type inference for cases like this:
+                    let a = 5;
+                    let x: ?i64 = loop 10 < 2 {
+                        if a != 2 {
+                            break 10;
+                        } else {
+                            break 11;
+                        }
+                    };
+                */
                 let cond = self.check_expr(scopes, *cond, Some(&TypeId::Bool));
-                let body = self.create_block(scopes, None, body, ScopeKind::Loop(target.cloned()));
-                let ScopeKind::Loop(target) = &scopes[body.scope].kind else {
+                let body = self.create_block(
+                    scopes,
+                    None,
+                    body,
+                    ScopeKind::Loop(None, matches!(cond.data, ExprData::Bool(true))),
+                );
+                let ScopeKind::Loop(target, _) = &scopes[body.scope].kind else {
                     panic!("ICE: target of loop changed from loop to something else");
                 };
-                // TODO: optionals
 
                 CheckedExpr::new(
-                    target.as_ref().cloned().unwrap_or_default(),
+                    target.clone().unwrap_or_default(),
                     ExprData::Loop {
                         cond: cond.into(),
                         body,
@@ -959,19 +986,22 @@ impl TypeChecker {
             }
             Expr::Break(expr) => {
                 let Some(scope) = scopes.iter().find_map(|(id, scope)| {
-                    matches!(scope.kind, ScopeKind::Loop(_)).then_some(id)
+                    matches!(scope.kind, ScopeKind::Loop(_, _)).then_some(id)
                 }) else {
                     return self.error(Error::new("break outside of loop", span));
                 };
 
-                let ScopeKind::Loop(target) = scopes[scope].kind.clone() else { unreachable!() };
+                let ScopeKind::Loop(target, inf) 
+                    = scopes[scope].kind.clone() else { unreachable!() };
 
                 let span = expr.span;
                 let expr = self.check_expr(scopes, *expr, target.as_ref());
                 if let Some(target) = &target {
                     type_check!(self, scopes, &expr.ty, target, span);
+                } else if inf {
+                    scopes[scope].kind = ScopeKind::Loop(Some(expr.ty.clone()), inf);
                 } else {
-                    scopes[scope].kind = ScopeKind::Loop(Some(expr.ty.clone()));
+                    scopes[scope].kind = ScopeKind::Loop(Some(TypeId::Option(expr.ty.clone().into())), inf);
                 }
 
                 CheckedExpr::new(TypeId::Never, ExprData::Break(expr.into()))
@@ -979,7 +1009,7 @@ impl TypeChecker {
             Expr::Continue => {
                 if scopes
                     .iter()
-                    .find_map(|(id, scope)| matches!(scope.kind, ScopeKind::Loop(_)).then_some(id))
+                    .find_map(|(id, scope)| matches!(scope.kind, ScopeKind::Loop(_, _)).then_some(id))
                     .is_none()
                 {
                     return self.error(Error::new("continue outside of loop", span));
@@ -990,7 +1020,7 @@ impl TypeChecker {
         }
     }
 
-    fn coerces_to(&self, ty: &TypeId, target: &TypeId) -> bool {
+    fn coerces_to(ty: &TypeId, target: &TypeId) -> bool {
         if matches!(ty, TypeId::IntGeneric) {
             match target {
                 TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize => return true,
@@ -1005,6 +1035,12 @@ impl TypeChecker {
             match target {
                 TypeId::Ref(target) if target == inner => return true,
                 _ => {}
+            }
+        }
+
+        if let TypeId::Option(inner) = target {
+            if Self::coerces_to(ty, inner) {
+                return true;
             }
         }
 
@@ -1096,7 +1132,7 @@ impl TypeChecker {
         // TODO: keyword arguments
         for ((_, ptype), (_, expr)) in params.into_iter().zip(args.into_iter()) {
             let expr = self.check_expr(scopes, expr, Some(&ptype));
-            if !self.coerces_to(&expr.ty, &ptype) {
+            if !Self::coerces_to(&expr.ty, &ptype) {
                 result_args.push(self.type_mismatch(scopes, &ptype, &expr.ty, span));
             } else {
                 result_args.push(expr);
@@ -1174,7 +1210,8 @@ impl TypeChecker {
                     }
                 })
                 .expect("ICE: this outside of method"),
-            TypeHint::Array(ty, n) => TypeId::Array(Box::new((self.resolve_type(scopes, ty), *n))),
+            TypeHint::Array(ty, n) => TypeId::Array((self.resolve_type(scopes, ty), *n).into()),
+            TypeHint::Option(ty) => TypeId::Option(self.resolve_type(scopes, ty).into()),
             _ => todo!(),
         }
     }
@@ -1264,6 +1301,7 @@ impl TypeChecker {
             TypeId::String => "str".into(),
             TypeId::Ref(id) => format!("*{}", Self::type_name(scopes, id)),
             TypeId::RefMut(id) => format!("*mut {}", Self::type_name(scopes, id)),
+            TypeId::Option(id) => format!("?{}", Self::type_name(scopes, id)),
             TypeId::Function(id) => {
                 let Function { name, params, ret } = &scopes[id.as_ref()];
                 let mut result = format!("fn {name}(");

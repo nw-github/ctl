@@ -479,6 +479,10 @@ int main(int argc, char **argv) {{
                 self.emit_type(inner);
                 self.emit(" *");
             }
+            TypeId::Option(inner) => {
+                self.emit(format!("{RT_PREFIX}option_"));
+                self.emit_type(inner);
+            }
             TypeId::Function(_) => todo!(),
             TypeId::Struct(id) => {
                 let Struct::Defined(d) = &self.scopes[id.as_ref()] else { unreachable!() };

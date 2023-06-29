@@ -189,6 +189,11 @@ impl<'a> Parser<'a> {
             } else {
                 return Ok(TypeHint::Ref(self.parse_type()?.into()));
             }
+        } else if self.advance_if_kind(Token::Question).is_some() {
+            return Ok(TypeHint::Option(self.parse_type()?.into()));
+        } else if self.advance_if_kind(Token::NoneCoalesce).is_some() {
+            // special case for ??
+            return Ok(TypeHint::Option(TypeHint::Option(self.parse_type()?.into()).into()));
         }
 
         let ty = if self.advance_if_kind(Token::LBrace).is_some() {
@@ -231,9 +236,7 @@ impl<'a> Parser<'a> {
             }
         };
 
-        if self.advance_if_kind(Token::Question).is_some() {
-            Ok(TypeHint::Option(ty.into()))
-        } else if self.advance_if_kind(Token::Exclamation).is_some() {
+        if self.advance_if_kind(Token::Exclamation).is_some() {
             Ok(TypeHint::Result(ty.into(), self.parse_type()?.into()))
         } else {
             Ok(ty)
@@ -967,7 +970,8 @@ impl<'a> Parser<'a> {
                     )
                 };
 
-                let (body, mut span) = self.parse_block(lcurly.span)?;
+                let mut span = token.span;
+                let (body, _) = self.parse_block(lcurly.span)?;
                 let (cond, do_while) = if let Some(cond) = cond {
                     (cond, false)
                 } else if self.advance_if_kind(Token::While).is_some() {

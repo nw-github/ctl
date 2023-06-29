@@ -23,7 +23,7 @@ pub struct StructId(ScopeId, usize);
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub enum ScopeKind {
     Block(Option<TypeId>),
-    Loop(Option<TypeId>),
+    Loop(Option<TypeId>, bool),
     Function(FunctionId),
     Struct(StructId),
     #[default]
