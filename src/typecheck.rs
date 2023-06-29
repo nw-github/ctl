@@ -35,6 +35,7 @@ pub enum TypeId {
     Bool,
     IntGeneric,
     FloatGeneric,
+    String,
     Function(Box<FunctionId>),
     Struct(Box<StructId>),
     Ref(Box<TypeId>),
@@ -57,8 +58,17 @@ impl TypeId {
 
     pub fn supports_binop(&self, op: BinaryOp) -> bool {
         match op {
-            BinaryOp::Add
-            | BinaryOp::Sub
+            BinaryOp::Add => matches!(
+                self,
+                TypeId::Int(_)
+                    | TypeId::Isize
+                    | TypeId::Uint(_)
+                    | TypeId::Usize
+                    | TypeId::F32
+                    | TypeId::F64
+                    | TypeId::String
+            ),
+            BinaryOp::Sub
             | BinaryOp::Mul
             | BinaryOp::Div
             | BinaryOp::Rem
@@ -588,7 +598,7 @@ impl TypeChecker {
             }
             Expr::Tuple(_) => todo!(),
             Expr::Map(_) => todo!(),
-            Expr::String(_) => todo!(),
+            Expr::String(s) => CheckedExpr::new(TypeId::String, ExprData::String(s)),
             Expr::None => todo!(),
             Expr::Range { .. } => todo!(),
             Expr::Void => CheckedExpr::new(
@@ -770,6 +780,19 @@ impl TypeChecker {
 
                 let rhs = self.check_expr(scopes, *value, Some(&lhs.ty));
                 type_check_bail!(self, scopes, &rhs.ty, &lhs.ty, span);
+
+                if let Some(op) = binary {
+                    if !lhs.ty.supports_binop(op) {
+                        self.error::<()>(Error::new(
+                            format!(
+                                "operator '{op}' is invalid for values of type {} and {}",
+                                Self::type_name(scopes, &lhs.ty),
+                                Self::type_name(scopes, &rhs.ty)
+                            ),
+                            span,
+                        ));
+                    }
+                }
 
                 CheckedExpr::new(
                     lhs.ty.clone(),
@@ -1110,22 +1133,21 @@ impl TypeChecker {
 
     fn resolve_type(&mut self, scopes: &Scopes, ty: &TypeHint) -> TypeId {
         match ty {
-            TypeHint::Regular { name, .. } => {
-                scopes
-                    .find_struct_maybe_undef(&name.data)
-                    .map(|id| TypeId::Struct(id.into()))
-                    .or_else(|| match name.data.as_str() {
-                        "void" => Some(TypeId::Void),
-                        "never" => Some(TypeId::Never),
-                        "f32" => Some(TypeId::F32),
-                        "f64" => Some(TypeId::F64),
-                        "usize" => Some(TypeId::Usize),
-                        "isize" => Some(TypeId::Isize),
-                        "bool" => Some(TypeId::Bool),
-                        _ => Self::match_int_type(&name.data),
-                    })
-                    .unwrap_or_else(|| self.undefined_type(&name.data, name.span))
-            }
+            TypeHint::Regular { name, .. } => scopes
+                .find_struct_maybe_undef(&name.data)
+                .map(|id| TypeId::Struct(id.into()))
+                .or_else(|| match name.data.as_str() {
+                    "void" => Some(TypeId::Void),
+                    "never" => Some(TypeId::Never),
+                    "f32" => Some(TypeId::F32),
+                    "f64" => Some(TypeId::F64),
+                    "usize" => Some(TypeId::Usize),
+                    "isize" => Some(TypeId::Isize),
+                    "bool" => Some(TypeId::Bool),
+                    "str" => Some(TypeId::String),
+                    _ => Self::match_int_type(&name.data),
+                })
+                .unwrap_or_else(|| self.undefined_type(&name.data, name.span)),
             TypeHint::Void => TypeId::Void,
             TypeHint::Ref(ty) => TypeId::Ref(self.resolve_type(scopes, ty).into()),
             TypeHint::RefMut(ty) => TypeId::RefMut(self.resolve_type(scopes, ty).into()),
@@ -1239,6 +1261,7 @@ impl TypeChecker {
             TypeId::Bool => "bool".into(),
             TypeId::IntGeneric => "{integer}".into(),
             TypeId::FloatGeneric => "{float}".into(),
+            TypeId::String => "str".into(),
             TypeId::Ref(id) => format!("*{}", Self::type_name(scopes, id)),
             TypeId::RefMut(id) => format!("*mut {}", Self::type_name(scopes, id)),
             TypeId::Function(id) => {

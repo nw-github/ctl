@@ -467,6 +467,7 @@ int main(int argc, char **argv) {{
             TypeId::F32 => self.emit(format!("{RT_PREFIX}f32")),
             TypeId::F64 => self.emit(format!("{RT_PREFIX}f64")),
             TypeId::Bool => self.emit(format!("{RT_PREFIX}bool")),
+            TypeId::String => self.emit(format!("{RT_PREFIX}str")),
             TypeId::IntGeneric | TypeId::FloatGeneric => {
                 panic!("ICE: Int/FloatGeneric in emit_type");
             }
@@ -537,6 +538,4 @@ int main(int argc, char **argv) {{
     fn remove_from_path(&mut self, name: &str) {
         self.current_path.truncate(self.current_path.len() - name.len() - 1);
     }
-
-    
 }
