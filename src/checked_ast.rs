@@ -97,7 +97,7 @@ pub mod expr {
         #[default]
         Error,
     }
-    
+
     #[derive(Default, derive_more::Constructor)]
     pub struct CheckedExpr {
         pub ty: TypeId,

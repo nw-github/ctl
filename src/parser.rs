@@ -193,7 +193,9 @@ impl<'a> Parser<'a> {
             return Ok(TypeHint::Option(self.parse_type()?.into()));
         } else if self.advance_if_kind(Token::NoneCoalesce).is_some() {
             // special case for ??
-            return Ok(TypeHint::Option(TypeHint::Option(self.parse_type()?.into()).into()));
+            return Ok(TypeHint::Option(
+                TypeHint::Option(self.parse_type()?.into()).into(),
+            ));
         }
 
         let ty = if self.advance_if_kind(Token::LBrace).is_some() {

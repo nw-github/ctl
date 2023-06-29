@@ -5,7 +5,8 @@ use crate::{
         stmt::{CheckedFnDecl, CheckedStmt, CheckedStruct, CheckedUserType},
         Block,
     },
-    typecheck::{CheckedAst, TypeId}, scope::{Scopes, Struct},
+    scope::{Scopes, Struct},
+    typecheck::{CheckedAst, TypeId},
 };
 
 const RT_PREFIX: &str = "$CTL_RUNTIME_";
@@ -136,10 +137,7 @@ int main(int argc, char **argv) {{
                 self.compile_expr(value);
                 self.emit(";");
             }
-            CheckedStmt::Module {
-                name,
-                body,
-            } => {
+            CheckedStmt::Module { name, body } => {
                 self.add_to_path(name);
                 for stmt in body.body.iter_mut() {
                     self.compile_stmt(stmt);
@@ -201,7 +199,7 @@ int main(int argc, char **argv) {{
                 UnaryOp::IntoError => todo!(),
                 UnaryOp::Try => todo!(),
                 UnaryOp::Sizeof => todo!(),
-            }
+            },
             ExprData::Call { callee, args } => {
                 self.compile_expr(callee);
                 self.emit("(");
@@ -235,7 +233,7 @@ int main(int argc, char **argv) {{
                         if source_ty == ty {
                             break;
                         }
-    
+
                         self.emit("*");
                         source_ty = inner;
                     }
@@ -347,9 +345,13 @@ int main(int argc, char **argv) {{
             ExprData::Unary { op: _, expr } => {
                 self.hoist_blocks(expr);
             }
-            ExprData::Call { callee, args } | 
-            ExprData::Subscript { callee, args } | 
-            ExprData::MemberCall { source: callee, args, .. } => {
+            ExprData::Call { callee, args }
+            | ExprData::Subscript { callee, args }
+            | ExprData::MemberCall {
+                source: callee,
+                args,
+                ..
+            } => {
                 self.hoist_blocks(&mut *callee);
                 for arg in args.iter_mut() {
                     self.hoist_blocks(arg);
@@ -446,7 +448,10 @@ int main(int argc, char **argv) {{
                 self.emit(format!("{label}:\n"));
                 self.current_block = old_block;
 
-                expr.data = ExprData::Symbol { scope: None, symbol: variable };
+                expr.data = ExprData::Symbol {
+                    scope: None,
+                    symbol: variable,
+                };
             }
             _ => {}
         }
@@ -540,6 +545,7 @@ int main(int argc, char **argv) {{
     }
 
     fn remove_from_path(&mut self, name: &str) {
-        self.current_path.truncate(self.current_path.len() - name.len() - 1);
+        self.current_path
+            .truncate(self.current_path.len() - name.len() - 1);
     }
 }

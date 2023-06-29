@@ -4,8 +4,8 @@ mod compiler;
 mod lexer;
 mod parser;
 mod pretty;
-mod typecheck;
 mod scope;
+mod typecheck;
 
 use std::path::PathBuf;
 
