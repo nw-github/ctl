@@ -5,7 +5,7 @@ use crate::{
         stmt::{CheckedFnDecl, CheckedStmt, CheckedStruct, CheckedUserType},
         Block,
     },
-    typecheck::{CheckedAst, Type, TypeId}, scope::Scopes,
+    typecheck::{CheckedAst, TypeId}, scope::{Scopes, Struct},
 };
 
 const RT_PREFIX: &str = "$CTL_RUNTIME_";
@@ -18,7 +18,6 @@ pub struct BlockInfo {
 
 pub struct Compiler {
     buffer: String,
-    types: Vec<Type>,
     scopes: Scopes,
     current_block: Option<BlockInfo>,
     block_number: usize,
@@ -29,7 +28,6 @@ impl Compiler {
     pub fn compile(mut ast: CheckedAst) -> String {
         let mut this = Self {
             buffer: String::new(),
-            types: ast.types,
             scopes: ast.scopes,
             current_block: None,
             block_number: 0,
@@ -88,8 +86,10 @@ int main(int argc, char **argv) {{
                 self.emit(";");
             }
             CheckedStmt::Fn(f) => {
+                self.add_to_path(&f.header.name);
                 self.emit_fn_decl(&f.header);
                 self.emit_block(&mut f.body);
+                self.remove_from_path(&f.header.name);
             }
             CheckedStmt::UserType(data) => match data {
                 CheckedUserType::Struct(CheckedStruct {
@@ -112,8 +112,10 @@ int main(int argc, char **argv) {{
                     self.emit("};");
 
                     for f in functions.iter_mut() {
+                        self.add_to_path(&f.header.name);
                         self.emit_fn_decl(&f.header);
                         self.emit_block(&mut f.body);
+                        self.remove_from_path(&f.header.name);
                     }
                     self.remove_from_path(name);
                 }
@@ -218,10 +220,10 @@ int main(int argc, char **argv) {{
                 ty,
                 args,
             } => {
-                let TypeId::Type(id) = ty else { unreachable!() };
-                let Type::Struct(s) = &self.types[*id] else { unreachable!() };
+                let TypeId::Struct(id) = ty else { unreachable!() };
+                let Struct::Defined(d) = &self.scopes[id.as_ref()] else { unreachable!() };
 
-                self.emit(self.scopes.name(s.scope));
+                self.emit(self.scopes.scope_full_name(d.scope));
                 self.emit(format!("_{member}"));
                 self.emit("(");
 
@@ -264,7 +266,7 @@ int main(int argc, char **argv) {{
             ExprData::String(_) => todo!(),
             ExprData::Symbol { scope, symbol } => {
                 if let Some(scope) = scope {
-                    self.emit(self.scopes.name(*scope));
+                    self.emit(self.scopes.scope_full_name(*scope));
                     self.emit("_");
                 }
                 self.emit(symbol);
@@ -476,14 +478,10 @@ int main(int argc, char **argv) {{
                 self.emit_type(inner);
                 self.emit(" *");
             }
-            TypeId::Type(id) => {
-                match &self.types[*id] {
-                    Type::Function { .. } => todo!(),
-                    Type::Struct(base) => {
-                        self.emit(format!("struct {}", self.scopes.name(base.scope)));
-                    }
-                    Type::Temporary => panic!("ICE: Type::Temporary in emit_type"),
-                }
+            TypeId::Function(_) => todo!(),
+            TypeId::Struct(id) => {
+                let Struct::Defined(d) = &self.scopes[id.as_ref()] else { unreachable!() };
+                self.emit(format!("struct {}", self.scopes.scope_full_name(d.scope)));
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
