@@ -6,7 +6,7 @@ use crate::{
         stmt::{self, Fn, FnDecl, Param, Stmt, TypeHint, UserType},
     },
     lexer::{Lexer, Located as L, Location, Span, Token},
-    Error, Result,
+    Error, Result, THIS_PARAM, THIS_TYPE,
 };
 
 macro_rules! binary {
@@ -229,12 +229,20 @@ impl<'a> Parser<'a> {
         } else if self.advance_if_kind(Token::Void).is_some() {
             TypeHint::Void
         } else {
-            let is_dyn = self.advance_if_kind(Token::Dyn);
-            let (name, span) = self.expect_id_with_span("expected type name")?;
-            TypeHint::Regular {
-                name: L::new(name.into(), span),
-                is_dyn: is_dyn.is_some(),
-                type_params: self.parse_generic_params()?,
+            let is_dyn = self.advance_if_kind(Token::Dyn).is_some();
+            if let Some(this) = self.advance_if_kind(Token::ThisType) {
+                TypeHint::Regular {
+                    name: L::new(THIS_TYPE.into(), this.span),
+                    is_dyn,
+                    type_params: self.parse_generic_params()?,
+                }
+            } else {
+                let (name, span) = self.expect_id_with_span("expected type name")?;
+                TypeHint::Regular {
+                    name: L::new(name.into(), span),
+                    is_dyn,
+                    type_params: self.parse_generic_params()?,
+                }
             }
         };
 
@@ -349,7 +357,7 @@ impl<'a> Parser<'a> {
                     Ok(Param {
                         mutable: false,
                         keyword,
-                        name: "$self".into(),
+                        name: THIS_PARAM.into(),
                         ty: if mutable {
                             TypeHint::MutThis
                         } else {
@@ -905,7 +913,8 @@ impl<'a> Parser<'a> {
                 }
             }
             Token::Ident(ident) => L::new(Expr::Symbol(ident.into()), token.span),
-            Token::This => L::new(Expr::Symbol("$self".into()), token.span),
+            Token::This => L::new(Expr::Symbol(THIS_PARAM.into()), token.span),
+            Token::ThisType => L::new(Expr::Symbol(THIS_TYPE.into()), token.span),
             Token::Range => {
                 if self.is_range_end() {
                     L::new(

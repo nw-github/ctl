@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 
+use crate::{THIS_PARAM, THIS_TYPE};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token<'a> {
     LCurly,
@@ -68,6 +70,7 @@ pub enum Token<'a> {
     Dyn,
     Type,
     This,
+    ThisType,
     If,
     Else,
     Loop,
@@ -360,7 +363,6 @@ impl<'a> Lexer<'a> {
             "interface" => Token::Interface,
             "dyn" => Token::Dyn,
             "type" => Token::Type,
-            "this" => Token::This,
             "if" => Token::If,
             "else" => Token::Else,
             "loop" => Token::Loop,
@@ -383,6 +385,8 @@ impl<'a> Lexer<'a> {
             "void" => Token::Void,
             "none" => Token::None,
             "unsafe" => Token::Unsafe,
+            x if x == THIS_PARAM => Token::This,
+            x if x == THIS_TYPE => Token::ThisType,
             id => Token::Ident(id),
         }
     }

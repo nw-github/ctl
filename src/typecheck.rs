@@ -18,7 +18,7 @@ use crate::{
         DefinedStruct, Function, FunctionId, Member, Param, ScopeKind, Scopes, Struct, StructId,
         Variable,
     },
-    Error,
+    Error, THIS_PARAM, THIS_TYPE,
 };
 
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
@@ -130,6 +130,7 @@ pub struct TypeChecker {
 macro_rules! type_check_bail {
     ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {
         if !Self::coerces_to($source, $target) {
+            eprintln!("{}:{}", file!(), line!());
             return $self.type_mismatch($scopes, $target, $source, $span);
         }
     };
@@ -138,6 +139,7 @@ macro_rules! type_check_bail {
 macro_rules! type_check {
     ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {
         if !Self::coerces_to($source, $target) {
+            eprintln!("{}:{}", file!(), line!());
             $self.type_mismatch::<()>($scopes, $target, $source, $span)
         }
     };
@@ -373,8 +375,9 @@ impl TypeChecker {
         match expr.data {
             Expr::Binary { op, left, right } => {
                 let left = self.check_expr(scopes, *left, target);
+                let right_span = right.span;
                 let right = self.check_expr(scopes, *right, Some(&left.ty));
-                type_check_bail!(self, scopes, &right.ty, &left.ty, span);
+                type_check_bail!(self, scopes, &right.ty, &left.ty, right_span);
 
                 if !left.ty.supports_binop(op) {
                     self.error(Error::new(
@@ -494,7 +497,7 @@ impl TypeChecker {
                     let source = self.check_expr(scopes, *source, None);
                     let (s, id) = eval_member_to_struct!(source);
                     if let Some(Function { params, ret, .. }) = scopes[s.scope].find_fn(&member) {
-                        if let Some(param) = params.get(0).filter(|p| p.name == "$self") {
+                        if let Some(param) = params.get(0).filter(|p| p.name == THIS_PARAM) {
                             if let TypeId::RefMut(inner) = &param.ty {
                                 let mut ty = &source.ty;
                                 if ty == inner.as_ref() && !Self::can_addrmut(scopes, &source) {
@@ -1081,7 +1084,9 @@ impl TypeChecker {
                         mutable: param.mutable,
                         keyword: param.keyword,
                         name: param.name,
-                        default: param.default.map(|expr| self.check_expr(scopes, expr, Some(&ty))),
+                        default: param
+                            .default
+                            .map(|expr| self.check_expr(scopes, expr, Some(&ty))),
                         ty,
                     }
                 })
@@ -1184,7 +1189,11 @@ impl TypeChecker {
             }
         }
 
-        for param in params.iter().filter(|p| !result.contains_key(&p.name)).collect::<Vec<_>>() {
+        for param in params
+            .iter()
+            .filter(|p| !result.contains_key(&p.name))
+            .collect::<Vec<_>>()
+        {
             if let Some(default) = &param.default {
                 result.insert(param.name.clone(), default.clone());
             }
@@ -1200,7 +1209,6 @@ impl TypeChecker {
                 span,
             ));
         }
-
 
         result
     }
@@ -1255,6 +1263,7 @@ impl TypeChecker {
                 .find_struct(&name.data)
                 .map(|id| TypeId::Struct(id.into()))
                 .or_else(|| match name.data.as_str() {
+                    name if name == THIS_TYPE => scopes.current_struct(),
                     "void" => Some(TypeId::Void),
                     "never" => Some(TypeId::Never),
                     "f32" => Some(TypeId::F32),
@@ -1272,25 +1281,13 @@ impl TypeChecker {
             TypeHint::This => {
                 // the parser ensures methods can only appear in structs/enums/etc
                 scopes
-                    .iter()
-                    .find_map(|(_, scope)| {
-                        if let ScopeKind::Struct(id) = &scope.kind {
-                            Some(TypeId::Ref(TypeId::Struct((*id).into()).into()))
-                        } else {
-                            None
-                        }
-                    })
+                    .current_struct()
+                    .map(|s| TypeId::Ref(s.into()))
                     .expect("ICE: this outside of method")
             }
             TypeHint::MutThis => scopes
-                .iter()
-                .find_map(|(_, scope)| {
-                    if let ScopeKind::Struct(id) = &scope.kind {
-                        Some(TypeId::RefMut(TypeId::Struct((*id).into()).into()))
-                    } else {
-                        None
-                    }
-                })
+                .current_struct()
+                .map(|s| TypeId::RefMut(s.into()))
                 .expect("ICE: this outside of method"),
             TypeHint::Array(ty, n) => TypeId::Array((self.resolve_type(scopes, ty), *n).into()),
             TypeHint::Option(ty) => TypeId::Option(self.resolve_type(scopes, ty).into()),

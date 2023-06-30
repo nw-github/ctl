@@ -234,7 +234,7 @@ pub mod stmt {
         pub keyword: bool,
         pub name: String,
         pub ty: TypeHint,
-        pub default: Option<super::Expr>
+        pub default: Option<super::Expr>,
     }
 
     #[derive(Debug)]

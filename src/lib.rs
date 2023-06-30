@@ -15,6 +15,9 @@ use typecheck::CheckedAst;
 
 use crate::{ast::Stmt, parser::Parser, typecheck::TypeChecker};
 
+pub(crate) const THIS_PARAM: &str = "this";
+pub(crate) const THIS_TYPE: &str = "Self";
+
 pub trait CompileState {}
 
 pub struct Source<'a>(&'a str);

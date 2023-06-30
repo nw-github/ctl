@@ -246,6 +246,18 @@ impl Scopes {
     pub fn insert_var(&mut self, name: String, var: Variable) {
         self.current().vars.insert(name, var);
     }
+
+    pub fn current_struct(&self) -> Option<TypeId> {
+        self
+            .iter()
+            .find_map(|(_, scope)| {
+                if let ScopeKind::Struct(id) = &scope.kind {
+                    Some(TypeId::Struct((*id).into()))
+                } else {
+                    None
+                }
+            })
+    }
 }
 
 impl Index<&FunctionId> for Scopes {
