@@ -228,52 +228,46 @@ impl TypeChecker {
                 mutable,
                 value,
             } => {
-                if let Some(ty) = ty {
+                let (ty, value) = if let Some(ty) = ty {
                     let ty = self.resolve_type(scopes, &ty);
-                    scopes.insert_var(
-                        name.clone(),
-                        Variable {
-                            ty: ty.clone(),
-                            is_static: false,
-                            mutable,
-                        },
-                    );
                     if let Some(value) = value {
                         let span = value.span;
                         let value = self.check_expr(scopes, value, Some(&ty));
                         type_check!(self, scopes, &value.ty, &ty, span);
 
-                        CheckedStmt::Let {
-                            name,
+                        (ty, CheckedStmt::Let {
+                            name: name.clone(),
                             mutable,
                             value: Ok(value),
-                        }
+                        })
                     } else {
-                        CheckedStmt::Let {
-                            name,
+                        (ty.clone(), CheckedStmt::Let {
+                            name: name.clone(),
                             mutable,
                             value: Err(ty),
-                        }
+                        })
                     }
                 } else if let Some(value) = value {
                     let value = self.check_expr(scopes, value, None);
-                    scopes.insert_var(
-                        name.clone(),
-                        Variable {
-                            ty: value.ty.clone(),
-                            is_static: false,
-                            mutable,
-                        },
-                    );
-
-                    CheckedStmt::Let {
-                        name,
+                    (value.ty.clone(), CheckedStmt::Let {
+                        name: name.clone(),
                         mutable,
                         value: Ok(value),
-                    }
+                    })
                 } else {
                     return self.error(Error::new("cannot infer type", stmt.span));
-                }
+                };
+
+                scopes.insert_var(
+                    name,
+                    Variable {
+                        ty,
+                        is_static: false,
+                        mutable,
+                    },
+                );
+
+                value
             }
             Stmt::Fn(f) => CheckedStmt::Fn(self.check_fn(scopes, f)),
             Stmt::Static {
@@ -284,6 +278,10 @@ impl TypeChecker {
             } => {
                 if let Some(ty) = ty {
                     let ty = self.resolve_type(scopes, &ty);
+                    let span = value.span;
+                    let value = self.check_expr(scopes, value, Some(&ty));
+                    type_check!(self, scopes, &value.ty, &ty, span);
+
                     scopes.insert_var(
                         name.clone(),
                         Variable {
@@ -292,10 +290,6 @@ impl TypeChecker {
                             mutable: false,
                         },
                     );
-
-                    let span = value.span;
-                    let value = self.check_expr(scopes, value, Some(&ty));
-                    type_check!(self, scopes, &value.ty, &ty, span);
 
                     CheckedStmt::Static {
                         public,
@@ -529,7 +523,7 @@ impl TypeChecker {
                         if params.len() != args.len() {
                             return self.error(Error::new(
                                 format!(
-                                    "expected {} arguments, found {}",
+                                    "expected {} argument(s), found {}",
                                     params.len(),
                                     args.len()
                                 ),
@@ -817,13 +811,17 @@ impl TypeChecker {
                 )
             }
             Expr::Block(body) => {
-                let block =
-                    self.create_block(scopes, None, body, ScopeKind::Block(target.cloned()));
-                let ScopeKind::Block(target) = &scopes[block.scope].kind else {
+                let block = self.create_block(
+                    scopes,
+                    None,
+                    body,
+                    ScopeKind::Block(target.cloned(), false),
+                );
+                let ScopeKind::Block(target, _) = &scopes[block.scope].kind else {
                     panic!("ICE: target of block changed from block to something else");
                 };
                 CheckedExpr::new(
-                    target.as_ref().cloned().unwrap_or_default(),
+                    target.clone().unwrap_or(TypeId::Void),
                     ExprData::Block(block),
                 )
             }
@@ -832,19 +830,33 @@ impl TypeChecker {
                 if_branch,
                 else_branch,
             } => {
+                /* TODO: fix type inference for cases like this:
+                    let foo = 5;
+                    let x: ?i64 = if foo {
+                        yield 10;
+                    };
+                */
                 let cond = self.check_expr(scopes, *cond, Some(&TypeId::Bool));
-                let if_branch = self.check_expr(scopes, *if_branch, target);
+                let if_branch = self.check_expr(scopes, *if_branch, None);
+                let mut out_type = if_branch.ty.clone();
                 let else_branch = if let Some(e) = else_branch {
                     let else_branch = self.check_expr(scopes, *e, Some(&if_branch.ty));
                     type_check!(self, scopes, &else_branch.ty, &if_branch.ty, span);
 
                     Some(else_branch)
                 } else {
+                    // this separates these two cases:
+                    //   let x /* void? */ = if whatever { yield void; };
+                    //   let x /* void */ = if whatever { };
+                    if matches!(&if_branch.data, ExprData::Block(b) if
+                        matches!(scopes[b.scope].kind, ScopeKind::Block(_, yields) if yields)) {
+                        out_type = TypeId::Option(out_type.into());
+                    }
                     None
                 };
 
                 CheckedExpr::new(
-                    if_branch.ty.clone(),
+                    out_type,
                     ExprData::If {
                         cond: cond.into(),
                         if_branch: if_branch.into(),
@@ -874,12 +886,12 @@ impl TypeChecker {
                     body,
                     ScopeKind::Loop(None, matches!(cond.data, ExprData::Bool(true))),
                 );
-                let ScopeKind::Loop(target, _) = &scopes[body.scope].kind else {
+                let ScopeKind::Loop(target, inf) = &scopes[body.scope].kind else {
                     panic!("ICE: target of loop changed from loop to something else");
                 };
 
                 CheckedExpr::new(
-                    target.clone().unwrap_or_default(),
+                    target.clone().unwrap_or(if *inf { TypeId::Never } else { TypeId::Void }),
                     ExprData::Loop {
                         cond: cond.into(),
                         body,
@@ -970,7 +982,7 @@ impl TypeChecker {
                 CheckedExpr::new(TypeId::Never, ExprData::Return(expr.into()))
             }
             Expr::Yield(expr) => {
-                let ScopeKind::Block(target) = scopes.current().kind.clone() else {
+                let ScopeKind::Block(target, _) = scopes.current().kind.clone() else {
                     return self.error(Error::new("yield outside of block", span));
                 };
 
@@ -978,8 +990,9 @@ impl TypeChecker {
                 let expr = self.check_expr(scopes, *expr, target.as_ref());
                 if let Some(target) = &target {
                     type_check!(self, scopes, &expr.ty, target, span);
+                    scopes.current().kind = ScopeKind::Block(Some(target.clone()), true);
                 } else {
-                    scopes.current().kind = ScopeKind::Block(Some(expr.ty.clone()));
+                    scopes.current().kind = ScopeKind::Block(Some(expr.ty.clone()), true);
                 }
 
                 CheckedExpr::new(TypeId::Never, ExprData::Yield(expr.into()))
@@ -991,8 +1004,9 @@ impl TypeChecker {
                     return self.error(Error::new("break outside of loop", span));
                 };
 
-                let ScopeKind::Loop(target, inf) 
-                    = scopes[scope].kind.clone() else { unreachable!() };
+                let ScopeKind::Loop(target, inf) = scopes[scope].kind.clone() else {
+                    unreachable!()
+                };
 
                 let span = expr.span;
                 let expr = self.check_expr(scopes, *expr, target.as_ref());
@@ -1001,7 +1015,8 @@ impl TypeChecker {
                 } else if inf {
                     scopes[scope].kind = ScopeKind::Loop(Some(expr.ty.clone()), inf);
                 } else {
-                    scopes[scope].kind = ScopeKind::Loop(Some(TypeId::Option(expr.ty.clone().into())), inf);
+                    scopes[scope].kind =
+                        ScopeKind::Loop(Some(TypeId::Option(expr.ty.clone().into())), inf);
                 }
 
                 CheckedExpr::new(TypeId::Never, ExprData::Break(expr.into()))
@@ -1009,7 +1024,9 @@ impl TypeChecker {
             Expr::Continue => {
                 if scopes
                     .iter()
-                    .find_map(|(id, scope)| matches!(scope.kind, ScopeKind::Loop(_, _)).then_some(id))
+                    .find_map(|(id, scope)| {
+                        matches!(scope.kind, ScopeKind::Loop(_, _)).then_some(id)
+                    })
                     .is_none()
                 {
                     return self.error(Error::new("continue outside of loop", span));
@@ -1021,30 +1038,15 @@ impl TypeChecker {
     }
 
     fn coerces_to(ty: &TypeId, target: &TypeId) -> bool {
-        if matches!(ty, TypeId::IntGeneric) {
-            match target {
-                TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize => return true,
-                _ => {}
-            }
-        } else if matches!(ty, TypeId::FloatGeneric) {
-            match target {
-                TypeId::F32 | TypeId::F64 => return true,
-                _ => {}
-            }
-        } else if let TypeId::RefMut(inner) = ty {
-            match target {
-                TypeId::Ref(target) if target == inner => return true,
-                _ => {}
-            }
-        }
-
-        if let TypeId::Option(inner) = target {
-            if Self::coerces_to(ty, inner) {
-                return true;
-            }
-        }
-
-        ty == target
+        match (ty, target) {
+            (TypeId::IntGeneric, TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize) 
+                => true,
+            (TypeId::FloatGeneric, TypeId::F32 | TypeId::F64) => true,
+            (TypeId::RefMut(ty), TypeId::Ref(target)) if ty == target => true,
+            (ty, TypeId::Option(inner)) if Self::coerces_to(ty, inner) => true,
+            (TypeId::Never, _) => true,
+            (ty, target) => ty == target,
+        } 
     }
 
     fn check_fn(
@@ -1289,7 +1291,7 @@ impl TypeChecker {
     fn type_name(scopes: &Scopes, ty: &TypeId) -> String {
         match ty {
             TypeId::Void => "void".into(),
-            TypeId::Never => todo!(),
+            TypeId::Never => "never".into(),
             TypeId::Int(bits) => format!("i{bits}"),
             TypeId::Uint(bits) => format!("u{bits}"),
             TypeId::Unknown => "{unknown}".into(),

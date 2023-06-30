@@ -22,7 +22,7 @@ pub struct StructId(ScopeId, usize);
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub enum ScopeKind {
-    Block(Option<TypeId>),
+    Block(Option<TypeId>, bool),
     Loop(Option<TypeId>, bool),
     Function(FunctionId),
     Struct(StructId),
@@ -135,11 +135,9 @@ impl Scopes {
 
     pub fn find_struct(&self, target: &str) -> Option<(StructId, &DefinedStruct)> {
         for (id, scope) in self.iter() {
-            if let Some((index, d)) = scope.types.iter().enumerate().find_map(|(i, s)| {
-                match s {
-                    Struct::Defined(d) if d.name == target => { Some((i, d)) }
-                    _ => None
-                }
+            if let Some((index, d)) = scope.types.iter().enumerate().find_map(|(i, s)| match s {
+                Struct::Defined(d) if d.name == target => Some((i, d)),
+                _ => None,
             }) {
                 return Some((StructId(id, index), d));
             }
@@ -154,12 +152,10 @@ impl Scopes {
 
     pub fn find_struct_maybe_undef(&self, target: &str) -> Option<StructId> {
         for (id, scope) in self.iter() {
-            if let Some(index) = scope.types.iter().enumerate().find_map(|(i, s)| {
-                match s {
-                    Struct::Defined(d) if d.name == target => { Some(i) }
-                    Struct::Declared(name) if name == target => { Some(i) }
-                    _ => { None }
-                }
+            if let Some(index) = scope.types.iter().enumerate().find_map(|(i, s)| match s {
+                Struct::Defined(d) if d.name == target => Some(i),
+                Struct::Declared(name) if name == target => Some(i),
+                _ => None,
             }) {
                 return Some(StructId(id, index));
             }

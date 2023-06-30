@@ -2,6 +2,7 @@ use crate::scope::ScopeId;
 
 use self::stmt::CheckedStmt;
 
+#[derive(Debug)]
 pub struct Block {
     pub body: Vec<CheckedStmt>,
     pub scope: ScopeId,
@@ -15,7 +16,7 @@ pub mod expr {
 
     use super::{Block, ScopeId};
 
-    #[derive(Default)]
+    #[derive(Default, Debug)]
     pub enum ExprData {
         Binary {
             op: BinaryOp,
@@ -98,7 +99,7 @@ pub mod expr {
         Error,
     }
 
-    #[derive(Default, derive_more::Constructor)]
+    #[derive(Debug, Default, derive_more::Constructor)]
     pub struct CheckedExpr {
         pub ty: TypeId,
         pub data: ExprData,
@@ -110,6 +111,7 @@ pub mod stmt {
 
     use super::{expr::CheckedExpr, Block};
 
+    #[derive(Debug)]
     pub struct CheckedParam {
         pub mutable: bool,
         pub keyword: bool,
@@ -117,6 +119,7 @@ pub mod stmt {
         pub ty: TypeId,
     }
 
+    #[derive(Debug)]
     pub struct CheckedFnDecl {
         pub public: bool,
         pub name: String,
@@ -127,11 +130,13 @@ pub mod stmt {
         pub ret: TypeId,
     }
 
+    #[derive(Debug)]
     pub struct CheckedFn {
         pub header: CheckedFnDecl,
         pub body: Block,
     }
 
+    #[derive(Debug)]
     pub struct CheckedMemVar {
         pub public: bool,
         pub name: String,
@@ -139,6 +144,7 @@ pub mod stmt {
         pub value: Option<CheckedExpr>,
     }
 
+    #[derive(Debug)]
     pub struct CheckedStruct {
         pub public: bool,
         pub name: String,
@@ -146,6 +152,7 @@ pub mod stmt {
         pub functions: Vec<CheckedFn>,
     }
 
+    #[derive(Debug)]
     pub enum CheckedUserType {
         Struct(CheckedStruct),
         Union {
@@ -168,7 +175,7 @@ pub mod stmt {
         },
     }
 
-    #[derive(Default)]
+    #[derive(Debug, Default)]
     pub enum CheckedStmt {
         Expr(CheckedExpr),
         Let {
