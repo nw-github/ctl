@@ -6,14 +6,14 @@ use crate::{
         stmt::{Fn, Prototype, Stmt, TypeHint, UserType},
     },
     checked_ast::{
-        expr::{CheckedExpr, ExprData},
+        expr::{CheckedExpr, ExprData, Symbol},
         stmt::{CheckedStmt, CheckedUserType},
         Block,
     },
     lexer::{Located, Span},
     scope::{
-        Function, FunctionId, Member, ScopeKind, Scopes, Struct, StructDef, StructId,
-        Variable, CheckedPrototype, CheckedParam,
+        CheckedParam, CheckedPrototype, Function, FunctionId, Member, ScopeKind, Scopes, Struct,
+        StructDef, StructId, Variable,
     },
     Error, THIS_PARAM, THIS_TYPE,
 };
@@ -161,7 +161,7 @@ impl TypeChecker {
             },
             Stmt::UserType(data) => match data {
                 UserType::Struct(base) => {
-                    let self_id = scopes.insert_type(Struct {
+                    let self_id = scopes.insert_struct(Struct {
                         name: base.name.clone(),
                         def: None,
                     });
@@ -273,14 +273,13 @@ impl TypeChecker {
                     return self.error(Error::new("cannot infer type", stmt.span));
                 };
 
-                scopes.insert_var(
+                scopes.insert_var(Variable {
+                    public: false,
                     name,
-                    Variable {
-                        ty,
-                        is_static: false,
-                        mutable,
-                    },
-                );
+                    ty,
+                    is_static: false,
+                    mutable,
+                });
 
                 value
             }
@@ -297,36 +296,28 @@ impl TypeChecker {
                     let value = self.check_expr(scopes, value, Some(&ty));
                     type_check!(self, scopes, &value.ty, &ty, span);
 
-                    scopes.insert_var(
-                        name.clone(),
-                        Variable {
+                    CheckedStmt::Static(
+                        scopes.insert_var(Variable {
+                            name,
+                            public,
                             ty: ty.clone(),
                             is_static: true,
                             mutable: false,
-                        },
-                    );
-
-                    CheckedStmt::Static {
-                        public,
-                        name,
+                        }),
                         value,
-                    }
+                    )
                 } else {
                     let value = self.check_expr(scopes, value, None);
-                    scopes.insert_var(
-                        name.clone(),
-                        Variable {
+                    CheckedStmt::Static(
+                        scopes.insert_var(Variable {
+                            name,
+                            public,
                             ty: value.ty.clone(),
                             is_static: true,
                             mutable: false,
-                        },
-                    );
-
-                    CheckedStmt::Static {
-                        public,
-                        name,
+                        }),
                         value,
-                    }
+                    )
                 }
             }
         }
@@ -484,7 +475,7 @@ impl TypeChecker {
                 if let Expr::Member { source, member } = callee.data {
                     let source = self.check_expr(scopes, *source, None);
                     let (d, id) = eval_member_to_struct!(source);
-                    if let Some(f) = scopes[d.scope].find_fn(&member) {
+                    if let Some((i, f)) = scopes[d.scope].find_fn(&member) {
                         if let Some(param) = f.proto.params.get(0).filter(|p| p.name == THIS_PARAM)
                         {
                             if let TypeId::RefMut(inner) = &param.ty {
@@ -516,9 +507,8 @@ impl TypeChecker {
                             return CheckedExpr::new(
                                 f.proto.ret.clone(),
                                 ExprData::MemberCall {
-                                    ty: id.clone(),
-                                    source: source.into(),
-                                    member,
+                                    this: source.into(),
+                                    func: FunctionId(d.scope, i),
                                     args: self.check_fn_args(
                                         scopes,
                                         args,
@@ -539,8 +529,8 @@ impl TypeChecker {
                     ))
                 } else {
                     let callee = self.check_expr(scopes, *callee, None);
-                    if let TypeId::Function(id) = &callee.ty {
-                        let f = &scopes[id.as_ref()];
+                    if let TypeId::Function(callee) = &callee.ty {
+                        let f = &scopes[callee.as_ref()];
                         let ret = f.proto.ret.clone();
                         if f.inst {
                             let TypeId::Struct(sid) = &ret else { unreachable!() };
@@ -561,23 +551,25 @@ impl TypeChecker {
 
                             return CheckedExpr::new(
                                 ret,
-                                ExprData::Instance {
-                                    members: self.check_instance_args(
-                                        scopes,
-                                        args,
-                                        &f.proto.params.clone(),
-                                        span,
-                                    ),
-                                },
+                                ExprData::Instance(self.check_instance_args(
+                                    scopes,
+                                    args,
+                                    &f.proto.params.clone(),
+                                    span,
+                                )),
                             );
                         }
 
-                        let params = f.proto.params.clone();
                         return CheckedExpr::new(
                             ret,
                             ExprData::Call {
-                                callee: callee.into(),
-                                args: self.check_fn_args(scopes, args, &params, span),
+                                func: **callee,
+                                args: self.check_fn_args(
+                                    scopes,
+                                    args,
+                                    &f.proto.params.clone(),
+                                    span,
+                                ),
                             },
                         );
                     }
@@ -644,12 +636,7 @@ impl TypeChecker {
                     self.error(Error::new("cannot infer type of option literal none", span))
                 }
             }
-            Expr::Void => CheckedExpr::new(
-                TypeId::Void,
-                ExprData::Instance {
-                    members: HashMap::new(),
-                },
-            ),
+            Expr::Void => CheckedExpr::new(TypeId::Void, ExprData::Instance(HashMap::new())),
             Expr::Bool(value) => CheckedExpr {
                 ty: TypeId::Bool,
                 data: ExprData::Bool(value),
@@ -747,21 +734,13 @@ impl TypeChecker {
                 ExprData::Float(value),
             ),
             Expr::Symbol(name) => {
-                if let Some((id, var)) = scopes.find_var(&name) {
-                    CheckedExpr::new(
-                        var.ty.clone(),
-                        ExprData::Symbol {
-                            scope: var.is_static.then_some(id),
-                            symbol: name,
-                        },
-                    )
+                if let Some(id) = scopes.find_var(&name) {
+                    let var = &scopes[&id];
+                    CheckedExpr::new(var.ty.clone(), ExprData::Symbol(Symbol::Variable(id)))
                 } else if let Some(id) = scopes.find_fn(&name) {
                     CheckedExpr::new(
                         TypeId::Function(id.into()),
-                        ExprData::Symbol {
-                            scope: Some(id.scope()),
-                            symbol: name,
-                        },
+                        ExprData::Symbol(Symbol::Function(id)),
                     )
                 } else {
                     self.error(Error::new(format!("undefined variable: {name}"), span))
@@ -1088,20 +1067,17 @@ impl TypeChecker {
                 .proto
                 .params
                 .iter()
-                .map(|param| {
-                    (
-                        param.name.clone(),
-                        Variable {
-                            ty: param.ty.clone(),
-                            is_static: false,
-                            mutable: param.mutable,
-                        },
-                    )
+                .map(|param| Variable {
+                    name: param.name.clone(),
+                    ty: param.ty.clone(),
+                    is_static: false,
+                    public: false,
+                    mutable: param.mutable,
                 })
                 .collect();
 
-            for (name, param) in params {
-                scopes.insert_var(name, param);
+            for param in params {
+                scopes.insert_var(param);
             }
 
             Block {
@@ -1139,7 +1115,7 @@ impl TypeChecker {
                         if let Some(param) = params.iter().find(|p| p.name == name) {
                             let expr = self.check_expr(scopes, expr, Some(&param.ty));
                             if !Self::coerces_to(&expr.ty, &param.ty) {
-                                self.type_mismatch::<()>(scopes, &param.ty, &expr.ty, span);
+                                entry.insert(self.type_mismatch(scopes, &param.ty, &expr.ty, span));
                             } else {
                                 entry.insert(expr);
                             }
@@ -1159,7 +1135,10 @@ impl TypeChecker {
             {
                 let expr = self.check_expr(scopes, expr, Some(&param.ty));
                 if !Self::coerces_to(&expr.ty, &param.ty) {
-                    self.type_mismatch::<()>(scopes, &param.ty, &expr.ty, span);
+                    result.insert(
+                        param.name.clone(),
+                        self.type_mismatch(scopes, &param.ty, &expr.ty, span),
+                    );
                 } else {
                     result.insert(param.name.clone(), expr);
                 }
@@ -1214,31 +1193,6 @@ impl TypeChecker {
         }
     }
 
-    fn match_int_type(name: &str) -> Option<TypeId> {
-        let mut chars = name.chars();
-        let mut i = false;
-        let result = match chars.next()? {
-            'i' => {
-                i = true;
-                TypeId::Int
-            }
-            'u' => TypeId::Uint,
-            _ => return None,
-        };
-
-        match (
-            chars.next().and_then(|c| c.to_digit(10)),
-            chars.next().and_then(|c| c.to_digit(10)),
-            chars.next().and_then(|c| c.to_digit(10)),
-            chars.next(),
-        ) {
-            (Some(a), None, None, None) => (!i || a > 1).then_some(result(a as u8)),
-            (Some(a), Some(b), None, None) => Some(result((a * 10 + b) as u8)),
-            (Some(a), Some(b), Some(c), None) => Some(result((a * 100 + b * 10 + c) as u8)),
-            _ => None,
-        }
-    }
-
     fn resolve_type(&mut self, scopes: &Scopes, ty: &TypeHint) -> TypeId {
         match ty {
             TypeHint::Regular { name, .. } => scopes
@@ -1250,8 +1204,6 @@ impl TypeChecker {
                     "never" => Some(TypeId::Never),
                     "f32" => Some(TypeId::F32),
                     "f64" => Some(TypeId::F64),
-                    "usize" => Some(TypeId::Usize),
-                    "isize" => Some(TypeId::Isize),
                     "bool" => Some(TypeId::Bool),
                     "str" => Some(TypeId::String),
                     _ => Self::match_int_type(&name.data),
@@ -1319,6 +1271,35 @@ impl TypeChecker {
         self.error(Error::new(format!("undefined type: {name}"), span))
     }
 
+    fn match_int_type(name: &str) -> Option<TypeId> {
+        let mut chars = name.chars();
+        let mut i = false;
+        let result = match chars.next()? {
+            'i' => {
+                i = true;
+                TypeId::Int
+            }
+            'u' => TypeId::Uint,
+            _ => return None,
+        };
+
+        match (
+            chars.next().and_then(|c| c.to_digit(10)),
+            chars.next().and_then(|c| c.to_digit(10)),
+            chars.next().and_then(|c| c.to_digit(10)),
+            chars.next(),
+        ) {
+            (Some(a), None, None, None) => (!i || a > 1).then_some(result(a as u8)),
+            (Some(a), Some(b), None, None) => Some(result((a * 10 + b) as u8)),
+            (Some(a), Some(b), Some(c), None) => Some(result((a * 100 + b * 10 + c) as u8)),
+            _ => match name {
+                "usize" => Some(TypeId::Usize),
+                "isize" => Some(TypeId::Isize),
+                _ => None,
+            },
+        }
+    }
+
     fn coerces_to(ty: &TypeId, target: &TypeId) -> bool {
         match (ty, target) {
             (
@@ -1338,10 +1319,7 @@ impl TypeChecker {
             ExprData::Unary { op, expr } => {
                 matches!(op, UnaryOp::Deref) && matches!(expr.ty, TypeId::RefMut(_))
             }
-            ExprData::Symbol { symbol, .. } => scopes.find_var(symbol).unwrap().1.mutable,
-            ExprData::Member { source, .. } => {
-                matches!(source.ty, TypeId::RefMut(_)) || Self::can_addrmut(scopes, source)
-            }
+            ExprData::Symbol(_) | ExprData::Member { .. } => Self::can_addrmut(scopes, expr),
             ExprData::Subscript { callee, .. } => Self::is_assignable(scopes, callee),
             _ => false,
         }
@@ -1352,7 +1330,10 @@ impl TypeChecker {
             ExprData::Unary { op, expr } => {
                 !matches!(op, UnaryOp::Deref) || matches!(expr.ty, TypeId::RefMut(_))
             }
-            ExprData::Symbol { symbol, .. } => scopes.find_var(symbol).unwrap().1.mutable,
+            ExprData::Symbol(symbol) => match symbol {
+                Symbol::Function(_) => false,
+                Symbol::Variable(id) => scopes[id].mutable,
+            },
             ExprData::Member { source, .. } => {
                 matches!(source.ty, TypeId::RefMut(_)) || Self::can_addrmut(scopes, source)
             }

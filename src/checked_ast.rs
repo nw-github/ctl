@@ -13,10 +13,17 @@ pub mod expr {
 
     use crate::{
         ast::expr::{BinaryOp, UnaryOp},
+        scope::{FunctionId, VariableId},
         typecheck::TypeId,
     };
 
-    use super::{Block, ScopeId};
+    use super::Block;
+
+    #[derive(Debug, Clone)]
+    pub enum Symbol {
+        Function(FunctionId),
+        Variable(VariableId),
+    }
 
     #[derive(Default, Debug, Clone)]
     pub enum ExprData {
@@ -30,13 +37,12 @@ pub mod expr {
             expr: Box<CheckedExpr>,
         },
         Call {
-            callee: Box<CheckedExpr>,
+            func: FunctionId,
             args: Vec<CheckedExpr>,
         },
         MemberCall {
-            source: Box<CheckedExpr>,
-            member: String,
-            ty: TypeId,
+            func: FunctionId,
+            this: Box<CheckedExpr>,
             args: Vec<CheckedExpr>,
         },
         Array(Vec<CheckedExpr>),
@@ -51,13 +57,8 @@ pub mod expr {
         Unsigned(u128),
         Float(String),
         String(String),
-        Symbol {
-            scope: Option<ScopeId>,
-            symbol: String,
-        },
-        Instance {
-            members: HashMap<String, CheckedExpr>,
-        },
+        Symbol(Symbol),
+        Instance(HashMap<String, CheckedExpr>),
         None,
         Assign {
             target: Box<CheckedExpr>,
@@ -104,7 +105,10 @@ pub mod expr {
 }
 
 pub mod stmt {
-    use crate::{typecheck::TypeId, scope::{StructId, FunctionId}};
+    use crate::{
+        scope::{FunctionId, StructId, VariableId},
+        typecheck::TypeId,
+    };
 
     use super::{expr::CheckedExpr, Block};
 
@@ -123,11 +127,7 @@ pub mod stmt {
         },
         Fn(FunctionId),
         UserType(CheckedUserType),
-        Static {
-            public: bool,
-            name: String,
-            value: CheckedExpr,
-        },
+        Static(VariableId, CheckedExpr),
         Module {
             name: String,
             body: Block,

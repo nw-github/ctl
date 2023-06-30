@@ -8,26 +8,65 @@ use crate::{
     typecheck::TypeId,
 };
 
+macro_rules! id {
+    ($name: ident => $output: ident,
+     $vec: ident, 
+     $find: ident, 
+     $($parts:ident).+,
+     $insert: ident) => {
+        #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+        pub struct $name(pub ScopeId, pub usize);
+
+        impl $name {
+            pub fn scope(&self) -> ScopeId {
+                self.0
+            }
+        }
+
+        impl Index<&$name> for Scopes {
+            type Output = $output;
+        
+            fn index(&self, index: &$name) -> &Self::Output {
+                &self[index.0].$vec[index.1]
+            }
+        }
+        
+        impl IndexMut<&$name> for Scopes {
+            fn index_mut(&mut self, index: &$name) -> &mut Self::Output {
+                &mut self[index.0].$vec[index.1]
+            }
+        }
+    
+        impl Scopes {
+            pub fn $find(&self, name: &str) -> Option<$name> {
+                for (id, scope) in self.iter() {
+                    if let Some(index) = scope.$vec.iter().position(|item| item.$($parts).+ == name) {
+                        return Some($name(id, index));
+                    }
+        
+                    if scope.kind == ScopeKind::Module {
+                        break;
+                    }
+                }
+        
+                None
+            }
+
+            pub fn $insert(&mut self, item: $output) -> $name {
+                let index = self.current().$vec.len();
+                self.current().$vec.push(item);
+                $name(self.current_id(), index)
+            }
+        }
+    };
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ScopeId(usize);
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct FunctionId(pub ScopeId, pub usize);
-
-impl FunctionId {
-    pub fn scope(&self) -> ScopeId {
-        self.0
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct StructId(ScopeId, usize);
-
-impl StructId {
-    pub fn scope(&self) -> ScopeId {
-        self.0
-    }
-}
+id!(FunctionId => Function, fns, find_fn, proto.name, insert_fn);
+id!(StructId => Struct, types, find_struct, name, insert_struct);
+id!(VariableId => Variable, vars, find_var, name, insert_var);
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub enum ScopeKind {
@@ -61,6 +100,8 @@ pub struct CheckedPrototype {
 
 #[derive(Default, Debug, Clone)]
 pub struct Variable {
+    pub public: bool,
+    pub name: String,
     pub ty: TypeId,
     pub is_static: bool,
     pub mutable: bool,
@@ -95,15 +136,15 @@ pub struct Struct {
 pub struct Scope {
     pub kind: ScopeKind,
     parent: Option<ScopeId>,
-    vars: HashMap<String, Variable>,
+    vars: Vec<Variable>,
     pub fns: Vec<Function>,
     types: Vec<Struct>,
     name: Option<String>,
 }
 
 impl Scope {
-    pub fn find_fn(&self, name: &str) -> Option<&Function> {
-        self.fns.iter().find(|f| f.proto.name == name)
+    pub fn find_fn(&self, name: &str) -> Option<(usize, &Function)> {
+        self.fns.iter().enumerate().find(|(_, f)| f.proto.name == name)
     }
 }
 
@@ -147,60 +188,17 @@ impl Scopes {
         self.iter_from(self.current)
     }
 
-    pub fn scope_full_name(&self, id: ScopeId) -> String {
-        let mut name = String::new();
-        for (_, scope) in self.iter_from(id) {
-            if let Some(scope_name) = &scope.name {
-                for c in scope_name.chars().rev() {
-                    name.push(c);
-                }
-                name.push('_');
+    pub fn full_name(&self, id: ScopeId, ident: &str) -> String {
+        let mut name: String = ident.chars().rev().collect();
+        for scope_name in self.iter_from(id).flat_map(|scope| scope.1.name.as_ref()) {
+            name.reserve(scope_name.len() + 1);
+            name.push('_');
+            for c in scope_name.chars().rev() {
+                name.push(c);
             }
         }
 
-        name.chars().rev().skip(1).collect::<String>()
-    }
-
-    pub fn find_struct(&self, target: &str) -> Option<StructId> {
-        for (id, scope) in self.iter() {
-            if let Some(index) = scope.types.iter().position(|s| s.name == target) {
-                return Some(StructId(id, index));
-            }
-
-            if scope.kind == ScopeKind::Module {
-                break;
-            }
-        }
-
-        None
-    }
-
-    pub fn find_var(&self, name: &str) -> Option<(ScopeId, &Variable)> {
-        for (id, scope) in self.iter() {
-            if let Some(var) = scope.vars.get(name) {
-                return Some((id, var));
-            }
-
-            if scope.kind == ScopeKind::Module {
-                break;
-            }
-        }
-
-        None
-    }
-
-    pub fn find_fn(&self, name: &str) -> Option<FunctionId> {
-        for (id, scope) in self.iter() {
-            if let Some(var) = scope.fns.iter().position(|f| f.proto.name == name) {
-                return Some(FunctionId(id, var));
-            }
-
-            if scope.kind == ScopeKind::Module {
-                break;
-            }
-        }
-
-        None
+        name.chars().rev().collect::<String>()
     }
 
     pub fn is_sub_scope(&self, target: ScopeId) -> bool {
@@ -236,22 +234,6 @@ impl Scopes {
         result
     }
 
-    pub fn insert_type(&mut self, ty: Struct) -> StructId {
-        let index = self.current().types.len();
-        self.current().types.push(ty);
-        StructId(self.current_id(), index)
-    }
-
-    pub fn insert_fn(&mut self, ty: Function) -> FunctionId {
-        let index = self.current().fns.len();
-        self.current().fns.push(ty);
-        FunctionId(self.current_id(), index)
-    }
-
-    pub fn insert_var(&mut self, name: String, var: Variable) {
-        self.current().vars.insert(name, var);
-    }
-
     pub fn current_struct(&self) -> Option<TypeId> {
         self.iter().find_map(|(_, scope)| {
             if let ScopeKind::Struct(id) = &scope.kind {
@@ -260,34 +242,6 @@ impl Scopes {
                 None
             }
         })
-    }
-}
-
-impl Index<&FunctionId> for Scopes {
-    type Output = Function;
-
-    fn index(&self, index: &FunctionId) -> &Self::Output {
-        &self[index.0].fns[index.1]
-    }
-}
-
-impl IndexMut<&FunctionId> for Scopes {
-    fn index_mut(&mut self, index: &FunctionId) -> &mut Self::Output {
-        &mut self[index.0].fns[index.1]
-    }
-}
-
-impl Index<&StructId> for Scopes {
-    type Output = Struct;
-
-    fn index(&self, index: &StructId) -> &Self::Output {
-        &self[index.0].types[index.1]
-    }
-}
-
-impl IndexMut<&StructId> for Scopes {
-    fn index_mut(&mut self, index: &StructId) -> &mut Self::Output {
-        &mut self[index.0].types[index.1]
     }
 }
 

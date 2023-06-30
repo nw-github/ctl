@@ -1,17 +1,15 @@
 use crate::{
     ast::expr::UnaryOp,
     checked_ast::{
-        expr::{CheckedExpr, ExprData},
+        expr::{CheckedExpr, ExprData, Symbol},
         stmt::{CheckedStmt, CheckedUserType},
         Block,
     },
-    scope::{Scopes, Struct, StructDef, CheckedPrototype, FunctionId, Function},
+    scope::{Scopes, Struct, StructDef, CheckedPrototype, FunctionId, Function, StructId, VariableId, Variable},
     typecheck::{CheckedAst, TypeId},
 };
 
 const RT_PREFIX: &str = "CTL_RUNTIME_";
-const MAIN_NAME: &str = "CTL_PROGRAM_MAIN";
-
 pub struct BlockInfo {
     variable: String,
     label: String,
@@ -21,7 +19,7 @@ pub struct Compiler {
     buffer: String,
     current_block: Option<BlockInfo>,
     block_number: usize,
-    current_path: String,
+    main: Option<FunctionId>,
 }
 
 impl Compiler {
@@ -30,23 +28,20 @@ impl Compiler {
             buffer: String::new(),
             current_block: None,
             block_number: 0,
-            current_path: String::new(),
+            main: None
         };
         this.emit(include_str!("../runtime/ctl.h"));
         this.emit("\n\n");
         this.compile_stmt(&mut ast.scopes, &mut ast.stmt);
-        this.emit(format!(
-            "
-int main(int argc, char **argv) {{
-    GC_INIT();
-
-    (void)argc;
-    (void)argv;
-
-    return {MAIN_NAME}();
-}}   
-        ",
-        ));
+        if let Some(main) = this.main {
+            this.emit("int main(int argc, char **argv) {");
+            this.emit("GC_INIT();");
+            this.emit("(void)argc;");
+            this.emit("(void)argv;");
+            this.emit("return ");
+            this.emit_fn_id(&ast.scopes, &main);
+            this.emit("(); }");
+        }
 
         this.buffer
     }
@@ -76,7 +71,7 @@ int main(int argc, char **argv) {{
                     Err(ty) => {
                         self.emit_type(scopes, ty);
                         if !*mutable {
-                            self.emit("const ");
+                            self.emit(" const ");
                         }
 
                         self.emit(format!(" {name}"));
@@ -86,25 +81,24 @@ int main(int argc, char **argv) {{
             }
             CheckedStmt::Fn(id) => {
                 self.emit_prototype(scopes, id);
-                self.add_to_path(&scopes[&*id].proto.name);
                 // FIXME: this clone hack
                 self.emit_block(scopes, &mut scopes[&*id].body.clone().unwrap());
-                self.remove_from_path(&scopes[&*id].proto.name);
             }
             CheckedStmt::UserType(data) => match data {
                 CheckedUserType::Struct(id) => {
                     let Struct { 
-                        name, 
                         def: Some(StructDef {
                             members,
                             scope
-                        }) 
+                        }),
+                        ..
                     } = &scopes[&*id] else {
                         unreachable!()
                     };
 
-                    self.emit(format!("struct {}{name} {{", self.current_path));
-                    self.add_to_path(name);
+                    self.emit("struct ");
+                    self.emit_struct_id(scopes, id);
+                    self.emit("{");
                     for (name, member) in members.iter() {
                         self.emit_type(scopes, &member.ty);
                         self.emit(format!(" {}", name));
@@ -116,7 +110,6 @@ int main(int argc, char **argv) {{
 
                     self.emit("};");
 
-                    let name = name.clone();
                     for i in 0..scopes[*scope].fns.len() {
                         let id = &FunctionId(id.scope(), i);
                         if scopes[id].inst {
@@ -124,32 +117,25 @@ int main(int argc, char **argv) {{
                         }
 
                         self.emit_prototype(scopes, id);
-                        self.add_to_path(&scopes[id].proto.name);
                         self.emit_block(scopes, &mut scopes[id].body.clone().unwrap());
-                        self.remove_from_path(&scopes[id].proto.name);
                     }
-                    self.remove_from_path(&name);
                 }
             },
-            CheckedStmt::Static {
-                public: _,
-                name,
-                value,
-            } => {
+            CheckedStmt::Static(id, value) => {
                 self.emit("static ");
                 self.emit_type(scopes, &value.ty);
-                self.emit(format!(" const {}{name} = ", self.current_path));
+                self.emit(" const ");
+                self.emit_var_id(scopes, id);
+                self.emit(" = ");
                 // FIXME: blocks in statics...
                 self.hoist_blocks(scopes, value);
                 self.compile_expr(scopes, value);
                 self.emit(";");
             }
-            CheckedStmt::Module { name, body } => {
-                self.add_to_path(name);
+            CheckedStmt::Module { body, .. } => {
                 for stmt in body.body.iter_mut() {
                     self.compile_stmt(scopes, stmt);
                 }
-                self.remove_from_path(name);
             }
             CheckedStmt::Error => {
                 panic!("ICE: CheckedStmt::Error in compile_stmt");
@@ -207,8 +193,8 @@ int main(int argc, char **argv) {{
                 UnaryOp::Try => todo!(),
                 UnaryOp::Sizeof => todo!(),
             },
-            ExprData::Call { callee, args } => {
-                self.compile_expr(scopes, callee);
+            ExprData::Call { func, args } => {
+                self.emit_fn_id(scopes, func);
                 self.emit("(");
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
@@ -220,29 +206,20 @@ int main(int argc, char **argv) {{
                 self.emit(")");
             }
             ExprData::MemberCall {
-                source,
-                member,
-                ty,
+                func,
+                this,
                 args,
             } => {
-                let TypeId::Struct(id) = ty else { unreachable!() };
-                let Struct { 
-                    name, def: Some(StructDef { 
-                        members, 
-                        scope 
-                    }) 
-                } = &scopes[id.as_ref()] else { unreachable!() };
-
-                self.emit(scopes.scope_full_name(*scope));
-                self.emit(format!("_{member}"));
+                self.emit_fn_id(scopes, func);
                 self.emit("(");
 
-                let mut source_ty = &source.ty;
-                if source_ty == ty {
+                let mut source_ty = &this.ty;
+                let target = &scopes[func].proto.params[0].ty;
+                if source_ty == target {
                     self.emit("&");
                 } else {
                     while let TypeId::Ref(inner) | TypeId::RefMut(inner) = source_ty {
-                        if source_ty == ty {
+                        if source_ty == target {
                             break;
                         }
 
@@ -251,7 +228,7 @@ int main(int argc, char **argv) {{
                     }
                 }
 
-                self.compile_expr(scopes, source);
+                self.compile_expr(scopes, this);
 
                 for arg in args {
                     self.emit(", ");
@@ -274,14 +251,22 @@ int main(int argc, char **argv) {{
             ExprData::Unsigned(value) => self.emit(format!("{value}")),
             ExprData::Float(value) => self.emit(value),
             ExprData::String(_) => todo!(),
-            ExprData::Symbol { scope, symbol } => {
-                if let Some(scope) = scope {
-                    self.emit(scopes.scope_full_name(*scope));
-                    self.emit("_");
+            ExprData::Symbol(symbol) => {
+                match symbol {
+                    Symbol::Function(id) => {
+                        self.emit_fn_id(scopes, id);
+                    }
+                    Symbol::Variable(id) => {
+                        let var = &scopes[id];
+                        if var.is_static {
+                            self.emit_var_id(scopes, id);
+                        } else {
+                            self.emit(&var.name);
+                        }
+                    }
                 }
-                self.emit(symbol);
             }
-            ExprData::Instance { members } => {
+            ExprData::Instance(members) => {
                 self.emit("(");
                 self.emit_type(scopes, &expr.ty);
                 self.emit("){");
@@ -356,10 +341,14 @@ int main(int argc, char **argv) {{
             ExprData::Unary { op: _, expr } => {
                 self.hoist_blocks(scopes, expr);
             }
-            ExprData::Call { callee, args }
-            | ExprData::Subscript { callee, args }
+            ExprData::Call { args, .. } => {
+                for arg in args.iter_mut() {
+                    self.hoist_blocks(scopes, arg);
+                }
+            }
+            ExprData::Subscript { callee, args }
             | ExprData::MemberCall {
-                source: callee,
+                this: callee,
                 args,
                 ..
             } => {
@@ -388,7 +377,7 @@ int main(int argc, char **argv) {{
                     self.hoist_blocks(scopes, value);
                 }
             }
-            ExprData::Instance { members, .. } => {
+            ExprData::Instance(members) => {
                 for (_, value) in members.iter_mut() {
                     self.hoist_blocks(scopes, value);
                 }
@@ -446,10 +435,13 @@ int main(int argc, char **argv) {{
                 self.emit(format!("{label}:\n"));
                 self.current_block = old_block;
 
-                expr.data = ExprData::Symbol {
-                    scope: None,
-                    symbol: variable,
-                };
+                expr.data = ExprData::Symbol(Symbol::Variable(scopes.insert_var(Variable {
+                    name: variable,
+                    ty: TypeId::Unknown,
+                    is_static: false,
+                    mutable: false,
+                    public: false,
+                })));
             }
             _ => {}
         }
@@ -488,21 +480,27 @@ int main(int argc, char **argv) {{
             }
             TypeId::Function(_) => todo!(),
             TypeId::Struct(id) => {
-                self.emit(format!(
-                    "struct {}", 
-                    scopes.scope_full_name(scopes[id.as_ref()].def.as_ref().unwrap().scope)
-                ));
+                self.emit("struct ");
+                self.emit_struct_id(scopes, id);
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
         }
     }
 
-    fn emit_prototype(
-        &mut self,
-        scopes: &Scopes,
-        id: &FunctionId,
-    ) {
+    fn emit_fn_id(&mut self, scopes: &Scopes, id: &FunctionId) {
+        self.emit(scopes.full_name(id.scope(), &scopes[id].proto.name));
+    }
+
+    fn emit_struct_id(&mut self, scopes: &Scopes, id: &StructId) {
+        self.emit(scopes.full_name(id.scope(), &scopes[id].name));
+    }
+
+    fn emit_var_id(&mut self, scopes: &Scopes, id: &VariableId) {
+        self.emit(scopes.full_name(id.scope(), &scopes[id].name));
+    }
+
+    fn emit_prototype(&mut self, scopes: &Scopes, id: &FunctionId) {
         let Function { proto: CheckedPrototype {
             public: _,
             name,
@@ -515,11 +513,12 @@ int main(int argc, char **argv) {{
 
         self.emit_type(scopes, ret);
         if name == "main" {
-            self.emit(format!(" {MAIN_NAME}("));
-        } else {
-            self.emit(format!(" {}{name}(", self.current_path));
+            self.main = Some(*id);
         }
 
+        self.emit(" ");
+        self.emit_fn_id(scopes, id);
+        self.emit("(");
         for (i, param) in params.iter().enumerate() {
             if i > 0 {
                 self.emit(", ");
@@ -541,14 +540,5 @@ int main(int argc, char **argv) {{
             self.compile_stmt(scopes, stmt);
         }
         self.emit("}");
-    }
-
-    fn add_to_path(&mut self, name: &str) {
-        self.current_path.push_str(&format!("{name}_"));
-    }
-
-    fn remove_from_path(&mut self, name: &str) {
-        self.current_path
-            .truncate(self.current_path.len() - name.len() - 1);
     }
 }
