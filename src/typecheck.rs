@@ -655,18 +655,28 @@ impl TypeChecker {
                 data: ExprData::Bool(value),
             },
             Expr::Integer { base, value, width } => {
-                // TODO: attempt to promote the literal if its too large for i32
-                let ty = target
-                    .map(|mut target| {
-                        while let TypeId::Option(ty) | TypeId::RefMut(ty) | TypeId::Ref(ty) = target
-                        {
-                            target = ty;
-                        }
-                        target
+                let ty = if let Some(width) = width {
+                    Self::match_int_type(&width).unwrap_or_else(|| {
+                        self.error(Error::new(
+                            format!("invalid integer literal type: {width}"),
+                            span,
+                        ))
                     })
-                    .filter(|target| Self::coerces_to(&TypeId::IntGeneric, target))
-                    .cloned()
-                    .unwrap_or(TypeId::Int(32));
+                } else {
+                    // TODO: attempt to promote the literal if its too large for i32
+                    target
+                        .map(|mut target| {
+                            while let TypeId::Option(ty) | TypeId::RefMut(ty) | TypeId::Ref(ty) =
+                                target
+                            {
+                                target = ty;
+                            }
+                            target
+                        })
+                        .filter(|target| Self::coerces_to(&TypeId::IntGeneric, target))
+                        .cloned()
+                        .unwrap_or(TypeId::Int(32))
+                };
 
                 let (signed, bits) = match ty {
                     TypeId::Int(bits) => (true, bits),
