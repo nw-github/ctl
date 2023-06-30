@@ -153,7 +153,11 @@ pub mod expr {
         Tuple(Vec<super::Expr>),
         Map(Vec<(super::Expr, super::Expr)>),
         Bool(bool),
-        Integer(u8, String),
+        Integer {
+            base: u8,
+            value: String,
+            width: Option<String>,
+        },
         Float(String),
         String(String),
         Symbol(String),

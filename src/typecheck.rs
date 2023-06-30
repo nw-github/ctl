@@ -663,7 +663,7 @@ impl TypeChecker {
                 ty: TypeId::Bool,
                 data: ExprData::Bool(value),
             },
-            Expr::Integer(base, value) => {
+            Expr::Integer { base, value, width } => {
                 // TODO: attempt to promote the literal if its too large for i32
                 let ty = target
                     .map(|mut target| {
@@ -688,9 +688,9 @@ impl TypeChecker {
                 if signed {
                     let result = match i128::from_str_radix(&value, base as u32) {
                         Ok(result) => result,
-                        Err(_) => {
+                        Err(e) => {
                             return self.error(Error::new(
-                                "Integer literal is too large for any type.",
+                                format!("Integer literal '{value}' is too large: {e}."),
                                 expr.span,
                             ));
                         }
@@ -715,7 +715,7 @@ impl TypeChecker {
                         Ok(result) => result,
                         Err(_) => {
                             return self.error(Error::new(
-                                "Integer literal is too large for any type.",
+                                format!("Integer literal '{value}' is too large."),
                                 expr.span,
                             ));
                         }

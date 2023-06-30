@@ -34,7 +34,8 @@ impl Compiler {
             block_number: 0,
             current_path: String::new(),
         };
-        this.emit("#include <runtime/ctl.h>\n\n");
+        this.emit(include_str!("../runtime/ctl.h"));
+        this.emit("\n\n");
         this.compile_stmt(&mut ast.stmt);
         this.emit(format!(
             "

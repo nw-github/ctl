@@ -206,8 +206,8 @@ impl<'a> Parser<'a> {
                 //let count = self.expression()?;
                 let count = self.expect(
                     |t| {
-                        let Token::Int(10, num) = t.data else { return None; };
-                        Some(num)
+                        let Token::Int { base: 10, value, width: None } = t.data else { return None; };
+                        Some(value)
                     },
                     "expected array size",
                 )?;
@@ -296,7 +296,14 @@ impl<'a> Parser<'a> {
                 };
                 this.expect_kind(Token::Comma, "expected ','")?;
 
-                members.push((name, stmt::MemVar { public, ty, default: value }));
+                members.push((
+                    name,
+                    stmt::MemVar {
+                        public,
+                        ty,
+                        default: value,
+                    },
+                ));
             }
 
             Ok(())
@@ -877,7 +884,9 @@ impl<'a> Parser<'a> {
             Token::False => L::new(Expr::Bool(false), token.span),
             Token::True => L::new(Expr::Bool(true), token.span),
             Token::None => L::new(Expr::None, token.span),
-            Token::Int(base, value) => L::new(Expr::Integer(base, value.into()), token.span),
+            Token::Int { base, value, width } => {
+                L::new(Expr::Integer { base, value: value.into(), width: width.map(|w| w.into()) }, token.span)
+            }
             Token::Float(value) => L::new(Expr::Float(value.into()), token.span),
             Token::String(value) => L::new(Expr::String(value.into()), token.span),
             Token::LParen => {
@@ -1032,8 +1041,10 @@ impl<'a> Parser<'a> {
                         // let count = self.expression()?;
                         let count = self.expect(
                             |t| {
-                                let Token::Int(10, num) = t.data else { return None; };
-                                Some(num)
+                                let Token::Int { base: 10, value, width: None } = t.data else { 
+                                    return None;
+                                };
+                                Some(value)
                             },
                             "expected array size",
                         )?;

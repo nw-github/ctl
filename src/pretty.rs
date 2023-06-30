@@ -219,8 +219,8 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
                 print_expr(value, indent + 2);
             }
         }
-        Expr::Integer(base, value) => {
-            println!("{tabs}Integer(base {base}) = {value}");
+        Expr::Integer { base, value, width } => {
+            println!("{tabs}Integer(base {base}, width {width:?}) = {value}");
         }
         Expr::Float(value) => {
             println!("{tabs}Float = {value}");

@@ -92,7 +92,11 @@ pub enum Token<'a> {
     Unsafe,
 
     Ident(&'a str),
-    Int(u8, &'a str),
+    Int {
+        base: u8,
+        value: &'a str,
+        width: Option<&'a str>,
+    },
     Float(&'a str),
     String(Cow<'a, str>),
 }
@@ -291,14 +295,35 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn numeric_suffix(&mut self) -> Option<&'a str> {
+        let suffix = self.advance_while(|s| s.is_ascii_alphanumeric());
+        if !suffix.is_empty() {
+            Some(suffix)
+        } else {
+            None
+        }
+    }
+
     fn numeric_literal(&mut self, start: usize) -> Token<'a> {
         if self.src.chars().nth(start) == Some('0') {
             if self.advance_if('x') {
-                return Token::Int(16, self.advance_while(|ch| ch.is_ascii_hexdigit()));
+                return Token::Int {
+                    base: 16,
+                    value: self.advance_while(|ch| ch.is_ascii_hexdigit()),
+                    width: self.numeric_suffix(),
+                };
             } else if self.advance_if('o') {
-                return Token::Int(8, self.advance_while(|ch| ch.is_digit(8)));
+                return Token::Int {
+                    base: 8,
+                    value: self.advance_while(|ch| ch.is_digit(8)),
+                    width: self.numeric_suffix(),
+                };
             } else if self.advance_if('b') {
-                return Token::Int(2, self.advance_while(|ch| ch.is_digit(2)));
+                return Token::Int {
+                    base: 2,
+                    value: self.advance_while(|ch| ch.is_digit(2)),
+                    width: self.numeric_suffix(),
+                };
             }
         }
 
@@ -313,7 +338,11 @@ impl<'a> Lexer<'a> {
                 // TODO: warn about leading zero, dont make it an error
             }
 
-            Token::Int(10, src)
+            Token::Int {
+                base: 10,
+                value: src,
+                width: self.numeric_suffix(),
+            }
         }
     }
 
