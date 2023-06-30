@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter::Peekable};
+use std::iter::Peekable;
 
 use crate::{
     ast::{
@@ -273,7 +273,7 @@ impl<'a> Parser<'a> {
         self.expect_kind(Token::LCurly, "expected '{'")?;
 
         let mut functions = Vec::new();
-        let mut members = HashMap::new();
+        let mut members = Vec::new();
         *span = self.advance_until(Token::RCurly, *span, |this| {
             let public = this.advance_if_kind(Token::Pub).is_some();
             if let Some(header) = this.try_function_decl(public, true) {
@@ -296,11 +296,7 @@ impl<'a> Parser<'a> {
                 };
                 this.expect_kind(Token::Comma, "expected ','")?;
 
-                if members.contains_key(&name) {
-                    // TODO: report error
-                }
-
-                members.insert(name, stmt::MemVar { public, ty, value });
+                members.push((name, stmt::MemVar { public, ty, value }));
             }
 
             Ok(())
@@ -884,32 +880,7 @@ impl<'a> Parser<'a> {
                     L::new(expr.data, Span::combine(token.span, end.span))
                 }
             }
-            Token::Ident(ident) => {
-                if self.advance_if_kind(Token::LCurly).is_some() {
-                    let mut members = Vec::new();
-                    let span = self.advance_until(Token::RCurly, token.span, |this| {
-                        let name = this.expect_id("expected member name")?;
-                        this.expect_kind(Token::Colon, "expected ':'")?;
-                        members.push((name.into(), this.expression()?));
-
-                        if !this.matches_kind(Token::RCurly) {
-                            this.expect_kind(Token::Comma, "expected ','")?;
-                        }
-
-                        Ok(())
-                    })?;
-
-                    L::new(
-                        Expr::Instance {
-                            name: ident.into(),
-                            members,
-                        },
-                        span,
-                    )
-                } else {
-                    L::new(Expr::Symbol(ident.into()), token.span)
-                }
-            }
+            Token::Ident(ident) => L::new(Expr::Symbol(ident.into()), token.span),
             Token::This => L::new(Expr::Symbol("$self".into()), token.span),
             Token::Range => {
                 if self.is_range_end() {

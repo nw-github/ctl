@@ -20,6 +20,12 @@ impl FunctionId {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct StructId(ScopeId, usize);
 
+impl StructId {
+    pub fn scope(&self) -> ScopeId {
+        self.0
+    }
+}
+
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub enum ScopeKind {
     Block(Option<TypeId>, bool),
@@ -37,11 +43,19 @@ pub struct Variable {
     pub mutable: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct Param {
+    pub name: String,
+    pub ty: TypeId,
+    pub kw: bool,
+}
+
 #[derive(Debug)]
 pub struct Function {
     pub name: String,
-    pub params: Vec<(String, TypeId)>,
+    pub params: Vec<Param>,
     pub ret: TypeId,
+    pub inst: Option<StructId>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +91,10 @@ impl Scope {
     pub fn find_fn(&self, name: &str) -> Option<&Function> {
         self.fns.iter().find(|f| f.name == name)
     }
+
+    pub fn insert_fn(&mut self,f: Function) {
+        self.fns.push(f);
+    } 
 }
 
 pub struct Scopes {
@@ -133,24 +151,7 @@ impl Scopes {
         name.chars().rev().skip(1).collect::<String>()
     }
 
-    pub fn find_struct(&self, target: &str) -> Option<(StructId, &DefinedStruct)> {
-        for (id, scope) in self.iter() {
-            if let Some((index, d)) = scope.types.iter().enumerate().find_map(|(i, s)| match s {
-                Struct::Defined(d) if d.name == target => Some((i, d)),
-                _ => None,
-            }) {
-                return Some((StructId(id, index), d));
-            }
-
-            if scope.kind == ScopeKind::Module {
-                break;
-            }
-        }
-
-        None
-    }
-
-    pub fn find_struct_maybe_undef(&self, target: &str) -> Option<StructId> {
+    pub fn find_struct(&self, target: &str) -> Option<StructId> {
         for (id, scope) in self.iter() {
             if let Some(index) = scope.types.iter().enumerate().find_map(|(i, s)| match s {
                 Struct::Defined(d) if d.name == target => Some(i),

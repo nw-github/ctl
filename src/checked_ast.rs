@@ -9,6 +9,8 @@ pub struct Block {
 }
 
 pub mod expr {
+    use std::collections::HashMap;
+
     use crate::{
         ast::expr::{BinaryOp, UnaryOp},
         typecheck::TypeId,
@@ -54,7 +56,7 @@ pub mod expr {
             symbol: String,
         },
         Instance {
-            members: Vec<(String, CheckedExpr)>,
+            members: HashMap<String, CheckedExpr>,
         },
         None,
         Assign {

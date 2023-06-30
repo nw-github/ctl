@@ -158,10 +158,6 @@ pub mod expr {
         String(String),
         Symbol(String),
         Void,
-        Instance {
-            name: String,
-            members: Vec<(String, super::Expr)>,
-        },
         None,
         Assign {
             target: Box<super::Expr>,
@@ -205,8 +201,6 @@ pub mod expr {
 }
 
 pub mod stmt {
-    use std::collections::HashMap;
-
     use crate::lexer::Located;
 
     #[derive(Debug)]
@@ -267,7 +261,7 @@ pub mod stmt {
         pub public: bool,
         pub name: String,
         pub type_params: Vec<String>,
-        pub members: HashMap<String, MemVar>,
+        pub members: Vec<(String, MemVar)>,
         pub impls: Vec<String>,
         pub functions: Vec<Fn>,
     }

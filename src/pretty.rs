@@ -328,17 +328,6 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
             println!("{tabs}Body: ");
             print_stmts(body, indent + 2);
         }
-        Expr::Instance { name, members } => {
-            println!("{tabs}Instance[{name}]");
-
-            let tabs = INDENT.repeat(indent + 1);
-            if !members.is_empty() {
-                for (name, expr) in members {
-                    println!("{tabs}{name}:");
-                    print_expr(expr, indent + 2);
-                }
-            }
-        }
         Expr::Void => println!("{tabs}Void"),
     }
 }

@@ -524,7 +524,7 @@ int main(int argc, char **argv) {{
 
             self.emit_type(&param.ty);
             if !param.mutable {
-                self.emit("const ");
+                self.emit(" const");
             }
 
             self.emit(format!(" {}", param.name));

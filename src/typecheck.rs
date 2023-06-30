@@ -15,7 +15,8 @@ use crate::{
     },
     lexer::{Located, Span},
     scope::{
-        DefinedStruct, Function, FunctionId, Member, ScopeKind, Scopes, Struct, StructId, Variable,
+        DefinedStruct, Function, FunctionId, Member, Param, ScopeKind, Scopes, Struct, StructId,
+        Variable,
     },
     Error,
 };
@@ -204,6 +205,20 @@ impl TypeChecker {
                                 scope: scopes.current_id(),
                             });
 
+                            scopes[self_id.scope()].insert_fn(Function {
+                                name: base.name.clone(),
+                                params: members
+                                    .iter()
+                                    .map(|member| Param {
+                                        ty: member.ty.clone(),
+                                        name: member.name.clone(),
+                                        kw: true,
+                                    })
+                                    .collect(),
+                                ret: TypeId::Struct(self_id.into()),
+                                inst: Some(self_id),
+                            });
+
                             CheckedStmt::UserType(CheckedUserType::Struct(CheckedStruct {
                                 public: base.public,
                                 name: base.name,
@@ -235,25 +250,34 @@ impl TypeChecker {
                         let value = self.check_expr(scopes, value, Some(&ty));
                         type_check!(self, scopes, &value.ty, &ty, span);
 
-                        (ty, CheckedStmt::Let {
-                            name: name.clone(),
-                            mutable,
-                            value: Ok(value),
-                        })
+                        (
+                            ty,
+                            CheckedStmt::Let {
+                                name: name.clone(),
+                                mutable,
+                                value: Ok(value),
+                            },
+                        )
                     } else {
-                        (ty.clone(), CheckedStmt::Let {
-                            name: name.clone(),
-                            mutable,
-                            value: Err(ty),
-                        })
+                        (
+                            ty.clone(),
+                            CheckedStmt::Let {
+                                name: name.clone(),
+                                mutable,
+                                value: Err(ty),
+                            },
+                        )
                     }
                 } else if let Some(value) = value {
                     let value = self.check_expr(scopes, value, None);
-                    (value.ty.clone(), CheckedStmt::Let {
-                        name: name.clone(),
-                        mutable,
-                        value: Ok(value),
-                    })
+                    (
+                        value.ty.clone(),
+                        CheckedStmt::Let {
+                            name: name.clone(),
+                            mutable,
+                            value: Ok(value),
+                        },
+                    )
                 } else {
                     return self.error(Error::new("cannot infer type", stmt.span));
                 };
@@ -469,8 +493,8 @@ impl TypeChecker {
                     let source = self.check_expr(scopes, *source, None);
                     let (s, id) = eval_member_to_struct!(source);
                     if let Some(Function { params, ret, .. }) = scopes[s.scope].find_fn(&member) {
-                        if let Some((_, ty)) = params.get(0).filter(|(name, _)| name == "$self") {
-                            if let TypeId::RefMut(inner) = ty {
+                        if let Some(param) = params.get(0).filter(|p| p.name == "$self") {
+                            if let TypeId::RefMut(inner) = &param.ty {
                                 let mut ty = &source.ty;
                                 if ty == inner.as_ref() && !Self::can_addrmut(scopes, &source) {
                                     return self.error(Error::new(
@@ -496,13 +520,19 @@ impl TypeChecker {
                             }
 
                             let ty = id.clone();
+                            #[allow(clippy::unnecessary_to_owned)]
                             return CheckedExpr::new(
                                 ret.clone(),
                                 ExprData::MemberCall {
                                     source: source.into(),
                                     member,
                                     ty,
-                                    args: self.check_fn_args(scopes, args, params.clone(), span),
+                                    args: self.check_fn_args(
+                                        scopes,
+                                        args,
+                                        &params[1..].to_vec(),
+                                        span,
+                                    ),
                                 },
                             );
                         }
@@ -518,26 +548,44 @@ impl TypeChecker {
                 } else {
                     let callee = self.check_expr(scopes, *callee, None);
                     if let TypeId::Function(id) = &callee.ty {
-                        let Function { params, ret, .. } = &scopes[id.as_ref()];
-                        // TODO: default arguments
-                        if params.len() != args.len() {
-                            return self.error(Error::new(
-                                format!(
-                                    "expected {} argument(s), found {}",
-                                    params.len(),
-                                    args.len()
-                                ),
-                                span,
-                            ));
+                        let Function {
+                            params, ret, inst, ..
+                        } = &scopes[id.as_ref()];
+                        let ret = ret.clone();
+                        if let Some(inst) = inst {
+                            let Struct::Defined(d) = &scopes[inst] else { unreachable!() };
+
+                            let members = d.members.clone();
+                            if members.iter().any(|member| !member.1.public)
+                                && !scopes.is_sub_scope(d.scope)
+                            {
+                                self.error::<()>(Error::new(
+                                    "cannot construct type with private members",
+                                    span,
+                                ));
+
+                                return CheckedExpr::new(ret, ExprData::Error);
+                            }
+
+                            return CheckedExpr::new(
+                                ret,
+                                ExprData::Instance {
+                                    members: self.check_instance_args(
+                                        scopes,
+                                        args,
+                                        &params.clone(),
+                                        span,
+                                    ),
+                                },
+                            );
                         }
 
-                        let ret = ret.clone();
                         let params = params.clone();
                         return CheckedExpr::new(
                             ret,
                             ExprData::Call {
                                 callee: callee.into(),
-                                args: self.check_fn_args(scopes, args, params, span),
+                                args: self.check_fn_args(scopes, args, &params, span),
                             },
                         );
                     }
@@ -607,7 +655,7 @@ impl TypeChecker {
             Expr::Void => CheckedExpr::new(
                 TypeId::Void,
                 ExprData::Instance {
-                    members: Vec::new(),
+                    members: HashMap::new(),
                 },
             ),
             Expr::Bool(value) => CheckedExpr {
@@ -707,71 +755,6 @@ impl TypeChecker {
                     self.error(Error::new(format!("undefined variable: {name}"), span))
                 }
             }
-            Expr::Instance {
-                name,
-                members: arguments,
-            } => {
-                let Some((id, d)) = scopes.find_struct(&name) else {
-                    return self.undefined_type(&name, span);
-                };
-                let id = TypeId::Struct(id.into());
-
-                let members = d.members.clone();
-                if members.iter().any(|member| !member.1.public) && !scopes.is_sub_scope(d.scope) {
-                    self.error::<()>(Error::new(
-                        "cannot construct type with private members",
-                        span,
-                    ));
-
-                    return CheckedExpr::new(id, ExprData::Error);
-                }
-
-                let mut checked: HashMap<_, _> =
-                    members.keys().map(|name| (name.clone(), None)).collect();
-                for (name, value) in arguments {
-                    if let Entry::Occupied(mut entry) = checked.entry(name.clone()) {
-                        if entry.get().is_some() {
-                            self.error::<()>(Error::new(
-                                format!("field '{name}' declared multiple times"),
-                                value.span,
-                            ));
-                        } else {
-                            let span = value.span;
-                            let value = self.check_expr(scopes, value, Some(&members[&name].ty));
-                            if !Self::coerces_to(&value.ty, &members[&name].ty) {
-                                entry.insert(Some(self.type_mismatch(
-                                    scopes,
-                                    &members[&name].ty,
-                                    &value.ty,
-                                    span,
-                                )));
-                            } else {
-                                entry.insert(Some(value));
-                            }
-                        }
-                    } else {
-                        self.error::<()>(Error::new(
-                            format!("no field '{name}' on type {}", Self::type_name(scopes, &id)),
-                            value.span,
-                        ));
-                    }
-                }
-
-                CheckedExpr::new(
-                    id,
-                    ExprData::Instance {
-                        members: checked
-                            .into_iter()
-                            .map(|(name, value)| {
-                                let value = value.unwrap_or_else(|| {
-                                    self.error(Error::new(format!("missing field: '{name}'"), span))
-                                });
-                                (name, value)
-                            })
-                            .collect(),
-                    },
-                )
-            }
             Expr::Assign {
                 target: lhs,
                 binary,
@@ -811,12 +794,8 @@ impl TypeChecker {
                 )
             }
             Expr::Block(body) => {
-                let block = self.create_block(
-                    scopes,
-                    None,
-                    body,
-                    ScopeKind::Block(target.cloned(), false),
-                );
+                let block =
+                    self.create_block(scopes, None, body, ScopeKind::Block(target.cloned(), false));
                 let ScopeKind::Block(target, _) = &scopes[block.scope].kind else {
                     panic!("ICE: target of block changed from block to something else");
                 };
@@ -849,7 +828,8 @@ impl TypeChecker {
                     //   let x /* void? */ = if whatever { yield void; };
                     //   let x /* void */ = if whatever { };
                     if matches!(&if_branch.data, ExprData::Block(b) if
-                        matches!(scopes[b.scope].kind, ScopeKind::Block(_, yields) if yields)) {
+                        matches!(scopes[b.scope].kind, ScopeKind::Block(_, yields) if yields))
+                    {
                         out_type = TypeId::Option(out_type.into());
                     }
                     None
@@ -891,7 +871,9 @@ impl TypeChecker {
                 };
 
                 CheckedExpr::new(
-                    target.clone().unwrap_or(if *inf { TypeId::Never } else { TypeId::Void }),
+                    target
+                        .clone()
+                        .unwrap_or(if *inf { TypeId::Never } else { TypeId::Void }),
                     ExprData::Loop {
                         cond: cond.into(),
                         body,
@@ -1039,14 +1021,16 @@ impl TypeChecker {
 
     fn coerces_to(ty: &TypeId, target: &TypeId) -> bool {
         match (ty, target) {
-            (TypeId::IntGeneric, TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize) 
-                => true,
+            (
+                TypeId::IntGeneric,
+                TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize,
+            ) => true,
             (TypeId::FloatGeneric, TypeId::F32 | TypeId::F64) => true,
             (TypeId::RefMut(ty), TypeId::Ref(target)) if ty == target => true,
             (ty, TypeId::Option(inner)) if Self::coerces_to(ty, inner) => true,
             (TypeId::Never, _) => true,
             (ty, target) => ty == target,
-        } 
+        }
     }
 
     fn check_fn(
@@ -1089,15 +1073,16 @@ impl TypeChecker {
             params: header
                 .params
                 .iter()
-                .map(|param| (param.name.clone(), param.ty.clone()))
+                .map(|param| Param {
+                    name: param.name.clone(),
+                    ty: param.ty.clone(),
+                    kw: param.keyword,
+                })
                 .collect(),
             ret: header.ret.clone(),
+            inst: None,
         });
 
-        // scopes.insert_var(header.name.clone(), Variable {
-        //     ty: TypeId::Function(id.clone().into()),
-        //     mutable: false,
-        // });
         CheckedFn {
             body: scopes.enter(Some(name), ScopeKind::Function(id), |scopes| {
                 for param in header.params.iter() {
@@ -1123,25 +1108,93 @@ impl TypeChecker {
         }
     }
 
+    fn check_instance_args(
+        &mut self,
+        scopes: &mut Scopes,
+        args: Vec<(Option<String>, Located<Expr>)>,
+        params: &[Param],
+        span: Span,
+    ) -> HashMap<String, CheckedExpr> {
+        if params.len() != args.len() {
+            self.error::<()>(Error::new(
+                format!(
+                    "expected {} argument(s), found {}",
+                    params.len(),
+                    args.len()
+                ),
+                span,
+            ));
+
+            return HashMap::new();
+        }
+
+        let mut result = HashMap::with_capacity(args.len());
+        let mut last_pos = 0;
+        for (name, expr) in args {
+            if let Some(name) = name {
+                match result.entry(name.clone()) {
+                    Entry::Occupied(_) => {
+                        self.error::<()>(Error::new(
+                            format!("parameter {name} has already been specified"),
+                            expr.span,
+                        ));
+                    }
+                    Entry::Vacant(entry) => {
+                        if let Some(param) = params.iter().find(|p| p.name == name) {
+                            let expr = self.check_expr(scopes, expr, Some(&param.ty));
+                            if !Self::coerces_to(&expr.ty, &param.ty) {
+                                self.type_mismatch::<()>(scopes, &param.ty, &expr.ty, span);
+                            } else {
+                                entry.insert(expr);
+                            }
+                        } else {
+                            self.error::<()>(Error::new(
+                                format!("unknown parameter: {name}"),
+                                expr.span,
+                            ));
+                        }
+                    }
+                }
+            } else if let Some((i, param)) = params
+                .iter()
+                .enumerate()
+                .skip(last_pos)
+                .find(|(_, param)| !param.kw)
+            {
+                let expr = self.check_expr(scopes, expr, Some(&param.ty));
+                if !Self::coerces_to(&expr.ty, &param.ty) {
+                    self.type_mismatch::<()>(scopes, &param.ty, &expr.ty, span);
+                } else {
+                    result.insert(param.name.clone(), expr);
+                }
+
+                last_pos = i + 1;
+            } else {
+                // TODO: a better error here would be nice
+                self.error::<()>(Error::new("too many positional arguments", expr.span));
+            }
+        }
+
+        result
+    }
+
     fn check_fn_args(
         &mut self,
         scopes: &mut Scopes,
         args: Vec<(Option<String>, Located<Expr>)>,
-        params: Vec<(String, TypeId)>,
+        params: &[Param],
         span: Span,
     ) -> Vec<CheckedExpr> {
-        let mut result_args = Vec::with_capacity(args.len());
-        // TODO: keyword arguments
-        for ((_, ptype), (_, expr)) in params.into_iter().zip(args.into_iter()) {
-            let expr = self.check_expr(scopes, expr, Some(&ptype));
-            if !Self::coerces_to(&expr.ty, &ptype) {
-                result_args.push(self.type_mismatch(scopes, &ptype, &expr.ty, span));
-            } else {
-                result_args.push(expr);
+        let mut args = self.check_instance_args(scopes, args, params, span);
+        if params.len() == args.len() {
+            let mut result = Vec::with_capacity(args.len());
+            for param in params {
+                result.push(args.remove(&param.name).unwrap());
             }
+            result
+        } else {
+            Vec::new()
         }
-
-        result_args
     }
 
     fn match_int_type(name: &str) -> Option<TypeId> {
@@ -1172,7 +1225,7 @@ impl TypeChecker {
     fn resolve_type(&mut self, scopes: &Scopes, ty: &TypeHint) -> TypeId {
         match ty {
             TypeHint::Regular { name, .. } => scopes
-                .find_struct_maybe_undef(&name.data)
+                .find_struct(&name.data)
                 .map(|id| TypeId::Struct(id.into()))
                 .or_else(|| match name.data.as_str() {
                     "void" => Some(TypeId::Void),
@@ -1305,15 +1358,20 @@ impl TypeChecker {
             TypeId::RefMut(id) => format!("*mut {}", Self::type_name(scopes, id)),
             TypeId::Option(id) => format!("?{}", Self::type_name(scopes, id)),
             TypeId::Function(id) => {
-                let Function { name, params, ret } = &scopes[id.as_ref()];
+                let Function {
+                    name, params, ret, ..
+                } = &scopes[id.as_ref()];
                 let mut result = format!("fn {name}(");
-                for (i, (name, ty)) in params.iter().enumerate() {
+                for (i, param) in params.iter().enumerate() {
                     if i > 0 {
                         result.push_str(", ");
                     }
 
-                    result.push_str(&format!("{name}: "));
-                    result.push_str(&Self::type_name(scopes, ty));
+                    result.push_str(&format!(
+                        "{}: {}",
+                        param.name,
+                        Self::type_name(scopes, &param.ty)
+                    ));
                 }
                 format!("{result}) {}", Self::type_name(scopes, ret))
             }
