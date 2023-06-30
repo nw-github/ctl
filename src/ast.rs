@@ -250,7 +250,7 @@ pub mod stmt {
 
     #[derive(Debug)]
     pub struct Fn {
-        pub header: Prototype,
+        pub proto: Prototype,
         pub body: Vec<super::Stmt>,
     }
 

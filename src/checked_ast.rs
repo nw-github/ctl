@@ -91,11 +91,6 @@ pub mod expr {
         Return(Box<CheckedExpr>),
         Yield(Box<CheckedExpr>),
         Break(Box<CheckedExpr>),
-        Range {
-            start: Option<Box<CheckedExpr>>,
-            end: Option<Box<CheckedExpr>>,
-            inclusive: bool,
-        },
         Continue,
         #[default]
         Error,
@@ -109,73 +104,13 @@ pub mod expr {
 }
 
 pub mod stmt {
-    use crate::typecheck::TypeId;
+    use crate::{typecheck::TypeId, scope::{StructId, FunctionId}};
 
     use super::{expr::CheckedExpr, Block};
 
     #[derive(Debug, Clone)]
-    pub struct CheckedParam {
-        pub mutable: bool,
-        pub keyword: bool,
-        pub name: String,
-        pub ty: TypeId,
-        pub default: Option<CheckedExpr>,
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct CheckedPrototype {
-        pub public: bool,
-        pub name: String,
-        pub is_async: bool,
-        pub is_extern: bool,
-        pub type_params: Vec<String>,
-        pub params: Vec<CheckedParam>,
-        pub ret: TypeId,
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct CheckedFn {
-        pub header: CheckedPrototype,
-        pub body: Block,
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct CheckedMemVar {
-        pub public: bool,
-        pub name: String,
-        pub ty: TypeId,
-        pub value: Option<CheckedExpr>,
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct CheckedStruct {
-        pub public: bool,
-        pub name: String,
-        pub members: Vec<CheckedMemVar>,
-        pub functions: Vec<CheckedFn>,
-    }
-
-    #[derive(Debug, Clone)]
     pub enum CheckedUserType {
-        Struct(CheckedStruct),
-        Union {
-            tag: Option<String>,
-            base: CheckedStruct,
-        },
-        Interface {
-            public: bool,
-            name: String,
-            type_params: Vec<String>,
-            impls: Vec<String>,
-            functions: Vec<CheckedPrototype>,
-        },
-        Enum {
-            public: bool,
-            name: String,
-            impls: Vec<String>,
-            variants: Vec<(String, Option<CheckedExpr>)>,
-            functions: Vec<CheckedFn>,
-        },
+        Struct(StructId),
     }
 
     #[derive(Debug, Default, Clone)]
@@ -186,7 +121,7 @@ pub mod stmt {
             mutable: bool,
             value: Result<CheckedExpr, TypeId>,
         },
-        Fn(CheckedFn),
+        Fn(FunctionId),
         UserType(CheckedUserType),
         Static {
             public: bool,

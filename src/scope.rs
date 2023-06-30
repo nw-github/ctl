@@ -3,13 +3,16 @@ use std::{
     ops::{Index, IndexMut},
 };
 
-use crate::{typecheck::TypeId, checked_ast::expr::CheckedExpr};
+use crate::{
+    checked_ast::{expr::CheckedExpr, Block},
+    typecheck::TypeId,
+};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ScopeId(usize);
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct FunctionId(ScopeId, usize);
+pub struct FunctionId(pub ScopeId, pub usize);
 
 impl FunctionId {
     pub fn scope(&self) -> ScopeId {
@@ -36,6 +39,26 @@ pub enum ScopeKind {
     Module,
 }
 
+#[derive(Debug, Clone)]
+pub struct CheckedParam {
+    pub mutable: bool,
+    pub keyword: bool,
+    pub name: String,
+    pub ty: TypeId,
+    pub default: Option<CheckedExpr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedPrototype {
+    pub public: bool,
+    pub name: String,
+    pub is_async: bool,
+    pub is_extern: bool,
+    pub type_params: Vec<String>,
+    pub params: Vec<CheckedParam>,
+    pub ret: TypeId,
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct Variable {
     pub ty: TypeId,
@@ -43,20 +66,11 @@ pub struct Variable {
     pub mutable: bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct Param {
-    pub name: String,
-    pub ty: TypeId,
-    pub kw: bool,
-    pub default: Option<CheckedExpr>,
-}
-
 #[derive(Debug)]
 pub struct Function {
-    pub name: String,
-    pub params: Vec<Param>,
-    pub ret: TypeId,
-    pub inst: Option<StructId>,
+    pub proto: CheckedPrototype,
+    pub body: Option<Block>,
+    pub inst: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -66,16 +80,15 @@ pub struct Member {
 }
 
 #[derive(Debug)]
-pub struct DefinedStruct {
-    pub name: String,
+pub struct StructDef {
     pub members: HashMap<String, Member>,
     pub scope: ScopeId,
 }
 
 #[derive(Debug)]
-pub enum Struct {
-    Declared(String),
-    Defined(DefinedStruct),
+pub struct Struct {
+    pub name: String,
+    pub def: Option<StructDef>,
 }
 
 #[derive(Default, Debug)]
@@ -83,19 +96,15 @@ pub struct Scope {
     pub kind: ScopeKind,
     parent: Option<ScopeId>,
     vars: HashMap<String, Variable>,
-    fns: Vec<Function>,
+    pub fns: Vec<Function>,
     types: Vec<Struct>,
     name: Option<String>,
 }
 
 impl Scope {
     pub fn find_fn(&self, name: &str) -> Option<&Function> {
-        self.fns.iter().find(|f| f.name == name)
+        self.fns.iter().find(|f| f.proto.name == name)
     }
-
-    pub fn insert_fn(&mut self,f: Function) {
-        self.fns.push(f);
-    } 
 }
 
 pub struct Scopes {
@@ -154,11 +163,7 @@ impl Scopes {
 
     pub fn find_struct(&self, target: &str) -> Option<StructId> {
         for (id, scope) in self.iter() {
-            if let Some(index) = scope.types.iter().enumerate().find_map(|(i, s)| match s {
-                Struct::Defined(d) if d.name == target => Some(i),
-                Struct::Declared(name) if name == target => Some(i),
-                _ => None,
-            }) {
+            if let Some(index) = scope.types.iter().position(|s| s.name == target) {
                 return Some(StructId(id, index));
             }
 
@@ -186,7 +191,7 @@ impl Scopes {
 
     pub fn find_fn(&self, name: &str) -> Option<FunctionId> {
         for (id, scope) in self.iter() {
-            if let Some(var) = scope.fns.iter().position(|f| f.name == name) {
+            if let Some(var) = scope.fns.iter().position(|f| f.proto.name == name) {
                 return Some(FunctionId(id, var));
             }
 
@@ -248,15 +253,13 @@ impl Scopes {
     }
 
     pub fn current_struct(&self) -> Option<TypeId> {
-        self
-            .iter()
-            .find_map(|(_, scope)| {
-                if let ScopeKind::Struct(id) = &scope.kind {
-                    Some(TypeId::Struct((*id).into()))
-                } else {
-                    None
-                }
-            })
+        self.iter().find_map(|(_, scope)| {
+            if let ScopeKind::Struct(id) = &scope.kind {
+                Some(TypeId::Struct((*id).into()))
+            } else {
+                None
+            }
+        })
     }
 }
 

@@ -375,7 +375,7 @@ fn print_prototype(
     println!("{plus_1}Return Type: {ret:?}");
 }
 
-fn print_fn(Fn { header, body }: &Fn, indent: usize) {
+fn print_fn(Fn { proto: header, body }: &Fn, indent: usize) {
     print_prototype(header, indent);
     println!("{}Body: ", INDENT.repeat(indent));
     print_stmts(body, indent + 1);

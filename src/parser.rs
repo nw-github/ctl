@@ -289,7 +289,7 @@ impl<'a> Parser<'a> {
                 let lcurly = this.expect_kind(Token::LCurly, "expected '{'")?;
                 let (body, _) = this.parse_block(lcurly.span)?;
 
-                functions.push(Fn { header, body });
+                functions.push(Fn { proto: header, body });
             } else {
                 let (name, ty) = this.parse_var_name()?;
                 let ty = match ty {
@@ -431,7 +431,7 @@ impl<'a> Parser<'a> {
                     let semi = self.expect_kind(Token::Semicolon, "expected ';'")?;
                     Ok(L::new(
                         Stmt::Fn(Fn {
-                            header,
+                            proto: header,
                             body: Vec::new(),
                         }),
                         Span::combine(public.map_or(span, |p| p.span), semi.span),
@@ -441,7 +441,7 @@ impl<'a> Parser<'a> {
                     let (body, body_span) = self.parse_block(lcurly.span)?;
 
                     Ok(L::new(
-                        Stmt::Fn(Fn { header, body }),
+                        Stmt::Fn(Fn { proto: header, body }),
                         Span::combine(public.map_or(span, |p| p.span), body_span),
                     ))
                 }
@@ -523,12 +523,12 @@ impl<'a> Parser<'a> {
                         let (header, _) = header?;
                         let lcurly = this.expect_kind(Token::LCurly, "expected '{'")?;
                         let (body, _) = this.parse_block(lcurly.span)?;
-                        functions.push(Fn { header, body });
+                        functions.push(Fn { proto: header, body });
                     } else if let Some(header) = this.try_prototype(false, true) {
                         let (header, _) = header?;
                         let lcurly = this.expect_kind(Token::LCurly, "expected '{'")?;
                         let (body, _) = this.parse_block(lcurly.span)?;
-                        functions.push(Fn { header, body });
+                        functions.push(Fn { proto: header, body });
                     } else {
                         variants.push((
                             this.expect_id("expected variant name")?.into(),

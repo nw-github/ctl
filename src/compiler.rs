@@ -2,10 +2,10 @@ use crate::{
     ast::expr::UnaryOp,
     checked_ast::{
         expr::{CheckedExpr, ExprData},
-        stmt::{CheckedPrototype, CheckedStmt, CheckedStruct, CheckedUserType},
+        stmt::{CheckedStmt, CheckedUserType},
         Block,
     },
-    scope::{Scopes, Struct},
+    scope::{Scopes, Struct, StructDef, CheckedPrototype, FunctionId, Function},
     typecheck::{CheckedAst, TypeId},
 };
 
@@ -19,7 +19,6 @@ pub struct BlockInfo {
 
 pub struct Compiler {
     buffer: String,
-    scopes: Scopes,
     current_block: Option<BlockInfo>,
     block_number: usize,
     current_path: String,
@@ -29,14 +28,13 @@ impl Compiler {
     pub fn compile(mut ast: CheckedAst) -> String {
         let mut this = Self {
             buffer: String::new(),
-            scopes: ast.scopes,
             current_block: None,
             block_number: 0,
             current_path: String::new(),
         };
         this.emit(include_str!("../runtime/ctl.h"));
         this.emit("\n\n");
-        this.compile_stmt(&mut ast.stmt);
+        this.compile_stmt(&mut ast.scopes, &mut ast.stmt);
         this.emit(format!(
             "
 int main(int argc, char **argv) {{
@@ -53,11 +51,11 @@ int main(int argc, char **argv) {{
         this.buffer
     }
 
-    fn compile_stmt(&mut self, stmt: &mut CheckedStmt) {
+    fn compile_stmt(&mut self, scopes: &mut Scopes, stmt: &mut CheckedStmt) {
         match stmt {
             CheckedStmt::Expr(expr) => {
-                self.hoist_blocks(expr);
-                self.compile_expr(expr);
+                self.hoist_blocks(scopes, expr);
+                self.compile_expr(scopes, expr);
                 self.emit(";");
             }
             CheckedStmt::Let {
@@ -67,17 +65,16 @@ int main(int argc, char **argv) {{
             } => {
                 match value {
                     Ok(value) => {
-                        self.hoist_blocks(value);
-
-                        self.emit_type(&value.ty);
+                        self.hoist_blocks(scopes, value);
+                        self.emit_type(scopes, &value.ty);
                         if !*mutable {
                             self.emit(" const ");
                         }
                         self.emit(format!(" {name} = "));
-                        self.compile_expr(value);
+                        self.compile_expr(scopes, value);
                     }
                     Err(ty) => {
-                        self.emit_type(ty);
+                        self.emit_type(scopes, ty);
                         if !*mutable {
                             self.emit("const ");
                         }
@@ -87,24 +84,30 @@ int main(int argc, char **argv) {{
                 }
                 self.emit(";");
             }
-            CheckedStmt::Fn(f) => {
-                self.emit_prototype(&f.header);
-                self.add_to_path(&f.header.name);
-                self.emit_block(&mut f.body);
-                self.remove_from_path(&f.header.name);
+            CheckedStmt::Fn(id) => {
+                self.emit_prototype(scopes, id);
+                self.add_to_path(&scopes[&*id].proto.name);
+                // FIXME: this clone hack
+                self.emit_block(scopes, &mut scopes[&*id].body.clone().unwrap());
+                self.remove_from_path(&scopes[&*id].proto.name);
             }
             CheckedStmt::UserType(data) => match data {
-                CheckedUserType::Struct(CheckedStruct {
-                    public: _,
-                    name,
-                    members,
-                    functions,
-                }) => {
+                CheckedUserType::Struct(id) => {
+                    let Struct { 
+                        name, 
+                        def: Some(StructDef {
+                            members,
+                            scope
+                        }) 
+                    } = &scopes[&*id] else {
+                        unreachable!()
+                    };
+
                     self.emit(format!("struct {}{name} {{", self.current_path));
                     self.add_to_path(name);
-                    for member in members.iter() {
-                        self.emit_type(&member.ty);
-                        self.emit(format!(" {}", member.name));
+                    for (name, member) in members.iter() {
+                        self.emit_type(scopes, &member.ty);
+                        self.emit(format!(" {}", name));
                         self.emit(";");
                         if !member.public {
                             self.emit("/* private */ \n")
@@ -113,17 +116,20 @@ int main(int argc, char **argv) {{
 
                     self.emit("};");
 
-                    for f in functions.iter_mut() {
-                        self.emit_prototype(&f.header);
-                        self.add_to_path(&f.header.name);
-                        self.emit_block(&mut f.body);
-                        self.remove_from_path(&f.header.name);
+                    let name = name.clone();
+                    for i in 0..scopes[*scope].fns.len() {
+                        let id = &FunctionId(id.scope(), i);
+                        if scopes[id].inst {
+                            continue;
+                        }
+
+                        self.emit_prototype(scopes, id);
+                        self.add_to_path(&scopes[id].proto.name);
+                        self.emit_block(scopes, &mut scopes[id].body.clone().unwrap());
+                        self.remove_from_path(&scopes[id].proto.name);
                     }
-                    self.remove_from_path(name);
+                    self.remove_from_path(&name);
                 }
-                CheckedUserType::Union { .. } => todo!(),
-                CheckedUserType::Interface { .. } => todo!(),
-                CheckedUserType::Enum { .. } => todo!(),
             },
             CheckedStmt::Static {
                 public: _,
@@ -131,17 +137,17 @@ int main(int argc, char **argv) {{
                 value,
             } => {
                 self.emit("static ");
-                self.emit_type(&value.ty);
+                self.emit_type(scopes, &value.ty);
                 self.emit(format!(" const {}{name} = ", self.current_path));
                 // FIXME: blocks in statics...
-                self.hoist_blocks(value);
-                self.compile_expr(value);
+                self.hoist_blocks(scopes, value);
+                self.compile_expr(scopes, value);
                 self.emit(";");
             }
             CheckedStmt::Module { name, body } => {
                 self.add_to_path(name);
                 for stmt in body.body.iter_mut() {
-                    self.compile_stmt(stmt);
+                    self.compile_stmt(scopes, stmt);
                 }
                 self.remove_from_path(name);
             }
@@ -151,47 +157,47 @@ int main(int argc, char **argv) {{
         }
     }
 
-    fn compile_expr(&mut self, expr: &CheckedExpr) {
+    fn compile_expr(&mut self, scopes: &mut Scopes, expr: &CheckedExpr) {
         match &expr.data {
             ExprData::Binary { op, left, right } => {
                 self.emit("(");
-                self.compile_expr(left);
+                self.compile_expr(scopes, left);
                 self.emit(format!(" {op} "));
-                self.compile_expr(right);
+                self.compile_expr(scopes, right);
                 self.emit(")");
             }
             ExprData::Unary { op, expr } => match op {
                 UnaryOp::Plus => {
                     self.emit("+");
-                    self.compile_expr(expr);
+                    self.compile_expr(scopes, expr);
                 }
                 UnaryOp::Neg => {
                     self.emit("-");
-                    self.compile_expr(expr);
+                    self.compile_expr(scopes, expr);
                 }
                 UnaryOp::PostIncrement => {
-                    self.compile_expr(expr);
+                    self.compile_expr(scopes, expr);
                     self.emit("++");
                 }
                 UnaryOp::PostDecrement => {
-                    self.compile_expr(expr);
+                    self.compile_expr(scopes, expr);
                     self.emit("--");
                 }
                 UnaryOp::PreIncrement => {
                     self.emit("++");
-                    self.compile_expr(expr);
+                    self.compile_expr(scopes, expr);
                 }
                 UnaryOp::PreDecrement => {
                     self.emit("--");
-                    self.compile_expr(expr);
+                    self.compile_expr(scopes, expr);
                 }
                 UnaryOp::Not => {
                     if expr.ty.is_numeric() {
                         self.emit("~");
-                        self.compile_expr(expr);
+                        self.compile_expr(scopes, expr);
                     } else {
                         self.emit("!");
-                        self.compile_expr(expr);
+                        self.compile_expr(scopes, expr);
                     }
                 }
                 UnaryOp::Deref => todo!(),
@@ -202,14 +208,14 @@ int main(int argc, char **argv) {{
                 UnaryOp::Sizeof => todo!(),
             },
             ExprData::Call { callee, args } => {
-                self.compile_expr(callee);
+                self.compile_expr(scopes, callee);
                 self.emit("(");
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         self.emit(", ");
                     }
 
-                    self.compile_expr(arg);
+                    self.compile_expr(scopes, arg);
                 }
                 self.emit(")");
             }
@@ -220,9 +226,14 @@ int main(int argc, char **argv) {{
                 args,
             } => {
                 let TypeId::Struct(id) = ty else { unreachable!() };
-                let Struct::Defined(d) = &self.scopes[id.as_ref()] else { unreachable!() };
+                let Struct { 
+                    name, def: Some(StructDef { 
+                        members, 
+                        scope 
+                    }) 
+                } = &scopes[id.as_ref()] else { unreachable!() };
 
-                self.emit(self.scopes.scope_full_name(d.scope));
+                self.emit(scopes.scope_full_name(*scope));
                 self.emit(format!("_{member}"));
                 self.emit("(");
 
@@ -240,11 +251,11 @@ int main(int argc, char **argv) {{
                     }
                 }
 
-                self.compile_expr(source);
+                self.compile_expr(scopes, source);
 
                 for arg in args {
                     self.emit(", ");
-                    self.compile_expr(arg);
+                    self.compile_expr(scopes, arg);
                 }
                 self.emit(")");
             }
@@ -265,18 +276,18 @@ int main(int argc, char **argv) {{
             ExprData::String(_) => todo!(),
             ExprData::Symbol { scope, symbol } => {
                 if let Some(scope) = scope {
-                    self.emit(self.scopes.scope_full_name(*scope));
+                    self.emit(scopes.scope_full_name(*scope));
                     self.emit("_");
                 }
                 self.emit(symbol);
             }
             ExprData::Instance { members } => {
                 self.emit("(");
-                self.emit_type(&expr.ty);
+                self.emit_type(scopes, &expr.ty);
                 self.emit("){");
                 for (name, value) in members {
                     self.emit(format!(".{name} = "));
-                    self.compile_expr(value);
+                    self.compile_expr(scopes, value);
                     self.emit(", ");
                 }
                 self.emit("}");
@@ -287,13 +298,13 @@ int main(int argc, char **argv) {{
                 binary,
                 value,
             } => {
-                self.compile_expr(target);
+                self.compile_expr(scopes, target);
                 if let Some(binary) = binary {
                     self.emit(format!(" {binary}= "));
                 } else {
                     self.emit(" = ");
                 }
-                self.compile_expr(value);
+                self.compile_expr(scopes, value);
             }
             ExprData::Block(_) => panic!("ICE: ExprData::Block in compile_expr"),
             ExprData::If { .. } => todo!(),
@@ -306,7 +317,7 @@ int main(int argc, char **argv) {{
                     self.emit("*");
                     ty = inner;
                 }
-                self.compile_expr(source);
+                self.compile_expr(scopes, source);
                 self.emit(format!(").{member}"));
             }
             ExprData::Subscript { .. } => todo!(),
@@ -314,7 +325,7 @@ int main(int argc, char **argv) {{
                 // TODO: when return is used as anything except a StmtExpr, we will have to change
                 // the generated code to accomodate it
                 self.emit("return ");
-                self.compile_expr(expr);
+                self.compile_expr(scopes, expr);
             }
             ExprData::Yield(expr) => {
                 let Some(block) = &self.current_block else {
@@ -325,11 +336,10 @@ int main(int argc, char **argv) {{
                 let goto = format!("; goto {}", block.label);
 
                 self.emit(assign);
-                self.compile_expr(expr);
+                self.compile_expr(scopes, expr);
                 self.emit(goto);
             }
             ExprData::Break(_) => todo!(),
-            ExprData::Range { .. } => todo!(),
             ExprData::Continue => todo!(),
             ExprData::Error => {
                 panic!("ICE: ExprData::Error in compile_expr");
@@ -337,14 +347,14 @@ int main(int argc, char **argv) {{
         }
     }
 
-    fn hoist_blocks(&mut self, expr: &mut CheckedExpr) {
+    fn hoist_blocks(&mut self, scopes: &mut Scopes, expr: &mut CheckedExpr) {
         match &mut expr.data {
             ExprData::Binary { op: _, left, right } => {
-                self.hoist_blocks(left);
-                self.hoist_blocks(right);
+                self.hoist_blocks(scopes, left);
+                self.hoist_blocks(scopes, right);
             }
             ExprData::Unary { op: _, expr } => {
-                self.hoist_blocks(expr);
+                self.hoist_blocks(scopes, expr);
             }
             ExprData::Call { callee, args }
             | ExprData::Subscript { callee, args }
@@ -353,34 +363,34 @@ int main(int argc, char **argv) {{
                 args,
                 ..
             } => {
-                self.hoist_blocks(&mut *callee);
+                self.hoist_blocks(scopes, &mut *callee);
                 for arg in args.iter_mut() {
-                    self.hoist_blocks(arg);
+                    self.hoist_blocks(scopes, arg);
                 }
             }
             ExprData::Array(args) => {
                 for arg in args.iter_mut() {
-                    self.hoist_blocks(arg);
+                    self.hoist_blocks(scopes, arg);
                 }
             }
             ExprData::ArrayWithInit { init, count: _ } => {
-                self.hoist_blocks(init);
-                //self.hoist_blocks(count);
+                self.hoist_blocks(scopes, init);
+                //self.hoist_blocks(scopes, count);
             }
             ExprData::Tuple(args) => {
                 for arg in args.iter_mut() {
-                    self.hoist_blocks(arg);
+                    self.hoist_blocks(scopes, arg);
                 }
             }
             ExprData::Map(args) => {
                 for (key, value) in args.iter_mut() {
-                    self.hoist_blocks(key);
-                    self.hoist_blocks(value);
+                    self.hoist_blocks(scopes, key);
+                    self.hoist_blocks(scopes, value);
                 }
             }
             ExprData::Instance { members, .. } => {
                 for (_, value) in members.iter_mut() {
-                    self.hoist_blocks(value);
+                    self.hoist_blocks(scopes, value);
                 }
             }
             ExprData::Assign {
@@ -388,11 +398,11 @@ int main(int argc, char **argv) {{
                 binary: _,
                 value,
             } => {
-                self.hoist_blocks(target);
-                self.hoist_blocks(value);
+                self.hoist_blocks(scopes, target);
+                self.hoist_blocks(scopes, value);
             }
             ExprData::If { cond, .. } => {
-                self.hoist_blocks(cond);
+                self.hoist_blocks(scopes, cond);
             }
             ExprData::Loop { .. } => {
                 /*
@@ -413,26 +423,13 @@ int main(int argc, char **argv) {{
                 iter,
                 body: _,
             } => {
-                self.hoist_blocks(iter);
+                self.hoist_blocks(scopes, iter);
             }
             ExprData::Member { source, member: _ } => {
-                self.hoist_blocks(source);
+                self.hoist_blocks(scopes, source);
             }
             ExprData::Return(expr) | ExprData::Yield(expr) | ExprData::Break(expr) => {
-                self.hoist_blocks(expr)
-            }
-            ExprData::Range {
-                start,
-                end,
-                inclusive: _,
-            } => {
-                if let Some(start) = start {
-                    self.hoist_blocks(start);
-                }
-
-                if let Some(end) = end {
-                    self.hoist_blocks(end);
-                }
+                self.hoist_blocks(scopes, expr)
             }
             ExprData::Block(block) => {
                 let variable = format!("$ctl_block{}", self.block_number);
@@ -443,9 +440,9 @@ int main(int argc, char **argv) {{
                 });
                 self.block_number += 1;
 
-                self.emit_type(&expr.ty);
+                self.emit_type(scopes, &expr.ty);
                 self.emit(format!(" {variable};"));
-                self.emit_block(block);
+                self.emit_block(scopes, block);
                 self.emit(format!("{label}:\n"));
                 self.current_block = old_block;
 
@@ -462,7 +459,7 @@ int main(int argc, char **argv) {{
         self.buffer.push_str(source.as_ref());
     }
 
-    fn emit_type(&mut self, id: &TypeId) {
+    fn emit_type(&mut self, scopes: &Scopes, id: &TypeId) {
         match id {
             TypeId::Void => self.emit(format!("{RT_PREFIX}void")),
             TypeId::Never => todo!(),
@@ -478,21 +475,23 @@ int main(int argc, char **argv) {{
                 panic!("ICE: Int/FloatGeneric in emit_type");
             }
             TypeId::Ref(inner) => {
-                self.emit_type(inner);
+                self.emit_type(scopes, inner);
                 self.emit(" const*");
             }
             TypeId::RefMut(inner) => {
-                self.emit_type(inner);
+                self.emit_type(scopes, inner);
                 self.emit(" *");
             }
             TypeId::Option(inner) => {
                 self.emit(format!("{RT_PREFIX}option_"));
-                self.emit_type(inner);
+                self.emit_type(scopes, inner);
             }
             TypeId::Function(_) => todo!(),
             TypeId::Struct(id) => {
-                let Struct::Defined(d) = &self.scopes[id.as_ref()] else { unreachable!() };
-                self.emit(format!("struct {}", self.scopes.scope_full_name(d.scope)));
+                self.emit(format!(
+                    "struct {}", 
+                    scopes.scope_full_name(scopes[id.as_ref()].def.as_ref().unwrap().scope)
+                ));
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
@@ -501,7 +500,10 @@ int main(int argc, char **argv) {{
 
     fn emit_prototype(
         &mut self,
-        CheckedPrototype {
+        scopes: &Scopes,
+        id: &FunctionId,
+    ) {
+        let Function { proto: CheckedPrototype {
             public: _,
             name,
             is_async: _,
@@ -509,9 +511,9 @@ int main(int argc, char **argv) {{
             type_params: _,
             params,
             ret,
-        }: &CheckedPrototype,
-    ) {
-        self.emit_type(ret);
+        }, .. } = &scopes[id];
+
+        self.emit_type(scopes, ret);
         if name == "main" {
             self.emit(format!(" {MAIN_NAME}("));
         } else {
@@ -523,7 +525,7 @@ int main(int argc, char **argv) {{
                 self.emit(", ");
             }
 
-            self.emit_type(&param.ty);
+            self.emit_type(scopes, &param.ty);
             if !param.mutable {
                 self.emit(" const");
             }
@@ -533,10 +535,10 @@ int main(int argc, char **argv) {{
         self.emit(")");
     }
 
-    fn emit_block(&mut self, block: &mut Block) {
+    fn emit_block(&mut self, scopes: &mut Scopes, block: &mut Block) {
         self.emit("{");
         for stmt in block.body.iter_mut() {
-            self.compile_stmt(stmt);
+            self.compile_stmt(scopes, stmt);
         }
         self.emit("}");
     }
