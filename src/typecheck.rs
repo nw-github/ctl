@@ -181,7 +181,7 @@ impl TypeChecker {
                                     },
                                 );
 
-                                let value = if let Some(value) = member.value {
+                                let value = if let Some(value) = member.default {
                                     let span = value.span;
                                     let expr = self.check_expr(scopes, value, Some(&target));
                                     type_check!(self, scopes, &expr.ty, &target, span);
@@ -213,6 +213,7 @@ impl TypeChecker {
                                         ty: member.ty.clone(),
                                         name: member.name.clone(),
                                         kw: true,
+                                        default: member.value.clone(),
                                     })
                                     .collect(),
                                 ret: TypeId::Struct(self_id.into()),
@@ -1074,11 +1075,15 @@ impl TypeChecker {
             type_params,
             params: params
                 .into_iter()
-                .map(|param| CheckedParam {
-                    mutable: param.mutable,
-                    keyword: param.keyword,
-                    name: param.name,
-                    ty: self.resolve_type(scopes, &param.ty),
+                .map(|param| {
+                    let ty = self.resolve_type(scopes, &param.ty);
+                    CheckedParam {
+                        mutable: param.mutable,
+                        keyword: param.keyword,
+                        name: param.name,
+                        default: param.default.map(|expr| self.check_expr(scopes, expr, Some(&ty))),
+                        ty,
+                    }
                 })
                 .collect(),
             ret: self.resolve_type(scopes, &ret),
@@ -1093,6 +1098,7 @@ impl TypeChecker {
                     name: param.name.clone(),
                     ty: param.ty.clone(),
                     kw: param.keyword,
+                    default: param.default.clone(),
                 })
                 .collect(),
             ret: header.ret.clone(),
@@ -1131,19 +1137,6 @@ impl TypeChecker {
         params: &[Param],
         span: Span,
     ) -> HashMap<String, CheckedExpr> {
-        if params.len() != args.len() {
-            self.error::<()>(Error::new(
-                format!(
-                    "expected {} argument(s), found {}",
-                    params.len(),
-                    args.len()
-                ),
-                span,
-            ));
-
-            return HashMap::new();
-        }
-
         let mut result = HashMap::with_capacity(args.len());
         let mut last_pos = 0;
         for (name, expr) in args {
@@ -1190,6 +1183,24 @@ impl TypeChecker {
                 self.error::<()>(Error::new("too many positional arguments", expr.span));
             }
         }
+
+        for param in params.iter().filter(|p| !result.contains_key(&p.name)).collect::<Vec<_>>() {
+            if let Some(default) = &param.default {
+                result.insert(param.name.clone(), default.clone());
+            }
+        }
+
+        if params.len() != result.len() {
+            self.error::<()>(Error::new(
+                format!(
+                    "expected {} argument(s), found {}",
+                    params.len(),
+                    result.len()
+                ),
+                span,
+            ));
+        }
+
 
         result
     }

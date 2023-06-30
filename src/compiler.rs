@@ -9,8 +9,8 @@ use crate::{
     typecheck::{CheckedAst, TypeId},
 };
 
-const RT_PREFIX: &str = "$CTL_RUNTIME_";
-const MAIN_NAME: &str = "$CTL_PROGRAM_MAIN";
+const RT_PREFIX: &str = "CTL_RUNTIME_";
+const MAIN_NAME: &str = "CTL_PROGRAM_MAIN";
 
 pub struct BlockInfo {
     variable: String,
@@ -34,7 +34,7 @@ impl Compiler {
             block_number: 0,
             current_path: String::new(),
         };
-        this.emit("#include <ctl/runtime.h>\n\n");
+        this.emit("#include <runtime/ctl.h>\n\n");
         this.compile_stmt(&mut ast.stmt);
         this.emit(format!(
             "

@@ -2,7 +2,7 @@ use crate::scope::ScopeId;
 
 use self::stmt::CheckedStmt;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block {
     pub body: Vec<CheckedStmt>,
     pub scope: ScopeId,
@@ -18,7 +18,7 @@ pub mod expr {
 
     use super::{Block, ScopeId};
 
-    #[derive(Default, Debug)]
+    #[derive(Default, Debug, Clone)]
     pub enum ExprData {
         Binary {
             op: BinaryOp,
@@ -101,7 +101,7 @@ pub mod expr {
         Error,
     }
 
-    #[derive(Debug, Default, derive_more::Constructor)]
+    #[derive(Debug, Default, Clone, derive_more::Constructor)]
     pub struct CheckedExpr {
         pub ty: TypeId,
         pub data: ExprData,
@@ -113,15 +113,16 @@ pub mod stmt {
 
     use super::{expr::CheckedExpr, Block};
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct CheckedParam {
         pub mutable: bool,
         pub keyword: bool,
         pub name: String,
         pub ty: TypeId,
+        pub default: Option<CheckedExpr>,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct CheckedFnDecl {
         pub public: bool,
         pub name: String,
@@ -132,13 +133,13 @@ pub mod stmt {
         pub ret: TypeId,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct CheckedFn {
         pub header: CheckedFnDecl,
         pub body: Block,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct CheckedMemVar {
         pub public: bool,
         pub name: String,
@@ -146,7 +147,7 @@ pub mod stmt {
         pub value: Option<CheckedExpr>,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct CheckedStruct {
         pub public: bool,
         pub name: String,
@@ -154,7 +155,7 @@ pub mod stmt {
         pub functions: Vec<CheckedFn>,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub enum CheckedUserType {
         Struct(CheckedStruct),
         Union {
@@ -177,7 +178,7 @@ pub mod stmt {
         },
     }
 
-    #[derive(Debug, Default)]
+    #[derive(Debug, Default, Clone)]
     pub enum CheckedStmt {
         Expr(CheckedExpr),
         Let {

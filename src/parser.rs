@@ -296,7 +296,7 @@ impl<'a> Parser<'a> {
                 };
                 this.expect_kind(Token::Comma, "expected ','")?;
 
-                members.push((name, stmt::MemVar { public, ty, value }));
+                members.push((name, stmt::MemVar { public, ty, default: value }));
             }
 
             Ok(())
@@ -337,6 +337,7 @@ impl<'a> Parser<'a> {
 
                 let keyword = this.advance_if_kind(Token::Keyword).is_some();
                 let mutable = this.advance_if_kind(Token::Mut).is_some();
+                let mut has_default = false;
                 if allow_method && count == 1 && this.advance_if_kind(Token::This).is_some() {
                     Ok(Param {
                         mutable: false,
@@ -347,15 +348,29 @@ impl<'a> Parser<'a> {
                         } else {
                             TypeHint::This
                         },
+                        default: None,
                     })
                 } else {
                     let name = this.expect_id("expected name")?.into();
                     this.expect_kind(Token::Colon, "expected type")?;
+                    let ty = this.parse_type()?;
+                    let default = if this.advance_if_kind(Token::Assign).is_some() {
+                        has_default = true;
+                        Some(this.expression()?)
+                    } else {
+                        if !keyword && has_default {
+                            todo!("positional parameters must not follow a default parameter")
+                        }
+
+                        None
+                    };
+
                     Ok(Param {
                         mutable,
                         keyword,
                         name,
-                        ty: this.parse_type()?,
+                        ty,
+                        default,
                     })
                 }
             })?

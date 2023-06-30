@@ -3,7 +3,7 @@ use std::{
     ops::{Index, IndexMut},
 };
 
-use crate::typecheck::TypeId;
+use crate::{typecheck::TypeId, checked_ast::expr::CheckedExpr};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ScopeId(usize);
@@ -48,6 +48,7 @@ pub struct Param {
     pub name: String,
     pub ty: TypeId,
     pub kw: bool,
+    pub default: Option<CheckedExpr>,
 }
 
 #[derive(Debug)]
