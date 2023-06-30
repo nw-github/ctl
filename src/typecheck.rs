@@ -815,7 +815,10 @@ impl TypeChecker {
                         yield 10;
                     };
                 */
+                let cond_span = cond.span;
                 let cond = self.check_expr(scopes, *cond, Some(&TypeId::Bool));
+                type_check!(self, scopes, &cond.ty, &TypeId::Bool, cond_span);
+
                 let if_branch = self.check_expr(scopes, *if_branch, None);
                 let mut out_type = if_branch.ty.clone();
                 let else_branch = if let Some(e) = else_branch {
@@ -859,7 +862,10 @@ impl TypeChecker {
                         }
                     };
                 */
+                let span = cond.span; 
                 let cond = self.check_expr(scopes, *cond, Some(&TypeId::Bool));
+                type_check!(self, scopes, &cond.ty, &TypeId::Bool, span);
+
                 let body = self.create_block(
                     scopes,
                     None,
