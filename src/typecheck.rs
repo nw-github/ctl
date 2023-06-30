@@ -643,6 +643,7 @@ impl TypeChecker {
             }
             Expr::Tuple(_) => todo!(),
             Expr::Map(_) => todo!(),
+            Expr::Range { .. } => todo!(),
             Expr::String(s) => CheckedExpr::new(TypeId::String, ExprData::String(s)),
             Expr::None => {
                 if let Some(TypeId::Option(target)) = target {
@@ -651,7 +652,6 @@ impl TypeChecker {
                     self.error(Error::new("cannot infer type of option literal none", span))
                 }
             }
-            Expr::Range { .. } => todo!(),
             Expr::Void => CheckedExpr::new(
                 TypeId::Void,
                 ExprData::Instance {
@@ -665,17 +665,20 @@ impl TypeChecker {
             Expr::Integer(base, value) => {
                 // TODO: attempt to promote the literal if its too large for i32
                 let ty = target
+                    .map(|mut target| {
+                        while let TypeId::Option(ty) | TypeId::RefMut(ty) | TypeId::Ref(ty) = target
+                        {
+                            target = ty;
+                        }
+                        target
+                    })
                     .filter(|target| Self::coerces_to(&TypeId::IntGeneric, target))
                     .cloned()
                     .unwrap_or(TypeId::Int(32));
-                let mut tmp = &ty;
-                while let TypeId::Option(ty) = tmp {
-                    tmp = ty;
-                }
 
-                let (signed, bits) = match tmp {
-                    TypeId::Int(bits) => (true, *bits),
-                    TypeId::Uint(bits) => (false, *bits),
+                let (signed, bits) = match ty {
+                    TypeId::Int(bits) => (true, bits),
+                    TypeId::Uint(bits) => (false, bits),
                     TypeId::Isize => (true, std::mem::size_of::<isize>() as u8 * 8),
                     TypeId::Usize => (false, std::mem::size_of::<usize>() as u8 * 8),
                     _ => unreachable!(),
@@ -729,6 +732,13 @@ impl TypeChecker {
             }
             Expr::Float(value) => CheckedExpr::new(
                 target
+                    .map(|mut target| {
+                        while let TypeId::Option(ty) | TypeId::RefMut(ty) | TypeId::Ref(ty) = target
+                        {
+                            target = ty;
+                        }
+                        target
+                    })
                     .filter(|target| Self::coerces_to(&TypeId::FloatGeneric, target))
                     .cloned()
                     .unwrap_or(TypeId::F64),
@@ -862,7 +872,7 @@ impl TypeChecker {
                         }
                     };
                 */
-                let span = cond.span; 
+                let span = cond.span;
                 let cond = self.check_expr(scopes, *cond, Some(&TypeId::Bool));
                 type_check!(self, scopes, &cond.ty, &TypeId::Bool, span);
 
