@@ -102,7 +102,7 @@ impl TypeId {
                         | TypeId::F64
                         | TypeId::Bool
                         | TypeId::String
-                        | TypeId::Option(_) // TODO: option<T> should be comparable with T
+                        | TypeId::Option(_) // FIXME: option<T> should be comparable with T
                 )
             }
             BinaryOp::LogicalOr | BinaryOp::LogicalAnd => {
@@ -650,7 +650,7 @@ impl TypeChecker {
                         ))
                     })
                 } else {
-                    // TODO: attempt to promote the literal if its too large for i32
+                    // FIXME: attempt to promote the literal if its too large for i32
                     target
                         .map(|mut target| {
                             while let TypeId::Option(ty) | TypeId::RefMut(ty) | TypeId::Ref(ty) =
@@ -751,7 +751,6 @@ impl TypeChecker {
                 binary,
                 value,
             } => {
-                // TODO: check the binary ops, like += -= etc..
                 let span = lhs.span;
                 let lhs = self.check_expr(scopes, *lhs, None);
                 if !Self::is_assignable(scopes, &lhs) {
@@ -800,7 +799,7 @@ impl TypeChecker {
                 if_branch,
                 else_branch,
             } => {
-                /* TODO: fix type inference for cases like this:
+                /* FIXME: type inference for cases like this:
                     let foo = 5;
                     let x: ?i64 = if foo {
                         yield 10;
@@ -843,7 +842,7 @@ impl TypeChecker {
                 body,
                 do_while,
             } => {
-                /* TODO: fix type inference for cases like this:
+                /* FIXME: type inference for cases like this:
                     let a = 5;
                     let x: ?i64 = loop 10 < 2 {
                         if a != 2 {

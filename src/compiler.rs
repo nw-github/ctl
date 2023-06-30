@@ -313,9 +313,7 @@ impl Compiler {
                 self.compile_expr(scopes, expr);
             }
             ExprData::Yield(expr) => {
-                let Some(block) = &self.current_block else {
-                    panic!("ICE: compiling yield, but there is no hoisted block");
-                };
+                let Some(block) = &self.current_block else { unreachable!() };
 
                 let assign = format!("{} = ", block.variable);
                 let goto = format!("; goto {}", block.label);
