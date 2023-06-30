@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         expr::Expr,
-        stmt::{Fn, FnDecl, Stmt, Struct, UserType},
+        stmt::{Fn, Prototype, Stmt, Struct, UserType},
     },
     lexer::Located,
 };
@@ -76,7 +76,7 @@ pub fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
 
                 println!("{tabs}Functions:");
                 for f in functions {
-                    print_fn_decl(f, indent + 1);
+                    print_prototype(f, indent + 1);
                 }
             }
             UserType::Enum {
@@ -338,8 +338,8 @@ fn print_stmts(stmts: &[Located<Stmt>], indent: usize) {
     }
 }
 
-fn print_fn_decl(
-    FnDecl {
+fn print_prototype(
+    Prototype {
         name,
         is_async,
         is_extern,
@@ -347,7 +347,7 @@ fn print_fn_decl(
         params,
         ret,
         public,
-    }: &FnDecl,
+    }: &Prototype,
     indent: usize,
 ) {
     let tabs = INDENT.repeat(indent);
@@ -376,7 +376,7 @@ fn print_fn_decl(
 }
 
 fn print_fn(Fn { header, body }: &Fn, indent: usize) {
-    print_fn_decl(header, indent);
+    print_prototype(header, indent);
     println!("{}Body: ", INDENT.repeat(indent));
     print_stmts(body, indent + 1);
 }

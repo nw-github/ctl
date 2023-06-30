@@ -2,7 +2,7 @@ use crate::{
     ast::expr::UnaryOp,
     checked_ast::{
         expr::{CheckedExpr, ExprData},
-        stmt::{CheckedFnDecl, CheckedStmt, CheckedStruct, CheckedUserType},
+        stmt::{CheckedPrototype, CheckedStmt, CheckedStruct, CheckedUserType},
         Block,
     },
     scope::{Scopes, Struct},
@@ -88,7 +88,7 @@ int main(int argc, char **argv) {{
                 self.emit(";");
             }
             CheckedStmt::Fn(f) => {
-                self.emit_fn_decl(&f.header);
+                self.emit_prototype(&f.header);
                 self.add_to_path(&f.header.name);
                 self.emit_block(&mut f.body);
                 self.remove_from_path(&f.header.name);
@@ -114,7 +114,7 @@ int main(int argc, char **argv) {{
                     self.emit("};");
 
                     for f in functions.iter_mut() {
-                        self.emit_fn_decl(&f.header);
+                        self.emit_prototype(&f.header);
                         self.add_to_path(&f.header.name);
                         self.emit_block(&mut f.body);
                         self.remove_from_path(&f.header.name);
@@ -499,9 +499,9 @@ int main(int argc, char **argv) {{
         }
     }
 
-    fn emit_fn_decl(
+    fn emit_prototype(
         &mut self,
-        CheckedFnDecl {
+        CheckedPrototype {
             public: _,
             name,
             is_async: _,
@@ -509,7 +509,7 @@ int main(int argc, char **argv) {{
             type_params: _,
             params,
             ret,
-        }: &CheckedFnDecl,
+        }: &CheckedPrototype,
     ) {
         self.emit_type(ret);
         if name == "main" {

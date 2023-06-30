@@ -238,7 +238,7 @@ pub mod stmt {
     }
 
     #[derive(Debug)]
-    pub struct FnDecl {
+    pub struct Prototype {
         pub public: bool,
         pub name: String,
         pub is_async: bool,
@@ -250,7 +250,7 @@ pub mod stmt {
 
     #[derive(Debug)]
     pub struct Fn {
-        pub header: FnDecl,
+        pub header: Prototype,
         pub body: Vec<super::Stmt>,
     }
 
@@ -283,7 +283,7 @@ pub mod stmt {
             name: String,
             type_params: Vec<String>,
             impls: Vec<String>,
-            functions: Vec<FnDecl>,
+            functions: Vec<Prototype>,
         },
         Enum {
             public: bool,

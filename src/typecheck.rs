@@ -3,12 +3,12 @@ use std::collections::{hash_map::Entry, HashMap};
 use crate::{
     ast::{
         expr::{BinaryOp, Expr, UnaryOp},
-        stmt::{Fn, FnDecl, Stmt, TypeHint, UserType},
+        stmt::{Fn, Prototype, Stmt, TypeHint, UserType},
     },
     checked_ast::{
         expr::{CheckedExpr, ExprData},
         stmt::{
-            CheckedFn, CheckedFnDecl, CheckedMemVar, CheckedParam, CheckedStmt, CheckedStruct,
+            CheckedFn, CheckedPrototype, CheckedMemVar, CheckedParam, CheckedStmt, CheckedStruct,
             CheckedUserType,
         },
         Block,
@@ -1058,7 +1058,7 @@ impl TypeChecker {
         scopes: &mut Scopes,
         Fn {
             header:
-                FnDecl {
+                Prototype {
                     public,
                     name,
                     is_async,
@@ -1070,7 +1070,7 @@ impl TypeChecker {
             body,
         }: Fn,
     ) -> CheckedFn {
-        let header = CheckedFnDecl {
+        let header = CheckedPrototype {
             public,
             name: name.clone(),
             is_async,

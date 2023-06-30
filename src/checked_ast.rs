@@ -123,7 +123,7 @@ pub mod stmt {
     }
 
     #[derive(Debug, Clone)]
-    pub struct CheckedFnDecl {
+    pub struct CheckedPrototype {
         pub public: bool,
         pub name: String,
         pub is_async: bool,
@@ -135,7 +135,7 @@ pub mod stmt {
 
     #[derive(Debug, Clone)]
     pub struct CheckedFn {
-        pub header: CheckedFnDecl,
+        pub header: CheckedPrototype,
         pub body: Block,
     }
 
@@ -167,7 +167,7 @@ pub mod stmt {
             name: String,
             type_params: Vec<String>,
             impls: Vec<String>,
-            functions: Vec<CheckedFnDecl>,
+            functions: Vec<CheckedPrototype>,
         },
         Enum {
             public: bool,
