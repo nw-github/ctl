@@ -350,7 +350,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn identifier(&mut self, start: usize) -> Token<'a> {
-        self.advance_while(|ch| matches!(ch, '_' | 'a'..='z' | 'A'..='Z' | '0'..='9'));
+        self.advance_while(Self::is_identifier_char);
         match &self.src[start..self.loc.pos] {
             "let" => Token::Let,
             "mut" => Token::Mut,
@@ -389,6 +389,14 @@ impl<'a> Lexer<'a> {
             x if x == THIS_TYPE => Token::ThisType,
             id => Token::Ident(id),
         }
+    }
+
+    pub fn is_identifier_char(ch: char) -> bool {
+        matches!(ch, '_' | 'a'..='z' | 'A'..='Z' | '0'..='9')
+    }
+
+    pub fn is_identifier_first_char(ch: char) -> bool {
+        matches!(ch, '_' | 'a'..='z' | 'A'..='Z')
     }
 }
 
@@ -578,7 +586,7 @@ impl<'a> Iterator for Lexer<'a> {
                 Err(err) => return Some(Err(err)),
             },
             '0'..='9' => self.numeric_literal(start.pos),
-            '_' | 'a'..='z' | 'A'..='Z' => self.identifier(start.pos),
+            ch if Self::is_identifier_first_char(ch) => self.identifier(start.pos),
             _ => {
                 return Some(Err(Located::new(
                     Error::UnrecognizedChar,

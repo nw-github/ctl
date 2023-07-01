@@ -14,7 +14,7 @@ pub struct Path {
 impl Display for Path {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (i, (name, generics)) in self.data.iter().enumerate() {
-            if i > 0 {
+            if i > 0 || self.root {
                 write!(f, "::")?;
             }
 

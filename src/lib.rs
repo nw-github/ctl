@@ -10,7 +10,7 @@ mod typecheck;
 use std::path::PathBuf;
 
 use compiler::Compiler;
-use lexer::Span;
+use lexer::{Span, Lexer};
 use typecheck::CheckedAst;
 
 use crate::{ast::Stmt, parser::Parser, typecheck::TypeChecker};
@@ -68,7 +68,21 @@ impl<'a> Pipeline<Source<'a>> {
     }
 
     pub fn parse(self) -> Pipeline<Ast> {
-        let (ast, errors) = Parser::parse(self.state.0);
+        let module = self
+            .file
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .chars()
+            .enumerate()
+            .map(|(i, ch)| match (i, ch) {
+                (0, ch) if Lexer::is_identifier_first_char(ch) => ch,
+                (_, ch) if Lexer::is_identifier_char(ch) => ch,
+                _ => '_',
+            })
+            .collect();
+
+        let (ast, errors) = Parser::parse(self.state.0, module);
         Pipeline {
             errors,
             file: self.file,
@@ -98,7 +112,7 @@ impl Pipeline<Checked> {
         if self.errors.is_empty() {
             match Compiler::compile(self.state.0) {
                 Ok(str) => Ok(str),
-                Err(err) => Err(vec![err])
+                Err(err) => Err(vec![err]),
             }
         } else {
             Err(self.errors)

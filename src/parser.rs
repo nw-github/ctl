@@ -45,7 +45,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(src: &'a str) -> (L<Stmt>, Vec<Error>) {
+    pub fn parse(src: &'a str, module: String) -> (L<Stmt>, Vec<Error>) {
         let mut this = Self::new(src);
         let mut stmts = Vec::new();
         let mut errors = Vec::new();
@@ -63,7 +63,7 @@ impl<'a> Parser<'a> {
             L::new(
                 Stmt::Module {
                     public: true,
-                    name: "tmpname".into(),
+                    name: module,
                     body: stmts,
                 },
                 Span {
