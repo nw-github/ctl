@@ -3,7 +3,7 @@ use std::iter::Peekable;
 use crate::{
     ast::{
         expr::{Expr, UnaryOp},
-        stmt::{self, Fn, Prototype, Param, Stmt, TypeHint, UserType},
+        stmt::{self, Fn, Param, Prototype, Stmt, TypeHint, UserType},
     },
     lexer::{Lexer, Located as L, Location, Span, Token},
     Error, Result, THIS_PARAM, THIS_TYPE,
@@ -289,7 +289,10 @@ impl<'a> Parser<'a> {
                 let lcurly = this.expect_kind(Token::LCurly, "expected '{'")?;
                 let (body, _) = this.parse_block(lcurly.span)?;
 
-                functions.push(Fn { proto: header, body });
+                functions.push(Fn {
+                    proto: header,
+                    body,
+                });
             } else {
                 let (name, ty) = this.parse_var_name()?;
                 let ty = match ty {
@@ -441,7 +444,10 @@ impl<'a> Parser<'a> {
                     let (body, body_span) = self.parse_block(lcurly.span)?;
 
                     Ok(L::new(
-                        Stmt::Fn(Fn { proto: header, body }),
+                        Stmt::Fn(Fn {
+                            proto: header,
+                            body,
+                        }),
                         Span::combine(public.map_or(span, |p| p.span), body_span),
                     ))
                 }
@@ -523,12 +529,18 @@ impl<'a> Parser<'a> {
                         let (header, _) = header?;
                         let lcurly = this.expect_kind(Token::LCurly, "expected '{'")?;
                         let (body, _) = this.parse_block(lcurly.span)?;
-                        functions.push(Fn { proto: header, body });
+                        functions.push(Fn {
+                            proto: header,
+                            body,
+                        });
                     } else if let Some(header) = this.try_prototype(false, true) {
                         let (header, _) = header?;
                         let lcurly = this.expect_kind(Token::LCurly, "expected '{'")?;
                         let (body, _) = this.parse_block(lcurly.span)?;
-                        functions.push(Fn { proto: header, body });
+                        functions.push(Fn {
+                            proto: header,
+                            body,
+                        });
                     } else {
                         variants.push((
                             this.expect_id("expected variant name")?.into(),
@@ -892,9 +904,14 @@ impl<'a> Parser<'a> {
             Token::False => L::new(Expr::Bool(false), token.span),
             Token::True => L::new(Expr::Bool(true), token.span),
             Token::None => L::new(Expr::None, token.span),
-            Token::Int { base, value, width } => {
-                L::new(Expr::Integer { base, value: value.into(), width: width.map(|w| w.into()) }, token.span)
-            }
+            Token::Int { base, value, width } => L::new(
+                Expr::Integer {
+                    base,
+                    value: value.into(),
+                    width: width.map(|w| w.into()),
+                },
+                token.span,
+            ),
             Token::Float(value) => L::new(Expr::Float(value.into()), token.span),
             Token::String(value) => L::new(Expr::String(value.into()), token.span),
             Token::LParen => {
@@ -1050,7 +1067,7 @@ impl<'a> Parser<'a> {
                         // let count = self.expression()?;
                         let count = self.expect(
                             |t| {
-                                let Token::Int { base: 10, value, width: None } = t.data else { 
+                                let Token::Int { base: 10, value, width: None } = t.data else {
                                     return None;
                                 };
                                 Some(value)

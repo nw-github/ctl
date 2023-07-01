@@ -62,7 +62,7 @@ fn main() -> anyhow::Result<()> {
             for err in errors {
                 err.display(args.input.to_string_lossy().as_ref());
             }
-            
+
             std::process::exit(1);
         }
     }

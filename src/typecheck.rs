@@ -184,7 +184,8 @@ impl TypeChecker {
                             let mut params = Vec::with_capacity(base.members.len());
                             let mut members = Vec::with_capacity(base.members.len());
                             for (name, member) in base.members.iter() {
-                                let target = self.resolve_type(scopes, &member.ty);
+                                let target = Self::fd_resolve_type(scopes, &member.ty)
+                                    .unwrap_or(TypeId::Unknown);
                                 members.push((
                                     name.clone(),
                                     Member {
@@ -235,7 +236,7 @@ impl TypeChecker {
                                         for stmt in f.body.iter() {
                                             self.forward_declare(scopes, stmt);
                                         }
-                
+
                                         scopes[&id].body = Some(Block {
                                             body: Vec::new(),
                                             scope: scopes.current_id(),

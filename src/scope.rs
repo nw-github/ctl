@@ -10,11 +10,11 @@ use crate::{
 
 macro_rules! id {
     ($name: ident => $output: ident,
-     $vec: ident, 
-     $find: ident, 
+     $vec: ident,
+     $find: ident,
      $($parts:ident).+,
      $insert: ident) => {
-        #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+        #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
         pub struct $name(pub ScopeId, pub usize);
 
         impl $name {
@@ -25,30 +25,30 @@ macro_rules! id {
 
         impl Index<&$name> for Scopes {
             type Output = $output;
-        
+
             fn index(&self, index: &$name) -> &Self::Output {
                 &self[index.0].$vec[index.1]
             }
         }
-        
+
         impl IndexMut<&$name> for Scopes {
             fn index_mut(&mut self, index: &$name) -> &mut Self::Output {
                 &mut self[index.0].$vec[index.1]
             }
         }
-    
+
         impl Scopes {
             pub fn $find(&self, name: &str) -> Option<$name> {
                 for (id, scope) in self.iter() {
                     if let Some(index) = scope.$vec.iter().position(|item| item.$($parts).+ == name) {
                         return Some($name(id, index));
                     }
-        
+
                     if scope.kind == ScopeKind::Module {
                         break;
                     }
                 }
-        
+
                 None
             }
 
@@ -61,8 +61,8 @@ macro_rules! id {
     };
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct ScopeId(usize);
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub struct ScopeId(pub usize);
 
 id!(FunctionId => Function, fns, find_fn, proto.name, insert_fn);
 id!(StructId => Struct, types, find_struct, name, insert_struct);
@@ -135,17 +135,20 @@ pub struct Struct {
 #[derive(Default, Debug)]
 pub struct Scope {
     pub kind: ScopeKind,
+    pub fns: Vec<Function>,
+    pub types: Vec<Struct>,
     parent: Option<ScopeId>,
     vars: Vec<Variable>,
-    pub fns: Vec<Function>,
-    types: Vec<Struct>,
     name: Option<String>,
     children: HashMap<String, ScopeId>,
 }
 
 impl Scope {
     pub fn find_fn(&self, name: &str) -> Option<(usize, &Function)> {
-        self.fns.iter().enumerate().find(|(_, f)| f.proto.name == name)
+        self.fns
+            .iter()
+            .enumerate()
+            .find(|(_, f)| f.proto.name == name)
     }
 }
 
@@ -224,7 +227,9 @@ impl Scopes {
         let prev = self.current;
         let id = ScopeId(self.scopes.len());
         // blocks are the only unnamed scopes
-        self.current().children.insert(name.clone().unwrap_or(String::new()), id);
+        self.current()
+            .children
+            .insert(name.clone().unwrap_or(String::new()), id);
         self.scopes.push(Scope {
             parent: Some(self.current),
             kind,
@@ -262,6 +267,10 @@ impl Scopes {
                 None
             }
         })
+    }
+
+    pub fn scopes(&self) -> &[Scope] {
+        &self.scopes
     }
 }
 
