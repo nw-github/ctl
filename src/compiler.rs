@@ -216,7 +216,7 @@ impl Compiler {
 
                 let mut source_ty = &this.ty;
                 let target = &scopes[func].proto.params[0].ty;
-                if source_ty == target {
+                if !matches!(source_ty, TypeId::Ref(_) | TypeId::RefMut(_)) {
                     self.emit("&");
                 } else {
                     while let TypeId::Ref(inner) | TypeId::RefMut(inner) = source_ty {
