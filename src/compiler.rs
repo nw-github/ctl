@@ -1,15 +1,22 @@
+use std::collections::HashMap;
+
 use crate::{
     ast::expr::UnaryOp,
     checked_ast::{
         expr::{CheckedExpr, ExprData, Symbol},
-        stmt::{CheckedStmt, CheckedUserType},
+        stmt::CheckedStmt,
         Block,
     },
-    scope::{Scopes, Struct, StructDef, CheckedPrototype, FunctionId, Function, StructId, VariableId, Variable},
+    lexer::{Location, Span},
+    scope::{
+        CheckedPrototype, Function, FunctionId, ScopeId, Scopes, StructId, Variable, VariableId,
+    },
     typecheck::{CheckedAst, TypeId},
+    Error,
 };
 
 const RT_PREFIX: &str = "CTL_RUNTIME_";
+
 pub struct BlockInfo {
     variable: String,
     label: String,
@@ -23,15 +30,16 @@ pub struct Compiler {
 }
 
 impl Compiler {
-    pub fn compile(mut ast: CheckedAst) -> String {
+    pub fn compile(mut ast: CheckedAst) -> Result<String, Error> {
         let mut this = Self {
             buffer: String::new(),
             current_block: None,
             block_number: 0,
-            main: None
+            main: None,
         };
-        this.emit(include_str!("../runtime/ctl.h"));
-        this.emit("\n\n");
+        this.emit(concat!(include_str!("../runtime/ctl.h"), "\n\n"));
+        this.emit_all_structs(&ast.scopes)?;
+        this.emit_all_functions(&mut ast.scopes);
         this.compile_stmt(&mut ast.scopes, &mut ast.stmt);
         if let Some(main) = this.main {
             this.emit("int main(int argc, char **argv) {");
@@ -43,7 +51,130 @@ impl Compiler {
             this.emit("(); }");
         }
 
-        this.buffer
+        Ok(this.buffer)
+    }
+
+    fn emit_all_structs(&mut self, scopes: &Scopes) -> Result<(), Error> {
+        fn dfs(
+            sid: StructId,
+            structs: &HashMap<StructId, Vec<&StructId>>,
+            visited: &mut HashMap<StructId, bool>,
+            result: &mut Vec<StructId>,
+        ) -> Result<(), (StructId, StructId)> {
+            visited.insert(sid, true);
+            if let Some(deps) = structs.get(&sid) {
+                for &&dep in deps {
+                    match visited.get(&dep) {
+                        Some(true) => return Err((dep, sid)),
+                        None => dfs(dep, structs, visited, result)?,
+                        _ => {}
+                    }
+                }
+            }
+            visited.insert(sid, false);
+            result.push(sid);
+            Ok(())
+        }
+
+        let mut structs = HashMap::new();
+        for (i, scope) in scopes.scopes().iter().enumerate() {
+            for (j, st) in scope.types.iter().enumerate() {
+                let id = StructId(ScopeId(i), j);
+                self.emit("struct ");
+                self.emit_struct_id(scopes, &id);
+                self.emit(";");
+
+                structs.insert(
+                    id,
+                    st.def
+                        .as_ref()
+                        .unwrap()
+                        .members
+                        .iter()
+                        .filter_map(|s| {
+                            let mut ty = &s.1.ty;
+                            while matches!(ty, TypeId::Option(_) | TypeId::Array(_)) {
+                                while let TypeId::Option(inner) = ty {
+                                    ty = inner.as_ref();
+                                }
+                                while let TypeId::Array(inner) = ty {
+                                    ty = &inner.as_ref().0;
+                                }
+                            }
+
+                            match ty {
+                                TypeId::Struct(id) => Some(id.as_ref()),
+                                _ => None,
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+
+        let mut result = Vec::new();
+        let mut state = HashMap::new();
+        for sid in structs.keys() {
+            if !state.contains_key(sid) {
+                dfs(*sid, &structs, &mut state, &mut result).map_err(|(a, b)| {
+                    // TODO: figure out a real span here
+                    Error::new(
+                        format!(
+                            "recursive dependency detected between {} and {}.",
+                            scopes[&a].name, scopes[&b].name,
+                        ),
+                        Span {
+                            loc: Location {
+                                row: 0,
+                                col: 0,
+                                pos: 0,
+                            },
+                            len: 0,
+                        },
+                    )
+                })?;
+            }
+        }
+        
+        for id in result.iter() {
+            self.emit("struct ");
+            self.emit_struct_id(scopes, id);
+            self.emit("{");
+            for (name, member) in scopes[id].def.as_ref().unwrap().members.iter() {
+                self.emit_type(scopes, &member.ty);
+                self.emit(format!(" {}", name));
+                self.emit(";");
+                if !member.public {
+                    self.emit("/* private */ \n")
+                }
+            }
+
+            self.emit("};");
+        }
+
+        Ok(())
+    }
+
+    fn emit_all_functions(&mut self, scopes: &mut Scopes) {
+        let mut fns = Vec::new();
+        for (i, scope) in scopes.scopes().iter().enumerate() {
+            for (j, func) in scope.fns.iter().enumerate() {
+                if func.inst {
+                    continue;
+                }
+
+                let id = FunctionId(ScopeId(i), j);
+                self.emit_prototype(scopes, &id);
+                self.emit(";");
+                fns.push(id);
+            }
+        }
+
+        for id in fns {
+            self.emit_prototype(scopes, &id);
+            // FIXME: this clone hack
+            self.emit_block(scopes, &mut scopes[&id].body.clone().unwrap());
+        }
     }
 
     fn compile_stmt(&mut self, scopes: &mut Scopes, stmt: &mut CheckedStmt) {
@@ -79,49 +210,6 @@ impl Compiler {
                 }
                 self.emit(";");
             }
-            CheckedStmt::Fn(id) => {
-                self.emit_prototype(scopes, id);
-                // FIXME: this clone hack
-                self.emit_block(scopes, &mut scopes[&*id].body.clone().unwrap());
-            }
-            CheckedStmt::UserType(data) => match data {
-                CheckedUserType::Struct(id) => {
-                    let Struct { 
-                        def: Some(StructDef {
-                            members,
-                            scope
-                        }),
-                        ..
-                    } = &scopes[&*id] else {
-                        unreachable!()
-                    };
-
-                    self.emit("struct ");
-                    self.emit_struct_id(scopes, id);
-                    self.emit("{");
-                    for (name, member) in members.iter() {
-                        self.emit_type(scopes, &member.ty);
-                        self.emit(format!(" {}", name));
-                        self.emit(";");
-                        if !member.public {
-                            self.emit("/* private */ \n")
-                        }
-                    }
-
-                    self.emit("};");
-
-                    let scope = *scope;
-                    for i in 0..scopes[scope].fns.len() {
-                        let id = &FunctionId(scope, i);
-                        if scopes[id].inst {
-                            continue;
-                        }
-
-                        self.emit_prototype(scopes, id);
-                        self.emit_block(scopes, &mut scopes[id].body.clone().unwrap());
-                    }
-                }
-            },
             CheckedStmt::Static(id, value) => {
                 self.emit("static ");
                 self.emit_type(scopes, &value.ty);
@@ -138,6 +226,8 @@ impl Compiler {
                     self.compile_stmt(scopes, stmt);
                 }
             }
+            CheckedStmt::Fn(_) => {}
+            CheckedStmt::UserType(_) => {}
             CheckedStmt::Error => {
                 panic!("ICE: CheckedStmt::Error in compile_stmt");
             }
@@ -206,11 +296,7 @@ impl Compiler {
                 }
                 self.emit(")");
             }
-            ExprData::MemberCall {
-                func,
-                this,
-                args,
-            } => {
+            ExprData::MemberCall { func, this, args } => {
                 self.emit_fn_id(scopes, func);
                 self.emit("(");
 
@@ -252,21 +338,19 @@ impl Compiler {
             ExprData::Unsigned(value) => self.emit(format!("{value}")),
             ExprData::Float(value) => self.emit(value),
             ExprData::String(_) => todo!(),
-            ExprData::Symbol(symbol) => {
-                match symbol {
-                    Symbol::Function(id) => {
-                        self.emit_fn_id(scopes, id);
-                    }
-                    Symbol::Variable(id) => {
-                        let var = &scopes[id];
-                        if var.is_static {
-                            self.emit_var_id(scopes, id);
-                        } else {
-                            self.emit(&var.name);
-                        }
+            ExprData::Symbol(symbol) => match symbol {
+                Symbol::Function(id) => {
+                    self.emit_fn_id(scopes, id);
+                }
+                Symbol::Variable(id) => {
+                    let var = &scopes[id];
+                    if var.is_static {
+                        self.emit_var_id(scopes, id);
+                    } else {
+                        self.emit(&var.name);
                     }
                 }
-            }
+            },
             ExprData::Instance(members) => {
                 self.emit("(");
                 self.emit_type(scopes, &expr.ty);
@@ -347,9 +431,7 @@ impl Compiler {
             }
             ExprData::Subscript { callee, args }
             | ExprData::MemberCall {
-                this: callee,
-                args,
-                ..
+                this: callee, args, ..
             } => {
                 self.hoist_blocks(scopes, &mut *callee);
                 for arg in args.iter_mut() {
@@ -500,15 +582,19 @@ impl Compiler {
     }
 
     fn emit_prototype(&mut self, scopes: &Scopes, id: &FunctionId) {
-        let Function { proto: CheckedPrototype {
-            public: _,
-            name,
-            is_async: _,
-            is_extern: _,
-            type_params: _,
-            params,
-            ret,
-        }, .. } = &scopes[id];
+        let Function {
+            proto:
+                CheckedPrototype {
+                    public: _,
+                    name,
+                    is_async: _,
+                    is_extern: _,
+                    type_params: _,
+                    params,
+                    ret,
+                },
+            ..
+        } = &scopes[id];
 
         self.emit_type(scopes, ret);
         if name == "main" {

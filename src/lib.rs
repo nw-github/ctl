@@ -96,7 +96,10 @@ impl Pipeline<Ast> {
 impl Pipeline<Checked> {
     pub fn codegen(self) -> std::result::Result<String, Vec<Error>> {
         if self.errors.is_empty() {
-            Ok(Compiler::compile(self.state.0))
+            match Compiler::compile(self.state.0) {
+                Ok(str) => Ok(str),
+                Err(err) => Err(vec![err])
+            }
         } else {
             Err(self.errors)
         }
