@@ -1,12 +1,62 @@
+use std::fmt::Display;
+
 use crate::lexer::Located;
 
 pub type Expr = Located<expr::Expr>;
 pub type Stmt = Located<stmt::Stmt>;
 
+#[derive(Debug, Clone)]
+pub struct Path {
+    pub data: Vec<(String, Vec<String>)>,
+    pub root: bool,
+}
+
+impl Display for Path {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, (name, generics)) in self.data.iter().enumerate() {
+            if i > 0 {
+                write!(f, "::")?;
+            }
+
+            write!(f, "{name}")?;
+            if !generics.is_empty() {
+                write!(f, "<")?;
+                for (j, param) in generics.iter().enumerate() {
+                    if j > 0 {
+                        write!(f, ", ")?;
+                    }
+
+                    write!(f, "{param}")?;
+                }
+                write!(f, ">")?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl From<String> for Path {
+    fn from(value: String) -> Self {
+        Self {
+            data: vec![(value, Vec::new())],
+            root: false,
+        }
+    }
+}
+
+impl Path {
+    pub fn as_symbol(&self) -> Option<&str> {
+        (self.data.len() == 1 && self.data[0].1.is_empty()).then_some(&self.data[0].0)
+    }
+}
+
 pub mod expr {
     use derive_more::Display;
 
     use crate::lexer::Token;
+
+    use super::Path;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
     pub enum BinaryOp {
@@ -160,7 +210,7 @@ pub mod expr {
         },
         Float(String),
         String(String),
-        Symbol(String),
+        Path(Path),
         Void,
         None,
         Assign {
@@ -207,13 +257,11 @@ pub mod expr {
 pub mod stmt {
     use crate::lexer::Located;
 
+    use super::Path;
+
     #[derive(Debug)]
     pub enum TypeHint {
-        Regular {
-            is_dyn: bool,
-            name: Located<String>,
-            type_params: Vec<String>,
-        },
+        Regular { is_dyn: bool, path: Located<Path> },
         Array(Box<TypeHint>, usize),
         Slice(Box<TypeHint>),
         Tuple(Vec<TypeHint>),
@@ -267,7 +315,7 @@ pub mod stmt {
         pub name: String,
         pub type_params: Vec<String>,
         pub members: Vec<(String, MemVar)>,
-        pub impls: Vec<String>,
+        pub impls: Vec<Located<Path>>,
         pub functions: Vec<Fn>,
     }
 
@@ -275,20 +323,20 @@ pub mod stmt {
     pub enum UserType {
         Struct(Struct),
         Union {
-            tag: Option<String>,
+            tag: Option<Located<Path>>,
             base: Struct,
         },
         Interface {
             public: bool,
             name: String,
             type_params: Vec<String>,
-            impls: Vec<String>,
+            impls: Vec<Located<Path>>,
             functions: Vec<Prototype>,
         },
         Enum {
             public: bool,
             name: String,
-            impls: Vec<String>,
+            impls: Vec<Located<Path>>,
             variants: Vec<(String, Option<super::Expr>)>,
             functions: Vec<Fn>,
         },

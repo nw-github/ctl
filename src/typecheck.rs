@@ -4,6 +4,7 @@ use crate::{
     ast::{
         expr::{BinaryOp, Expr, UnaryOp},
         stmt::{Fn, Prototype, Stmt, TypeHint, UserType},
+        Path,
     },
     checked_ast::{
         expr::{CheckedExpr, ExprData, Symbol},
@@ -12,8 +13,8 @@ use crate::{
     },
     lexer::{Located, Span},
     scope::{
-        CheckedParam, CheckedPrototype, Function, FunctionId, Member, ScopeKind, Scopes, Struct,
-        StructDef, StructId, Variable,
+        CheckedParam, CheckedPrototype, Function, FunctionId, Member, ScopeKind,
+        Scopes, Struct, StructDef, StructId, Variable,
     },
     Error, THIS_PARAM, THIS_TYPE,
 };
@@ -315,9 +316,11 @@ impl TypeChecker {
                             );
                         }
 
-                        let init = scopes[self_id.scope()].fns.iter().position(|f| {
-                            f.inst && f.proto.ret == TypeId::Struct(self_id.into())
-                        }).unwrap();
+                        let init = scopes[self_id.scope()]
+                            .fns
+                            .iter()
+                            .position(|f| f.inst && f.proto.ret == TypeId::Struct(self_id.into()))
+                            .unwrap();
 
                         for i in 0..base.members.len() {
                             resolve_forward_declare!(
@@ -325,7 +328,7 @@ impl TypeChecker {
                                 scopes,
                                 scopes[self_id.scope()].fns[init].proto.params[i].ty,
                                 &base.members[i].1.ty
-                            ) ;
+                            );
                         }
 
                         for f in base.functions {
@@ -586,7 +589,7 @@ impl TypeChecker {
                                     if matches!(ty, TypeId::Ref(_)) {
                                         return self.error(Error::new(
                                             format!(
-                                                "cannot call method '{member}' from behind an immutable pointer"
+                                                "cannot call method '{member}' through an immutable pointer"
                                             ),
                                             span,
                                         ));
@@ -824,19 +827,21 @@ impl TypeChecker {
                     .unwrap_or(TypeId::F64),
                 ExprData::Float(value),
             ),
-            Expr::Symbol(name) => {
-                if let Some(id) = scopes.find_var(&name) {
-                    let var = &scopes[&id];
-                    CheckedExpr::new(var.ty.clone(), ExprData::Symbol(Symbol::Variable(id)))
-                } else if let Some(id) = scopes.find_fn(&name) {
-                    CheckedExpr::new(
-                        TypeId::Function(id.into()),
-                        ExprData::Symbol(Symbol::Function(id)),
-                    )
-                } else {
-                    self.error(Error::new(format!("undefined variable: {name}"), span))
+            Expr::Path(path) => match scopes.resolve_path(&path) {
+                Some(symbol @ Symbol::Variable(ref id)) => {
+                    CheckedExpr::new(scopes[id].ty.clone(), ExprData::Symbol(symbol))
                 }
-            }
+                Some(symbol @ Symbol::Function(ref id)) => {
+                    CheckedExpr::new(TypeId::Function((*id).into()), ExprData::Symbol(symbol))
+                }
+                None => {
+                    if let Some(symbol) = path.as_symbol() {
+                        self.error(Error::new(format!("undefined variable: {symbol}"), span))
+                    } else {
+                        self.error(Error::new(format!("undefined type: {path}"), span))
+                    }
+                }
+            },
             Expr::Assign {
                 target: lhs,
                 binary,
@@ -1033,13 +1038,7 @@ impl TypeChecker {
                 }
             }
             Expr::Return(expr) => {
-                let Some(target) = scopes.iter().find_map(|(_, scope)| {
-                    if let ScopeKind::Function(id) = &scope.kind {
-                        Some(id)
-                    } else {
-                        None
-                    }
-                }).map(|id| scopes[id].proto.ret.clone()) else {
+                let Some(target) = scopes.current_function().map(|id| scopes[&id].proto.ret.clone()) else {
                     // the parser ensures return only happens inside functions
                     return self.error(Error::new("return outside of function", span));
                 };
@@ -1281,26 +1280,30 @@ impl TypeChecker {
         }
     }
 
-    fn fd_resolve_type<'a>(
-        scopes: &Scopes,
-        ty: &'a TypeHint,
-    ) -> Result<TypeId, &'a Located<String>> {
+    fn fd_resolve_type<'a>(scopes: &Scopes, ty: &'a TypeHint) -> Result<TypeId, &'a Located<Path>> {
         Ok(match ty {
-            TypeHint::Regular { name, .. } => {
-                return scopes
-                    .find_struct(&name.data)
-                    .map(|id| TypeId::Struct(id.into()))
-                    .or_else(|| match name.data.as_str() {
-                        name if name == THIS_TYPE => scopes.current_struct(),
+            TypeHint::Regular { path, .. } => {
+                if let Some(Symbol::Function(id)) = scopes.resolve_path(&path.data) {
+                    if scopes[&id].inst {
+                        return Ok(scopes[&id].proto.ret.clone());
+                    }
+                }
+
+                if let Some(symbol) = path.data.as_symbol() {
+                    return match symbol {
+                        symbol if symbol == THIS_TYPE => scopes.current_struct(),
                         "void" => Some(TypeId::Void),
                         "never" => Some(TypeId::Never),
                         "f32" => Some(TypeId::F32),
                         "f64" => Some(TypeId::F64),
                         "bool" => Some(TypeId::Bool),
                         "str" => Some(TypeId::String),
-                        _ => Self::match_int_type(&name.data),
-                    })
-                    .ok_or(name)
+                        _ => Self::match_int_type(symbol),
+                    }
+                    .ok_or(path);
+                }
+
+                return Err(path);
             }
             TypeHint::Void => TypeId::Void,
             TypeHint::Ref(ty) => TypeId::Ref(Self::fd_resolve_type(scopes, ty)?.into()),
@@ -1325,8 +1328,12 @@ impl TypeChecker {
     }
 
     fn resolve_type(&mut self, scopes: &Scopes, ty: &TypeHint) -> TypeId {
-        Self::fd_resolve_type(scopes, ty)
-            .unwrap_or_else(|name| self.undefined_type(&name.data, name.span))
+        Self::fd_resolve_type(scopes, ty).unwrap_or_else(|name| {
+            self.error(Error::new(
+                format!("undefined type: {}", name.data),
+                name.span,
+            ))
+        })
     }
 
     fn create_block(
@@ -1365,10 +1372,6 @@ impl TypeChecker {
             ),
             span,
         ))
-    }
-
-    fn undefined_type<T: Default>(&mut self, name: &str, span: Span) -> T {
-        self.error(Error::new(format!("undefined type: {name}"), span))
     }
 
     fn match_int_type(name: &str) -> Option<TypeId> {

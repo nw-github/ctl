@@ -4,6 +4,7 @@ use crate::{
     ast::{
         expr::{Expr, UnaryOp},
         stmt::{self, Fn, Param, Prototype, Stmt, TypeHint, UserType},
+        Path,
     },
     lexer::{Lexer, Located as L, Location, Span, Token},
     Error, Result, THIS_PARAM, THIS_TYPE,
@@ -108,8 +109,21 @@ impl<'a> Parser<'a> {
 
     // helpers
 
-    fn path(&mut self) -> Result<String> {
-        self.expect_id("expected path").map(|s| s.into())
+    fn path_with_one(&mut self, root: bool, mut ident: (&'a str, Span)) -> Result<L<Path>> {
+        let mut data = vec![(ident.0.to_owned(), self.parse_generic_params()?)];
+        while self.advance_if_kind(Token::ScopeRes).is_some() {
+            let (id, span) = self.expect_id_with_span("expected name")?;
+            data.push((id.to_owned(), self.parse_generic_params()?));
+            ident.1.extend_to(span);
+        }
+
+        Ok(L::new(Path { data, root }, ident.1))
+    }
+
+    fn path(&mut self) -> Result<L<Path>> {
+        let root = self.advance_if_kind(Token::ScopeRes).is_some();
+        let ident = self.expect_id_with_span("expected name")?;
+        self.path_with_one(root, ident)
     }
 
     fn comma_separated<T>(
@@ -168,7 +182,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_interface_impl(&mut self) -> Result<Vec<String>> {
+    fn parse_interface_impl(&mut self) -> Result<Vec<L<Path>>> {
         let mut impls = Vec::new();
         if self.advance_if_kind(Token::Colon).is_some() {
             loop {
@@ -232,16 +246,13 @@ impl<'a> Parser<'a> {
             let is_dyn = self.advance_if_kind(Token::Dyn).is_some();
             if let Some(this) = self.advance_if_kind(Token::ThisType) {
                 TypeHint::Regular {
-                    name: L::new(THIS_TYPE.into(), this.span),
+                    path: L::new(Path::from(THIS_TYPE.to_owned()), this.span),
                     is_dyn,
-                    type_params: self.parse_generic_params()?,
                 }
             } else {
-                let (name, span) = self.expect_id_with_span("expected type name")?;
                 TypeHint::Regular {
-                    name: L::new(name.into(), span),
+                    path: self.path()?,
                     is_dyn,
-                    type_params: self.parse_generic_params()?,
                 }
             }
         };
@@ -274,7 +285,7 @@ impl<'a> Parser<'a> {
         Ok((stmts, span))
     }
 
-    fn parse_struct_body(&mut self, public: bool, span: &mut Span) -> Result<stmt::Struct> {
+    fn parse_struct_body(&mut self, span: &mut Span) -> Result<stmt::Struct> {
         let type_params = self.parse_generic_params()?;
         let impls = self.parse_interface_impl()?;
 
@@ -321,7 +332,7 @@ impl<'a> Parser<'a> {
         })?;
 
         Ok(stmt::Struct {
-            public,
+            public: false,
             name: String::new(),
             type_params,
             members,
@@ -338,15 +349,7 @@ impl<'a> Parser<'a> {
         is_extern: bool,
     ) -> Result<Prototype> {
         let name = self.expect_id("expected name")?;
-        let type_params = if self.advance_if_kind(Token::LAngle).is_some() {
-            self.comma_separated(Token::RAngle, "expected '>'", |this| {
-                this.expect_id("expected type name").map(|id| id.into())
-            })?
-            .0
-        } else {
-            Vec::new()
-        };
-
+        let type_params = self.parse_generic_params()?;
         self.expect_kind(Token::LParen, "expected parameter list")?;
         let params = if self.advance_if_kind(Token::RParen).is_none() {
             let mut count = 0;
@@ -457,7 +460,8 @@ impl<'a> Parser<'a> {
                 Ok(L::new(
                     Stmt::UserType(UserType::Struct(stmt::Struct {
                         name: self.expect_id("expected name")?.into(),
-                        ..self.parse_struct_body(public.is_some(), &mut token.span)?
+                        public: public.is_some(),
+                        ..self.parse_struct_body(&mut token.span)?
                     })),
                     token.span,
                 ))
@@ -477,7 +481,8 @@ impl<'a> Parser<'a> {
                         tag,
                         base: stmt::Struct {
                             name: self.expect_id("expected name")?.into(),
-                            ..self.parse_struct_body(public.is_some(), &mut token.span)?
+                            public: public.is_some(),
+                            ..self.parse_struct_body(&mut token.span)?
                         },
                     }),
                     token.span,
@@ -699,7 +704,7 @@ impl<'a> Parser<'a> {
         let expr = self.range()?;
         if let Some(assign) = self.advance_if(|k| k.is_assignment()) {
             match expr.data {
-                Expr::Symbol(_) | Expr::Subscript { .. } | Expr::Member { .. } => {}
+                Expr::Path(_) | Expr::Subscript { .. } | Expr::Member { .. } => {}
                 Expr::Unary { op, .. } if op == UnaryOp::Deref => {}
                 _ => return Err(Error::new("invalid assignment target", expr.span)),
             }
@@ -814,12 +819,17 @@ impl<'a> Parser<'a> {
                 } else {
                     self.comma_separated(Token::RParen, "expected ')'", |this| {
                         let mut expr = this.expression()?;
-                        if let Expr::Symbol(name) = expr.data {
-                            if this.advance_if_kind(Token::Colon).is_some() {
-                                return Ok((Some(name), this.expression()?));
+                        if let Expr::Path(path) = expr.data {
+                            if path.as_symbol().is_some()
+                                && this.advance_if_kind(Token::Colon).is_some()
+                            {
+                                return Ok((
+                                    Some(path.data.into_iter().next().unwrap().0),
+                                    this.expression()?,
+                                ));
                             }
 
-                            expr.data = Expr::Symbol(name);
+                            expr.data = Expr::Path(path);
                         }
 
                         Ok((None, expr))
@@ -929,9 +939,17 @@ impl<'a> Parser<'a> {
                     L::new(expr.data, Span::combine(token.span, end.span))
                 }
             }
-            Token::Ident(ident) => L::new(Expr::Symbol(ident.into()), token.span),
-            Token::This => L::new(Expr::Symbol(THIS_PARAM.into()), token.span),
-            Token::ThisType => L::new(Expr::Symbol(THIS_TYPE.into()), token.span),
+            Token::Ident(ident) => {
+                let result = self.path_with_one(false, (ident, token.span))?;
+                L::new(Expr::Path(result.data), result.span)
+            }
+            Token::ScopeRes => {
+                let ident = self.expect_id_with_span("expected name")?;
+                let result = self.path_with_one(false, ident)?;
+                L::new(Expr::Path(result.data), result.span)
+            }
+            Token::This => L::new(Expr::Path(THIS_PARAM.to_owned().into()), token.span),
+            Token::ThisType => L::new(Expr::Path(THIS_TYPE.to_owned().into()), token.span),
             Token::Range => {
                 if self.is_range_end() {
                     L::new(
@@ -1015,7 +1033,7 @@ impl<'a> Parser<'a> {
                 )
             }
             Token::For => {
-                let var = self.expect_id("expected type name")?;
+                let var = self.expect_id("expected variable name")?;
                 self.expect_kind(Token::In, "expected 'in'")?;
                 // TODO: parse for foo in 0.. {} as |0..| |{}| instead of |0..{}|
                 let iter = self.expression()?;

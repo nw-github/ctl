@@ -19,7 +19,7 @@ pub mod expr {
 
     use super::Block;
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Copy)]
     pub enum Symbol {
         Function(FunctionId),
         Variable(VariableId),

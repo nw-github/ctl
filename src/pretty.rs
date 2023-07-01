@@ -43,7 +43,7 @@ pub fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
             UserType::Struct(base) => print_struct("Struct", base, indent),
             UserType::Union { tag, base } => {
                 if let Some(tag) = tag {
-                    print_struct(&format!("Union({tag})"), base, indent);
+                    print_struct(&format!("Union({})", tag.data), base, indent);
                 } else {
                     print_struct("Union", base, indent)
                 }
@@ -228,8 +228,8 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
         Expr::String(value) => {
             println!("{tabs}String = \'{value}\'");
         }
-        Expr::Symbol(value) => {
-            println!("{tabs}Symbol[{value}]");
+        Expr::Path(value) => {
+            println!("{tabs}Path[{value}]");
         }
         Expr::Assign {
             target,

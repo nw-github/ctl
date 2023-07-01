@@ -4,7 +4,8 @@ use std::{
 };
 
 use crate::{
-    checked_ast::{expr::CheckedExpr, Block},
+    ast::Path,
+    checked_ast::{expr::{CheckedExpr, Symbol}, Block},
     typecheck::TypeId,
 };
 
@@ -37,10 +38,19 @@ macro_rules! id {
             }
         }
 
+        impl Scope {
+            pub fn $find(&self, name: &str) -> Option<(usize, &$output)> {
+                self.$vec
+                    .iter()
+                    .enumerate()
+                    .find(|(_, item)| item.$($parts).+ == name )
+            }
+        }
+
         impl Scopes {
             pub fn $find(&self, name: &str) -> Option<$name> {
                 for (id, scope) in self.iter() {
-                    if let Some(index) = scope.$vec.iter().position(|item| item.$($parts).+ == name) {
+                    if let Some((index, _)) = scope.$find(name) {
                         return Some($name(id, index));
                     }
 
@@ -141,15 +151,6 @@ pub struct Scope {
     vars: Vec<Variable>,
     name: Option<String>,
     children: HashMap<String, ScopeId>,
-}
-
-impl Scope {
-    pub fn find_fn(&self, name: &str) -> Option<(usize, &Function)> {
-        self.fns
-            .iter()
-            .enumerate()
-            .find(|(_, f)| f.proto.name == name)
-    }
 }
 
 pub struct Scopes {
@@ -269,8 +270,56 @@ impl Scopes {
         })
     }
 
+    pub fn current_function(&self) -> Option<FunctionId> {
+        self.iter().find_map(|(_, scope)| {
+            if let ScopeKind::Function(id) = &scope.kind {
+                Some(*id)
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn scopes(&self) -> &[Scope] {
         &self.scopes
+    }
+
+    pub fn resolve_path(&self, path: &Path) -> Option<Symbol> {
+        // TODO: generic params
+        if let Some(name) = path.as_symbol() {
+            self.find_var(name)
+                .map(Symbol::Variable)
+                .or_else(|| self.find_fn(name).map(Symbol::Function))
+        } else {
+            let mut scope = ScopeId(0);
+            if !path.root {
+                for (id, current) in self.iter() {
+                    if current.kind == ScopeKind::Module {
+                        scope = id;
+                        break;
+                    }
+                }
+            }
+
+            for part in path.data[0..path.data.len() - 1].iter() {
+                if let Some(found) = self[scope].children.iter().find(|scope| {
+                    scope.0 == &part.0
+                        && matches!(self[*scope.1].kind, ScopeKind::Module | ScopeKind::Struct(_))
+                }) {
+                    scope = *found.1;
+                }
+            }
+
+            let last = path.data.last().unwrap();
+            self[scope]
+                .find_var(&last.0)
+                .map(|var| Symbol::Variable(VariableId(scope, var.0)))
+                .or_else(|| {
+                    self[scope]
+                        .find_fn(&last.0)
+                        .map(|func| Symbol::Function(FunctionId(scope, func.0)))
+                })
+        }
     }
 }
 

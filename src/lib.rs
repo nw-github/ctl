@@ -16,7 +16,7 @@ use typecheck::CheckedAst;
 use crate::{ast::Stmt, parser::Parser, typecheck::TypeChecker};
 
 pub(crate) const THIS_PARAM: &str = "this";
-pub(crate) const THIS_TYPE: &str = "Self";
+pub(crate) const THIS_TYPE: &str = "This";
 
 pub trait CompileState {}
 
