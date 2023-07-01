@@ -122,7 +122,11 @@ impl<'a> Parser<'a> {
 
     fn path(&mut self) -> Result<L<Path>> {
         let root = self.advance_if_kind(Token::ScopeRes).is_some();
-        let ident = self.expect_id_with_span("expected name")?;
+        let ident = if let Some(sup) = self.advance_if_kind(Token::Super) {
+            ("super", sup.span)
+        } else {
+            self.expect_id_with_span("expected name")?
+        };
         self.path_with_one(root, ident)
     }
 
@@ -947,6 +951,10 @@ impl<'a> Parser<'a> {
                 let ident = self.expect_id_with_span("expected name")?;
                 let result = self.path_with_one(false, ident)?;
                 L::new(Expr::Path(result.data), result.span)
+            }
+            Token::Super => {
+                let result = self.path_with_one(false, ("super", token.span))?;
+                L::new(Expr::Path(result.data), token.span)
             }
             Token::This => L::new(Expr::Path(THIS_PARAM.to_owned().into()), token.span),
             Token::ThisType => L::new(Expr::Path(THIS_TYPE.to_owned().into()), token.span),

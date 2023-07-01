@@ -5,7 +5,10 @@ use std::{
 
 use crate::{
     ast::Path,
-    checked_ast::{expr::{CheckedExpr, Symbol}, Block},
+    checked_ast::{
+        expr::{CheckedExpr, Symbol},
+        Block,
+    },
     typecheck::TypeId,
 };
 
@@ -84,8 +87,9 @@ pub enum ScopeKind {
     Loop(Option<TypeId>, bool),
     Function(FunctionId),
     Struct(StructId),
-    #[default]
     Module,
+    #[default]
+    None,
 }
 
 #[derive(Debug, Clone)]
@@ -280,6 +284,16 @@ impl Scopes {
         })
     }
 
+    pub fn module_of(&self, id: ScopeId) -> Option<ScopeId> {
+        for (id, current) in self.iter_from(id) {
+            if current.kind == ScopeKind::Module {
+                return Some(id);
+            }
+        }
+
+        None
+    }
+
     pub fn scopes(&self) -> &[Scope] {
         &self.scopes
     }
@@ -292,19 +306,29 @@ impl Scopes {
                 .or_else(|| self.find_fn(name).map(Symbol::Function))
         } else {
             let mut scope = ScopeId(0);
+            let mut start = 0;
             if !path.root {
-                for (id, current) in self.iter() {
-                    if current.kind == ScopeKind::Module {
-                        scope = id;
-                        break;
+                if path.data[0].0 == "super" {
+                    start = 1;
+                    if let Some(module) =
+                        self.module_of(self[self.module_of(self.current).unwrap()].parent.unwrap())
+                    {
+                        scope = module;
+                    } else {
+                        todo!("super at top level")
                     }
+                } else {
+                    scope = self.module_of(self.current).unwrap();
                 }
             }
 
-            for part in path.data[0..path.data.len() - 1].iter() {
+            for part in path.data[start..path.data.len() - 1].iter() {
                 if let Some(found) = self[scope].children.iter().find(|scope| {
                     scope.0 == &part.0
-                        && matches!(self[*scope.1].kind, ScopeKind::Module | ScopeKind::Struct(_))
+                        && matches!(
+                            self[*scope.1].kind,
+                            ScopeKind::Module | ScopeKind::Struct(_)
+                        )
                 }) {
                     scope = *found.1;
                 }

@@ -92,6 +92,7 @@ pub enum Token<'a> {
     Static,
     Void,
     None,
+    Super,
     Unsafe,
 
     Ident(&'a str),
@@ -385,6 +386,7 @@ impl<'a> Lexer<'a> {
             "void" => Token::Void,
             "none" => Token::None,
             "unsafe" => Token::Unsafe,
+            "super" => Token::Super,
             x if x == THIS_PARAM => Token::This,
             x if x == THIS_TYPE => Token::ThisType,
             id => Token::Ident(id),
