@@ -315,6 +315,19 @@ impl TypeChecker {
                             );
                         }
 
+                        let init = scopes[self_id.scope()].fns.iter().position(|f| {
+                            f.inst && f.proto.ret == TypeId::Struct(self_id.into())
+                        }).unwrap();
+
+                        for i in 0..base.members.len() {
+                            resolve_forward_declare!(
+                                self,
+                                scopes,
+                                scopes[self_id.scope()].fns[init].proto.params[i].ty,
+                                &base.members[i].1.ty
+                            ) ;
+                        }
+
                         for f in base.functions {
                             self.check_fn(scopes, f);
                         }
