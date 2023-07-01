@@ -110,8 +110,9 @@ impl Compiler {
 
                     self.emit("};");
 
-                    for i in 0..scopes[*scope].fns.len() {
-                        let id = &FunctionId(id.scope(), i);
+                    let scope = *scope;
+                    for i in 0..scopes[scope].fns.len() {
+                        let id = &FunctionId(scope, i);
                         if scopes[id].inst {
                             continue;
                         }

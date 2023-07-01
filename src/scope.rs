@@ -84,7 +84,7 @@ pub struct CheckedParam {
     pub keyword: bool,
     pub name: String,
     pub ty: TypeId,
-    pub default: Option<CheckedExpr>,
+    //pub default: Option<CheckedExpr>,
 }
 
 #[derive(Debug, Clone)]
@@ -122,7 +122,7 @@ pub struct Member {
 
 #[derive(Debug)]
 pub struct StructDef {
-    pub members: HashMap<String, Member>,
+    pub members: Vec<(String, Member)>,
     pub scope: ScopeId,
 }
 
@@ -140,6 +140,7 @@ pub struct Scope {
     pub fns: Vec<Function>,
     types: Vec<Struct>,
     name: Option<String>,
+    children: HashMap<String, ScopeId>,
 }
 
 impl Scope {
@@ -220,6 +221,10 @@ impl Scopes {
         kind: ScopeKind,
         f: impl FnOnce(&mut Self) -> T,
     ) -> T {
+        let prev = self.current;
+        let id = ScopeId(self.scopes.len());
+        // blocks are the only unnamed scopes
+        self.current().children.insert(name.clone().unwrap_or(String::new()), id);
         self.scopes.push(Scope {
             parent: Some(self.current),
             kind,
@@ -227,8 +232,23 @@ impl Scopes {
             ..Default::default()
         });
 
-        let prev = self.current;
         self.current = ScopeId(self.scopes.len() - 1);
+        let result = f(self);
+        self.current = prev;
+        result
+    }
+
+    pub fn find_enter<T>(&mut self, name: &str, f: impl FnOnce(&mut Self) -> T) -> T {
+        let prev = self.current;
+        self.current = *self.current().children.get(name).unwrap();
+        let result = f(self);
+        self.current = prev;
+        result
+    }
+
+    pub fn enter_id<T>(&mut self, id: ScopeId, f: impl FnOnce(&mut Self) -> T) -> T {
+        let prev = self.current;
+        self.current = id;
         let result = f(self);
         self.current = prev;
         result
