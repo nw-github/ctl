@@ -3,6 +3,8 @@ use std::{
     ops::{Index, IndexMut},
 };
 
+use enum_as_inner::EnumAsInner;
+
 use crate::{
     checked_ast::{expr::CheckedExpr, Block},
     typecheck::TypeId,
@@ -74,7 +76,7 @@ macro_rules! id {
 pub struct ScopeId(pub usize);
 
 id!(FunctionId => Function, fns, find_fn, proto.name, insert_fn);
-id!(StructId => Struct, types, find_struct, name, insert_struct);
+id!(UserTypeId => UserType, types, find_user_type, name, insert_user_type);
 id!(VariableId => Variable, vars, find_var, name, insert_var);
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
@@ -82,7 +84,7 @@ pub enum ScopeKind {
     Block(Option<TypeId>, bool),
     Loop(Option<TypeId>, bool),
     Function(FunctionId),
-    Struct(StructId),
+    UserType(UserTypeId),
     Module(bool),
     #[default]
     None,
@@ -130,12 +132,18 @@ pub struct Member {
     pub ty: TypeId,
 }
 
+#[derive(Debug, EnumAsInner)]
+pub enum UserTypeData {
+    Struct(Vec<(String, Member)>),
+    GenericParam,
+}
+
 #[derive(Debug)]
-pub struct Struct {
+pub struct UserType {
     pub public: bool,
     pub name: String,
-    pub members: Vec<(String, Member)>,
     pub scope: ScopeId,
+    pub data: UserTypeData,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -148,7 +156,7 @@ pub enum Symbol {
 pub struct Scope {
     pub kind: ScopeKind,
     pub fns: Vec<Function>,
-    pub types: Vec<Struct>,
+    pub types: Vec<UserType>,
     pub parent: Option<ScopeId>,
     pub vars: Vec<Variable>,
     pub name: Option<String>,
@@ -260,7 +268,7 @@ impl Scopes {
 
     pub fn current_struct(&self) -> Option<TypeId> {
         self.iter().find_map(|(_, scope)| {
-            if let ScopeKind::Struct(id) = &scope.kind {
+            if let ScopeKind::UserType(id) = &scope.kind {
                 Some(TypeId::Struct((*id).into()))
             } else {
                 None

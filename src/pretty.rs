@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         expr::Expr,
-        stmt::{Fn, Prototype, Stmt, Struct, UserType},
+        stmt::{Fn, ParsedUserType, Prototype, Stmt, Struct},
     },
     lexer::Located,
 };
@@ -40,15 +40,15 @@ pub fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
         }
         Stmt::Fn(f) => print_fn(f, indent),
         Stmt::UserType(ty) => match ty {
-            UserType::Struct(base) => print_struct("Struct", base, indent),
-            UserType::Union { tag, base } => {
+            ParsedUserType::Struct(base) => print_struct("Struct", base, indent),
+            ParsedUserType::Union { tag, base } => {
                 if let Some(tag) = tag {
                     print_struct(&format!("Union({})", tag.data), base, indent);
                 } else {
                     print_struct("Union", base, indent)
                 }
             }
-            UserType::Interface {
+            ParsedUserType::Interface {
                 public,
                 name,
                 type_params,
@@ -79,7 +79,7 @@ pub fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
                     print_prototype(f, indent + 1);
                 }
             }
-            UserType::Enum {
+            ParsedUserType::Enum {
                 name,
                 impls,
                 variants,

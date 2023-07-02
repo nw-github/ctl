@@ -9,8 +9,8 @@ use crate::{
     },
     lexer::{Location, Span},
     scope::{
-        CheckedPrototype, Function, FunctionId, ScopeId, Scopes, StructId, Symbol, Variable,
-        VariableId,
+        CheckedPrototype, Function, FunctionId, ScopeId, Scopes, Symbol, UserTypeData, UserTypeId,
+        Variable, VariableId,
     },
     typecheck::{CheckedAst, TypeId},
     Error,
@@ -57,11 +57,11 @@ impl Compiler {
 
     fn emit_all_structs(&mut self, scopes: &Scopes) -> Result<(), Error> {
         fn dfs(
-            sid: StructId,
-            structs: &HashMap<StructId, Vec<&StructId>>,
-            visited: &mut HashMap<StructId, bool>,
-            result: &mut Vec<StructId>,
-        ) -> Result<(), (StructId, StructId)> {
+            sid: UserTypeId,
+            structs: &HashMap<UserTypeId, Vec<&UserTypeId>>,
+            visited: &mut HashMap<UserTypeId, bool>,
+            result: &mut Vec<UserTypeId>,
+        ) -> Result<(), (UserTypeId, UserTypeId)> {
             visited.insert(sid, true);
             if let Some(deps) = structs.get(&sid) {
                 for &&dep in deps {
@@ -80,14 +80,18 @@ impl Compiler {
         let mut structs = HashMap::new();
         for (i, scope) in scopes.scopes().iter().enumerate() {
             for (j, st) in scope.types.iter().enumerate() {
-                let id = StructId(ScopeId(i), j);
+                let UserTypeData::Struct(members) = &st.data else {
+                    continue;
+                };
+
+                let id = UserTypeId(ScopeId(i), j);
                 self.emit("struct ");
                 self.emit_struct_id(scopes, &id);
                 self.emit(";");
 
                 structs.insert(
                     id,
-                    st.members
+                    members
                         .iter()
                         .filter_map(|s| {
                             let mut ty = &s.1.ty;
@@ -138,7 +142,7 @@ impl Compiler {
             self.emit("struct ");
             self.emit_struct_id(scopes, id);
             self.emit("{");
-            for (name, member) in scopes[id].members.iter() {
+            for (name, member) in scopes[id].data.as_struct().unwrap().iter() {
                 self.emit_type(scopes, &member.ty);
                 self.emit(format!(" {}", name));
                 self.emit(";");
@@ -224,8 +228,7 @@ impl Compiler {
                     self.compile_stmt(scopes, stmt);
                 }
             }
-            CheckedStmt::Fn(_) => {}
-            CheckedStmt::UserType(_) => {}
+            CheckedStmt::None => {}
             CheckedStmt::Error => {
                 panic!("ICE: CheckedStmt::Error in compile_stmt");
             }
@@ -300,10 +303,10 @@ impl Compiler {
 
                 let mut source_ty = &this.ty;
                 let target = &scopes[func].proto.params[0].ty;
-                if !matches!(source_ty, TypeId::Ref(_) | TypeId::RefMut(_)) {
+                if !matches!(source_ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
                     self.emit("&");
                 } else {
-                    while let TypeId::Ref(inner) | TypeId::RefMut(inner) = source_ty {
+                    while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = source_ty {
                         if source_ty == target {
                             break;
                         }
@@ -381,7 +384,7 @@ impl Compiler {
             ExprData::Member { source, member } => {
                 self.emit("(");
                 let mut ty = &source.ty;
-                while let TypeId::Ref(inner) | TypeId::RefMut(inner) = ty {
+                while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = ty {
                     self.emit("*");
                     ty = inner;
                 }
@@ -396,8 +399,7 @@ impl Compiler {
                 self.compile_expr(scopes, expr);
             }
             ExprData::Yield(expr) => {
-                let Some(block) = &self.current_block else { unreachable!() };
-
+                let block = self.current_block.as_ref().unwrap();
                 let assign = format!("{} = ", block.variable);
                 let goto = format!("; goto {}", block.label);
 
@@ -545,11 +547,11 @@ impl Compiler {
             TypeId::IntGeneric | TypeId::FloatGeneric => {
                 panic!("ICE: Int/FloatGeneric in emit_type");
             }
-            TypeId::Ref(inner) => {
+            TypeId::Ptr(inner) => {
                 self.emit_type(scopes, inner);
                 self.emit(" const*");
             }
-            TypeId::RefMut(inner) => {
+            TypeId::MutPtr(inner) => {
                 self.emit_type(scopes, inner);
                 self.emit(" *");
             }
@@ -564,6 +566,7 @@ impl Compiler {
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
+            TypeId::Generic(_) => todo!(),
         }
     }
 
@@ -571,7 +574,7 @@ impl Compiler {
         self.emit(scopes.full_name(id.scope(), &scopes[id].proto.name));
     }
 
-    fn emit_struct_id(&mut self, scopes: &Scopes, id: &StructId) {
+    fn emit_struct_id(&mut self, scopes: &Scopes, id: &UserTypeId) {
         self.emit(scopes.full_name(id.scope(), &scopes[id].name));
     }
 

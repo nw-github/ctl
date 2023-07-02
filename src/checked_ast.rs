@@ -13,7 +13,7 @@ pub mod expr {
 
     use crate::{
         ast::expr::{BinaryOp, UnaryOp},
-        scope::{FunctionId, VariableId, Symbol},
+        scope::{FunctionId, Symbol},
         typecheck::TypeId,
     };
 
@@ -99,17 +99,8 @@ pub mod expr {
 }
 
 pub mod stmt {
-    use crate::{
-        scope::{FunctionId, StructId, VariableId},
-        typecheck::TypeId,
-    };
-
     use super::{expr::CheckedExpr, Block};
-
-    #[derive(Debug, Clone)]
-    pub enum CheckedUserType {
-        Struct(StructId),
-    }
+    use crate::{scope::VariableId, typecheck::TypeId};
 
     #[derive(Debug, Default, Clone)]
     pub enum CheckedStmt {
@@ -119,13 +110,12 @@ pub mod stmt {
             mutable: bool,
             value: Result<CheckedExpr, TypeId>,
         },
-        Fn(FunctionId),
-        UserType(CheckedUserType),
         Static(VariableId, CheckedExpr),
         Module {
             name: String,
             body: Block,
         },
+        None,
         #[default]
         Error,
     }

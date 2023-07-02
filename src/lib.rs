@@ -10,7 +10,7 @@ mod typecheck;
 use std::path::PathBuf;
 
 use compiler::Compiler;
-use lexer::{Span, Lexer};
+use lexer::{Lexer, Span};
 use typecheck::CheckedAst;
 
 use crate::{ast::Stmt, parser::Parser, typecheck::TypeChecker};

@@ -3,7 +3,7 @@ use std::iter::Peekable;
 use crate::{
     ast::{
         expr::{Expr, UnaryOp},
-        stmt::{self, Fn, Param, Prototype, Stmt, TypeHint, UserType},
+        stmt::{self, Fn, Param, ParsedUserType, Prototype, Stmt, TypeHint},
         Path,
     },
     lexer::{Lexer, Located as L, Location, Span, Token},
@@ -118,15 +118,22 @@ impl<'a> Parser<'a> {
                 ident.1.extend_to(id.span);
             } else {
                 self.expect_kind(Token::LAngle, "expected name or generic parameters")?;
-                let (params, span) = self.comma_separated(Token::RAngle, "expected '>'", |this| {
-                    this.expect_id("expected type name").map(|id| id.into())
-                })?;
+                let (params, span) =
+                    self.comma_separated(Token::RAngle, "expected '>'", |this| {
+                        this.expect_id("expected type name").map(|id| id.into())
+                    })?;
                 data.last_mut().unwrap().1 = params;
                 ident.1.extend_to(span);
             }
         }
 
-        Ok(L::new(Path { components: data, root }, ident.1))
+        Ok(L::new(
+            Path {
+                components: data,
+                root,
+            },
+            ident.1,
+        ))
     }
 
     fn path(&mut self) -> Result<L<Path>> {
@@ -463,7 +470,7 @@ impl<'a> Parser<'a> {
         } else if let Some(mut token) = self.advance_if_kind(Token::Struct) {
             Some((|| {
                 Ok(L::new(
-                    Stmt::UserType(UserType::Struct(stmt::Struct {
+                    Stmt::UserType(ParsedUserType::Struct(stmt::Struct {
                         name: self.expect_id("expected name")?.into(),
                         public: public.is_some(),
                         ..self.parse_struct_body(&mut token.span)?
@@ -482,7 +489,7 @@ impl<'a> Parser<'a> {
                 };
 
                 Ok(L::new(
-                    Stmt::UserType(UserType::Union {
+                    Stmt::UserType(ParsedUserType::Union {
                         tag,
                         base: stmt::Struct {
                             name: self.expect_id("expected name")?.into(),
@@ -510,7 +517,7 @@ impl<'a> Parser<'a> {
                 })?;
 
                 Ok(L::new(
-                    Stmt::UserType(UserType::Interface {
+                    Stmt::UserType(ParsedUserType::Interface {
                         public: public.is_some(),
                         name,
                         type_params,
@@ -568,7 +575,7 @@ impl<'a> Parser<'a> {
                 })?;
 
                 Ok(L::new(
-                    Stmt::UserType(UserType::Enum {
+                    Stmt::UserType(ParsedUserType::Enum {
                         public: public.is_some(),
                         name,
                         impls,

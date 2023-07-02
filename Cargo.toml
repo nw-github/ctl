@@ -7,3 +7,4 @@ edition = "2021"
 anyhow = "1.0.71"
 clap = { version = "4.3.8", features = ["derive"] }
 derive_more = "0.99.17"
+enum-as-inner = "0.6.0"

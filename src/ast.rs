@@ -271,7 +271,7 @@ pub mod stmt {
         Result(Box<TypeHint>, Box<TypeHint>),
         Ref(Box<TypeHint>),
         RefMut(Box<TypeHint>),
-        Anon(UserType),
+        Anon(ParsedUserType),
         Void,
         This,
         MutThis,
@@ -321,7 +321,7 @@ pub mod stmt {
     }
 
     #[derive(Debug)]
-    pub enum UserType {
+    pub enum ParsedUserType {
         Struct(Struct),
         Union {
             tag: Option<Located<Path>>,
@@ -353,7 +353,7 @@ pub mod stmt {
             value: Option<super::Expr>,
         },
         Fn(Fn),
-        UserType(UserType),
+        UserType(ParsedUserType),
         Static {
             public: bool,
             name: String,
