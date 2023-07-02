@@ -198,7 +198,7 @@ pub mod expr {
         Array(Vec<super::Expr>),
         ArrayWithInit {
             init: Box<super::Expr>,
-            count: usize,
+            count: Box<super::Expr>,
         },
         Tuple(Vec<super::Expr>),
         Map(Vec<(super::Expr, super::Expr)>),
@@ -262,7 +262,7 @@ pub mod stmt {
     #[derive(Debug)]
     pub enum TypeHint {
         Regular { is_dyn: bool, path: Located<Path> },
-        Array(Box<TypeHint>, usize),
+        Array(Box<TypeHint>, Box<super::Expr>),
         Slice(Box<TypeHint>),
         Tuple(Vec<TypeHint>),
         Map(Box<TypeHint>, Box<TypeHint>),

@@ -221,17 +221,9 @@ impl<'a> Parser<'a> {
             if self.advance_if_kind(Token::RBrace).is_some() {
                 TypeHint::Slice(inner.into())
             } else if self.advance_if_kind(Token::Semicolon).is_some() {
-                //let count = self.expression()?;
-                let count = self.expect(
-                    |t| {
-                        let Token::Int { base: 10, value, width: None } = t.data else { return None; };
-                        Some(value)
-                    },
-                    "expected array size",
-                )?;
-
+                let count = self.expression()?;
                 self.expect_kind(Token::RBrace, "expected ']'")?;
-                TypeHint::Array(inner.into(), count.parse().unwrap())
+                TypeHint::Array(inner.into(), count.into())
             } else if self.advance_if_kind(Token::Colon).is_some() {
                 let value = self.parse_type()?;
                 self.expect_kind(Token::RBrace, "expected ']'")?;
@@ -1090,22 +1082,12 @@ impl<'a> Parser<'a> {
 
                         L::new(Expr::Map(exprs), span)
                     } else if self.advance_if_kind(Token::Semicolon).is_some() {
-                        // let count = self.expression()?;
-                        let count = self.expect(
-                            |t| {
-                                let Token::Int { base: 10, value, width: None } = t.data else {
-                                    return None;
-                                };
-                                Some(value)
-                            },
-                            "expected array size",
-                        )?;
-
+                        let count = self.expression()?;
                         let rbrace = self.expect_kind(Token::RBrace, "expected ']'")?;
                         L::new(
                             Expr::ArrayWithInit {
                                 init: expr.into(),
-                                count: count.parse().unwrap(),
+                                count: count.into(),
                             },
                             Span::combine(token.span, rbrace.span),
                         )

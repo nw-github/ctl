@@ -13,8 +13,8 @@ use crate::{
     },
     lexer::{Located, Span},
     scope::{
-        CheckedParam, CheckedPrototype, Function, FunctionId, Member, ScopeKind,
-        Scopes, Struct, StructDef, StructId, Variable,
+        CheckedParam, CheckedPrototype, Function, FunctionId, Member, ScopeKind, Scopes, Struct,
+        StructDef, StructId, Variable,
     },
     Error, THIS_PARAM, THIS_TYPE,
 };
@@ -41,6 +41,11 @@ pub enum TypeId {
     RefMut(Box<TypeId>),
     Option(Box<TypeId>),
     Array(Box<(TypeId, usize)>),
+}
+
+enum ResolveError<'a> {
+    Path(&'a Located<Path>),
+    ConstEval(Error),
 }
 
 impl TypeId {
@@ -125,10 +130,23 @@ pub struct TypeChecker {
     errors: Vec<Error>,
 }
 
+macro_rules! type_mismatch {
+    ($scopes: expr, $expected: expr, $actual: expr, $span: expr) => {
+        Error::new(
+            format!(
+                "type mismatch: expected type {}, got {}",
+                Self::type_name($scopes, $expected),
+                Self::type_name($scopes, $actual),
+            ),
+            $span,
+        )
+    };
+}
+
 macro_rules! type_check_bail {
     ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {
         if !Self::coerces_to($source, $target) {
-            return $self.type_mismatch($scopes, $target, $source, $span);
+            return $self.error(type_mismatch!($scopes, $target, $source, $span));
         }
     };
 }
@@ -136,7 +154,7 @@ macro_rules! type_check_bail {
 macro_rules! type_check {
     ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {
         if !Self::coerces_to($source, $target) {
-            $self.type_mismatch::<()>($scopes, $target, $source, $span)
+            $self.error::<()>(type_mismatch!($scopes, $target, $source, $span))
         }
     };
 }
@@ -707,17 +725,16 @@ impl TypeChecker {
                     self.check_expr(scopes, *init, None)
                 };
 
-                // let span = count.span;
-                // let count = self.check_expr(scopes, *count, Some(&TypeId::Isize));
-                // type_check!(self, scopes, &count.ty, &TypeId::Isize, span);
-
-                CheckedExpr::new(
-                    TypeId::Array(Box::new((init.ty.clone(), count))),
-                    ExprData::ArrayWithInit {
-                        init: init.into(),
-                        count,
-                    },
-                )
+                match Self::consteval(scopes, &count, Some(&TypeId::Usize)) {
+                    Ok(count) => CheckedExpr::new(
+                        TypeId::Array(Box::new((init.ty.clone(), count))),
+                        ExprData::ArrayWithInit {
+                            init: init.into(),
+                            count,
+                        },
+                    ),
+                    Err(err) => self.error(err),
+                }
             }
             Expr::Tuple(_) => todo!(),
             Expr::Map(_) => todo!(),
@@ -1105,6 +1122,33 @@ impl TypeChecker {
         }
     }
 
+    fn consteval(
+        scopes: &Scopes,
+        expr: &Located<Expr>,
+        target: Option<&TypeId>,
+    ) -> Result<usize, Error> {
+        match &expr.data {
+            Expr::Integer { base, value, width } => {
+                if let Some(width) = width.as_ref().and_then(|width| Self::match_int_type(width)) {
+                    if let Some(target) = target {
+                        if target != &width {
+                            return Err(type_mismatch!(scopes, target, &width, expr.span));
+                        }
+                    }
+                }
+
+                match usize::from_str_radix(value, *base as u32) {
+                    Ok(value) => Ok(value),
+                    Err(_) => Err(Error::new("value cannot be converted to usize", expr.span)),
+                }
+            }
+            _ => Err(Error::new(
+                "expression is not compile time evaluatable",
+                expr.span,
+            )),
+        }
+    }
+
     fn check_prototype(
         &mut self,
         scopes: &mut Scopes,
@@ -1202,7 +1246,9 @@ impl TypeChecker {
                         if let Some(param) = params.iter().find(|p| p.name == name) {
                             let expr = self.check_expr(scopes, expr, Some(&param.ty));
                             if !Self::coerces_to(&expr.ty, &param.ty) {
-                                entry.insert(self.type_mismatch(scopes, &param.ty, &expr.ty, span));
+                                entry.insert(
+                                    self.error(type_mismatch!(scopes, &param.ty, &expr.ty, span)),
+                                );
                             } else {
                                 entry.insert(expr);
                             }
@@ -1224,7 +1270,7 @@ impl TypeChecker {
                 if !Self::coerces_to(&expr.ty, &param.ty) {
                     result.insert(
                         param.name.clone(),
-                        self.type_mismatch(scopes, &param.ty, &expr.ty, span),
+                        self.error(type_mismatch!(scopes, &param.ty, &expr.ty, span)),
                     );
                 } else {
                     result.insert(param.name.clone(), expr);
@@ -1280,7 +1326,7 @@ impl TypeChecker {
         }
     }
 
-    fn fd_resolve_type<'a>(scopes: &Scopes, ty: &'a TypeHint) -> Result<TypeId, &'a Located<Path>> {
+    fn fd_resolve_type<'a>(scopes: &Scopes, ty: &'a TypeHint) -> Result<TypeId, ResolveError<'a>> {
         Ok(match ty {
             TypeHint::Regular { path, .. } => {
                 if let Some(Symbol::Function(id)) = scopes.resolve_path(&path.data) {
@@ -1300,10 +1346,10 @@ impl TypeChecker {
                         "str" => Some(TypeId::String),
                         _ => Self::match_int_type(symbol),
                     }
-                    .ok_or(path);
+                    .ok_or(ResolveError::Path(path));
                 }
 
-                return Err(path);
+                return Err(ResolveError::Path(path));
             }
             TypeHint::Void => TypeId::Void,
             TypeHint::Ref(ty) => TypeId::Ref(Self::fd_resolve_type(scopes, ty)?.into()),
@@ -1319,8 +1365,11 @@ impl TypeChecker {
                 .current_struct()
                 .map(|s| TypeId::RefMut(s.into()))
                 .expect("ICE: this outside of method"),
-            TypeHint::Array(ty, n) => {
-                TypeId::Array((Self::fd_resolve_type(scopes, ty)?, *n).into())
+            TypeHint::Array(ty, count) => {
+                match Self::consteval(scopes, count, Some(&TypeId::Usize)) {
+                    Ok(n) => TypeId::Array((Self::fd_resolve_type(scopes, ty)?, n).into()),
+                    Err(err) => return Err(ResolveError::ConstEval(err)),
+                }
             }
             TypeHint::Option(ty) => TypeId::Option(Self::fd_resolve_type(scopes, ty)?.into()),
             _ => todo!(),
@@ -1328,11 +1377,12 @@ impl TypeChecker {
     }
 
     fn resolve_type(&mut self, scopes: &Scopes, ty: &TypeHint) -> TypeId {
-        Self::fd_resolve_type(scopes, ty).unwrap_or_else(|name| {
-            self.error(Error::new(
+        Self::fd_resolve_type(scopes, ty).unwrap_or_else(|err| match err {
+            ResolveError::ConstEval(err) => self.error(err),
+            ResolveError::Path(name) => self.error(Error::new(
                 format!("undefined type: {}", name.data),
                 name.span,
-            ))
+            )),
         })
     }
 
@@ -1355,23 +1405,6 @@ impl TypeChecker {
     fn error<T: Default>(&mut self, error: Error) -> T {
         self.errors.push(error);
         T::default()
-    }
-
-    fn type_mismatch<T: Default>(
-        &mut self,
-        scopes: &Scopes,
-        expected: &TypeId,
-        actual: &TypeId,
-        span: Span,
-    ) -> T {
-        self.error(Error::new(
-            format!(
-                "type mismatch: expected type {}, got {}",
-                Self::type_name(scopes, expected),
-                Self::type_name(scopes, actual),
-            ),
-            span,
-        ))
     }
 
     fn match_int_type(name: &str) -> Option<TypeId> {

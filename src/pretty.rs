@@ -200,8 +200,8 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
             let tabs = INDENT.repeat(indent + 1);
             println!("{tabs}Init: ");
             print_expr(init, indent + 2);
-            println!("{tabs}Count: {count}");
-            //print_expr(count, indent + 2);
+            println!("{tabs}Count: ");
+            print_expr(count, indent + 2);
         }
         Expr::Tuple(elements) => {
             println!("{tabs}Tuple");
