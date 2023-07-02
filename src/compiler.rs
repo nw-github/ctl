@@ -3,13 +3,13 @@ use std::collections::HashMap;
 use crate::{
     ast::expr::UnaryOp,
     checked_ast::{
-        expr::{CheckedExpr, ExprData, Symbol},
+        expr::{CheckedExpr, ExprData},
         stmt::CheckedStmt,
         Block,
     },
     lexer::{Location, Span},
     scope::{
-        CheckedPrototype, Function, FunctionId, ScopeId, Scopes, StructId, Variable, VariableId,
+        CheckedPrototype, Function, FunctionId, ScopeId, Scopes, StructId, Variable, VariableId, Symbol,
     },
     typecheck::{CheckedAst, TypeId},
     Error,

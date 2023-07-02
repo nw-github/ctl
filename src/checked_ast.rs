@@ -13,17 +13,11 @@ pub mod expr {
 
     use crate::{
         ast::expr::{BinaryOp, UnaryOp},
-        scope::{FunctionId, VariableId},
+        scope::{FunctionId, VariableId, Symbol},
         typecheck::TypeId,
     };
 
     use super::Block;
-
-    #[derive(Debug, Clone, Copy)]
-    pub enum Symbol {
-        Function(FunctionId),
-        Variable(VariableId),
-    }
 
     #[derive(Default, Debug, Clone)]
     pub enum ExprData {

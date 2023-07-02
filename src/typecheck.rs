@@ -7,14 +7,14 @@ use crate::{
         Path,
     },
     checked_ast::{
-        expr::{CheckedExpr, ExprData, Symbol},
+        expr::{CheckedExpr, ExprData},
         stmt::{CheckedStmt, CheckedUserType},
         Block,
     },
     lexer::{Located, Span},
     scope::{
-        CheckedParam, CheckedPrototype, Function, FunctionId, Member, ScopeKind, Scopes, Struct,
-        StructDef, StructId, Variable,
+        CheckedParam, CheckedPrototype, Function, FunctionId, Member, ScopeId, ScopeKind, Scopes,
+        Struct, StructDef, StructId, Symbol, Variable, VariableId,
     },
     Error, THIS_PARAM, THIS_TYPE,
 };
@@ -45,7 +45,7 @@ pub enum TypeId {
 
 enum ResolveError<'a> {
     Path(&'a Located<Path>),
-    ConstEval(Error),
+    Error(Error),
 }
 
 impl TypeId {
@@ -179,12 +179,8 @@ impl TypeChecker {
 
     fn forward_declare(&mut self, scopes: &mut Scopes, stmt: &Located<Stmt>) {
         match &stmt.data {
-            Stmt::Module {
-                public: _,
-                name,
-                body,
-            } => {
-                scopes.enter(Some(name.clone()), ScopeKind::Module, |scopes| {
+            Stmt::Module { public, name, body } => {
+                scopes.enter(Some(name.clone()), ScopeKind::Module(*public), |scopes| {
                     for stmt in body {
                         self.forward_declare(scopes, stmt)
                     }
@@ -194,6 +190,7 @@ impl TypeChecker {
                 UserType::Struct(base) => {
                     let self_id = scopes.insert_struct(Struct {
                         name: base.name.clone(),
+                        public: base.public,
                         def: None,
                     });
                     scopes.enter(
@@ -588,6 +585,16 @@ impl TypeChecker {
                     let source = self.check_expr(scopes, *source, None);
                     let (d, id) = eval_member_to_struct!(source);
                     if let Some((i, f)) = scopes[d.scope].find_fn(&member) {
+                        if !f.proto.public && !scopes.is_sub_scope(d.scope) {
+                            return self.error(Error::new(
+                                format!(
+                                    "cannot access private method '{member}' of type {}",
+                                    Self::type_name(scopes, id)
+                                ),
+                                span,
+                            ));
+                        }
+
                         if let Some(param) = f.proto.params.get(0).filter(|p| p.name == THIS_PARAM)
                         {
                             if let TypeId::RefMut(inner) = &param.ty {
@@ -844,13 +851,14 @@ impl TypeChecker {
                     .unwrap_or(TypeId::F64),
                 ExprData::Float(value),
             ),
-            Expr::Path(path) => match scopes.resolve_path(&path) {
-                Some(symbol @ Symbol::Variable(ref id)) => {
+            Expr::Path(path) => match Self::resolve_path(scopes, &path, span) {
+                Some(Ok(symbol @ Symbol::Variable(ref id))) => {
                     CheckedExpr::new(scopes[id].ty.clone(), ExprData::Symbol(symbol))
                 }
-                Some(symbol @ Symbol::Function(ref id)) => {
+                Some(Ok(symbol @ Symbol::Function(ref id))) => {
                     CheckedExpr::new(TypeId::Function((*id).into()), ExprData::Symbol(symbol))
                 }
+                Some(Err(err)) => self.error(err),
                 None => {
                     if let Some(symbol) = path.as_symbol() {
                         self.error(Error::new(format!("undefined variable: {symbol}"), span))
@@ -1185,6 +1193,7 @@ impl TypeChecker {
     }
 
     fn check_fn(&mut self, scopes: &mut Scopes, f: Fn) -> FunctionId {
+        // TODO: disallow private type in public interface
         let id = scopes.find_fn(&f.proto.name).unwrap();
         for i in 0..f.proto.params.len() {
             resolve_forward_declare!(
@@ -1329,10 +1338,16 @@ impl TypeChecker {
     fn fd_resolve_type<'a>(scopes: &Scopes, ty: &'a TypeHint) -> Result<TypeId, ResolveError<'a>> {
         Ok(match ty {
             TypeHint::Regular { path, .. } => {
-                if let Some(Symbol::Function(id)) = scopes.resolve_path(&path.data) {
-                    if scopes[&id].inst {
-                        return Ok(scopes[&id].proto.ret.clone());
+                match Self::resolve_path(scopes, &path.data, path.span) {
+                    Some(Ok(Symbol::Function(id))) => {
+                        if scopes[&id].inst {
+                            return Ok(scopes[&id].proto.ret.clone());
+                        }
                     }
+                    Some(Err(err)) => {
+                        return Err(ResolveError::Error(err));
+                    }
+                    _ => {}
                 }
 
                 if let Some(symbol) = path.data.as_symbol() {
@@ -1368,7 +1383,7 @@ impl TypeChecker {
             TypeHint::Array(ty, count) => {
                 match Self::consteval(scopes, count, Some(&TypeId::Usize)) {
                     Ok(n) => TypeId::Array((Self::fd_resolve_type(scopes, ty)?, n).into()),
-                    Err(err) => return Err(ResolveError::ConstEval(err)),
+                    Err(err) => return Err(ResolveError::Error(err)),
                 }
             }
             TypeHint::Option(ty) => TypeId::Option(Self::fd_resolve_type(scopes, ty)?.into()),
@@ -1378,7 +1393,7 @@ impl TypeChecker {
 
     fn resolve_type(&mut self, scopes: &Scopes, ty: &TypeHint) -> TypeId {
         Self::fd_resolve_type(scopes, ty).unwrap_or_else(|err| match err {
-            ResolveError::ConstEval(err) => self.error(err),
+            ResolveError::Error(err) => self.error(err),
             ResolveError::Path(name) => self.error(Error::new(
                 format!("undefined type: {}", name.data),
                 name.span,
@@ -1514,6 +1529,88 @@ impl TypeChecker {
             TypeId::Array(inner) => format!("[{}; {}]", Self::type_name(scopes, &inner.0), inner.1),
             TypeId::Isize => "isize".into(),
             TypeId::Usize => "usize".into(),
+        }
+    }
+
+    pub fn resolve_path(scopes: &Scopes, path: &Path, span: Span) -> Option<Result<Symbol, Error>> {
+        // TODO: generic params
+        if let Some(name) = path.as_symbol() {
+            scopes
+                .find_var(name)
+                .map(Symbol::Variable)
+                .or_else(|| scopes.find_fn(name).map(Symbol::Function))
+                .map(Ok)
+        } else {
+            let mut scope = ScopeId(0);
+            let mut start = 0;
+            if !path.root {
+                if path.data[0].0 == "super" {
+                    start = 1;
+                    if let Some(module) = scopes.module_of(
+                        scopes[scopes.module_of(scopes.current_id()).unwrap()]
+                            .parent
+                            .unwrap(),
+                    ) {
+                        scope = module;
+                    } else {
+                        return Some(Err(Error::new("cannot use super here", span)));
+                    }
+                } else {
+                    scope = scopes.module_of(scopes.current_id()).unwrap();
+                }
+            }
+
+            for part in path.data[start..path.data.len() - 1].iter() {
+                for (name, id) in scopes[scope].children.iter() {
+                    if name == &part.0 {
+                        // TODO: skip the public check if we ended up in our own module
+                        match &scopes[*id].kind {
+                            ScopeKind::Module(public) => {
+                                if !*public {
+                                    return Some(Err(Error::new(
+                                        format!("cannot access private module {name}"),
+                                        span,
+                                    )));
+                                }
+                            }
+                            ScopeKind::Struct(id) => {
+                                if !scopes[id].public {
+                                    return Some(Err(Error::new(
+                                        format!("cannot access members of private struct {name}"),
+                                        span,
+                                    )));
+                                }
+                            }
+                            _ => continue,
+                        }
+
+                        scope = *id;
+                        break;
+                    }
+                }
+            }
+
+            let last = path.data.last().unwrap();
+            scopes[scope]
+                .find_var(&last.0)
+                .map(|var| Symbol::Variable(VariableId(scope, var.0)))
+                .or_else(|| {
+                    scopes[scope]
+                        .find_fn(&last.0)
+                        .map(|func| Symbol::Function(FunctionId(scope, func.0)))
+                })
+                .map(|symbol| {
+                    let public = match &symbol {
+                        Symbol::Function(id) => scopes[id].proto.public,
+                        Symbol::Variable(id) => scopes[id].public,
+                    };
+
+                    if public {
+                        Ok(symbol)
+                    } else {
+                        Err(Error::new("symbol is private", span))
+                    }
+                })
         }
     }
 }

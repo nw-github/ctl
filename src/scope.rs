@@ -4,11 +4,7 @@ use std::{
 };
 
 use crate::{
-    ast::Path,
-    checked_ast::{
-        expr::{CheckedExpr, Symbol},
-        Block,
-    },
+    checked_ast::{expr::CheckedExpr, Block},
     typecheck::TypeId,
 };
 
@@ -57,7 +53,7 @@ macro_rules! id {
                         return Some($name(id, index));
                     }
 
-                    if scope.kind == ScopeKind::Module {
+                    if matches!(scope.kind, ScopeKind::Module(_)) {
                         break;
                     }
                 }
@@ -87,7 +83,7 @@ pub enum ScopeKind {
     Loop(Option<TypeId>, bool),
     Function(FunctionId),
     Struct(StructId),
-    Module,
+    Module(bool),
     #[default]
     None,
 }
@@ -143,7 +139,14 @@ pub struct StructDef {
 #[derive(Debug)]
 pub struct Struct {
     pub name: String,
+    pub public: bool,
     pub def: Option<StructDef>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Symbol {
+    Function(FunctionId),
+    Variable(VariableId),
 }
 
 #[derive(Default, Debug)]
@@ -151,10 +154,10 @@ pub struct Scope {
     pub kind: ScopeKind,
     pub fns: Vec<Function>,
     pub types: Vec<Struct>,
-    parent: Option<ScopeId>,
-    vars: Vec<Variable>,
-    name: Option<String>,
-    children: HashMap<String, ScopeId>,
+    pub parent: Option<ScopeId>,
+    pub vars: Vec<Variable>,
+    pub name: Option<String>,
+    pub children: HashMap<String, ScopeId>,
 }
 
 pub struct Scopes {
@@ -286,7 +289,7 @@ impl Scopes {
 
     pub fn module_of(&self, id: ScopeId) -> Option<ScopeId> {
         for (id, current) in self.iter_from(id) {
-            if current.kind == ScopeKind::Module {
+            if matches!(current.kind, ScopeKind::Module(_)) {
                 return Some(id);
             }
         }
@@ -296,54 +299,6 @@ impl Scopes {
 
     pub fn scopes(&self) -> &[Scope] {
         &self.scopes
-    }
-
-    pub fn resolve_path(&self, path: &Path) -> Option<Symbol> {
-        // TODO: generic params
-        if let Some(name) = path.as_symbol() {
-            self.find_var(name)
-                .map(Symbol::Variable)
-                .or_else(|| self.find_fn(name).map(Symbol::Function))
-        } else {
-            let mut scope = ScopeId(0);
-            let mut start = 0;
-            if !path.root {
-                if path.data[0].0 == "super" {
-                    start = 1;
-                    if let Some(module) =
-                        self.module_of(self[self.module_of(self.current).unwrap()].parent.unwrap())
-                    {
-                        scope = module;
-                    } else {
-                        todo!("super at top level")
-                    }
-                } else {
-                    scope = self.module_of(self.current).unwrap();
-                }
-            }
-
-            for part in path.data[start..path.data.len() - 1].iter() {
-                if let Some(found) = self[scope].children.iter().find(|scope| {
-                    scope.0 == &part.0
-                        && matches!(
-                            self[*scope.1].kind,
-                            ScopeKind::Module | ScopeKind::Struct(_)
-                        )
-                }) {
-                    scope = *found.1;
-                }
-            }
-
-            let last = path.data.last().unwrap();
-            self[scope]
-                .find_var(&last.0)
-                .map(|var| Symbol::Variable(VariableId(scope, var.0)))
-                .or_else(|| {
-                    self[scope]
-                        .find_fn(&last.0)
-                        .map(|func| Symbol::Function(FunctionId(scope, func.0)))
-                })
-        }
     }
 }
 
