@@ -852,13 +852,10 @@ impl TypeChecker {
                     CheckedExpr::new(TypeId::Function((*id).into()), ExprData::Symbol(symbol))
                 }
                 Some(Err(err)) => self.error(err),
-                None => {
-                    if let Some(symbol) = path.as_symbol() {
-                        self.error(Error::new(format!("undefined variable: {symbol}"), span))
-                    } else {
-                        self.error(Error::new(format!("undefined type: {path}"), span))
-                    }
-                }
+                None => self.error(Error::new(
+                    format!("'{path}' not found in this scope"),
+                    span,
+                )),
             },
             Expr::Assign {
                 target: lhs,
@@ -1527,18 +1524,39 @@ impl TypeChecker {
     }
 
     pub fn resolve_path(scopes: &Scopes, path: &Path, span: Span) -> Option<Result<Symbol, Error>> {
-        // TODO: generic params
-        if let Some(name) = path.as_symbol() {
-            scopes
-                .find_var(name)
-                .map(Symbol::Variable)
-                .or_else(|| scopes.find_fn(name).map(Symbol::Function))
-                .map(Ok)
+        if path.components.len() == 1 {
+            let name = &path.components[0].0;
+            if let Some(var) = scopes.find_var(name) {
+                if !path.components[0].1.is_empty() {
+                    return Some(Err(Error::new(
+                        "local variables cannot be parameterized with generics",
+                        span,
+                    )));
+                }
+
+                return Some(Ok(Symbol::Variable(var)));
+            } else if let Some(func) = scopes.find_fn(name) {
+                if path.components[0].1.len() != scopes[&func].proto.type_params.len() {
+                    return Some(Err(Error::new(
+                        format!(
+                            "expected {} generic arguments, received {}",
+                            scopes[&func].proto.type_params.len(),
+                            path.components[0].1.len()
+                        ),
+                        span,
+                    )));
+                }
+
+                return Some(Ok(Symbol::Function(func)));
+            }
+
+            None
         } else {
+            // TODO: generic params
             let mut scope = ScopeId(0);
             let mut start = 0;
             if !path.root {
-                if path.data[0].0 == "super" {
+                if path.components[0].0 == "super" {
                     start = 1;
                     if let Some(module) = scopes.module_of(
                         scopes[scopes.module_of(scopes.current_id()).unwrap()]
@@ -1554,7 +1572,7 @@ impl TypeChecker {
                 }
             }
 
-            for part in path.data[start..path.data.len() - 1].iter() {
+            for part in path.components[start..path.components.len() - 1].iter() {
                 for (name, id) in scopes[scope].children.iter() {
                     if name == &part.0 {
                         // TODO: skip the public check if we ended up in our own module
@@ -1568,7 +1586,10 @@ impl TypeChecker {
                                 }
                             }
                             ScopeKind::Struct(id) => {
-                                if !scopes[id].public {
+                                if !scopes[id].public
+                                    && scopes.module_of(id.scope())
+                                        != scopes.module_of(scopes.current_id())
+                                {
                                     return Some(Err(Error::new(
                                         format!("cannot access members of private struct {name}"),
                                         span,
@@ -1584,7 +1605,7 @@ impl TypeChecker {
                 }
             }
 
-            let last = path.data.last().unwrap();
+            let last = path.components.last().unwrap();
             scopes[scope]
                 .find_var(&last.0)
                 .map(|var| Symbol::Variable(VariableId(scope, var.0)))

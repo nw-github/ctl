@@ -110,14 +110,23 @@ impl<'a> Parser<'a> {
     // helpers
 
     fn path_with_one(&mut self, root: bool, mut ident: (&'a str, Span)) -> Result<L<Path>> {
-        let mut data = vec![(ident.0.to_owned(), self.parse_generic_params()?)];
+        let mut data = vec![(ident.0.to_owned(), Vec::new())];
         while self.advance_if_kind(Token::ScopeRes).is_some() {
-            let (id, span) = self.expect_id_with_span("expected name")?;
-            data.push((id.to_owned(), self.parse_generic_params()?));
-            ident.1.extend_to(span);
+            if let Some(id) = self.advance_if(|k| matches!(k, Token::Ident(_))) {
+                let Token::Ident(name) = id.data else { unreachable!() };
+                data.push((name.to_owned(), self.parse_generic_params()?));
+                ident.1.extend_to(id.span);
+            } else {
+                self.expect_kind(Token::LAngle, "expected name or generic parameters")?;
+                let (params, span) = self.comma_separated(Token::RAngle, "expected '>'", |this| {
+                    this.expect_id("expected type name").map(|id| id.into())
+                })?;
+                data.last_mut().unwrap().1 = params;
+                ident.1.extend_to(span);
+            }
         }
 
-        Ok(L::new(Path { data, root }, ident.1))
+        Ok(L::new(Path { components: data, root }, ident.1))
     }
 
     fn path(&mut self) -> Result<L<Path>> {
@@ -820,7 +829,7 @@ impl<'a> Parser<'a> {
                                 && this.advance_if_kind(Token::Colon).is_some()
                             {
                                 return Ok((
-                                    Some(path.data.into_iter().next().unwrap().0),
+                                    Some(path.components.into_iter().next().unwrap().0),
                                     this.expression()?,
                                 ));
                             }

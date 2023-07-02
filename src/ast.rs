@@ -7,13 +7,13 @@ pub type Stmt = Located<stmt::Stmt>;
 
 #[derive(Debug, Clone)]
 pub struct Path {
-    pub data: Vec<(String, Vec<String>)>,
+    pub components: Vec<(String, Vec<String>)>,
     pub root: bool,
 }
 
 impl Display for Path {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (i, (name, generics)) in self.data.iter().enumerate() {
+        for (i, (name, generics)) in self.components.iter().enumerate() {
             if i > 0 || self.root {
                 write!(f, "::")?;
             }
@@ -39,7 +39,7 @@ impl Display for Path {
 impl From<String> for Path {
     fn from(value: String) -> Self {
         Self {
-            data: vec![(value, Vec::new())],
+            components: vec![(value, Vec::new())],
             root: false,
         }
     }
@@ -47,7 +47,8 @@ impl From<String> for Path {
 
 impl Path {
     pub fn as_symbol(&self) -> Option<&str> {
-        (self.data.len() == 1 && self.data[0].1.is_empty()).then_some(&self.data[0].0)
+        (self.components.len() == 1 && self.components[0].1.is_empty())
+            .then_some(&self.components[0].0)
     }
 }
 
