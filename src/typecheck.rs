@@ -1275,6 +1275,7 @@ impl TypeChecker {
                 .skip(last_pos)
                 .find(|(_, param)| !param.keyword)
             {
+                let span = expr.span;
                 let expr = self.check_expr(scopes, expr, Some(&param.ty));
                 if !Self::coerces_to(&expr.ty, &param.ty) {
                     result.insert(
