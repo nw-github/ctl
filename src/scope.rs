@@ -131,16 +131,11 @@ pub struct Member {
 }
 
 #[derive(Debug)]
-pub struct StructDef {
+pub struct Struct {
+    pub public: bool,
+    pub name: String,
     pub members: Vec<(String, Member)>,
     pub scope: ScopeId,
-}
-
-#[derive(Debug)]
-pub struct Struct {
-    pub name: String,
-    pub public: bool,
-    pub def: Option<StructDef>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -232,31 +227,27 @@ impl Scopes {
         kind: ScopeKind,
         f: impl FnOnce(&mut Self) -> T,
     ) -> T {
-        let prev = self.current;
         let id = ScopeId(self.scopes.len());
         // blocks are the only unnamed scopes
         self.current()
             .children
             .insert(name.clone().unwrap_or(String::new()), id);
-        self.scopes.push(Scope {
-            parent: Some(self.current),
-            kind,
-            name,
-            ..Default::default()
-        });
+        let parent = Some(self.current);
+        self.enter_id(id, |this| {
+            this.scopes.push(Scope {
+                parent,
+                kind,
+                name,
+                ..Default::default()
+            });
 
-        self.current = ScopeId(self.scopes.len() - 1);
-        let result = f(self);
-        self.current = prev;
-        result
+            f(this)
+        })
     }
 
     pub fn find_enter<T>(&mut self, name: &str, f: impl FnOnce(&mut Self) -> T) -> T {
-        let prev = self.current;
-        self.current = *self.current().children.get(name).unwrap();
-        let result = f(self);
-        self.current = prev;
-        result
+        let id = *self.current().children.get(name).unwrap();
+        self.enter_id(id, f)
     }
 
     pub fn enter_id<T>(&mut self, id: ScopeId, f: impl FnOnce(&mut Self) -> T) -> T {

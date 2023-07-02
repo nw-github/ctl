@@ -9,7 +9,8 @@ use crate::{
     },
     lexer::{Location, Span},
     scope::{
-        CheckedPrototype, Function, FunctionId, ScopeId, Scopes, StructId, Variable, VariableId, Symbol,
+        CheckedPrototype, Function, FunctionId, ScopeId, Scopes, StructId, Symbol, Variable,
+        VariableId,
     },
     typecheck::{CheckedAst, TypeId},
     Error,
@@ -86,10 +87,7 @@ impl Compiler {
 
                 structs.insert(
                     id,
-                    st.def
-                        .as_ref()
-                        .unwrap()
-                        .members
+                    st.members
                         .iter()
                         .filter_map(|s| {
                             let mut ty = &s.1.ty;
@@ -135,12 +133,12 @@ impl Compiler {
                 })?;
             }
         }
-        
+
         for id in result.iter() {
             self.emit("struct ");
             self.emit_struct_id(scopes, id);
             self.emit("{");
-            for (name, member) in scopes[id].def.as_ref().unwrap().members.iter() {
+            for (name, member) in scopes[id].members.iter() {
                 self.emit_type(scopes, &member.ty);
                 self.emit(format!(" {}", name));
                 self.emit(";");

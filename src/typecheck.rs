@@ -14,7 +14,7 @@ use crate::{
     lexer::{Located, Span},
     scope::{
         CheckedParam, CheckedPrototype, Function, FunctionId, Member, ScopeId, ScopeKind, Scopes,
-        Struct, StructDef, StructId, Symbol, Variable, VariableId,
+        Struct, StructId, Symbol, Variable, VariableId,
     },
     Error, THIS_PARAM, THIS_TYPE,
 };
@@ -188,42 +188,39 @@ impl TypeChecker {
             }
             Stmt::UserType(data) => match data {
                 UserType::Struct(base) => {
+                    let mut params = Vec::with_capacity(base.members.len());
+                    let mut members = Vec::with_capacity(base.members.len());
+                    for (name, member) in base.members.iter() {
+                        let target =
+                            Self::fd_resolve_type(scopes, &member.ty).unwrap_or(TypeId::Unknown);
+                        members.push((
+                            name.clone(),
+                            Member {
+                                public: member.public,
+                                ty: target.clone(),
+                            },
+                        ));
+
+                        params.push(CheckedParam {
+                            mutable: false,
+                            keyword: true,
+                            name: name.clone(),
+                            ty: Self::fd_resolve_type(scopes, &member.ty)
+                                .unwrap_or(TypeId::Unknown),
+                        });
+                    }
+
                     let self_id = scopes.insert_struct(Struct {
                         name: base.name.clone(),
                         public: base.public,
-                        def: None,
+                        members,
+                        scope: scopes.current_id(),
                     });
                     scopes.enter(
                         Some(base.name.clone()),
                         ScopeKind::Struct(self_id),
                         |scopes| {
-                            let mut params = Vec::with_capacity(base.members.len());
-                            let mut members = Vec::with_capacity(base.members.len());
-                            for (name, member) in base.members.iter() {
-                                let target = Self::fd_resolve_type(scopes, &member.ty)
-                                    .unwrap_or(TypeId::Unknown);
-                                members.push((
-                                    name.clone(),
-                                    Member {
-                                        public: member.public,
-                                        ty: target.clone(),
-                                    },
-                                ));
-
-                                params.push(CheckedParam {
-                                    mutable: false,
-                                    keyword: true,
-                                    name: name.clone(),
-                                    ty: Self::fd_resolve_type(scopes, &member.ty)
-                                        .unwrap_or(TypeId::Unknown),
-                                });
-                            }
-
-                            scopes[&self_id].def = Some(StructDef {
-                                members,
-                                scope: scopes.current_id(),
-                            });
-
+                            scopes[&self_id].scope = scopes.current_id();
                             scopes[self_id.scope()].fns.push(Function {
                                 proto: CheckedPrototype {
                                     public: base.public,
@@ -321,12 +318,12 @@ impl TypeChecker {
             Stmt::UserType(data) => match data {
                 UserType::Struct(base) => {
                     let self_id = scopes.find_struct(&base.name).unwrap();
-                    scopes.enter_id(scopes[&self_id].def.as_ref().unwrap().scope, |scopes| {
+                    scopes.enter_id(scopes[&self_id].scope, |scopes| {
                         for i in 0..base.members.len() {
                             resolve_forward_declare!(
                                 self,
                                 scopes,
-                                scopes[&self_id].def.as_mut().unwrap().members[i].1.ty,
+                                scopes[&self_id].members[i].1.ty,
                                 &base.members[i].1.ty
                             );
                         }
@@ -455,8 +452,7 @@ impl TypeChecker {
                     ), span));
                 };
 
-                let Struct{ def: Some(def), .. } = &scopes[ty.as_ref()] else { unreachable!() };
-                (def, id)
+                (&scopes[ty.as_ref()], id)
             }};
         }
 
@@ -549,7 +545,7 @@ impl TypeChecker {
                     AddrMut => {
                         if !Self::can_addrmut(scopes, &expr) {
                             self.error::<()>(Error::new(
-                                "cannot take address of immutable memory location",
+                                "cannot create mutable pointer to immutable memory location",
                                 span,
                             ));
                         }
@@ -653,12 +649,9 @@ impl TypeChecker {
                         let ret = f.proto.ret.clone();
                         if f.inst {
                             let TypeId::Struct(sid) = &ret else { unreachable!() };
-                            let Struct { def: Some(def), .. } = &scopes[sid.as_ref()] else {
-                                unreachable!()
-                            };
-
-                            if def.members.iter().any(|member| !member.1.public)
-                                && !scopes.is_sub_scope(def.scope)
+                            let st = &scopes[sid.as_ref()];
+                            if st.members.iter().any(|member| !member.1.public)
+                                && !scopes.is_sub_scope(st.scope)
                             {
                                 self.error::<()>(Error::new(
                                     "cannot construct type with private members",
@@ -1001,9 +994,9 @@ impl TypeChecker {
             Expr::For { .. } => todo!(),
             Expr::Member { source, member } => {
                 let source = self.check_expr(scopes, *source, None);
-                let (d, id) = eval_member_to_struct!(source);
-                if let Some((_, var)) = d.members.iter().find(|m| m.0 == member) {
-                    if !var.public && !scopes.is_sub_scope(d.scope) {
+                let (st, id) = eval_member_to_struct!(source);
+                if let Some((_, var)) = st.members.iter().find(|m| m.0 == member) {
+                    if !var.public && !scopes.is_sub_scope(st.scope) {
                         return self.error(Error::new(
                             format!(
                                 "cannot access private member '{member}' of type {}",
