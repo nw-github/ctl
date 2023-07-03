@@ -1,4 +1,4 @@
-use crate::scope::ScopeId;
+use crate::typecheck::ScopeId;
 
 use self::stmt::CheckedStmt;
 
@@ -13,8 +13,7 @@ pub mod expr {
 
     use crate::{
         ast::expr::{BinaryOp, UnaryOp},
-        scope::{FunctionId, Symbol},
-        typecheck::TypeId,
+        typecheck::{FunctionId, Symbol, TypeId},
     };
 
     use super::Block;
@@ -100,7 +99,7 @@ pub mod expr {
 
 pub mod stmt {
     use super::{expr::CheckedExpr, Block};
-    use crate::{scope::VariableId, typecheck::TypeId};
+    use crate::typecheck::{TypeId, VariableId};
 
     #[derive(Debug, Default, Clone)]
     pub enum CheckedStmt {

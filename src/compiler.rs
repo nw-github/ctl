@@ -8,11 +8,10 @@ use crate::{
         Block,
     },
     lexer::{Location, Span},
-    scope::{
-        CheckedPrototype, Function, FunctionId, Scopes, Symbol, UserTypeData, UserTypeId, Variable,
-        VariableId,
+    typecheck::{
+        CheckedAst, CheckedPrototype, Function, FunctionId, Scopes, Symbol, TypeId, UserTypeData,
+        UserTypeId, Variable, VariableId,
     },
-    typecheck::{CheckedAst, TypeId},
     Error,
 };
 
