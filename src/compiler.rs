@@ -9,8 +9,8 @@ use crate::{
     },
     lexer::{Location, Span},
     scope::{
-        CheckedPrototype, Function, FunctionId, ScopeId, Scopes, Symbol, UserTypeData, UserTypeId,
-        Variable, VariableId,
+        CheckedPrototype, Function, FunctionId, Scopes, Symbol, UserTypeData, UserTypeId, Variable,
+        VariableId,
     },
     typecheck::{CheckedAst, TypeId},
     Error,
@@ -48,7 +48,7 @@ impl Compiler {
             this.emit("(void)argc;");
             this.emit("(void)argv;");
             this.emit("return ");
-            this.emit_fn_name(&ast.scopes, &main);
+            this.emit_fn_name(&ast.scopes, main);
             this.emit("(); }");
         }
 
@@ -78,15 +78,14 @@ impl Compiler {
         }
 
         let mut structs = HashMap::new();
-        for (i, scope) in scopes.scopes().iter().enumerate() {
-            for (j, st) in scope.types.iter().enumerate() {
-                let UserTypeData::Struct(members) = &st.data else {
+        for scope in scopes.scopes().iter() {
+            for &id in scope.types.iter() {
+                let UserTypeData::Struct(members) = &scopes.get_user_type(id).data else {
                     continue;
                 };
 
-                let id = UserTypeId(ScopeId(i), j);
                 self.emit("struct ");
-                self.emit_type_name(scopes, &id);
+                self.emit_type_name(scopes, id);
                 self.emit(";");
 
                 structs.insert(
@@ -105,7 +104,7 @@ impl Compiler {
                             }
 
                             match ty {
-                                TypeId::UserType(id) => Some(id.as_ref()),
+                                TypeId::UserType(id) => Some(id),
                                 _ => None,
                             }
                         })
@@ -123,7 +122,8 @@ impl Compiler {
                     Error::new(
                         format!(
                             "recursive dependency detected between {} and {}.",
-                            scopes[&a].name, scopes[&b].name,
+                            scopes.get_user_type(a).name,
+                            scopes.get_user_type(b).name,
                         ),
                         Span {
                             loc: Location {
@@ -138,11 +138,11 @@ impl Compiler {
             }
         }
 
-        for id in result.iter() {
+        for &id in result.iter() {
             self.emit("struct ");
             self.emit_type_name(scopes, id);
             self.emit("{");
-            for (name, member) in scopes[id].data.as_struct().unwrap().iter() {
+            for (name, member) in scopes.get_user_type(id).data.as_struct().unwrap().iter() {
                 self.emit_type(scopes, &member.ty);
                 self.emit(format!(" {}", name));
                 self.emit(";");
@@ -159,23 +159,22 @@ impl Compiler {
 
     fn emit_all_functions(&mut self, scopes: &mut Scopes) {
         let mut fns = Vec::new();
-        for (i, scope) in scopes.scopes().iter().enumerate() {
-            for (j, func) in scope.fns.iter().enumerate() {
-                if func.inst {
+        for scope in scopes.scopes().iter() {
+            for &id in scope.fns.iter() {
+                if scopes.get_func(id).inst {
                     continue;
                 }
 
-                let id = FunctionId(ScopeId(i), j);
-                self.emit_prototype(scopes, &id);
+                self.emit_prototype(scopes, id);
                 self.emit(";");
                 fns.push(id);
             }
         }
 
         for id in fns {
-            self.emit_prototype(scopes, &id);
+            self.emit_prototype(scopes, id);
             // FIXME: this clone hack
-            self.emit_block(scopes, &mut scopes[&id].body.clone().unwrap());
+            self.emit_block(scopes, &mut scopes.get_func(id).body.clone().unwrap());
         }
     }
 
@@ -216,7 +215,7 @@ impl Compiler {
                 self.emit("static ");
                 self.emit_type(scopes, &value.ty);
                 self.emit(" const ");
-                self.emit_var_name(scopes, id);
+                self.emit_var_name(scopes, *id);
                 self.emit(" = ");
                 // FIXME: blocks in statics...
                 self.hoist_blocks(scopes, value);
@@ -286,7 +285,7 @@ impl Compiler {
                 UnaryOp::Sizeof => todo!(),
             },
             ExprData::Call { func, args } => {
-                self.emit_fn_name(scopes, func);
+                self.emit_fn_name(scopes, *func);
                 self.emit("(");
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
@@ -298,11 +297,11 @@ impl Compiler {
                 self.emit(")");
             }
             ExprData::MemberCall { func, this, args } => {
-                self.emit_fn_name(scopes, func);
+                self.emit_fn_name(scopes, *func);
                 self.emit("(");
 
                 let mut source_ty = &this.ty;
-                let target = &scopes[func].proto.params[0].ty;
+                let target = &scopes.get_func(*func).proto.params[0].ty;
                 if !matches!(source_ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
                     self.emit("&");
                 } else {
@@ -339,7 +338,7 @@ impl Compiler {
             ExprData::Unsigned(value) => self.emit(format!("{value}")),
             ExprData::Float(value) => self.emit(value),
             ExprData::String(_) => todo!(),
-            ExprData::Symbol(symbol) => match symbol {
+            ExprData::Symbol(symbol) => match *symbol {
                 Symbol::Function(id) => self.emit_fn_name(scopes, id),
                 Symbol::Variable(id) => self.emit_var_name(scopes, id),
             },
@@ -551,34 +550,38 @@ impl Compiler {
                 self.emit_type(scopes, inner);
             }
             TypeId::Function(_) => todo!(),
-            TypeId::UserType(id) => {
-                if matches!(scopes[id.as_ref()].data, UserTypeData::Struct(_)) {
+            &TypeId::UserType(id) => {
+                if scopes.get_user_type(id).data.is_struct() {
                     self.emit("struct ");
                     self.emit_type_name(scopes, id);
                 }
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
+            TypeId::GenericPlaceholder(_) => panic!("ICE: TypeId::GenericPlaceholder in emit_type"),
         }
     }
 
-    fn emit_fn_name(&mut self, scopes: &Scopes, id: &FunctionId) {
-        self.emit(scopes.full_name(id.scope(), &scopes[id].proto.name));
+    fn emit_fn_name(&mut self, scopes: &Scopes, id: FunctionId) {
+        let func = scopes.get_func(id);
+        self.emit(scopes.full_name(func.scope, &func.proto.name));
     }
 
-    fn emit_type_name(&mut self, scopes: &Scopes, id: &UserTypeId) {
-        self.emit(scopes.full_name(id.scope(), &scopes[id].name));
+    fn emit_type_name(&mut self, scopes: &Scopes, id: UserTypeId) {
+        let ty = scopes.get_user_type(id);
+        self.emit(scopes.full_name(ty.scope, &ty.name));
     }
 
-    fn emit_var_name(&mut self, scopes: &Scopes, id: &VariableId) {
-        if scopes[id].is_static {
-            self.emit(scopes.full_name(id.scope(), &scopes[id].name));
+    fn emit_var_name(&mut self, scopes: &Scopes, id: VariableId) {
+        let var = scopes.get_var(id);
+        if var.is_static {
+            self.emit(scopes.full_name(var.scope, &var.name));
         } else {
-            self.emit(&scopes[id].name);
+            self.emit(&var.name);
         }
     }
 
-    fn emit_prototype(&mut self, scopes: &Scopes, id: &FunctionId) {
+    fn emit_prototype(&mut self, scopes: &Scopes, id: FunctionId) {
         let Function {
             proto:
                 CheckedPrototype {
@@ -591,11 +594,11 @@ impl Compiler {
                     ret,
                 },
             ..
-        } = &scopes[id];
+        } = &scopes.get_func(id).item;
 
         self.emit_type(scopes, ret);
         if name == "main" {
-            self.main = Some(*id);
+            self.main = Some(id);
         }
 
         self.emit(" ");

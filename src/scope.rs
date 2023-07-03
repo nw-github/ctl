@@ -3,6 +3,8 @@ use std::{
     ops::{Index, IndexMut},
 };
 
+use concat_idents::concat_idents;
+use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
 
 use crate::{
@@ -13,61 +15,68 @@ use crate::{
 macro_rules! id {
     ($name: ident => $output: ident,
      $vec: ident,
-     $find: ident,
      $($parts:ident).+,
-     $insert: ident) => {
+     $suffix: ident) => {
         #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-        pub struct $name(pub ScopeId, pub usize);
-
-        impl $name {
-            pub fn scope(&self) -> ScopeId {
-                self.0
-            }
-        }
-
-        impl Index<&$name> for Scopes {
-            type Output = $output;
-
-            fn index(&self, index: &$name) -> &Self::Output {
-                &self[index.0].$vec[index.1]
-            }
-        }
-
-        impl IndexMut<&$name> for Scopes {
-            fn index_mut(&mut self, index: &$name) -> &mut Self::Output {
-                &mut self[index.0].$vec[index.1]
-            }
-        }
-
-        impl Scope {
-            pub fn $find(&self, name: &str) -> Option<(usize, &$output)> {
-                self.$vec
-                    .iter()
-                    .enumerate()
-                    .find(|(_, item)| item.$($parts).+ == name )
-            }
-        }
+        pub struct $name(usize);
 
         impl Scopes {
-            pub fn $find(&self, name: &str) -> Option<$name> {
-                for (id, scope) in self.iter() {
-                    if let Some((index, _)) = scope.$find(name) {
-                        return Some($name(id, index));
-                    }
-
-                    if matches!(scope.kind, ScopeKind::Module(_)) {
-                        break;
-                    }
+            concat_idents!(fn_name = find_, $suffix, _in {
+                pub fn fn_name(&self, name: &str, scope: ScopeId) -> Option<$name> {
+                    self[scope].$vec
+                        .iter()
+                        .find_map(|id| (self.$vec[id.0].$($parts).+ == name).then_some(*id))
                 }
+            });
 
-                None
-            }
+            concat_idents!(fn_name = find_, $suffix {
+                pub fn fn_name(&self, name: &str) -> Option<$name> {
+                    for (id, scope) in self.iter() {
+                        concat_idents!(fn_name = find_, $suffix, _in {
+                            if let Some(item) = self.fn_name(name, id) {
+                                return Some(item);
+                            }
+                        });
 
-            pub fn $insert(&mut self, item: $output) -> $name {
-                let index = self.current().$vec.len();
-                self.current().$vec.push(item);
-                $name(self.current_id(), index)
-            }
+                        if matches!(scope.kind, ScopeKind::Module(_)) {
+                            break;
+                        }
+                    }
+
+                    None
+                }
+            });
+
+            concat_idents!(fn_name = insert_, $suffix, _in {
+                pub fn fn_name(&mut self, item: $output, scope: ScopeId) -> $name {
+                    let index = self.$vec.len();
+                    self.$vec.push(Scoped::new(item, scope));
+                    let itemid = $name(index);
+                    self[scope].$vec.push(itemid);
+                    itemid
+                }
+            });
+
+            concat_idents!(fn_name = insert_, $suffix {
+                pub fn fn_name(&mut self, item: $output) -> $name {
+                    concat_idents!(fn_name = insert_, $suffix, _in {
+                        self.fn_name(item, self.current_id())
+                    })
+                }
+            });
+
+            concat_idents!(fn_name = get_, $suffix {
+                pub fn fn_name(&self, id: $name) -> &Scoped<$output> {
+                    &self.$vec[id.0]
+                }
+            });
+
+            concat_idents!(fn_name = get_, $suffix, _mut {
+                #[allow(dead_code)]
+                pub fn fn_name(&mut self, id: $name) -> &mut Scoped<$output> {
+                    &mut self.$vec[id.0]
+                }
+            });
         }
     };
 }
@@ -75,9 +84,9 @@ macro_rules! id {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct ScopeId(pub usize);
 
-id!(FunctionId => Function, fns, find_fn, proto.name, insert_fn);
-id!(UserTypeId => UserType, types, find_user_type, name, insert_user_type);
-id!(VariableId => Variable, vars, find_var, name, insert_var);
+id!(FunctionId => Function, fns, proto.name, func);
+id!(UserTypeId => UserType, types, name, user_type);
+id!(VariableId => Variable, vars, name, var);
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub enum ScopeKind {
@@ -142,7 +151,7 @@ pub enum UserTypeData {
 pub struct UserType {
     pub public: bool,
     pub name: String,
-    pub scope: ScopeId,
+    pub body_scope: ScopeId,
     pub data: UserTypeData,
 }
 
@@ -152,13 +161,21 @@ pub enum Symbol {
     Variable(VariableId),
 }
 
+#[derive(Deref, DerefMut, Constructor)]
+pub struct Scoped<T> {
+    #[deref]
+    #[deref_mut]
+    pub item: T,
+    pub scope: ScopeId,
+}
+
 #[derive(Default, Debug)]
 pub struct Scope {
     pub kind: ScopeKind,
-    pub fns: Vec<Function>,
-    pub types: Vec<UserType>,
     pub parent: Option<ScopeId>,
-    pub vars: Vec<Variable>,
+    pub fns: Vec<FunctionId>,
+    pub types: Vec<UserTypeId>,
+    pub vars: Vec<VariableId>,
     pub name: Option<String>,
     pub children: HashMap<String, ScopeId>,
 }
@@ -166,6 +183,9 @@ pub struct Scope {
 pub struct Scopes {
     scopes: Vec<Scope>,
     current: ScopeId,
+    fns: Vec<Scoped<Function>>,
+    types: Vec<Scoped<UserType>>,
+    vars: Vec<Scoped<Variable>>,
 }
 
 impl Scopes {
@@ -173,6 +193,9 @@ impl Scopes {
         Self {
             scopes: vec![Scope::default()],
             current: ScopeId(0),
+            fns: Vec::new(),
+            types: Vec::new(),
+            vars: Vec::new(),
         }
     }
 
@@ -268,11 +291,12 @@ impl Scopes {
 
     pub fn current_struct(&self) -> Option<TypeId> {
         self.iter().find_map(|(_, scope)| {
-            if let ScopeKind::UserType(id) = &scope.kind {
-                Some(TypeId::UserType((*id).into()))
-            } else {
-                None
+            if let ScopeKind::UserType(id) = scope.kind {
+                if self.get_user_type(id).data.is_struct() {
+                    return Some(TypeId::UserType(id));
+                }
             }
+            None
         })
     }
 
