@@ -48,7 +48,7 @@ impl Compiler {
             this.emit("(void)argc;");
             this.emit("(void)argv;");
             this.emit("return ");
-            this.emit_fn_id(&ast.scopes, &main);
+            this.emit_fn_name(&ast.scopes, &main);
             this.emit("(); }");
         }
 
@@ -86,7 +86,7 @@ impl Compiler {
 
                 let id = UserTypeId(ScopeId(i), j);
                 self.emit("struct ");
-                self.emit_struct_id(scopes, &id);
+                self.emit_type_name(scopes, &id);
                 self.emit(";");
 
                 structs.insert(
@@ -105,7 +105,7 @@ impl Compiler {
                             }
 
                             match ty {
-                                TypeId::Struct(id) => Some(id.as_ref()),
+                                TypeId::UserType(id) => Some(id.as_ref()),
                                 _ => None,
                             }
                         })
@@ -140,7 +140,7 @@ impl Compiler {
 
         for id in result.iter() {
             self.emit("struct ");
-            self.emit_struct_id(scopes, id);
+            self.emit_type_name(scopes, id);
             self.emit("{");
             for (name, member) in scopes[id].data.as_struct().unwrap().iter() {
                 self.emit_type(scopes, &member.ty);
@@ -216,7 +216,7 @@ impl Compiler {
                 self.emit("static ");
                 self.emit_type(scopes, &value.ty);
                 self.emit(" const ");
-                self.emit_var_id(scopes, id);
+                self.emit_var_name(scopes, id);
                 self.emit(" = ");
                 // FIXME: blocks in statics...
                 self.hoist_blocks(scopes, value);
@@ -286,7 +286,7 @@ impl Compiler {
                 UnaryOp::Sizeof => todo!(),
             },
             ExprData::Call { func, args } => {
-                self.emit_fn_id(scopes, func);
+                self.emit_fn_name(scopes, func);
                 self.emit("(");
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
@@ -298,7 +298,7 @@ impl Compiler {
                 self.emit(")");
             }
             ExprData::MemberCall { func, this, args } => {
-                self.emit_fn_id(scopes, func);
+                self.emit_fn_name(scopes, func);
                 self.emit("(");
 
                 let mut source_ty = &this.ty;
@@ -340,17 +340,8 @@ impl Compiler {
             ExprData::Float(value) => self.emit(value),
             ExprData::String(_) => todo!(),
             ExprData::Symbol(symbol) => match symbol {
-                Symbol::Function(id) => {
-                    self.emit_fn_id(scopes, id);
-                }
-                Symbol::Variable(id) => {
-                    let var = &scopes[id];
-                    if var.is_static {
-                        self.emit_var_id(scopes, id);
-                    } else {
-                        self.emit(&var.name);
-                    }
-                }
+                Symbol::Function(id) => self.emit_fn_name(scopes, id),
+                Symbol::Variable(id) => self.emit_var_name(scopes, id),
             },
             ExprData::Instance(members) => {
                 self.emit("(");
@@ -560,26 +551,31 @@ impl Compiler {
                 self.emit_type(scopes, inner);
             }
             TypeId::Function(_) => todo!(),
-            TypeId::Struct(id) => {
-                self.emit("struct ");
-                self.emit_struct_id(scopes, id);
+            TypeId::UserType(id) => {
+                if matches!(scopes[id.as_ref()].data, UserTypeData::Struct(_)) {
+                    self.emit("struct ");
+                    self.emit_type_name(scopes, id);
+                }
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
-            TypeId::Generic(_) => todo!(),
         }
     }
 
-    fn emit_fn_id(&mut self, scopes: &Scopes, id: &FunctionId) {
+    fn emit_fn_name(&mut self, scopes: &Scopes, id: &FunctionId) {
         self.emit(scopes.full_name(id.scope(), &scopes[id].proto.name));
     }
 
-    fn emit_struct_id(&mut self, scopes: &Scopes, id: &UserTypeId) {
+    fn emit_type_name(&mut self, scopes: &Scopes, id: &UserTypeId) {
         self.emit(scopes.full_name(id.scope(), &scopes[id].name));
     }
 
-    fn emit_var_id(&mut self, scopes: &Scopes, id: &VariableId) {
-        self.emit(scopes.full_name(id.scope(), &scopes[id].name));
+    fn emit_var_name(&mut self, scopes: &Scopes, id: &VariableId) {
+        if scopes[id].is_static {
+            self.emit(scopes.full_name(id.scope(), &scopes[id].name));
+        } else {
+            self.emit(&scopes[id].name);
+        }
     }
 
     fn emit_prototype(&mut self, scopes: &Scopes, id: &FunctionId) {
@@ -603,7 +599,7 @@ impl Compiler {
         }
 
         self.emit(" ");
-        self.emit_fn_id(scopes, id);
+        self.emit_fn_name(scopes, id);
         self.emit("(");
         for (i, param) in params.iter().enumerate() {
             if i > 0 {

@@ -21,11 +21,11 @@ pub(crate) const THIS_TYPE: &str = "This";
 pub trait CompileState {}
 
 pub struct Source<'a>(&'a str);
-pub struct Ast(Stmt);
+pub struct Ast<'a>(Stmt, &'a str);
 pub struct Checked(CheckedAst);
 
 impl CompileState for Source<'_> {}
-impl CompileState for Ast {}
+impl CompileState for Ast<'_> {}
 impl CompileState for Checked {}
 
 #[derive(Debug)]
@@ -67,7 +67,7 @@ impl<'a> Pipeline<Source<'a>> {
         }
     }
 
-    pub fn parse(self) -> Pipeline<Ast> {
+    pub fn parse(self) -> Pipeline<Ast<'a>> {
         let module = self
             .file
             .file_stem()
@@ -86,18 +86,18 @@ impl<'a> Pipeline<Source<'a>> {
         Pipeline {
             errors,
             file: self.file,
-            state: Ast(ast),
+            state: Ast(ast, self.state.0),
         }
     }
 }
 
-impl Pipeline<Ast> {
+impl Pipeline<Ast<'_>> {
     pub fn dump(&self) {
-        pretty::print_stmt(&self.state.0, 0);
+        pretty::print_stmt(&self.state.0, self.state.1, 0);
     }
 
     pub fn typecheck(mut self) -> Pipeline<Checked> {
-        let (checked, errors) = TypeChecker::check(self.state.0);
+        let (checked, errors) = TypeChecker::check(self.state.0, self.state.1);
         self.errors.extend(errors);
         Pipeline {
             errors: self.errors,

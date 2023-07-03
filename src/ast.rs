@@ -1,39 +1,14 @@
-use std::fmt::Display;
-
 use crate::lexer::Located;
+
+use self::stmt::TypeHint;
 
 pub type Expr = Located<expr::Expr>;
 pub type Stmt = Located<stmt::Stmt>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Path {
-    pub components: Vec<(String, Vec<String>)>,
+    pub components: Vec<(String, Vec<TypeHint>)>,
     pub root: bool,
-}
-
-impl Display for Path {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (i, (name, generics)) in self.components.iter().enumerate() {
-            if i > 0 || self.root {
-                write!(f, "::")?;
-            }
-
-            write!(f, "{name}")?;
-            if !generics.is_empty() {
-                write!(f, "<")?;
-                for (j, param) in generics.iter().enumerate() {
-                    if j > 0 {
-                        write!(f, ", ")?;
-                    }
-
-                    write!(f, "{param}")?;
-                }
-                write!(f, ">")?;
-            }
-        }
-
-        Ok(())
-    }
 }
 
 impl From<String> for Path {
@@ -271,7 +246,7 @@ pub mod stmt {
         Result(Box<TypeHint>, Box<TypeHint>),
         Ref(Box<TypeHint>),
         RefMut(Box<TypeHint>),
-        Anon(ParsedUserType),
+        Anon(Box<ParsedUserType>),
         Void,
         This,
         MutThis,

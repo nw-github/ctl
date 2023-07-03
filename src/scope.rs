@@ -269,7 +269,7 @@ impl Scopes {
     pub fn current_struct(&self) -> Option<TypeId> {
         self.iter().find_map(|(_, scope)| {
             if let ScopeKind::UserType(id) = &scope.kind {
-                Some(TypeId::Struct((*id).into()))
+                Some(TypeId::UserType((*id).into()))
             } else {
                 None
             }

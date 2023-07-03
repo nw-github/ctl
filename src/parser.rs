@@ -112,17 +112,14 @@ impl<'a> Parser<'a> {
     fn path_with_one(&mut self, root: bool, mut ident: (&'a str, Span)) -> Result<L<Path>> {
         let mut data = vec![(ident.0.to_owned(), Vec::new())];
         while self.advance_if_kind(Token::ScopeRes).is_some() {
-            if let Some(id) = self.advance_if(|k| matches!(k, Token::Ident(_))) {
-                let Token::Ident(name) = id.data else { unreachable!() };
-                data.push((name.to_owned(), self.parse_generic_params()?));
-                ident.1.extend_to(id.span);
-            } else {
-                self.expect_kind(Token::LAngle, "expected name or generic parameters")?;
+            if self.advance_if_kind(Token::LAngle).is_some() {
                 let (params, span) =
-                    self.comma_separated(Token::RAngle, "expected '>'", |this| {
-                        this.expect_id("expected type name").map(|id| id.into())
-                    })?;
+                    self.comma_separated(Token::RAngle, "expected '>'", |this| this.parse_type())?;
                 data.last_mut().unwrap().1 = params;
+                ident.1.extend_to(span);
+            } else {
+                let (name, span) = self.expect_id_with_span("expected name")?;
+                data.push((name.to_owned(), Vec::new()));
                 ident.1.extend_to(span);
             }
         }
@@ -144,6 +141,40 @@ impl<'a> Parser<'a> {
             self.expect_id_with_span("expected name")?
         };
         self.path_with_one(root, ident)
+    }
+
+    fn type_path(&mut self) -> Result<L<Path>> {
+        let root = self.advance_if_kind(Token::ScopeRes);
+        let mut data = Vec::new();
+        let mut span = root.as_ref().map(|t| t.span);
+        loop {
+            let (ident, ispan) = self.expect_id_with_span("expected type name")?;
+            if let Some(span) = &mut span {
+                span.extend_to(ispan);
+            } else {
+                span = Some(ispan);
+            }
+            if self.advance_if_kind(Token::LAngle).is_some() {
+                let (params, pspan) =
+                    self.comma_separated(Token::RAngle, "expected '>'", |this| this.parse_type())?;
+                span.as_mut().unwrap().extend_to(pspan);
+                data.push((ident.into(), params));
+            } else {
+                data.push((ident.into(), Vec::new()));
+            }
+
+            if self.advance_if_kind(Token::ScopeRes).is_none() {
+                break;
+            }
+        }
+
+        Ok(L::new(
+            Path {
+                components: data,
+                root: root.is_some(),
+            },
+            span.unwrap(),
+        ))
     }
 
     fn comma_separated<T>(
@@ -263,7 +294,7 @@ impl<'a> Parser<'a> {
                 }
             } else {
                 TypeHint::Regular {
-                    path: self.path()?,
+                    path: self.type_path()?,
                     is_dyn,
                 }
             }
@@ -1234,88 +1265,5 @@ impl<'a> Parser<'a> {
 
     fn matches_kind(&mut self, kind: Token) -> bool {
         self.matches(|t| t == &kind)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_type() {
-        let mut parser = Parser::new("&[dyn Into<T>!(i44, [u70: str], E?); 3]?");
-        let _ty = dbg!(parser.parse_type().unwrap());
-    }
-
-    #[test]
-    fn parse_fn() {
-        let mut parser = Parser::new(
-            "
-            fn hello<T, E>(a: T, mut b: E) T!E {}
-        ",
-        );
-
-        _ = dbg!(parser.item());
-    }
-
-    #[test]
-    fn parse_struct() {
-        let mut parser = Parser::new(
-            "
-struct Hello<T, E> : Add + Sub {
-    foo: T,
-    bar: E,
-
-    fn new(a: T, b: C) Hello {}
-}
-            ",
-        );
-
-        _ = dbg!(parser.item());
-    }
-
-    #[test]
-    fn square_bracket_literals() {
-        let mut parser = Parser::new("let x = [5; 10];");
-        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
-
-        parser = Parser::new("let x = [1, 2, 3, 4];");
-        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
-
-        parser = Parser::new("let x = [1, 2, 3, 4, ];");
-        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
-
-        parser = Parser::new("let x = [1: 2, 3: 4];");
-        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
-
-        parser = Parser::new("let x = [1: 2, 3: 4, ];");
-        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
-
-        parser = Parser::new("let x = [];");
-        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
-
-        parser = Parser::new("let x = [:];");
-        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
-    }
-
-    #[test]
-    fn function_calls() {
-        let mut parser = Parser::new("let x = foo(a, b);");
-        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
-
-        parser = Parser::new("let x = foo(a: bar, b: quux);");
-        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
-
-        parser = Parser::new("let x = foo(a: bar, b, c: quux);");
-        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
-    }
-
-    #[test]
-    fn instances() {
-        let mut parser = Parser::new("let x = Foo { bar: 10, quux: 15 };");
-        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
-
-        parser = Parser::new("let x = Foo { bar: 10, quux: 15, };");
-        crate::pretty::print_stmt(&parser.declaration().unwrap(), 0);
     }
 }

@@ -1,5 +1,6 @@
 use std::collections::{hash_map::Entry, HashMap};
 
+use derive_more::From;
 use enum_as_inner::EnumAsInner;
 
 use crate::{
@@ -38,16 +39,17 @@ pub enum TypeId {
     FloatGeneric,
     String,
     Function(Box<FunctionId>),
-    Struct(Box<UserTypeId>),
+    UserType(Box<UserTypeId>),
     Ptr(Box<TypeId>),
     MutPtr(Box<TypeId>),
     Option(Box<TypeId>),
     Array(Box<(TypeId, usize)>),
-    Generic(Box<UserTypeId>),
 }
 
+#[derive(From)]
 enum ResolveError<'a> {
     Path(&'a Located<Path>),
+    #[from]
     Error(Error),
 }
 
@@ -128,11 +130,6 @@ pub struct CheckedAst {
     pub stmt: CheckedStmt,
 }
 
-#[derive(Default)]
-pub struct TypeChecker {
-    errors: Vec<Error>,
-}
-
 macro_rules! type_mismatch {
     ($scopes: expr, $expected: expr, $actual: expr, $span: expr) => {
         Error::new(
@@ -170,10 +167,20 @@ macro_rules! resolve_forward_declare {
     };
 }
 
-impl TypeChecker {
-    pub fn check(stmt: Located<Stmt>) -> (CheckedAst, Vec<Error>) {
+pub struct TypeChecker<'a> {
+    errors: Vec<Error>,
+    generic_fn_insts: Vec<(FunctionId, Vec<TypeId>)>,
+    src: &'a str,
+}
+
+impl<'a> TypeChecker<'a> {
+    pub fn check(stmt: Located<Stmt>, src: &'a str) -> (CheckedAst, Vec<Error>) {
         // we depend on parser wrapping up the generated code in a Stmt::Module
-        let mut this = Self::default();
+        let mut this = Self {
+            errors: vec![],
+            generic_fn_insts: vec![],
+            src,
+        };
         let mut scopes = Scopes::new();
         this.forward_declare(&mut scopes, &stmt);
         let stmt = this.check_stmt(&mut scopes, stmt);
@@ -230,9 +237,9 @@ impl TypeChecker {
                                     name: base.name.clone(),
                                     is_async: false,
                                     is_extern: false,
-                                    type_params: Vec::new(),
+                                    type_params: base.type_params.clone(),
                                     params,
-                                    ret: TypeId::Struct(self_id.into()),
+                                    ret: TypeId::UserType(self_id.into()),
                                 },
                                 body: None,
                                 inst: true,
@@ -294,7 +301,7 @@ impl TypeChecker {
                         let init = scopes[self_id.scope()]
                             .fns
                             .iter()
-                            .position(|f| f.inst && f.proto.ret == TypeId::Struct(self_id.into()))
+                            .position(|f| f.inst && matches!(&f.proto.ret, TypeId::UserType(id) if id.as_ref() == &self_id))
                             .unwrap();
 
                         for i in 0..base.members.len() {
@@ -411,7 +418,7 @@ impl TypeChecker {
                     id = inner;
                 }
 
-                let TypeId::Struct(ty) = id else {
+                let TypeId::UserType(ty) = id else {
                     return self.error(Error::new(
                         format!("cannot get member of type {}",
                         Self::type_name(scopes, id)
@@ -546,58 +553,61 @@ impl TypeChecker {
                 if let Expr::Member { source, member } = callee.data {
                     let source = self.check_expr(scopes, *source, None);
                     let (d, id) = eval_member_to_struct!(source);
-                    if let Some((i, f)) = scopes[d.scope].find_fn(&member) {
-                        if !f.proto.public && !scopes.is_sub_scope(d.scope) {
-                            return self.error(Error::new(
-                                format!(
-                                    "cannot access private method '{member}' of type {}",
-                                    Self::type_name(scopes, id)
-                                ),
-                                span,
-                            ));
-                        }
+                    if d.data.is_struct() {
+                        if let Some((i, f)) = scopes[d.scope].find_fn(&member) {
+                            if !f.proto.public && !scopes.is_sub_scope(d.scope) {
+                                return self.error(Error::new(
+                                    format!(
+                                        "cannot access private method '{member}' of type {}",
+                                        Self::type_name(scopes, id)
+                                    ),
+                                    span,
+                                ));
+                            }
 
-                        if let Some(param) = f.proto.params.get(0).filter(|p| p.name == THIS_PARAM)
-                        {
-                            if let TypeId::MutPtr(inner) = &param.ty {
-                                let mut ty = &source.ty;
-                                if ty == inner.as_ref() && !Self::can_addrmut(scopes, &source) {
-                                    return self.error(Error::new(
-                                        format!(
-                                            "cannot call method '{member}' with immutable receiver"
-                                        ),
-                                        span,
-                                    ));
-                                } else {
-                                    while let TypeId::MutPtr(inner) = ty {
-                                        ty = inner;
-                                    }
-
-                                    if matches!(ty, TypeId::Ptr(_)) {
+                            if let Some(param) =
+                                f.proto.params.get(0).filter(|p| p.name == THIS_PARAM)
+                            {
+                                if let TypeId::MutPtr(inner) = &param.ty {
+                                    let mut ty = &source.ty;
+                                    if ty == inner.as_ref() && !Self::can_addrmut(scopes, &source) {
                                         return self.error(Error::new(
                                             format!(
-                                                "cannot call method '{member}' through an immutable pointer"
+                                                "cannot call method '{member}' with immutable receiver"
                                             ),
                                             span,
                                         ));
+                                    } else {
+                                        while let TypeId::MutPtr(inner) = ty {
+                                            ty = inner;
+                                        }
+
+                                        if matches!(ty, TypeId::Ptr(_)) {
+                                            return self.error(Error::new(
+                                                format!(
+                                                    "cannot call method '{member}' through an immutable pointer"
+                                                ),
+                                                span,
+                                            ));
+                                        }
                                     }
                                 }
-                            }
 
-                            #[allow(clippy::unnecessary_to_owned)]
-                            return CheckedExpr::new(
-                                f.proto.ret.clone(),
-                                ExprData::MemberCall {
-                                    this: source.into(),
-                                    func: FunctionId(d.scope, i),
-                                    args: self.check_fn_args(
-                                        scopes,
-                                        args,
-                                        &f.proto.params[1..].to_vec(),
-                                        span,
-                                    ),
-                                },
-                            );
+                                #[allow(clippy::unnecessary_to_owned)]
+                                return CheckedExpr::new(
+                                    f.proto.ret.clone(),
+                                    ExprData::MemberCall {
+                                        this: source.into(),
+                                        func: FunctionId(d.scope, i),
+                                        args: self.check_fn_args(
+                                            scopes,
+                                            args,
+                                            &f.proto.params[1..].to_vec(),
+                                            span,
+                                        ),
+                                    },
+                                );
+                            }
                         }
                     }
 
@@ -614,7 +624,7 @@ impl TypeChecker {
                         let f = &scopes[callee.as_ref()];
                         let ret = f.proto.ret.clone();
                         if f.inst {
-                            let st = &scopes[ret.as_struct().unwrap().as_ref()];
+                            let st = &scopes[ret.as_user_type().unwrap().as_ref()];
                             if st
                                 .data
                                 .as_struct()
@@ -815,15 +825,15 @@ impl TypeChecker {
                 ExprData::Float(value),
             ),
             Expr::Path(path) => match Self::resolve_path(scopes, &path, span) {
-                Some(Ok(symbol @ Symbol::Variable(ref id))) => {
+                Ok(Some(symbol @ Symbol::Variable(ref id))) => {
                     CheckedExpr::new(scopes[id].ty.clone(), ExprData::Symbol(symbol))
                 }
-                Some(Ok(symbol @ Symbol::Function(ref id))) => {
+                Ok(Some(symbol @ Symbol::Function(ref id))) => {
                     CheckedExpr::new(TypeId::Function((*id).into()), ExprData::Symbol(symbol))
                 }
-                Some(Err(err)) => self.error(err),
-                None => self.error(Error::new(
-                    format!("'{path}' not found in this scope"),
+                Err(err) => self.error(err),
+                Ok(None) => self.error(Error::new(
+                    format!("'{}' not found in this scope", span.text(self.src)),
                     span,
                 )),
             },
@@ -962,34 +972,35 @@ impl TypeChecker {
             Expr::Member { source, member } => {
                 let source = self.check_expr(scopes, *source, None);
                 let (st, id) = eval_member_to_struct!(source);
-                if let Some((_, var)) = st.data.as_struct().unwrap().iter().find(|m| m.0 == member)
-                {
-                    if !var.public && !scopes.is_sub_scope(st.scope) {
-                        return self.error(Error::new(
-                            format!(
-                                "cannot access private member '{member}' of type {}",
-                                Self::type_name(scopes, id)
-                            ),
-                            span,
-                        ));
-                    }
+                if let Some(members) = st.data.as_struct() {
+                    if let Some((_, var)) = members.iter().find(|m| m.0 == member) {
+                        if !var.public && !scopes.is_sub_scope(st.scope) {
+                            return self.error(Error::new(
+                                format!(
+                                    "cannot access private member '{member}' of type {}",
+                                    Self::type_name(scopes, id)
+                                ),
+                                span,
+                            ));
+                        }
 
-                    CheckedExpr::new(
-                        var.ty.clone(),
-                        ExprData::Member {
-                            source: source.into(),
-                            member,
-                        },
-                    )
-                } else {
-                    self.error(Error::new(
-                        format!(
-                            "type {} has no member '{member}'",
-                            Self::type_name(scopes, &source.ty)
-                        ),
-                        span,
-                    ))
+                        return CheckedExpr::new(
+                            var.ty.clone(),
+                            ExprData::Member {
+                                source: source.into(),
+                                member,
+                            },
+                        );
+                    }
                 }
+
+                self.error(Error::new(
+                    format!(
+                        "type {} has no member '{member}'",
+                        Self::type_name(scopes, &source.ty)
+                    ),
+                    span,
+                ))
             }
             Expr::Subscript { callee, args } => {
                 if args.len() > 1 {
@@ -1132,7 +1143,7 @@ impl TypeChecker {
                             return type_params
                                 .iter()
                                 .position(|t| t == name)
-                                .map(|i| TypeId::Generic(Box::new(UserTypeId(ScopeId(0), i))))
+                                .map(|i| TypeId::UserType(Box::new(UserTypeId(ScopeId(0), i))))
                                 .ok_or(err);
                         }
                     }
@@ -1143,8 +1154,8 @@ impl TypeChecker {
         }
 
         fn fix_generics(id: &mut TypeId, index: usize, fix: &UserTypeId) {
-            if matches!(id, TypeId::Generic(info) if info.0 == ScopeId(0) && info.1 == index) {
-                *id = TypeId::Generic(Box::new(*fix));
+            if matches!(id, TypeId::UserType(info) if info.0 == ScopeId(0) && info.1 == index) {
+                *id = TypeId::UserType(Box::new(*fix));
             }
         }
 
@@ -1347,19 +1358,11 @@ impl TypeChecker {
         }
     }
 
-    fn fd_resolve_type<'a>(scopes: &Scopes, ty: &'a TypeHint) -> Result<TypeId, ResolveError<'a>> {
+    fn fd_resolve_type<'b>(scopes: &Scopes, ty: &'b TypeHint) -> Result<TypeId, ResolveError<'b>> {
         Ok(match ty {
             TypeHint::Regular { path, .. } => {
-                match Self::resolve_path(scopes, &path.data, path.span) {
-                    Some(Ok(Symbol::Function(id))) => {
-                        if scopes[&id].inst {
-                            return Ok(scopes[&id].proto.ret.clone());
-                        }
-                    }
-                    Some(Err(err)) => {
-                        return Err(ResolveError::Error(err));
-                    }
-                    _ => {}
+                if let Some(id) = Self::resolve_type_path(scopes, &path.data, path.span)? {
+                    return Ok(TypeId::UserType(id.into()));
                 }
 
                 if let Some(symbol) = path.data.as_symbol() {
@@ -1393,10 +1396,8 @@ impl TypeChecker {
                 .map(|s| TypeId::MutPtr(s.into()))
                 .expect("ICE: this outside of method"),
             TypeHint::Array(ty, count) => {
-                match Self::consteval(scopes, count, Some(&TypeId::Usize)) {
-                    Ok(n) => TypeId::Array((Self::fd_resolve_type(scopes, ty)?, n).into()),
-                    Err(err) => return Err(ResolveError::Error(err)),
-                }
+                let n = Self::consteval(scopes, count, Some(&TypeId::Usize))?;
+                TypeId::Array((Self::fd_resolve_type(scopes, ty)?, n).into())
             }
             TypeHint::Option(ty) => TypeId::Option(Self::fd_resolve_type(scopes, ty)?.into()),
             _ => todo!(),
@@ -1407,7 +1408,7 @@ impl TypeChecker {
         Self::fd_resolve_type(scopes, ty).unwrap_or_else(|err| match err {
             ResolveError::Error(err) => self.error(err),
             ResolveError::Path(name) => self.error(Error::new(
-                format!("undefined type '{}'", name.data),
+                format!("undefined type '{}'", name.span.text(self.src)),
                 name.span,
             )),
         })
@@ -1537,15 +1538,70 @@ impl TypeChecker {
                 }
                 format!("{result}) {}", Self::type_name(scopes, &f.proto.ret))
             }
-            TypeId::Struct(id) => scopes[id.as_ref()].name.clone(),
-            TypeId::Generic(id) => scopes[id.as_ref()].name.clone(),
+            TypeId::UserType(id) => scopes[id.as_ref()].name.clone(),
             TypeId::Array(inner) => format!("[{}; {}]", Self::type_name(scopes, &inner.0), inner.1),
             TypeId::Isize => "isize".into(),
             TypeId::Usize => "usize".into(),
         }
     }
 
-    pub fn resolve_path(scopes: &Scopes, path: &Path, span: Span) -> Option<Result<Symbol, Error>> {
+    fn resolve_path_to_end(scopes: &Scopes, path: &Path, span: Span) -> Result<ScopeId, Error> {
+        let mut scope = ScopeId(0);
+        let mut start = 0;
+        if !path.root {
+            if path.components[0].0 == "super" {
+                start = 1;
+                if let Some(module) = scopes.module_of(
+                    scopes[scopes.module_of(scopes.current_id()).unwrap()]
+                        .parent
+                        .unwrap(),
+                ) {
+                    scope = module;
+                } else {
+                    return Err(Error::new("cannot use super here", span));
+                }
+            } else {
+                scope = scopes.module_of(scopes.current_id()).unwrap();
+            }
+        }
+
+        for part in path.components[start..path.components.len() - 1].iter() {
+            for (name, id) in scopes[scope].children.iter() {
+                if name == &part.0 {
+                    // TODO: skip the public check if we ended up in our own module
+                    match &scopes[*id].kind {
+                        ScopeKind::Module(public) => {
+                            if !*public {
+                                return Err(Error::new(
+                                    format!("cannot access private module {name}"),
+                                    span,
+                                ));
+                            }
+                        }
+                        ScopeKind::UserType(id) => {
+                            if !scopes[id].public
+                                && scopes.module_of(id.scope())
+                                    != scopes.module_of(scopes.current_id())
+                            {
+                                return Err(Error::new(
+                                    format!("cannot access members of private struct {name}"),
+                                    span,
+                                ));
+                            }
+                        }
+                        _ => continue,
+                    }
+
+                    scope = *id;
+                    break;
+                }
+            }
+        }
+
+        Ok(scope)
+    }
+
+    fn resolve_path(scopes: &Scopes, path: &Path, span: Span) -> Result<Option<Symbol>, Error> {
         let last = path.components.last().unwrap();
         let symbol = if path.components.len() == 1 {
             scopes
@@ -1553,76 +1609,24 @@ impl TypeChecker {
                 .map(Symbol::Variable)
                 .or_else(|| scopes.find_fn(&last.0).map(Symbol::Function))
         } else {
-            // TODO: struct generic params
-            let mut scope = ScopeId(0);
-            let mut start = 0;
-            if !path.root {
-                if path.components[0].0 == "super" {
-                    start = 1;
-                    if let Some(module) = scopes.module_of(
-                        scopes[scopes.module_of(scopes.current_id()).unwrap()]
-                            .parent
-                            .unwrap(),
-                    ) {
-                        scope = module;
-                    } else {
-                        return Some(Err(Error::new("cannot use super here", span)));
-                    }
-                } else {
-                    scope = scopes.module_of(scopes.current_id()).unwrap();
-                }
-            }
-
-            for part in path.components[start..path.components.len() - 1].iter() {
-                for (name, id) in scopes[scope].children.iter() {
-                    if name == &part.0 {
-                        // TODO: skip the public check if we ended up in our own module
-                        match &scopes[*id].kind {
-                            ScopeKind::Module(public) => {
-                                if !*public {
-                                    return Some(Err(Error::new(
-                                        format!("cannot access private module {name}"),
-                                        span,
-                                    )));
-                                }
-                            }
-                            ScopeKind::UserType(id) => {
-                                if !scopes[id].public
-                                    && scopes.module_of(id.scope())
-                                        != scopes.module_of(scopes.current_id())
-                                {
-                                    return Some(Err(Error::new(
-                                        format!("cannot access members of private struct {name}"),
-                                        span,
-                                    )));
-                                }
-                            }
-                            _ => continue,
-                        }
-
-                        scope = *id;
-                        break;
-                    }
-                }
-            }
-
+            let scope = Self::resolve_path_to_end(scopes, path, span)?;
             if let Some(var) = scopes[scope].find_var(&last.0) {
                 let var = VariableId(scope, var.0);
                 if !scopes[&var].public {
-                    return Some(Err(Error::new(
+                    return Err(Error::new(
                         format!("variable '{}' is private", scopes[&var].name),
                         span,
-                    )));
+                    ));
                 }
 
                 Some(Symbol::Variable(var))
             } else if let Some(func) = scopes[scope].find_fn(&last.0) {
                 let func = FunctionId(scope, func.0);
                 if !scopes[&func].proto.public {
-                    return Some(Err(Error::new(
+                    return Err(Error::new(
                         format!("function '{}' is private", scopes[&func].proto.name),
                         span,
-                    )));
+                    ));
                 }
 
                 Some(Symbol::Function(func))
@@ -1631,7 +1635,7 @@ impl TypeChecker {
             }
         };
 
-        symbol.map(|symbol| {
+        if let Some(symbol) = symbol {
             match symbol {
                 Symbol::Function(func) => {
                     if path.components[0].1.len() > scopes[&func].proto.type_params.len() {
@@ -1655,7 +1659,52 @@ impl TypeChecker {
                 }
             }
 
-            Ok(symbol)
-        })
+            Ok(Some(symbol))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn resolve_type_path(
+        scopes: &Scopes,
+        path: &Path,
+        span: Span,
+    ) -> Result<Option<UserTypeId>, Error> {
+        let last = path.components.last().unwrap();
+        let ty = if path.components.len() == 1 {
+            scopes.find_user_type(&last.0)
+        } else {
+            // TODO: struct generic params
+            let scope = Self::resolve_path_to_end(scopes, path, span)?;
+            if let Some(ty) = scopes[scope].find_user_type(&last.0) {
+                let ty = UserTypeId(scope, ty.0);
+                if !scopes[&ty].public {
+                    return Err(Error::new(
+                        format!("type '{}' is private", scopes[&ty].name),
+                        span,
+                    ));
+                }
+
+                Some(ty)
+            } else {
+                None
+            }
+        };
+
+        if let Some(ty) = ty {
+            // if path.components[0].1.len() != scopes[&ty].data.type_params.len() {
+            //     return Err(Error::new(
+            //         format!(
+            //             "expected {} generic arguments, received {}",
+            //             scopes[&func].proto.type_params.len(),
+            //             path.components[0].1.len()
+            //         ),
+            //         span,
+            //     ));
+            // }
+            Ok(Some(ty))
+        } else {
+            Ok(None)
+        }
     }
 }

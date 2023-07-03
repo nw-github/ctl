@@ -16,12 +16,12 @@ macro_rules! print_bool {
     };
 }
 
-pub fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
+pub fn print_stmt(stmt: &Located<Stmt>, src: &str, indent: usize) {
     let tabs = INDENT.repeat(indent);
     match &stmt.data {
         Stmt::Expr(expr) => {
             println!("{tabs}StmtExpr");
-            print_expr(expr, indent + 1);
+            print_expr(expr, src, indent + 1);
         }
         Stmt::Let {
             name,
@@ -35,17 +35,17 @@ pub fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
 
             println!("{tabs}Type: {ty:?}");
             if let Some(value) = value {
-                print_expr(value, indent + 1);
+                print_expr(value, src, indent + 1);
             }
         }
-        Stmt::Fn(f) => print_fn(f, indent),
+        Stmt::Fn(f) => print_fn(f,src,  indent),
         Stmt::UserType(ty) => match ty {
-            ParsedUserType::Struct(base) => print_struct("Struct", base, indent),
+            ParsedUserType::Struct(base) => print_struct("Struct", base, src, indent),
             ParsedUserType::Union { tag, base } => {
                 if let Some(tag) = tag {
-                    print_struct(&format!("Union({})", tag.data), base, indent);
+                    print_struct(&format!("Union({})", tag.span.text(src)), base, src, indent);
                 } else {
-                    print_struct("Union", base, indent)
+                    print_struct("Union", base, src, indent)
                 }
             }
             ParsedUserType::Interface {
@@ -102,12 +102,12 @@ pub fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
                 for (name, expr) in variants {
                     println!("{plus_1}{name}");
                     if let Some(expr) = expr {
-                        print_expr(expr, indent + 2);
+                        print_expr(expr, src, indent + 2);
                     }
                 }
 
                 for f in functions {
-                    print_fn(f, indent + 1);
+                    print_fn(f, src, indent + 1);
                 }
             }
         },
@@ -127,25 +127,25 @@ pub fn print_stmt(stmt: &Located<Stmt>, indent: usize) {
                 println!("{tabs}Type: {ty:?}");
             }
 
-            print_expr(value, indent + 1);
+            print_expr(value, src, indent + 1);
         }
         Stmt::Module { name, body, public } => {
             print!("{tabs}Module[{name}]");
             print_bool!(public);
             println!();
 
-            print_stmts(body, indent + 1);
+            print_stmts(body, src, indent + 1);
         }
     }
 }
 
-pub fn print_expr(expr: &Located<Expr>, indent: usize) {
+pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
     let tabs = INDENT.repeat(indent);
     match &expr.data {
         Expr::Binary { op, left, right } => {
             println!("{tabs}Binary({op:?})");
-            print_expr(left, indent + 1);
-            print_expr(right, indent + 1);
+            print_expr(left, src, indent + 1);
+            print_expr(right, src, indent + 1);
         }
         Expr::Range {
             start,
@@ -159,31 +159,31 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
             let tabs = INDENT.repeat(indent + 1);
             if let Some(start) = start {
                 println!("{tabs}From:");
-                print_expr(start, indent + 2);
+                print_expr(start, src, indent + 2);
             }
             if let Some(end) = end {
                 println!("{tabs}To:");
-                print_expr(end, indent + 2);
+                print_expr(end, src, indent + 2);
             }
         }
         Expr::Unary { op, expr } => {
             println!("{tabs}Unary({op:?})");
-            print_expr(expr, indent + 1);
+            print_expr(expr, src, indent + 1);
         }
         Expr::Call { callee, args } => {
             println!("{tabs}Call");
             let tabs = INDENT.repeat(indent + 1);
             println!("{tabs}Callee: ");
-            print_expr(callee, indent + 2);
+            print_expr(callee, src, indent + 2);
 
             if !args.is_empty() {
                 println!("{tabs}Args: ");
                 for (name, expr) in args {
                     if let Some(name) = name {
                         println!("{tabs}{INDENT}{name}:");
-                        print_expr(expr, indent + 3);
+                        print_expr(expr, src, indent + 3);
                     } else {
-                        print_expr(expr, indent + 2);
+                        print_expr(expr, src, indent + 2);
                     }
                 }
             }
@@ -191,7 +191,7 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
         Expr::Array(elements) => {
             println!("{tabs}Array");
             for el in elements {
-                print_expr(el, indent + 1);
+                print_expr(el, src, indent + 1);
             }
         }
         Expr::ArrayWithInit { init, count } => {
@@ -199,14 +199,14 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
 
             let tabs = INDENT.repeat(indent + 1);
             println!("{tabs}Init: ");
-            print_expr(init, indent + 2);
+            print_expr(init, src, indent + 2);
             println!("{tabs}Count: ");
-            print_expr(count, indent + 2);
+            print_expr(count, src, indent + 2);
         }
         Expr::Tuple(elements) => {
             println!("{tabs}Tuple");
             for el in elements {
-                print_expr(el, indent + 1);
+                print_expr(el, src, indent + 1);
             }
         }
         Expr::Map(expr) => {
@@ -214,9 +214,9 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
             let tabs = INDENT.repeat(indent + 1);
             for (key, value) in expr {
                 println!("{tabs}Key: ");
-                print_expr(key, indent + 2);
+                print_expr(key, src, indent + 2);
                 println!("{tabs}Value: ");
-                print_expr(value, indent + 2);
+                print_expr(value, src, indent + 2);
             }
         }
         Expr::Integer { base, value, width } => {
@@ -228,8 +228,8 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
         Expr::String(value) => {
             println!("{tabs}String = \'{value}\'");
         }
-        Expr::Path(value) => {
-            println!("{tabs}Path[{value}]");
+        Expr::Path(_) => {
+            println!("{tabs}Path[{}]", expr.span.text(src));
         }
         Expr::Assign {
             target,
@@ -239,13 +239,13 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
             println!("{tabs}Assign({binary:?})");
             let tabs = INDENT.repeat(indent + 1);
             println!("{tabs}Target: ");
-            print_expr(target, indent + 2);
+            print_expr(target, src, indent + 2);
             println!("{tabs}Value: ");
-            print_expr(value, indent + 2);
+            print_expr(value, src, indent + 2);
         }
         Expr::Block(expr) => {
             println!("{tabs}Block");
-            print_stmts(expr, indent + 1);
+            print_stmts(expr, src, indent + 1);
         }
         Expr::If {
             cond,
@@ -256,14 +256,14 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
 
             let tabs = INDENT.repeat(indent + 1);
             println!("{tabs}Condition: ");
-            print_expr(cond, indent + 2);
+            print_expr(cond, src, indent + 2);
 
             println!("{tabs}Body: ");
-            print_expr(if_branch, indent + 2);
+            print_expr(if_branch, src, indent + 2);
 
             if let Some(else_branch) = else_branch {
                 println!("{tabs}Else: ");
-                print_expr(else_branch, indent + 2);
+                print_expr(else_branch, src, indent + 2);
             }
         }
         Expr::Loop {
@@ -277,39 +277,39 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
 
             let tabs = INDENT.repeat(indent + 1);
             println!("{tabs}Condition: ");
-            print_expr(cond, indent + 2);
+            print_expr(cond, src, indent + 2);
 
             println!("{tabs}Body: ");
-            print_stmts(body, indent + 2);
+            print_stmts(body, src, indent + 2);
         }
         Expr::Member { source, member } => {
             println!("{tabs}Member[{member}]");
-            print_expr(source, indent + 1);
+            print_expr(source, src, indent + 1);
         }
         Expr::Subscript { callee, args } => {
             println!("{tabs}Subscript");
             let tabs = INDENT.repeat(indent + 1);
             println!("{tabs}Callee: ");
-            print_expr(callee, indent + 2);
+            print_expr(callee, src, indent + 2);
 
             if !args.is_empty() {
                 println!("{tabs}Args: ");
                 for expr in args {
-                    print_expr(expr, indent + 2);
+                    print_expr(expr, src, indent + 2);
                 }
             }
         }
         Expr::Return(expr) => {
             println!("{tabs}Return");
-            print_expr(expr, indent + 1);
+            print_expr(expr, src, indent + 1);
         }
         Expr::Yield(expr) => {
             println!("{tabs}Yield");
-            print_expr(expr, indent + 1);
+            print_expr(expr, src, indent + 1);
         }
         Expr::Break(expr) => {
             println!("{tabs}Break");
-            print_expr(expr, indent + 1);
+            print_expr(expr, src, indent + 1);
         }
         Expr::Bool(value) => {
             println!("{tabs}Bool = {value}");
@@ -324,17 +324,17 @@ pub fn print_expr(expr: &Located<Expr>, indent: usize) {
             println!("{tabs}For[{var}]");
             let tabs = INDENT.repeat(indent + 1);
             println!("{tabs}In: ");
-            print_expr(iter, indent + 2);
+            print_expr(iter, src, indent + 2);
             println!("{tabs}Body: ");
-            print_stmts(body, indent + 2);
+            print_stmts(body, src, indent + 2);
         }
         Expr::Void => println!("{tabs}Void"),
     }
 }
 
-fn print_stmts(stmts: &[Located<Stmt>], indent: usize) {
+fn print_stmts(stmts: &[Located<Stmt>], src: &str, indent: usize) {
     for stmt in stmts {
-        print_stmt(stmt, indent);
+        print_stmt(stmt, src, indent);
     }
 }
 
@@ -380,11 +380,12 @@ fn print_fn(
         proto: header,
         body,
     }: &Fn,
+    src: &str,
     indent: usize,
 ) {
     print_prototype(header, indent);
     println!("{}Body: ", INDENT.repeat(indent));
-    print_stmts(body, indent + 1);
+    print_stmts(body, src, indent + 1);
 }
 
 fn print_struct(
@@ -397,6 +398,7 @@ fn print_struct(
         functions,
         public,
     }: &Struct,
+    src: &str,
     indent: usize,
 ) {
     let tabs = INDENT.repeat(indent);
@@ -428,6 +430,6 @@ fn print_struct(
 
     println!("{tabs}Functions:");
     for f in functions {
-        print_fn(f, indent + 1);
+        print_fn(f, src, indent + 1);
     }
 }
