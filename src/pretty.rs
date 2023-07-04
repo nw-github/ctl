@@ -282,8 +282,15 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
             println!("{tabs}Body: ");
             print_stmts(body, src, indent + 2);
         }
-        Expr::Member { source, member } => {
+        Expr::Member { source, member, generics } => {
             println!("{tabs}Member[{member}]");
+            if !generics.is_empty() {
+                println!("{tabs}Generics:");
+                let tabs = INDENT.repeat(indent + 1);
+                for ty in generics.iter() {
+                    println!("{ty:?}")
+                }
+            }
             print_expr(source, src, indent + 1);
         }
         Expr::Subscript { callee, args } => {

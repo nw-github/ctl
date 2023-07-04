@@ -281,7 +281,7 @@ pub struct UserType {
     pub data: UserTypeData,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, EnumAsInner)]
 pub enum Symbol {
     Func(FunctionId),
     GenericFunc(GenericFunc),
@@ -1186,7 +1186,18 @@ impl<'a> TypeChecker<'a> {
                 )
             }
             Expr::For { .. } => todo!(),
-            Expr::Member { source, member } => {
+            Expr::Member {
+                source,
+                member,
+                generics,
+            } => {
+                if !generics.is_empty() {
+                    self.error::<()>(Error::new(
+                        "member variables cannot be parameterized with generics",
+                        span,
+                    ));
+                }
+
                 let source = self.check_expr(scopes, *source, None);
                 let id = source.ty.strip_references();
                 let Some(ty) = id.as_user_type() else {
@@ -1392,7 +1403,12 @@ impl<'a> TypeChecker<'a> {
         args: Vec<(Option<String>, Located<Expr>)>,
         span: Span,
     ) -> CheckedExpr {
-        if let Expr::Member { source, member } = callee.data {
+        if let Expr::Member {
+            source,
+            member,
+            generics,
+        } = callee.data
+        {
             let source = self.check_expr(scopes, *source, None);
             let id = source.ty.strip_references();
             let Some(ty) = id.as_user_type().map(|&ty| scopes.get_user_type(ty)) else {
@@ -1402,66 +1418,71 @@ impl<'a> TypeChecker<'a> {
                 ), span));
             };
 
-            if ty.data.is_struct() {
-                if let Some(func) = scopes.find_func_in(&member, ty.scope) {
-                    let f = scopes.get_func(func);
-                    if !f.proto.public && !scopes.is_sub_scope(ty.scope) {
-                        return self.error(Error::new(
-                            format!(
-                                "cannot access private method '{member}' of type '{}'",
-                                Self::type_name(scopes, id)
-                            ),
-                            span,
-                        ));
-                    }
+            if let Some(func) = ty
+                .data
+                .as_struct()
+                .and_then(|_| scopes.find_func_in(&member, ty.body_scope))
+            {
+                let f = scopes.get_func(func);
+                if !f.proto.public && !scopes.is_sub_scope(ty.scope) {
+                    return self.error(Error::new(
+                        format!(
+                            "cannot access private method '{member}' of type '{}'",
+                            Self::type_name(scopes, id)
+                        ),
+                        span,
+                    ));
+                }
 
-                    if let Some(this) = f.proto.params.get(0).filter(|p| p.name == THIS_PARAM) {
-                        if let TypeId::MutPtr(inner) = &this.ty {
-                            let mut ty = &source.ty;
-                            if ty == inner.as_ref() && !Self::can_addrmut(scopes, &source) {
+                if let Some(this) = f.proto.params.get(0).filter(|p| p.name == THIS_PARAM) {
+                    if let TypeId::MutPtr(inner) = &this.ty {
+                        let mut ty = &source.ty;
+                        if ty == inner.as_ref() && !Self::can_addrmut(scopes, &source) {
+                            return self.error(Error::new(
+                                format!("cannot call method '{member}' with immutable receiver"),
+                                span,
+                            ));
+                        } else {
+                            while let TypeId::MutPtr(inner) = ty {
+                                ty = inner;
+                            }
+
+                            if matches!(ty, TypeId::Ptr(_)) {
                                 return self.error(Error::new(
                                     format!(
-                                        "cannot call method '{member}' with immutable receiver"
+                                        "cannot call method '{member}' through an immutable pointer"
                                     ),
                                     span,
                                 ));
-                            } else {
-                                while let TypeId::MutPtr(inner) = ty {
-                                    ty = inner;
-                                }
-
-                                if matches!(ty, TypeId::Ptr(_)) {
-                                    return self.error(Error::new(
-                                        format!(
-                                            "cannot call method '{member}' through an immutable pointer"
-                                        ),
-                                        span,
-                                    ));
-                                }
                             }
                         }
-
-                        #[allow(clippy::unnecessary_to_owned)]
-                        let (args, ret) = self.check_args_with_generics(
-                            scopes,
-                            args,
-                            &f.proto.params[1..].to_vec(),
-                            &f.proto.type_params.to_vec(),
-                            None,
-                            f.proto.ret.clone(),
-                            target,
-                            span,
-                        );
-
-                        return CheckedExpr::new(
-                            ret,
-                            ExprData::MemberCall {
-                                this: source.into(),
-                                func,
-                                args,
-                            },
-                        );
                     }
+
+                    let symbol = match self.resolve_func(scopes, func, &generics, span) {
+                        Ok(symbol) => symbol,
+                        Err(_) => return CheckedExpr::default(),
+                    };
+
+                    #[allow(clippy::unnecessary_to_owned)]
+                    let (args, ret) = self.check_args_with_generics(
+                        scopes,
+                        args,
+                        &f.proto.params[1..].to_vec(),
+                        &f.proto.type_params.to_vec(),
+                        symbol.into_generic_func().map(|v| v.generics).ok(),
+                        f.proto.ret.clone(),
+                        target,
+                        span,
+                    );
+
+                    return CheckedExpr::new(
+                        ret,
+                        ExprData::MemberCall {
+                            this: source.into(),
+                            func,
+                            args,
+                        },
+                    );
                 }
             }
 
@@ -1531,9 +1552,7 @@ impl<'a> TypeChecker<'a> {
                         &f.proto.params.clone(),
                         &f.proto.type_params.to_vec(),
                         Some(func.generics),
-                        f
-                        .proto
-                        .ret.clone(),
+                        f.proto.ret.clone(),
                         target,
                         span,
                     );

@@ -889,11 +889,20 @@ impl<'a> Parser<'a> {
                 );
             } else if self.advance_if_kind(Token::Dot).is_some() {
                 let (member, span) = self.expect_id_with_span("expected member name")?;
-                let span = Span::combine(expr.span, span);
+                let (generics, span) = if self.advance_if_kind(Token::ScopeRes).is_some() {
+                    self.expect_kind(Token::LAngle, "expected '<'")?;
+                    let (params, span) =
+                        self.comma_separated(Token::RAngle, "expected '>'", |this| this.parse_type())?;
+                    (params, Span::combine(expr.span, span))
+                } else {
+                    (Vec::new(), Span::combine(expr.span, span))
+                };
+
                 expr = L::new(
                     Expr::Member {
                         source: expr.into(),
                         member: member.into(),
+                        generics,
                     },
                     span,
                 );
