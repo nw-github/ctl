@@ -160,7 +160,7 @@ impl Compiler {
         let mut fns = Vec::new();
         for scope in scopes.scopes().iter() {
             for &id in scope.fns.iter() {
-                if scopes.get_func(id).inst {
+                if scopes.get_func(id).inst || !scopes.get_func(id).proto.type_params.is_empty() {
                     continue;
                 }
 
@@ -338,8 +338,9 @@ impl Compiler {
             ExprData::Float(value) => self.emit(value),
             ExprData::String(_) => todo!(),
             ExprData::Symbol(symbol) => match *symbol {
-                Symbol::Function(id) => self.emit_fn_name(scopes, id),
-                Symbol::Variable(id) => self.emit_var_name(scopes, id),
+                Symbol::Func(id) => self.emit_fn_name(scopes, id),
+                Symbol::Var(id) => self.emit_var_name(scopes, id),
+                Symbol::GenericFunc(_) => todo!(),
             },
             ExprData::Instance(members) => {
                 self.emit("(");
@@ -505,7 +506,7 @@ impl Compiler {
                 self.emit(format!("{label}:\n"));
                 self.current_block = old_block;
 
-                expr.data = ExprData::Symbol(Symbol::Variable(scopes.insert_var(Variable {
+                expr.data = ExprData::Symbol(Symbol::Var(scopes.insert_var(Variable {
                     name: variable,
                     ty: TypeId::Unknown,
                     is_static: false,
@@ -548,7 +549,8 @@ impl Compiler {
                 self.emit(format!("{RT_PREFIX}option_"));
                 self.emit_type(scopes, inner);
             }
-            TypeId::Function(_) => todo!(),
+            TypeId::Func(_) => todo!(),
+            TypeId::GenericFunc(_) => todo!(),
             &TypeId::UserType(id) => {
                 if scopes.get_user_type(id).data.is_struct() {
                     self.emit("struct ");
