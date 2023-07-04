@@ -288,7 +288,7 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
                 println!("{tabs}Generics:");
                 let tabs = INDENT.repeat(indent + 1);
                 for ty in generics.iter() {
-                    println!("{ty:?}")
+                    println!("{tabs}{ty:?}")
                 }
             }
             print_expr(source, src, indent + 1);

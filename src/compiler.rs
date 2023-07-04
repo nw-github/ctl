@@ -559,7 +559,6 @@ impl Compiler {
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
-            TypeId::GenericPlaceholder(_) => panic!("ICE: TypeId::GenericPlaceholder in emit_type"),
         }
     }
 

@@ -48,7 +48,6 @@ pub enum TypeId {
     MutPtr(Box<TypeId>),
     Option(Box<TypeId>),
     Array(Box<(TypeId, usize)>),
-    GenericPlaceholder(usize),
 }
 
 impl TypeId {
@@ -2043,7 +2042,6 @@ impl<'a> TypeChecker<'a> {
             TypeId::Array(inner) => format!("[{}; {}]", Self::type_name(scopes, &inner.0), inner.1),
             TypeId::Isize => "isize".into(),
             TypeId::Usize => "usize".into(),
-            TypeId::GenericPlaceholder(_) => unreachable!(),
         }
     }
 
