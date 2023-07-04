@@ -1147,8 +1147,13 @@ impl<'a> Parser<'a> {
                             },
                             Span::combine(token.span, rbrace.span),
                         )
+                    } else if let Some(rbrace) = self.advance_if_kind(Token::RBrace) {
+                        L::new(
+                            Expr::Array(vec![expr]),
+                            Span::combine(token.span, rbrace.span),
+                        )
                     } else {
-                        self.expect_kind(Token::Comma, "expected ':', ';', or ','")?;
+                        self.expect_kind(Token::Comma, "expected ':', ';', ',', or ']'")?;
                         let mut exprs = vec![expr];
                         let span = self.advance_until(Token::RBrace, token.span, |this| {
                             exprs.push(this.expression()?);
