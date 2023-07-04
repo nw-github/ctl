@@ -481,7 +481,7 @@ macro_rules! type_mismatch {
     ($scopes: expr, $expected: expr, $actual: expr, $span: expr) => {
         Error::new(
             format!(
-                "type mismatch: expected type {}, got {}",
+                "type mismatch: expected type '{}', got '{}'",
                 Self::type_name($scopes, $expected),
                 Self::type_name($scopes, $actual),
             ),
@@ -1604,35 +1604,6 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn forward_declare_fn(&mut self, scopes: &mut Scopes, f: &Fn) {
-        // FIXME: it really doesnt get hackier than this
-        fn resolve_hint_or_generic(
-            scopes: &Scopes,
-            ty: &TypeHint,
-            type_params: &[String],
-        ) -> TypeId {
-            TypeChecker::fd_resolve_type(scopes, ty)
-                .or_else(|err| {
-                    if let ResolveError::Path(path) = err {
-                        if let Some(name) = path.data.as_symbol() {
-                            return type_params
-                                .iter()
-                                .position(|t| t == name)
-                                .map(TypeId::GenericPlaceholder)
-                                .ok_or(err);
-                        }
-                    }
-
-                    Err(err)
-                })
-                .unwrap_or(TypeId::Unknown)
-        }
-
-        fn fix_generics(id: &mut TypeId, index: usize, fix: UserTypeId) {
-            if matches!(id, TypeId::GenericPlaceholder(id) if *id == index) {
-                *id = TypeId::UserType(fix);
-            }
-        }
-
         let checked = Function {
             proto: CheckedPrototype {
                 public: f.proto.public,
@@ -1648,10 +1619,10 @@ impl<'a> TypeChecker<'a> {
                         mutable: param.mutable,
                         keyword: param.keyword,
                         name: param.name.clone(),
-                        ty: resolve_hint_or_generic(scopes, &param.ty, &f.proto.type_params),
+                        ty: Self::fd_resolve_type(scopes, &param.ty).unwrap_or(TypeId::Unknown),
                     })
                     .collect(),
-                ret: resolve_hint_or_generic(scopes, &f.proto.ret, &f.proto.type_params),
+                ret: Self::fd_resolve_type(scopes, &f.proto.ret).unwrap_or(TypeId::Unknown),
             },
             body: None,
             inst: false,
@@ -1661,20 +1632,23 @@ impl<'a> TypeChecker<'a> {
             Some(f.proto.name.clone()),
             ScopeKind::Function(id),
             |scopes| {
-                for (i, param) in f.proto.type_params.iter().enumerate() {
-                    let ty = scopes.insert_user_type(UserType {
-                        public: false,
-                        name: param.clone(),
-                        body_scope: scopes.current_id(),
-                        data: UserTypeData::Generic(i),
-                    });
-
-                    let func = scopes.get_func_mut(id);
-                    for item in func.proto.params.iter_mut() {
-                        fix_generics(&mut item.ty, i, ty);
+                if !f.proto.type_params.is_empty() {
+                    for (i, param) in f.proto.type_params.iter().enumerate() {
+                        scopes.insert_user_type(UserType {
+                            public: false,
+                            name: param.clone(),
+                            body_scope: scopes.current_id(),
+                            data: UserTypeData::Generic(i),
+                        });
                     }
 
-                    fix_generics(&mut func.proto.ret, i, ty);
+                    for (i, original) in f.proto.params.iter().enumerate() {
+                        scopes.get_func_mut(id).proto.params[i].ty =
+                            Self::fd_resolve_type(scopes, &original.ty).unwrap_or(TypeId::Unknown);
+                    }
+
+                    scopes.get_func_mut(id).proto.ret =
+                        Self::fd_resolve_type(scopes, &f.proto.ret).unwrap_or(TypeId::Unknown);
                 }
 
                 for stmt in f.body.iter() {
