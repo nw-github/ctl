@@ -2076,12 +2076,14 @@ impl<'a> TypeChecker<'a> {
         }
 
         for part in path.components[start..path.components.len() - 1].iter() {
-            for (name, id) in scopes[scope].children.iter() {
+            for (name, &id) in scopes[scope].children.iter() {
                 if name == &part.0 {
-                    // TODO: skip the public check if we ended up in our own module
-                    match &scopes[*id].kind {
+                    match scopes[id].kind {
                         ScopeKind::Module(public) => {
-                            if !*public {
+                            if !public
+                                && scopes.module_of(scopes.current_id())
+                                    != scopes.module_of(scopes[id].parent.unwrap())
+                            {
                                 return Err(Error::new(
                                     format!("cannot access private module {name}"),
                                     span,
@@ -2089,7 +2091,7 @@ impl<'a> TypeChecker<'a> {
                             }
                         }
                         ScopeKind::UserType(id) => {
-                            let ty = scopes.get_user_type(*id);
+                            let ty = scopes.get_user_type(id);
                             if !ty.public
                                 && scopes.module_of(ty.scope)
                                     != scopes.module_of(scopes.current_id())
@@ -2103,7 +2105,7 @@ impl<'a> TypeChecker<'a> {
                         _ => continue,
                     }
 
-                    scope = *id;
+                    scope = id;
                     break;
                 }
             }
