@@ -128,6 +128,48 @@ impl TypeId {
         }
         id
     }
+
+    pub fn innermost_type(&self) -> &TypeId {
+        let mut inner = self;
+        loop {
+            match inner {
+                TypeId::Array(t) => inner = &t.0,
+                TypeId::Option(t) | TypeId::Ptr(t) | TypeId::MutPtr(t) => inner = t,
+                _ => break,
+            }
+        }
+
+        inner
+    }
+
+    pub fn innermost_type_mut(&mut self) -> &mut TypeId {
+        let mut inner = self;
+        loop {
+            match inner {
+                TypeId::Array(t) => inner = &mut t.0,
+                TypeId::Option(t) | TypeId::Ptr(t) | TypeId::MutPtr(t) => inner = t,
+                _ => break,
+            }
+        }
+
+        inner
+    }
+
+    pub fn innermost_generic(&self, scopes: &Scopes) -> Option<(usize, &TypeId)> {
+        let inner = self.innermost_type();
+        inner
+            .as_user_type()
+            .and_then(|&id| scopes.get_user_type(id).data.as_generic())
+            .map(|ty| (*ty, inner))
+    }
+
+    pub fn innermost_generic_mut(&mut self, scopes: &Scopes) -> Option<(usize, &mut TypeId)> {
+        let inner = self.innermost_type_mut();
+        inner
+            .as_user_type()
+            .and_then(|&id| scopes.get_user_type(id).data.as_generic())
+            .map(|ty| (*ty, inner))
+    }
 }
 
 #[derive(From)]
@@ -150,6 +192,7 @@ macro_rules! id {
                 pub fn fn_name(&self, name: &str, scope: ScopeId) -> Option<$name> {
                     self[scope].$vec
                         .iter()
+                        .rev()
                         .find_map(|id| (self.$vec[id.0].$($parts).+ == name).then_some(*id))
                 }
             });
@@ -803,15 +846,18 @@ impl<'a> TypeChecker<'a> {
                 name, ty, value, ..
             } => {
                 // FIXME: detect cycles like static X: usize = X;
+                let id = scopes.find_var(&name).unwrap();
                 if let Some(ty) = ty {
                     let ty = self.resolve_type(scopes, &ty);
                     let span = value.span;
                     let value = self.check_expr(scopes, value, Some(&ty));
                     type_check!(self, scopes, &value.ty, &ty, span);
 
-                    CheckedStmt::Static(scopes.find_var(&name).unwrap(), value)
+                    scopes.get_var_mut(id).ty = ty;
+                    CheckedStmt::Static(id, value)
                 } else {
                     let value = self.check_expr(scopes, value, None);
+                    scopes.get_var_mut(id).ty = value.ty.clone();
                     CheckedStmt::Static(scopes.find_var(&name).unwrap(), value)
                 }
             }
@@ -1663,6 +1709,33 @@ impl<'a> TypeChecker<'a> {
         id
     }
 
+    fn infer_generic<'b>(mut src: &TypeId, mut target: &'b TypeId) -> &'b TypeId {
+        loop {
+            match (src, target) {
+                (TypeId::Ptr(gi), TypeId::Ptr(ti)) => {
+                    src = gi;
+                    target = ti;
+                }
+                (TypeId::MutPtr(gi), TypeId::MutPtr(ti)) => {
+                    src = gi;
+                    target = ti;
+                }
+                (TypeId::Array(gi), TypeId::Array(ti)) => {
+                    src = &gi.0;
+                    target = &ti.0;
+                }
+                (TypeId::Option(gi), TypeId::Option(ti)) => {
+                    src = gi;
+                    target = ti;
+                }
+                (TypeId::UserType(_), target) => {
+                    break target;
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
     fn check_arg(
         &mut self,
         scopes: &mut Scopes,
@@ -1670,23 +1743,23 @@ impl<'a> TypeChecker<'a> {
         param: &CheckedParam,
         generics: &mut [TypeId],
     ) -> CheckedExpr {
-        if let Some(&index) = param
-            .ty
-            .as_user_type()
-            .and_then(|ty| scopes.get_user_type(*ty).data.as_generic())
-        {
-            let expr = self.check_expr(scopes, expr, Some(&generics[index]));
-            if generics[index].is_unknown() {
-                generics[index] = expr.ty.clone();
+        let mut target = param.ty.clone();
+        if let Some((index, inner)) = target.innermost_generic_mut(scopes) {
+            // TODO: type check
+            if !generics[index].is_unknown() {
+                *inner = generics[index].clone();
+                return self.check_expr(scopes, expr, Some(&target));
+            } else {
+                let expr = self.check_expr(scopes, expr, Some(&target));
+                generics[index] = Self::infer_generic(&param.ty, &expr.ty).clone();
+                return expr;
             }
-
-            return expr;
         }
 
         let span = expr.span;
-        let expr = self.check_expr(scopes, expr, Some(&param.ty));
-        if !Self::coerces_to(&expr.ty, &param.ty) {
-            self.error(type_mismatch!(scopes, &param.ty, &expr.ty, span))
+        let expr = self.check_expr(scopes, expr, Some(&target));
+        if !Self::coerces_to(&expr.ty, &target) {
+            self.error(type_mismatch!(scopes, &target, &expr.ty, span))
         } else {
             expr
         }
@@ -1791,7 +1864,7 @@ impl<'a> TypeChecker<'a> {
         params: &[CheckedParam],
         type_params: &[String],
         mut generics: Option<Vec<TypeId>>,
-        ret: TypeId,
+        mut ret: TypeId,
         target: Option<&TypeId>,
         span: Span,
     ) -> (Vec<CheckedExpr>, TypeId) {
@@ -1812,13 +1885,11 @@ impl<'a> TypeChecker<'a> {
             for (i, ty) in generics.iter_mut().enumerate() {
                 if ty.is_unknown() {
                     if let Some(target) = ret
-                        .as_user_type()
-                        .and_then(|&ret| scopes.get_user_type(ret).data.as_generic())
-                        .filter(|&&ret| ret == i)
+                        .innermost_generic(scopes)
+                        .filter(|(index, _)| *index == i)
                         .and(target)
-                        .cloned()
                     {
-                        *ty = target.clone();
+                        *ty = Self::infer_generic(&ret, target).clone();
                     } else {
                         self.error::<()>(Error::new(
                             format!("cannot infer type of generic parameter {}", type_params[i]),
@@ -1828,14 +1899,11 @@ impl<'a> TypeChecker<'a> {
                 }
             }
 
-            if let Some(&idx) = ret
-                .as_user_type()
-                .and_then(|&ret| scopes.get_user_type(ret).data.as_generic())
-            {
-                (args, generics.into_iter().nth(idx).unwrap())
-            } else {
-                (args, ret)
+            if let Some((idx, ty)) = ret.innermost_generic_mut(scopes) {
+                *ty = generics.into_iter().nth(idx).unwrap();
             }
+
+            (args, ret)
         }
     }
 
