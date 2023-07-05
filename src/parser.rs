@@ -939,7 +939,7 @@ impl<'a> Parser<'a> {
                 let span = Span::combine(expr.span, dec.span);
                 expr = L::new(
                     Expr::Unary {
-                        op: UnaryOp::IntoError,
+                        op: UnaryOp::Unwrap,
                         expr: expr.into(),
                     },
                     span,

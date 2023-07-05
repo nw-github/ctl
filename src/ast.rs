@@ -131,7 +131,7 @@ pub mod expr {
         #[display(fmt = "&mut")]
         AddrMut,
         #[display(fmt = "!")]
-        IntoError,
+        Unwrap,
         #[display(fmt = "?")]
         Try,
         #[display(fmt = "sizeof")]

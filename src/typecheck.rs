@@ -922,7 +922,18 @@ impl<'a> TypeChecker<'a> {
                         out_ty = Some(TypeId::MutPtr(expr.ty.clone().into()));
                         true
                     }
-                    IntoError => todo!(),
+                    Unwrap => {
+                        if let Some(inner) = expr.ty.as_option() {
+                            out_ty = Some(inner.as_ref().clone());
+                            true
+                        } else {
+                            self.error::<()>(Error::new(
+                                "unwrap operator is only valid for option types",
+                                span,
+                            ));
+                            false
+                        }
+                    }
                     Try => todo!(),
                     Sizeof => todo!(),
                 };
@@ -1799,7 +1810,6 @@ impl<'a> TypeChecker<'a> {
             let mut generics = generics.unwrap_or_else(|| vec![TypeId::Unknown; type_params.len()]);
             let args = self.check_fn_args(scopes, args, params, &mut generics, span);
             for (i, ty) in generics.iter_mut().enumerate() {
-
                 if ty.is_unknown() {
                     if let Some(target) = ret
                         .as_user_type()

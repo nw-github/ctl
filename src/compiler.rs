@@ -279,7 +279,7 @@ impl Compiler {
                 UnaryOp::Deref => todo!(),
                 UnaryOp::Addr => todo!(),
                 UnaryOp::AddrMut => todo!(),
-                UnaryOp::IntoError => todo!(),
+                UnaryOp::Unwrap => todo!(),
                 UnaryOp::Try => todo!(),
                 UnaryOp::Sizeof => todo!(),
             },
