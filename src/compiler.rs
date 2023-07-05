@@ -16,6 +16,7 @@ use crate::{
 };
 
 const RT_PREFIX: &str = "CTL_RUNTIME_";
+const RT_STATIC_INIT: &str = "CTL_RUNTIME_init_statics";
 
 pub struct BlockInfo {
     variable: String,
@@ -46,6 +47,7 @@ impl Compiler {
             this.emit("GC_INIT();");
             this.emit("(void)argc;");
             this.emit("(void)argv;");
+            this.emit(format!("{RT_STATIC_INIT}();"));
             this.emit("return ");
             this.emit_fn_name(&ast.scopes, main);
             this.emit("(); }");
@@ -159,16 +161,45 @@ impl Compiler {
     fn emit_all_functions(&mut self, scopes: &mut Scopes) {
         let mut fns = Vec::new();
         for scope in scopes.scopes().iter() {
-            for &id in scope.fns.iter() {
-                if scopes.get_func(id).inst || !scopes.get_func(id).proto.type_params.is_empty() {
-                    continue;
-                }
-
+            for &id in scope.fns.iter().filter(|&&id| {
+                let func = scopes.get_func(id);
+                !func.inst && func.proto.type_params.is_empty()
+            }) {
                 self.emit_prototype(scopes, id);
                 self.emit(";");
                 fns.push(id);
             }
         }
+
+        let mut statics = Vec::new();
+        for scope in scopes.scopes().iter() {
+            for &id in scope.vars.iter() {
+                let var = scopes.get_var(id);
+                if !var.is_static {
+                    continue;
+                }
+
+                self.emit("static ");
+                self.emit_type(scopes, &var.ty);
+                self.emit(" ");
+                self.emit_var_name(scopes, id);
+                self.emit(";");
+
+                statics.push(id);
+            }
+        }
+
+        self.emit(format!("void {RT_STATIC_INIT}() {{"));
+        for id in statics {
+            self.emit_var_name(scopes, id);
+            self.emit(" = ");
+
+            let mut value = scopes.get_var(id).value.clone().unwrap();
+            self.hoist_blocks(scopes, &mut value);
+            self.compile_expr(scopes, &value);
+            self.emit(";");
+        }
+        self.emit("}");
 
         for id in fns {
             self.emit_prototype(scopes, id);
@@ -179,52 +210,36 @@ impl Compiler {
 
     fn compile_stmt(&mut self, scopes: &mut Scopes, stmt: &mut CheckedStmt) {
         match stmt {
+            CheckedStmt::Module { body, .. } => {
+                for stmt in body.body.iter_mut() {
+                    self.compile_stmt(scopes, stmt);
+                }
+            }
             CheckedStmt::Expr(expr) => {
                 self.hoist_blocks(scopes, expr);
                 self.compile_expr(scopes, expr);
                 self.emit(";");
             }
-            CheckedStmt::Let {
-                name,
-                mutable,
-                value,
-            } => {
-                match value {
-                    Ok(value) => {
-                        self.hoist_blocks(scopes, value);
-                        self.emit_type(scopes, &value.ty);
-                        if !*mutable {
-                            self.emit(" const ");
-                        }
-                        self.emit(format!(" {name} = "));
-                        self.compile_expr(scopes, value);
+            CheckedStmt::Let(name, id) => {
+                let mut var = scopes.get_var_mut(*id).clone();
+                if let Some(value) = &mut var.value {
+                    self.hoist_blocks(scopes, value);
+                    self.emit_type(scopes, &value.ty);
+                    if !var.mutable {
+                        self.emit(" const ");
                     }
-                    Err(ty) => {
-                        self.emit_type(scopes, ty);
-                        if !*mutable {
-                            self.emit(" const ");
-                        }
+                    self.emit(format!(" {name} = "));
+                    self.compile_expr(scopes, value);
+                } else {
+                    self.emit_type(scopes, &var.ty);
+                    if !var.mutable {
+                        self.emit(" const ");
+                    }
 
-                        self.emit(format!(" {name}"));
-                    }
+                    self.emit(format!(" {name}"));
                 }
+
                 self.emit(";");
-            }
-            CheckedStmt::Static(id, value) => {
-                self.emit("static ");
-                self.emit_type(scopes, &value.ty);
-                self.emit(" const ");
-                self.emit_var_name(scopes, *id);
-                self.emit(" = ");
-                // FIXME: blocks in statics...
-                self.hoist_blocks(scopes, value);
-                self.compile_expr(scopes, value);
-                self.emit(";");
-            }
-            CheckedStmt::Module { body, .. } => {
-                for stmt in body.body.iter_mut() {
-                    self.compile_stmt(scopes, stmt);
-                }
             }
             CheckedStmt::None => {}
             CheckedStmt::Error => {
@@ -512,6 +527,7 @@ impl Compiler {
                     is_static: false,
                     mutable: false,
                     public: false,
+                    value: None,
                 })));
             }
             _ => {}

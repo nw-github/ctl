@@ -99,17 +99,12 @@ pub mod expr {
 
 pub mod stmt {
     use super::{expr::CheckedExpr, Block};
-    use crate::typecheck::{TypeId, VariableId};
+    use crate::typecheck::VariableId;
 
     #[derive(Debug, Default, Clone)]
     pub enum CheckedStmt {
         Expr(CheckedExpr),
-        Let {
-            name: String,
-            mutable: bool,
-            value: Result<CheckedExpr, TypeId>,
-        },
-        Static(VariableId, CheckedExpr),
+        Let(String, VariableId),
         Module {
             name: String,
             body: Block,

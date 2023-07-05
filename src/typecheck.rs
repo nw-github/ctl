@@ -294,6 +294,7 @@ pub struct Variable {
     pub ty: TypeId,
     pub is_static: bool,
     pub mutable: bool,
+    pub value: Option<CheckedExpr>,
 }
 
 #[derive(Debug)]
@@ -656,6 +657,7 @@ impl<'a> TypeChecker<'a> {
                     ty: TypeId::Unknown,
                     is_static: true,
                     mutable: false,
+                    value: None,
                 });
             }
             _ => {}
@@ -789,54 +791,53 @@ impl<'a> TypeChecker<'a> {
                 mutable,
                 value,
             } => {
-                let (ty, value) = if let Some(ty) = ty {
+                if let Some(ty) = ty {
                     let ty = self.resolve_type(scopes, &ty);
                     if let Some(value) = value {
                         let span = value.span;
                         let value = self.check_expr(scopes, value, Some(&ty));
                         type_check!(self, scopes, &value.ty, &ty, span);
 
-                        (
-                            ty,
-                            CheckedStmt::Let {
-                                name: name.clone(),
+                        CheckedStmt::Let(
+                            name.clone(),
+                            scopes.insert_var(Variable {
+                                public: false,
+                                name,
+                                ty,
+                                is_static: false,
                                 mutable,
-                                value: Ok(value),
-                            },
+                                value: Some(value),
+                            }),
                         )
                     } else {
-                        (
-                            ty.clone(),
-                            CheckedStmt::Let {
-                                name: name.clone(),
+                        CheckedStmt::Let(
+                            name.clone(),
+                            scopes.insert_var(Variable {
+                                public: false,
+                                name,
+                                ty,
+                                is_static: false,
                                 mutable,
-                                value: Err(ty),
-                            },
+                                value: None,
+                            }),
                         )
                     }
                 } else if let Some(value) = value {
                     let value = self.check_expr(scopes, value, None);
-                    (
-                        value.ty.clone(),
-                        CheckedStmt::Let {
-                            name: name.clone(),
+                    CheckedStmt::Let(
+                        name.clone(),
+                        scopes.insert_var(Variable {
+                            public: false,
+                            name,
+                            ty: value.ty.clone(),
+                            is_static: false,
                             mutable,
-                            value: Ok(value),
-                        },
+                            value: Some(value),
+                        }),
                     )
                 } else {
                     return self.error(Error::new("cannot infer type", stmt.span));
-                };
-
-                scopes.insert_var(Variable {
-                    public: false,
-                    name,
-                    ty,
-                    is_static: false,
-                    mutable,
-                });
-
-                value
+                }
             }
             Stmt::Fn(f) => {
                 self.check_fn(scopes, f);
@@ -846,20 +847,24 @@ impl<'a> TypeChecker<'a> {
                 name, ty, value, ..
             } => {
                 // FIXME: detect cycles like static X: usize = X;
+                // FIXME: non-const statics should be disallowed
                 let id = scopes.find_var(&name).unwrap();
-                if let Some(ty) = ty {
+                let (value, ty) = if let Some(ty) = ty {
                     let ty = self.resolve_type(scopes, &ty);
                     let span = value.span;
                     let value = self.check_expr(scopes, value, Some(&ty));
                     type_check!(self, scopes, &value.ty, &ty, span);
-
-                    scopes.get_var_mut(id).ty = ty;
-                    CheckedStmt::Static(id, value)
+                    (value, ty)
                 } else {
                     let value = self.check_expr(scopes, value, None);
-                    scopes.get_var_mut(id).ty = value.ty.clone();
-                    CheckedStmt::Static(scopes.find_var(&name).unwrap(), value)
-                }
+                    let ty = value.ty.clone();
+                    (value, ty)
+                };
+
+                let var = scopes.get_var_mut(id);
+                var.ty = ty;
+                var.value = Some(value);
+                CheckedStmt::None
             }
         }
     }
@@ -1693,6 +1698,7 @@ impl<'a> TypeChecker<'a> {
                         is_static: false,
                         public: false,
                         mutable: param.mutable,
+                        value: None,
                     })
                     .collect();
 
