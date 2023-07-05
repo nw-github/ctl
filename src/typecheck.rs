@@ -619,6 +619,66 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    fn forward_declare_fn(&mut self, scopes: &mut Scopes, f: &Fn) {
+        let checked = Function {
+            proto: CheckedPrototype {
+                public: f.proto.public,
+                name: f.proto.name.clone(),
+                is_async: f.proto.is_async,
+                is_extern: f.proto.is_extern,
+                type_params: f.proto.type_params.clone(),
+                params: f
+                    .proto
+                    .params
+                    .iter()
+                    .map(|param| CheckedParam {
+                        mutable: param.mutable,
+                        keyword: param.keyword,
+                        name: param.name.clone(),
+                        ty: Self::fd_resolve_type(scopes, &param.ty).unwrap_or(TypeId::Unknown),
+                    })
+                    .collect(),
+                ret: Self::fd_resolve_type(scopes, &f.proto.ret).unwrap_or(TypeId::Unknown),
+            },
+            body: None,
+            inst: false,
+        };
+        let id = scopes.insert_func(checked);
+        scopes.enter(
+            Some(f.proto.name.clone()),
+            ScopeKind::Function(id),
+            |scopes| {
+                if !f.proto.type_params.is_empty() {
+                    for (i, param) in f.proto.type_params.iter().enumerate() {
+                        scopes.insert_user_type(UserType {
+                            public: false,
+                            name: param.clone(),
+                            body_scope: scopes.current_id(),
+                            data: UserTypeData::Generic(i),
+                        });
+                    }
+
+                    for (i, original) in f.proto.params.iter().enumerate() {
+                        scopes.get_func_mut(id).proto.params[i].ty =
+                            Self::fd_resolve_type(scopes, &original.ty).unwrap_or(TypeId::Unknown);
+                    }
+
+                    scopes.get_func_mut(id).proto.ret =
+                        Self::fd_resolve_type(scopes, &f.proto.ret).unwrap_or(TypeId::Unknown);
+                }
+
+                for stmt in f.body.iter() {
+                    self.forward_declare(scopes, stmt);
+                }
+
+                scopes.get_func_mut(id).body = Some(Block {
+                    body: Vec::new(),
+                    scope: scopes.current_id(),
+                });
+            },
+        )
+    }
+
     fn check_stmt(&mut self, scopes: &mut Scopes, stmt: Located<Stmt>) -> CheckedStmt {
         match stmt.data {
             Stmt::Module {
@@ -1337,63 +1397,6 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn check_args_with_generics(
-        &mut self,
-        scopes: &mut Scopes,
-        args: Vec<(Option<String>, Located<Expr>)>,
-        params: &[CheckedParam],
-        type_params: &[String],
-        mut generics: Option<Vec<TypeId>>,
-        ret: TypeId,
-        target: Option<&TypeId>,
-        span: Span,
-    ) -> (Vec<CheckedExpr>, TypeId) {
-        if type_params.is_empty() {
-            (
-                self.check_fn_args(
-                    scopes,
-                    args,
-                    params,
-                    generics.as_deref_mut().unwrap_or(&mut []),
-                    span,
-                ),
-                ret,
-            )
-        } else {
-            let mut generics = generics.unwrap_or_else(|| vec![TypeId::Unknown; type_params.len()]);
-            let args = self.check_fn_args(scopes, args, params, &mut generics, span);
-            for (i, ty) in generics.iter_mut().enumerate() {
-                if ty.is_unknown() {
-                    eprintln!("ret = {}", Self::type_name(scopes, &ret));
-                    if let Some(target) = ret
-                        .as_user_type()
-                        .and_then(|&ret| scopes.get_user_type(ret).data.as_generic())
-                        .filter(|&&ret| ret == i)
-                        .and(target)
-                        .cloned()
-                    {
-                        *ty = target.clone();
-                    } else {
-                        self.error::<()>(Error::new(
-                            format!("cannot infer type of generic parameter {}", type_params[i]),
-                            span,
-                        ));
-                    }
-                }
-            }
-
-            if let Some(&idx) = ret
-                .as_user_type()
-                .and_then(|&ret| scopes.get_user_type(ret).data.as_generic())
-            {
-                (args, generics.into_iter().nth(idx).unwrap())
-            } else {
-                (args, ret)
-            }
-        }
-    }
-
     fn check_call(
         &mut self,
         scopes: &mut Scopes,
@@ -1602,66 +1605,6 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn forward_declare_fn(&mut self, scopes: &mut Scopes, f: &Fn) {
-        let checked = Function {
-            proto: CheckedPrototype {
-                public: f.proto.public,
-                name: f.proto.name.clone(),
-                is_async: f.proto.is_async,
-                is_extern: f.proto.is_extern,
-                type_params: f.proto.type_params.clone(),
-                params: f
-                    .proto
-                    .params
-                    .iter()
-                    .map(|param| CheckedParam {
-                        mutable: param.mutable,
-                        keyword: param.keyword,
-                        name: param.name.clone(),
-                        ty: Self::fd_resolve_type(scopes, &param.ty).unwrap_or(TypeId::Unknown),
-                    })
-                    .collect(),
-                ret: Self::fd_resolve_type(scopes, &f.proto.ret).unwrap_or(TypeId::Unknown),
-            },
-            body: None,
-            inst: false,
-        };
-        let id = scopes.insert_func(checked);
-        scopes.enter(
-            Some(f.proto.name.clone()),
-            ScopeKind::Function(id),
-            |scopes| {
-                if !f.proto.type_params.is_empty() {
-                    for (i, param) in f.proto.type_params.iter().enumerate() {
-                        scopes.insert_user_type(UserType {
-                            public: false,
-                            name: param.clone(),
-                            body_scope: scopes.current_id(),
-                            data: UserTypeData::Generic(i),
-                        });
-                    }
-
-                    for (i, original) in f.proto.params.iter().enumerate() {
-                        scopes.get_func_mut(id).proto.params[i].ty =
-                            Self::fd_resolve_type(scopes, &original.ty).unwrap_or(TypeId::Unknown);
-                    }
-
-                    scopes.get_func_mut(id).proto.ret =
-                        Self::fd_resolve_type(scopes, &f.proto.ret).unwrap_or(TypeId::Unknown);
-                }
-
-                for stmt in f.body.iter() {
-                    self.forward_declare(scopes, stmt);
-                }
-
-                scopes.get_func_mut(id).body = Some(Block {
-                    body: Vec::new(),
-                    scope: scopes.current_id(),
-                });
-            },
-        )
-    }
-
     fn check_fn(&mut self, scopes: &mut Scopes, f: Fn) -> FunctionId {
         // TODO: disallow private type in public interface
         let id = scopes.find_func(&f.proto.name).unwrap();
@@ -1826,6 +1769,63 @@ impl<'a> TypeChecker<'a> {
             result
         } else {
             Vec::new()
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_args_with_generics(
+        &mut self,
+        scopes: &mut Scopes,
+        args: Vec<(Option<String>, Located<Expr>)>,
+        params: &[CheckedParam],
+        type_params: &[String],
+        mut generics: Option<Vec<TypeId>>,
+        ret: TypeId,
+        target: Option<&TypeId>,
+        span: Span,
+    ) -> (Vec<CheckedExpr>, TypeId) {
+        if type_params.is_empty() {
+            (
+                self.check_fn_args(
+                    scopes,
+                    args,
+                    params,
+                    generics.as_deref_mut().unwrap_or(&mut []),
+                    span,
+                ),
+                ret,
+            )
+        } else {
+            let mut generics = generics.unwrap_or_else(|| vec![TypeId::Unknown; type_params.len()]);
+            let args = self.check_fn_args(scopes, args, params, &mut generics, span);
+            for (i, ty) in generics.iter_mut().enumerate() {
+
+                if ty.is_unknown() {
+                    if let Some(target) = ret
+                        .as_user_type()
+                        .and_then(|&ret| scopes.get_user_type(ret).data.as_generic())
+                        .filter(|&&ret| ret == i)
+                        .and(target)
+                        .cloned()
+                    {
+                        *ty = target.clone();
+                    } else {
+                        self.error::<()>(Error::new(
+                            format!("cannot infer type of generic parameter {}", type_params[i]),
+                            span,
+                        ));
+                    }
+                }
+            }
+
+            if let Some(&idx) = ret
+                .as_user_type()
+                .and_then(|&ret| scopes.get_user_type(ret).data.as_generic())
+            {
+                (args, generics.into_iter().nth(idx).unwrap())
+            } else {
+                (args, ret)
+            }
         }
     }
 
