@@ -2149,7 +2149,7 @@ impl<'a> TypeChecker<'a> {
             }
         }
 
-        for part in path.components[start..path.components.len() - 1].iter() {
+        'outer: for part in path.components[start..path.components.len() - 1].iter() {
             for (name, &id) in scopes[scope].children.iter() {
                 if name == &part.0 {
                     match scopes[id].kind {
@@ -2180,9 +2180,11 @@ impl<'a> TypeChecker<'a> {
                     }
 
                     scope = id;
-                    break;
+                    continue 'outer;
                 }
             }
+
+            return Err(Error::new(format!("'{}' not found in this scope", part.0), span));
         }
 
         Ok(scope)
