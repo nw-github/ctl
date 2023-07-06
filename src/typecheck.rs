@@ -279,6 +279,7 @@ pub struct Member {
 #[derive(Debug, EnumAsInner)]
 pub enum UserTypeData {
     Struct(Vec<(String, Member)>),
+    Enum,
     FuncGeneric(usize),
     StructGeneric(usize),
 }
@@ -427,10 +428,11 @@ impl Scopes {
         result
     }
 
-    pub fn current_struct(&self) -> Option<TypeId> {
+    pub fn this_type(&self) -> Option<TypeId> {
         self.iter().find_map(|(_, scope)| {
             if let ScopeKind::UserType(id) = scope.kind {
-                if self.get_user_type(id).data.is_struct() {
+                let data = &self.get_user_type(id).data;
+                if data.is_struct() || data.is_enum() {
                     return Some(TypeId::UserType(id));
                 }
             }
@@ -677,7 +679,40 @@ impl<'a> TypeChecker<'a> {
                 }
                 ParsedUserType::Union { .. } => todo!(),
                 ParsedUserType::Interface { .. } => todo!(),
-                ParsedUserType::Enum { .. } => todo!(),
+                ParsedUserType::Enum {
+                    public,
+                    name,
+                    impls: _,
+                    variants,
+                    functions,
+                } => {
+                    let id = scopes.insert_user_type(UserType {
+                        public: *public,
+                        name: name.clone(),
+                        body_scope: ScopeId(0),
+                        data: UserTypeData::Enum,
+                        type_params: Vec::new(),
+                    });
+
+                    scopes.enter(Some(name.clone()), ScopeKind::UserType(id), |scopes| {
+                        scopes.get_user_type_mut(id).body_scope = scopes.current_id();
+
+                        for (name, _) in variants {
+                            scopes.insert_var(Variable {
+                                name: name.clone(),
+                                public: true,
+                                ty: TypeId::UserType(id),
+                                is_static: true,
+                                mutable: false,
+                                value: None,
+                            });
+                        }
+
+                        for f in functions.iter() {
+                            self.forward_declare_fn(scopes, scopes.current_id(), false, f);
+                        }
+                    });
+                }
             },
             Stmt::Fn(f) => self.forward_declare_fn(scopes, scopes.current_id(), false, f),
             Stmt::Static { public, name, .. } => {
@@ -822,7 +857,27 @@ impl<'a> TypeChecker<'a> {
                 }
                 ParsedUserType::Union { .. } => todo!(),
                 ParsedUserType::Interface { .. } => todo!(),
-                ParsedUserType::Enum { .. } => todo!(),
+                ParsedUserType::Enum {
+                    name,
+                    impls: _,
+                    variants,
+                    functions,
+                    ..
+                } => {
+                    let id = scopes.find_user_type(&name).unwrap();
+                    scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
+                        for (name, expr) in variants {
+                            scopes.get_var_mut(scopes.find_var(&name).unwrap()).value = expr
+                                .map(|expr| self.check_expr(scopes, expr, Some(&TypeId::Usize)));
+                        }
+
+                        for f in functions {
+                            self.check_fn(scopes, f);
+                        }
+                    });
+
+                    CheckedStmt::None
+                }
             },
             Stmt::Expr(expr) => CheckedStmt::Expr(self.check_expr(scopes, expr, None)),
             Stmt::Let {
@@ -1518,6 +1573,8 @@ impl<'a> TypeChecker<'a> {
             if let Some(func) = ty
                 .data
                 .as_struct()
+                .map(|_| ())
+                .or_else(|| ty.data.is_enum().then_some(()))
                 .and_then(|_| scopes.find_func_in(&member, ty.body_scope))
             {
                 let f = scopes.get_func(func);
@@ -2060,7 +2117,7 @@ impl<'a> TypeChecker<'a> {
 
                 if let Some(symbol) = path.data.as_symbol() {
                     return match symbol {
-                        symbol if symbol == THIS_TYPE => scopes.current_struct(),
+                        symbol if symbol == THIS_TYPE => scopes.this_type(),
                         "void" => Some(TypeId::Void),
                         "never" => Some(TypeId::Never),
                         "f32" => Some(TypeId::F32),
@@ -2080,12 +2137,12 @@ impl<'a> TypeChecker<'a> {
             TypeHint::This => {
                 // the parser ensures methods can only appear in structs/enums/etc
                 scopes
-                    .current_struct()
+                    .this_type()
                     .map(|s| TypeId::Ptr(s.into()))
                     .expect("ICE: this outside of method")
             }
             TypeHint::MutThis => scopes
-                .current_struct()
+                .this_type()
                 .map(|s| TypeId::MutPtr(s.into()))
                 .expect("ICE: this outside of method"),
             TypeHint::Array(ty, count) => {
@@ -2261,8 +2318,9 @@ impl<'a> TypeChecker<'a> {
                 format!("{result}) {}", Self::type_name(scopes, &f.proto.ret))
             }
             TypeId::UserType(id) => {
-                let x = scopes.get_user_type(*id);
-                scopes.full_name(x.scope, &x.name)
+                //let x = scopes.get_user_type(*id);
+                //scopes.full_name(x.scope, &x.name)
+                scopes.get_user_type(*id).name.clone()
             }
             TypeId::GenericUserType(data) => {
                 let ty = scopes.get_user_type(data.id);
@@ -2337,7 +2395,10 @@ impl<'a> TypeChecker<'a> {
                 }
             }
 
-            return Err(Error::new(format!("'{}' not found in this scope", part.0), span));
+            return Err(Error::new(
+                format!("'{}' not found in this scope", part.0),
+                span,
+            ));
         }
 
         Ok(scope)
