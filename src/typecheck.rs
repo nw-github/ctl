@@ -7,7 +7,7 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     ast::{
         expr::{BinaryOp, Expr, UnaryOp},
-        stmt::{Fn, ParsedUserType, Stmt, TypeHint},
+        stmt::{Fn, Param, ParsedUserType, Prototype, Stmt, TypeHint},
         Path,
     },
     checked_ast::{
@@ -22,6 +22,12 @@ use crate::{
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct GenericFunc {
     id: FunctionId,
+    generics: Vec<TypeId>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct GenericUserType {
+    id: UserTypeId,
     generics: Vec<TypeId>,
 }
 
@@ -44,6 +50,7 @@ pub enum TypeId {
     Func(FunctionId),
     GenericFunc(Box<GenericFunc>),
     UserType(UserTypeId),
+    GenericUserType(Box<GenericUserType>),
     Ptr(Box<TypeId>),
     MutPtr(Box<TypeId>),
     Option(Box<TypeId>),
@@ -128,48 +135,6 @@ impl TypeId {
         }
         id
     }
-
-    pub fn innermost_type(&self) -> &TypeId {
-        let mut inner = self;
-        loop {
-            match inner {
-                TypeId::Array(t) => inner = &t.0,
-                TypeId::Option(t) | TypeId::Ptr(t) | TypeId::MutPtr(t) => inner = t,
-                _ => break,
-            }
-        }
-
-        inner
-    }
-
-    pub fn innermost_type_mut(&mut self) -> &mut TypeId {
-        let mut inner = self;
-        loop {
-            match inner {
-                TypeId::Array(t) => inner = &mut t.0,
-                TypeId::Option(t) | TypeId::Ptr(t) | TypeId::MutPtr(t) => inner = t,
-                _ => break,
-            }
-        }
-
-        inner
-    }
-
-    pub fn innermost_generic(&self, scopes: &Scopes) -> Option<(usize, &TypeId)> {
-        let inner = self.innermost_type();
-        inner
-            .as_user_type()
-            .and_then(|&id| scopes.get_user_type(id).data.as_generic())
-            .map(|ty| (*ty, inner))
-    }
-
-    pub fn innermost_generic_mut(&mut self, scopes: &Scopes) -> Option<(usize, &mut TypeId)> {
-        let inner = self.innermost_type_mut();
-        inner
-            .as_user_type()
-            .and_then(|&id| scopes.get_user_type(id).data.as_generic())
-            .map(|ty| (*ty, inner))
-    }
 }
 
 #[derive(From)]
@@ -226,6 +191,7 @@ macro_rules! id {
             });
 
             concat_idents!(fn_name = insert_, $suffix {
+                #[allow(dead_code)]
                 pub fn fn_name(&mut self, item: $output) -> $name {
                     concat_idents!(fn_name = insert_, $suffix, _in {
                         self.fn_name(item, self.current_id())
@@ -301,7 +267,7 @@ pub struct Variable {
 pub struct Function {
     pub proto: CheckedPrototype,
     pub body: Option<Block>,
-    pub inst: bool,
+    pub constructor: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -313,7 +279,8 @@ pub struct Member {
 #[derive(Debug, EnumAsInner)]
 pub enum UserTypeData {
     Struct(Vec<(String, Member)>),
-    Generic(usize),
+    FuncGeneric(usize),
+    StructGeneric(usize),
 }
 
 #[derive(Debug)]
@@ -322,6 +289,7 @@ pub struct UserType {
     pub name: String,
     pub body_scope: ScopeId,
     pub data: UserTypeData,
+    pub type_params: Vec<String>,
 }
 
 #[derive(Debug, Clone, EnumAsInner)]
@@ -549,6 +517,24 @@ macro_rules! type_check {
     };
 }
 
+macro_rules! user_type {
+    ($self: expr, $scopes: expr, $id: expr, $span: expr) => {
+        $scopes.get_user_type(match $id {
+            TypeId::UserType(id) => *id,
+            TypeId::GenericUserType(ty) => ty.id,
+            _ => {
+                return $self.error(Error::new(
+                    format!(
+                        "cannot get member of type '{}'",
+                        Self::type_name($scopes, $id)
+                    ),
+                    $span,
+                ));
+            }
+        })
+    };
+}
+
 macro_rules! resolve_forward_declare {
     ($self: ident, $scopes: expr, $checked: expr, $unchecked: expr) => {
         if $checked == TypeId::Unknown {
@@ -601,12 +587,12 @@ impl<'a> TypeChecker<'a> {
                             },
                         ));
 
-                        params.push(CheckedParam {
+                        params.push(Param {
                             mutable: false,
                             keyword: true,
                             name: name.clone(),
-                            ty: Self::fd_resolve_type(scopes, &member.ty)
-                                .unwrap_or(TypeId::Unknown),
+                            ty: member.ty.clone(),
+                            default: None,
                         });
                     }
 
@@ -615,6 +601,7 @@ impl<'a> TypeChecker<'a> {
                         public: base.public,
                         body_scope: ScopeId(0),
                         data: UserTypeData::Struct(members),
+                        type_params: base.type_params.clone(),
                     });
                     let parent = scopes.current_id();
                     scopes.enter(
@@ -622,25 +609,68 @@ impl<'a> TypeChecker<'a> {
                         ScopeKind::UserType(self_id),
                         |scopes| {
                             scopes.get_user_type_mut(self_id).body_scope = scopes.current_id();
-                            scopes.insert_func_in(
-                                Function {
-                                    proto: CheckedPrototype {
+
+                            for (i, param) in base.type_params.iter().enumerate() {
+                                scopes.insert_user_type(UserType {
+                                    public: false,
+                                    name: param.clone(),
+                                    body_scope: scopes.current_id(),
+                                    data: UserTypeData::StructGeneric(i),
+                                    type_params: Vec::new(),
+                                });
+                            }
+
+                            self.forward_declare_fn(
+                                scopes,
+                                parent,
+                                true,
+                                &Fn {
+                                    proto: Prototype {
                                         public: base.public,
                                         name: base.name.clone(),
                                         is_async: false,
                                         is_extern: false,
                                         type_params: base.type_params.clone(),
                                         params,
-                                        ret: TypeId::UserType(self_id),
+                                        ret: TypeHint::Regular {
+                                            is_dyn: false,
+                                            path: Located::new(
+                                                Path {
+                                                    components: vec![(
+                                                        base.name.clone(),
+                                                        if base.type_params.is_empty() {
+                                                            Vec::new()
+                                                        } else {
+                                                            base.type_params
+                                                                .iter()
+                                                                .map(|name| TypeHint::Regular {
+                                                                    is_dyn: false,
+                                                                    path: Located::new(
+                                                                        Path {
+                                                                            components: vec![(
+                                                                                name.clone(),
+                                                                                vec![],
+                                                                            )],
+                                                                            root: false,
+                                                                        },
+                                                                        stmt.span,
+                                                                    ),
+                                                                })
+                                                                .collect()
+                                                        },
+                                                    )],
+                                                    root: false,
+                                                },
+                                                stmt.span,
+                                            ),
+                                        },
                                     },
-                                    body: None,
-                                    inst: true,
+                                    body: Vec::new(),
                                 },
-                                parent,
                             );
 
                             for f in base.functions.iter() {
-                                self.forward_declare_fn(scopes, f);
+                                self.forward_declare_fn(scopes, scopes.current_id(), false, f);
                             }
                         },
                     )
@@ -649,7 +679,7 @@ impl<'a> TypeChecker<'a> {
                 ParsedUserType::Interface { .. } => todo!(),
                 ParsedUserType::Enum { .. } => todo!(),
             },
-            Stmt::Fn(f) => self.forward_declare_fn(scopes, f),
+            Stmt::Fn(f) => self.forward_declare_fn(scopes, scopes.current_id(), false, f),
             Stmt::Static { public, name, .. } => {
                 scopes.insert_var(Variable {
                     name: name.clone(),
@@ -664,7 +694,13 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn forward_declare_fn(&mut self, scopes: &mut Scopes, f: &Fn) {
+    fn forward_declare_fn(
+        &mut self,
+        scopes: &mut Scopes,
+        scope: ScopeId,
+        constructor: bool,
+        f: &Fn,
+    ) {
         let checked = Function {
             proto: CheckedPrototype {
                 public: f.proto.public,
@@ -686,9 +722,9 @@ impl<'a> TypeChecker<'a> {
                 ret: Self::fd_resolve_type(scopes, &f.proto.ret).unwrap_or(TypeId::Unknown),
             },
             body: None,
-            inst: false,
+            constructor,
         };
-        let id = scopes.insert_func(checked);
+        let id = scopes.insert_func_in(checked, scope);
         scopes.enter(
             Some(f.proto.name.clone()),
             ScopeKind::Function(id),
@@ -699,7 +735,8 @@ impl<'a> TypeChecker<'a> {
                             public: false,
                             name: param.clone(),
                             body_scope: scopes.current_id(),
-                            data: UserTypeData::Generic(i),
+                            data: UserTypeData::FuncGeneric(i),
+                            type_params: Vec::new(),
                         });
                     }
 
@@ -716,10 +753,12 @@ impl<'a> TypeChecker<'a> {
                     self.forward_declare(scopes, stmt);
                 }
 
-                scopes.get_func_mut(id).body = Some(Block {
-                    body: Vec::new(),
-                    scope: scopes.current_id(),
-                });
+                if !constructor {
+                    scopes.get_func_mut(id).body = Some(Block {
+                        body: Vec::new(),
+                        scope: scopes.current_id(),
+                    });
+                }
             },
         )
     }
@@ -740,12 +779,11 @@ impl<'a> TypeChecker<'a> {
                     scope: scopes.current_id(),
                 }),
             },
-            Stmt::UserType(data) => {
-                match data {
-                    ParsedUserType::Struct(base) => {
-                        let self_id = scopes.find_user_type(&base.name).unwrap();
-                        let parent = scopes.current_id();
-                        scopes.enter_id(scopes.get_user_type(self_id).body_scope, |scopes| {
+            Stmt::UserType(data) => match data {
+                ParsedUserType::Struct(base) => {
+                    let self_id = scopes.find_user_type(&base.name).unwrap();
+                    let parent = scopes.current_id();
+                    scopes.enter_id(scopes.get_user_type(self_id).body_scope, |scopes| {
                         for i in 0..base.members.len() {
                             resolve_forward_declare!(
                                 self,
@@ -760,7 +798,10 @@ impl<'a> TypeChecker<'a> {
                             .iter()
                             .find(|&&f| {
                                 let f = scopes.get_func(f);
-                                f.inst && matches!(f.proto.ret, TypeId::UserType(id) if id == self_id)
+                                f.constructor && (
+                                    matches!(f.proto.ret, TypeId::UserType(id) if id == self_id) ||
+                                    matches!(&f.proto.ret, TypeId::GenericUserType(ty) if ty.id == self_id
+                                ))
                             })
                             .unwrap();
 
@@ -777,13 +818,12 @@ impl<'a> TypeChecker<'a> {
                             self.check_fn(scopes, f);
                         }
                     });
-                        CheckedStmt::None
-                    }
-                    ParsedUserType::Union { .. } => todo!(),
-                    ParsedUserType::Interface { .. } => todo!(),
-                    ParsedUserType::Enum { .. } => todo!(),
+                    CheckedStmt::None
                 }
-            }
+                ParsedUserType::Union { .. } => todo!(),
+                ParsedUserType::Interface { .. } => todo!(),
+                ParsedUserType::Enum { .. } => todo!(),
+            },
             Stmt::Expr(expr) => CheckedStmt::Expr(self.check_expr(scopes, expr, None)),
             Stmt::Let {
                 name,
@@ -1321,13 +1361,7 @@ impl<'a> TypeChecker<'a> {
 
                 let source = self.check_expr(scopes, *source, None);
                 let id = source.ty.strip_references();
-                let Some(ty) = id.as_user_type() else {
-                    return self.error(Error::new(
-                        format!("cannot get member of type {}",
-                        Self::type_name(scopes, id)
-                    ), span));
-                };
-                let ty = scopes.get_user_type(*ty);
+                let ty = user_type!(self, scopes, id, span);
 
                 if let Some(members) = ty.data.as_struct() {
                     if let Some((_, var)) = members.iter().find(|m| m.0 == member) {
@@ -1341,8 +1375,13 @@ impl<'a> TypeChecker<'a> {
                             ));
                         }
 
+                        let mut ty = var.ty.clone();
+                        if let Some(instance) = id.as_generic_user_type() {
+                            Self::fill_type_generics(&mut ty, scopes, instance);
+                        }
+
                         return CheckedExpr::new(
-                            var.ty.clone(),
+                            ty,
                             ExprData::Member {
                                 source: source.into(),
                                 member,
@@ -1475,13 +1514,7 @@ impl<'a> TypeChecker<'a> {
         {
             let source = self.check_expr(scopes, *source, None);
             let id = source.ty.strip_references();
-            let Some(ty) = id.as_user_type().map(|&ty| scopes.get_user_type(ty)) else {
-                return self.error(Error::new(
-                    format!("cannot get member of type '{}'",
-                    Self::type_name(scopes, id)
-                ), span));
-            };
-
+            let ty = user_type!(self, scopes, id, span);
             if let Some(func) = ty
                 .data
                 .as_struct()
@@ -1529,11 +1562,13 @@ impl<'a> TypeChecker<'a> {
 
                     #[allow(clippy::unnecessary_to_owned)]
                     let (args, ret) = self.check_args_with_generics(
+                        func,
                         scopes,
                         args,
                         &f.proto.params[1..].to_vec(),
                         &f.proto.type_params.to_vec(),
                         symbol.into_generic_func().map(|v| v.generics).ok(),
+                        id.as_generic_user_type().map(|inner| inner.as_ref()),
                         f.proto.ret.clone(),
                         target,
                         span,
@@ -1563,7 +1598,7 @@ impl<'a> TypeChecker<'a> {
                 TypeId::Func(func) => {
                     let f = scopes.get_func(func);
                     let ret = f.proto.ret.clone();
-                    if f.inst {
+                    if f.constructor {
                         let st = scopes.get_user_type(*ret.as_user_type().unwrap());
                         if st
                             .data
@@ -1586,20 +1621,24 @@ impl<'a> TypeChecker<'a> {
                         return CheckedExpr::new(
                             ret,
                             ExprData::Instance(self.check_instance_args(
+                                func,
                                 scopes,
                                 args,
                                 &f.proto.params.clone(),
                                 &mut generics,
+                                None,
                                 span,
                             )),
                         );
                     }
 
                     let (args, ret) = self.check_args_with_generics(
+                        func,
                         scopes,
                         args,
                         &f.proto.params.clone(),
                         &f.proto.type_params.to_vec(),
+                        None,
                         None,
                         ret,
                         target,
@@ -1611,11 +1650,13 @@ impl<'a> TypeChecker<'a> {
                 TypeId::GenericFunc(func) => {
                     let f = scopes.get_func(func.id);
                     let (args, ret) = self.check_args_with_generics(
+                        func.id,
                         scopes,
                         args,
                         &f.proto.params.clone(),
                         &f.proto.type_params.to_vec(),
                         Some(func.generics),
+                        None,
                         f.proto.ret.clone(),
                         target,
                         span,
@@ -1715,7 +1756,13 @@ impl<'a> TypeChecker<'a> {
         id
     }
 
-    fn infer_generic<'b>(mut src: &TypeId, mut target: &'b TypeId) -> &'b TypeId {
+    fn infer_generics(
+        mut src: &TypeId,
+        mut target: &TypeId,
+        _here: FunctionId,
+        scopes: &Scopes,
+        generics: &mut [TypeId],
+    ) {
         loop {
             match (src, target) {
                 (TypeId::Ptr(gi), TypeId::Ptr(ti)) => {
@@ -1734,36 +1781,111 @@ impl<'a> TypeChecker<'a> {
                     src = gi;
                     target = ti;
                 }
-                (TypeId::UserType(_), target) => {
-                    break target;
+                (TypeId::UserType(gi), target) => {
+                    if let Some(&index) = scopes.get_user_type(*gi).data.as_func_generic() {
+                        if generics[index].is_unknown() {
+                            generics[index] = target.clone();
+                        }
+                    }
+
+                    break;
                 }
-                _ => unreachable!(),
+                (TypeId::GenericUserType(gi), TypeId::GenericUserType(ti)) => {
+                    for (src, target) in gi.generics.iter().zip(ti.generics.iter()) {
+                        Self::infer_generics(src, target, _here, scopes, generics);
+                    }
+
+                    break;
+                }
+                _ => break,
+            }
+        }
+    }
+
+    fn fill_func_generics(
+        mut src: &mut TypeId,
+        _here: FunctionId,
+        scopes: &Scopes,
+        generics: &[TypeId],
+    ) {
+        loop {
+            match src {
+                TypeId::Array(t) => src = &mut t.0,
+                TypeId::Option(t) | TypeId::Ptr(t) | TypeId::MutPtr(t) => src = t,
+                TypeId::UserType(ty) => {
+                    if let Some(&index) = scopes.get_user_type(*ty).data.as_func_generic() {
+                        if !generics[index].is_unknown() {
+                            *src = generics[index].clone();
+                        }
+                    }
+
+                    break;
+                }
+                TypeId::GenericUserType(ty) => {
+                    for ty in ty.generics.iter_mut() {
+                        Self::fill_func_generics(ty, _here, scopes, generics);
+                    }
+
+                    break;
+                }
+                _ => break,
+            }
+        }
+    }
+
+    fn fill_type_generics(mut src: &mut TypeId, scopes: &Scopes, instance: &GenericUserType) {
+        loop {
+            match src {
+                TypeId::Array(t) => src = &mut t.0,
+                TypeId::Option(t) | TypeId::Ptr(t) | TypeId::MutPtr(t) => src = t,
+                TypeId::UserType(ty) => {
+                    if let Some(&index) = scopes.get_user_type(*ty).data.as_struct_generic() {
+                        *src = instance.generics[index].clone();
+                    }
+
+                    break;
+                }
+                TypeId::GenericUserType(ty) => {
+                    for ty in ty.generics.iter_mut() {
+                        Self::fill_type_generics(ty, scopes, instance);
+                    }
+
+                    break;
+                }
+                _ => break,
             }
         }
     }
 
     fn check_arg(
         &mut self,
+        here: FunctionId,
         scopes: &mut Scopes,
         expr: Located<Expr>,
         param: &CheckedParam,
         generics: &mut [TypeId],
+        instance: Option<&GenericUserType>,
     ) -> CheckedExpr {
         let mut target = param.ty.clone();
-        if let Some((index, inner)) = target.innermost_generic_mut(scopes) {
-            // TODO: type check
-            if !generics[index].is_unknown() {
-                *inner = generics[index].clone();
-                return self.check_expr(scopes, expr, Some(&target));
-            } else {
-                let expr = self.check_expr(scopes, expr, Some(&target));
-                generics[index] = Self::infer_generic(&param.ty, &expr.ty).clone();
-                return expr;
-            }
+        if !generics.is_empty() {
+            Self::fill_func_generics(&mut target, here, scopes, generics);
+        }
+
+        if let Some(instance) = instance {
+            Self::fill_type_generics(&mut target, scopes, instance);
         }
 
         let span = expr.span;
         let expr = self.check_expr(scopes, expr, Some(&target));
+        if !generics.is_empty() {
+            Self::infer_generics(&param.ty, &expr.ty, here, scopes, generics);
+            Self::fill_func_generics(&mut target, here, scopes, generics);
+        }
+
+        if let Some(instance) = instance {
+            Self::fill_type_generics(&mut target, scopes, instance);
+        }
+
         if !Self::coerces_to(&expr.ty, &target) {
             self.error(type_mismatch!(scopes, &target, &expr.ty, span))
         } else {
@@ -1771,12 +1893,15 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn check_instance_args(
         &mut self,
+        here: FunctionId,
         scopes: &mut Scopes,
         args: Vec<(Option<String>, Located<Expr>)>,
         params: &[CheckedParam],
         generics: &mut [TypeId],
+        instance: Option<&GenericUserType>,
         span: Span,
     ) -> HashMap<String, CheckedExpr> {
         let mut result = HashMap::with_capacity(args.len());
@@ -1792,7 +1917,9 @@ impl<'a> TypeChecker<'a> {
                     }
                     Entry::Vacant(entry) => {
                         if let Some(param) = params.iter().find(|p| p.name == name) {
-                            entry.insert(self.check_arg(scopes, expr, param, generics));
+                            entry.insert(
+                                self.check_arg(here, scopes, expr, param, generics, instance),
+                            );
                         } else {
                             self.error::<()>(Error::new(
                                 format!("unknown parameter: {name}"),
@@ -1809,7 +1936,7 @@ impl<'a> TypeChecker<'a> {
             {
                 result.insert(
                     param.name.clone(),
-                    self.check_arg(scopes, expr, param, generics),
+                    self.check_arg(here, scopes, expr, param, generics, instance),
                 );
                 last_pos = i + 1;
             } else {
@@ -1842,15 +1969,19 @@ impl<'a> TypeChecker<'a> {
         result
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn check_fn_args(
         &mut self,
+        here: FunctionId,
         scopes: &mut Scopes,
         args: Vec<(Option<String>, Located<Expr>)>,
         params: &[CheckedParam],
         generics: &mut [TypeId],
+        instance: Option<&GenericUserType>,
         span: Span,
     ) -> Vec<CheckedExpr> {
-        let mut args = self.check_instance_args(scopes, args, params, generics, span);
+        let mut args =
+            self.check_instance_args(here, scopes, args, params, generics, instance, span);
         if params.len() == args.len() {
             let mut result = Vec::with_capacity(args.len());
             for param in params {
@@ -1865,38 +1996,43 @@ impl<'a> TypeChecker<'a> {
     #[allow(clippy::too_many_arguments)]
     fn check_args_with_generics(
         &mut self,
+        here: FunctionId,
         scopes: &mut Scopes,
         args: Vec<(Option<String>, Located<Expr>)>,
         params: &[CheckedParam],
         type_params: &[String],
         mut generics: Option<Vec<TypeId>>,
+        instance: Option<&GenericUserType>,
         mut ret: TypeId,
         target: Option<&TypeId>,
         span: Span,
     ) -> (Vec<CheckedExpr>, TypeId) {
-        if type_params.is_empty() {
+        let (args, mut ret) = if type_params.is_empty() {
             (
                 self.check_fn_args(
+                    here,
                     scopes,
                     args,
                     params,
                     generics.as_deref_mut().unwrap_or(&mut []),
+                    instance,
                     span,
                 ),
                 ret,
             )
         } else {
             let mut generics = generics.unwrap_or_else(|| vec![TypeId::Unknown; type_params.len()]);
-            let args = self.check_fn_args(scopes, args, params, &mut generics, span);
-            for (i, ty) in generics.iter_mut().enumerate() {
-                if ty.is_unknown() {
-                    if let Some(target) = ret
-                        .innermost_generic(scopes)
-                        .filter(|(index, _)| *index == i)
-                        .and(target)
-                    {
-                        *ty = Self::infer_generic(&ret, target).clone();
-                    } else {
+            let args =
+                self.check_fn_args(here, scopes, args, params, &mut generics, instance, span);
+
+            if !generics.is_empty() {
+                if let Some(target) = target {
+                    Self::infer_generics(&ret, target, here, scopes, &mut generics);
+                }
+
+                Self::fill_func_generics(&mut ret, here, scopes, &generics);
+                for (i, ty) in generics.iter_mut().enumerate() {
+                    if ty.is_unknown() {
                         self.error::<()>(Error::new(
                             format!("cannot infer type of generic parameter {}", type_params[i]),
                             span,
@@ -1905,19 +2041,21 @@ impl<'a> TypeChecker<'a> {
                 }
             }
 
-            if let Some((idx, ty)) = ret.innermost_generic_mut(scopes) {
-                *ty = generics.into_iter().nth(idx).unwrap();
-            }
-
             (args, ret)
+        };
+
+        if let Some(instance) = instance {
+            Self::fill_type_generics(&mut ret, scopes, instance);
         }
+
+        (args, ret)
     }
 
     fn fd_resolve_type<'b>(scopes: &Scopes, ty: &'b TypeHint) -> Result<TypeId, ResolveError<'b>> {
         Ok(match ty {
             TypeHint::Regular { path, .. } => {
                 if let Some(id) = Self::resolve_type_path(scopes, &path.data, path.span)? {
-                    return Ok(TypeId::UserType(id));
+                    return Ok(id);
                 }
 
                 if let Some(symbol) = path.data.as_symbol() {
@@ -2122,7 +2260,22 @@ impl<'a> TypeChecker<'a> {
                 }
                 format!("{result}) {}", Self::type_name(scopes, &f.proto.ret))
             }
-            TypeId::UserType(id) => scopes.get_user_type(*id).name.clone(),
+            TypeId::UserType(id) => {
+                let x = scopes.get_user_type(*id);
+                scopes.full_name(x.scope, &x.name)
+            }
+            TypeId::GenericUserType(data) => {
+                let ty = scopes.get_user_type(data.id);
+                let mut result = format!("{}<", ty.name);
+                for (i, concrete) in data.generics.iter().enumerate() {
+                    if i > 0 {
+                        result.push_str(", ");
+                    }
+                    result.push_str(&Self::type_name(scopes, concrete));
+                }
+                result.push('>');
+                result
+            }
             TypeId::Array(inner) => format!("[{}; {}]", Self::type_name(scopes, &inner.0), inner.1),
             TypeId::Isize => "isize".into(),
             TypeId::Usize => "usize".into(),
@@ -2279,11 +2432,11 @@ impl<'a> TypeChecker<'a> {
         Ok(var.map(Symbol::Var))
     }
 
-    fn resolve_type_path(
+    fn resolve_type_path<'b>(
         scopes: &Scopes,
-        path: &Path,
+        path: &'b Path,
         span: Span,
-    ) -> Result<Option<UserTypeId>, Error> {
+    ) -> Result<Option<TypeId>, ResolveError<'b>> {
         let last = path.components.last().unwrap();
         let ty = if path.components.len() == 1 {
             scopes.find_user_type(&last.0)
@@ -2293,7 +2446,10 @@ impl<'a> TypeChecker<'a> {
             if let Some(id) = scopes.find_user_type_in(&last.0, scope) {
                 let ty = scopes.get_user_type(id);
                 if !ty.public {
-                    return Err(Error::new(format!("type '{}' is private", ty.name), span));
+                    return Err(ResolveError::Error(Error::new(
+                        format!("type '{}' is private", ty.name),
+                        span,
+                    )));
                 }
 
                 Some(id)
@@ -2302,21 +2458,34 @@ impl<'a> TypeChecker<'a> {
             }
         };
 
-        Ok(ty)
-        // if let Some(ty) = ty {
-        //     // if path.components[0].1.len() != scopes[&ty].data.type_params.len() {
-        //     //     return Err(Error::new(
-        //     //         format!(
-        //     //             "expected {} generic arguments, received {}",
-        //     //             scopes[&func].proto.type_params.len(),
-        //     //             path.components[0].1.len()
-        //     //         ),
-        //     //         span,
-        //     //     ));
-        //     // }
-        //     Ok(Some(ty))
-        // } else {
-        //     Ok(None)
-        // }
+        if let Some(id) = ty {
+            let params = &scopes.get_user_type(id).type_params;
+            if last.1.len() != params.len() {
+                return Err(ResolveError::Error(Error::new(
+                    format!(
+                        "expected {} generic arguments, received {}",
+                        params.len(),
+                        last.1.len()
+                    ),
+                    span,
+                )));
+            }
+
+            if !last.1.is_empty() {
+                let mut generics = Vec::new();
+                for ty in last.1.iter() {
+                    generics.push(Self::fd_resolve_type(scopes, ty)?);
+                }
+
+                Ok(Some(TypeId::GenericUserType(Box::new(GenericUserType {
+                    id,
+                    generics,
+                }))))
+            } else {
+                Ok(Some(TypeId::UserType(id)))
+            }
+        } else {
+            Ok(None)
+        }
     }
 }

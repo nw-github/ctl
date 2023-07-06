@@ -163,7 +163,7 @@ impl Compiler {
         for scope in scopes.scopes().iter() {
             for &id in scope.fns.iter().filter(|&&id| {
                 let func = scopes.get_func(id);
-                !func.inst && func.proto.type_params.is_empty()
+                !func.constructor && func.proto.type_params.is_empty()
             }) {
                 self.emit_prototype(scopes, id);
                 self.emit(";");
@@ -575,6 +575,7 @@ impl Compiler {
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
+            TypeId::GenericUserType(_) => todo!(),
         }
     }
 

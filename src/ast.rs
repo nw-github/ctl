@@ -5,7 +5,7 @@ use self::stmt::TypeHint;
 pub type Expr = Located<expr::Expr>;
 pub type Stmt = Located<stmt::Stmt>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Path {
     pub components: Vec<(String, Vec<TypeHint>)>,
     pub root: bool,
@@ -156,7 +156,7 @@ pub mod expr {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub enum Expr {
         Binary {
             op: BinaryOp,
@@ -236,7 +236,7 @@ pub mod stmt {
 
     use super::Path;
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub enum TypeHint {
         Regular { is_dyn: bool, path: Located<Path> },
         Array(Box<TypeHint>, Box<super::Expr>),
@@ -253,7 +253,7 @@ pub mod stmt {
         MutThis,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct Param {
         pub mutable: bool,
         pub keyword: bool,
@@ -262,7 +262,7 @@ pub mod stmt {
         pub default: Option<super::Expr>,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct Prototype {
         pub public: bool,
         pub name: String,
@@ -273,20 +273,20 @@ pub mod stmt {
         pub ret: TypeHint,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct Fn {
         pub proto: Prototype,
         pub body: Vec<super::Stmt>,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct MemVar {
         pub public: bool,
         pub ty: TypeHint,
         pub default: Option<super::Expr>,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct Struct {
         pub public: bool,
         pub name: String,
@@ -296,7 +296,7 @@ pub mod stmt {
         pub functions: Vec<Fn>,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub enum ParsedUserType {
         Struct(Struct),
         Union {
@@ -319,7 +319,7 @@ pub mod stmt {
         },
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub enum Stmt {
         Expr(super::Expr),
         Let {
