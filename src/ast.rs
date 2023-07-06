@@ -186,6 +186,7 @@ pub mod expr {
         },
         Float(String),
         String(String),
+        Char(char),
         Path(Path),
         Void,
         None,

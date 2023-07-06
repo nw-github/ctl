@@ -976,6 +976,7 @@ impl<'a> Parser<'a> {
             ),
             Token::Float(value) => L::new(Expr::Float(value.into()), token.span),
             Token::String(value) => L::new(Expr::String(value.into()), token.span),
+            Token::Char(value) => L::new(Expr::Char(value.into()), token.span),
             Token::LParen => {
                 let expr = self.expression()?;
                 if self.advance_if_kind(Token::Comma).is_some() {

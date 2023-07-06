@@ -38,7 +38,7 @@ impl Compiler {
             block_number: 0,
             main: None,
         };
-        this.emit(concat!(include_str!("../runtime/ctl.h"), "\n\n"));
+        this.emit("#include <runtime/ctl.h>");
         this.emit_all_structs(&ast.scopes)?;
         this.emit_all_functions(&mut ast.scopes);
         this.compile_stmt(&mut ast.scopes, &mut ast.stmt);
@@ -105,7 +105,11 @@ impl Compiler {
                             }
 
                             match ty {
-                                TypeId::UserType(id) => Some(id),
+                                TypeId::UserType(id)
+                                    if scopes.get_user_type(*id).data.is_struct() =>
+                                {
+                                    Some(id)
+                                }
                                 _ => None,
                             }
                         })
@@ -122,7 +126,7 @@ impl Compiler {
                     // TODO: figure out a real span here
                     Error::new(
                         format!(
-                            "recursive dependency detected between {} and {}.",
+                            "cyclic dependency detected between {} and {}.",
                             scopes.get_user_type(a).name,
                             scopes.get_user_type(b).name,
                         ),
@@ -352,6 +356,7 @@ impl Compiler {
             ExprData::Unsigned(value) => self.emit(format!("{value}")),
             ExprData::Float(value) => self.emit(value),
             ExprData::String(_) => todo!(),
+            ExprData::Char(_) => todo!(),
             ExprData::Symbol(symbol) => match *symbol {
                 Symbol::Func(id) => self.emit_fn_name(scopes, id),
                 Symbol::Var(id) => self.emit_var_name(scopes, id),
@@ -550,6 +555,7 @@ impl Compiler {
             TypeId::F64 => self.emit(format!("{RT_PREFIX}f64")),
             TypeId::Bool => self.emit(format!("{RT_PREFIX}bool")),
             TypeId::String => self.emit(format!("{RT_PREFIX}str")),
+            TypeId::Char => self.emit(format!("{RT_PREFIX}char")),
             TypeId::IntGeneric | TypeId::FloatGeneric => {
                 panic!("ICE: Int/FloatGeneric in emit_type");
             }

@@ -47,6 +47,7 @@ pub enum TypeId {
     IntGeneric,
     FloatGeneric,
     String,
+    Char,
     Func(FunctionId),
     GenericFunc(Box<GenericFunc>),
     UserType(UserTypeId),
@@ -1148,6 +1149,7 @@ impl<'a> TypeChecker<'a> {
             Expr::Map(_) => todo!(),
             Expr::Range { .. } => todo!(),
             Expr::String(s) => CheckedExpr::new(TypeId::String, ExprData::String(s)),
+            Expr::Char(s) => CheckedExpr::new(TypeId::Char, ExprData::Char(s)),
             Expr::None => {
                 if let Some(TypeId::Option(target)) = target {
                     CheckedExpr::new(TypeId::Option(target.clone()), ExprData::None)
@@ -2124,6 +2126,7 @@ impl<'a> TypeChecker<'a> {
                         "f64" => Some(TypeId::F64),
                         "bool" => Some(TypeId::Bool),
                         "str" => Some(TypeId::String),
+                        "char" => Some(TypeId::Char),
                         _ => Self::match_int_type(symbol),
                     }
                     .ok_or(ResolveError::Path(path));
@@ -2269,6 +2272,7 @@ impl<'a> TypeChecker<'a> {
             TypeId::IntGeneric => "{integer}".into(),
             TypeId::FloatGeneric => "{float}".into(),
             TypeId::String => "str".into(),
+            TypeId::Char => "char".into(),
             TypeId::Ptr(id) => format!("*{}", Self::type_name(scopes, id)),
             TypeId::MutPtr(id) => format!("*mut {}", Self::type_name(scopes, id)),
             TypeId::Option(id) => format!("?{}", Self::type_name(scopes, id)),

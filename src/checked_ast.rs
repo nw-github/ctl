@@ -50,6 +50,7 @@ pub mod expr {
         Unsigned(u128),
         Float(String),
         String(String),
+        Char(char),
         Symbol(Symbol),
         Instance(HashMap<String, CheckedExpr>),
         None,

@@ -103,6 +103,7 @@ pub enum Token<'a> {
     },
     Float(&'a str),
     String(Cow<'a, str>),
+    Char(char),
 }
 
 impl Token<'_> {
@@ -129,6 +130,9 @@ impl Token<'_> {
 #[derive(Debug, Clone, Copy)]
 pub enum Error {
     UnterminatedStr,
+    UnterminatedChar,
+    CharTooLong,
+    EmptyChar,
     UnterminatedComment,
     UnrecognizedChar,
     InvalidEscape,
@@ -138,6 +142,9 @@ impl Error {
     pub fn tell(&self) -> &'static str {
         match self {
             Error::UnterminatedStr => "unterminated string literal",
+            Error::UnterminatedChar => "unterminated char literal",
+            Error::EmptyChar => "empty char literal",
+            Error::CharTooLong => "char literal must only contain one character",
             Error::UnterminatedComment => "unterminated block comment",
             Error::UnrecognizedChar => "unexpected character",
             Error::InvalidEscape => "invalid UTF-8 escape sequence",
@@ -260,26 +267,31 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn escape_char(&mut self) -> Result<char, Located<Error>> {
+        Ok(match self.advance() {
+            Some('"') => '"',
+            Some('\'') => '\'',
+            Some('\\') => '\\',
+            Some('n') => '\n',
+            Some('t') => '\t',
+            _ => {
+                return Err(Located::new(
+                    Error::InvalidEscape,
+                    Span {
+                        loc: self.loc,
+                        len: 1,
+                    },
+                ));
+            }
+        })
+    }
+
     fn string_literal(&mut self, start: usize) -> Result<Token<'a>, Located<Error>> {
         let mut result = Cow::from("");
         loop {
             match self.advance() {
                 Some('\\') => {
-                    result.to_mut().push(match self.advance() {
-                        Some('"') => '"',
-                        Some('\\') => '\\',
-                        Some('n') => '\n',
-                        Some('t') => '\t',
-                        _ => {
-                            return Err(Located::new(
-                                Error::InvalidEscape,
-                                Span {
-                                    loc: self.loc,
-                                    len: 1,
-                                },
-                            ));
-                        }
-                    });
+                    result.to_mut().push(self.escape_char()?);
                 }
                 Some('"') => break Ok(Token::String(result)),
                 Some(ch) => match &mut result {
@@ -296,6 +308,39 @@ impl<'a> Lexer<'a> {
                     ));
                 }
             }
+        }
+    }
+
+    fn char_literal(&mut self) -> Result<Token<'a>, Located<Error>> {
+        let ch = match self.advance() {
+            Some('\\') => self.escape_char()?, 
+            Some('\'') => return Err(Located::new(
+                Error::EmptyChar,
+                Span {
+                    loc: self.loc,
+                    len: 0,
+                }
+            )),
+            Some(any) => any,
+            None => return Err(Located::new(
+                Error::UnterminatedChar,
+                Span {
+                    loc: self.loc,
+                    len: 0,
+                }
+            )),
+        };
+
+        if !self.advance_if('\'') {
+            Err(Located::new(
+                Error::CharTooLong,
+                Span {
+                    loc: self.loc,
+                    len: 0,
+                }
+            ))
+        } else {
+            Ok(Token::Char(ch))
         }
     }
 
@@ -587,6 +632,10 @@ impl<'a> Iterator for Lexer<'a> {
                 Ok(token) => token,
                 Err(err) => return Some(Err(err)),
             },
+            '\'' => match self.char_literal() {
+                Ok(token) => token,
+                Err(err) => return Some(Err(err)),
+            }
             '0'..='9' => self.numeric_literal(start.pos),
             ch if Self::is_identifier_first_char(ch) => self.identifier(start.pos),
             _ => {

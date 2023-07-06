@@ -228,6 +228,9 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
         Expr::String(value) => {
             println!("{tabs}String = \'{value}\'");
         }
+        Expr::Char(value) => {
+            println!("{tabs}Char = \'{value}\'");
+        }
         Expr::Path(_) => {
             println!("{tabs}Path[{}]", expr.span.text(src));
         }
