@@ -649,13 +649,7 @@ impl<'a> TypeChecker<'a> {
                                                                 .map(|name| TypeHint::Regular {
                                                                     is_dyn: false,
                                                                     path: Located::new(
-                                                                        Path {
-                                                                            components: vec![(
-                                                                                name.clone(),
-                                                                                vec![],
-                                                                            )],
-                                                                            root: false,
-                                                                        },
+                                                                        Path::from(name.clone()),
                                                                         stmt.span,
                                                                     ),
                                                                 })

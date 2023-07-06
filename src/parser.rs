@@ -143,40 +143,6 @@ impl<'a> Parser<'a> {
         self.path_with_one(root, ident)
     }
 
-    fn type_path(&mut self) -> Result<L<Path>> {
-        let root = self.advance_if_kind(Token::ScopeRes);
-        let mut data = Vec::new();
-        let mut span = root.as_ref().map(|t| t.span);
-        loop {
-            let (ident, ispan) = self.expect_id_with_span("expected type name")?;
-            if let Some(span) = &mut span {
-                span.extend_to(ispan);
-            } else {
-                span = Some(ispan);
-            }
-            if self.advance_if_kind(Token::LAngle).is_some() {
-                let (params, pspan) =
-                    self.comma_separated(Token::RAngle, "expected '>'", |this| this.parse_type())?;
-                span.as_mut().unwrap().extend_to(pspan);
-                data.push((ident.into(), params));
-            } else {
-                data.push((ident.into(), Vec::new()));
-            }
-
-            if self.advance_if_kind(Token::ScopeRes).is_none() {
-                break;
-            }
-        }
-
-        Ok(L::new(
-            Path {
-                components: data,
-                root: root.is_some(),
-            },
-            span.unwrap(),
-        ))
-    }
-
     fn comma_separated<T>(
         &mut self,
         end: Token,
@@ -293,8 +259,41 @@ impl<'a> Parser<'a> {
                     is_dyn,
                 }
             } else {
+                // TODO: super::
+                let root = self.advance_if_kind(Token::ScopeRes);
+                let mut data = Vec::new();
+                let mut span = root.as_ref().map(|t| t.span);
+                loop {
+                    let (ident, ispan) = self.expect_id_with_span("expected type name")?;
+                    if let Some(span) = &mut span {
+                        span.extend_to(ispan);
+                    } else {
+                        span = Some(ispan);
+                    }
+                    if self.advance_if_kind(Token::LAngle).is_some() {
+                        let (params, pspan) =
+                            self.comma_separated(Token::RAngle, "expected '>'", |this| {
+                                this.parse_type()
+                            })?;
+                        span.as_mut().unwrap().extend_to(pspan);
+                        data.push((ident.into(), params));
+                    } else {
+                        data.push((ident.into(), Vec::new()));
+                    }
+
+                    if self.advance_if_kind(Token::ScopeRes).is_none() {
+                        break;
+                    }
+                }
+
                 TypeHint::Regular {
-                    path: self.type_path()?,
+                    path: L::new(
+                        Path {
+                            components: data,
+                            root: root.is_some(),
+                        },
+                        span.unwrap(),
+                    ),
                     is_dyn,
                 }
             }
@@ -328,7 +327,12 @@ impl<'a> Parser<'a> {
         Ok((stmts, span))
     }
 
-    fn parse_struct_body(&mut self, span: &mut Span) -> Result<stmt::Struct> {
+    fn parse_struct_body(
+        &mut self,
+        public: bool,
+        name: String,
+        span: &mut Span,
+    ) -> Result<stmt::Struct> {
         let type_params = self.parse_generic_params()?;
         let impls = self.parse_interface_impl()?;
 
@@ -375,8 +379,67 @@ impl<'a> Parser<'a> {
         })?;
 
         Ok(stmt::Struct {
-            public: false,
-            name: String::new(),
+            public,
+            name,
+            type_params,
+            members,
+            impls,
+            functions,
+        })
+    }
+
+    fn parse_union_body(
+        &mut self,
+        public: bool,
+        name: String,
+        span: &mut Span,
+    ) -> Result<stmt::Struct> {
+        let type_params = self.parse_generic_params()?;
+        let impls = self.parse_interface_impl()?;
+
+        self.expect_kind(Token::LCurly, "expected '{'")?;
+
+        let mut functions = Vec::new();
+        let mut members = Vec::new();
+        *span = self.advance_until(Token::RCurly, *span, |this| {
+            let public = this.advance_if_kind(Token::Pub).is_some();
+            if let Some(header) = public
+                .then(|| this.expect_prototype(public, true))
+                .or_else(|| this.try_prototype(public, true))
+            {
+                let (header, _) = header?;
+                let lcurly = this.expect_kind(Token::LCurly, "expected '{'")?;
+                let (body, _) = this.parse_block(lcurly.span)?;
+
+                functions.push(Fn {
+                    proto: header,
+                    body,
+                });
+            } else {
+                let (name, ty) = this.parse_var_name()?;
+                let value = if this.advance_if_kind(Token::Assign).is_some() {
+                    Some(this.expression()?)
+                } else {
+                    None
+                };
+                this.expect_kind(Token::Comma, "expected ','")?;
+
+                members.push((
+                    name,
+                    stmt::MemVar {
+                        public,
+                        ty: ty.unwrap_or(TypeHint::Void),
+                        default: value,
+                    },
+                ));
+            }
+
+            Ok(())
+        })?;
+
+        Ok(stmt::Struct {
+            public,
+            name,
             type_params,
             members,
             impls,
@@ -500,12 +563,13 @@ impl<'a> Parser<'a> {
             })())
         } else if let Some(mut token) = self.advance_if_kind(Token::Struct) {
             Some((|| {
+                let name = self.expect_id("expected name")?;
                 Ok(L::new(
-                    Stmt::UserType(ParsedUserType::Struct(stmt::Struct {
-                        name: self.expect_id("expected name")?.into(),
-                        public: public.is_some(),
-                        ..self.parse_struct_body(&mut token.span)?
-                    })),
+                    Stmt::UserType(ParsedUserType::Struct(self.parse_struct_body(
+                        public.is_some(),
+                        name.into(),
+                        &mut token.span,
+                    )?)),
                     token.span,
                 ))
             })())
@@ -519,14 +583,15 @@ impl<'a> Parser<'a> {
                     None
                 };
 
+                let name = self.expect_id("expected name")?;
                 Ok(L::new(
                     Stmt::UserType(ParsedUserType::Union {
                         tag,
-                        base: stmt::Struct {
-                            name: self.expect_id("expected name")?.into(),
-                            public: public.is_some(),
-                            ..self.parse_struct_body(&mut token.span)?
-                        },
+                        base: self.parse_union_body(
+                            public.is_some(),
+                            name.into(),
+                            &mut token.span,
+                        )?,
                     }),
                     token.span,
                 ))
@@ -892,7 +957,9 @@ impl<'a> Parser<'a> {
                 let (generics, span) = if self.advance_if_kind(Token::ScopeRes).is_some() {
                     self.expect_kind(Token::LAngle, "expected '<'")?;
                     let (params, span) =
-                        self.comma_separated(Token::RAngle, "expected '>'", |this| this.parse_type())?;
+                        self.comma_separated(Token::RAngle, "expected '>'", |this| {
+                            this.parse_type()
+                        })?;
                     (params, Span::combine(expr.span, span))
                 } else {
                     (Vec::new(), Span::combine(expr.span, span))
@@ -976,7 +1043,7 @@ impl<'a> Parser<'a> {
             ),
             Token::Float(value) => L::new(Expr::Float(value.into()), token.span),
             Token::String(value) => L::new(Expr::String(value.into()), token.span),
-            Token::Char(value) => L::new(Expr::Char(value.into()), token.span),
+            Token::Char(value) => L::new(Expr::Char(value), token.span),
             Token::LParen => {
                 let expr = self.expression()?;
                 if self.advance_if_kind(Token::Comma).is_some() {

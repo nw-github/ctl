@@ -248,7 +248,6 @@ pub mod stmt {
         Result(Box<TypeHint>, Box<TypeHint>),
         Ref(Box<TypeHint>),
         RefMut(Box<TypeHint>),
-        Anon(Box<ParsedUserType>),
         Void,
         This,
         MutThis,
