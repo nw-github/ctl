@@ -32,7 +32,7 @@ pub mod expr {
 
     use crate::lexer::Token;
 
-    use super::{Path, stmt::TypeHint};
+    use super::{stmt::TypeHint, Path};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
     pub enum BinaryOp {

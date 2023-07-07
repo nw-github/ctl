@@ -371,7 +371,7 @@ impl Compiler {
                     self.buffer.emit("(*");
                     self.compile_expr(scopes, *expr);
                     self.buffer.emit(")");
-                },
+                }
                 UnaryOp::Addr => todo!(),
                 UnaryOp::AddrMut => todo!(),
                 UnaryOp::Unwrap => todo!(),

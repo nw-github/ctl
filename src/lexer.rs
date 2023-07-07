@@ -313,22 +313,26 @@ impl<'a> Lexer<'a> {
 
     fn char_literal(&mut self) -> Result<Token<'a>, Located<Error>> {
         let ch = match self.advance() {
-            Some('\\') => self.escape_char()?, 
-            Some('\'') => return Err(Located::new(
-                Error::EmptyChar,
-                Span {
-                    loc: self.loc,
-                    len: 0,
-                }
-            )),
+            Some('\\') => self.escape_char()?,
+            Some('\'') => {
+                return Err(Located::new(
+                    Error::EmptyChar,
+                    Span {
+                        loc: self.loc,
+                        len: 0,
+                    },
+                ))
+            }
             Some(any) => any,
-            None => return Err(Located::new(
-                Error::UnterminatedChar,
-                Span {
-                    loc: self.loc,
-                    len: 0,
-                }
-            )),
+            None => {
+                return Err(Located::new(
+                    Error::UnterminatedChar,
+                    Span {
+                        loc: self.loc,
+                        len: 0,
+                    },
+                ))
+            }
         };
 
         if !self.advance_if('\'') {
@@ -337,7 +341,7 @@ impl<'a> Lexer<'a> {
                 Span {
                     loc: self.loc,
                     len: 0,
-                }
+                },
             ))
         } else {
             Ok(Token::Char(ch))
@@ -635,7 +639,7 @@ impl<'a> Iterator for Lexer<'a> {
             '\'' => match self.char_literal() {
                 Ok(token) => token,
                 Err(err) => return Some(Err(err)),
-            }
+            },
             '0'..='9' => self.numeric_literal(start.pos),
             ch if Self::is_identifier_first_char(ch) => self.identifier(start.pos),
             _ => {

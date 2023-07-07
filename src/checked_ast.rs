@@ -13,7 +13,7 @@ pub mod expr {
 
     use crate::{
         ast::expr::{BinaryOp, UnaryOp},
-        typecheck::{Symbol, TypeId, GenericFunc},
+        typecheck::{GenericFunc, Symbol, TypeId},
     };
 
     use super::Block;

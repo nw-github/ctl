@@ -38,7 +38,7 @@ pub fn print_stmt(stmt: &Located<Stmt>, src: &str, indent: usize) {
                 print_expr(value, src, indent + 1);
             }
         }
-        Stmt::Fn(f) => print_fn(f,src,  indent),
+        Stmt::Fn(f) => print_fn(f, src, indent),
         Stmt::UserType(ty) => match ty {
             ParsedUserType::Struct(base) => print_struct("Struct", base, src, indent),
             ParsedUserType::Union { tag, base } => {
@@ -285,7 +285,11 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
             println!("{tabs}Body: ");
             print_stmts(body, src, indent + 2);
         }
-        Expr::Member { source, member, generics } => {
+        Expr::Member {
+            source,
+            member,
+            generics,
+        } => {
             println!("{tabs}Member[{member}]");
             if !generics.is_empty() {
                 println!("{tabs}Generics:");
