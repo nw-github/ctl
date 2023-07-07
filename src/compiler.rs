@@ -231,7 +231,7 @@ impl Compiler {
                 if let Some(body) = ast.scopes.get_func(func.id).body.clone() {
                     this.buffer
                         .emit_prototype(&ast.scopes, &func, inst.as_ref());
-                    this.emit_block(&ast.scopes, body);
+                    this.emit_block(&ast.scopes, body, inst.as_ref());
                 }
             }
         }
@@ -266,7 +266,11 @@ impl Compiler {
             for id in statics {
                 this.buffer.emit_var_name(&ast.scopes, id);
                 this.buffer.emit(" = ");
-                this.compile_expr(&ast.scopes, ast.scopes.get_var(id).value.clone().unwrap());
+                this.compile_expr(
+                    &ast.scopes,
+                    ast.scopes.get_var(id).value.clone().unwrap(),
+                    None,
+                );
                 this.buffer.emit(";");
             }
             this.buffer.emit("}");
@@ -286,33 +290,33 @@ impl Compiler {
         Ok(this.buffer.0)
     }
 
-    fn compile_stmt(&mut self, scopes: &Scopes, stmt: CheckedStmt) {
+    fn compile_stmt(&mut self, scopes: &Scopes, stmt: CheckedStmt, inst: Option<&GenericUserType>) {
         match stmt {
             CheckedStmt::Module { body, .. } => {
                 for stmt in body.body.into_iter() {
-                    self.compile_stmt(scopes, stmt);
+                    self.compile_stmt(scopes, stmt, inst);
                 }
             }
             CheckedStmt::Expr(expr) => {
-                self.compile_expr(scopes, expr);
+                self.compile_expr(scopes, expr, inst);
                 self.buffer.emit(";");
             }
             CheckedStmt::Let(name, id) => {
                 let var = scopes.get_var(id);
-                if let Some(value) = &var.value {
-                    self.buffer.emit_type(scopes, &value.ty);
-                    if !var.mutable {
-                        self.buffer.emit(" const ");
-                    }
-                    self.buffer.emit(format!(" {name} = "));
-                    self.compile_expr(scopes, value.clone());
-                } else {
-                    self.buffer.emit_type(scopes, &var.ty);
-                    if !var.mutable {
-                        self.buffer.emit(" const ");
-                    }
+                let mut ty = var.ty.clone();
+                if let Some(inst) = inst {
+                    ty.fill_type_generics(scopes, inst);
+                }
 
-                    self.buffer.emit(format!(" {name}"));
+                self.buffer.emit_type(scopes, &ty);
+                if !var.mutable {
+                    self.buffer.emit(" const ");
+                }
+                self.buffer.emit(format!(" {name}"));
+
+                if let Some(value) = &var.value {
+                    self.buffer.emit(" = ");
+                    self.compile_expr(scopes, value.clone(), inst);
                 }
 
                 self.buffer.emit(";");
@@ -324,52 +328,61 @@ impl Compiler {
         }
     }
 
-    fn compile_expr(&mut self, scopes: &Scopes, expr: CheckedExpr) {
+    fn compile_expr(
+        &mut self,
+        scopes: &Scopes,
+        mut expr: CheckedExpr,
+        inst: Option<&GenericUserType>,
+    ) {
+        if let Some(inst) = inst {
+            expr.ty.fill_type_generics(scopes, inst);
+        }
+
         match expr.data {
             ExprData::Binary { op, left, right } => {
                 self.buffer.emit("(");
-                self.compile_expr(scopes, *left);
+                self.compile_expr(scopes, *left, inst);
                 self.buffer.emit(format!(" {op} "));
-                self.compile_expr(scopes, *right);
+                self.compile_expr(scopes, *right, inst);
                 self.buffer.emit(")");
             }
             ExprData::Unary { op, expr } => match op {
                 UnaryOp::Plus => {
                     self.buffer.emit("+");
-                    self.compile_expr(scopes, *expr);
+                    self.compile_expr(scopes, *expr, inst);
                 }
                 UnaryOp::Neg => {
                     self.buffer.emit("-");
-                    self.compile_expr(scopes, *expr);
+                    self.compile_expr(scopes, *expr, inst);
                 }
                 UnaryOp::PostIncrement => {
-                    self.compile_expr(scopes, *expr);
+                    self.compile_expr(scopes, *expr, inst);
                     self.buffer.emit("++");
                 }
                 UnaryOp::PostDecrement => {
-                    self.compile_expr(scopes, *expr);
+                    self.compile_expr(scopes, *expr, inst);
                     self.buffer.emit("--");
                 }
                 UnaryOp::PreIncrement => {
                     self.buffer.emit("++");
-                    self.compile_expr(scopes, *expr);
+                    self.compile_expr(scopes, *expr, inst);
                 }
                 UnaryOp::PreDecrement => {
                     self.buffer.emit("--");
-                    self.compile_expr(scopes, *expr);
+                    self.compile_expr(scopes, *expr, inst);
                 }
                 UnaryOp::Not => {
                     if expr.ty.is_numeric() {
                         self.buffer.emit("~");
-                        self.compile_expr(scopes, *expr);
+                        self.compile_expr(scopes, *expr, inst);
                     } else {
                         self.buffer.emit("!");
-                        self.compile_expr(scopes, *expr);
+                        self.compile_expr(scopes, *expr, inst);
                     }
                 }
                 UnaryOp::Deref => {
                     self.buffer.emit("(*");
-                    self.compile_expr(scopes, *expr);
+                    self.compile_expr(scopes, *expr, inst);
                     self.buffer.emit(")");
                 }
                 UnaryOp::Addr => todo!(),
@@ -389,20 +402,20 @@ impl Compiler {
                         self.buffer.emit(", ");
                     }
 
-                    self.compile_expr(scopes, arg);
+                    self.compile_expr(scopes, arg, inst);
                 }
                 self.buffer.emit(")");
             }
             ExprData::MemberCall { func, this, args } => {
                 let target = &scopes.get_func(func.id).proto.params[0].ty;
-                let inst = this
+                let next_inst = this
                     .ty
                     .strip_references()
                     .as_user_type()
                     .map(|ty| (**ty).clone());
 
-                self.buffer.emit_fn_name(scopes, &func, inst.as_ref());
-                self.funcs.insert((inst, func));
+                self.buffer.emit_fn_name(scopes, &func, next_inst.as_ref());
+                self.funcs.insert((next_inst, func));
 
                 self.buffer.emit("(");
 
@@ -420,11 +433,11 @@ impl Compiler {
                     }
                 }
 
-                self.compile_expr(scopes, *this);
+                self.compile_expr(scopes, *this, inst);
 
                 for arg in args {
                     self.buffer.emit(", ");
-                    self.compile_expr(scopes, arg);
+                    self.compile_expr(scopes, arg, inst);
                 }
                 self.buffer.emit(")");
             }
@@ -475,7 +488,7 @@ impl Compiler {
                 self.buffer.emit("){");
                 for (name, value) in members {
                     self.buffer.emit(format!(".{name} = "));
-                    self.compile_expr(scopes, value);
+                    self.compile_expr(scopes, value, inst);
                     self.buffer.emit(", ");
                 }
                 self.buffer.emit("}");
@@ -493,16 +506,16 @@ impl Compiler {
                 binary,
                 value,
             } => {
-                self.compile_expr(scopes, *target);
+                self.compile_expr(scopes, *target, inst);
                 if let Some(binary) = binary {
                     self.buffer.emit(format!(" {binary}= "));
                 } else {
                     self.buffer.emit(" = ");
                 }
-                self.compile_expr(scopes, *value);
+                self.compile_expr(scopes, *value, inst);
             }
             ExprData::Block(block) => {
-                self.emit_block(scopes, block);
+                self.emit_block(scopes, block, inst);
             }
             ExprData::If { .. } => todo!(),
             ExprData::Loop { .. } => todo!(),
@@ -514,7 +527,7 @@ impl Compiler {
                     self.buffer.emit("*");
                     ty = inner;
                 }
-                self.compile_expr(scopes, *source);
+                self.compile_expr(scopes, *source, inst);
                 self.buffer.emit(format!(").{member}"));
             }
             ExprData::Subscript { .. } => todo!(),
@@ -522,7 +535,7 @@ impl Compiler {
                 // TODO: when return is used as anything except a StmtExpr, we will have to change
                 // the generated code to accomodate it
                 self.buffer.emit("return ");
-                self.compile_expr(scopes, *expr);
+                self.compile_expr(scopes, *expr, inst);
             }
             ExprData::Yield(_) => {
                 //                 let block = self.current_block.as_ref().unwrap();
@@ -530,7 +543,7 @@ impl Compiler {
                 //                 let goto = format!("; goto {}", block.label);
                 //
                 //                 self.buffer.emit(assign);
-                //                 self.compile_expr(scopes, *expr);
+                //                 self.compile_expr(scopes, *expr, inst);
                 //                 self.buffer.emit(goto);
                 todo!()
             }
@@ -542,10 +555,10 @@ impl Compiler {
         }
     }
 
-    fn emit_block(&mut self, scopes: &Scopes, block: Block) {
+    fn emit_block(&mut self, scopes: &Scopes, block: Block, inst: Option<&GenericUserType>) {
         self.buffer.emit("{");
         for stmt in block.body.into_iter() {
-            self.compile_stmt(scopes, stmt);
+            self.compile_stmt(scopes, stmt, inst);
         }
         self.buffer.emit("}");
     }
