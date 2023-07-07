@@ -8,10 +8,7 @@ use crate::{
         Block,
     },
     lexer::{Location, Span},
-    typecheck::{
-        CheckedAst, FunctionId, GenericFunc, GenericUserType, Scopes, Symbol, TypeId, UserTypeId,
-        VariableId,
-    },
+    typecheck::{CheckedAst, GenericFunc, GenericUserType, Scopes, Symbol, TypeId, VariableId},
     Error,
 };
 
@@ -55,10 +52,10 @@ impl Buffer {
                 self.emit(")");
             }
             TypeId::Func(_) => todo!(),
-            TypeId::UserType(data) => {
-                if scopes.get_user_type(data.id).data.is_struct() {
+            TypeId::UserType(ut) => {
+                if scopes.get_user_type(ut.id).data.is_struct() {
                     self.emit("struct ");
-                    self.emit_type_name(scopes, data.id, &data.generics);
+                    self.emit_type_name(scopes, ut);
                 }
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
@@ -95,9 +92,9 @@ impl Buffer {
                 self.emit_generic_mangled_name(scopes, inner);
             }
             TypeId::Func(_) => todo!(),
-            TypeId::UserType(data) => {
-                if scopes.get_user_type(data.id).data.is_struct() {
-                    self.emit_type_name(scopes, data.id, &data.generics);
+            TypeId::UserType(ut) => {
+                if scopes.get_user_type(ut.id).data.is_struct() {
+                    self.emit_type_name(scopes, ut);
                 }
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
@@ -105,23 +102,35 @@ impl Buffer {
         }
     }
 
-    fn emit_fn_name(&mut self, scopes: &Scopes, id: FunctionId, generics: &[TypeId]) {
-        let func = scopes.get_func(id);
-        if !func.proto.is_extern {
-            self.emit(scopes.full_name(func.scope, &func.proto.name));
-            for ty in generics {
+    fn emit_fn_name(
+        &mut self,
+        scopes: &Scopes,
+        func: &GenericFunc,
+        inst: Option<&GenericUserType>,
+    ) {
+        let f = scopes.get_func(func.id);
+        if !f.proto.is_extern {
+            if let Some(inst) = inst {
+                self.emit_type_name(scopes, inst);
+                self.emit("_");
+                self.emit(&f.proto.name);
+            } else {
+                self.emit(scopes.full_name(f.scope, &f.proto.name));
+            }
+
+            for ty in func.generics.iter() {
                 self.emit("$");
                 self.emit_generic_mangled_name(scopes, ty);
             }
         } else {
-            self.emit(&func.proto.name);
+            self.emit(&f.proto.name);
         }
     }
 
-    fn emit_type_name(&mut self, scopes: &Scopes, id: UserTypeId, generics: &[TypeId]) {
-        let ty = scopes.get_user_type(id);
+    fn emit_type_name(&mut self, scopes: &Scopes, ut: &GenericUserType) {
+        let ty = scopes.get_user_type(ut.id);
         self.emit(scopes.full_name(ty.scope, &ty.name));
-        for ty in generics {
+        for ty in ut.generics.iter() {
             self.emit("$");
             self.emit_generic_mangled_name(scopes, ty);
         }
@@ -136,22 +145,33 @@ impl Buffer {
         }
     }
 
-    fn emit_prototype(&mut self, scopes: &Scopes, id: FunctionId, generics: &[TypeId]) {
-        let func = scopes.get_func(id);
-        let mut ret = func.proto.ret.clone();
-        ret.fill_func_generics(id, scopes, generics);
+    fn emit_prototype(
+        &mut self,
+        scopes: &Scopes,
+        func: &GenericFunc,
+        inst: Option<&GenericUserType>,
+    ) {
+        let f = scopes.get_func(func.id);
+        let mut ret = f.proto.ret.clone();
+        ret.fill_func_generics(scopes, func);
+        if let Some(inst) = inst {
+            ret.fill_type_generics(scopes, inst);
+        }
 
         self.emit_type(scopes, &ret);
         self.emit(" ");
-        self.emit_fn_name(scopes, id, generics);
+        self.emit_fn_name(scopes, func, inst);
         self.emit("(");
-        for (i, param) in func.proto.params.iter().enumerate() {
+        for (i, param) in f.proto.params.iter().enumerate() {
             if i > 0 {
                 self.emit(", ");
             }
 
             let mut ty = param.ty.clone();
-            ty.fill_func_generics(id, scopes, generics);
+            ty.fill_func_generics(scopes, func);
+            if let Some(inst) = inst {
+                ty.fill_type_generics(scopes, inst);
+            }
 
             self.emit_type(scopes, &ty);
             if !param.mutable {
@@ -168,7 +188,7 @@ impl Buffer {
 pub struct Compiler {
     buffer: Buffer,
     structs: HashSet<GenericUserType>,
-    funcs: HashSet<GenericFunc>,
+    funcs: HashSet<(Option<GenericUserType>, GenericFunc)>,
 }
 
 impl Compiler {
@@ -188,8 +208,9 @@ impl Compiler {
             ));
         };
 
+        let main = GenericFunc::new(main, Vec::new());
         let mut this = Self {
-            funcs: [GenericFunc::new(main, Vec::new())].into(),
+            funcs: [(None, main.clone())].into(),
             ..Self::default()
         };
 
@@ -199,17 +220,17 @@ impl Compiler {
             let diff = this.funcs.difference(&emitted).cloned().collect::<Vec<_>>();
             emitted.extend(this.funcs.drain());
 
-            for func in diff {
+            for (inst, func) in diff {
                 if ast.scopes.get_func(func.id).proto.is_extern {
                     prototypes.emit("extern ");
                 }
 
-                prototypes.emit_prototype(&ast.scopes, func.id, &func.generics);
+                prototypes.emit_prototype(&ast.scopes, &func, inst.as_ref());
                 prototypes.emit(";");
 
                 if let Some(body) = ast.scopes.get_func(func.id).body.clone() {
                     this.buffer
-                        .emit_prototype(&ast.scopes, func.id, &func.generics);
+                        .emit_prototype(&ast.scopes, &func, inst.as_ref());
                     this.emit_block(&ast.scopes, body);
                 }
             }
@@ -259,7 +280,7 @@ impl Compiler {
             this.buffer.emit(format!("{RT_STATIC_INIT}();"));
         }
         this.buffer.emit("return ");
-        this.buffer.emit_fn_name(&ast.scopes, main, &[]);
+        this.buffer.emit_fn_name(&ast.scopes, &main, None);
         this.buffer.emit("(); }");
 
         Ok(this.buffer.0)
@@ -346,7 +367,11 @@ impl Compiler {
                         self.compile_expr(scopes, *expr);
                     }
                 }
-                UnaryOp::Deref => todo!(),
+                UnaryOp::Deref => {
+                    self.buffer.emit("(*");
+                    self.compile_expr(scopes, *expr);
+                    self.buffer.emit(")");
+                },
                 UnaryOp::Addr => todo!(),
                 UnaryOp::AddrMut => todo!(),
                 UnaryOp::Unwrap => todo!(),
@@ -354,9 +379,9 @@ impl Compiler {
                 UnaryOp::Sizeof => todo!(),
             },
             ExprData::Call { func, args } => {
-                self.buffer.emit_fn_name(scopes, func.id, &func.generics);
+                self.buffer.emit_fn_name(scopes, &func, None);
 
-                self.funcs.insert(func);
+                self.funcs.insert((None, func));
 
                 self.buffer.emit("(");
                 for (i, arg) in args.into_iter().enumerate() {
@@ -370,9 +395,14 @@ impl Compiler {
             }
             ExprData::MemberCall { func, this, args } => {
                 let target = &scopes.get_func(func.id).proto.params[0].ty;
+                let inst = this
+                    .ty
+                    .strip_references()
+                    .as_user_type()
+                    .map(|ty| (**ty).clone());
 
-                self.buffer.emit_fn_name(scopes, func.id, &func.generics);
-                self.funcs.insert(func);
+                self.buffer.emit_fn_name(scopes, &func, inst.as_ref());
+                self.funcs.insert((inst, func));
 
                 self.buffer.emit("(");
 
@@ -436,7 +466,7 @@ impl Compiler {
                 self.buffer.emit(format!("{:#x}", value as u32));
             }
             ExprData::Symbol(symbol) => match symbol {
-                Symbol::Func(data) => self.buffer.emit_fn_name(scopes, data.id, &data.generics),
+                Symbol::Func(func) => self.buffer.emit_fn_name(scopes, &func, None),
                 Symbol::Var(id) => self.buffer.emit_var_name(scopes, id),
             },
             ExprData::Instance(members) => {
@@ -528,11 +558,11 @@ impl Compiler {
 
         for ut in Self::get_struct_order(scopes, &structs)? {
             self.buffer.emit("struct ");
-            self.buffer.emit_type_name(scopes, ut.id, &ut.generics);
+            self.buffer.emit_type_name(scopes, ut);
             self.buffer.emit("{");
             for (name, member) in scopes.get_user_type(ut.id).data.as_struct().unwrap().iter() {
                 let mut ty = member.ty.clone();
-                ty.fill_type_generics(scopes, &ut.generics);
+                ty.fill_type_generics(scopes, ut);
 
                 self.buffer.emit_type(scopes, &ty);
                 self.buffer.emit(format!(" {}", name));
@@ -613,13 +643,13 @@ impl Compiler {
         }
 
         self.buffer.emit("struct ");
-        self.buffer.emit_type_name(scopes, ut.id, &ut.generics);
+        self.buffer.emit_type_name(scopes, &ut);
         self.buffer.emit(";");
 
         let mut deps = Vec::new();
         for (_, member) in scopes.get_user_type(ut.id).data.as_struct().unwrap().iter() {
             let mut ty = member.ty.clone();
-            ty.fill_type_generics(scopes, &ut.generics);
+            ty.fill_type_generics(scopes, &ut);
 
             while matches!(ty, TypeId::Option(_) | TypeId::Array(_)) {
                 while let TypeId::Option(inner) = ty {
