@@ -219,6 +219,7 @@ impl Compiler {
 
         this.buffer.emit("#include <runtime/ctl.h>\n");
         this.emit_structs(&ast.scopes)?;
+        this.buffer.emit(prototypes.0);
 
         let mut statics = Vec::new();
         for scope in ast.scopes.scopes().iter() {
@@ -236,7 +237,6 @@ impl Compiler {
             }
         }
 
-        this.buffer.emit(prototypes.0);
         this.buffer.emit(functions.0);
 
         let static_init = !statics.is_empty();
@@ -368,11 +368,7 @@ impl Compiler {
                 }
                 self.buffer.emit(")");
             }
-            ExprData::MemberCall {
-                func,
-                this,
-                args,
-            } => {
+            ExprData::MemberCall { func, this, args } => {
                 let target = &scopes.get_func(func.id).proto.params[0].ty;
 
                 self.buffer.emit_fn_name(scopes, func.id, &func.generics);
@@ -525,51 +521,16 @@ impl Compiler {
     }
 
     fn emit_structs(&mut self, scopes: &Scopes) -> Result<(), Error> {
-        // FIXME: functions of generic structs
-
-        let usertypes = std::mem::take(&mut self.structs);
         let mut structs = HashMap::new();
-        for GenericUserType { id, generics } in usertypes.iter() {
-            self.buffer.emit("struct ");
-            self.buffer.emit_type_name(scopes, *id, generics);
-            self.buffer.emit(";");
-
-            structs.insert(
-                *id,
-                scopes
-                    .get_user_type(*id)
-                    .data
-                    .as_struct()
-                    .unwrap()
-                    .iter()
-                    .filter_map(|s| {
-                        let mut ty = &s.1.ty;
-                        while matches!(ty, TypeId::Option(_) | TypeId::Array(_)) {
-                            while let TypeId::Option(inner) = ty {
-                                ty = inner.as_ref();
-                            }
-                            while let TypeId::Array(inner) = ty {
-                                ty = &inner.as_ref().0;
-                            }
-                        }
-
-                        if let TypeId::UserType(data) = ty {
-                            Some(data.id)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>(),
-            );
+        for ut in std::mem::take(&mut self.structs) {
+            self.get_depencencies(scopes, ut, &mut structs);
         }
 
-        for id in Self::get_struct_order(scopes, structs)? {
-            let ut = usertypes.iter().find(|ty| ty.id == id).unwrap();
-
+        for ut in Self::get_struct_order(scopes, &structs)? {
             self.buffer.emit("struct ");
-            self.buffer.emit_type_name(scopes, id, &ut.generics);
+            self.buffer.emit_type_name(scopes, ut.id, &ut.generics);
             self.buffer.emit("{");
-            for (name, member) in scopes.get_user_type(id).data.as_struct().unwrap().iter() {
+            for (name, member) in scopes.get_user_type(ut.id).data.as_struct().unwrap().iter() {
                 let mut ty = member.ty.clone();
                 ty.fill_type_generics(scopes, &ut.generics);
 
@@ -587,27 +548,28 @@ impl Compiler {
         Ok(())
     }
 
-    fn get_struct_order(
+    fn get_struct_order<'a>(
         scopes: &Scopes,
-        structs: HashMap<UserTypeId, Vec<UserTypeId>>,
-    ) -> Result<Vec<UserTypeId>, Error> {
-        fn dfs(
-            sid: UserTypeId,
-            structs: &HashMap<UserTypeId, Vec<UserTypeId>>,
-            visited: &mut HashMap<UserTypeId, bool>,
-            result: &mut Vec<UserTypeId>,
-        ) -> Result<(), (UserTypeId, UserTypeId)> {
+        structs: &'a HashMap<GenericUserType, Vec<GenericUserType>>,
+    ) -> Result<Vec<&'a GenericUserType>, Error> {
+        fn dfs<'a>(
+            sid: &'a GenericUserType,
+            structs: &'a HashMap<GenericUserType, Vec<GenericUserType>>,
+            visited: &mut HashMap<&'a GenericUserType, bool>,
+            result: &mut Vec<&'a GenericUserType>,
+        ) -> Result<(), (&'a GenericUserType, &'a GenericUserType)> {
             visited.insert(sid, true);
-            if let Some(deps) = structs.get(&sid) {
-                for &dep in deps {
-                    match visited.get(&dep) {
+            if let Some(deps) = structs.get(sid) {
+                for dep in deps.iter() {
+                    match visited.get(dep) {
                         Some(true) => return Err((dep, sid)),
                         None => dfs(dep, structs, visited, result)?,
                         _ => {}
                     }
                 }
             }
-            visited.insert(sid, false);
+
+            *visited.get_mut(sid).unwrap() = false;
             result.push(sid);
             Ok(())
         }
@@ -616,13 +578,13 @@ impl Compiler {
         let mut result = Vec::new();
         for sid in structs.keys() {
             if !state.contains_key(sid) {
-                dfs(*sid, &structs, &mut state, &mut result).map_err(|(a, b)| {
+                dfs(sid, structs, &mut state, &mut result).map_err(|(a, b)| {
                     // TODO: figure out a real span here
                     Error::new(
                         format!(
                             "cyclic dependency detected between {} and {}.",
-                            scopes.get_user_type(a).name,
-                            scopes.get_user_type(b).name,
+                            a.name(scopes),
+                            b.name(scopes),
                         ),
                         Span {
                             loc: Location {
@@ -638,5 +600,45 @@ impl Compiler {
         }
 
         Ok(result)
+    }
+
+    fn get_depencencies(
+        &mut self,
+        scopes: &Scopes,
+        ut: GenericUserType,
+        result: &mut HashMap<GenericUserType, Vec<GenericUserType>>,
+    ) {
+        if result.contains_key(&ut) {
+            return;
+        }
+
+        self.buffer.emit("struct ");
+        self.buffer.emit_type_name(scopes, ut.id, &ut.generics);
+        self.buffer.emit(";");
+
+        let mut deps = Vec::new();
+        for (_, member) in scopes.get_user_type(ut.id).data.as_struct().unwrap().iter() {
+            let mut ty = member.ty.clone();
+            ty.fill_type_generics(scopes, &ut.generics);
+
+            while matches!(ty, TypeId::Option(_) | TypeId::Array(_)) {
+                while let TypeId::Option(inner) = ty {
+                    ty = *inner;
+                }
+                while let TypeId::Array(inner) = ty {
+                    ty = inner.0;
+                }
+            }
+
+            if let TypeId::UserType(data) = ty {
+                if !data.generics.is_empty() {
+                    self.get_depencencies(scopes, (*data).clone(), result);
+                }
+
+                deps.push(*data);
+            }
+        }
+
+        result.insert(ut, deps);
     }
 }

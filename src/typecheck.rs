@@ -31,6 +31,24 @@ pub struct GenericUserType {
     pub generics: Vec<TypeId>,
 }
 
+impl GenericUserType {
+    pub fn name(&self, scopes: &Scopes) -> String {
+        let mut result = scopes.get_user_type(self.id).name.clone();
+        if !self.generics.is_empty() {
+            result.push('<');
+            for (i, concrete) in self.generics.iter().enumerate() {
+                if i > 0 {
+                    result.push_str(", ");
+                }
+                result.push_str(&concrete.name(scopes));
+            }
+            result.push('>');
+        }
+        
+        result
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Eq, Clone, EnumAsInner, Hash)]
 pub enum TypeId {
     #[default]
@@ -189,6 +207,65 @@ impl TypeId {
                 }
                 _ => break,
             }
+        }
+    }
+
+    pub fn name(&self, scopes: &Scopes) -> String {
+        match self {
+            TypeId::Void => "void".into(),
+            TypeId::Never => "never".into(),
+            TypeId::Int(bits) => format!("i{bits}"),
+            TypeId::Uint(bits) => format!("u{bits}"),
+            TypeId::Unknown => "{unknown}".into(),
+            TypeId::F32 => "f32".into(),
+            TypeId::F64 => "f64".into(),
+            TypeId::Bool => "bool".into(),
+            TypeId::IntGeneric => "{integer}".into(),
+            TypeId::FloatGeneric => "{float}".into(),
+            TypeId::String => "str".into(),
+            TypeId::Char => "char".into(),
+            TypeId::Ptr(id) => format!("*{}", id.name(scopes)),
+            TypeId::MutPtr(id) => format!("*mut {}", id.name(scopes)),
+            TypeId::Option(id) => format!("?{}", id.name(scopes)),
+            TypeId::Func(func) => {
+                let f = scopes.get_func(func.id);
+
+                let mut result = format!("fn {}", f.proto.name);
+                if !func.generics.is_empty() {
+                    result.push('<');
+                    for (i, (param, concrete)) in f
+                        .proto
+                        .type_params
+                        .iter()
+                        .zip(func.generics.iter())
+                        .enumerate()
+                    {
+                        if i > 0 {
+                            result.push_str(", ");
+                        }
+                        result.push_str(&format!("{param} = {}", concrete.name(scopes)));
+                    }
+                    result.push('>');
+                }
+
+                result.push('(');
+                for (i, param) in f.proto.params.iter().enumerate() {
+                    if i > 0 {
+                        result.push_str(", ");
+                    }
+
+                    result.push_str(&format!(
+                        "{}: {}",
+                        param.name,
+                        param.ty.name(scopes)
+                    ));
+                }
+                format!("{result}) {}", f.proto.ret.name(scopes))
+            }
+            TypeId::UserType(ty) => ty.name(scopes),
+            TypeId::Array(inner) => format!("[{}; {}]", inner.0.name(scopes), inner.1),
+            TypeId::Isize => "isize".into(),
+            TypeId::Usize => "usize".into(),
         }
     }
 }
@@ -550,8 +627,8 @@ macro_rules! type_mismatch {
         Error::new(
             format!(
                 "type mismatch: expected type '{}', got '{}'",
-                Self::type_name($scopes, $expected),
-                Self::type_name($scopes, $actual),
+                $expected.name($scopes),
+                $actual.name($scopes),
             ),
             $span,
         )
@@ -582,7 +659,7 @@ macro_rules! user_type {
                 return $self.error(Error::new(
                     format!(
                         "cannot get member of type '{}'",
-                        Self::type_name($scopes, $id)
+                        $id.name($scopes)
                     ),
                     $span,
                 ));
@@ -1031,8 +1108,8 @@ impl<'a> TypeChecker<'a> {
                     self.error(Error::new(
                         format!(
                             "operator '{op}' is invalid for values of type {} and {}",
-                            Self::type_name(scopes, &left.ty),
-                            Self::type_name(scopes, &right.ty)
+                            &left.ty.name(scopes),
+                            &right.ty.name(scopes)
                         ),
                         span,
                     ))
@@ -1145,7 +1222,7 @@ impl<'a> TypeChecker<'a> {
                     self.error(Error::new(
                         format!(
                             "operator '{op}' is invalid for value of type {}",
-                            Self::type_name(scopes, &expr.ty)
+                            &expr.ty.name(scopes)
                         ),
                         span,
                     ))
@@ -1336,8 +1413,8 @@ impl<'a> TypeChecker<'a> {
                         self.error::<()>(Error::new(
                             format!(
                                 "operator '{op}' is invalid for values of type {} and {}",
-                                Self::type_name(scopes, &lhs.ty),
-                                Self::type_name(scopes, &rhs.ty)
+                                &lhs.ty.name(scopes),
+                                &rhs.ty.name(scopes)
                             ),
                             span,
                         ));
@@ -1470,7 +1547,7 @@ impl<'a> TypeChecker<'a> {
                             return self.error(Error::new(
                                 format!(
                                     "cannot access private member '{member}' of type {}",
-                                    Self::type_name(scopes, id)
+                                    id.name(scopes)
                                 ),
                                 span,
                             ));
@@ -1494,7 +1571,7 @@ impl<'a> TypeChecker<'a> {
                 self.error(Error::new(
                     format!(
                         "type {} has no member '{member}'",
-                        Self::type_name(scopes, &source.ty)
+                        &source.ty.name(scopes)
                     ),
                     span,
                 ))
@@ -1525,7 +1602,7 @@ impl<'a> TypeChecker<'a> {
                     self.error(Error::new(
                         format!(
                             "type {} cannot be subscripted",
-                            Self::type_name(scopes, &callee.ty)
+                            &callee.ty.name(scopes)
                         ),
                         span,
                     ))
@@ -1628,7 +1705,7 @@ impl<'a> TypeChecker<'a> {
                     return self.error(Error::new(
                         format!(
                             "cannot access private method '{member}' of type '{}'",
-                            Self::type_name(scopes, id)
+                            id.name(scopes)
                         ),
                         span,
                     ));
@@ -1691,7 +1768,7 @@ impl<'a> TypeChecker<'a> {
             self.error(Error::new(
                 format!(
                     "no method '{member}' found on type '{}'",
-                    Self::type_name(scopes, id)
+                    id.name(scopes)
                 ),
                 span,
             ))
@@ -1751,7 +1828,7 @@ impl<'a> TypeChecker<'a> {
                 _ => self.error(Error::new(
                     format!(
                         "cannot call value of type '{}'",
-                        Self::type_name(scopes, &callee.ty)
+                        &callee.ty.name(scopes)
                     ),
                     span,
                 )),
@@ -2184,79 +2261,6 @@ impl<'a> TypeChecker<'a> {
             }
             ExprData::Subscript { callee, .. } => Self::can_addrmut(scopes, callee),
             _ => true,
-        }
-    }
-
-    fn type_name(scopes: &Scopes, ty: &TypeId) -> String {
-        match ty {
-            TypeId::Void => "void".into(),
-            TypeId::Never => "never".into(),
-            TypeId::Int(bits) => format!("i{bits}"),
-            TypeId::Uint(bits) => format!("u{bits}"),
-            TypeId::Unknown => "{unknown}".into(),
-            TypeId::F32 => "f32".into(),
-            TypeId::F64 => "f64".into(),
-            TypeId::Bool => "bool".into(),
-            TypeId::IntGeneric => "{integer}".into(),
-            TypeId::FloatGeneric => "{float}".into(),
-            TypeId::String => "str".into(),
-            TypeId::Char => "char".into(),
-            TypeId::Ptr(id) => format!("*{}", Self::type_name(scopes, id)),
-            TypeId::MutPtr(id) => format!("*mut {}", Self::type_name(scopes, id)),
-            TypeId::Option(id) => format!("?{}", Self::type_name(scopes, id)),
-            TypeId::Func(func) => {
-                let f = scopes.get_func(func.id);
-
-                let mut result = format!("fn {}", f.proto.name);
-                if !func.generics.is_empty() {
-                    result.push('<');
-                    for (i, (param, concrete)) in f
-                        .proto
-                        .type_params
-                        .iter()
-                        .zip(func.generics.iter())
-                        .enumerate()
-                    {
-                        if i > 0 {
-                            result.push_str(", ");
-                        }
-                        result.push_str(&format!("{param} = {}", Self::type_name(scopes, concrete)));
-                    }
-                    result.push('>');
-                }
-
-                result.push('(');
-                for (i, param) in f.proto.params.iter().enumerate() {
-                    if i > 0 {
-                        result.push_str(", ");
-                    }
-
-                    result.push_str(&format!(
-                        "{}: {}",
-                        param.name,
-                        Self::type_name(scopes, &param.ty)
-                    ));
-                }
-                format!("{result}) {}", Self::type_name(scopes, &f.proto.ret))
-            }
-            TypeId::UserType(ty) => {
-                let mut result = scopes.get_user_type(ty.id).name.clone();
-                if !ty.generics.is_empty() {
-                    result.push('<');
-                    for (i, concrete) in ty.generics.iter().enumerate() {
-                        if i > 0 {
-                            result.push_str(", ");
-                        }
-                        result.push_str(&Self::type_name(scopes, concrete));
-                    }
-                    result.push('>');
-                }
-                
-                result
-            }
-            TypeId::Array(inner) => format!("[{}; {}]", Self::type_name(scopes, &inner.0), inner.1),
-            TypeId::Isize => "isize".into(),
-            TypeId::Usize => "usize".into(),
         }
     }
 
