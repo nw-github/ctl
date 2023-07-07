@@ -32,12 +32,15 @@ pub mod expr {
         Call {
             func: FunctionId,
             args: Vec<CheckedExpr>,
+            generics: Vec<TypeId>,
         },
         MemberCall {
             func: FunctionId,
             this: Box<CheckedExpr>,
             args: Vec<CheckedExpr>,
+            generics: Vec<TypeId>,
         },
+        Instance(HashMap<String, CheckedExpr>),
         Array(Vec<CheckedExpr>),
         ArrayWithInit {
             init: Box<CheckedExpr>,
@@ -52,7 +55,6 @@ pub mod expr {
         String(String),
         Char(char),
         Symbol(Symbol),
-        Instance(HashMap<String, CheckedExpr>),
         None,
         Assign {
             target: Box<CheckedExpr>,

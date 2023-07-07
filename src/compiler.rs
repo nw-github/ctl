@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     ast::expr::UnaryOp,
@@ -9,63 +9,619 @@ use crate::{
     },
     lexer::{Location, Span},
     typecheck::{
-        CheckedAst, CheckedPrototype, Function, FunctionId, Scopes, Symbol, TypeId, UserTypeData,
-        UserTypeId, Variable, VariableId,
+        CheckedAst, FunctionId, GenericFunc, GenericUserType, Scopes, Symbol, TypeId, UserTypeId,
+        VariableId,
     },
     Error,
 };
 
-const RT_PREFIX: &str = "CTL_RUNTIME_";
-const RT_STATIC_INIT: &str = "CTL_RUNTIME_init_statics";
+const RT_STATIC_INIT: &str = "CTL_init_statics";
 
-pub struct BlockInfo {
-    variable: String,
-    label: String,
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+struct Buffer(String);
+
+impl Buffer {
+    fn emit(&mut self, source: impl AsRef<str>) {
+        self.0.push_str(source.as_ref());
+    }
+
+    fn emit_type(&mut self, scopes: &Scopes, id: &TypeId) {
+        match id {
+            TypeId::Void => self.emit("CTL(void)"),
+            TypeId::Never => self.emit("void"),
+            TypeId::Int(bits) => self.emit(format!("CTL(i{bits})")),
+            TypeId::Uint(bits) => self.emit(format!("CTL(u{bits})")),
+            TypeId::Isize => self.emit("CTL(isize)"),
+            TypeId::Usize => self.emit("CTL(usize)"),
+            TypeId::F32 => self.emit("CTL(f32)"),
+            TypeId::F64 => self.emit("CTL(f64)"),
+            TypeId::Bool => self.emit("CTL(bool)"),
+            TypeId::String => self.emit("CTL(str)"),
+            TypeId::Char => self.emit("CTL(char)"),
+            TypeId::IntGeneric | TypeId::FloatGeneric => {
+                panic!("ICE: Int/FloatGeneric in emit_type");
+            }
+            TypeId::Ptr(inner) => {
+                self.emit_type(scopes, inner);
+                self.emit(" const*");
+            }
+            TypeId::MutPtr(inner) => {
+                self.emit_type(scopes, inner);
+                self.emit(" *");
+            }
+            TypeId::Option(inner) => {
+                self.emit("CTL(option_");
+                self.emit_type(scopes, inner);
+                self.emit(")");
+            }
+            TypeId::Func(_) => todo!(),
+            TypeId::GenericFunc(_) => todo!(),
+            &TypeId::UserType(id) => {
+                if scopes.get_user_type(id).data.is_struct() {
+                    self.emit("struct ");
+                    self.emit_type_name(scopes, id, &[]);
+                }
+            }
+            TypeId::GenericUserType(data) => {
+                self.emit("struct ");
+                self.emit_type_name(scopes, data.id, &data.generics);
+            }
+            TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
+            TypeId::Array(_) => todo!(),
+        }
+    }
+
+    fn emit_generic_mangled_name(&mut self, scopes: &Scopes, id: &TypeId) {
+        match id {
+            TypeId::Void => self.emit("void"),
+            TypeId::Never => self.emit("never"),
+            TypeId::Int(bits) => self.emit(format!("i{bits}")),
+            TypeId::Uint(bits) => self.emit(format!("u{bits}")),
+            TypeId::Isize => self.emit("isize"),
+            TypeId::Usize => self.emit("usize"),
+            TypeId::F32 => self.emit("f32"),
+            TypeId::F64 => self.emit("f64"),
+            TypeId::Bool => self.emit("bool"),
+            TypeId::String => self.emit("str"),
+            TypeId::Char => self.emit("char"),
+            TypeId::IntGeneric | TypeId::FloatGeneric => {
+                panic!("ICE: Int/FloatGeneric in emit_generic_mangled_name");
+            }
+            TypeId::Ptr(inner) => {
+                self.emit("ptr_");
+                self.emit_type(scopes, inner);
+            }
+            TypeId::MutPtr(inner) => {
+                self.emit_type(scopes, inner);
+                self.emit("mutptr_");
+            }
+            TypeId::Option(inner) => {
+                self.emit("CTL(opt_");
+                self.emit_type(scopes, inner);
+                self.emit(")");
+            }
+            TypeId::Func(_) => todo!(),
+            TypeId::GenericFunc(_) => todo!(),
+            &TypeId::UserType(id) => {
+                if scopes.get_user_type(id).data.is_struct() {
+                    self.emit_type_name(scopes, id, &[]);
+                }
+            }
+            TypeId::GenericUserType(data) => {
+                self.emit_type_name(scopes, data.id, &data.generics);
+            }
+            TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
+            TypeId::Array(_) => todo!(),
+        }
+    }
+
+    fn emit_fn_name(&mut self, scopes: &Scopes, id: FunctionId, generics: &[TypeId]) {
+        let func = scopes.get_func(id);
+        if !func.proto.is_extern {
+            self.emit(scopes.full_name(func.scope, &func.proto.name));
+            for ty in generics {
+                self.emit("$");
+                self.emit_generic_mangled_name(scopes, ty);
+            }
+        } else {
+            self.emit(&func.proto.name);
+        }
+    }
+
+    fn emit_type_name(&mut self, scopes: &Scopes, id: UserTypeId, generics: &[TypeId]) {
+        let ty = scopes.get_user_type(id);
+        self.emit(scopes.full_name(ty.scope, &ty.name));
+        for ty in generics {
+            self.emit("$");
+            self.emit_generic_mangled_name(scopes, ty);
+        }
+    }
+
+    fn emit_var_name(&mut self, scopes: &Scopes, id: VariableId) {
+        let var = scopes.get_var(id);
+        if var.is_static {
+            self.emit(scopes.full_name(var.scope, &var.name));
+        } else {
+            self.emit(&var.name);
+        }
+    }
+
+    fn emit_prototype(&mut self, scopes: &Scopes, id: FunctionId, generics: &[TypeId]) {
+        let func = scopes.get_func(id);
+        let mut ret = func.proto.ret.clone();
+        ret.fill_func_generics(id, scopes, generics);
+
+        self.emit_type(scopes, &ret);
+        self.emit(" ");
+        self.emit_fn_name(scopes, id, generics);
+        self.emit("(");
+        for (i, param) in func.proto.params.iter().enumerate() {
+            if i > 0 {
+                self.emit(", ");
+            }
+
+            let mut ty = param.ty.clone();
+            ty.fill_func_generics(id, scopes, generics);
+
+            self.emit_type(scopes, &ty);
+            if !param.mutable {
+                self.emit(" const");
+            }
+
+            self.emit(format!(" {}", param.name));
+        }
+        self.emit(")");
+    }
 }
 
+#[derive(Default)]
 pub struct Compiler {
-    buffer: String,
-    current_block: Option<BlockInfo>,
-    block_number: usize,
-    main: Option<FunctionId>,
+    buffer: Buffer,
+    structs: HashSet<GenericUserType>,
+    funcs: HashSet<GenericFunc>,
 }
 
 impl Compiler {
-    pub fn compile(mut ast: CheckedAst) -> Result<String, Error> {
-        let mut this = Self {
-            buffer: String::new(),
-            current_block: None,
-            block_number: 0,
-            main: None,
+    pub fn compile(ast: CheckedAst) -> Result<String, Error> {
+        let main_module = ast.scopes.scopes()[0].children.iter().next().unwrap();
+        let Some(main) = ast.scopes.find_func_in("main", *main_module.1) else {
+            return Err(Error::new(
+                "no main function found",
+                Span {
+                    loc: Location {
+                        row: 0,
+                        col: 0,
+                        pos: 0,
+                    },
+                    len: 0,
+                },
+            ));
         };
-        this.emit("#include <runtime/ctl.h>");
-        this.emit_all_structs(&ast.scopes)?;
-        this.emit_all_functions(&mut ast.scopes);
-        this.compile_stmt(&mut ast.scopes, &mut ast.stmt);
-        if let Some(main) = this.main {
-            this.emit("int main(int argc, char **argv) {");
-            this.emit("GC_INIT();");
-            this.emit("(void)argc;");
-            this.emit("(void)argv;");
-            this.emit(format!("{RT_STATIC_INIT}();"));
-            this.emit("return ");
-            this.emit_fn_name(&ast.scopes, main);
-            this.emit("(); }");
+
+        let mut this = Self {
+            funcs: [GenericFunc::new(main, Vec::new())].into(),
+            ..Self::default()
+        };
+
+        let mut prototypes = Buffer::default();
+        let mut emitted = HashSet::new();
+        while !this.funcs.is_empty() {
+            let diff = this.funcs.difference(&emitted).cloned().collect::<Vec<_>>();
+            emitted.extend(this.funcs.drain());
+
+            for func in diff {
+                if ast.scopes.get_func(func.id).proto.is_extern {
+                    prototypes.emit("extern ");
+                }
+
+                prototypes.emit_prototype(&ast.scopes, func.id, &func.generics);
+                prototypes.emit(";");
+
+                if let Some(body) = ast.scopes.get_func(func.id).body.clone() {
+                    this.buffer
+                        .emit_prototype(&ast.scopes, func.id, &func.generics);
+                    this.emit_block(&ast.scopes, body);
+                }
+            }
         }
 
-        Ok(this.buffer)
+        let functions = std::mem::take(&mut this.buffer);
+
+        this.buffer.emit("#include <runtime/ctl.h>\n");
+        this.emit_structs(&ast.scopes)?;
+
+        let mut statics = Vec::new();
+        for scope in ast.scopes.scopes().iter() {
+            for &id in scope.vars.iter() {
+                let var = ast.scopes.get_var(id);
+                if var.is_static {
+                    this.buffer.emit("static ");
+                    this.buffer.emit_type(&ast.scopes, &var.ty);
+                    this.buffer.emit(" ");
+                    this.buffer.emit_var_name(&ast.scopes, id);
+                    this.buffer.emit(";");
+
+                    statics.push(id);
+                }
+            }
+        }
+
+        this.buffer.emit(prototypes.0);
+        this.buffer.emit(functions.0);
+
+        let static_init = !statics.is_empty();
+        if static_init {
+            this.buffer.emit(format!("void {RT_STATIC_INIT}() {{"));
+            for id in statics {
+                this.buffer.emit_var_name(&ast.scopes, id);
+                this.buffer.emit(" = ");
+                this.compile_expr(&ast.scopes, ast.scopes.get_var(id).value.clone().unwrap());
+                this.buffer.emit(";");
+            }
+            this.buffer.emit("}");
+        }
+
+        this.buffer.emit("int main(int argc, char **argv) {");
+        this.buffer.emit("GC_INIT();");
+        this.buffer.emit("(void)argc;");
+        this.buffer.emit("(void)argv;");
+        if static_init {
+            this.buffer.emit(format!("{RT_STATIC_INIT}();"));
+        }
+        this.buffer.emit("return ");
+        this.buffer.emit_fn_name(&ast.scopes, main, &[]);
+        this.buffer.emit("(); }");
+
+        Ok(this.buffer.0)
     }
 
-    fn emit_all_structs(&mut self, scopes: &Scopes) -> Result<(), Error> {
+    fn compile_stmt(&mut self, scopes: &Scopes, stmt: CheckedStmt) {
+        match stmt {
+            CheckedStmt::Module { body, .. } => {
+                for stmt in body.body.into_iter() {
+                    self.compile_stmt(scopes, stmt);
+                }
+            }
+            CheckedStmt::Expr(expr) => {
+                self.compile_expr(scopes, expr);
+                self.buffer.emit(";");
+            }
+            CheckedStmt::Let(name, id) => {
+                let var = scopes.get_var(id);
+                if let Some(value) = &var.value {
+                    self.buffer.emit_type(scopes, &value.ty);
+                    if !var.mutable {
+                        self.buffer.emit(" const ");
+                    }
+                    self.buffer.emit(format!(" {name} = "));
+                    self.compile_expr(scopes, value.clone());
+                } else {
+                    self.buffer.emit_type(scopes, &var.ty);
+                    if !var.mutable {
+                        self.buffer.emit(" const ");
+                    }
+
+                    self.buffer.emit(format!(" {name}"));
+                }
+
+                self.buffer.emit(";");
+            }
+            CheckedStmt::None => {}
+            CheckedStmt::Error => {
+                panic!("ICE: CheckedStmt::Error in compile_stmt");
+            }
+        }
+    }
+
+    fn compile_expr(&mut self, scopes: &Scopes, expr: CheckedExpr) {
+        match expr.data {
+            ExprData::Binary { op, left, right } => {
+                self.buffer.emit("(");
+                self.compile_expr(scopes, *left);
+                self.buffer.emit(format!(" {op} "));
+                self.compile_expr(scopes, *right);
+                self.buffer.emit(")");
+            }
+            ExprData::Unary { op, expr } => match op {
+                UnaryOp::Plus => {
+                    self.buffer.emit("+");
+                    self.compile_expr(scopes, *expr);
+                }
+                UnaryOp::Neg => {
+                    self.buffer.emit("-");
+                    self.compile_expr(scopes, *expr);
+                }
+                UnaryOp::PostIncrement => {
+                    self.compile_expr(scopes, *expr);
+                    self.buffer.emit("++");
+                }
+                UnaryOp::PostDecrement => {
+                    self.compile_expr(scopes, *expr);
+                    self.buffer.emit("--");
+                }
+                UnaryOp::PreIncrement => {
+                    self.buffer.emit("++");
+                    self.compile_expr(scopes, *expr);
+                }
+                UnaryOp::PreDecrement => {
+                    self.buffer.emit("--");
+                    self.compile_expr(scopes, *expr);
+                }
+                UnaryOp::Not => {
+                    if expr.ty.is_numeric() {
+                        self.buffer.emit("~");
+                        self.compile_expr(scopes, *expr);
+                    } else {
+                        self.buffer.emit("!");
+                        self.compile_expr(scopes, *expr);
+                    }
+                }
+                UnaryOp::Deref => todo!(),
+                UnaryOp::Addr => todo!(),
+                UnaryOp::AddrMut => todo!(),
+                UnaryOp::Unwrap => todo!(),
+                UnaryOp::Try => todo!(),
+                UnaryOp::Sizeof => todo!(),
+            },
+            ExprData::Call {
+                func,
+                args,
+                generics,
+            } => {
+                self.buffer.emit_fn_name(scopes, func, &generics);
+
+                self.funcs.insert(GenericFunc::new(func, generics));
+
+                self.buffer.emit("(");
+                for (i, arg) in args.into_iter().enumerate() {
+                    if i > 0 {
+                        self.buffer.emit(", ");
+                    }
+
+                    self.compile_expr(scopes, arg);
+                }
+                self.buffer.emit(")");
+            }
+            ExprData::MemberCall {
+                func,
+                this,
+                args,
+                generics,
+            } => {
+                self.buffer.emit_fn_name(scopes, func, &generics);
+                self.funcs.insert(GenericFunc::new(func, generics));
+
+                self.buffer.emit("(");
+
+                let mut source_ty = &this.ty;
+                let target = &scopes.get_func(func).proto.params[0].ty;
+                if !matches!(source_ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
+                    self.buffer.emit("&");
+                } else {
+                    while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = source_ty {
+                        if source_ty == target {
+                            break;
+                        }
+
+                        self.buffer.emit("*");
+                        source_ty = inner;
+                    }
+                }
+
+                self.compile_expr(scopes, *this);
+
+                for arg in args {
+                    self.buffer.emit(", ");
+                    self.compile_expr(scopes, arg);
+                }
+                self.buffer.emit(")");
+            }
+            ExprData::Array(_) => todo!(),
+            ExprData::ArrayWithInit { .. } => todo!(),
+            ExprData::Tuple(_) => todo!(),
+            ExprData::Map(_) => todo!(),
+            ExprData::Bool(value) => {
+                self.buffer
+                    .emit(if value { "CTL(true)" } else { "CTL(false)" })
+            }
+            ExprData::Signed(value) => {
+                self.buffer.emit("(");
+                self.buffer.emit_type(scopes, &expr.ty);
+                self.buffer.emit(")");
+                self.buffer.emit(format!("{value}"));
+            }
+            ExprData::Unsigned(value) => {
+                self.buffer.emit("(");
+                self.buffer.emit_type(scopes, &expr.ty);
+                self.buffer.emit(")");
+                self.buffer.emit(format!("{value}"));
+            }
+            ExprData::Float(value) => {
+                self.buffer.emit("(");
+                self.buffer.emit_type(scopes, &expr.ty);
+                self.buffer.emit(")");
+                self.buffer.emit(value);
+            }
+            ExprData::String(value) => {
+                self.buffer.emit("CTL_STR(\"");
+                self.buffer.emit(value);
+                self.buffer.emit("\")");
+            }
+            ExprData::Char(value) => {
+                self.buffer.emit("(");
+                self.buffer.emit_type(scopes, &expr.ty);
+                self.buffer.emit(")");
+                self.buffer.emit(format!("{:#x}", value as u32));
+            }
+            ExprData::Symbol(symbol) => match symbol {
+                Symbol::Func(id) => self.buffer.emit_fn_name(scopes, id, &[]),
+                Symbol::Var(id) => self.buffer.emit_var_name(scopes, id),
+                Symbol::GenericFunc(data) => {
+                    self.buffer.emit_fn_name(scopes, data.id, &data.generics)
+                }
+            },
+            ExprData::Instance(members) => {
+                self.buffer.emit("(");
+                self.buffer.emit_type(scopes, &expr.ty);
+                self.buffer.emit("){");
+                for (name, value) in members {
+                    self.buffer.emit(format!(".{name} = "));
+                    self.compile_expr(scopes, value);
+                    self.buffer.emit(", ");
+                }
+                self.buffer.emit("}");
+
+                match expr.ty {
+                    TypeId::UserType(id) => {
+                        self.structs.insert(GenericUserType::new(id, vec![]));
+                    }
+                    TypeId::GenericUserType(data) => {
+                        self.structs
+                            .insert(GenericUserType::new(data.id, data.generics));
+                    }
+                    _ => panic!("ICE: Constructing instance of non-struct type!"),
+                }
+            }
+            ExprData::None => todo!(),
+            ExprData::Assign {
+                target,
+                binary,
+                value,
+            } => {
+                self.compile_expr(scopes, *target);
+                if let Some(binary) = binary {
+                    self.buffer.emit(format!(" {binary}= "));
+                } else {
+                    self.buffer.emit(" = ");
+                }
+                self.compile_expr(scopes, *value);
+            }
+            ExprData::Block(block) => {
+                self.emit_block(scopes, block);
+            }
+            ExprData::If { .. } => todo!(),
+            ExprData::Loop { .. } => todo!(),
+            ExprData::For { .. } => todo!(),
+            ExprData::Member { source, member } => {
+                self.buffer.emit("(");
+                let mut ty = &source.ty;
+                while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = ty {
+                    self.buffer.emit("*");
+                    ty = inner;
+                }
+                self.compile_expr(scopes, *source);
+                self.buffer.emit(format!(").{member}"));
+            }
+            ExprData::Subscript { .. } => todo!(),
+            ExprData::Return(expr) => {
+                // TODO: when return is used as anything except a StmtExpr, we will have to change
+                // the generated code to accomodate it
+                self.buffer.emit("return ");
+                self.compile_expr(scopes, *expr);
+            }
+            ExprData::Yield(_) => {
+                //                 let block = self.current_block.as_ref().unwrap();
+                //                 let assign = format!("{} = ", block.variable);
+                //                 let goto = format!("; goto {}", block.label);
+                //
+                //                 self.buffer.emit(assign);
+                //                 self.compile_expr(scopes, *expr);
+                //                 self.buffer.emit(goto);
+                todo!()
+            }
+            ExprData::Break(_) => todo!(),
+            ExprData::Continue => todo!(),
+            ExprData::Error => {
+                panic!("ICE: ExprData::Error in compile_expr");
+            }
+        }
+    }
+
+    fn emit_block(&mut self, scopes: &Scopes, block: Block) {
+        self.buffer.emit("{");
+        for stmt in block.body.into_iter() {
+            self.compile_stmt(scopes, stmt);
+        }
+        self.buffer.emit("}");
+    }
+
+    fn emit_structs(&mut self, scopes: &Scopes) -> Result<(), Error> {
+        // FIXME: functions of generic structs
+
+        let usertypes = std::mem::take(&mut self.structs);
+        let mut structs = HashMap::new();
+        for GenericUserType { id, generics } in usertypes.iter() {
+            self.buffer.emit("struct ");
+            self.buffer.emit_type_name(scopes, *id, generics);
+            self.buffer.emit(";");
+
+            structs.insert(
+                *id,
+                scopes
+                    .get_user_type(*id)
+                    .data
+                    .as_struct()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|s| {
+                        let mut ty = &s.1.ty;
+                        while matches!(ty, TypeId::Option(_) | TypeId::Array(_)) {
+                            while let TypeId::Option(inner) = ty {
+                                ty = inner.as_ref();
+                            }
+                            while let TypeId::Array(inner) = ty {
+                                ty = &inner.as_ref().0;
+                            }
+                        }
+
+                        match ty {
+                            TypeId::UserType(id) if scopes.get_user_type(*id).data.is_struct() => {
+                                Some(*id)
+                            }
+                            _ => None,
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            );
+        }
+
+        for id in Self::get_struct_order(scopes, structs)? {
+            let ut = usertypes.iter().find(|ty| ty.id == id).unwrap();
+
+            self.buffer.emit("struct ");
+            self.buffer.emit_type_name(scopes, id, &ut.generics);
+            self.buffer.emit("{");
+            for (name, member) in scopes.get_user_type(id).data.as_struct().unwrap().iter() {
+                let mut ty = member.ty.clone();
+                ty.fill_type_generics(scopes, &ut.generics);
+
+                self.buffer.emit_type(scopes, &ty);
+                self.buffer.emit(format!(" {}", name));
+                self.buffer.emit(";");
+                if !member.public {
+                    self.buffer.emit("/* private */ \n")
+                }
+            }
+
+            self.buffer.emit("};");
+        }
+
+        Ok(())
+    }
+
+    fn get_struct_order(
+        scopes: &Scopes,
+        structs: HashMap<UserTypeId, Vec<UserTypeId>>,
+    ) -> Result<Vec<UserTypeId>, Error> {
         fn dfs(
             sid: UserTypeId,
-            structs: &HashMap<UserTypeId, Vec<&UserTypeId>>,
+            structs: &HashMap<UserTypeId, Vec<UserTypeId>>,
             visited: &mut HashMap<UserTypeId, bool>,
             result: &mut Vec<UserTypeId>,
         ) -> Result<(), (UserTypeId, UserTypeId)> {
             visited.insert(sid, true);
             if let Some(deps) = structs.get(&sid) {
-                for &&dep in deps {
+                for &dep in deps {
                     match visited.get(&dep) {
                         Some(true) => return Err((dep, sid)),
                         None => dfs(dep, structs, visited, result)?,
@@ -78,48 +634,8 @@ impl Compiler {
             Ok(())
         }
 
-        let mut structs = HashMap::new();
-        for scope in scopes.scopes().iter() {
-            for &id in scope.types.iter() {
-                let UserTypeData::Struct(members) = &scopes.get_user_type(id).data else {
-                    continue;
-                };
-
-                self.emit("struct ");
-                self.emit_type_name(scopes, id);
-                self.emit(";");
-
-                structs.insert(
-                    id,
-                    members
-                        .iter()
-                        .filter_map(|s| {
-                            let mut ty = &s.1.ty;
-                            while matches!(ty, TypeId::Option(_) | TypeId::Array(_)) {
-                                while let TypeId::Option(inner) = ty {
-                                    ty = inner.as_ref();
-                                }
-                                while let TypeId::Array(inner) = ty {
-                                    ty = &inner.as_ref().0;
-                                }
-                            }
-
-                            match ty {
-                                TypeId::UserType(id)
-                                    if scopes.get_user_type(*id).data.is_struct() =>
-                                {
-                                    Some(id)
-                                }
-                                _ => None,
-                            }
-                        })
-                        .collect::<Vec<_>>(),
-                );
-            }
-        }
-
-        let mut result = Vec::new();
         let mut state = HashMap::new();
+        let mut result = Vec::new();
         for sid in structs.keys() {
             if !state.contains_key(sid) {
                 dfs(*sid, &structs, &mut state, &mut result).map_err(|(a, b)| {
@@ -143,510 +659,6 @@ impl Compiler {
             }
         }
 
-        for &id in result.iter() {
-            self.emit("struct ");
-            self.emit_type_name(scopes, id);
-            self.emit("{");
-            for (name, member) in scopes.get_user_type(id).data.as_struct().unwrap().iter() {
-                self.emit_type(scopes, &member.ty);
-                self.emit(format!(" {}", name));
-                self.emit(";");
-                if !member.public {
-                    self.emit("/* private */ \n")
-                }
-            }
-
-            self.emit("};");
-        }
-
-        Ok(())
-    }
-
-    fn emit_all_functions(&mut self, scopes: &mut Scopes) {
-        let mut fns = Vec::new();
-        for scope in scopes.scopes().iter() {
-            for &id in scope.fns.iter().filter(|&&id| {
-                let func = scopes.get_func(id);
-                !func.constructor && func.proto.type_params.is_empty()
-            }) {
-                self.emit_prototype(scopes, id);
-                self.emit(";");
-                fns.push(id);
-            }
-        }
-
-        let mut statics = Vec::new();
-        for scope in scopes.scopes().iter() {
-            for &id in scope.vars.iter() {
-                let var = scopes.get_var(id);
-                if !var.is_static {
-                    continue;
-                }
-
-                self.emit("static ");
-                self.emit_type(scopes, &var.ty);
-                self.emit(" ");
-                self.emit_var_name(scopes, id);
-                self.emit(";");
-
-                statics.push(id);
-            }
-        }
-
-        self.emit(format!("void {RT_STATIC_INIT}() {{"));
-        for id in statics {
-            self.emit_var_name(scopes, id);
-            self.emit(" = ");
-
-            let mut value = scopes.get_var(id).value.clone().unwrap();
-            self.hoist_blocks(scopes, &mut value);
-            self.compile_expr(scopes, &value);
-            self.emit(";");
-        }
-        self.emit("}");
-
-        for id in fns {
-            self.emit_prototype(scopes, id);
-            // FIXME: this clone hack
-            self.emit_block(scopes, &mut scopes.get_func(id).body.clone().unwrap());
-        }
-    }
-
-    fn compile_stmt(&mut self, scopes: &mut Scopes, stmt: &mut CheckedStmt) {
-        match stmt {
-            CheckedStmt::Module { body, .. } => {
-                for stmt in body.body.iter_mut() {
-                    self.compile_stmt(scopes, stmt);
-                }
-            }
-            CheckedStmt::Expr(expr) => {
-                self.hoist_blocks(scopes, expr);
-                self.compile_expr(scopes, expr);
-                self.emit(";");
-            }
-            CheckedStmt::Let(name, id) => {
-                let mut var = scopes.get_var_mut(*id).clone();
-                if let Some(value) = &mut var.value {
-                    self.hoist_blocks(scopes, value);
-                    self.emit_type(scopes, &value.ty);
-                    if !var.mutable {
-                        self.emit(" const ");
-                    }
-                    self.emit(format!(" {name} = "));
-                    self.compile_expr(scopes, value);
-                } else {
-                    self.emit_type(scopes, &var.ty);
-                    if !var.mutable {
-                        self.emit(" const ");
-                    }
-
-                    self.emit(format!(" {name}"));
-                }
-
-                self.emit(";");
-            }
-            CheckedStmt::None => {}
-            CheckedStmt::Error => {
-                panic!("ICE: CheckedStmt::Error in compile_stmt");
-            }
-        }
-    }
-
-    fn compile_expr(&mut self, scopes: &mut Scopes, expr: &CheckedExpr) {
-        match &expr.data {
-            ExprData::Binary { op, left, right } => {
-                self.emit("(");
-                self.compile_expr(scopes, left);
-                self.emit(format!(" {op} "));
-                self.compile_expr(scopes, right);
-                self.emit(")");
-            }
-            ExprData::Unary { op, expr } => match op {
-                UnaryOp::Plus => {
-                    self.emit("+");
-                    self.compile_expr(scopes, expr);
-                }
-                UnaryOp::Neg => {
-                    self.emit("-");
-                    self.compile_expr(scopes, expr);
-                }
-                UnaryOp::PostIncrement => {
-                    self.compile_expr(scopes, expr);
-                    self.emit("++");
-                }
-                UnaryOp::PostDecrement => {
-                    self.compile_expr(scopes, expr);
-                    self.emit("--");
-                }
-                UnaryOp::PreIncrement => {
-                    self.emit("++");
-                    self.compile_expr(scopes, expr);
-                }
-                UnaryOp::PreDecrement => {
-                    self.emit("--");
-                    self.compile_expr(scopes, expr);
-                }
-                UnaryOp::Not => {
-                    if expr.ty.is_numeric() {
-                        self.emit("~");
-                        self.compile_expr(scopes, expr);
-                    } else {
-                        self.emit("!");
-                        self.compile_expr(scopes, expr);
-                    }
-                }
-                UnaryOp::Deref => todo!(),
-                UnaryOp::Addr => todo!(),
-                UnaryOp::AddrMut => todo!(),
-                UnaryOp::Unwrap => todo!(),
-                UnaryOp::Try => todo!(),
-                UnaryOp::Sizeof => todo!(),
-            },
-            ExprData::Call { func, args } => {
-                self.emit_fn_name(scopes, *func);
-                self.emit("(");
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        self.emit(", ");
-                    }
-
-                    self.compile_expr(scopes, arg);
-                }
-                self.emit(")");
-            }
-            ExprData::MemberCall { func, this, args } => {
-                self.emit_fn_name(scopes, *func);
-                self.emit("(");
-
-                let mut source_ty = &this.ty;
-                let target = &scopes.get_func(*func).proto.params[0].ty;
-                if !matches!(source_ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
-                    self.emit("&");
-                } else {
-                    while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = source_ty {
-                        if source_ty == target {
-                            break;
-                        }
-
-                        self.emit("*");
-                        source_ty = inner;
-                    }
-                }
-
-                self.compile_expr(scopes, this);
-
-                for arg in args {
-                    self.emit(", ");
-                    self.compile_expr(scopes, arg);
-                }
-                self.emit(")");
-            }
-            ExprData::Array(_) => todo!(),
-            ExprData::ArrayWithInit { .. } => todo!(),
-            ExprData::Tuple(_) => todo!(),
-            ExprData::Map(_) => todo!(),
-            ExprData::Bool(value) => {
-                if *value {
-                    self.emit(format!("{RT_PREFIX}::boolean::TRUE"));
-                } else {
-                    self.emit(format!("{RT_PREFIX}::boolean::FALSE"));
-                }
-            }
-            ExprData::Signed(value) => self.emit(format!("{value}")),
-            ExprData::Unsigned(value) => self.emit(format!("{value}")),
-            ExprData::Float(value) => self.emit(value),
-            ExprData::String(_) => todo!(),
-            ExprData::Char(_) => todo!(),
-            ExprData::Symbol(symbol) => match *symbol {
-                Symbol::Func(id) => self.emit_fn_name(scopes, id),
-                Symbol::Var(id) => self.emit_var_name(scopes, id),
-                Symbol::GenericFunc(_) => todo!(),
-            },
-            ExprData::Instance(members) => {
-                self.emit("(");
-                self.emit_type(scopes, &expr.ty);
-                self.emit("){");
-                for (name, value) in members {
-                    self.emit(format!(".{name} = "));
-                    self.compile_expr(scopes, value);
-                    self.emit(", ");
-                }
-                self.emit("}");
-            }
-            ExprData::None => todo!(),
-            ExprData::Assign {
-                target,
-                binary,
-                value,
-            } => {
-                self.compile_expr(scopes, target);
-                if let Some(binary) = binary {
-                    self.emit(format!(" {binary}= "));
-                } else {
-                    self.emit(" = ");
-                }
-                self.compile_expr(scopes, value);
-            }
-            ExprData::Block(_) => panic!("ICE: ExprData::Block in compile_expr"),
-            ExprData::If { .. } => todo!(),
-            ExprData::Loop { .. } => todo!(),
-            ExprData::For { .. } => todo!(),
-            ExprData::Member { source, member } => {
-                self.emit("(");
-                let mut ty = &source.ty;
-                while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = ty {
-                    self.emit("*");
-                    ty = inner;
-                }
-                self.compile_expr(scopes, source);
-                self.emit(format!(").{member}"));
-            }
-            ExprData::Subscript { .. } => todo!(),
-            ExprData::Return(expr) => {
-                // TODO: when return is used as anything except a StmtExpr, we will have to change
-                // the generated code to accomodate it
-                self.emit("return ");
-                self.compile_expr(scopes, expr);
-            }
-            ExprData::Yield(expr) => {
-                let block = self.current_block.as_ref().unwrap();
-                let assign = format!("{} = ", block.variable);
-                let goto = format!("; goto {}", block.label);
-
-                self.emit(assign);
-                self.compile_expr(scopes, expr);
-                self.emit(goto);
-            }
-            ExprData::Break(_) => todo!(),
-            ExprData::Continue => todo!(),
-            ExprData::Error => {
-                panic!("ICE: ExprData::Error in compile_expr");
-            }
-        }
-    }
-
-    fn hoist_blocks(&mut self, scopes: &mut Scopes, expr: &mut CheckedExpr) {
-        match &mut expr.data {
-            ExprData::Binary { op: _, left, right } => {
-                self.hoist_blocks(scopes, left);
-                self.hoist_blocks(scopes, right);
-            }
-            ExprData::Unary { op: _, expr } => {
-                self.hoist_blocks(scopes, expr);
-            }
-            ExprData::Call { args, .. } => {
-                for arg in args.iter_mut() {
-                    self.hoist_blocks(scopes, arg);
-                }
-            }
-            ExprData::Subscript { callee, args }
-            | ExprData::MemberCall {
-                this: callee, args, ..
-            } => {
-                self.hoist_blocks(scopes, &mut *callee);
-                for arg in args.iter_mut() {
-                    self.hoist_blocks(scopes, arg);
-                }
-            }
-            ExprData::Array(args) => {
-                for arg in args.iter_mut() {
-                    self.hoist_blocks(scopes, arg);
-                }
-            }
-            ExprData::ArrayWithInit { init, count: _ } => {
-                self.hoist_blocks(scopes, init);
-                //self.hoist_blocks(scopes, count);
-            }
-            ExprData::Tuple(args) => {
-                for arg in args.iter_mut() {
-                    self.hoist_blocks(scopes, arg);
-                }
-            }
-            ExprData::Map(args) => {
-                for (key, value) in args.iter_mut() {
-                    self.hoist_blocks(scopes, key);
-                    self.hoist_blocks(scopes, value);
-                }
-            }
-            ExprData::Instance(members) => {
-                for (_, value) in members.iter_mut() {
-                    self.hoist_blocks(scopes, value);
-                }
-            }
-            ExprData::Assign {
-                target,
-                binary: _,
-                value,
-            } => {
-                self.hoist_blocks(scopes, target);
-                self.hoist_blocks(scopes, value);
-            }
-            ExprData::If { cond, .. } => {
-                self.hoist_blocks(scopes, cond);
-            }
-            ExprData::Loop { .. } => {
-                /*
-                    in a situation like:
-
-                loop { if a { return; } else { true } }
-                {
-
-                }
-
-                    if we hoist the block here, the condition wont be executed every iteration
-                 */
-
-                todo!()
-            }
-            ExprData::For {
-                var: _,
-                iter,
-                body: _,
-            } => {
-                self.hoist_blocks(scopes, iter);
-            }
-            ExprData::Member { source, member: _ } => {
-                self.hoist_blocks(scopes, source);
-            }
-            ExprData::Return(expr) | ExprData::Yield(expr) | ExprData::Break(expr) => {
-                self.hoist_blocks(scopes, expr)
-            }
-            ExprData::Block(block) => {
-                let variable = format!("$ctl_block{}", self.block_number);
-                let label = format!("$ctl_label{}", self.block_number);
-                let old_block = self.current_block.replace(BlockInfo {
-                    variable: variable.clone(),
-                    label: label.clone(),
-                });
-                self.block_number += 1;
-
-                self.emit_type(scopes, &expr.ty);
-                self.emit(format!(" {variable};"));
-                self.emit_block(scopes, block);
-                self.emit(format!("{label}:\n"));
-                self.current_block = old_block;
-
-                expr.data = ExprData::Symbol(Symbol::Var(scopes.insert_var(Variable {
-                    name: variable,
-                    ty: TypeId::Unknown,
-                    is_static: false,
-                    mutable: false,
-                    public: false,
-                    value: None,
-                })));
-            }
-            _ => {}
-        }
-    }
-
-    fn emit(&mut self, source: impl AsRef<str>) {
-        self.buffer.push_str(source.as_ref());
-    }
-
-    fn emit_type(&mut self, scopes: &Scopes, id: &TypeId) {
-        match id {
-            TypeId::Void => self.emit(format!("{RT_PREFIX}void")),
-            TypeId::Never => todo!(),
-            TypeId::Int(bits) => self.emit(format!("{RT_PREFIX}i{bits}")),
-            TypeId::Uint(bits) => self.emit(format!("{RT_PREFIX}u{bits}")),
-            TypeId::Isize => self.emit(format!("{RT_PREFIX}isize")),
-            TypeId::Usize => self.emit(format!("{RT_PREFIX}usize")),
-            TypeId::F32 => self.emit(format!("{RT_PREFIX}f32")),
-            TypeId::F64 => self.emit(format!("{RT_PREFIX}f64")),
-            TypeId::Bool => self.emit(format!("{RT_PREFIX}bool")),
-            TypeId::String => self.emit(format!("{RT_PREFIX}str")),
-            TypeId::Char => self.emit(format!("{RT_PREFIX}char")),
-            TypeId::IntGeneric | TypeId::FloatGeneric => {
-                panic!("ICE: Int/FloatGeneric in emit_type");
-            }
-            TypeId::Ptr(inner) => {
-                self.emit_type(scopes, inner);
-                self.emit(" const*");
-            }
-            TypeId::MutPtr(inner) => {
-                self.emit_type(scopes, inner);
-                self.emit(" *");
-            }
-            TypeId::Option(inner) => {
-                self.emit(format!("{RT_PREFIX}option_"));
-                self.emit_type(scopes, inner);
-            }
-            TypeId::Func(_) => todo!(),
-            TypeId::GenericFunc(_) => todo!(),
-            &TypeId::UserType(id) => {
-                if scopes.get_user_type(id).data.is_struct() {
-                    self.emit("struct ");
-                    self.emit_type_name(scopes, id);
-                }
-            }
-            TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
-            TypeId::Array(_) => todo!(),
-            TypeId::GenericUserType(_) => todo!(),
-        }
-    }
-
-    fn emit_fn_name(&mut self, scopes: &Scopes, id: FunctionId) {
-        let func = scopes.get_func(id);
-        self.emit(scopes.full_name(func.scope, &func.proto.name));
-    }
-
-    fn emit_type_name(&mut self, scopes: &Scopes, id: UserTypeId) {
-        let ty = scopes.get_user_type(id);
-        self.emit(scopes.full_name(ty.scope, &ty.name));
-    }
-
-    fn emit_var_name(&mut self, scopes: &Scopes, id: VariableId) {
-        let var = scopes.get_var(id);
-        if var.is_static {
-            self.emit(scopes.full_name(var.scope, &var.name));
-        } else {
-            self.emit(&var.name);
-        }
-    }
-
-    fn emit_prototype(&mut self, scopes: &Scopes, id: FunctionId) {
-        let Function {
-            proto:
-                CheckedPrototype {
-                    public: _,
-                    name,
-                    is_async: _,
-                    is_extern: _,
-                    type_params: _,
-                    params,
-                    ret,
-                },
-            ..
-        } = &scopes.get_func(id).item;
-
-        self.emit_type(scopes, ret);
-        if name == "main" {
-            self.main = Some(id);
-        }
-
-        self.emit(" ");
-        self.emit_fn_name(scopes, id);
-        self.emit("(");
-        for (i, param) in params.iter().enumerate() {
-            if i > 0 {
-                self.emit(", ");
-            }
-
-            self.emit_type(scopes, &param.ty);
-            if !param.mutable {
-                self.emit(" const");
-            }
-
-            self.emit(format!(" {}", param.name));
-        }
-        self.emit(")");
-    }
-
-    fn emit_block(&mut self, scopes: &mut Scopes, block: &mut Block) {
-        self.emit("{");
-        for stmt in block.body.iter_mut() {
-            self.compile_stmt(scopes, stmt);
-        }
-        self.emit("}");
+        Ok(result)
     }
 }
