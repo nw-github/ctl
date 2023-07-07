@@ -120,18 +120,6 @@ pub enum TypeId {
 }
 
 impl TypeId {
-    pub fn is_numeric(&self) -> bool {
-        matches!(
-            self,
-            TypeId::Int(_)
-                | TypeId::Uint(_)
-                | TypeId::F32
-                | TypeId::F64
-                | TypeId::Isize
-                | TypeId::Usize
-        )
-    }
-
     pub fn supports_binop(&self, op: BinaryOp) -> bool {
         match op {
             BinaryOp::Add => matches!(
@@ -307,6 +295,61 @@ impl TypeId {
             TypeId::Array(inner) => format!("[{}; {}]", inner.0.name(scopes), inner.1),
             TypeId::Isize => "isize".into(),
             TypeId::Usize => "usize".into(),
+        }
+    }
+
+    pub fn is_numeric(&self) -> bool {
+        matches!(
+            self,
+            TypeId::Int(_)
+                | TypeId::Uint(_)
+                | TypeId::F32
+                | TypeId::F64
+                | TypeId::Isize
+                | TypeId::Usize
+        )
+    }
+
+    fn coerces_to(&self, target: &TypeId) -> bool {
+        match (self, target) {
+            (
+                TypeId::IntGeneric,
+                TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize,
+            ) => true,
+            (TypeId::FloatGeneric, TypeId::F32 | TypeId::F64) => true,
+            (TypeId::MutPtr(ty), TypeId::Ptr(target)) if ty == target => true,
+            (ty, TypeId::Option(inner)) if ty.coerces_to(inner) => true,
+            (TypeId::Never, _) => true,
+            (ty, target) => ty == target,
+        }
+    }
+
+    fn from_int_name(name: &str) -> Option<TypeId> {
+        let mut chars = name.chars();
+        let mut i = false;
+        let result = match chars.next()? {
+            'i' => {
+                i = true;
+                TypeId::Int
+            }
+            'u' => TypeId::Uint,
+            _ => return None,
+        };
+
+        match (
+            chars.next().and_then(|c| c.to_digit(10)),
+            chars.next().and_then(|c| c.to_digit(10)),
+            chars.next().and_then(|c| c.to_digit(10)),
+            chars.next(),
+        ) {
+            (Some(a), None, None, None) => (!i || a > 1).then_some(result(a as u8)),
+            (Some(a), Some(b), None, None) => Some(result((a * 10 + b) as u8)),
+            (Some(a), Some(b), Some(c), None) => Some(result((a * 100 + b * 10 + c) as u8)),
+            _ => match name {
+                "usize" => Some(TypeId::Usize),
+                "isize" => Some(TypeId::Isize),
+                _ => None,
+            },
         }
     }
 }
@@ -697,7 +740,7 @@ macro_rules! type_mismatch {
 
 macro_rules! type_check_bail {
     ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {
-        if !Self::coerces_to($source, $target) {
+        if !$source.coerces_to($target) {
             return $self.error(type_mismatch!($scopes, $target, $source, $span));
         }
     };
@@ -705,7 +748,7 @@ macro_rules! type_check_bail {
 
 macro_rules! type_check {
     ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {
-        if !Self::coerces_to($source, $target) {
+        if !$source.coerces_to($target) {
             $self.error::<()>(type_mismatch!($scopes, $target, $source, $span))
         }
     };
@@ -1352,7 +1395,7 @@ impl<'a> TypeChecker<'a> {
             },
             Expr::Integer { base, value, width } => {
                 let ty = if let Some(width) = width {
-                    Self::match_int_type(&width).unwrap_or_else(|| {
+                    TypeId::from_int_name(&width).unwrap_or_else(|| {
                         self.error(Error::new(
                             format!("invalid integer literal type: {width}"),
                             span,
@@ -1369,7 +1412,7 @@ impl<'a> TypeChecker<'a> {
                             }
                             target
                         })
-                        .filter(|target| Self::coerces_to(&TypeId::IntGeneric, target))
+                        .filter(|target| TypeId::IntGeneric.coerces_to(target))
                         .cloned()
                         .unwrap_or(TypeId::Int(32))
                 };
@@ -1437,7 +1480,7 @@ impl<'a> TypeChecker<'a> {
                         }
                         target
                     })
-                    .filter(|target| Self::coerces_to(&TypeId::FloatGeneric, target))
+                    .filter(|target| TypeId::FloatGeneric.coerces_to(target))
                     .cloned()
                     .unwrap_or(TypeId::F64),
                 ExprData::Float(value),
@@ -1881,7 +1924,10 @@ impl<'a> TypeChecker<'a> {
     ) -> Result<usize, Error> {
         match &expr.data {
             Expr::Integer { base, value, width } => {
-                if let Some(width) = width.as_ref().and_then(|width| Self::match_int_type(width)) {
+                if let Some(width) = width
+                    .as_ref()
+                    .and_then(|width| TypeId::from_int_name(width))
+                {
                     if let Some(target) = target {
                         if target != &width {
                             return Err(type_mismatch!(scopes, target, &width, expr.span));
@@ -1982,7 +2028,7 @@ impl<'a> TypeChecker<'a> {
             target.fill_type_generics(scopes, instance);
         }
 
-        if !Self::coerces_to(&expr.ty, &target) {
+        if !expr.ty.coerces_to(&target) {
             self.error(type_mismatch!(scopes, &target, &expr.ty, span))
         } else {
             expr
@@ -2105,26 +2151,21 @@ impl<'a> TypeChecker<'a> {
     fn fd_resolve_type<'b>(scopes: &Scopes, ty: &'b TypeHint) -> Result<TypeId, ResolveError<'b>> {
         Ok(match ty {
             TypeHint::Regular { path, .. } => {
-                if let Some(id) = Self::resolve_type_path(scopes, &path.data, path.span)? {
-                    return Ok(id);
-                }
-
-                if let Some(symbol) = path.data.as_symbol() {
-                    return match symbol {
-                        symbol if symbol == THIS_TYPE => scopes.this_type(),
-                        "void" => Some(TypeId::Void),
-                        "never" => Some(TypeId::Never),
-                        "f32" => Some(TypeId::F32),
-                        "f64" => Some(TypeId::F64),
-                        "bool" => Some(TypeId::Bool),
-                        "str" => Some(TypeId::String),
-                        "char" => Some(TypeId::Char),
-                        _ => Self::match_int_type(symbol),
-                    }
+                return Self::resolve_type_path(scopes, &path.data, path.span)?
+                    .or_else(|| {
+                        path.data.as_symbol().and_then(|symbol| match symbol {
+                            symbol if symbol == THIS_TYPE => scopes.this_type(),
+                            "void" => Some(TypeId::Void),
+                            "never" => Some(TypeId::Never),
+                            "f32" => Some(TypeId::F32),
+                            "f64" => Some(TypeId::F64),
+                            "bool" => Some(TypeId::Bool),
+                            "str" => Some(TypeId::String),
+                            "char" => Some(TypeId::Char),
+                            _ => TypeId::from_int_name(symbol),
+                        })
+                    })
                     .ok_or(ResolveError::Path(path));
-                }
-
-                return Err(ResolveError::Path(path));
             }
             TypeHint::Void => TypeId::Void,
             TypeHint::Ref(ty) => TypeId::Ptr(Self::fd_resolve_type(scopes, ty)?.into()),
@@ -2178,49 +2219,6 @@ impl<'a> TypeChecker<'a> {
     fn error<T: Default>(&mut self, error: Error) -> T {
         self.errors.push(error);
         T::default()
-    }
-
-    fn match_int_type(name: &str) -> Option<TypeId> {
-        let mut chars = name.chars();
-        let mut i = false;
-        let result = match chars.next()? {
-            'i' => {
-                i = true;
-                TypeId::Int
-            }
-            'u' => TypeId::Uint,
-            _ => return None,
-        };
-
-        match (
-            chars.next().and_then(|c| c.to_digit(10)),
-            chars.next().and_then(|c| c.to_digit(10)),
-            chars.next().and_then(|c| c.to_digit(10)),
-            chars.next(),
-        ) {
-            (Some(a), None, None, None) => (!i || a > 1).then_some(result(a as u8)),
-            (Some(a), Some(b), None, None) => Some(result((a * 10 + b) as u8)),
-            (Some(a), Some(b), Some(c), None) => Some(result((a * 100 + b * 10 + c) as u8)),
-            _ => match name {
-                "usize" => Some(TypeId::Usize),
-                "isize" => Some(TypeId::Isize),
-                _ => None,
-            },
-        }
-    }
-
-    fn coerces_to(ty: &TypeId, target: &TypeId) -> bool {
-        match (ty, target) {
-            (
-                TypeId::IntGeneric,
-                TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize,
-            ) => true,
-            (TypeId::FloatGeneric, TypeId::F32 | TypeId::F64) => true,
-            (TypeId::MutPtr(ty), TypeId::Ptr(target)) if ty == target => true,
-            (ty, TypeId::Option(inner)) if Self::coerces_to(ty, inner) => true,
-            (TypeId::Never, _) => true,
-            (ty, target) => ty == target,
-        }
     }
 
     fn is_assignable(scopes: &Scopes, expr: &CheckedExpr) -> bool {
