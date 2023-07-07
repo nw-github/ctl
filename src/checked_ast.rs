@@ -13,7 +13,7 @@ pub mod expr {
 
     use crate::{
         ast::expr::{BinaryOp, UnaryOp},
-        typecheck::{FunctionId, Symbol, TypeId},
+        typecheck::{Symbol, TypeId, GenericFunc},
     };
 
     use super::Block;
@@ -30,15 +30,13 @@ pub mod expr {
             expr: Box<CheckedExpr>,
         },
         Call {
-            func: FunctionId,
+            func: GenericFunc,
             args: Vec<CheckedExpr>,
-            generics: Vec<TypeId>,
         },
         MemberCall {
-            func: FunctionId,
-            this: Box<CheckedExpr>,
+            func: GenericFunc,
             args: Vec<CheckedExpr>,
-            generics: Vec<TypeId>,
+            this: Box<CheckedExpr>,
         },
         Instance(HashMap<String, CheckedExpr>),
         Array(Vec<CheckedExpr>),

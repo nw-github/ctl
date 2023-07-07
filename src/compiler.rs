@@ -50,21 +50,16 @@ impl Buffer {
                 self.emit(" *");
             }
             TypeId::Option(inner) => {
-                self.emit("CTL(option_");
+                self.emit("CTL(opt_");
                 self.emit_type(scopes, inner);
                 self.emit(")");
             }
             TypeId::Func(_) => todo!(),
-            TypeId::GenericFunc(_) => todo!(),
-            &TypeId::UserType(id) => {
-                if scopes.get_user_type(id).data.is_struct() {
+            TypeId::UserType(data) => {
+                if scopes.get_user_type(data.id).data.is_struct() {
                     self.emit("struct ");
-                    self.emit_type_name(scopes, id, &[]);
+                    self.emit_type_name(scopes, data.id, &data.generics);
                 }
-            }
-            TypeId::GenericUserType(data) => {
-                self.emit("struct ");
-                self.emit_type_name(scopes, data.id, &data.generics);
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
@@ -89,26 +84,21 @@ impl Buffer {
             }
             TypeId::Ptr(inner) => {
                 self.emit("ptr_");
-                self.emit_type(scopes, inner);
+                self.emit_generic_mangled_name(scopes, inner);
             }
             TypeId::MutPtr(inner) => {
-                self.emit_type(scopes, inner);
                 self.emit("mutptr_");
+                self.emit_generic_mangled_name(scopes, inner);
             }
             TypeId::Option(inner) => {
-                self.emit("CTL(opt_");
-                self.emit_type(scopes, inner);
-                self.emit(")");
+                self.emit("opt_");
+                self.emit_generic_mangled_name(scopes, inner);
             }
             TypeId::Func(_) => todo!(),
-            TypeId::GenericFunc(_) => todo!(),
-            &TypeId::UserType(id) => {
-                if scopes.get_user_type(id).data.is_struct() {
-                    self.emit_type_name(scopes, id, &[]);
+            TypeId::UserType(data) => {
+                if scopes.get_user_type(data.id).data.is_struct() {
+                    self.emit_type_name(scopes, data.id, &data.generics);
                 }
-            }
-            TypeId::GenericUserType(data) => {
-                self.emit_type_name(scopes, data.id, &data.generics);
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
             TypeId::Array(_) => todo!(),
@@ -363,14 +353,10 @@ impl Compiler {
                 UnaryOp::Try => todo!(),
                 UnaryOp::Sizeof => todo!(),
             },
-            ExprData::Call {
-                func,
-                args,
-                generics,
-            } => {
-                self.buffer.emit_fn_name(scopes, func, &generics);
+            ExprData::Call { func, args } => {
+                self.buffer.emit_fn_name(scopes, func.id, &func.generics);
 
-                self.funcs.insert(GenericFunc::new(func, generics));
+                self.funcs.insert(func);
 
                 self.buffer.emit("(");
                 for (i, arg) in args.into_iter().enumerate() {
@@ -386,15 +372,15 @@ impl Compiler {
                 func,
                 this,
                 args,
-                generics,
             } => {
-                self.buffer.emit_fn_name(scopes, func, &generics);
-                self.funcs.insert(GenericFunc::new(func, generics));
+                let target = &scopes.get_func(func.id).proto.params[0].ty;
+
+                self.buffer.emit_fn_name(scopes, func.id, &func.generics);
+                self.funcs.insert(func);
 
                 self.buffer.emit("(");
 
                 let mut source_ty = &this.ty;
-                let target = &scopes.get_func(func).proto.params[0].ty;
                 if !matches!(source_ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
                     self.buffer.emit("&");
                 } else {
@@ -454,11 +440,8 @@ impl Compiler {
                 self.buffer.emit(format!("{:#x}", value as u32));
             }
             ExprData::Symbol(symbol) => match symbol {
-                Symbol::Func(id) => self.buffer.emit_fn_name(scopes, id, &[]),
+                Symbol::Func(data) => self.buffer.emit_fn_name(scopes, data.id, &data.generics),
                 Symbol::Var(id) => self.buffer.emit_var_name(scopes, id),
-                Symbol::GenericFunc(data) => {
-                    self.buffer.emit_fn_name(scopes, data.id, &data.generics)
-                }
             },
             ExprData::Instance(members) => {
                 self.buffer.emit("(");
@@ -471,15 +454,11 @@ impl Compiler {
                 }
                 self.buffer.emit("}");
 
-                match expr.ty {
-                    TypeId::UserType(id) => {
-                        self.structs.insert(GenericUserType::new(id, vec![]));
-                    }
-                    TypeId::GenericUserType(data) => {
-                        self.structs
-                            .insert(GenericUserType::new(data.id, data.generics));
-                    }
-                    _ => panic!("ICE: Constructing instance of non-struct type!"),
+                if let TypeId::UserType(data) = expr.ty {
+                    self.structs
+                        .insert(GenericUserType::new(data.id, data.generics));
+                } else {
+                    panic!("ICE: Constructing instance of non-struct type!");
                 }
             }
             ExprData::None => todo!(),
@@ -574,11 +553,10 @@ impl Compiler {
                             }
                         }
 
-                        match ty {
-                            TypeId::UserType(id) if scopes.get_user_type(*id).data.is_struct() => {
-                                Some(*id)
-                            }
-                            _ => None,
+                        if let TypeId::UserType(data) = ty {
+                            Some(data.id)
+                        } else {
+                            None
                         }
                     })
                     .collect::<Vec<_>>(),
