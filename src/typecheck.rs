@@ -1388,7 +1388,7 @@ impl<'a> TypeChecker<'a> {
                     self.error(Error::new("cannot infer type of option literal none", span))
                 }
             }
-            Expr::Void => CheckedExpr::new(TypeId::Void, ExprData::Instance(HashMap::new())),
+            Expr::Void => CheckedExpr::new(TypeId::Void, ExprData::Void),
             Expr::Bool(value) => CheckedExpr {
                 ty: TypeId::Bool,
                 data: ExprData::Bool(value),

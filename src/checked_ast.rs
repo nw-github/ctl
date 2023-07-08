@@ -48,6 +48,7 @@ pub mod expr {
         Float(String),
         String(String),
         Char(char),
+        Void,
         Symbol(Symbol),
         None,
         Assign {

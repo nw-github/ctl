@@ -441,6 +441,7 @@ impl Compiler {
                 self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(format!("{:#x}", value as u32));
             }
+            ExprData::Void => self.buffer.emit("CTL(VOID)"),
             ExprData::Symbol(symbol) => match symbol {
                 Symbol::Func(func) => self.buffer.emit_fn_name(scopes, &func, None),
                 Symbol::Var(id) => self.buffer.emit_var_name(scopes, id),
