@@ -46,11 +46,7 @@ impl Buffer {
                 self.emit_type(scopes, inner);
                 self.emit(" *");
             }
-            TypeId::Option(inner) => {
-                self.emit("CTL(opt_");
-                self.emit_type(scopes, inner);
-                self.emit(")");
-            }
+            TypeId::Option(_) => todo!(),
             TypeId::Func(_) => todo!(),
             TypeId::UserType(ut) => {
                 if scopes.get_user_type(ut.id).data.is_struct() {
