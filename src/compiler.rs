@@ -59,6 +59,12 @@ impl Buffer {
         }
     }
 
+    fn emit_cast(&mut self, scopes: &Scopes, id: &TypeId) {
+        self.emit("(");
+        self.emit_type(scopes, id);
+        self.emit(")");
+    }
+
     fn emit_generic_mangled_name(&mut self, scopes: &Scopes, id: &TypeId) {
         match id {
             TypeId::Void => self.emit("void"),
@@ -342,53 +348,57 @@ impl Compiler {
                 self.compile_expr(scopes, *right, inst);
                 self.buffer.emit(")");
             }
-            ExprData::Unary { op, expr } => match op {
+            ExprData::Unary { op, expr: inner } => match op {
                 UnaryOp::Plus => {
                     self.buffer.emit("+");
-                    self.compile_expr(scopes, *expr, inst);
+                    self.compile_expr(scopes, *inner, inst);
                 }
                 UnaryOp::Neg => {
                     self.buffer.emit("-");
-                    self.compile_expr(scopes, *expr, inst);
+                    self.compile_expr(scopes, *inner, inst);
                 }
                 UnaryOp::PostIncrement => {
-                    self.compile_expr(scopes, *expr, inst);
+                    self.compile_expr(scopes, *inner, inst);
                     self.buffer.emit("++");
                 }
                 UnaryOp::PostDecrement => {
-                    self.compile_expr(scopes, *expr, inst);
+                    self.compile_expr(scopes, *inner, inst);
                     self.buffer.emit("--");
                 }
                 UnaryOp::PreIncrement => {
                     self.buffer.emit("++");
-                    self.compile_expr(scopes, *expr, inst);
+                    self.compile_expr(scopes, *inner, inst);
                 }
                 UnaryOp::PreDecrement => {
                     self.buffer.emit("--");
-                    self.compile_expr(scopes, *expr, inst);
+                    self.compile_expr(scopes, *inner, inst);
                 }
                 UnaryOp::Not => {
-                    if expr.ty.is_numeric() {
+                    if inner.ty.is_numeric() {
                         self.buffer.emit("~");
-                        self.compile_expr(scopes, *expr, inst);
+                        self.compile_expr(scopes, *inner, inst);
                     } else {
                         self.buffer.emit("!");
-                        self.compile_expr(scopes, *expr, inst);
+                        self.compile_expr(scopes, *inner, inst);
                     }
                 }
                 UnaryOp::Deref => {
                     self.buffer.emit("(*");
-                    self.compile_expr(scopes, *expr, inst);
+                    self.compile_expr(scopes, *inner, inst);
                     self.buffer.emit(")");
                 }
-                UnaryOp::Addr => todo!(),
-                UnaryOp::AddrMut => todo!(),
+                UnaryOp::Addr | UnaryOp::AddrMut => {
+                    self.buffer.emit_cast(scopes, &expr.ty);
+                    self.buffer.emit("(&");
+                    self.compile_expr(scopes, *inner, inst);
+                    self.buffer.emit(")");
+                }
                 UnaryOp::Unwrap => todo!(),
                 UnaryOp::Try => todo!(),
                 UnaryOp::Sizeof => todo!(),
             },
-            ExprData::Call { func, args } => {
-                self.buffer.emit_fn_name(scopes, &func, None);
+            ExprData::Call { func, args, inst: this_inst } => {
+                self.buffer.emit_fn_name(scopes, &func, this_inst.as_ref());
 
                 self.funcs.insert((None, func));
 
@@ -402,41 +412,6 @@ impl Compiler {
                 }
                 self.buffer.emit(")");
             }
-            ExprData::MemberCall { func, this, args } => {
-                let target = &scopes.get_func(func.id).proto.params[0].ty;
-                let next_inst = this
-                    .ty
-                    .strip_references()
-                    .as_user_type()
-                    .map(|ty| (**ty).clone());
-
-                self.buffer.emit_fn_name(scopes, &func, next_inst.as_ref());
-                self.funcs.insert((next_inst, func));
-
-                self.buffer.emit("(");
-
-                let mut source_ty = &this.ty;
-                if !matches!(source_ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
-                    self.buffer.emit("&");
-                } else {
-                    while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = source_ty {
-                        if source_ty == target {
-                            break;
-                        }
-
-                        self.buffer.emit("*");
-                        source_ty = inner;
-                    }
-                }
-
-                self.compile_expr(scopes, *this, inst);
-
-                for arg in args {
-                    self.buffer.emit(", ");
-                    self.compile_expr(scopes, arg, inst);
-                }
-                self.buffer.emit(")");
-            }
             ExprData::Array(_) => todo!(),
             ExprData::ArrayWithInit { .. } => todo!(),
             ExprData::Tuple(_) => todo!(),
@@ -446,21 +421,15 @@ impl Compiler {
                     .emit(if value { "CTL(true)" } else { "CTL(false)" })
             }
             ExprData::Signed(value) => {
-                self.buffer.emit("(");
-                self.buffer.emit_type(scopes, &expr.ty);
-                self.buffer.emit(")");
+                self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(format!("{value}"));
             }
             ExprData::Unsigned(value) => {
-                self.buffer.emit("(");
-                self.buffer.emit_type(scopes, &expr.ty);
-                self.buffer.emit(")");
+                self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(format!("{value}"));
             }
             ExprData::Float(value) => {
-                self.buffer.emit("(");
-                self.buffer.emit_type(scopes, &expr.ty);
-                self.buffer.emit(")");
+                self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(value);
             }
             ExprData::String(value) => {
@@ -469,9 +438,7 @@ impl Compiler {
                 self.buffer.emit("\")");
             }
             ExprData::Char(value) => {
-                self.buffer.emit("(");
-                self.buffer.emit_type(scopes, &expr.ty);
-                self.buffer.emit(")");
+                self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(format!("{:#x}", value as u32));
             }
             ExprData::Symbol(symbol) => match symbol {
@@ -479,9 +446,8 @@ impl Compiler {
                 Symbol::Var(id) => self.buffer.emit_var_name(scopes, id),
             },
             ExprData::Instance(members) => {
-                self.buffer.emit("(");
-                self.buffer.emit_type(scopes, &expr.ty);
-                self.buffer.emit("){");
+                self.buffer.emit_cast(scopes, &expr.ty);
+                self.buffer.emit("{");
                 for (name, value) in members {
                     self.buffer.emit(format!(".{name} = "));
                     self.compile_expr(scopes, value, inst);
@@ -493,7 +459,7 @@ impl Compiler {
                     self.structs
                         .insert(GenericUserType::new(data.id, data.generics));
                 } else {
-                    panic!("ICE: Constructing instance of non-struct type!");
+                    panic!("ICE: Constructing instance of non-struct type {}!", expr.ty.name(scopes));
                 }
             }
             ExprData::None => todo!(),
@@ -517,14 +483,8 @@ impl Compiler {
             ExprData::Loop { .. } => todo!(),
             ExprData::For { .. } => todo!(),
             ExprData::Member { source, member } => {
-                self.buffer.emit("(");
-                let mut ty = &source.ty;
-                while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = ty {
-                    self.buffer.emit("*");
-                    ty = inner;
-                }
                 self.compile_expr(scopes, *source, inst);
-                self.buffer.emit(format!(").{member}"));
+                self.buffer.emit(format!(".{member}"));
             }
             ExprData::Subscript { .. } => todo!(),
             ExprData::Return(expr) => {

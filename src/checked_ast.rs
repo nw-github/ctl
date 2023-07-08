@@ -13,7 +13,7 @@ pub mod expr {
 
     use crate::{
         ast::expr::{BinaryOp, UnaryOp},
-        typecheck::{GenericFunc, Symbol, TypeId},
+        typecheck::{GenericFunc, Symbol, TypeId, GenericUserType},
     };
 
     use super::Block;
@@ -32,11 +32,7 @@ pub mod expr {
         Call {
             func: GenericFunc,
             args: Vec<CheckedExpr>,
-        },
-        MemberCall {
-            func: GenericFunc,
-            args: Vec<CheckedExpr>,
-            this: Box<CheckedExpr>,
+            inst: Option<GenericUserType>,
         },
         Instance(HashMap<String, CheckedExpr>),
         Array(Vec<CheckedExpr>),

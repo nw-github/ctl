@@ -756,7 +756,7 @@ macro_rules! type_check {
 
 macro_rules! user_type {
     ($self: expr, $scopes: expr, $id: expr, $span: expr) => {
-        $scopes.get_user_type(match $id {
+        $scopes.get_user_type(match &$id {
             TypeId::UserType(data) => data.id,
             _ => {
                 return $self.error(Error::new(
@@ -1665,10 +1665,11 @@ impl<'a> TypeChecker<'a> {
                             ty.fill_type_generics(scopes, instance);
                         }
 
+                        let id = id.clone();
                         return CheckedExpr::new(
                             ty,
                             ExprData::Member {
-                                source: source.into(),
+                                source: Self::auto_ref(source, &id).into(),
                                 member,
                             },
                         );
@@ -1777,6 +1778,41 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    fn auto_ref(mut source: CheckedExpr, target: &TypeId) -> CheckedExpr {
+        if !matches!(source.ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
+            source = CheckedExpr::new(
+                target.clone(),
+                ExprData::Unary {
+                    op: if matches!(source.ty, TypeId::Ptr(_)) {
+                        UnaryOp::Addr
+                    } else {
+                        UnaryOp::AddrMut
+                    },
+                    expr: source.into(),
+                },
+            )
+        } else {
+            #[allow(clippy::redundant_clone)]
+            let mut ty = source.ty.clone();
+            while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = &ty {
+                if &ty == target {
+                    break;
+                }
+
+                source = CheckedExpr::new(
+                    (**inner).clone(),
+                    ExprData::Unary {
+                        op: UnaryOp::Deref,
+                        expr: source.into(),
+                    },
+                );
+                ty = source.ty.clone();
+            }
+        }
+        
+        source
+    }
+
     fn check_call(
         &mut self,
         scopes: &mut Scopes,
@@ -1792,7 +1828,7 @@ impl<'a> TypeChecker<'a> {
         } = callee.data
         {
             let source = self.check_expr(scopes, *source, None);
-            let id = source.ty.strip_references();
+            let id = source.ty.strip_references().clone();
             let ty = user_type!(self, scopes, id, span);
             if let Some(func) = ty
                 .data
@@ -1836,12 +1872,13 @@ impl<'a> TypeChecker<'a> {
                         }
                     }
 
+                    let mut result = vec![Self::auto_ref(source, &this.ty)];
                     let mut func = match self.resolve_func(scopes, func, &generics, span) {
                         Ok(symbol) => symbol,
                         Err(error) => return self.error(error),
                     };
                     let params = &f.proto.params[1..].to_vec();
-                    let (args, ret) = self.check_fn_args(
+                    let (hargs, ret) = self.check_fn_args(
                         id.as_user_type().map(|inner| inner.as_ref()),
                         &mut func,
                         args,
@@ -1851,12 +1888,13 @@ impl<'a> TypeChecker<'a> {
                         span,
                     );
 
+                    result.append(&mut Self::make_positional(params, hargs));
                     return CheckedExpr::new(
                         ret,
-                        ExprData::MemberCall {
+                        ExprData::Call {
                             func,
-                            this: source.into(),
-                            args: Self::make_positional(params, args),
+                            inst: id.as_user_type().map(|ty| (**ty).clone()),
+                            args: result,
                         },
                     );
                 }
@@ -1905,6 +1943,7 @@ impl<'a> TypeChecker<'a> {
                             ExprData::Call {
                                 func: *func,
                                 args: Self::make_positional(params, args),
+                                inst: None,
                             }
                         },
                     )
