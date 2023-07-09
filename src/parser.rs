@@ -4,7 +4,7 @@ use crate::{
     ast::{
         expr::{Expr, UnaryOp},
         stmt::{self, Fn, Param, ParsedUserType, Prototype, Stmt, TypeHint},
-        Path,
+        Path, Pattern,
     },
     lexer::{Lexer, Located as L, Location, Span, Token},
     Error, Result, THIS_PARAM, THIS_TYPE,
@@ -141,6 +141,22 @@ impl<'a> Parser<'a> {
             self.expect_id_with_span("expected name")?
         };
         self.path_with_one(root, ident)
+    }
+
+    fn pattern(&mut self) -> Result<Pattern> {
+        let ty = self.parse_type()?;
+        if self.advance_if_kind(Token::LParen).is_some() {
+            // TODO: make this a pattern
+            let id = self.expect_id("expected identifier")?;
+            self.expect_kind(Token::RParen, "expected ')'")?;
+
+            Ok(Pattern {
+                ty,
+                inner: Some(id.into()),
+            })
+        } else {
+            Ok(Pattern { ty, inner: None })
+        }
     }
 
     fn comma_separated<T>(
@@ -763,7 +779,7 @@ impl<'a> Parser<'a> {
         let mut span = expr.span;
         if !(matches!(
             expr.data,
-            Expr::If { .. } | Expr::For { .. } | Expr::Block(_)
+            Expr::If { .. } | Expr::For { .. } | Expr::Block(_) | Expr::Match { .. }
         ) || matches!(expr.data, Expr::Loop { do_while, .. } if !do_while ))
         {
             span.extend_to(self.expect_kind(Token::Semicolon, "expected ';'")?.span);
@@ -866,16 +882,48 @@ impl<'a> Parser<'a> {
 
     binary!(logical_or, Token::LogicalOr, logical_and);
     binary!(logical_and, Token::LogicalAnd, comparison);
-    binary!(
-        comparison,
-        Token::RAngle
-            | Token::GtEqual
-            | Token::LAngle
-            | Token::LtEqual
-            | Token::Equal
-            | Token::NotEqual,
-        coalesce
-    );
+
+    fn comparison(&mut self) -> Result<L<Expr>> {
+        let mut expr = self.coalesce()?;
+        while let Some(op) = self.advance_if(|kind| {
+            matches!(
+                kind,
+                Token::RAngle
+                    | Token::GtEqual
+                    | Token::LAngle
+                    | Token::LtEqual
+                    | Token::Equal
+                    | Token::NotEqual
+                    | Token::Is
+            )
+        }) {
+            if op.data == Token::Is {
+                let pattern = self.pattern()?;
+                //let span = Span::combine(expr.span, pattern.span);
+                let span = expr.span;
+                expr = L::new(
+                    Expr::Is {
+                        expr: expr.into(),
+                        pattern,
+                    },
+                    span,
+                );
+            } else {
+                let right = self.coalesce()?;
+                let span = Span::combine(expr.span, right.span);
+                expr = L::new(
+                    Expr::Binary {
+                        op: op.data.try_into().unwrap(),
+                        left: expr.into(),
+                        right: right.into(),
+                    },
+                    span,
+                );
+            }
+        }
+        Ok(expr)
+    }
+
     binary!(coalesce, Token::NoneCoalesce | Token::ErrCoalesce, or);
     binary!(or, Token::Or, xor);
     binary!(xor, Token::Caret, and);
@@ -928,7 +976,7 @@ impl<'a> Parser<'a> {
                     self.comma_separated(Token::RParen, "expected ')'", |this| {
                         let mut expr = this.expression()?;
                         if let Expr::Path(path) = expr.data {
-                            if path.as_symbol().is_some()
+                            if path.as_identifier().is_some()
                                 && this.advance_if_kind(Token::Colon).is_some()
                             {
                                 return Ok((
@@ -1170,6 +1218,28 @@ impl<'a> Parser<'a> {
                         body,
                     },
                     Span::combine(token.span, span),
+                )
+            }
+            Token::Match => {
+                let expr = self.expression()?;
+                self.expect_kind(Token::LCurly, "expected block")?;
+                let mut body = Vec::new();
+                let span = self.advance_until(Token::RCurly, token.span, |this| {
+                    let pattern = this.pattern()?;
+                    this.expect_kind(Token::FatArrow, "expected '=>'")?;
+                    let expr = this.expression()?;
+                    this.expect_kind(Token::Comma, "expected ','")?;
+
+                    body.push((pattern, expr));
+                    Ok(())
+                })?;
+
+                L::new(
+                    Expr::Match {
+                        expr: expr.into(),
+                        body,
+                    },
+                    span,
                 )
             }
             Token::LBrace => {

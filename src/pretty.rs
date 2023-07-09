@@ -343,6 +343,20 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
             print_stmts(body, src, indent + 2);
         }
         Expr::Void => println!("{tabs}Void"),
+        Expr::Is { expr, pattern } => {
+            println!("{tabs}Is ({pattern:?})");
+            print_expr(expr, src, indent + 1);
+        }
+        Expr::Match { expr, body } => {
+            println!("{tabs}Match");
+            print_expr(expr, src, indent + 1);
+
+            let tabs = INDENT.repeat(indent + 1);
+            for (i, (patt, expr)) in body.iter().enumerate() {
+                println!("{tabs}Case {i} ({patt:?}):");
+                print_expr(expr, src, indent + 2);
+            }
+        }
     }
 }
 

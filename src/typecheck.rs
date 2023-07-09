@@ -1775,6 +1775,8 @@ impl<'a> TypeChecker<'a> {
 
                 CheckedExpr::new(TypeId::Never, ExprData::Continue)
             }
+            Expr::Is { expr, pattern } => todo!(),
+            Expr::Match { expr, body } => todo!(),
         }
     }
 
@@ -2192,7 +2194,7 @@ impl<'a> TypeChecker<'a> {
             TypeHint::Regular { path, .. } => {
                 return Self::resolve_type_path(scopes, &path.data, path.span)?
                     .or_else(|| {
-                        path.data.as_symbol().and_then(|symbol| match symbol {
+                        path.data.as_identifier().and_then(|symbol| match symbol {
                             symbol if symbol == THIS_TYPE => scopes.this_type(),
                             "void" => Some(TypeId::Void),
                             "never" => Some(TypeId::Never),

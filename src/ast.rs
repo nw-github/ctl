@@ -21,10 +21,16 @@ impl From<String> for Path {
 }
 
 impl Path {
-    pub fn as_symbol(&self) -> Option<&str> {
+    pub fn as_identifier(&self) -> Option<&str> {
         (self.components.len() == 1 && self.components[0].1.is_empty())
             .then_some(&self.components[0].0)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct Pattern {
+    pub ty: TypeHint,
+    pub inner: Option<String>,
 }
 
 pub mod expr {
@@ -32,7 +38,7 @@ pub mod expr {
 
     use crate::lexer::Token;
 
-    use super::{stmt::TypeHint, Path};
+    use super::{stmt::TypeHint, Path, Pattern};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
     pub enum BinaryOp {
@@ -163,6 +169,10 @@ pub mod expr {
             left: Box<super::Expr>,
             right: Box<super::Expr>,
         },
+        Is {
+            expr: Box<super::Expr>,
+            pattern: Pattern,
+        },
         Unary {
             op: UnaryOp,
             expr: Box<super::Expr>,
@@ -210,6 +220,10 @@ pub mod expr {
             var: String,
             iter: Box<super::Expr>,
             body: Vec<super::Stmt>,
+        },
+        Match {
+            expr: Box<super::Expr>,
+            body: Vec<(Pattern, super::Expr)>,
         },
         Member {
             source: Box<super::Expr>,
