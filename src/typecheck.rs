@@ -496,9 +496,19 @@ pub struct Member {
 #[derive(Debug, EnumAsInner)]
 pub enum UserTypeData {
     Struct(Vec<(String, Member)>),
+    Union(Vec<(String, Member)>),
     Enum,
     FuncGeneric(usize),
     StructGeneric(usize),
+}
+
+impl UserTypeData {
+    pub fn members(&self) -> Option<&[(String, Member)]> {
+        match self {
+            UserTypeData::Struct(members) | UserTypeData::Union(members) => Some(members),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -808,13 +818,13 @@ impl<'a> TypeChecker<'a> {
                     let mut params = Vec::with_capacity(base.members.len());
                     let mut members = Vec::with_capacity(base.members.len());
                     for (name, member) in base.members.iter() {
-                        let target =
-                            Self::fd_resolve_type(scopes, &member.ty).unwrap_or(TypeId::Unknown);
                         members.push((
                             name.clone(),
                             Member {
                                 public: member.public,
-                                ty: target.clone(),
+                                ty: Self::fd_resolve_type(scopes, &member.ty)
+                                    .unwrap_or(TypeId::Unknown)
+                                    .clone(),
                             },
                         ));
 
@@ -900,7 +910,103 @@ impl<'a> TypeChecker<'a> {
                         },
                     )
                 }
-                ParsedUserType::Union { .. } => todo!(),
+                ParsedUserType::Union { tag, base } => {
+                    let mut members = Vec::with_capacity(base.members.len());
+                    for (name, member) in base.members.iter() {
+                        members.push((
+                            name.clone(),
+                            Member {
+                                public: member.public,
+                                ty: Self::fd_resolve_type(scopes, &member.ty)
+                                    .unwrap_or(TypeId::Unknown)
+                                    .clone(),
+                            },
+                        ));
+                    }
+
+                    let self_id = scopes.insert_user_type(UserType {
+                        name: base.name.clone(),
+                        public: base.public,
+                        body_scope: ScopeId(0),
+                        data: UserTypeData::Union(members),
+                        type_params: base.type_params.clone(),
+                    });
+                    scopes.enter(
+                        Some(base.name.clone()),
+                        ScopeKind::UserType(self_id),
+                        |scopes| {
+                            scopes.get_user_type_mut(self_id).body_scope = scopes.current_id();
+
+                            for (i, param) in base.type_params.iter().enumerate() {
+                                scopes.insert_user_type(UserType {
+                                    public: false,
+                                    name: param.clone(),
+                                    body_scope: scopes.current_id(),
+                                    data: UserTypeData::StructGeneric(i),
+                                    type_params: Vec::new(),
+                                });
+                            }
+
+                            for (name, member) in base.members.iter() {
+                                // TODO: generic params
+                                self.forward_declare_fn(
+                                    scopes,
+                                    scopes.current_id(),
+                                    true,
+                                    &Fn {
+                                        proto: Prototype {
+                                            public: true,
+                                            name: name.clone(),
+                                            is_async: false,
+                                            is_extern: false,
+                                            type_params: base.type_params.clone(),
+                                            params: vec![Param {
+                                                mutable: false,
+                                                keyword: false,
+                                                name: name.clone(),
+                                                ty: member.ty.clone(),
+                                                default: None,
+                                            }],
+                                            ret: TypeHint::Regular {
+                                                is_dyn: false,
+                                                path: Located::new(
+                                                    Path {
+                                                        components: vec![(
+                                                            base.name.clone(),
+                                                            if base.type_params.is_empty() {
+                                                                Vec::new()
+                                                            } else {
+                                                                base.type_params
+                                                                    .iter()
+                                                                    .map(|name| TypeHint::Regular {
+                                                                        is_dyn: false,
+                                                                        path: Located::new(
+                                                                            Path::from(
+                                                                                name.clone(),
+                                                                            ),
+                                                                            stmt.span,
+                                                                        ),
+                                                                    })
+                                                                    .collect()
+                                                            },
+                                                        )],
+                                                        root: false,
+                                                    },
+                                                    stmt.span,
+                                                ),
+                                            },
+                                        },
+                                        body: Vec::new(),
+                                    },
+                                );
+                            }
+
+                            for f in base.functions.iter() {
+                                self.forward_declare_fn(scopes, scopes.current_id(), false, f);
+                            }
+                        },
+                    )
+                }
                 ParsedUserType::Interface { .. } => todo!(),
                 ParsedUserType::Enum {
                     public,
@@ -1087,7 +1193,41 @@ impl<'a> TypeChecker<'a> {
                     });
                     CheckedStmt::None
                 }
-                ParsedUserType::Union { .. } => todo!(),
+                ParsedUserType::Union { tag, base } => {
+                    let self_id = scopes.find_user_type(&base.name).unwrap();
+                    scopes.enter_id(scopes.get_user_type(self_id).body_scope, |scopes| {
+                        for i in 0..base.members.len() {
+                            resolve_forward_declare!(
+                                self,
+                                scopes,
+                                scopes
+                                    .get_user_type_mut(self_id)
+                                    .data
+                                    .as_union_mut()
+                                    .unwrap()[i]
+                                    .1
+                                    .ty,
+                                &base.members[i].1.ty
+                            );
+                        }
+
+                        for (name, member) in base.members.iter() {
+                            let init = scopes.find_func(name).unwrap();
+                            resolve_forward_declare!(
+                                self,
+                                scopes,
+                                scopes.get_func_mut(init).proto.params[0].ty,
+                                &member.ty
+                            );
+                        }
+
+                        for f in base.functions {
+                            self.check_fn(scopes, f);
+                        }
+                    });
+
+                    CheckedStmt::None
+                }
                 ParsedUserType::Interface { .. } => todo!(),
                 ParsedUserType::Enum {
                     name,
@@ -1811,7 +1951,7 @@ impl<'a> TypeChecker<'a> {
                 ty = source.ty.clone();
             }
         }
-        
+
         source
     }
 
@@ -1914,22 +2054,19 @@ impl<'a> TypeChecker<'a> {
                     let constructor = f.constructor;
                     if constructor {
                         let ret = f.proto.ret.clone();
-                        let st = scopes.get_user_type(ret.as_user_type().unwrap().id);
-                        if st
-                            .data
-                            .as_struct()
-                            .unwrap()
-                            .iter()
-                            .any(|member| !member.1.public)
-                            && !scopes.is_sub_scope(st.scope)
-                        {
-                            return CheckedExpr::new(
-                                ret,
-                                self.error(Error::new(
-                                    "cannot construct type with private members",
-                                    span,
-                                )),
-                            );
+                        let ut = scopes.get_user_type(ret.as_user_type().unwrap().id);
+                        if let Some(st) = ut.data.as_struct() {
+                            if st.iter().any(|member| !member.1.public)
+                                && !scopes.is_sub_scope(ut.scope)
+                            {
+                                return CheckedExpr::new(
+                                    ret,
+                                    self.error(Error::new(
+                                        "cannot construct type with private members",
+                                        span,
+                                    )),
+                                );
+                            }
                         }
                     }
 

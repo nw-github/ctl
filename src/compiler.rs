@@ -8,7 +8,9 @@ use crate::{
         Block,
     },
     lexer::{Location, Span},
-    typecheck::{CheckedAst, GenericFunc, GenericUserType, Scopes, Symbol, TypeId, VariableId},
+    typecheck::{
+        CheckedAst, GenericFunc, GenericUserType, Scopes, Symbol, TypeId, UserTypeData, VariableId,
+    },
     Error,
 };
 
@@ -49,10 +51,19 @@ impl Buffer {
             TypeId::Option(_) => todo!(),
             TypeId::Func(_) => todo!(),
             TypeId::UserType(ut) => {
-                if scopes.get_user_type(ut.id).data.is_struct() {
-                    self.emit("struct ");
-                    self.emit_type_name(scopes, ut);
+                match scopes.get_user_type(ut.id).data {
+                    UserTypeData::Struct(_) => {
+                        self.emit("struct ");
+                        self.emit_type_name(scopes, ut);
+                    }
+                    UserTypeData::Union(_) => {
+                        // TODO: unsafe union
+                        self.emit("struct ");
+                        self.emit_type_name(scopes, ut);
+                    }
+                    _ => todo!(),
                 }
+                if scopes.get_user_type(ut.id).data.is_struct() {}
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
@@ -397,7 +408,11 @@ impl Compiler {
                 UnaryOp::Try => todo!(),
                 UnaryOp::Sizeof => todo!(),
             },
-            ExprData::Call { func, args, inst: this_inst } => {
+            ExprData::Call {
+                func,
+                args,
+                inst: this_inst,
+            } => {
                 self.buffer.emit_fn_name(scopes, &func, this_inst.as_ref());
 
                 self.funcs.insert((None, func));
@@ -450,6 +465,18 @@ impl Compiler {
                 self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit("{");
                 for (name, value) in members {
+                    if let Some(members) = expr
+                        .ty
+                        .as_user_type()
+                        .and_then(|ut| scopes.get_user_type(ut.id).data.as_union())
+                    {
+                        // union instances only have one member
+                        self.buffer.emit(format!(
+                            ".$tag = {},",
+                            members.iter().position(|(n, _)| &name == n).unwrap()
+                        ));
+                    }
+
                     self.buffer.emit(format!(".{name} = "));
                     self.compile_expr(scopes, value, inst);
                     self.buffer.emit(", ");
@@ -460,7 +487,10 @@ impl Compiler {
                     self.structs
                         .insert(GenericUserType::new(data.id, data.generics));
                 } else {
-                    panic!("ICE: Constructing instance of non-struct type {}!", expr.ty.name(scopes));
+                    panic!(
+                        "ICE: Constructing instance of non-struct type {}!",
+                        expr.ty.name(scopes)
+                    );
                 }
             }
             ExprData::None => todo!(),
@@ -530,7 +560,13 @@ impl Compiler {
             self.buffer.emit("struct ");
             self.buffer.emit_type_name(scopes, ut);
             self.buffer.emit("{");
-            for (name, member) in scopes.get_user_type(ut.id).data.as_struct().unwrap().iter() {
+
+            let union = scopes.get_user_type(ut.id).data.is_union();
+            if union {
+                self.buffer.emit("CTL(u8) $tag; union {");
+            }
+
+            for (name, member) in scopes.get_user_type(ut.id).data.members().unwrap() {
                 let mut ty = member.ty.clone();
                 ty.fill_type_generics(scopes, ut);
 
@@ -540,6 +576,10 @@ impl Compiler {
                 if !member.public {
                     self.buffer.emit("/* private */ \n")
                 }
+            }
+
+            if union {
+                self.buffer.emit("};");
             }
 
             self.buffer.emit("};");
@@ -617,7 +657,7 @@ impl Compiler {
         self.buffer.emit(";");
 
         let mut deps = Vec::new();
-        for (_, member) in scopes.get_user_type(ut.id).data.as_struct().unwrap().iter() {
+        for (_, member) in scopes.get_user_type(ut.id).data.members().unwrap().iter() {
             let mut ty = member.ty.clone();
             ty.fill_type_generics(scopes, &ut);
 
