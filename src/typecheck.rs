@@ -895,20 +895,16 @@ impl<'a> TypeChecker<'a> {
                                                 Path {
                                                     components: vec![(
                                                         base.name.clone(),
-                                                        if base.type_params.is_empty() {
-                                                            Vec::new()
-                                                        } else {
-                                                            base.type_params
-                                                                .iter()
-                                                                .map(|name| TypeHint::Regular {
-                                                                    is_dyn: false,
-                                                                    path: Located::new(
-                                                                        Path::from(name.clone()),
-                                                                        stmt.span,
-                                                                    ),
-                                                                })
-                                                                .collect()
-                                                        },
+                                                        base.type_params
+                                                            .iter()
+                                                            .map(|name| TypeHint::Regular {
+                                                                is_dyn: false,
+                                                                path: Located::new(
+                                                                    Path::from(name.clone()),
+                                                                    stmt.span,
+                                                                ),
+                                                            })
+                                                            .collect(),
                                                     )],
                                                     root: false,
                                                 },
@@ -989,22 +985,16 @@ impl<'a> TypeChecker<'a> {
                                                     Path {
                                                         components: vec![(
                                                             base.name.clone(),
-                                                            if base.type_params.is_empty() {
-                                                                Vec::new()
-                                                            } else {
-                                                                base.type_params
-                                                                    .iter()
-                                                                    .map(|name| TypeHint::Regular {
-                                                                        is_dyn: false,
-                                                                        path: Located::new(
-                                                                            Path::from(
-                                                                                name.clone(),
-                                                                            ),
-                                                                            stmt.span,
-                                                                        ),
-                                                                    })
-                                                                    .collect()
-                                                            },
+                                                            base.type_params
+                                                                .iter()
+                                                                .map(|name| TypeHint::Regular {
+                                                                    is_dyn: false,
+                                                                    path: Located::new(
+                                                                        Path::from(name.clone()),
+                                                                        stmt.span,
+                                                                    ),
+                                                                })
+                                                                .collect(),
                                                         )],
                                                         root: false,
                                                     },
@@ -1282,40 +1272,34 @@ impl<'a> TypeChecker<'a> {
                         let value = self.check_expr(scopes, value, Some(&ty));
                         type_check!(self, scopes, &value.ty, &ty, span);
 
-                        CheckedStmt::Let(
-                            scopes.insert_var(Variable {
-                                public: false,
-                                name,
-                                ty,
-                                is_static: false,
-                                mutable,
-                                value: Some(value),
-                            }),
-                        )
-                    } else {
-                        CheckedStmt::Let(
-                            scopes.insert_var(Variable {
-                                public: false,
-                                name,
-                                ty,
-                                is_static: false,
-                                mutable,
-                                value: None,
-                            }),
-                        )
-                    }
-                } else if let Some(value) = value {
-                    let value = self.check_expr(scopes, value, None);
-                    CheckedStmt::Let(
-                        scopes.insert_var(Variable {
+                        CheckedStmt::Let(scopes.insert_var(Variable {
                             public: false,
                             name,
-                            ty: value.ty.clone(),
+                            ty,
                             is_static: false,
                             mutable,
                             value: Some(value),
-                        }),
-                    )
+                        }))
+                    } else {
+                        CheckedStmt::Let(scopes.insert_var(Variable {
+                            public: false,
+                            name,
+                            ty,
+                            is_static: false,
+                            mutable,
+                            value: None,
+                        }))
+                    }
+                } else if let Some(value) = value {
+                    let value = self.check_expr(scopes, value, None);
+                    CheckedStmt::Let(scopes.insert_var(Variable {
+                        public: false,
+                        name,
+                        ty: value.ty.clone(),
+                        is_static: false,
+                        mutable,
+                        value: Some(value),
+                    }))
                 } else {
                     return self.error(Error::new("cannot infer type", stmt.span));
                 }
@@ -2016,20 +2000,22 @@ impl<'a> TypeChecker<'a> {
             );
         };
 
+        let mut ty = member.ty.clone();
+        ty.fill_type_generics(scopes, ut);
         let tag = union.variant_tag(&name).unwrap();
         if let Some((mutable, binding)) = pattern.binding {
             (
                 Some(Variable {
                     public: false,
                     name: binding,
-                    ty: member.ty.clone(),
+                    ty,
                     is_static: false,
                     mutable,
                     value: None,
                 }),
                 (name, tag),
             )
-        } else if member.ty.is_void() {
+        } else if ty.is_void() {
             (None, (name, tag))
         } else {
             self.error(Error::new(
