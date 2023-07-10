@@ -1,4 +1,4 @@
-use std::iter::Peekable;
+use std::{iter::Peekable, path::PathBuf};
 
 use crate::{
     ast::{
@@ -32,21 +32,27 @@ macro_rules! binary {
     };
 }
 
+pub struct ParsedFile {
+    pub ast: L<Stmt>,
+    pub errors: Vec<Error>,
+    pub path: PathBuf,
+}
+
 pub struct Parser<'a> {
     lexer: Peekable<Lexer<'a>>,
-    src: &'a str,
+    len: usize,
 }
 
 impl<'a> Parser<'a> {
     fn new(src: &'a str) -> Self {
         Self {
             lexer: Lexer::new(src).peekable(),
-            src,
+            len: src.len(),
         }
     }
 
-    pub fn parse(src: &'a str, module: String) -> (L<Stmt>, Vec<Error>) {
-        let mut this = Self::new(src);
+    pub fn parse(buffer: &'a str, path: PathBuf) -> std::io::Result<ParsedFile> {
+        let mut this = Self::new(buffer);
         let mut stmts = Vec::new();
         let mut errors = Vec::new();
         while this.lexer.peek().is_some() {
@@ -59,11 +65,11 @@ impl<'a> Parser<'a> {
             }
         }
 
-        (
-            L::new(
+        Ok(ParsedFile {
+            ast: L::new(
                 Stmt::Module {
                     public: true,
-                    name: module,
+                    name: crate::derive_module_name(&path),
                     body: stmts,
                 },
                 Span {
@@ -72,11 +78,12 @@ impl<'a> Parser<'a> {
                         col: 1,
                         pos: 0,
                     },
-                    len: src.len(),
+                    len: buffer.len(),
                 },
             ),
             errors,
-        )
+            path,
+        })
     }
 
     fn synchronize(&mut self) {
@@ -1339,7 +1346,7 @@ impl<'a> Parser<'a> {
                     loc: Location {
                         row: 0,
                         col: 0,
-                        pos: self.src.len(),
+                        pos: self.len,
                     },
                     len: 0,
                 },

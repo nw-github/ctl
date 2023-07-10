@@ -20,10 +20,8 @@ struct Arguments {
 
 fn main() -> anyhow::Result<()> {
     let args = Arguments::parse();
-
-    let buffer = std::fs::read_to_string(&args.input)?;
-    let result = Pipeline::new(&buffer, args.input.clone())
-        .parse()
+    let result = Pipeline::new(args.input.clone())
+        .parse()?
         .inspect(|ast| {
             if args.dump_ast {
                 ast.dump()
@@ -59,8 +57,10 @@ fn main() -> anyhow::Result<()> {
         }
         Err(errors) => {
             eprintln!("Compilation failed: ");
-            for err in errors {
-                err.display(args.input.to_string_lossy().as_ref());
+            for (file, errors) in errors {
+                for err in errors {
+                    err.display(&file.to_string_lossy());
+                }
             }
 
             std::process::exit(1);

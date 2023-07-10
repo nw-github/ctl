@@ -8,7 +8,9 @@ use crate::{
         Block,
     },
     lexer::{Location, Span},
-    typecheck::{CheckedAst, GenericFunc, GenericUserType, Scopes, Symbol, TypeId, VariableId, Variable},
+    typecheck::{
+        GenericFunc, GenericUserType, ScopeId, Scopes, Symbol, TypeId, Variable, VariableId,
+    },
     Error,
 };
 
@@ -181,12 +183,7 @@ impl Buffer {
         self.emit(")");
     }
 
-    fn emit_local_decl(
-        &mut self,
-        scopes: &Scopes,
-        inst: Option<&GenericUserType>,
-        var: &Variable,
-    ) {
+    fn emit_local_decl(&mut self, scopes: &Scopes, inst: Option<&GenericUserType>, var: &Variable) {
         let mut ty = var.ty.clone();
         if let Some(inst) = inst {
             ty.fill_type_generics(scopes, inst);
@@ -209,9 +206,8 @@ pub struct Compiler {
 }
 
 impl Compiler {
-    pub fn compile(ast: CheckedAst) -> Result<String, Error> {
-        let main_module = ast.scopes.scopes()[0].children.iter().next().unwrap();
-        let Some(main) = ast.scopes.find_func_in("main", *main_module.1) else {
+    pub fn compile(scope: ScopeId, scopes: &Scopes) -> Result<String, Error> {
+        let Some(main) = scopes.find_func_in("main", scope) else {
             return Err(Error::new(
                 "no main function found",
                 Span {
@@ -238,17 +234,16 @@ impl Compiler {
             emitted.extend(this.funcs.drain());
 
             for (inst, func) in diff {
-                if ast.scopes.get_func(func.id).proto.is_extern {
+                if scopes.get_func(func.id).proto.is_extern {
                     prototypes.emit("extern ");
                 }
 
-                prototypes.emit_prototype(&ast.scopes, &func, inst.as_ref());
+                prototypes.emit_prototype(scopes, &func, inst.as_ref());
                 prototypes.emit(";");
 
-                if let Some(body) = ast.scopes.get_func(func.id).body.clone() {
-                    this.buffer
-                        .emit_prototype(&ast.scopes, &func, inst.as_ref());
-                    this.emit_block(&ast.scopes, body, inst.as_ref());
+                if let Some(body) = scopes.get_func(func.id).body.clone() {
+                    this.buffer.emit_prototype(scopes, &func, inst.as_ref());
+                    this.emit_block(scopes, body, inst.as_ref());
                 }
             }
         }
@@ -256,18 +251,18 @@ impl Compiler {
         let functions = std::mem::take(&mut this.buffer);
 
         this.buffer.emit("#include <runtime/ctl.h>\n");
-        this.emit_structs(&ast.scopes)?;
+        this.emit_structs(scopes)?;
         this.buffer.emit(prototypes.0);
 
         let mut statics = Vec::new();
-        for scope in ast.scopes.scopes().iter() {
+        for scope in scopes.scopes().iter() {
             for &id in scope.vars.iter() {
-                let var = ast.scopes.get_var(id);
+                let var = scopes.get_var(id);
                 if var.is_static {
                     this.buffer.emit("static ");
-                    this.buffer.emit_type(&ast.scopes, &var.ty);
+                    this.buffer.emit_type(scopes, &var.ty);
                     this.buffer.emit(" ");
-                    this.buffer.emit_var_name(&ast.scopes, id);
+                    this.buffer.emit_var_name(scopes, id);
                     this.buffer.emit(";");
 
                     statics.push(id);
@@ -281,13 +276,9 @@ impl Compiler {
         if static_init {
             this.buffer.emit(format!("void {RT_STATIC_INIT}() {{"));
             for id in statics {
-                this.buffer.emit_var_name(&ast.scopes, id);
+                this.buffer.emit_var_name(scopes, id);
                 this.buffer.emit(" = ");
-                this.compile_expr(
-                    &ast.scopes,
-                    ast.scopes.get_var(id).value.clone().unwrap(),
-                    None,
-                );
+                this.compile_expr(scopes, scopes.get_var(id).value.clone().unwrap(), None);
                 this.buffer.emit(";");
             }
             this.buffer.emit("}");
@@ -301,7 +292,7 @@ impl Compiler {
             this.buffer.emit(format!("{RT_STATIC_INIT}();"));
         }
         this.buffer.emit("return ");
-        this.buffer.emit_fn_name(&ast.scopes, &main, None);
+        this.buffer.emit_fn_name(scopes, &main, None);
         this.buffer.emit("(); }");
 
         Ok(this.buffer.0)
@@ -309,8 +300,8 @@ impl Compiler {
 
     fn compile_stmt(&mut self, scopes: &Scopes, stmt: CheckedStmt, inst: Option<&GenericUserType>) {
         match stmt {
-            CheckedStmt::Module { body, .. } => {
-                for stmt in body.body.into_iter() {
+            CheckedStmt::Module(block) => {
+                for stmt in block.body.into_iter() {
                     self.compile_stmt(scopes, stmt, inst);
                 }
             }
@@ -552,8 +543,10 @@ impl Compiler {
                     ));
 
                     if let Some(id) = pattern.binding {
-                        self.buffer.emit_local_decl(scopes, inst, scopes.get_var(id));
-                        self.buffer.emit(format!(" = {tmp_name}.{};", pattern.variant.0));
+                        self.buffer
+                            .emit_local_decl(scopes, inst, scopes.get_var(id));
+                        self.buffer
+                            .emit(format!(" = {tmp_name}.{};", pattern.variant.0));
                     }
 
                     // FIXME: match yields values

@@ -113,10 +113,7 @@ pub mod stmt {
     pub enum CheckedStmt {
         Expr(CheckedExpr),
         Let(VariableId),
-        Module {
-            name: String,
-            body: Block,
-        },
+        Module(Block),
         None,
         #[default]
         Error,

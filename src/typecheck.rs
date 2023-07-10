@@ -1,4 +1,7 @@
-use std::collections::{hash_map::Entry, HashMap};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    path::PathBuf,
+};
 
 use concat_idents::concat_idents;
 use derive_more::{Constructor, Deref, DerefMut, From};
@@ -16,6 +19,7 @@ use crate::{
         Block, UnionPattern,
     },
     lexer::{Located, Span},
+    parser::ParsedFile,
     Error, THIS_PARAM, THIS_TYPE,
 };
 
@@ -746,11 +750,6 @@ impl Default for Scopes {
     }
 }
 
-pub struct CheckedAst {
-    pub scopes: Scopes,
-    pub stmt: CheckedStmt,
-}
-
 macro_rules! type_mismatch {
     ($scopes: expr, $expected: expr, $actual: expr, $span: expr) => {
         Error::new(
@@ -802,22 +801,63 @@ macro_rules! resolve_forward_declare {
     };
 }
 
-pub struct TypeChecker<'a> {
-    errors: Vec<Error>,
-    src: &'a str,
+pub struct Module {
+    pub scopes: Scopes,
+    pub errors: Vec<(PathBuf, Vec<Error>)>,
+    pub scope: ScopeId,
 }
 
-impl<'a> TypeChecker<'a> {
-    pub fn check(stmt: Located<Stmt>, src: &'a str) -> (CheckedAst, Vec<Error>) {
-        // we depend on parser wrapping up the generated code in a Stmt::Module
-        let mut this = Self {
-            errors: vec![],
-            src,
-        };
+pub struct TypeChecker {
+    errors: Vec<Error>,
+}
+
+impl TypeChecker {
+    pub fn check(path: &std::path::Path, module: Vec<ParsedFile>) -> Module {
+        let mut this = Self { errors: vec![] };
         let mut scopes = Scopes::new();
-        this.forward_declare(&mut scopes, &stmt);
-        let stmt = this.check_stmt(&mut scopes, stmt);
-        (CheckedAst { scopes, stmt }, this.errors)
+        let mut errors = Vec::new();
+
+        let project = crate::derive_module_name(path);
+        let scope = scopes.enter(Some(project.clone()), ScopeKind::Module(true), |scopes| {
+            for file in module.iter() {
+                match &file.ast.data {
+                    Stmt::Module { name, body, .. } if name == &project => {
+                        for stmt in body {
+                            this.forward_declare(scopes, stmt);
+                        }
+                    }
+                    _ => {
+                        this.forward_declare(scopes, &file.ast);
+                    }
+                }
+            }
+    
+            for mut file in module {
+                match file.ast.data {
+                    Stmt::Module { name, body, .. } if name == project => {
+                        for stmt in body {
+                            this.check_stmt(scopes, stmt);
+                        }
+                    }
+                    _ => {
+                        this.check_stmt(scopes, file.ast);
+                    }
+                }
+    
+                file.errors.append(&mut this.errors);
+                if !file.errors.is_empty() {
+                    errors.push((file.path, std::mem::take(&mut file.errors)));
+                }
+            }
+
+            scopes.current_id()
+        });
+
+        Module {
+            scopes,
+            errors,
+            scope,
+        }
     }
 
     fn forward_declare(&mut self, scopes: &mut Scopes, stmt: &Located<Stmt>) {
@@ -1144,16 +1184,15 @@ impl<'a> TypeChecker<'a> {
                 public: _,
                 name,
                 body,
-            } => CheckedStmt::Module {
-                name: name.clone(),
-                body: scopes.find_enter(&name, |scopes| Block {
+            } => CheckedStmt::Module(scopes.find_enter(&name, |scopes| {
+                Block {
                     body: body
                         .into_iter()
                         .map(|stmt| self.check_stmt(scopes, stmt))
                         .collect(),
                     scope: scopes.current_id(),
-                }),
-            },
+                }
+            })),
             Stmt::UserType(data) => match data {
                 ParsedUserType::Struct(base) => {
                     let self_id = scopes.find_user_type(&base.name).unwrap();
@@ -1633,10 +1672,7 @@ impl<'a> TypeChecker<'a> {
                     ExprData::Symbol(Symbol::Func(id)),
                 ),
                 Err(err) => self.error(err),
-                Ok(None) => self.error(Error::new(
-                    format!("'{}' not found in this scope", span.text(self.src)),
-                    span,
-                )),
+                Ok(None) => self.error(Error::new("type not found in this scope", span)),
             },
             Expr::Assign {
                 target: lhs,
@@ -2476,10 +2512,9 @@ impl<'a> TypeChecker<'a> {
     fn resolve_type(&mut self, scopes: &Scopes, ty: &TypeHint) -> TypeId {
         Self::fd_resolve_type(scopes, ty).unwrap_or_else(|err| match err {
             ResolveError::Error(err) => self.error(err),
-            ResolveError::Path(name) => self.error(Error::new(
-                format!("undefined type '{}'", name.span.text(self.src)),
-                name.span,
-            )),
+            ResolveError::Path(name) => {
+                self.error(Error::new("undefined type", name.span))
+            }
         })
     }
 
