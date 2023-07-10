@@ -147,15 +147,16 @@ impl<'a> Parser<'a> {
         let ty = self.parse_type()?;
         if self.advance_if_kind(Token::LParen).is_some() {
             // TODO: make this a pattern
+            let mutable = self.advance_if_kind(Token::Mut);
             let id = self.expect_id("expected identifier")?;
             self.expect_kind(Token::RParen, "expected ')'")?;
 
             Ok(Pattern {
                 ty,
-                inner: Some(id.into()),
+                binding: Some((mutable.is_some(), id.into())),
             })
         } else {
-            Ok(Pattern { ty, inner: None })
+            Ok(Pattern { ty, binding: None })
         }
     }
 
@@ -232,9 +233,9 @@ impl<'a> Parser<'a> {
     fn parse_type(&mut self) -> Result<TypeHint> {
         if self.advance_if_kind(Token::Asterisk).is_some() {
             if self.advance_if_kind(Token::Mut).is_some() {
-                return Ok(TypeHint::RefMut(self.parse_type()?.into()));
+                return Ok(TypeHint::MutPtr(self.parse_type()?.into()));
             } else {
-                return Ok(TypeHint::Ref(self.parse_type()?.into()));
+                return Ok(TypeHint::Ptr(self.parse_type()?.into()));
             }
         } else if self.advance_if_kind(Token::Question).is_some() {
             return Ok(TypeHint::Option(self.parse_type()?.into()));

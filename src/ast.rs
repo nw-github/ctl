@@ -30,7 +30,7 @@ impl Path {
 #[derive(Debug, Clone)]
 pub struct Pattern {
     pub ty: TypeHint,
-    pub inner: Option<String>,
+    pub binding: Option<(bool, String)>,
 }
 
 pub mod expr {
@@ -260,8 +260,8 @@ pub mod stmt {
         Map(Box<TypeHint>, Box<TypeHint>),
         Option(Box<TypeHint>),
         Result(Box<TypeHint>, Box<TypeHint>),
-        Ref(Box<TypeHint>),
-        RefMut(Box<TypeHint>),
+        Ptr(Box<TypeHint>),
+        MutPtr(Box<TypeHint>),
         Void,
         This,
         MutThis,

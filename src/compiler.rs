@@ -8,13 +8,12 @@ use crate::{
         Block,
     },
     lexer::{Location, Span},
-    typecheck::{
-        CheckedAst, GenericFunc, GenericUserType, Scopes, Symbol, TypeId, UserTypeData, VariableId,
-    },
+    typecheck::{CheckedAst, GenericFunc, GenericUserType, Scopes, Symbol, TypeId, VariableId, Variable},
     Error,
 };
 
 const RT_STATIC_INIT: &str = "CTL_init_statics";
+const UNION_TAG_NAME: &str = "$tag";
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 struct Buffer(String);
@@ -51,19 +50,7 @@ impl Buffer {
             TypeId::Option(_) => todo!(),
             TypeId::Func(_) => todo!(),
             TypeId::UserType(ut) => {
-                match scopes.get_user_type(ut.id).data {
-                    UserTypeData::Struct(_) => {
-                        self.emit("struct ");
-                        self.emit_type_name(scopes, ut);
-                    }
-                    UserTypeData::Union(_) => {
-                        // TODO: unsafe union
-                        self.emit("struct ");
-                        self.emit_type_name(scopes, ut);
-                    }
-                    _ => todo!(),
-                }
-                if scopes.get_user_type(ut.id).data.is_struct() {}
+                self.emit_type_name(scopes, ut);
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
@@ -106,9 +93,7 @@ impl Buffer {
             }
             TypeId::Func(_) => todo!(),
             TypeId::UserType(ut) => {
-                if scopes.get_user_type(ut.id).data.is_struct() {
-                    self.emit_type_name(scopes, ut);
-                }
+                self.emit_type_name(scopes, ut);
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
             TypeId::Array(_) => todo!(),
@@ -195,6 +180,24 @@ impl Buffer {
         }
         self.emit(")");
     }
+
+    fn emit_local_decl(
+        &mut self,
+        scopes: &Scopes,
+        inst: Option<&GenericUserType>,
+        var: &Variable,
+    ) {
+        let mut ty = var.ty.clone();
+        if let Some(inst) = inst {
+            ty.fill_type_generics(scopes, inst);
+        }
+
+        self.emit_type(scopes, &ty);
+        if !var.mutable {
+            self.emit(" const");
+        }
+        self.emit(format!(" {}", var.name));
+    }
 }
 
 #[derive(Default)]
@@ -202,6 +205,7 @@ pub struct Compiler {
     buffer: Buffer,
     structs: HashSet<GenericUserType>,
     funcs: HashSet<(Option<GenericUserType>, GenericFunc)>,
+    tmpnum: usize,
 }
 
 impl Compiler {
@@ -314,19 +318,9 @@ impl Compiler {
                 self.compile_expr(scopes, expr, inst);
                 self.buffer.emit(";");
             }
-            CheckedStmt::Let(name, id) => {
+            CheckedStmt::Let(id) => {
                 let var = scopes.get_var(id);
-                let mut ty = var.ty.clone();
-                if let Some(inst) = inst {
-                    ty.fill_type_generics(scopes, inst);
-                }
-
-                self.buffer.emit_type(scopes, &ty);
-                if !var.mutable {
-                    self.buffer.emit(" const ");
-                }
-                self.buffer.emit(format!(" {name}"));
-
+                self.buffer.emit_local_decl(scopes, inst, var);
                 if let Some(value) = &var.value {
                     self.buffer.emit(" = ");
                     self.compile_expr(scopes, value.clone(), inst);
@@ -465,15 +459,15 @@ impl Compiler {
                 self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit("{");
                 for (name, value) in members {
-                    if let Some(members) = expr
+                    if let Some(union) = expr
                         .ty
                         .as_user_type()
                         .and_then(|ut| scopes.get_user_type(ut.id).data.as_union())
                     {
                         // union instances only have one member
                         self.buffer.emit(format!(
-                            ".$tag = {},",
-                            members.iter().position(|(n, _)| &name == n).unwrap()
+                            ".{UNION_TAG_NAME} = {},",
+                            union.variant_tag(&name).unwrap()
                         ));
                     }
 
@@ -539,6 +533,34 @@ impl Compiler {
             ExprData::Error => {
                 panic!("ICE: ExprData::Error in compile_expr");
             }
+            ExprData::Match { expr, body } => {
+                let tmp_name = self.get_tmp_name();
+
+                self.buffer.emit_type(scopes, &expr.ty);
+                self.buffer.emit(format!(" {tmp_name} = "));
+                self.compile_expr(scopes, *expr, inst);
+                self.buffer.emit(";");
+
+                for (i, (pattern, expr)) in body.into_iter().enumerate() {
+                    if i > 0 {
+                        self.buffer.emit("else ");
+                    }
+
+                    self.buffer.emit(format!(
+                        "if ({tmp_name}.{UNION_TAG_NAME} == {}) {{",
+                        pattern.variant.1
+                    ));
+
+                    if let Some(id) = pattern.binding {
+                        self.buffer.emit_local_decl(scopes, inst, scopes.get_var(id));
+                        self.buffer.emit(format!(" = {tmp_name}.{};", pattern.variant.0));
+                    }
+
+                    // FIXME: match yields values
+                    self.compile_expr(scopes, expr, inst);
+                    self.buffer.emit("; }");
+                }
+            }
         }
     }
 
@@ -561,9 +583,10 @@ impl Compiler {
             self.buffer.emit_type_name(scopes, ut);
             self.buffer.emit("{");
 
-            let union = scopes.get_user_type(ut.id).data.is_union();
-            if union {
-                self.buffer.emit("CTL(u8) $tag; union {");
+            let union = scopes.get_user_type(ut.id).data.as_union();
+            if let Some(union) = union {
+                self.buffer.emit_type(scopes, &union.tag_type());
+                self.buffer.emit(format!(" {UNION_TAG_NAME}; union {{"));
             }
 
             for (name, member) in scopes.get_user_type(ut.id).data.members().unwrap() {
@@ -578,7 +601,7 @@ impl Compiler {
                 }
             }
 
-            if union {
+            if union.is_some() {
                 self.buffer.emit("};");
             }
 
@@ -652,7 +675,9 @@ impl Compiler {
             return;
         }
 
-        self.buffer.emit("struct ");
+        self.buffer.emit("typedef struct ");
+        self.buffer.emit_type_name(scopes, &ut);
+        self.buffer.emit(" ");
         self.buffer.emit_type_name(scopes, &ut);
         self.buffer.emit(";");
 
@@ -680,5 +705,10 @@ impl Compiler {
         }
 
         result.insert(ut, deps);
+    }
+
+    fn get_tmp_name(&mut self) -> String {
+        self.tmpnum += 1;
+        format!("$tmp{}", self.tmpnum)
     }
 }

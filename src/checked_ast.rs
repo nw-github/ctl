@@ -1,4 +1,4 @@
-use crate::typecheck::ScopeId;
+use crate::typecheck::{ScopeId, VariableId};
 
 use self::stmt::CheckedStmt;
 
@@ -8,15 +8,21 @@ pub struct Block {
     pub scope: ScopeId,
 }
 
+#[derive(Debug, Clone)]
+pub struct UnionPattern {
+    pub binding: Option<VariableId>,
+    pub variant: (String, usize),
+}
+
 pub mod expr {
     use std::collections::HashMap;
 
     use crate::{
         ast::expr::{BinaryOp, UnaryOp},
-        typecheck::{GenericFunc, Symbol, TypeId, GenericUserType},
+        typecheck::{GenericFunc, GenericUserType, Symbol, TypeId},
     };
 
-    use super::Block;
+    use super::{Block, UnionPattern};
 
     #[derive(Default, Debug, Clone)]
     pub enum ExprData {
@@ -72,6 +78,10 @@ pub mod expr {
             iter: Box<CheckedExpr>,
             body: Block,
         },
+        Match {
+            expr: Box<CheckedExpr>,
+            body: Vec<(UnionPattern, CheckedExpr)>,
+        },
         Member {
             source: Box<CheckedExpr>,
             member: String,
@@ -102,7 +112,7 @@ pub mod stmt {
     #[derive(Debug, Default, Clone)]
     pub enum CheckedStmt {
         Expr(CheckedExpr),
-        Let(String, VariableId),
+        Let(VariableId),
         Module {
             name: String,
             body: Block,

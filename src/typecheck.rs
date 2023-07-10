@@ -8,12 +8,12 @@ use crate::{
     ast::{
         expr::{BinaryOp, Expr, UnaryOp},
         stmt::{Fn, Param, ParsedUserType, Prototype, Stmt, TypeHint},
-        Path,
+        Path, Pattern,
     },
     checked_ast::{
         expr::{CheckedExpr, ExprData},
         stmt::CheckedStmt,
-        Block,
+        Block, UnionPattern,
     },
     lexer::{Located, Span},
     Error, THIS_PARAM, THIS_TYPE,
@@ -439,7 +439,7 @@ id!(FunctionId => Function, fns, proto.name, func);
 id!(UserTypeId => UserType, types, name, user_type);
 id!(VariableId => Variable, vars, name, var);
 
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, EnumAsInner)]
 pub enum ScopeKind {
     Block(Option<TypeId>, bool),
     Loop(Option<TypeId>, bool),
@@ -493,10 +493,25 @@ pub struct Member {
     pub ty: TypeId,
 }
 
+#[derive(Debug, Clone)]
+pub struct Union {
+    pub variants: Vec<(String, Member)>,
+}
+
+impl Union {
+    pub fn tag_type(&self) -> TypeId {
+        TypeId::Uint(8)
+    }
+
+    pub fn variant_tag(&self, name: &str) -> Option<usize> {
+        self.variants.iter().position(|(n, _)| name == n)
+    }
+}
+
 #[derive(Debug, EnumAsInner)]
 pub enum UserTypeData {
     Struct(Vec<(String, Member)>),
-    Union(Vec<(String, Member)>),
+    Union(Union),
     Enum,
     FuncGeneric(usize),
     StructGeneric(usize),
@@ -505,7 +520,8 @@ pub enum UserTypeData {
 impl UserTypeData {
     pub fn members(&self) -> Option<&[(String, Member)]> {
         match self {
-            UserTypeData::Struct(members) | UserTypeData::Union(members) => Some(members),
+            UserTypeData::Struct(members) => Some(members),
+            UserTypeData::Union(union) => Some(&union.variants),
             _ => None,
         }
     }
@@ -911,9 +927,9 @@ impl<'a> TypeChecker<'a> {
                     )
                 }
                 ParsedUserType::Union { tag, base } => {
-                    let mut members = Vec::with_capacity(base.members.len());
+                    let mut variants = Vec::with_capacity(base.members.len());
                     for (name, member) in base.members.iter() {
-                        members.push((
+                        variants.push((
                             name.clone(),
                             Member {
                                 public: member.public,
@@ -928,7 +944,7 @@ impl<'a> TypeChecker<'a> {
                         name: base.name.clone(),
                         public: base.public,
                         body_scope: ScopeId(0),
-                        data: UserTypeData::Union(members),
+                        data: UserTypeData::Union(Union { variants }),
                         type_params: base.type_params.clone(),
                     });
                     scopes.enter(
@@ -1204,7 +1220,8 @@ impl<'a> TypeChecker<'a> {
                                     .get_user_type_mut(self_id)
                                     .data
                                     .as_union_mut()
-                                    .unwrap()[i]
+                                    .unwrap()
+                                    .variants[i]
                                     .1
                                     .ty,
                                 &base.members[i].1.ty
@@ -1266,7 +1283,6 @@ impl<'a> TypeChecker<'a> {
                         type_check!(self, scopes, &value.ty, &ty, span);
 
                         CheckedStmt::Let(
-                            name.clone(),
                             scopes.insert_var(Variable {
                                 public: false,
                                 name,
@@ -1278,7 +1294,6 @@ impl<'a> TypeChecker<'a> {
                         )
                     } else {
                         CheckedStmt::Let(
-                            name.clone(),
                             scopes.insert_var(Variable {
                                 public: false,
                                 name,
@@ -1292,7 +1307,6 @@ impl<'a> TypeChecker<'a> {
                 } else if let Some(value) = value {
                     let value = self.check_expr(scopes, value, None);
                     CheckedStmt::Let(
-                        name.clone(),
                         scopes.insert_var(Variable {
                             public: false,
                             name,
@@ -1916,7 +1930,112 @@ impl<'a> TypeChecker<'a> {
                 CheckedExpr::new(TypeId::Never, ExprData::Continue)
             }
             Expr::Is { expr, pattern } => todo!(),
-            Expr::Match { expr, body } => todo!(),
+            Expr::Match { expr, body } => {
+                let scrutinee_span = expr.span;
+                let scrutinee = self.check_expr(scopes, *expr, None);
+                let mut target = target.cloned().unwrap_or(TypeId::Unknown);
+                let mut result = Vec::new();
+                for (pattern, expr) in body.into_iter() {
+                    let span = expr.span;
+                    let (var, variant) =
+                        self.check_pattern(scopes, &scrutinee, scrutinee_span, pattern);
+                    let (var, expr) = scopes.enter(None, ScopeKind::None, |scopes| {
+                        let var = var.map(|var| scopes.insert_var(var));
+                        (var, self.check_expr(scopes, expr, Some(&target)))
+                    });
+
+                    if target.is_unknown() {
+                        target = expr.ty.clone();
+                    } else {
+                        type_check!(self, scopes, &expr.ty, &target, span);
+                    }
+
+                    result.push((
+                        UnionPattern {
+                            binding: var,
+                            variant,
+                        },
+                        expr,
+                    ));
+                }
+
+                CheckedExpr::new(
+                    target,
+                    ExprData::Match {
+                        expr: scrutinee.into(),
+                        body: result,
+                    },
+                )
+            }
+        }
+    }
+
+    fn check_pattern(
+        &mut self,
+        scopes: &Scopes,
+        scrutinee: &CheckedExpr,
+        span: Span,
+        pattern: Pattern,
+    ) -> (Option<Variable>, (String, usize)) {
+        let Some(ut) = scrutinee.ty
+            .as_user_type()
+            .filter(|ut| scopes.get_user_type(ut.id).data.is_union()) else {
+            return self.error(Error::new("match scrutinee must be a union type", span));
+        };
+
+        let TypeHint::Regular { is_dyn: _, mut path } = pattern.ty else {
+            return self.error(Error::new("invalid pattern, must be a union variant", span));
+        };
+
+        if path.data.components.len() < 2 {
+            return self.error(Error::new("invalid pattern, must be a union variant", span));
+        }
+
+        let scope = match Self::resolve_path_to_end(scopes, &path.data, span) {
+            Ok(scope) => scope,
+            Err(err) => return self.error(err),
+        };
+
+        let Some(union) = scopes[scope].kind
+            .as_user_type()
+            .filter(|&&id| id == ut.id)
+            .and_then(|&id| scopes.get_user_type(id).data.as_union()) else {
+            return self.error(Error::new("pattern does not match the scrutinee", span));
+        };
+
+        let name = path.data.components.pop().unwrap().0;
+        let Some((_, member)) = union.variants
+            .iter()
+            .find(|(m, _)| m == &name) else {
+            return self.error(
+                Error::new(
+                    format!("type {} has no variant {name}",
+                    scrutinee.ty.name(scopes)),
+                    span
+                )
+            );
+        };
+
+        let tag = union.variant_tag(&name).unwrap();
+        if let Some((mutable, binding)) = pattern.binding {
+            (
+                Some(Variable {
+                    public: false,
+                    name: binding,
+                    ty: member.ty.clone(),
+                    is_static: false,
+                    mutable,
+                    value: None,
+                }),
+                (name, tag),
+            )
+        } else if member.ty.is_void() {
+            (None, (name, tag))
+        } else {
+            self.error(Error::new(
+                format!("union variant {name} has data that must be bound"),
+                span,
+            ))
         }
     }
 
@@ -2346,8 +2465,8 @@ impl<'a> TypeChecker<'a> {
                     .ok_or(ResolveError::Path(path));
             }
             TypeHint::Void => TypeId::Void,
-            TypeHint::Ref(ty) => TypeId::Ptr(Self::fd_resolve_type(scopes, ty)?.into()),
-            TypeHint::RefMut(ty) => TypeId::MutPtr(Self::fd_resolve_type(scopes, ty)?.into()),
+            TypeHint::Ptr(ty) => TypeId::Ptr(Self::fd_resolve_type(scopes, ty)?.into()),
+            TypeHint::MutPtr(ty) => TypeId::MutPtr(Self::fd_resolve_type(scopes, ty)?.into()),
             TypeHint::This => {
                 // the parser ensures methods can only appear in structs/enums/etc
                 scopes
