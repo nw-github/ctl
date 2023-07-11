@@ -1121,7 +1121,7 @@ impl<'a> Parser<'a> {
             }
             Token::ScopeRes => {
                 let ident = self.expect_id_with_span("expected name")?;
-                let result = self.path_with_one(false, ident)?;
+                let result = self.path_with_one(true, ident)?;
                 L::new(Expr::Path(result.data), result.span)
             }
             Token::Super => {

@@ -27,7 +27,7 @@ fn main() -> anyhow::Result<()> {
                 ast.dump()
             }
         })
-        .typecheck()
+        .typecheck()?
         .codegen();
 
     match result {

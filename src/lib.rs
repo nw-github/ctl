@@ -6,8 +6,12 @@ mod parser;
 mod pretty;
 mod typecheck;
 
-use std::{path::{Path, PathBuf}, ffi::OsStr};
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 
+use anyhow::Context;
 use compiler::Compiler;
 use lexer::{Lexer, Span};
 use parser::ParsedFile;
@@ -65,10 +69,14 @@ impl Pipeline<Source> {
         }
     }
 
-    pub fn parse(self) -> std::io::Result<Pipeline<Parsed>> {
+    pub fn parse(self) -> anyhow::Result<Pipeline<Parsed>> {
         let mut sources = Vec::new();
         if self.path.is_dir() {
-            for file in self.path.read_dir()? {
+            for file in self
+                .path
+                .read_dir()
+                .with_context(|| format!("loading path {}", self.path.display()))?
+            {
                 let file = file?;
                 let path = file.path();
                 if file.file_type()?.is_file() && path.extension() == Some(OsStr::new("ctl")) {
@@ -77,7 +85,8 @@ impl Pipeline<Source> {
                 }
             }
         } else {
-            let buffer = std::fs::read_to_string(&self.path)?;
+            let buffer = std::fs::read_to_string(&self.path)
+                .with_context(|| format!("loading path {}", self.path.display()))?;
             sources.push(Parser::parse(&buffer, self.path.clone())?);
         }
 
@@ -96,11 +105,15 @@ impl Pipeline<Parsed> {
         }
     }
 
-    pub fn typecheck(self) -> Pipeline<Checked> {
-        Pipeline {
-            state: Checked(TypeChecker::check(&self.path, self.state.0)),
+    pub fn typecheck(self) -> anyhow::Result<Pipeline<Checked>> {
+        Ok(Pipeline {
+            state: Checked(TypeChecker::check(
+                &self.path,
+                self.state.0,
+                vec![Path::new(file!()).parent().unwrap().parent().unwrap().join("ctl/core")],
+            )?),
             path: self.path,
-        }
+        })
     }
 }
 

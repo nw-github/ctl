@@ -20,7 +20,7 @@ use crate::{
     },
     lexer::{Located, Span},
     parser::ParsedFile,
-    Error, THIS_PARAM, THIS_TYPE,
+    Error, Pipeline, THIS_PARAM, THIS_TYPE,
 };
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, Constructor)]
@@ -812,52 +812,69 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
-    pub fn check(path: &std::path::Path, module: Vec<ParsedFile>) -> Module {
+    pub fn check(
+        path: &std::path::Path,
+        module: Vec<ParsedFile>,
+        libs: Vec<PathBuf>,
+    ) -> anyhow::Result<Module> {
         let mut this = Self { errors: vec![] };
         let mut scopes = Scopes::new();
         let mut errors = Vec::new();
 
+        for lib in libs {
+            let parsed = Pipeline::new(lib).parse()?;
+            this.check_one(&mut scopes, &mut errors, &parsed.path, parsed.state.0);
+        }
+
+        Ok(Module {
+            scope: this.check_one(&mut scopes, &mut errors, path, module),
+            scopes,
+            errors,
+        })
+    }
+
+    fn check_one(
+        &mut self,
+        scopes: &mut Scopes,
+        errors: &mut Vec<(PathBuf, Vec<Error>)>,
+        path: &std::path::Path,
+        module: Vec<ParsedFile>,
+    ) -> ScopeId {
         let project = crate::derive_module_name(path);
-        let scope = scopes.enter(Some(project.clone()), ScopeKind::Module(true), |scopes| {
+        scopes.enter(Some(project.clone()), ScopeKind::Module(true), |scopes| {
             for file in module.iter() {
                 match &file.ast.data {
                     Stmt::Module { name, body, .. } if name == &project => {
                         for stmt in body {
-                            this.forward_declare(scopes, stmt);
+                            self.forward_declare(scopes, stmt);
                         }
                     }
                     _ => {
-                        this.forward_declare(scopes, &file.ast);
+                        self.forward_declare(scopes, &file.ast);
                     }
                 }
             }
-    
+
             for mut file in module {
                 match file.ast.data {
                     Stmt::Module { name, body, .. } if name == project => {
                         for stmt in body {
-                            this.check_stmt(scopes, stmt);
+                            self.check_stmt(scopes, stmt);
                         }
                     }
                     _ => {
-                        this.check_stmt(scopes, file.ast);
+                        self.check_stmt(scopes, file.ast);
                     }
                 }
-    
-                file.errors.append(&mut this.errors);
+
+                file.errors.append(&mut self.errors);
                 if !file.errors.is_empty() {
                     errors.push((file.path, std::mem::take(&mut file.errors)));
                 }
             }
 
             scopes.current_id()
-        });
-
-        Module {
-            scopes,
-            errors,
-            scope,
-        }
+        })
     }
 
     fn forward_declare(&mut self, scopes: &mut Scopes, stmt: &Located<Stmt>) {
@@ -2512,9 +2529,7 @@ impl TypeChecker {
     fn resolve_type(&mut self, scopes: &Scopes, ty: &TypeHint) -> TypeId {
         Self::fd_resolve_type(scopes, ty).unwrap_or_else(|err| match err {
             ResolveError::Error(err) => self.error(err),
-            ResolveError::Path(name) => {
-                self.error(Error::new("undefined type", name.span))
-            }
+            ResolveError::Path(name) => self.error(Error::new("undefined type", name.span)),
         })
     }
 
