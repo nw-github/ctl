@@ -29,8 +29,20 @@ impl Buffer {
         match id {
             TypeId::Void => self.emit("CTL(void)"),
             TypeId::Never => self.emit("void"),
-            TypeId::Int(bits) => self.emit(format!("CTL(i{bits})")),
-            TypeId::Uint(bits) => self.emit(format!("CTL(u{bits})")),
+            TypeId::Int(bits) | TypeId::Uint(bits) => {
+                let unsigned = matches!(id, TypeId::Uint(_));
+                if (8..=64).contains(bits) && bits.is_power_of_two() {
+                    if unsigned {
+                        self.emit(format!("uint{bits}_t"));
+                    } else {
+                        self.emit(format!("int{bits}_t"));
+                    }
+                } else if unsigned {
+                    self.emit(format!("unsigned CTL_BITINT({bits})"));
+                } else {
+                    self.emit(format!("CTL_BITINT({bits})"));
+                }
+            },
             TypeId::Isize => self.emit("CTL(isize)"),
             TypeId::Usize => self.emit("CTL(usize)"),
             TypeId::F32 => self.emit("CTL(f32)"),
@@ -428,7 +440,7 @@ impl Compiler {
 
                 self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit("{");
-                self.buffer.emit(format!(".data = (CTL(u8) const*)\"{value}\","));
+                self.buffer.emit(format!(".data = (uint8_t const*)\"{value}\","));
                 self.buffer.emit(format!(".len = {},", value.len()));
                 self.buffer.emit("}");
             }
