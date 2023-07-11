@@ -672,7 +672,7 @@ impl Scopes {
         self.iter().find_map(|(_, scope)| {
             if let ScopeKind::UserType(id) = scope.kind {
                 let ty = self.get_user_type(id);
-                if ty.data.is_struct() || ty.data.is_enum() {
+                if ty.data.is_struct() || ty.data.is_union() || ty.data.is_enum() {
                     return Some(TypeId::UserType(
                         GenericUserType::new(
                             id,
