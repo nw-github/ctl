@@ -1512,8 +1512,27 @@ impl TypeChecker {
                     }
                     Unwrap => {
                         if let Some(inner) = Self::as_option_inner(scopes, &expr.ty) {
-                            out_ty = Some(inner.clone());
-                            true
+                            let func = scopes.find_func_in(
+                                "unwrap",
+                                scopes
+                                    .get_user_type(Self::find_core_option(scopes).unwrap())
+                                    .body_scope,
+                            );
+
+                            return CheckedExpr::new(
+                                inner.clone(),
+                                ExprData::Call {
+                                    inst: expr.ty.clone().as_user_type().map(|ut| (**ut).clone()),
+                                    args: vec![CheckedExpr::new(
+                                        TypeId::Ptr(expr.ty.clone().into()),
+                                        ExprData::Unary {
+                                            op: UnaryOp::Addr,
+                                            expr: expr.into(),
+                                        },
+                                    )],
+                                    func: GenericFunc::new(func.unwrap(), vec![]),
+                                },
+                            );
                         } else {
                             self.error::<()>(Error::new(
                                 "unwrap operator is only valid for option types",
@@ -1917,7 +1936,7 @@ impl TypeChecker {
                         return CheckedExpr::new(
                             ty,
                             ExprData::Member {
-                                source: Self::auto_ref(source, &id).into(),
+                                source: Self::auto_deref(source, &id).into(),
                                 member,
                             },
                         );
@@ -2147,36 +2166,22 @@ impl TypeChecker {
         }
     }
 
-    fn auto_ref(mut source: CheckedExpr, target: &TypeId) -> CheckedExpr {
-        if !matches!(source.ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
+    fn auto_deref(mut source: CheckedExpr, target: &TypeId) -> CheckedExpr {
+        #[allow(clippy::redundant_clone)]
+        let mut ty = source.ty.clone();
+        while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = &ty {
+            if &ty == target {
+                break;
+            }
+
             source = CheckedExpr::new(
-                target.clone(),
+                (**inner).clone(),
                 ExprData::Unary {
-                    op: if matches!(source.ty, TypeId::Ptr(_)) {
-                        UnaryOp::Addr
-                    } else {
-                        UnaryOp::AddrMut
-                    },
+                    op: UnaryOp::Deref,
                     expr: source.into(),
                 },
-            )
-        } else {
-            #[allow(clippy::redundant_clone)]
-            let mut ty = source.ty.clone();
-            while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = &ty {
-                if &ty == target {
-                    break;
-                }
-
-                source = CheckedExpr::new(
-                    (**inner).clone(),
-                    ExprData::Unary {
-                        op: UnaryOp::Deref,
-                        expr: source.into(),
-                    },
-                );
-                ty = source.ty.clone();
-            }
+            );
+            ty = source.ty.clone();
         }
 
         source
@@ -2196,15 +2201,12 @@ impl TypeChecker {
             generics,
         } = callee.data
         {
-            let source = self.check_expr(scopes, *source, None);
-            let id = source.ty.strip_references().clone();
+            let this = self.check_expr(scopes, *source, None);
+            let id = this.ty.strip_references().clone();
             let ty = user_type!(self, scopes, id, span);
-            if let Some(func) = ty
-                .data
-                .as_struct()
-                .map(|_| ())
-                .or_else(|| ty.data.is_enum().then_some(()))
-                .and_then(|_| scopes.find_func_in(&member, ty.body_scope))
+            if let Some(func) = (ty.data.is_struct() || ty.data.is_union() || ty.data.is_enum())
+                .then(|| scopes.find_func_in(&member, ty.body_scope))
+                .flatten()
             {
                 let f = scopes.get_func(func);
                 if !f.proto.public && !scopes.is_sub_scope(ty.scope) {
@@ -2217,10 +2219,10 @@ impl TypeChecker {
                     ));
                 }
 
-                if let Some(this) = f.proto.params.get(0).filter(|p| p.name == THIS_PARAM) {
-                    if let TypeId::MutPtr(inner) = &this.ty {
-                        let mut ty = &source.ty;
-                        if ty == inner.as_ref() && !Self::can_addrmut(scopes, &source) {
+                if let Some(this_param) = f.proto.params.get(0).filter(|p| p.name == THIS_PARAM) {
+                    if let TypeId::MutPtr(inner) = &this_param.ty {
+                        let mut ty = &this.ty;
+                        if ty == inner.as_ref() && !Self::can_addrmut(scopes, &this) {
                             return self.error(Error::new(
                                 format!("cannot call method '{member}' with immutable receiver"),
                                 span,
@@ -2241,14 +2243,36 @@ impl TypeChecker {
                         }
                     }
 
-                    let mut result = vec![Self::auto_ref(source, &this.ty)];
+                    let mut result =
+                        vec![if !matches!(this.ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
+                            if matches!(this_param.ty, TypeId::Ptr(_)) {
+                                CheckedExpr::new(
+                                    TypeId::Ptr(this.ty.clone().into()),
+                                    ExprData::Unary {
+                                        op: UnaryOp::Addr,
+                                        expr: this.into(),
+                                    },
+                                )
+                            } else {
+                                CheckedExpr::new(
+                                    TypeId::MutPtr(this.ty.clone().into()),
+                                    ExprData::Unary {
+                                        op: UnaryOp::AddrMut,
+                                        expr: this.into(),
+                                    },
+                                )
+                            }
+                        } else {
+                            Self::auto_deref(this, &this_param.ty)
+                        }];
                     let mut func = match self.resolve_func(scopes, func, &generics, span) {
                         Ok(symbol) => symbol,
                         Err(error) => return self.error(error),
                     };
                     let params = &f.proto.params[1..].to_vec();
-                    let (hargs, ret) = self.check_fn_args(
-                        id.as_user_type().map(|inner| inner.as_ref()),
+                    let inst = id.as_user_type().map(|ty| (**ty).clone());
+                    let (args, ret) = self.check_fn_args(
+                        inst.as_ref(),
                         &mut func,
                         args,
                         params,
@@ -2257,12 +2281,12 @@ impl TypeChecker {
                         span,
                     );
 
-                    result.append(&mut Self::make_positional(params, hargs));
+                    result.append(&mut Self::make_positional(params, args));
                     return CheckedExpr::new(
                         ret,
                         ExprData::Call {
                             func,
-                            inst: id.as_user_type().map(|ty| (**ty).clone()),
+                            inst,
                             args: result,
                         },
                     );

@@ -392,7 +392,7 @@ impl Compiler {
                     self.compile_expr(scopes, *inner, inst);
                     self.buffer.emit(")");
                 }
-                UnaryOp::Unwrap => todo!(),
+                UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in compile_expr"),
                 UnaryOp::Try => todo!(),
                 UnaryOp::Sizeof => todo!(),
             },
@@ -403,7 +403,7 @@ impl Compiler {
             } => {
                 self.buffer.emit_fn_name(scopes, &func, this_inst.as_ref());
 
-                self.funcs.insert((None, func));
+                self.funcs.insert((this_inst, func));
 
                 self.buffer.emit("(");
                 for (i, arg) in args.into_iter().enumerate() {
@@ -529,8 +529,12 @@ impl Compiler {
             ExprData::Error => {
                 panic!("ICE: ExprData::Error in compile_expr");
             }
-            ExprData::Match { expr, body } => {
+            ExprData::Match { mut expr, body } => {
                 let tmp_name = self.get_tmp_name();
+
+                if let Some(inst) = inst {
+                    expr.ty.fill_type_generics(scopes, inst);
+                }
 
                 self.buffer.emit_type(scopes, &expr.ty);
                 self.buffer.emit(format!(" {tmp_name} = "));
