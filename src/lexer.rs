@@ -436,7 +436,7 @@ impl<'a> Lexer<'a> {
             "false" => Token::False,
             "static" => Token::Static,
             "void" => Token::Void,
-            "none" => Token::None,
+            "null" => Token::None,
             "unsafe" => Token::Unsafe,
             "super" => Token::Super,
             "shared" => Token::Shared,

@@ -1646,7 +1646,7 @@ impl TypeChecker {
                         ),
                     )
                 } else {
-                    self.error(Error::new("cannot infer type of option literal none", span))
+                    self.error(Error::new("cannot infer type of option literal null", span))
                 }
             }
             Expr::Void => CheckedExpr::new(TypeId::Void, ExprData::Void),
