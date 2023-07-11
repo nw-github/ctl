@@ -49,7 +49,6 @@ impl Buffer {
                 self.emit_type(scopes, inner);
                 self.emit(" *");
             }
-            TypeId::Option(_) => todo!(),
             TypeId::Func(_) => todo!(),
             TypeId::UserType(ut) => {
                 self.emit_type_name(scopes, ut);
@@ -87,10 +86,6 @@ impl Buffer {
             }
             TypeId::MutPtr(inner) => {
                 self.emit("mutptr_");
-                self.emit_generic_mangled_name(scopes, inner);
-            }
-            TypeId::Option(inner) => {
-                self.emit("opt_");
                 self.emit_generic_mangled_name(scopes, inner);
             }
             TypeId::Func(_) => todo!(),
@@ -210,14 +205,7 @@ impl Compiler {
         let Some(main) = scopes.find_func_in("main", scope) else {
             return Err(Error::new(
                 "no main function found",
-                Span {
-                    loc: Location {
-                        row: 0,
-                        col: 0,
-                        pos: 0,
-                    },
-                    len: 0,
-                },
+                Span::default(),
             ));
         };
 
@@ -642,14 +630,7 @@ impl Compiler {
                             a.name(scopes),
                             b.name(scopes),
                         ),
-                        Span {
-                            loc: Location {
-                                row: 0,
-                                col: 0,
-                                pos: 0,
-                            },
-                            len: 0,
-                        },
+                        Span::default(),
                     )
                 })?;
             }
@@ -679,10 +660,7 @@ impl Compiler {
             let mut ty = member.ty.clone();
             ty.fill_type_generics(scopes, &ut);
 
-            while matches!(ty, TypeId::Option(_) | TypeId::Array(_)) {
-                while let TypeId::Option(inner) = ty {
-                    ty = *inner;
-                }
+            while matches!(ty, TypeId::Array(_)) {
                 while let TypeId::Array(inner) = ty {
                     ty = inner.0;
                 }

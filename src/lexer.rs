@@ -153,14 +153,14 @@ impl Error {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Location {
     pub row: usize,
     pub col: usize,
     pub pos: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Span {
     pub loc: Location,
     pub len: usize,

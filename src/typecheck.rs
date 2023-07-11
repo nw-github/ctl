@@ -45,10 +45,6 @@ impl GenericFunc {
                     src = &gi.0;
                     target = &ti.0;
                 }
-                (TypeId::Option(gi), TypeId::Option(ti)) => {
-                    src = gi;
-                    target = ti;
-                }
                 (TypeId::UserType(src), target) => {
                     if let Some(target) = target.as_user_type() {
                         if !src.generics.is_empty() && !target.generics.is_empty() {
@@ -119,7 +115,6 @@ pub enum TypeId {
     UserType(Box<GenericUserType>),
     Ptr(Box<TypeId>),
     MutPtr(Box<TypeId>),
-    Option(Box<TypeId>),
     Array(Box<(TypeId, usize)>),
 }
 
@@ -170,8 +165,7 @@ impl TypeId {
                         | TypeId::F32
                         | TypeId::F64
                         | TypeId::Bool
-                        | TypeId::String
-                        | TypeId::Option(_) // FIXME: option<T> should be comparable with T
+                        | TypeId::String // FIXME: option<T> should be comparable with T
                 )
             }
             BinaryOp::LogicalOr | BinaryOp::LogicalAnd => {
@@ -199,7 +193,7 @@ impl TypeId {
         loop {
             match src {
                 TypeId::Array(t) => src = &mut t.0,
-                TypeId::Option(t) | TypeId::Ptr(t) | TypeId::MutPtr(t) => src = t,
+                TypeId::Ptr(t) | TypeId::MutPtr(t) => src = t,
                 TypeId::UserType(ty) => {
                     if !ty.generics.is_empty() {
                         for ty in ty.generics.iter_mut() {
@@ -227,7 +221,7 @@ impl TypeId {
         loop {
             match src {
                 TypeId::Array(t) => src = &mut t.0,
-                TypeId::Option(t) | TypeId::Ptr(t) | TypeId::MutPtr(t) => src = t,
+                TypeId::Ptr(t) | TypeId::MutPtr(t) => src = t,
                 TypeId::UserType(ty) => {
                     if !ty.generics.is_empty() {
                         for ty in ty.generics.iter_mut() {
@@ -263,7 +257,6 @@ impl TypeId {
             TypeId::Char => "char".into(),
             TypeId::Ptr(id) => format!("*{}", id.name(scopes)),
             TypeId::MutPtr(id) => format!("*mut {}", id.name(scopes)),
-            TypeId::Option(id) => format!("?{}", id.name(scopes)),
             TypeId::Func(func) => {
                 let f = scopes.get_func(func.id);
 
@@ -314,7 +307,7 @@ impl TypeId {
         )
     }
 
-    fn coerces_to(&self, target: &TypeId) -> bool {
+    fn coerces_to(&self, scopes: &Scopes, target: &TypeId) -> bool {
         match (self, target) {
             (
                 TypeId::IntGeneric,
@@ -322,7 +315,12 @@ impl TypeId {
             ) => true,
             (TypeId::FloatGeneric, TypeId::F32 | TypeId::F64) => true,
             (TypeId::MutPtr(ty), TypeId::Ptr(target)) if ty == target => true,
-            (ty, TypeId::Option(inner)) if ty.coerces_to(inner) => true,
+            (ty, inner)
+                if TypeChecker::as_option_inner(scopes, inner)
+                    .map_or(false, |inner| ty.coerces_to(scopes, inner)) =>
+            {
+                true
+            }
             (TypeId::Never, _) => true,
             (ty, target) => ty == target,
         }
@@ -765,7 +763,7 @@ macro_rules! type_mismatch {
 
 macro_rules! type_check_bail {
     ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {
-        if !$source.coerces_to($target) {
+        if !$source.coerces_to($scopes, $target) {
             return $self.error(type_mismatch!($scopes, $target, $source, $span));
         }
     };
@@ -773,7 +771,7 @@ macro_rules! type_check_bail {
 
 macro_rules! type_check {
     ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {
-        if !$source.coerces_to($target) {
+        if !$source.coerces_to($scopes, $target) {
             $self.error::<()>(type_mismatch!($scopes, $target, $source, $span))
         }
     };
@@ -1495,8 +1493,8 @@ impl TypeChecker {
                         true
                     }
                     Unwrap => {
-                        if let Some(inner) = expr.ty.as_option() {
-                            out_ty = Some(inner.as_ref().clone());
+                        if let Some(inner) = Self::as_option_inner(scopes, &expr.ty) {
+                            out_ty = Some(inner.clone());
                             true
                         } else {
                             self.error::<()>(Error::new(
@@ -1576,8 +1574,12 @@ impl TypeChecker {
             Expr::String(s) => CheckedExpr::new(TypeId::String, ExprData::String(s)),
             Expr::Char(s) => CheckedExpr::new(TypeId::Char, ExprData::Char(s)),
             Expr::None => {
-                if let Some(TypeId::Option(target)) = target {
-                    CheckedExpr::new(TypeId::Option(target.clone()), ExprData::None)
+                if let Some(inner) = target.and_then(|target| Self::as_option_inner(scopes, target))
+                {
+                    CheckedExpr::new(
+                        Self::make_option(scopes, inner.clone()).unwrap(),
+                        ExprData::None,
+                    )
                 } else {
                     self.error(Error::new("cannot infer type of option literal none", span))
                 }
@@ -1597,16 +1599,24 @@ impl TypeChecker {
                     })
                 } else {
                     // FIXME: attempt to promote the literal if its too large for i32
+                    // FIXME: addr of should change the target to remove one pointer
                     target
                         .map(|mut target| {
-                            while let TypeId::Option(ty) | TypeId::MutPtr(ty) | TypeId::Ptr(ty) =
-                                target
-                            {
-                                target = ty;
+                            loop {
+                                match target {
+                                    TypeId::MutPtr(ty) | TypeId::Ptr(ty) => target = ty,
+                                    other => {
+                                        if let Some(inner) = Self::as_option_inner(scopes, other) {
+                                            target = inner;
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                }
                             }
                             target
                         })
-                        .filter(|target| TypeId::IntGeneric.coerces_to(target))
+                        .filter(|target| TypeId::IntGeneric.coerces_to(scopes, target))
                         .cloned()
                         .unwrap_or(TypeId::Int(32))
                 };
@@ -1668,13 +1678,12 @@ impl TypeChecker {
             Expr::Float(value) => CheckedExpr::new(
                 target
                     .map(|mut target| {
-                        while let TypeId::Option(ty) | TypeId::MutPtr(ty) | TypeId::Ptr(ty) = target
-                        {
+                        while let TypeId::MutPtr(ty) | TypeId::Ptr(ty) = target {
                             target = ty;
                         }
                         target
                     })
-                    .filter(|target| TypeId::FloatGeneric.coerces_to(target))
+                    .filter(|target| TypeId::FloatGeneric.coerces_to(scopes, target))
                     .cloned()
                     .unwrap_or(TypeId::F64),
                 ExprData::Float(value),
@@ -1768,7 +1777,7 @@ impl TypeChecker {
                     if matches!(&if_branch.data, ExprData::Block(b) if
                         matches!(scopes[b.scope].kind, ScopeKind::Block(_, yields) if yields))
                     {
-                        out_type = TypeId::Option(out_type.into());
+                        out_type = Self::make_option(scopes, out_type).unwrap();
                     }
                     None
                 };
@@ -1947,8 +1956,10 @@ impl TypeChecker {
                 } else if inf {
                     scopes[scope].kind = ScopeKind::Loop(Some(expr.ty.clone()), inf);
                 } else {
-                    scopes[scope].kind =
-                        ScopeKind::Loop(Some(TypeId::Option(expr.ty.clone().into())), inf);
+                    scopes[scope].kind = ScopeKind::Loop(
+                        Some(Self::make_option(scopes, expr.ty.clone()).unwrap()),
+                        inf,
+                    );
                 }
 
                 CheckedExpr::new(TypeId::Never, ExprData::Break(expr.into()))
@@ -2364,7 +2375,7 @@ impl TypeChecker {
             target.fill_type_generics(scopes, instance);
         }
 
-        if !expr.ty.coerces_to(&target) {
+        if !expr.ty.coerces_to(scopes, &target) {
             self.error(type_mismatch!(scopes, &target, &expr.ty, span))
         } else {
             expr
@@ -2521,7 +2532,11 @@ impl TypeChecker {
                 let n = Self::consteval(scopes, count, Some(&TypeId::Usize))?;
                 TypeId::Array((Self::fd_resolve_type(scopes, ty)?, n).into())
             }
-            TypeHint::Option(ty) => TypeId::Option(Self::fd_resolve_type(scopes, ty)?.into()),
+            TypeHint::Option(ty) => Self::make_option(scopes, Self::fd_resolve_type(scopes, ty)?)
+                .ok_or(ResolveError::Error(Error::new(
+                "ICE: core::option::Option not found",
+                Span::default(),
+            )))?,
             _ => todo!(),
         })
     }
@@ -2530,6 +2545,30 @@ impl TypeChecker {
         Self::fd_resolve_type(scopes, ty).unwrap_or_else(|err| match err {
             ResolveError::Error(err) => self.error(err),
             ResolveError::Path(name) => self.error(Error::new("undefined type", name.span)),
+        })
+    }
+
+    fn find_core_option(scopes: &Scopes) -> Option<UserTypeId> {
+        let core = scopes.scopes()[0].children.get("core")?;
+        let option = scopes[*core].children.get("option")?;
+        scopes.find_user_type_in("Option", *option)
+    }
+
+    fn make_option(scopes: &Scopes, ty: TypeId) -> Option<TypeId> {
+        Some(TypeId::UserType(
+            GenericUserType {
+                id: Self::find_core_option(scopes).unwrap(),
+                generics: vec![ty],
+            }
+            .into(),
+        ))
+    }
+
+    fn as_option_inner<'a>(scopes: &Scopes, ty: &'a TypeId) -> Option<&'a TypeId> {
+        Self::find_core_option(scopes).and_then(|opt| {
+            ty.as_user_type()
+                .filter(|ut| ut.id == opt)
+                .map(|ut| &ut.generics[0])
         })
     }
 
