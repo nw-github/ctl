@@ -173,6 +173,10 @@ pub mod expr {
             expr: Box<super::Expr>,
             pattern: Pattern,
         },
+        As {
+            expr: Box<super::Expr>,
+            ty: TypeHint,
+        },
         Unary {
             op: UnaryOp,
             expr: Box<super::Expr>,

@@ -941,7 +941,24 @@ impl<'a> Parser<'a> {
     binary!(and, Token::Ampersand, shift);
     binary!(shift, Token::Shl | Token::Shr, term);
     binary!(term, Token::Plus | Token::Minus, factor);
-    binary!(factor, Token::Asterisk | Token::Div | Token::Rem, unary);
+    binary!(factor, Token::Asterisk | Token::Div | Token::Rem, cast);
+
+    fn cast(&mut self) -> Result<L<Expr>>  {
+        let mut expr = self.unary()?;
+        while self.advance_if_kind(Token::As).is_some() {
+            let ty = self.parse_type()?;
+            let span = expr.span;
+            expr = L::new(
+                Expr::As {
+                    expr: expr.into(),
+                    ty,
+                },
+                span,
+            );
+        }
+
+        Ok(expr)
+    }
 
     fn unary(&mut self) -> Result<L<Expr>> {
         if let Some(t) = self.advance_if(|k| {

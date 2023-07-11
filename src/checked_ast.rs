@@ -89,6 +89,7 @@ pub mod expr {
             callee: Box<CheckedExpr>,
             args: Vec<CheckedExpr>,
         },
+        As(Box<CheckedExpr>),
         Return(Box<CheckedExpr>),
         Yield(Box<CheckedExpr>),
         Break(Box<CheckedExpr>),

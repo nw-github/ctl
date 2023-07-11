@@ -571,6 +571,12 @@ impl Compiler {
                     self.buffer.emit("; }");
                 }
             }
+            ExprData::As(inner) => {
+                self.buffer.emit_cast(scopes, &expr.ty);
+                self.buffer.emit("(");
+                self.compile_expr(scopes, *inner, state);
+                self.buffer.emit(")");
+            }
         }
     }
 

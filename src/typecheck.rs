@@ -504,7 +504,10 @@ impl Union {
     }
 
     pub fn variant_tag(&self, name: &str) -> Option<usize> {
-        self.variants.iter().filter(|m| !m.1.shared).position(|(n, _)| name == n)
+        self.variants
+            .iter()
+            .filter(|m| !m.1.shared)
+            .position(|(n, _)| name == n)
     }
 }
 
@@ -2114,6 +2117,36 @@ impl TypeChecker {
                         body: result,
                     },
                 )
+            }
+            Expr::As { expr, ty } => {
+                let mut expr = self.check_expr(scopes, *expr, None);
+                let ty = self.resolve_type(scopes, &ty);
+                if !expr.ty.coerces_to(scopes, &ty) {
+                    match (&expr.ty, &ty) {
+                        (TypeId::Int(a), TypeId::Int(b) | TypeId::Uint(b)) if a <= b => {}
+                        (TypeId::Uint(a), TypeId::Uint(b)) if a <= b => {}
+                        // TODO: these should only be allowable with an unsafe pointer type, or
+                        // should be unsafe to do
+                        (TypeId::Usize, TypeId::Ptr(_) | TypeId::MutPtr(_)) => {}
+                        (TypeId::Ptr(_), TypeId::Ptr(_) | TypeId::Usize) => {}
+                        (TypeId::MutPtr(_), TypeId::Ptr(_) | TypeId::MutPtr(_) | TypeId::Usize) => {
+                        }
+                        _ => {
+                            expr = self.error(Error::new(
+                                format!(
+                                    "cannot infallibly cast expression of type '{}' to '{}'",
+                                    expr.ty.name(scopes),
+                                    ty.name(scopes)
+                                ),
+                                span,
+                            ));
+                        }
+                    }
+
+                    CheckedExpr::new(ty, ExprData::As(expr.into()))
+                } else {
+                    Self::coerce_expr(scopes, expr, &ty)
+                }
             }
         }
     }
