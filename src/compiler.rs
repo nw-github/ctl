@@ -17,6 +17,22 @@ use crate::{
 const RT_STATIC_INIT: &str = "CTL_init_statics";
 const UNION_TAG_NAME: &str = "$tag";
 
+#[derive(Hash, PartialEq, Eq, Clone)]
+struct State {
+    func: GenericFunc,
+    inst: Option<GenericUserType>,
+}
+
+impl State {
+    pub fn fill_generics(&self, scopes: &Scopes, ty: &mut TypeId) {
+        ty.fill_func_generics(scopes, &self.func);
+
+        if let Some(inst) = self.inst.as_ref() {
+            ty.fill_type_generics(scopes, inst);
+        }
+    }
+}
+
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 struct Buffer(String);
 
@@ -107,15 +123,10 @@ impl Buffer {
         }
     }
 
-    fn emit_fn_name(
-        &mut self,
-        scopes: &Scopes,
-        func: &GenericFunc,
-        inst: Option<&GenericUserType>,
-    ) {
-        let f = scopes.get_func(func.id);
+    fn emit_fn_name(&mut self, scopes: &Scopes, state: &State) {
+        let f = scopes.get_func(state.func.id);
         if !f.proto.is_extern {
-            if let Some(inst) = inst {
+            if let Some(inst) = state.inst.as_ref() {
                 self.emit_type_name(scopes, inst);
                 self.emit("_");
                 self.emit(&f.proto.name);
@@ -123,7 +134,7 @@ impl Buffer {
                 self.emit(scopes.full_name(f.scope, &f.proto.name));
             }
 
-            for ty in func.generics.iter() {
+            for ty in state.func.generics.iter() {
                 self.emit("$");
                 self.emit_generic_mangled_name(scopes, ty);
             }
@@ -150,22 +161,14 @@ impl Buffer {
         }
     }
 
-    fn emit_prototype(
-        &mut self,
-        scopes: &Scopes,
-        func: &GenericFunc,
-        inst: Option<&GenericUserType>,
-    ) {
-        let f = scopes.get_func(func.id);
+    fn emit_prototype(&mut self, scopes: &Scopes, state: &State) {
+        let f = scopes.get_func(state.func.id);
         let mut ret = f.proto.ret.clone();
-        ret.fill_func_generics(scopes, func);
-        if let Some(inst) = inst {
-            ret.fill_type_generics(scopes, inst);
-        }
+        state.fill_generics(scopes, &mut ret);
 
         self.emit_type(scopes, &ret);
         self.emit(" ");
-        self.emit_fn_name(scopes, func, inst);
+        self.emit_fn_name(scopes, state);
         self.emit("(");
         for (i, param) in f.proto.params.iter().enumerate() {
             if i > 0 {
@@ -173,10 +176,7 @@ impl Buffer {
             }
 
             let mut ty = param.ty.clone();
-            ty.fill_func_generics(scopes, func);
-            if let Some(inst) = inst {
-                ty.fill_type_generics(scopes, inst);
-            }
+            state.fill_generics(scopes, &mut ty);
 
             self.emit_type(scopes, &ty);
             if !param.mutable {
@@ -192,26 +192,13 @@ impl Buffer {
             self.emit(")");
         }
     }
-
-    fn emit_local_decl(&mut self, scopes: &Scopes, inst: Option<&GenericUserType>, var: &Variable) {
-        let mut ty = var.ty.clone();
-        if let Some(inst) = inst {
-            ty.fill_type_generics(scopes, inst);
-        }
-
-        self.emit_type(scopes, &ty);
-        if !var.mutable {
-            self.emit(" const");
-        }
-        self.emit(format!(" {}", var.name));
-    }
 }
 
 #[derive(Default)]
 pub struct Compiler {
     buffer: Buffer,
     structs: HashSet<GenericUserType>,
-    funcs: HashSet<(Option<GenericUserType>, GenericFunc)>,
+    funcs: HashSet<State>,
     tmpnum: usize,
 }
 
@@ -226,7 +213,11 @@ impl Compiler {
 
         let main = GenericFunc::new(main, Vec::new());
         let mut this = Self {
-            funcs: [(None, main.clone())].into(),
+            funcs: [State {
+                inst: None,
+                func: main.clone(),
+            }]
+            .into(),
             ..Self::default()
         };
 
@@ -236,17 +227,18 @@ impl Compiler {
             let diff = this.funcs.difference(&emitted).cloned().collect::<Vec<_>>();
             emitted.extend(this.funcs.drain());
 
-            for (inst, func) in diff {
-                if scopes.get_func(func.id).proto.is_extern {
+            for state in diff {
+                let f = scopes.get_func(state.func.id);
+                if f.proto.is_extern {
                     prototypes.emit("extern ");
                 }
 
-                prototypes.emit_prototype(scopes, &func, inst.as_ref());
+                prototypes.emit_prototype(scopes, &state);
                 prototypes.emit(";");
 
-                if let Some(body) = scopes.get_func(func.id).body.clone() {
-                    this.buffer.emit_prototype(scopes, &func, inst.as_ref());
-                    this.emit_block(scopes, body, inst.as_ref());
+                if let Some(body) = f.body.clone() {
+                    this.buffer.emit_prototype(scopes, &state);
+                    this.emit_block(scopes, body, &state);
                 }
             }
         }
@@ -281,8 +273,10 @@ impl Compiler {
             for id in statics {
                 this.buffer.emit_var_name(scopes, id);
                 this.buffer.emit(" = ");
-                this.compile_expr(scopes, scopes.get_var(id).value.clone().unwrap(), None);
+                //this.compile_expr(scopes, scopes.get_var(id).value.clone().unwrap(), None);
                 this.buffer.emit(";");
+
+                todo!("statics")
             }
             this.buffer.emit("}");
         }
@@ -295,29 +289,35 @@ impl Compiler {
             this.buffer.emit(format!("{RT_STATIC_INIT}();"));
         }
         this.buffer.emit("return ");
-        this.buffer.emit_fn_name(scopes, &main, None);
+        this.buffer.emit_fn_name(
+            scopes,
+            &State {
+                func: main,
+                inst: None,
+            },
+        );
         this.buffer.emit("(); }");
 
         Ok(this.buffer.0)
     }
 
-    fn compile_stmt(&mut self, scopes: &Scopes, stmt: CheckedStmt, inst: Option<&GenericUserType>) {
+    fn compile_stmt(&mut self, scopes: &Scopes, stmt: CheckedStmt, state: &State) {
         match stmt {
             CheckedStmt::Module(block) => {
                 for stmt in block.body.into_iter() {
-                    self.compile_stmt(scopes, stmt, inst);
+                    self.compile_stmt(scopes, stmt, state);
                 }
             }
             CheckedStmt::Expr(expr) => {
-                self.compile_expr(scopes, expr, inst);
+                self.compile_expr(scopes, expr, state);
                 self.buffer.emit(";");
             }
             CheckedStmt::Let(id) => {
                 let var = scopes.get_var(id);
-                self.buffer.emit_local_decl(scopes, inst, var);
+                self.emit_local_decl(scopes, var, state);
                 if let Some(value) = &var.value {
                     self.buffer.emit(" = ");
-                    self.compile_expr(scopes, value.clone(), inst);
+                    self.compile_expr(scopes, value.clone(), state);
                 }
 
                 self.buffer.emit(";");
@@ -329,67 +329,60 @@ impl Compiler {
         }
     }
 
-    fn compile_expr(
-        &mut self,
-        scopes: &Scopes,
-        mut expr: CheckedExpr,
-        inst: Option<&GenericUserType>,
-    ) {
-        if let Some(inst) = inst {
-            expr.ty.fill_type_generics(scopes, inst);
-        }
+    fn compile_expr(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
+        state.fill_generics(scopes, &mut expr.ty);
 
         match expr.data {
             ExprData::Binary { op, left, right } => {
                 self.buffer.emit("(");
-                self.compile_expr(scopes, *left, inst);
+                self.compile_expr(scopes, *left, state);
                 self.buffer.emit(format!(" {op} "));
-                self.compile_expr(scopes, *right, inst);
+                self.compile_expr(scopes, *right, state);
                 self.buffer.emit(")");
             }
             ExprData::Unary { op, expr: inner } => match op {
                 UnaryOp::Plus => {
                     self.buffer.emit("+");
-                    self.compile_expr(scopes, *inner, inst);
+                    self.compile_expr(scopes, *inner, state);
                 }
                 UnaryOp::Neg => {
                     self.buffer.emit("-");
-                    self.compile_expr(scopes, *inner, inst);
+                    self.compile_expr(scopes, *inner, state);
                 }
                 UnaryOp::PostIncrement => {
-                    self.compile_expr(scopes, *inner, inst);
+                    self.compile_expr(scopes, *inner, state);
                     self.buffer.emit("++");
                 }
                 UnaryOp::PostDecrement => {
-                    self.compile_expr(scopes, *inner, inst);
+                    self.compile_expr(scopes, *inner, state);
                     self.buffer.emit("--");
                 }
                 UnaryOp::PreIncrement => {
                     self.buffer.emit("++");
-                    self.compile_expr(scopes, *inner, inst);
+                    self.compile_expr(scopes, *inner, state);
                 }
                 UnaryOp::PreDecrement => {
                     self.buffer.emit("--");
-                    self.compile_expr(scopes, *inner, inst);
+                    self.compile_expr(scopes, *inner, state);
                 }
                 UnaryOp::Not => {
                     if inner.ty.is_numeric() {
                         self.buffer.emit("~");
-                        self.compile_expr(scopes, *inner, inst);
+                        self.compile_expr(scopes, *inner, state);
                     } else {
                         self.buffer.emit("!");
-                        self.compile_expr(scopes, *inner, inst);
+                        self.compile_expr(scopes, *inner, state);
                     }
                 }
                 UnaryOp::Deref => {
                     self.buffer.emit("(*");
-                    self.compile_expr(scopes, *inner, inst);
+                    self.compile_expr(scopes, *inner, state);
                     self.buffer.emit(")");
                 }
                 UnaryOp::Addr | UnaryOp::AddrMut => {
                     self.buffer.emit_cast(scopes, &expr.ty);
                     self.buffer.emit("(&");
-                    self.compile_expr(scopes, *inner, inst);
+                    self.compile_expr(scopes, *inner, state);
                     self.buffer.emit(")");
                 }
                 UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in compile_expr"),
@@ -397,13 +390,20 @@ impl Compiler {
                 UnaryOp::Sizeof => todo!(),
             },
             ExprData::Call {
-                func,
+                mut func,
                 args,
                 inst: this_inst,
             } => {
-                self.buffer.emit_fn_name(scopes, &func, this_inst.as_ref());
+                for ty in func.generics.iter_mut() {
+                    state.fill_generics(scopes, ty);
+                }
 
-                self.funcs.insert((this_inst, func));
+                let next_state = State {
+                    func,
+                    inst: this_inst,
+                };
+                self.buffer.emit_fn_name(scopes, &next_state);
+                self.funcs.insert(next_state);
 
                 self.buffer.emit("(");
                 for (i, arg) in args.into_iter().enumerate() {
@@ -411,7 +411,7 @@ impl Compiler {
                         self.buffer.emit(", ");
                     }
 
-                    self.compile_expr(scopes, arg, inst);
+                    self.compile_expr(scopes, arg, state);
                 }
                 self.buffer.emit(")");
             }
@@ -452,7 +452,9 @@ impl Compiler {
             }
             ExprData::Void => self.buffer.emit("CTL(VOID)"),
             ExprData::Symbol(symbol) => match symbol {
-                Symbol::Func(func) => self.buffer.emit_fn_name(scopes, &func, None),
+                Symbol::Func(func) => self
+                    .buffer
+                    .emit_fn_name(scopes, &State { func, inst: None }),
                 Symbol::Var(id) => self.buffer.emit_var_name(scopes, id),
             },
             ExprData::Instance(members) => {
@@ -479,7 +481,7 @@ impl Compiler {
                     }
 
                     self.buffer.emit(format!(".{name} = "));
-                    self.compile_expr(scopes, value, inst);
+                    self.compile_expr(scopes, value, state);
                     self.buffer.emit(", ");
                 }
                 self.buffer.emit("}");
@@ -498,22 +500,22 @@ impl Compiler {
                 binary,
                 value,
             } => {
-                self.compile_expr(scopes, *target, inst);
+                self.compile_expr(scopes, *target, state);
                 if let Some(binary) = binary {
                     self.buffer.emit(format!(" {binary}= "));
                 } else {
                     self.buffer.emit(" = ");
                 }
-                self.compile_expr(scopes, *value, inst);
+                self.compile_expr(scopes, *value, state);
             }
             ExprData::Block(block) => {
-                self.emit_block(scopes, block, inst);
+                self.emit_block(scopes, block, state);
             }
             ExprData::If { .. } => todo!(),
             ExprData::Loop { .. } => todo!(),
             ExprData::For { .. } => todo!(),
             ExprData::Member { source, member } => {
-                self.compile_expr(scopes, *source, inst);
+                self.compile_expr(scopes, *source, state);
                 self.buffer.emit(format!(".{member}"));
             }
             ExprData::Subscript { .. } => todo!(),
@@ -521,7 +523,7 @@ impl Compiler {
                 // TODO: when return is used as anything except a StmtExpr, we will have to change
                 // the generated code to accomodate it
                 self.buffer.emit("return ");
-                self.compile_expr(scopes, *expr, inst);
+                self.compile_expr(scopes, *expr, state);
             }
             ExprData::Yield(_) => {
                 //                 let block = self.current_block.as_ref().unwrap();
@@ -529,7 +531,7 @@ impl Compiler {
                 //                 let goto = format!("; goto {}", block.label);
                 //
                 //                 self.buffer.emit(assign);
-                //                 self.compile_expr(scopes, *expr, inst);
+                //                 self.compile_expr(scopes, *expr, state);
                 //                 self.buffer.emit(goto);
                 todo!()
             }
@@ -541,13 +543,11 @@ impl Compiler {
             ExprData::Match { mut expr, body } => {
                 let tmp_name = self.get_tmp_name();
 
-                if let Some(inst) = inst {
-                    expr.ty.fill_type_generics(scopes, inst);
-                }
+                state.fill_generics(scopes, &mut expr.ty);
 
                 self.buffer.emit_type(scopes, &expr.ty);
                 self.buffer.emit(format!(" {tmp_name} = "));
-                self.compile_expr(scopes, *expr, inst);
+                self.compile_expr(scopes, *expr, state);
                 self.buffer.emit(";");
 
                 for (i, (pattern, expr)) in body.into_iter().enumerate() {
@@ -561,24 +561,23 @@ impl Compiler {
                     ));
 
                     if let Some(id) = pattern.binding {
-                        self.buffer
-                            .emit_local_decl(scopes, inst, scopes.get_var(id));
+                        self.emit_local_decl(scopes, scopes.get_var(id), state);
                         self.buffer
                             .emit(format!(" = {tmp_name}.{};", pattern.variant.0));
                     }
 
                     // FIXME: match yields values
-                    self.compile_expr(scopes, expr, inst);
+                    self.compile_expr(scopes, expr, state);
                     self.buffer.emit("; }");
                 }
             }
         }
     }
 
-    fn emit_block(&mut self, scopes: &Scopes, block: Block, inst: Option<&GenericUserType>) {
+    fn emit_block(&mut self, scopes: &Scopes, block: Block, state: &State) {
         self.buffer.emit("{");
         for stmt in block.body.into_iter() {
-            self.compile_stmt(scopes, stmt, inst);
+            self.compile_stmt(scopes, stmt, state);
         }
         self.buffer.emit("}");
     }
@@ -634,6 +633,17 @@ impl Compiler {
         }
 
         Ok(())
+    }
+
+    fn emit_local_decl(&mut self, scopes: &Scopes, var: &Variable, state: &State) {
+        let mut ty = var.ty.clone();
+        state.fill_generics(scopes, &mut ty);
+
+        self.buffer.emit_type(scopes, &ty);
+        if !var.mutable {
+            self.buffer.emit(" const");
+        }
+        self.buffer.emit(format!(" {}", var.name));
     }
 
     fn get_struct_order<'a>(
