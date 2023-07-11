@@ -1,3 +1,4 @@
+use core::panic;
 use std::{
     collections::{hash_map::Entry, HashMap},
     path::PathBuf,
@@ -311,8 +312,8 @@ impl TypeId {
             ) => true,
             (TypeId::FloatGeneric, TypeId::F32 | TypeId::F64) => true,
             (TypeId::MutPtr(ty), TypeId::Ptr(target)) if ty == target => true,
-            (ty, inner)
-                if TypeChecker::as_option_inner(scopes, inner)
+            (ty, target)
+                if TypeChecker::as_option_inner(scopes, target)
                     .map_or(false, |inner| ty.coerces_to(scopes, inner)) =>
             {
                 true
@@ -758,19 +759,25 @@ macro_rules! type_mismatch {
 }
 
 macro_rules! type_check_bail {
-    ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {
-        if !$source.coerces_to($scopes, $target) {
-            return $self.error(type_mismatch!($scopes, $target, $source, $span));
+    ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {{
+        let source = $source;
+        if !source.ty.coerces_to($scopes, $target) {
+            return $self.error(type_mismatch!($scopes, $target, source.ty, $span));
         }
-    };
+
+        Self::coerce_expr($scopes, source, $target)
+    }};
 }
 
 macro_rules! type_check {
-    ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {
-        if !$source.coerces_to($scopes, $target) {
-            $self.error::<()>(type_mismatch!($scopes, $target, $source, $span))
+    ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {{
+        let source = $source;
+        if !source.ty.coerces_to($scopes, $target) {
+            $self.error::<()>(type_mismatch!($scopes, $target, source.ty, $span))
         }
-    };
+
+        Self::coerce_expr($scopes, source, $target)
+    }};
 }
 
 macro_rules! user_type {
@@ -1319,8 +1326,13 @@ impl TypeChecker {
                     let ty = self.resolve_type(scopes, &ty);
                     if let Some(value) = value {
                         let span = value.span;
-                        let value = self.check_expr(scopes, value, Some(&ty));
-                        type_check!(self, scopes, &value.ty, &ty, span);
+                        let value = type_check!(
+                            self,
+                            scopes,
+                            self.check_expr(scopes, value, Some(&ty)),
+                            &ty,
+                            span
+                        );
 
                         CheckedStmt::Let(scopes.insert_var(Variable {
                             public: false,
@@ -1367,8 +1379,13 @@ impl TypeChecker {
                 let (value, ty) = if let Some(ty) = ty {
                     let ty = self.resolve_type(scopes, &ty);
                     let span = value.span;
-                    let value = self.check_expr(scopes, value, Some(&ty));
-                    type_check!(self, scopes, &value.ty, &ty, span);
+                    let value = type_check!(
+                        self,
+                        scopes,
+                        self.check_expr(scopes, value, Some(&ty)),
+                        &ty,
+                        span
+                    );
                     (value, ty)
                 } else {
                     let value = self.check_expr(scopes, value, None);
@@ -1395,8 +1412,13 @@ impl TypeChecker {
             Expr::Binary { op, left, right } => {
                 let left = self.check_expr(scopes, *left, target);
                 let right_span = right.span;
-                let right = self.check_expr(scopes, *right, Some(&left.ty));
-                type_check_bail!(self, scopes, &right.ty, &left.ty, right_span);
+                let right = type_check_bail!(
+                    self,
+                    scopes,
+                    self.check_expr(scopes, *right, Some(&left.ty)),
+                    &left.ty,
+                    right_span
+                );
 
                 if !left.ty.supports_binop(op) {
                     self.error(Error::new(
@@ -1546,9 +1568,13 @@ impl TypeChecker {
             Expr::ArrayWithInit { init, count } => {
                 let init = if let Some(TypeId::Array(inner)) = target {
                     let span = init.span;
-                    let init = self.check_expr(scopes, *init, Some(&inner.0));
-                    type_check!(self, scopes, &init.ty, &inner.0, span);
-                    init
+                    type_check!(
+                        self,
+                        scopes,
+                        self.check_expr(scopes, *init, Some(&inner.0)),
+                        &inner.0,
+                        span
+                    )
                 } else {
                     self.check_expr(scopes, *init, None)
                 };
@@ -1576,7 +1602,13 @@ impl TypeChecker {
                 {
                     CheckedExpr::new(
                         Self::make_option(scopes, inner.clone()).unwrap(),
-                        ExprData::None,
+                        ExprData::Instance(
+                            [(
+                                "None".into(),
+                                CheckedExpr::new(TypeId::Void, ExprData::Void),
+                            )]
+                            .into(),
+                        ),
                     )
                 } else {
                     self.error(Error::new("cannot infer type of option literal none", span))
@@ -1710,8 +1742,13 @@ impl TypeChecker {
                     return self.error(Error::new("expression is not assignable", span));
                 }
 
-                let rhs = self.check_expr(scopes, *value, Some(&lhs.ty));
-                type_check_bail!(self, scopes, &rhs.ty, &lhs.ty, span);
+                let rhs = type_check_bail!(
+                    self,
+                    scopes,
+                    self.check_expr(scopes, *value, Some(&lhs.ty)),
+                    &lhs.ty,
+                    span
+                );
 
                 if let Some(op) = binary {
                     if !lhs.ty.supports_binop(op) {
@@ -1758,16 +1795,24 @@ impl TypeChecker {
                     };
                 */
                 let cond_span = cond.span;
-                let cond = self.check_expr(scopes, *cond, Some(&TypeId::Bool));
-                type_check!(self, scopes, &cond.ty, &TypeId::Bool, cond_span);
+                let cond = type_check!(
+                    self,
+                    scopes,
+                    self.check_expr(scopes, *cond, Some(&TypeId::Bool)),
+                    &TypeId::Bool,
+                    cond_span
+                );
 
                 let if_branch = self.check_expr(scopes, *if_branch, None);
                 let mut out_type = if_branch.ty.clone();
                 let else_branch = if let Some(e) = else_branch {
-                    let else_branch = self.check_expr(scopes, *e, Some(&if_branch.ty));
-                    type_check!(self, scopes, &else_branch.ty, &if_branch.ty, span);
-
-                    Some(else_branch)
+                    Some(type_check!(
+                        self,
+                        scopes,
+                        self.check_expr(scopes, *e, Some(&if_branch.ty)),
+                        &if_branch.ty,
+                        span
+                    ))
                 } else {
                     // this separates these two cases:
                     //   let x /* void? */ = if whatever { yield void; };
@@ -1805,8 +1850,13 @@ impl TypeChecker {
                     };
                 */
                 let span = cond.span;
-                let cond = self.check_expr(scopes, *cond, Some(&TypeId::Bool));
-                type_check!(self, scopes, &cond.ty, &TypeId::Bool, span);
+                let cond = type_check!(
+                    self,
+                    scopes,
+                    self.check_expr(scopes, *cond, Some(&TypeId::Bool)),
+                    &TypeId::Bool,
+                    span
+                );
 
                 let body = self.create_block(
                     scopes,
@@ -1890,8 +1940,13 @@ impl TypeChecker {
                 let callee = self.check_expr(scopes, *callee, None);
                 let arg = args.into_iter().next().unwrap();
                 let arg_span = arg.span;
-                let arg = self.check_expr(scopes, arg, Some(&TypeId::Isize));
-                type_check_bail!(self, scopes, &arg.ty, &TypeId::Isize, arg_span);
+                let arg = type_check_bail!(
+                    self,
+                    scopes,
+                    self.check_expr(scopes, arg, Some(&TypeId::Isize)),
+                    &TypeId::Isize,
+                    arg_span
+                );
 
                 if let TypeId::Array(target) = &callee.ty {
                     CheckedExpr::new(
@@ -1915,8 +1970,13 @@ impl TypeChecker {
                 };
 
                 let span = expr.span;
-                let expr = self.check_expr(scopes, *expr, Some(&target));
-                type_check!(self, scopes, &expr.ty, &target, span);
+                let expr = type_check!(
+                    self,
+                    scopes,
+                    self.check_expr(scopes, *expr, Some(&target)),
+                    &target,
+                    span
+                );
 
                 CheckedExpr::new(TypeId::Never, ExprData::Return(expr.into()))
             }
@@ -1926,9 +1986,9 @@ impl TypeChecker {
                 };
 
                 let span = expr.span;
-                let expr = self.check_expr(scopes, *expr, target.as_ref());
+                let mut expr = self.check_expr(scopes, *expr, target.as_ref());
                 if let Some(target) = &target {
-                    type_check!(self, scopes, &expr.ty, target, span);
+                    expr = type_check!(self, scopes, expr, target, span);
                     scopes.current().kind = ScopeKind::Block(Some(target.clone()), true);
                 } else {
                     scopes.current().kind = ScopeKind::Block(Some(expr.ty.clone()), true);
@@ -1948,9 +2008,9 @@ impl TypeChecker {
                 };
 
                 let span = expr.span;
-                let expr = self.check_expr(scopes, *expr, target.as_ref());
+                let mut expr = self.check_expr(scopes, *expr, target.as_ref());
                 if let Some(target) = &target {
-                    type_check!(self, scopes, &expr.ty, target, span);
+                    expr = type_check!(self, scopes, expr, target, span);
                 } else if inf {
                     scopes[scope].kind = ScopeKind::Loop(Some(expr.ty.clone()), inf);
                 } else {
@@ -1985,7 +2045,7 @@ impl TypeChecker {
                     let span = expr.span;
                     let (var, variant) =
                         self.check_pattern(scopes, &scrutinee, scrutinee_span, pattern);
-                    let (var, expr) = scopes.enter(None, ScopeKind::None, |scopes| {
+                    let (var, mut expr) = scopes.enter(None, ScopeKind::None, |scopes| {
                         let var = var.map(|var| scopes.insert_var(var));
                         (var, self.check_expr(scopes, expr, Some(&target)))
                     });
@@ -1993,7 +2053,7 @@ impl TypeChecker {
                     if target.is_unknown() {
                         target = expr.ty.clone();
                     } else {
-                        type_check!(self, scopes, &expr.ty, &target, span);
+                        expr = type_check!(self, scopes, expr, &target, span);
                     }
 
                     result.push((
@@ -2373,11 +2433,7 @@ impl TypeChecker {
             target.fill_type_generics(scopes, instance);
         }
 
-        if !expr.ty.coerces_to(scopes, &target) {
-            self.error(type_mismatch!(scopes, &target, &expr.ty, span))
-        } else {
-            expr
-        }
+        type_check_bail!(self, scopes, expr, &target, span)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2843,6 +2899,38 @@ impl TypeChecker {
             }
         } else {
             Ok(None)
+        }
+    }
+
+    fn coerce_expr(scopes: &Scopes, expr: CheckedExpr, target: &TypeId) -> CheckedExpr {
+        match (&expr.ty, target) {
+            (
+                TypeId::IntGeneric,
+                TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize,
+            ) => CheckedExpr::new(target.clone(), expr.data),
+            (TypeId::FloatGeneric, TypeId::F32 | TypeId::F64) => {
+                CheckedExpr::new(target.clone(), expr.data)
+            }
+            (TypeId::MutPtr(lhs), TypeId::Ptr(rhs)) if lhs == rhs => {
+                CheckedExpr::new(target.clone(), expr.data)
+            }
+            (ty, target)
+                if Self::as_option_inner(scopes, target)
+                    .map_or(false, |inner| ty.coerces_to(scopes, inner)) =>
+            {
+                let inner = Self::as_option_inner(scopes, target).unwrap();
+                let expr = Self::coerce_expr(scopes, expr, inner);
+                Self::coerce_expr(
+                    scopes,
+                    CheckedExpr::new(
+                        Self::make_option(scopes, expr.ty.clone()).unwrap(),
+                        ExprData::Instance([("Some".into(), expr)].into()),
+                    ),
+                    target,
+                )
+            }
+            (TypeId::Never, _) => CheckedExpr::new(target.clone(), expr.data),
+            _ => expr,
         }
     }
 }

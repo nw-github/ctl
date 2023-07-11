@@ -56,7 +56,6 @@ pub mod expr {
         Char(char),
         Void,
         Symbol(Symbol),
-        None,
         Assign {
             target: Box<CheckedExpr>,
             binary: Option<BinaryOp>,

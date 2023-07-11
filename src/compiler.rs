@@ -484,7 +484,6 @@ impl Compiler {
                     );
                 }
             }
-            ExprData::None => todo!(),
             ExprData::Assign {
                 target,
                 binary,
