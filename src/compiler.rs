@@ -7,7 +7,7 @@ use crate::{
         stmt::CheckedStmt,
         Block,
     },
-    lexer::{Location, Span},
+    lexer::Span,
     typecheck::{
         GenericFunc, GenericUserType, ScopeId, Scopes, Symbol, TypeId, Variable, VariableId,
     },
@@ -36,7 +36,6 @@ impl Buffer {
             TypeId::F32 => self.emit("CTL(f32)"),
             TypeId::F64 => self.emit("CTL(f64)"),
             TypeId::Bool => self.emit("CTL(bool)"),
-            TypeId::String => self.emit("CTL(str)"),
             TypeId::Char => self.emit("CTL(char)"),
             TypeId::IntGeneric | TypeId::FloatGeneric => {
                 panic!("ICE: Int/FloatGeneric in emit_type");
@@ -75,7 +74,6 @@ impl Buffer {
             TypeId::F32 => self.emit("f32"),
             TypeId::F64 => self.emit("f64"),
             TypeId::Bool => self.emit("bool"),
-            TypeId::String => self.emit("str"),
             TypeId::Char => self.emit("char"),
             TypeId::IntGeneric | TypeId::FloatGeneric => {
                 panic!("ICE: Int/FloatGeneric in emit_generic_mangled_name");
@@ -175,7 +173,12 @@ impl Buffer {
 
             self.emit(format!(" {}", param.name));
         }
-        self.emit(")");
+
+        if f.proto.params.is_empty() {
+            self.emit("void)");
+        } else {
+            self.emit(")");
+        }
     }
 
     fn emit_local_decl(&mut self, scopes: &Scopes, inst: Option<&GenericUserType>, var: &Variable) {
@@ -421,9 +424,13 @@ impl Compiler {
                 self.buffer.emit(value);
             }
             ExprData::String(value) => {
-                self.buffer.emit("CTL_STR(\"");
-                self.buffer.emit(value);
-                self.buffer.emit("\")");
+                self.structs.insert((**expr.ty.as_user_type().unwrap()).clone());
+
+                self.buffer.emit_cast(scopes, &expr.ty);
+                self.buffer.emit("{");
+                self.buffer.emit(format!(".data = (CTL(u8) const*)\"{value}\","));
+                self.buffer.emit(format!(".len = {},", value.len()));
+                self.buffer.emit("}");
             }
             ExprData::Char(value) => {
                 self.buffer.emit_cast(scopes, &expr.ty);
@@ -457,8 +464,7 @@ impl Compiler {
                 self.buffer.emit("}");
 
                 if let TypeId::UserType(data) = expr.ty {
-                    self.structs
-                        .insert(GenericUserType::new(data.id, data.generics));
+                    self.structs.insert((*data).clone());
                 } else {
                     panic!(
                         "ICE: Constructing instance of non-struct type {}!",

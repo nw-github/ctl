@@ -109,7 +109,6 @@ pub enum TypeId {
     Bool,
     IntGeneric,
     FloatGeneric,
-    String,
     Char,
     Func(Box<GenericFunc>),
     UserType(Box<GenericUserType>),
@@ -129,7 +128,6 @@ impl TypeId {
                     | TypeId::Usize
                     | TypeId::F32
                     | TypeId::F64
-                    | TypeId::String
             ),
             BinaryOp::Sub
             | BinaryOp::Mul
@@ -164,8 +162,7 @@ impl TypeId {
                         | TypeId::Usize
                         | TypeId::F32
                         | TypeId::F64
-                        | TypeId::Bool
-                        | TypeId::String // FIXME: option<T> should be comparable with T
+                        | TypeId::Bool // FIXME: option<T> should be comparable with T
                 )
             }
             BinaryOp::LogicalOr | BinaryOp::LogicalAnd => {
@@ -253,7 +250,6 @@ impl TypeId {
             TypeId::Bool => "bool".into(),
             TypeId::IntGeneric => "{integer}".into(),
             TypeId::FloatGeneric => "{float}".into(),
-            TypeId::String => "str".into(),
             TypeId::Char => "char".into(),
             TypeId::Ptr(id) => format!("*{}", id.name(scopes)),
             TypeId::MutPtr(id) => format!("*mut {}", id.name(scopes)),
@@ -1571,7 +1567,9 @@ impl TypeChecker {
             Expr::Tuple(_) => todo!(),
             Expr::Map(_) => todo!(),
             Expr::Range { .. } => todo!(),
-            Expr::String(s) => CheckedExpr::new(TypeId::String, ExprData::String(s)),
+            Expr::String(s) => {
+                CheckedExpr::new(Self::find_core_string(scopes).unwrap(), ExprData::String(s))
+            }
             Expr::Char(s) => CheckedExpr::new(TypeId::Char, ExprData::Char(s)),
             Expr::None => {
                 if let Some(inner) = target.and_then(|target| Self::as_option_inner(scopes, target))
@@ -2507,7 +2505,7 @@ impl TypeChecker {
                             "f32" => Some(TypeId::F32),
                             "f64" => Some(TypeId::F64),
                             "bool" => Some(TypeId::Bool),
-                            "str" => Some(TypeId::String),
+                            "str" => Self::find_core_string(scopes),
                             "char" => Some(TypeId::Char),
                             _ => TypeId::from_int_name(symbol),
                         })
@@ -2552,6 +2550,18 @@ impl TypeChecker {
         let core = scopes.scopes()[0].children.get("core")?;
         let option = scopes[*core].children.get("option")?;
         scopes.find_user_type_in("Option", *option)
+    }
+
+    fn find_core_string(scopes: &Scopes) -> Option<TypeId> {
+        let core = scopes.scopes()[0].children.get("core")?;
+        let option = scopes[*core].children.get("string")?;
+        Some(TypeId::UserType(
+            GenericUserType {
+                id: scopes.find_user_type_in("str", *option)?,
+                generics: vec![],
+            }
+            .into(),
+        ))
     }
 
     fn make_option(scopes: &Scopes, ty: TypeId) -> Option<TypeId> {
