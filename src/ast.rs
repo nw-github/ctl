@@ -296,6 +296,7 @@ pub mod stmt {
     #[derive(Debug, Clone)]
     pub struct MemVar {
         pub public: bool,
+        pub shared: bool,
         pub ty: TypeHint,
         pub default: Option<super::Expr>,
     }

@@ -395,6 +395,7 @@ impl<'a> Parser<'a> {
                         public,
                         ty,
                         default: value,
+                        shared: false,
                     },
                 ));
             }
@@ -440,6 +441,7 @@ impl<'a> Parser<'a> {
                     body,
                 });
             } else {
+                let shared = this.advance_if_kind(Token::Shared).is_some();
                 let (name, ty) = this.parse_var_name()?;
                 let value = if this.advance_if_kind(Token::Assign).is_some() {
                     Some(this.expression()?)
@@ -452,6 +454,7 @@ impl<'a> Parser<'a> {
                     name,
                     stmt::MemVar {
                         public,
+                        shared,
                         ty: ty.unwrap_or(TypeHint::Void),
                         default: value,
                     },

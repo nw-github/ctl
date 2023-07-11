@@ -489,6 +489,7 @@ pub struct Function {
 #[derive(Debug, Clone)]
 pub struct Member {
     pub public: bool,
+    pub shared: bool,
     pub ty: TypeId,
 }
 
@@ -503,7 +504,7 @@ impl Union {
     }
 
     pub fn variant_tag(&self, name: &str) -> Option<usize> {
-        self.variants.iter().position(|(n, _)| name == n)
+        self.variants.iter().filter(|m| !m.1.shared).position(|(n, _)| name == n)
     }
 }
 
@@ -896,6 +897,7 @@ impl TypeChecker {
                             name.clone(),
                             Member {
                                 public: member.public,
+                                shared: member.shared,
                                 ty: Self::fd_resolve_type(scopes, &member.ty)
                                     .unwrap_or(TypeId::Unknown)
                                     .clone(),
@@ -982,16 +984,28 @@ impl TypeChecker {
                 }
                 ParsedUserType::Union { tag, base } => {
                     let mut variants = Vec::with_capacity(base.members.len());
+                    let mut shared = vec![];
                     for (name, member) in base.members.iter() {
                         variants.push((
                             name.clone(),
                             Member {
                                 public: member.public,
+                                shared: member.shared,
                                 ty: Self::fd_resolve_type(scopes, &member.ty)
                                     .unwrap_or(TypeId::Unknown)
                                     .clone(),
                             },
                         ));
+
+                        if member.shared {
+                            shared.push(Param {
+                                mutable: false,
+                                keyword: true,
+                                name: name.clone(),
+                                ty: member.ty.clone(),
+                                default: None,
+                            });
+                        }
                     }
 
                     let self_id = scopes.insert_user_type(UserType {
@@ -1018,6 +1032,14 @@ impl TypeChecker {
                             }
 
                             for (name, member) in base.members.iter() {
+                                let mut params = shared.clone();
+                                params.push(Param {
+                                    mutable: false,
+                                    keyword: false,
+                                    name: name.clone(),
+                                    ty: member.ty.clone(),
+                                    default: None,
+                                });
                                 // TODO: generic params
                                 self.forward_declare_fn(
                                     scopes,
@@ -1030,13 +1052,7 @@ impl TypeChecker {
                                             is_async: false,
                                             is_extern: false,
                                             type_params: base.type_params.clone(),
-                                            params: vec![Param {
-                                                mutable: false,
-                                                keyword: false,
-                                                name: name.clone(),
-                                                ty: member.ty.clone(),
-                                                default: None,
-                                            }],
+                                            params,
                                             ret: TypeHint::Regular {
                                                 is_dyn: false,
                                                 path: Located::new(
@@ -1915,8 +1931,15 @@ impl TypeChecker {
                 let id = source.ty.strip_references();
                 let ty = user_type!(self, scopes, id, span);
 
-                if let Some(members) = ty.data.as_struct() {
+                if let Some(members) = ty.data.members() {
                     if let Some((_, var)) = members.iter().find(|m| m.0 == member) {
+                        if ty.data.is_union() && !var.shared {
+                            return self.error(Error::new(
+                                "cannot access union variant with '.' (only shared members)",
+                                span,
+                            ));
+                        }
+
                         if !var.public && !scopes.is_sub_scope(ty.scope) {
                             return self.error(Error::new(
                                 format!(

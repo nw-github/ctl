@@ -9,7 +9,7 @@ use crate::{
     },
     lexer::Span,
     typecheck::{
-        GenericFunc, GenericUserType, ScopeId, Scopes, Symbol, TypeId, Variable, VariableId,
+        GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId, Variable, VariableId,
     },
     Error,
 };
@@ -42,7 +42,7 @@ impl Buffer {
                 } else {
                     self.emit(format!("CTL_BITINT({bits})"));
                 }
-            },
+            }
             TypeId::Isize => self.emit("CTL(isize)"),
             TypeId::Usize => self.emit("CTL(usize)"),
             TypeId::F32 => self.emit("CTL(f32)"),
@@ -436,11 +436,13 @@ impl Compiler {
                 self.buffer.emit(value);
             }
             ExprData::String(value) => {
-                self.structs.insert((**expr.ty.as_user_type().unwrap()).clone());
+                self.structs
+                    .insert((**expr.ty.as_user_type().unwrap()).clone());
 
                 self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit("{");
-                self.buffer.emit(format!(".data = (uint8_t const*)\"{value}\","));
+                self.buffer
+                    .emit(format!(".data = (uint8_t const*)\"{value}\","));
                 self.buffer.emit(format!(".len = {},", value.len()));
                 self.buffer.emit("}");
             }
@@ -462,11 +464,18 @@ impl Compiler {
                         .as_user_type()
                         .and_then(|ut| scopes.get_user_type(ut.id).data.as_union())
                     {
-                        // union instances only have one member
-                        self.buffer.emit(format!(
-                            ".{UNION_TAG_NAME} = {},",
-                            union.variant_tag(&name).unwrap()
-                        ));
+                        if union
+                            .variants
+                            .iter()
+                            .find(|n| n.0 == name)
+                            .filter(|m| !m.1.shared)
+                            .is_some()
+                        {
+                            self.buffer.emit(format!(
+                                ".{UNION_TAG_NAME} = {},",
+                                union.variant_tag(&name).unwrap()
+                            ));
+                        }
                     }
 
                     self.buffer.emit(format!(".{name} = "));
@@ -574,6 +583,18 @@ impl Compiler {
         self.buffer.emit("}");
     }
 
+    fn emit_member(&mut self, scopes: &Scopes, ut: &GenericUserType, name: &str, member: &Member) {
+        let mut ty = member.ty.clone();
+        ty.fill_type_generics(scopes, ut);
+
+        self.buffer.emit_type(scopes, &ty);
+        self.buffer.emit(format!(" {name}"));
+        self.buffer.emit(";");
+        if !member.public {
+            self.buffer.emit("/* private */ \n")
+        }
+    }
+
     fn emit_structs(&mut self, scopes: &Scopes) -> Result<(), Error> {
         let mut structs = HashMap::new();
         for ut in std::mem::take(&mut self.structs) {
@@ -585,26 +606,28 @@ impl Compiler {
             self.buffer.emit_type_name(scopes, ut);
             self.buffer.emit("{");
 
-            let union = scopes.get_user_type(ut.id).data.as_union();
-            if let Some(union) = union {
+            let members = scopes.get_user_type(ut.id).data.members().unwrap();
+            if let Some(union) = scopes.get_user_type(ut.id).data.as_union() {
                 self.buffer.emit_type(scopes, &union.tag_type());
-                self.buffer.emit(format!(" {UNION_TAG_NAME}; union {{"));
-            }
+                self.buffer.emit(format!(" {UNION_TAG_NAME};"));
 
-            for (name, member) in scopes.get_user_type(ut.id).data.members().unwrap() {
-                let mut ty = member.ty.clone();
-                ty.fill_type_generics(scopes, ut);
-
-                self.buffer.emit_type(scopes, &ty);
-                self.buffer.emit(format!(" {}", name));
-                self.buffer.emit(";");
-                if !member.public {
-                    self.buffer.emit("/* private */ \n")
+                for (name, member) in members {
+                    if member.shared {
+                        self.emit_member(scopes, ut, name, member);
+                    }
                 }
-            }
 
-            if union.is_some() {
+                self.buffer.emit(" union {");
+                for (name, member) in members {
+                    if !member.shared {
+                        self.emit_member(scopes, ut, name, member);
+                    }
+                }
                 self.buffer.emit("};");
+            } else {
+                for (name, member) in members {
+                    self.emit_member(scopes, ut, name, member);
+                }
             }
 
             self.buffer.emit("};");

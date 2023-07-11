@@ -95,6 +95,7 @@ pub enum Token<'a> {
     None,
     Super,
     Unsafe,
+    Shared,
 
     Ident(&'a str),
     Int {
@@ -438,6 +439,7 @@ impl<'a> Lexer<'a> {
             "none" => Token::None,
             "unsafe" => Token::Unsafe,
             "super" => Token::Super,
+            "shared" => Token::Shared,
             x if x == THIS_PARAM => Token::This,
             x if x == THIS_TYPE => Token::ThisType,
             id => Token::Ident(id),
