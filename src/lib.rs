@@ -140,6 +140,7 @@ impl<T: CompileState> Pipeline<T> {
 }
 
 pub(crate) fn derive_module_name(path: &Path) -> String {
+    let path = path.canonicalize().unwrap();
     let base = if path.is_file() {
         path.file_stem()
     } else {
