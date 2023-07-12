@@ -1,10 +1,11 @@
-#ifndef CTL_FWD_H 
-#define CTL_FWD_H
+#ifndef CTL_TYPES_H 
+#define CTL_TYPES_H
 
 #include <stdint.h>
 
-#define CTL(ident)       CTL_##ident
-#define CTL_BITINT(bits) _BitInt(bits)
+#define CTL(ident)        CTL_##ident
+#define CTL_SBITINT(bits) _BitInt(bits)
+#define CTL_UBITINT(bits) unsigned _BitInt(bits)
 
 typedef intptr_t  CTL(isize);
 typedef uintptr_t CTL(usize);

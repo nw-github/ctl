@@ -54,9 +54,9 @@ impl Buffer {
                         self.emit(format!("int{bits}_t"));
                     }
                 } else if unsigned {
-                    self.emit(format!("unsigned CTL_BITINT({bits})"));
+                    self.emit(format!("CTL_UBITINT({bits})"));
                 } else {
-                    self.emit(format!("CTL_BITINT({bits})"));
+                    self.emit(format!("CTL_SBITINT({bits})"));
                 }
             }
             TypeId::Isize => self.emit("CTL(isize)"),
@@ -246,8 +246,8 @@ impl Compiler {
         let functions = std::mem::take(&mut this.buffer);
 
         this.buffer.emit("#include <runtime/ctl.h>\n");
-        this.emit_structs(scopes)?;
-        this.buffer.emit(prototypes.0);
+        
+        this.emit_structs(scopes, prototypes.0)?;
 
         let mut statics = Vec::new();
         for scope in scopes.scopes().iter() {
@@ -442,13 +442,17 @@ impl Compiler {
                 self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit("{");
                 self.buffer
-                    .emit(format!(".data = (uint8_t const*)\"{value}\","));
-                self.buffer.emit(format!(".len = {},", value.len()));
+                    .emit(format!(".data = (uint8_t const*)u8\"{value}\","));
+                self.buffer.emit(format!(".len = (CTL(usize)){},", value.len()));
                 self.buffer.emit("}");
             }
             ExprData::Char(value) => {
                 self.buffer.emit_cast(scopes, &expr.ty);
-                self.buffer.emit(format!("{:#x}", value as u32));
+                if value as u32 <= 127 {
+                    self.buffer.emit(format!("'{value}'"));
+                } else {
+                    self.buffer.emit(format!("{:#x}", value as u32));
+                }
             }
             ExprData::Void => self.buffer.emit("CTL(VOID)"),
             ExprData::Symbol(symbol) => match symbol {
@@ -600,12 +604,13 @@ impl Compiler {
         }
     }
 
-    fn emit_structs(&mut self, scopes: &Scopes) -> Result<(), Error> {
+    fn emit_structs(&mut self, scopes: &Scopes, prototypes: String) -> Result<(), Error> {
         let mut structs = HashMap::new();
         for ut in std::mem::take(&mut self.structs) {
             self.get_depencencies(scopes, ut, &mut structs);
         }
 
+        self.buffer.emit(prototypes);
         for ut in Self::get_struct_order(scopes, &structs)? {
             self.buffer.emit("struct ");
             self.buffer.emit_type_name(scopes, ut);
