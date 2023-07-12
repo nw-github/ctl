@@ -387,13 +387,25 @@ impl Compiler {
                 }
                 UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in compile_expr"),
                 UnaryOp::Try => todo!(),
-                UnaryOp::Sizeof => todo!(),
             },
             ExprData::Call {
                 mut func,
                 args,
                 inst: this_inst,
             } => {
+                if scopes.scopes()[0].children.get("core")
+                    .and_then(|&scope| scopes[scope].children.get("mem"))
+                    .and_then(|&scope| scopes.find_func_in("size_of", scope))
+                    .filter(|&id| id == func.id).is_some()
+                {
+                    self.buffer.emit("(CTL(usize))sizeof");
+                    self.buffer.emit_cast(scopes, &func.generics[0]);
+                    if let TypeId::UserType(ty) = &func.generics[0] {
+                        self.structs.insert((**ty).clone());
+                    }
+                    return;
+                }
+
                 for ty in func.generics.iter_mut() {
                     state.fill_generics(scopes, ty);
                 }

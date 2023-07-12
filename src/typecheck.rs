@@ -1766,6 +1766,7 @@ impl TypeChecker {
                     ExprData::Symbol(Symbol::Func(id)),
                 ),
                 Err(err) => self.error(err),
+                // FIXME: this error sucks
                 Ok(None) => self.error(Error::new("type not found in this scope", span)),
             },
             Expr::Assign {

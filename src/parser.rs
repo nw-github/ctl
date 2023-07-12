@@ -971,7 +971,6 @@ impl<'a> Parser<'a> {
                     | Token::Increment
                     | Token::Decrement
                     | Token::Exclamation
-                    | Token::Sizeof
             )
         }) {
             let op = if t.data == Token::Ampersand && self.advance_if_kind(Token::Mut).is_some() {
