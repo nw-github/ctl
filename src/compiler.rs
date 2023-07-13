@@ -527,7 +527,20 @@ impl Compiler {
             ExprData::Block(block) => {
                 self.emit_block(scopes, block, state);
             }
-            ExprData::If { .. } => todo!(),
+            ExprData::If {
+                cond,
+                if_branch,
+                else_branch,
+            } => {
+                self.buffer.emit("if (");
+                self.compile_expr(scopes, *cond, state);
+                self.buffer.emit(") ");
+                self.compile_expr(scopes, *if_branch, state);
+                if let Some(else_branch) = else_branch {
+                    self.buffer.emit(" else ");
+                    self.compile_expr(scopes, *else_branch, state);
+                }
+            }
             ExprData::Loop { .. } => todo!(),
             ExprData::For { .. } => todo!(),
             ExprData::Member { source, member } => {
