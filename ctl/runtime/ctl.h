@@ -12,22 +12,22 @@ inline CTL(void) print_i32(int32_t const num) {
 }
 
 inline CTL(void) print(uint8_t const *buf, CTL(usize) const len) {
-    printf("%*s", (int)len, buf);
+    printf("%.*s", (int)len, buf);
     return CTL(VOID);
 }
 
 inline CTL(void) println(uint8_t const *buf, CTL(usize) const len) {
-    printf("%*s\n", (int)len, buf);
+    printf("%.*s\n", (int)len, buf);
     return CTL(VOID);
 }
 
 inline CTL(void) eprint(uint8_t const *buf, CTL(usize) const len) {
-    fprintf(stderr, "%*s", (int)len, buf);
+    fprintf(stderr, "%.*s", (int)len, buf);
     return CTL(VOID);
 }
 
 inline CTL(void) eprintln(uint8_t const *buf, CTL(usize) const len) {
-    fprintf(stderr, "%*s\n", (int)len, buf);
+    fprintf(stderr, "%.*s\n", (int)len, buf);
     return CTL(VOID);
 }
 
