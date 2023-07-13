@@ -1561,7 +1561,6 @@ impl TypeChecker {
                         }
                     }
                     Try => todo!(),
-                    Sizeof => todo!(),
                 };
 
                 if valid {
