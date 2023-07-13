@@ -246,7 +246,7 @@ impl Compiler {
         let functions = std::mem::take(&mut this.buffer);
 
         this.buffer.emit("#include <runtime/ctl.h>\n");
-        
+
         this.emit_structs(scopes, prototypes.0)?;
 
         let mut statics = Vec::new();
@@ -391,12 +391,25 @@ impl Compiler {
             ExprData::Call {
                 mut func,
                 args,
-                inst: this_inst,
+                mut inst,
             } => {
-                if scopes.scopes()[0].children.get("core")
+                for ty in func.generics.iter_mut() {
+                    state.fill_generics(scopes, ty);
+                }
+
+                if let Some(inst) = inst.as_mut() {
+                    for ty in inst.generics.iter_mut() {
+                        state.fill_generics(scopes, ty);
+                    }
+                }
+
+                if scopes.scopes()[0]
+                    .children
+                    .get("core")
                     .and_then(|&scope| scopes[scope].children.get("mem"))
                     .and_then(|&scope| scopes.find_func_in("size_of", scope))
-                    .filter(|&id| id == func.id).is_some()
+                    .filter(|&id| id == func.id)
+                    .is_some()
                 {
                     self.buffer.emit("(CTL(usize))sizeof");
                     self.buffer.emit_cast(scopes, &func.generics[0]);
@@ -406,14 +419,7 @@ impl Compiler {
                     return;
                 }
 
-                for ty in func.generics.iter_mut() {
-                    state.fill_generics(scopes, ty);
-                }
-
-                let next_state = State {
-                    func,
-                    inst: this_inst,
-                };
+                let next_state = State { func, inst };
                 self.buffer.emit_fn_name(scopes, &next_state);
                 self.funcs.insert(next_state);
 
@@ -455,7 +461,8 @@ impl Compiler {
                 self.buffer.emit("{");
                 self.buffer
                     .emit(format!(".data = (uint8_t const*)u8\"{value}\","));
-                self.buffer.emit(format!(".len = (CTL(usize)){},", value.len()));
+                self.buffer
+                    .emit(format!(".len = (CTL(usize)){},", value.len()));
                 self.buffer.emit("}");
             }
             ExprData::Char(value) => {
