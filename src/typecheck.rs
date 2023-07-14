@@ -1176,10 +1176,6 @@ impl TypeChecker {
         };
 
         let id = scopes.insert_func_in(checked, scope);
-        if f.proto.is_extern {
-            return;
-        }
-
         scopes.enter(
             Some(f.proto.name.clone()),
             ScopeKind::Function(id),
@@ -2445,52 +2441,53 @@ impl TypeChecker {
     fn check_fn(&mut self, scopes: &mut Scopes, f: Fn) -> FunctionId {
         // TODO: disallow private type in public interface
         let id = scopes.find_func(&f.proto.name).unwrap();
-        for i in 0..f.proto.params.len() {
+
+        scopes.enter_id(scopes.get_func(id).body.as_ref().unwrap().scope, |scopes| {
+            for i in 0..f.proto.params.len() {
+                resolve_forward_declare!(
+                    self,
+                    scopes,
+                    scopes.get_func_mut(id).proto.params[i].ty,
+                    &f.proto.params[i].ty
+                );
+            }
+
             resolve_forward_declare!(
                 self,
                 scopes,
-                scopes.get_func_mut(id).proto.params[i].ty,
-                &f.proto.params[i].ty
+                scopes.get_func_mut(id).proto.ret,
+                &f.proto.ret
             );
-        }
 
-        resolve_forward_declare!(
-            self,
-            scopes,
-            scopes.get_func_mut(id).proto.ret,
-            &f.proto.ret
-        );
+            if f.proto.is_extern {
+                return;
+            }
 
-        if f.proto.is_extern {
-            return id;
-        }
+            let params: Vec<_> = scopes
+                .get_func_mut(id)
+                .proto
+                .params
+                .iter()
+                .map(|param| Variable {
+                    name: param.name.clone(),
+                    ty: param.ty.clone(),
+                    is_static: false,
+                    public: false,
+                    mutable: param.mutable,
+                    value: None,
+                })
+                .collect();
 
-        scopes.get_func_mut(id).body.as_mut().unwrap().body =
-            scopes.enter_id(scopes.get_func(id).body.as_ref().unwrap().scope, |scopes| {
-                let params: Vec<_> = scopes
-                    .get_func_mut(id)
-                    .proto
-                    .params
-                    .iter()
-                    .map(|param| Variable {
-                        name: param.name.clone(),
-                        ty: param.ty.clone(),
-                        is_static: false,
-                        public: false,
-                        mutable: param.mutable,
-                        value: None,
-                    })
-                    .collect();
+            for param in params {
+                scopes.insert_var(param);
+            }
 
-                for param in params {
-                    scopes.insert_var(param);
-                }
-
-                f.body
-                    .into_iter()
-                    .map(|stmt| self.check_stmt(scopes, stmt))
-                    .collect()
-            });
+            scopes.get_func_mut(id).body.as_mut().unwrap().body = f
+                .body
+                .into_iter()
+                .map(|stmt| self.check_stmt(scopes, stmt))
+                .collect();
+        });
 
         id
     }
@@ -2713,7 +2710,7 @@ impl TypeChecker {
     fn make_option(scopes: &Scopes, ty: TypeId) -> Option<TypeId> {
         Some(TypeId::UserType(
             GenericUserType {
-                id: Self::find_core_option(scopes).unwrap(),
+                id: Self::find_core_option(scopes)?,
                 generics: vec![ty],
             }
             .into(),
@@ -2811,8 +2808,7 @@ impl TypeChecker {
                     ScopeKind::UserType(id) => {
                         let ty = scopes.get_user_type(id);
                         if !ty.public
-                            && scopes.module_of(ty.scope)
-                                != scopes.module_of(scopes.current_id())
+                            && scopes.module_of(ty.scope) != scopes.module_of(scopes.current_id())
                         {
                             return Err(Error::new(
                                 format!("cannot access members of private struct {}", part.0),
@@ -3028,7 +3024,7 @@ impl TypeChecker {
                     span,
                 ));
             }
-            
+
             scopes.current().children.insert(last.clone(), module);
         } else {
             return Err(Error::new(
