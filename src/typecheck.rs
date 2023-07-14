@@ -985,7 +985,7 @@ impl TypeChecker {
                         },
                     )
                 }
-                ParsedUserType::Union { tag, base } => {
+                ParsedUserType::Union { tag: _, base } => {
                     let mut variants = Vec::with_capacity(base.members.len());
                     let mut shared = vec![];
                     for (name, member) in base.members.iter() {
@@ -1274,7 +1274,7 @@ impl TypeChecker {
                     });
                     CheckedStmt::None
                 }
-                ParsedUserType::Union { tag, base } => {
+                ParsedUserType::Union { tag: _, base } => {
                     let self_id = scopes.find_user_type(&base.name).unwrap();
                     scopes.enter_id(scopes.get_user_type(self_id).body_scope, |scopes| {
                         for i in 0..base.members.len() {
@@ -2086,7 +2086,7 @@ impl TypeChecker {
 
                 CheckedExpr::new(TypeId::Never, ExprData::Continue)
             }
-            Expr::Is { expr, pattern } => todo!(),
+            Expr::Is { .. } => todo!(),
             Expr::Match { expr, body } => {
                 let scrutinee_span = expr.span;
                 let scrutinee = self.check_expr(scopes, *expr, None);
