@@ -338,6 +338,7 @@ pub mod stmt {
     #[derive(Debug, Clone)]
     pub enum Stmt {
         Expr(super::Expr),
+        Use(Path),
         Let {
             name: String,
             ty: Option<TypeHint>,

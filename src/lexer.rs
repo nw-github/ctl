@@ -96,6 +96,7 @@ pub enum Token<'a> {
     Super,
     Unsafe,
     Shared,
+    Use,
 
     Ident(&'a str),
     Int {
@@ -412,7 +413,7 @@ impl<'a> Lexer<'a> {
             "struct" => Token::Struct,
             "union" => Token::Union,
             "enum" => Token::Enum,
-            "interface" => Token::Interface,
+            "trait" => Token::Interface,
             "dyn" => Token::Dyn,
             "type" => Token::Type,
             "if" => Token::If,
@@ -440,6 +441,7 @@ impl<'a> Lexer<'a> {
             "unsafe" => Token::Unsafe,
             "super" => Token::Super,
             "shared" => Token::Shared,
+            "use" => Token::Use,
             x if x == THIS_PARAM => Token::This,
             x if x == THIS_TYPE => Token::ThisType,
             id => Token::Ident(id),

@@ -1137,6 +1137,9 @@ impl TypeChecker {
                     value: None,
                 });
             }
+            Stmt::Use(path) => {
+                _ = Self::resolve_use(scopes, path, stmt.span);
+            }
             _ => {}
         }
     }
@@ -1416,6 +1419,13 @@ impl TypeChecker {
                 var.ty = ty;
                 var.value = Some(value);
                 CheckedStmt::None
+            }
+            Stmt::Use(path) => {
+                if let Err(err) = Self::resolve_use(scopes, &path, stmt.span) {
+                    self.error(err)
+                } else {
+                    CheckedStmt::None
+                }
             }
         }
     }
@@ -2787,45 +2797,39 @@ impl TypeChecker {
             }
         }
 
-        'outer: for part in path.components[start..path.components.len() - 1].iter() {
-            for (name, &id) in scopes[scope].children.iter() {
-                if name == &part.0 {
-                    match scopes[id].kind {
-                        ScopeKind::Module(public) => {
-                            if !public
-                                && scopes.module_of(scopes.current_id())
-                                    != scopes.module_of(scopes[id].parent.unwrap())
-                            {
-                                return Err(Error::new(
-                                    format!("cannot access private module {name}"),
-                                    span,
-                                ));
-                            }
+        for part in path.components[start..path.components.len() - 1].iter() {
+            if let Some(&id) = scopes[scope].children.get(&part.0) {
+                match scopes[id].kind {
+                    ScopeKind::Module(public) => {
+                        if Self::is_private_mod(scopes, id, public) {
+                            return Err(Error::new(
+                                format!("cannot access private module {}", part.0),
+                                span,
+                            ));
                         }
-                        ScopeKind::UserType(id) => {
-                            let ty = scopes.get_user_type(id);
-                            if !ty.public
-                                && scopes.module_of(ty.scope)
-                                    != scopes.module_of(scopes.current_id())
-                            {
-                                return Err(Error::new(
-                                    format!("cannot access members of private struct {name}"),
-                                    span,
-                                ));
-                            }
-                        }
-                        _ => continue,
                     }
-
-                    scope = id;
-                    continue 'outer;
+                    ScopeKind::UserType(id) => {
+                        let ty = scopes.get_user_type(id);
+                        if !ty.public
+                            && scopes.module_of(ty.scope)
+                                != scopes.module_of(scopes.current_id())
+                        {
+                            return Err(Error::new(
+                                format!("cannot access members of private struct {}", part.0),
+                                span,
+                            ));
+                        }
+                    }
+                    _ => continue,
                 }
-            }
 
-            return Err(Error::new(
-                format!("'{}' not found in this scope", part.0),
-                span,
-            ));
+                scope = id;
+            } else {
+                return Err(Error::new(
+                    format!("'{}' not found in this scope", part.0),
+                    span,
+                ));
+            }
         }
 
         Ok(scope)
@@ -2982,6 +2986,60 @@ impl TypeChecker {
         }
     }
 
+    fn resolve_use(scopes: &mut Scopes, path: &Path, span: Span) -> Result<(), Error> {
+        // FIXME: because of the forward declare, this can end up inserting the same ID multiple
+        //        times. it doesn't really matter, but it is a little wasteful.
+        let scope = Self::resolve_path_to_end(scopes, path, span)?;
+
+        // FIXME: make one resolve path so the work isnt duplicated across 4 functions
+
+        let last = &path.components.last().unwrap().0;
+        if let Some(ty) = scopes.find_user_type_in(last, scope) {
+            if !scopes.get_user_type(ty).public {
+                return Err(Error::new(
+                    format!("no symbol '{last}' in this module"),
+                    span,
+                ));
+            }
+
+            scopes.current().types.push(ty);
+        } else if let Some(func) = scopes.find_func_in(last, scope) {
+            if !scopes.get_func(func).proto.public {
+                return Err(Error::new(
+                    format!("no symbol '{last}' in this module"),
+                    span,
+                ));
+            }
+
+            scopes.current().fns.push(func);
+        } else if let Some(var) = scopes.find_var_in(last, scope) {
+            if !scopes.get_var(var).public {
+                return Err(Error::new(
+                    format!("no symbol '{last}' in this module"),
+                    span,
+                ));
+            }
+
+            scopes.current().vars.push(var);
+        } else if let Some(&module) = scopes[scope].children.get(last) {
+            if Self::is_private_mod(scopes, module, *scopes[module].kind.as_module().unwrap()) {
+                return Err(Error::new(
+                    format!("no symbol '{last}' in this module"),
+                    span,
+                ));
+            }
+            
+            scopes.current().children.insert(last.clone(), module);
+        } else {
+            return Err(Error::new(
+                format!("no symbol '{last}' in this module"),
+                span,
+            ));
+        }
+
+        Ok(())
+    }
+
     fn coerce_expr(scopes: &Scopes, expr: CheckedExpr, target: &TypeId) -> CheckedExpr {
         match (&expr.ty, target) {
             (
@@ -3012,5 +3070,11 @@ impl TypeChecker {
             (TypeId::Never, _) => CheckedExpr::new(target.clone(), expr.data),
             _ => expr,
         }
+    }
+
+    fn is_private_mod(scopes: &Scopes, scope: ScopeId, public: bool) -> bool {
+        !public
+            && scopes.module_of(scopes.current_id())
+                != scopes.module_of(scopes[scope].parent.unwrap())
     }
 }

@@ -727,6 +727,24 @@ impl<'a> Parser<'a> {
                     span,
                 ))
             })())
+        } else if let Some(token) = self.advance_if_kind(Token::Use) {
+            Some((|| {
+                let ident = self.expect_id("expected path")?;
+                let mut path = Path {
+                    root: true,
+                    components: vec![(ident.into(), vec![])],
+                };
+                let span = self.advance_until(Token::Semicolon, token.span, |this| {
+                    this.expect_kind(Token::ScopeRes, "expected '::'")?;
+                    path.components.push((
+                        this.expect_id("expected path component")?.to_string(),
+                        vec![],
+                    ));
+                    Ok(())
+                })?;
+
+                Ok(L::new(Stmt::Use(path), span))
+            })())
         } else {
             self.advance_if_kind(Token::Static).map(|token| {
                 (|| {
@@ -943,7 +961,7 @@ impl<'a> Parser<'a> {
     binary!(term, Token::Plus | Token::Minus, factor);
     binary!(factor, Token::Asterisk | Token::Div | Token::Rem, cast);
 
-    fn cast(&mut self) -> Result<L<Expr>>  {
+    fn cast(&mut self) -> Result<L<Expr>> {
         let mut expr = self.unary()?;
         while self.advance_if_kind(Token::As).is_some() {
             let ty = self.parse_type()?;

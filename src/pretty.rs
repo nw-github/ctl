@@ -136,6 +136,9 @@ pub fn print_stmt(stmt: &Located<Stmt>, src: &str, indent: usize) {
 
             print_stmts(body, src, indent + 1);
         }
+        Stmt::Use(_) => {
+            println!("{tabs}Use[{}]", stmt.span.text(src));
+        }
     }
 }
 
