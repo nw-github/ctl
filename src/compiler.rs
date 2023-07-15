@@ -236,9 +236,11 @@ impl Compiler {
                 prototypes.emit_prototype(scopes, &state);
                 prototypes.emit(";");
 
-                if let Some(body) = f.body.clone() {
-                    this.buffer.emit_prototype(scopes, &state);
-                    this.emit_block(scopes, body, &state);
+                if !f.proto.is_extern {
+                    if let Some(body) = f.body.clone() {
+                        this.buffer.emit_prototype(scopes, &state);
+                        this.emit_block(scopes, body, &state);
+                    }
                 }
             }
         }
@@ -475,9 +477,16 @@ impl Compiler {
             }
             ExprData::Void => self.buffer.emit("CTL(VOID)"),
             ExprData::Symbol(symbol) => match symbol {
-                Symbol::Func(func) => self
-                    .buffer
-                    .emit_fn_name(scopes, &State { func, inst: None }),
+                Symbol::Func => {
+                    let func = expr.ty.into_func().unwrap();
+                    self.buffer.emit_fn_name(
+                        scopes,
+                        &State {
+                            func: *func,
+                            inst: None,
+                        },
+                    )
+                }
                 Symbol::Var(id) => self.buffer.emit_var_name(scopes, id),
             },
             ExprData::Instance(members) => {
