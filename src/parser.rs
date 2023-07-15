@@ -454,9 +454,10 @@ impl<'a> Parser<'a> {
                     proto: header,
                     body,
                 });
-            } else {
-                let shared = this.advance_if_kind(Token::Shared).is_some();
-                let (name, ty) = this.parse_var_name()?;
+            } else if this.advance_if_kind(Token::Shared).is_some() {
+                let name = this.expect_id("expected name")?.into();
+                this.expect_kind(Token::Colon, "expected type")?;
+                let ty = this.parse_type()?;
                 let value = if this.advance_if_kind(Token::Assign).is_some() {
                     Some(this.expression()?)
                 } else {
@@ -468,8 +469,34 @@ impl<'a> Parser<'a> {
                     name,
                     stmt::MemVar {
                         public,
-                        shared,
-                        ty: ty.unwrap_or(TypeHint::Void),
+                        shared: true,
+                        ty,
+                        default: value,
+                    },
+                ));
+            } else {
+                let name = this.expect_id("expected variant name")?;
+                let (ty, value) = if this.advance_if_kind(Token::LParen).is_some() {
+                    let ty = this.parse_type()?;
+                    this.expect_kind(Token::RParen, "expected ')'")?;
+                    let value = if this.advance_if_kind(Token::Assign).is_some() {
+                        Some(this.expression()?)
+                    } else {
+                        None
+                    };
+
+                    (ty, value)
+                } else {
+                    (TypeHint::Void, None)
+                };
+
+                this.expect_kind(Token::Comma, "expected ','")?;
+                members.push((
+                    name.to_string(),
+                    stmt::MemVar {
+                        public,
+                        shared: false,
+                        ty,
                         default: value,
                     },
                 ));

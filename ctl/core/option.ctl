@@ -1,5 +1,5 @@
 pub union Option<T> { // ?T
-    Some: T,
+    Some(T),
     None,
 
     // ?? operator
