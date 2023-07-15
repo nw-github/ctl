@@ -5,7 +5,7 @@ use std::{
 };
 
 use concat_idents::concat_idents;
-use derive_more::{Constructor, Deref, DerefMut, From};
+use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
 
 use crate::{
@@ -351,13 +351,6 @@ impl TypeId {
             },
         }
     }
-}
-
-#[derive(From)]
-enum ResolveError<'a> {
-    Path(&'a Located<Path>),
-    #[from]
-    Error(Error),
 }
 
 macro_rules! id {
@@ -729,6 +722,14 @@ impl Scopes {
     }
 }
 
+#[derive(Debug, EnumAsInner)]
+pub enum ResolvedPath {
+    UserType(GenericUserType),
+    Func(GenericFunc),
+    Var(VariableId),
+    Module(ScopeId),
+}
+
 impl std::ops::Index<ScopeId> for Scopes {
     type Output = Scope;
 
@@ -955,22 +956,19 @@ impl TypeChecker {
                                         ret: TypeHint::Regular {
                                             is_dyn: false,
                                             path: Located::new(
-                                                Path {
-                                                    components: vec![(
-                                                        base.name.clone(),
-                                                        base.type_params
-                                                            .iter()
-                                                            .map(|name| TypeHint::Regular {
-                                                                is_dyn: false,
-                                                                path: Located::new(
-                                                                    Path::from(name.clone()),
-                                                                    stmt.span,
-                                                                ),
-                                                            })
-                                                            .collect(),
-                                                    )],
-                                                    root: false,
-                                                },
+                                                Path::Normal(vec![(
+                                                    base.name.clone(),
+                                                    base.type_params
+                                                        .iter()
+                                                        .map(|name| TypeHint::Regular {
+                                                            is_dyn: false,
+                                                            path: Located::new(
+                                                                Path::from(name.clone()),
+                                                                stmt.span,
+                                                            ),
+                                                        })
+                                                        .collect(),
+                                                )]),
                                                 stmt.span,
                                             ),
                                         },
@@ -1059,22 +1057,19 @@ impl TypeChecker {
                                             ret: TypeHint::Regular {
                                                 is_dyn: false,
                                                 path: Located::new(
-                                                    Path {
-                                                        components: vec![(
-                                                            base.name.clone(),
-                                                            base.type_params
-                                                                .iter()
-                                                                .map(|name| TypeHint::Regular {
-                                                                    is_dyn: false,
-                                                                    path: Located::new(
-                                                                        Path::from(name.clone()),
-                                                                        stmt.span,
-                                                                    ),
-                                                                })
-                                                                .collect(),
-                                                        )],
-                                                        root: false,
-                                                    },
+                                                    Path::Normal(vec![(
+                                                        base.name.clone(),
+                                                        base.type_params
+                                                            .iter()
+                                                            .map(|name| TypeHint::Regular {
+                                                                is_dyn: false,
+                                                                path: Located::new(
+                                                                    Path::from(name.clone()),
+                                                                    stmt.span,
+                                                                ),
+                                                            })
+                                                            .collect(),
+                                                    )]),
                                                     stmt.span,
                                                 ),
                                             },
@@ -1761,18 +1756,23 @@ impl TypeChecker {
                     .unwrap_or(TypeId::F64),
                 ExprData::Float(value),
             ),
-            Expr::Path(path) => match self.resolve_path(scopes, &path, span) {
-                Ok(Some(Symbol::Var(id))) => CheckedExpr::new(
+            Expr::Path(path) => match Self::resolve_path(scopes, &path, span) {
+                Ok(ResolvedPath::Var(id)) => CheckedExpr::new(
                     scopes.get_var(id).ty.clone(),
                     ExprData::Symbol(Symbol::Var(id)),
                 ),
-                Ok(Some(Symbol::Func(id))) => CheckedExpr::new(
+                Ok(ResolvedPath::Func(id)) => CheckedExpr::new(
                     TypeId::Func(id.clone().into()),
                     ExprData::Symbol(Symbol::Func(id)),
                 ),
+                Ok(ResolvedPath::UserType(id)) => {
+                    // TODO: get the init function
+                    todo!()
+                }
+                Ok(ResolvedPath::Module(_)) => {
+                    self.error(Error::new("expected value, found module", span))
+                }
                 Err(err) => self.error(err),
-                // FIXME: this error sucks
-                Ok(None) => self.error(Error::new("type not found in this scope", span)),
             },
             Expr::Assign {
                 target: lhs,
@@ -2170,38 +2170,36 @@ impl TypeChecker {
             return self.error(Error::new("match scrutinee must be a union type", span));
         };
 
-        let TypeHint::Regular { is_dyn: _, mut path } = pattern.ty else {
+        let TypeHint::Regular { is_dyn: _, path } = pattern.ty else {
             return self.error(Error::new("invalid pattern, must be a union variant", span));
         };
 
-        if path.data.components.len() < 2 {
+        if path.data.components().len() < 2 {
             return self.error(Error::new("invalid pattern, must be a union variant", span));
         }
 
-        let scope = match Self::resolve_path_to_end(scopes, &path.data, span) {
-            Ok(scope) => scope,
+        let result = match Self::resolve_path(scopes, &path.data, span) {
+            Ok(path) => path,
             Err(err) => return self.error(err),
         };
 
-        let Some(union) = scopes[scope].kind
-            .as_user_type()
-            .filter(|&&id| id == ut.id)
-            .and_then(|&id| scopes.get_user_type(id).data.as_union()) else {
+        let Some(func) = result.as_func() else {
             return self.error(Error::new("pattern does not match the scrutinee", span));
         };
 
-        let name = path.data.components.pop().unwrap().0;
-        let Some((_, member)) = union.variants
-            .iter()
-            .find(|(m, _)| m == &name) else {
-            return self.error(
-                Error::new(
-                    format!("type {} has no variant {name}",
-                    scrutinee.ty.name(scopes)),
-                    span
-                )
-            );
+        let func = scopes.get_func(func.id);
+        if !func.constructor {
+            return self.error(Error::new("pattern does not match the scrutinee", span));
+        }
+
+        let Some(union) = func.proto.ret.as_user_type()
+            .filter(|ty| ty.id == ut.id)
+            .and_then(|ty| scopes.get_user_type(ty.id).data.as_union()) else {
+            return self.error(Error::new("pattern does not match the scrutinee", span));
         };
+
+        let name = path.data.components().last().unwrap().0.clone();
+        let (_, member) = union.variants.iter().find(|(m, _)| m == &name).unwrap();
 
         let mut ty = member.ty.clone();
         ty.fill_type_generics(scopes, ut);
@@ -2327,7 +2325,7 @@ impl TypeChecker {
                         } else {
                             Self::auto_deref(this, &this_param.ty)
                         }];
-                    let mut func = match self.resolve_func(scopes, func, &generics, span) {
+                    let mut func = match Self::resolve_func(scopes, func, &generics, span) {
                         Ok(symbol) => symbol,
                         Err(error) => return self.error(error),
                     };
@@ -2636,10 +2634,12 @@ impl TypeChecker {
         }
     }
 
-    fn fd_resolve_type<'b>(scopes: &Scopes, ty: &'b TypeHint) -> Result<TypeId, ResolveError<'b>> {
+    fn fd_resolve_type(scopes: &Scopes, ty: &TypeHint) -> Result<TypeId, Error> {
         Ok(match ty {
             TypeHint::Regular { path, .. } => {
-                return Self::resolve_type_path(scopes, &path.data, path.span)?
+                return Some(Self::resolve_path(scopes, &path.data, path.span)?)
+                    .and_then(|rp| rp.into_user_type().ok())
+                    .map(|ut| TypeId::UserType(ut.into()))
                     .or_else(|| {
                         path.data.as_identifier().and_then(|symbol| match symbol {
                             symbol if symbol == THIS_TYPE => scopes.this_type(),
@@ -2653,7 +2653,7 @@ impl TypeChecker {
                             _ => TypeId::from_int_name(symbol),
                         })
                     })
-                    .ok_or(ResolveError::Path(path));
+                    .ok_or_else(|| Error::new("undefined type", path.span));
             }
             TypeHint::Void => TypeId::Void,
             TypeHint::Ptr(ty) => TypeId::Ptr(Self::fd_resolve_type(scopes, ty)?.into()),
@@ -2674,19 +2674,16 @@ impl TypeChecker {
                 TypeId::Array((Self::fd_resolve_type(scopes, ty)?, n).into())
             }
             TypeHint::Option(ty) => Self::make_option(scopes, Self::fd_resolve_type(scopes, ty)?)
-                .ok_or(ResolveError::Error(Error::new(
+                .ok_or(Error::new(
                 "ICE: core::option::Option not found",
                 Span::default(),
-            )))?,
+            ))?,
             _ => todo!(),
         })
     }
 
     fn resolve_type(&mut self, scopes: &Scopes, ty: &TypeHint) -> TypeId {
-        Self::fd_resolve_type(scopes, ty).unwrap_or_else(|err| match err {
-            ResolveError::Error(err) => self.error(err),
-            ResolveError::Path(name) => self.error(Error::new("undefined type", name.span)),
-        })
+        Self::fd_resolve_type(scopes, ty).unwrap_or_else(|err| self.error(err))
     }
 
     fn find_core_option(scopes: &Scopes) -> Option<UserTypeId> {
@@ -2774,263 +2771,15 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_path_to_end(scopes: &Scopes, path: &Path, span: Span) -> Result<ScopeId, Error> {
-        let mut scope = ScopeId(0);
-        let mut start = 0;
-        if !path.root {
-            if path.components[0].0 == "super" {
-                start = 1;
-                if let Some(module) = scopes.module_of(
-                    scopes[scopes.module_of(scopes.current_id()).unwrap()]
-                        .parent
-                        .unwrap(),
-                ) {
-                    scope = module;
-                } else {
-                    return Err(Error::new("cannot use super here", span));
-                }
-            } else {
-                scope = scopes.module_of(scopes.current_id()).unwrap();
-            }
-        }
-
-        for part in path.components[start..path.components.len() - 1].iter() {
-            if let Some(&id) = scopes[scope].children.get(&part.0) {
-                match scopes[id].kind {
-                    ScopeKind::Module(public) => {
-                        if Self::is_private_mod(scopes, id, public) {
-                            return Err(Error::new(
-                                format!("cannot access private module {}", part.0),
-                                span,
-                            ));
-                        }
-                    }
-                    ScopeKind::UserType(id) => {
-                        let ty = scopes.get_user_type(id);
-                        if !ty.public
-                            && scopes.module_of(ty.scope) != scopes.module_of(scopes.current_id())
-                        {
-                            return Err(Error::new(
-                                format!("cannot access members of private struct {}", part.0),
-                                span,
-                            ));
-                        }
-                    }
-                    _ => continue,
-                }
-
-                scope = id;
-            } else {
-                return Err(Error::new(
-                    format!("'{}' not found in this scope", part.0),
-                    span,
-                ));
-            }
-        }
-
-        Ok(scope)
-    }
-
-    fn resolve_func(
-        &mut self,
-        scopes: &Scopes,
-        id: FunctionId,
-        generics: &[TypeHint],
-        span: Span,
-    ) -> Result<GenericFunc, Error> {
-        let func = scopes.get_func(id);
-        if !func.proto.type_params.is_empty() {
-            if generics.is_empty() {
-                Ok(GenericFunc {
-                    id,
-                    generics: vec![TypeId::Unknown; func.proto.type_params.len()],
-                })
-            } else if generics.len() != func.proto.type_params.len() {
-                Err(Error::new(
-                    format!(
-                        "expected {} generic arguments, received {}",
-                        func.proto.type_params.len(),
-                        generics.len()
-                    ),
-                    span,
-                ))
-            } else {
-                Ok(GenericFunc::new(
-                    id,
-                    generics
-                        .iter()
-                        .map(|ty| self.resolve_type(scopes, ty))
-                        .collect(),
-                ))
-            }
-        } else {
-            Ok(GenericFunc::new(id, vec![]))
-        }
-    }
-
-    fn resolve_path(
-        &mut self,
-        scopes: &Scopes,
-        path: &Path,
-        span: Span,
-    ) -> Result<Option<Symbol>, Error> {
-        let last = path.components.last().unwrap();
-        let var = if path.components.len() == 1 {
-            if let Some(var) = scopes.find_var(&last.0) {
-                Some(var)
-            } else if let Some(func) = scopes.find_func(&last.0) {
-                return Ok(Some(Symbol::Func(
-                    self.resolve_func(scopes, func, &last.1, span)?,
-                )));
-            } else {
-                None
-            }
-        } else {
-            let scope = Self::resolve_path_to_end(scopes, path, span)?;
-            if let Some(id) = scopes.find_var_in(&last.0, scope) {
-                let var = scopes.get_var(id);
-                if !var.public {
-                    return Err(Error::new(
-                        format!("variable '{}' is private", var.name),
-                        span,
-                    ));
-                }
-
-                Some(id)
-            } else if let Some(id) = scopes.find_func_in(&last.0, scope) {
-                let func = scopes.get_func(id);
-                if !func.proto.public {
-                    return Err(Error::new(
-                        format!("function '{}' is private", func.proto.name),
-                        span,
-                    ));
-                }
-
-                return Ok(Some(Symbol::Func(
-                    self.resolve_func(scopes, id, &last.1, span)?,
-                )));
-            } else {
-                None
-            }
-        };
-
-        if !path.components.last().unwrap().1.is_empty() {
-            return Err(Error::new(
-                "variables cannot be parameterized with generics",
-                span,
-            ));
-        }
-
-        Ok(var.map(Symbol::Var))
-    }
-
-    fn resolve_type_path<'b>(
-        scopes: &Scopes,
-        path: &'b Path,
-        span: Span,
-    ) -> Result<Option<TypeId>, ResolveError<'b>> {
-        let last = path.components.last().unwrap();
-        let ty = if path.components.len() == 1 {
-            scopes.find_user_type(&last.0)
-        } else {
-            // TODO: struct generic params
-            let scope = Self::resolve_path_to_end(scopes, path, span)?;
-            if let Some(id) = scopes.find_user_type_in(&last.0, scope) {
-                let ty = scopes.get_user_type(id);
-                if !ty.public {
-                    return Err(ResolveError::Error(Error::new(
-                        format!("type '{}' is private", ty.name),
-                        span,
-                    )));
-                }
-
-                Some(id)
-            } else {
-                None
-            }
-        };
-
-        if let Some(id) = ty {
-            let params = &scopes.get_user_type(id).type_params;
-            if last.1.len() != params.len() {
-                return Err(ResolveError::Error(Error::new(
-                    format!(
-                        "expected {} generic arguments, received {}",
-                        params.len(),
-                        last.1.len()
-                    ),
-                    span,
-                )));
-            }
-
-            if !last.1.is_empty() {
-                let mut generics = Vec::new();
-                for ty in last.1.iter() {
-                    generics.push(Self::fd_resolve_type(scopes, ty)?);
-                }
-
-                Ok(Some(TypeId::UserType(
-                    GenericUserType::new(id, generics).into(),
-                )))
-            } else {
-                Ok(Some(TypeId::UserType(
-                    GenericUserType::new(id, vec![]).into(),
-                )))
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
     fn resolve_use(scopes: &mut Scopes, path: &Path, span: Span) -> Result<(), Error> {
-        // FIXME: because of the forward declare, this can end up inserting the same ID multiple
-        //        times. it doesn't really matter, but it is a little wasteful.
-        let scope = Self::resolve_path_to_end(scopes, path, span)?;
-
-        // FIXME: make one resolve path so the work isnt duplicated across 4 functions
-
-        let last = &path.components.last().unwrap().0;
-        if let Some(ty) = scopes.find_user_type_in(last, scope) {
-            if !scopes.get_user_type(ty).public {
-                return Err(Error::new(
-                    format!("no symbol '{last}' in this module"),
-                    span,
-                ));
-            }
-
-            scopes.current().types.push(ty);
-        } else if let Some(func) = scopes.find_func_in(last, scope) {
-            if !scopes.get_func(func).proto.public {
-                return Err(Error::new(
-                    format!("no symbol '{last}' in this module"),
-                    span,
-                ));
-            }
-
-            scopes.current().fns.push(func);
-        } else if let Some(var) = scopes.find_var_in(last, scope) {
-            if !scopes.get_var(var).public {
-                return Err(Error::new(
-                    format!("no symbol '{last}' in this module"),
-                    span,
-                ));
-            }
-
-            scopes.current().vars.push(var);
-        } else if let Some(&module) = scopes[scope].children.get(last) {
-            if Self::is_private_mod(scopes, module, *scopes[module].kind.as_module().unwrap()) {
-                return Err(Error::new(
-                    format!("no symbol '{last}' in this module"),
-                    span,
-                ));
-            }
-
-            scopes.current().children.insert(last.clone(), module);
-        } else {
-            return Err(Error::new(
-                format!("no symbol '{last}' in this module"),
-                span,
-            ));
+        match Self::resolve_path(scopes, path, span)? {
+            ResolvedPath::UserType(ut) => scopes.current().types.push(ut.id),
+            ResolvedPath::Func(func) => scopes.current().fns.push(func.id),
+            ResolvedPath::Var(id) => scopes.current().vars.push(id),
+            ResolvedPath::Module(id) => {
+                let name = scopes[id].name.as_ref().unwrap().clone();
+                scopes.current().children.insert(name, id);
+            },
         }
 
         Ok(())
@@ -3065,6 +2814,204 @@ impl TypeChecker {
             }
             (TypeId::Never, _) => CheckedExpr::new(target.clone(), expr.data),
             _ => expr,
+        }
+    }
+
+    fn resolve_path(scopes: &Scopes, path: &Path, span: Span) -> Result<ResolvedPath, Error> {
+        match path {
+            Path::Root(data) => {
+                Self::resolve_path_from(data, ScopeId(0), scopes, span)
+            }
+            Path::Super(data) => {
+                if let Some(module) = scopes.module_of(
+                    scopes[scopes.module_of(scopes.current_id()).unwrap()]
+                        .parent
+                        .unwrap(),
+                ) {
+                    Self::resolve_path_from(data, module, scopes, span)
+                } else {
+                    Err(Error::new("cannot use super here", span))
+                }
+            }
+            Path::Normal(data) => {
+                let (name, generics) = data.first().unwrap();
+                let is_end = data.len() == 1;
+                if let Some(id) = scopes.find_user_type(name) {
+                    let ty = scopes.get_user_type(id);
+                    if !ty.public
+                        && scopes.module_of(ty.scope) != scopes.module_of(scopes.current_id())
+                    {
+                        return Err(Error::new(format!("type '{name}' is private"), span));
+                    }
+    
+                    if is_end {
+                        let mut r_generics = Vec::new();
+                        for ty in generics.iter() {
+                            r_generics.push(Self::fd_resolve_type(scopes, ty)?);
+                        }
+    
+                        return Ok(ResolvedPath::UserType(GenericUserType {
+                            id,
+                            generics: r_generics,
+                        }));
+                    }
+    
+                    Self::resolve_path_from(data, ty.body_scope, scopes, span)
+                } else if let Some(id) = scopes.find_func(name) {
+                    let func = scopes.get_func(id);
+                    if !func.proto.public {
+                        return Err(Error::new(format!("function '{name}' is private"), span));
+                    }
+    
+                    if is_end {
+                        return Ok(ResolvedPath::Func(Self::resolve_func(
+                            scopes, id, generics, span,
+                        )?));
+                    }
+    
+                    Err(Error::new(format!("'{name}' is a function"), span))
+                } else if let Some(id) = scopes.find_var(name) {
+                    if !scopes.get_var(id).public {
+                        return Err(Error::new(format!("variable '{name}' is private"), span));
+                    }
+    
+                    if is_end {
+                        return Ok(ResolvedPath::Var(id));
+                    }
+    
+                    Err(Error::new(format!("'{name}' is a variable"), span))
+                } else if let Some(&id) = scopes[scopes.current_id()].children.get(name) {
+                    if Self::is_private_mod(scopes, id, *scopes[id].kind.as_module().unwrap()) {
+                        return Err(Error::new(
+                            format!("no symbol '{name}' in this module"),
+                            span,
+                        ));
+                    }
+    
+                    if is_end {
+                        return Ok(ResolvedPath::Module(id));
+                    }
+    
+                    Self::resolve_path_from(data, id, scopes, span)
+                } else {
+                    Err(Error::new(
+                        format!("no symbol '{name}' found in this module"),
+                        span,
+                    ))
+                }
+            }
+        }
+    }
+
+    fn resolve_path_from(
+        data: &[(String, Vec<TypeHint>)],
+        mut scope: ScopeId,
+        scopes: &Scopes,
+        span: Span,
+    ) -> Result<ResolvedPath, Error> {
+        for (i, (name, generics)) in data.iter().enumerate() {
+            let is_end = i + 1 == data.len();
+            if let Some(id) = scopes.find_user_type_in(name, scope) {
+                let ty = scopes.get_user_type(id);
+                if !ty.public
+                    && scopes.module_of(ty.scope) != scopes.module_of(scopes.current_id())
+                {
+                    return Err(Error::new(format!("type '{name}' is private"), span));
+                }
+
+                if is_end {
+                    let mut r_generics = Vec::new();
+                    for ty in generics.iter() {
+                        r_generics.push(Self::fd_resolve_type(scopes, ty)?);
+                    }
+
+                    return Ok(ResolvedPath::UserType(GenericUserType {
+                        id,
+                        generics: r_generics,
+                    }));
+                }
+
+                scope = ty.body_scope;
+            } else if let Some(id) = scopes.find_func_in(name, scope) {
+                let func = scopes.get_func(id);
+                if !func.proto.public {
+                    return Err(Error::new(format!("function '{name}' is private"), span));
+                }
+
+                if is_end {
+                    return Ok(ResolvedPath::Func(Self::resolve_func(
+                        scopes, id, generics, span,
+                    )?));
+                }
+
+                return Err(Error::new(format!("'{name}' is a function"), span));
+            } else if let Some(id) = scopes.find_var_in(name, scope) {
+                if !scopes.get_var(id).public {
+                    return Err(Error::new(format!("variable '{name}' is private"), span));
+                }
+
+                if is_end {
+                    return Ok(ResolvedPath::Var(id));
+                }
+
+                return Err(Error::new(format!("'{name}' is a variable"), span));
+            } else if let Some(&id) = scopes[scope].children.get(name) {
+                if Self::is_private_mod(scopes, id, *scopes[id].kind.as_module().unwrap()) {
+                    return Err(Error::new(
+                        format!("no symbol '{name}' in this module"),
+                        span,
+                    ));
+                }
+
+                if is_end {
+                    return Ok(ResolvedPath::Module(id));
+                }
+
+                scope = id;
+            } else {
+                return Err(Error::new(
+                    format!("no symbol '{name}' found in this module"),
+                    span,
+                ));
+            }
+        }
+
+        unreachable!()
+    }
+
+    fn resolve_func(
+        scopes: &Scopes,
+        id: FunctionId,
+        generics: &[TypeHint],
+        span: Span,
+    ) -> Result<GenericFunc, Error> {
+        let func = scopes.get_func(id);
+        if generics.is_empty() {
+            Ok(GenericFunc {
+                id,
+                generics: vec![TypeId::Unknown; func.proto.type_params.len()],
+            })
+        } else if generics.len() != func.proto.type_params.len() {
+            Err(Error::new(
+                format!(
+                    "expected {} generic arguments, received {}",
+                    func.proto.type_params.len(),
+                    generics.len()
+                ),
+                span,
+            ))
+        } else {
+            let mut r_generics = Vec::new();
+            for ty in generics.iter() {
+                r_generics.push(Self::fd_resolve_type(scopes, ty)?);
+            }
+
+            let mut r_generics = Vec::new();
+            for ty in generics.iter() {
+                r_generics.push(Self::fd_resolve_type(scopes, ty)?);
+            }
+
+            Ok(GenericFunc::new(id, r_generics))
         }
     }
 

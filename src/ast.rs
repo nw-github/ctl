@@ -1,3 +1,5 @@
+use enum_as_inner::EnumAsInner;
+
 use crate::lexer::Located;
 
 use self::stmt::TypeHint;
@@ -5,25 +7,32 @@ use self::stmt::TypeHint;
 pub type Expr = Located<expr::Expr>;
 pub type Stmt = Located<stmt::Stmt>;
 
-#[derive(Debug, Clone)]
-pub struct Path {
-    pub components: Vec<(String, Vec<TypeHint>)>,
-    pub root: bool,
+#[derive(Debug, Clone, EnumAsInner)]
+pub enum Path {
+    Root(Vec<(String, Vec<TypeHint>)>),
+    Super(Vec<(String, Vec<TypeHint>)>),
+    Normal(Vec<(String, Vec<TypeHint>)>),
 }
 
 impl From<String> for Path {
     fn from(value: String) -> Self {
-        Self {
-            components: vec![(value, Vec::new())],
-            root: false,
-        }
+        Self::Normal(vec![(value, Vec::new())])
     }
 }
 
 impl Path {
     pub fn as_identifier(&self) -> Option<&str> {
-        (self.components.len() == 1 && self.components[0].1.is_empty())
-            .then_some(&self.components[0].0)
+        self.as_normal().and_then(|comps| {
+            (comps.len() == 1 && comps[0].1.is_empty()).then_some(comps[0].0.as_str())
+        })
+    }
+
+    pub fn components(&self) -> &[(String, Vec<TypeHint>)] {
+        match self {
+            Path::Root(data) => data,
+            Path::Super(data) => data,
+            Path::Normal(data) => data,
+        }
     }
 }
 

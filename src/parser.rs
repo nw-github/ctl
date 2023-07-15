@@ -116,38 +116,42 @@ impl<'a> Parser<'a> {
 
     // helpers
 
-    fn path_with_one(&mut self, root: bool, mut ident: (&'a str, Span)) -> Result<L<Path>> {
-        let mut data = vec![(ident.0.to_owned(), Vec::new())];
+    fn path_components(
+        &mut self,
+        first: Option<&str>,
+        outspan: &mut Span,
+    ) -> Result<Vec<(String, Vec<TypeHint>)>> {
+        let mut data = first.map(|s| vec![(s.into(), vec![])]).unwrap_or_default();
         while self.advance_if_kind(Token::ScopeRes).is_some() {
-            if self.advance_if_kind(Token::LAngle).is_some() {
+            if self.advance_if_kind(Token::LAngle).is_none() {
+                let (name, span) = self.expect_id_with_span("expected name")?;
+                data.push((name.to_owned(), Vec::new()));
+                outspan.extend_to(span);
+            } else {
                 let (params, span) =
                     self.comma_separated(Token::RAngle, "expected '>'", |this| this.parse_type())?;
                 data.last_mut().unwrap().1 = params;
-                ident.1.extend_to(span);
-            } else {
-                let (name, span) = self.expect_id_with_span("expected name")?;
-                data.push((name.to_owned(), Vec::new()));
-                ident.1.extend_to(span);
+                outspan.extend_to(span);
             }
         }
 
-        Ok(L::new(
-            Path {
-                components: data,
-                root,
-            },
-            ident.1,
-        ))
+        Ok(data)
     }
 
     fn path(&mut self) -> Result<L<Path>> {
-        let root = self.advance_if_kind(Token::ScopeRes).is_some();
-        let ident = if let Some(sup) = self.advance_if_kind(Token::Super) {
-            ("super", sup.span)
+        if let Some(mut sup) = self.advance_if_kind(Token::Super) {
+            let components = self.path_components(None, &mut sup.span)?;
+            Ok(L::new(Path::Root(components), sup.span))
         } else {
-            self.expect_id_with_span("expected name")?
-        };
-        self.path_with_one(root, ident)
+            let root = self.advance_if_kind(Token::ScopeRes).is_some();
+            let (id, mut span) = self.expect_id_with_span("expected name")?;
+            let components = self.path_components(Some(id), &mut span)?;
+            if root {
+                Ok(L::new(Path::Root(components), span))
+            } else {
+                Ok(L::new(Path::Normal(components), span))
+            }
+        }
     }
 
     fn pattern(&mut self) -> Result<Pattern> {
@@ -285,6 +289,13 @@ impl<'a> Parser<'a> {
             } else {
                 // TODO: super::
                 let root = self.advance_if_kind(Token::ScopeRes);
+                let sup = if root.is_none() && self.advance_if_kind(Token::Super).is_some() {
+                    self.expect_kind(Token::ScopeRes, "expected '::'")?;
+                    true
+                } else {
+                    false
+                };
+
                 let mut data = Vec::new();
                 let mut span = root.as_ref().map(|t| t.span);
                 loop {
@@ -312,9 +323,12 @@ impl<'a> Parser<'a> {
 
                 TypeHint::Regular {
                     path: L::new(
-                        Path {
-                            components: data,
-                            root: root.is_some(),
+                        if root.is_some() {
+                            Path::Root(data)
+                        } else if sup {
+                            Path::Super(data)
+                        } else {
+                            Path::Normal(data)
                         },
                         span.unwrap(),
                     ),
@@ -729,21 +743,17 @@ impl<'a> Parser<'a> {
             })())
         } else if let Some(token) = self.advance_if_kind(Token::Use) {
             Some((|| {
-                let ident = self.expect_id("expected path")?;
-                let mut path = Path {
-                    root: true,
-                    components: vec![(ident.into(), vec![])],
-                };
+                let mut components = vec![(self.expect_id("expected path")?.into(), vec![])];
                 let span = self.advance_until(Token::Semicolon, token.span, |this| {
                     this.expect_kind(Token::ScopeRes, "expected '::'")?;
-                    path.components.push((
+                    components.push((
                         this.expect_id("expected path component")?.to_string(),
                         vec![],
                     ));
                     Ok(())
                 })?;
 
-                Ok(L::new(Stmt::Use(path), span))
+                Ok(L::new(Stmt::Use(Path::Root(components)), span))
             })())
         } else {
             self.advance_if_kind(Token::Static).map(|token| {
@@ -1019,18 +1029,16 @@ impl<'a> Parser<'a> {
                     (Vec::new(), rparen.span)
                 } else {
                     self.comma_separated(Token::RParen, "expected ')'", |this| {
-                        let mut expr = this.expression()?;
-                        if let Expr::Path(path) = expr.data {
+                        let expr = this.expression()?;
+                        if let Expr::Path(path) = &expr.data {
                             if path.as_identifier().is_some()
                                 && this.advance_if_kind(Token::Colon).is_some()
                             {
                                 return Ok((
-                                    Some(path.components.into_iter().next().unwrap().0),
+                                    Some(path.as_identifier().unwrap().into()),
                                     this.expression()?,
                                 ));
                             }
-
-                            expr.data = Expr::Path(path);
                         }
 
                         Ok((None, expr))
@@ -1120,7 +1128,7 @@ impl<'a> Parser<'a> {
     }
 
     fn primary(&mut self) -> Result<L<Expr>> {
-        let token = self.advance()?;
+        let mut token = self.advance()?;
         Ok(match token.data {
             Token::Void => L::new(Expr::Void, token.span),
             Token::False => L::new(Expr::Bool(false), token.span),
@@ -1153,17 +1161,17 @@ impl<'a> Parser<'a> {
                 }
             }
             Token::Ident(ident) => {
-                let result = self.path_with_one(false, (ident, token.span))?;
-                L::new(Expr::Path(result.data), result.span)
+                let data = self.path_components(Some(ident), &mut token.span)?;
+                L::new(Expr::Path(Path::Normal(data)), token.span)
             }
             Token::ScopeRes => {
-                let ident = self.expect_id_with_span("expected name")?;
-                let result = self.path_with_one(true, ident)?;
-                L::new(Expr::Path(result.data), result.span)
+                let ident = self.expect_id("expected name")?;
+                let data = self.path_components(Some(ident), &mut token.span)?;
+                L::new(Expr::Path(Path::Root(data)), token.span)
             }
             Token::Super => {
-                let result = self.path_with_one(false, ("super", token.span))?;
-                L::new(Expr::Path(result.data), token.span)
+                let data = self.path_components(None, &mut token.span)?;
+                L::new(Expr::Path(Path::Super(data)), token.span)
             }
             Token::This => L::new(Expr::Path(THIS_PARAM.to_owned().into()), token.span),
             Token::ThisType => L::new(Expr::Path(THIS_TYPE.to_owned().into()), token.span),
