@@ -2261,8 +2261,10 @@ impl TypeChecker {
         #[allow(clippy::redundant_clone)]
         let mut ty = source.ty.clone();
         while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = &ty {
-            if &ty == target {
-                break;
+            match target {
+                TypeId::Ptr(t) | TypeId::MutPtr(t) if t == inner => break,
+                other if other == &ty => break,
+                _ => {}
             }
 
             source = CheckedExpr::new(
@@ -2573,7 +2575,7 @@ impl TypeChecker {
                 match result.entry(name.clone()) {
                     Entry::Occupied(_) => {
                         self.error::<()>(Error::new(
-                            format!("parameter {name} has already been specified"),
+                            format!("parameter '{name}' has already been specified"),
                             expr.span,
                         ));
                     }
@@ -2582,7 +2584,7 @@ impl TypeChecker {
                             entry.insert(self.check_arg(func, scopes, expr, param, instance));
                         } else {
                             self.error::<()>(Error::new(
-                                format!("unknown parameter: {name}"),
+                                format!("unknown parameter: '{name}'"),
                                 expr.span,
                             ));
                         }
@@ -2616,9 +2618,20 @@ impl TypeChecker {
         // }
 
         if params.len() != result.len() {
+            let mut missing = String::new();
+            for param in params {
+                if !result.contains_key(&param.name) {
+                    if !missing.is_empty() {
+                        missing.push_str(", ");
+                    }
+
+                    missing.push_str(&param.name);
+                }
+            }
+
             self.error::<()>(Error::new(
                 format!(
-                    "expected {} argument(s), found {}",
+                    "expected {} argument(s), found {} (missing {missing})",
                     params.len(),
                     result.len()
                 ),
