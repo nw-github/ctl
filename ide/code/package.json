@@ -1,0 +1,37 @@
+{
+  "name": "ctl",
+  "displayName": "CTL",
+  "description": "Language support for the CTL programming language.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "ctl",
+        "aliases": [
+          "CTL",
+          "ctl"
+        ],
+        "extensions": [
+          ".ctl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ctl",
+        "scopeName": "source.ctl",
+        "path": "./syntaxes/ctl.tmLanguage.json"
+      }
+    ]
+  },
+  "devDependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}
