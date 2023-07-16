@@ -194,9 +194,22 @@ impl Buffer {
     }
 }
 
+macro_rules! tmpbuf {
+    ($self: expr, $body: expr) => {
+        {
+            let buffer = std::mem::take(&mut $self.buffer);
+
+            $body;
+
+            std::mem::replace(&mut $self.buffer, buffer)
+        }
+    };
+}
+
 #[derive(Default)]
 pub struct Compiler {
     buffer: Buffer,
+    temporaries: Buffer,
     structs: HashSet<GenericUserType>,
     funcs: HashSet<State>,
     tmpnum: usize,
@@ -311,18 +324,34 @@ impl Compiler {
                 }
             }
             CheckedStmt::Expr(expr) => {
-                self.compile_expr(scopes, expr, state);
-                self.buffer.emit(";");
+                let written = tmpbuf! { 
+                    self,
+                    {
+                        self.compile_expr_inner(scopes, expr, state);
+                        self.buffer.emit(";");
+                    }
+                };
+
+                self.buffer.emit(std::mem::take(&mut self.temporaries).0);
+                self.buffer.emit(written.0);
             }
             CheckedStmt::Let(id) => {
-                let var = scopes.get_var(id);
-                self.emit_local_decl(scopes, var, state);
-                if let Some(value) = &var.value {
-                    self.buffer.emit(" = ");
-                    self.compile_expr(scopes, value.clone(), state);
-                }
+                let written = tmpbuf! { 
+                    self,
+                    {
+                        let var = scopes.get_var(id);
+                        self.emit_local_decl(scopes, var, state);
+                        if let Some(value) = &var.value {
+                            self.buffer.emit(" = ");
+                            self.compile_expr_inner(scopes, value.clone(), state);
+                        }
+        
+                        self.buffer.emit(";");
+                    }
+                };
 
-                self.buffer.emit(";");
+                self.buffer.emit(std::mem::take(&mut self.temporaries).0);
+                self.buffer.emit(written.0);
             }
             CheckedStmt::None => {}
             CheckedStmt::Error => {
@@ -331,7 +360,7 @@ impl Compiler {
         }
     }
 
-    fn compile_expr(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
+    fn compile_expr_inner(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
         state.fill_generics(scopes, &mut expr.ty);
 
         match expr.data {
@@ -435,6 +464,8 @@ impl Compiler {
                 self.buffer.emit_fn_name(scopes, &next_state);
                 self.funcs.insert(next_state);
 
+                // FIXME: keyword arguments can be specified out of order. this evaluates them in 
+                // parameter order instead of argument order.
                 self.buffer.emit("(");
                 for (i, arg) in args.into_iter().enumerate() {
                     if i > 0 {
@@ -649,6 +680,86 @@ impl Compiler {
                 self.compile_expr(scopes, *inner, state);
                 self.buffer.emit(")");
             }
+        }
+    }
+
+    fn compile_expr(
+        &mut self,
+        scopes: &Scopes,
+        expr: CheckedExpr,
+        state: &State,
+    ) {
+        if Self::needs_temporary(&expr) {
+            let tmp = self.get_tmp_name();
+            let written = tmpbuf! { 
+                self,
+                {
+                    self.buffer.emit_type(scopes, &expr.ty);
+                    self.buffer.emit(format!(" {tmp} = "));
+                    self.compile_expr_inner(scopes, expr, state);
+                    self.buffer.emit(";");
+                }
+            };
+
+            self.temporaries.emit(written.0);
+            self.buffer.emit(tmp);
+        } else {
+            self.compile_expr_inner(scopes, expr, state);
+        }
+    }
+
+    fn needs_temporary(expr: &CheckedExpr) -> bool {
+        // TODO: if we allow user defined operators, we will need to update this as any operator
+        // could potentially cause a side effect
+        match &expr.data {
+            ExprData::Binary { left, right, .. } => {
+                Self::needs_temporary(left) || Self::needs_temporary(right)
+            }
+            ExprData::Unary { op, expr } => match op {
+                UnaryOp::PostIncrement
+                | UnaryOp::PostDecrement
+                | UnaryOp::PreIncrement
+                | UnaryOp::PreDecrement => true,
+                _ => Self::needs_temporary(expr),
+            },
+            ExprData::Call { .. } => true,
+            ExprData::Instance(args) => {
+                for arg in args.values() {
+                    if Self::needs_temporary(arg) {
+                        return true;
+                    }
+                }
+
+                false
+            }
+            ExprData::Array(_) => todo!(),
+            ExprData::ArrayWithInit { .. } => todo!(),
+            ExprData::Tuple(_) => todo!(),
+            ExprData::Map(_) => todo!(),
+            ExprData::Bool(_) => false,
+            ExprData::Signed(_) => false,
+            ExprData::Unsigned(_) => false,
+            ExprData::Float(_) => false,
+            ExprData::String(_) => false,
+            ExprData::Char(_) => false,
+            ExprData::Void => false,
+            ExprData::Symbol(_) => false,
+            ExprData::Assign { target, value, .. } => {
+                Self::needs_temporary(target) || Self::needs_temporary(value)
+            }
+            ExprData::Block(_) => true,
+            ExprData::If { .. } => true,
+            ExprData::Loop { .. } => true,
+            ExprData::For { .. } => todo!(),
+            ExprData::Match { .. } => true,
+            ExprData::Member { source, .. } => Self::needs_temporary(source),
+            ExprData::Subscript { .. } => todo!(),
+            ExprData::As(_) => false,
+            ExprData::Return(_) => false,
+            ExprData::Yield(_) => false,
+            ExprData::Break(_) => false,
+            ExprData::Continue => false,
+            ExprData::Error => false,
         }
     }
 
