@@ -336,11 +336,19 @@ impl Compiler {
 
         match expr.data {
             ExprData::Binary { op, left, right } => {
+                if expr.ty == TypeId::Bool {
+                    self.buffer.emit_cast(scopes, &expr.ty);
+                    self.buffer.emit("(");
+                }
                 self.buffer.emit("(");
                 self.compile_expr(scopes, *left, state);
                 self.buffer.emit(format!(" {op} "));
                 self.compile_expr(scopes, *right, state);
                 self.buffer.emit(")");
+
+                if expr.ty == TypeId::Bool {
+                    self.buffer.emit(" ? 1 : 0)");
+                }
             }
             ExprData::Unary { op, expr: inner } => match op {
                 UnaryOp::Plus => {
@@ -368,11 +376,13 @@ impl Compiler {
                     self.compile_expr(scopes, *inner, state);
                 }
                 UnaryOp::Not => {
-                    if inner.ty.is_numeric() {
-                        self.buffer.emit("~");
+                    if inner.ty == TypeId::Bool {
+                        self.buffer.emit_cast(scopes, &expr.ty);
+                        self.buffer.emit("(");
                         self.compile_expr(scopes, *inner, state);
+                        self.buffer.emit(" ^ 1)");
                     } else {
-                        self.buffer.emit("!");
+                        self.buffer.emit("~");
                         self.compile_expr(scopes, *inner, state);
                     }
                 }
@@ -440,8 +450,8 @@ impl Compiler {
             ExprData::Tuple(_) => todo!(),
             ExprData::Map(_) => todo!(),
             ExprData::Bool(value) => {
-                self.buffer
-                    .emit(if value { "CTL(true)" } else { "CTL(false)" })
+                self.buffer.emit_cast(scopes, &expr.ty);
+                self.buffer.emit(if value { "1" } else { "0" })
             }
             ExprData::Signed(value) => {
                 self.buffer.emit_cast(scopes, &expr.ty);
