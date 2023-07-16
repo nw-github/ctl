@@ -597,8 +597,6 @@ impl<'a> Iterator for Lexer<'a> {
             '!' => {
                 if self.advance_if('=') {
                     Token::NotEqual
-                } else if self.advance_if('!') {
-                    Token::ErrCoalesce
                 } else {
                     Token::Exclamation
                 }
