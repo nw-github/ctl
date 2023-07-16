@@ -360,9 +360,7 @@ impl Compiler {
         }
     }
 
-    fn compile_expr_inner(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
-        state.fill_generics(scopes, &mut expr.ty);
-
+    fn compile_expr_inner(&mut self, scopes: &Scopes, expr: CheckedExpr, state: &State) {
         match expr.data {
             ExprData::Binary { op, left, right } => {
                 if expr.ty == TypeId::Bool {
@@ -686,9 +684,11 @@ impl Compiler {
     fn compile_expr(
         &mut self,
         scopes: &Scopes,
-        expr: CheckedExpr,
+        mut expr: CheckedExpr,
         state: &State,
     ) {
+        state.fill_generics(scopes, &mut expr.ty);
+
         if Self::needs_temporary(&expr) {
             let tmp = self.get_tmp_name();
             let written = tmpbuf! { 
