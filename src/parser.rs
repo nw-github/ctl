@@ -1253,21 +1253,26 @@ impl<'a> Parser<'a> {
                     span,
                 )
             }
-            Token::Loop => {
-                let (cond, lcurly) = if let Some(lcurly) = self.advance_if_kind(Token::LCurly) {
-                    (None, lcurly)
-                } else {
-                    (
-                        Some(self.expression()?),
-                        self.expect_kind(Token::LCurly, "expected '{'")?,
-                    )
-                };
+            Token::While => {
+                let tspan = token.span;
+                let cond = self.expression()?;
+                let lcurly = self.expect_kind(Token::LCurly, "expected '{'")?;
+                let (body, span) = self.parse_block(lcurly.span)?;
 
+                L::new(
+                    Expr::Loop {
+                        cond: cond.into(),
+                        body,
+                        do_while: false,
+                    },
+                    Span::combine(tspan, span),
+                )
+            }
+            Token::Loop => {
                 let mut span = token.span;
+                let lcurly = self.expect_kind(Token::LCurly, "expected '{'")?;
                 let (body, _) = self.parse_block(lcurly.span)?;
-                let (cond, do_while) = if let Some(cond) = cond {
-                    (cond, false)
-                } else if self.advance_if_kind(Token::While).is_some() {
+                let (cond, do_while) = if self.advance_if_kind(Token::While).is_some() {
                     let cond = self.expression()?;
                     span.extend_to(cond.span);
                     (cond, true)
