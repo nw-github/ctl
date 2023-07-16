@@ -725,7 +725,11 @@ impl Scopes {
     }
 
     pub fn find_module_in(&self, name: &str, scope: ScopeId) -> Option<ScopeId> {
-        self[scope].children.get(name).filter(|&&id| self[id].kind.is_module()).copied()
+        self[scope]
+            .children
+            .get(name)
+            .filter(|&&id| self[id].kind.is_module())
+            .copied()
     }
 
     pub fn find_module(&self, name: &str) -> Option<ScopeId> {
@@ -1878,7 +1882,16 @@ impl TypeChecker {
                     cond_span
                 );
 
-                let if_branch = self.check_expr(scopes, *if_branch, None);
+                let target = if else_branch.is_some() {
+                    target
+                } else {
+                    target
+                        .and_then(|t| t.as_user_type())
+                        .filter(|t| t.id == Self::find_core_option(scopes).unwrap())
+                        .map(|target| &target.generics[0])
+                };
+
+                let if_branch = self.check_expr(scopes, *if_branch, target);
                 let mut out_type = if_branch.ty.clone();
                 let else_branch = if let Some(e) = else_branch {
                     Some(type_check!(
@@ -1914,16 +1927,6 @@ impl TypeChecker {
                 body,
                 do_while,
             } => {
-                /* FIXME: type inference for cases like this:
-                    let a = 5;
-                    let x: ?i64 = loop 10 < 2 {
-                        if a != 2 {
-                            break 10;
-                        } else {
-                            break 11;
-                        }
-                    };
-                */
                 let span = cond.span;
                 let cond = type_check!(
                     self,
@@ -1933,11 +1936,21 @@ impl TypeChecker {
                     span
                 );
 
+                let inf = matches!(cond.data, ExprData::Bool(true));
+                let target = if inf {
+                    target
+                } else {
+                    target
+                        .and_then(|t| t.as_user_type())
+                        .filter(|t| t.id == Self::find_core_option(scopes).unwrap())
+                        .map(|target| &target.generics[0])
+                };
+
                 let body = self.create_block(
                     scopes,
                     None,
                     body,
-                    ScopeKind::Loop(None, matches!(cond.data, ExprData::Bool(true))),
+                    ScopeKind::Loop(target.cloned(), inf),
                 );
                 let ScopeKind::Loop(target, inf) = &scopes[body.scope].kind else {
                     panic!("ICE: target of loop changed from loop to something else");
