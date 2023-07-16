@@ -1867,12 +1867,6 @@ impl TypeChecker {
                 if_branch,
                 else_branch,
             } => {
-                /* FIXME: type inference for cases like this:
-                    let foo = 5;
-                    let x: ?i64 = if foo {
-                        yield 10;
-                    };
-                */
                 let cond_span = cond.span;
                 let cond = type_check!(
                     self,
@@ -2134,7 +2128,7 @@ impl TypeChecker {
             Expr::Match { expr, body } => {
                 let scrutinee_span = expr.span;
                 let scrutinee = self.check_expr(scopes, *expr, None);
-                let mut target = target.cloned().unwrap_or(TypeId::Unknown);
+                let mut target = target.cloned();
                 let mut result = Vec::new();
                 for (pattern, expr) in body.into_iter() {
                     let span = expr.span;
@@ -2142,13 +2136,13 @@ impl TypeChecker {
                         self.check_pattern(scopes, &scrutinee, scrutinee_span, pattern);
                     let (var, mut expr) = scopes.enter(None, ScopeKind::None, |scopes| {
                         let var = var.map(|var| scopes.insert_var(var));
-                        (var, self.check_expr(scopes, expr, Some(&target)))
+                        (var, self.check_expr(scopes, expr, target.as_ref()))
                     });
 
-                    if target.is_unknown() {
-                        target = expr.ty.clone();
+                    if let Some(target) = &target {
+                        expr = type_check!(self, scopes, expr, target, span);
                     } else {
-                        expr = type_check!(self, scopes, expr, &target, span);
+                        target = Some(expr.ty.clone());
                     }
 
                     result.push((
@@ -2156,12 +2150,12 @@ impl TypeChecker {
                             binding: var,
                             variant,
                         },
-                        expr,
+                        CheckedExpr::new(TypeId::Never, ExprData::Yield(expr.into())),
                     ));
                 }
 
                 CheckedExpr::new(
-                    target,
+                    target.unwrap_or(TypeId::Void),
                     ExprData::Match {
                         expr: scrutinee.into(),
                         body: result,

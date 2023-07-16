@@ -14,5 +14,6 @@ pub fn panic(s: str) never {
     let prefix = "fatal error: ";
     eprint(prefix.as_ptr(), prefix.len());
     eprintln(s.as_ptr(), s.len());
-    return exit(101);
+    
+    exit(101);
 }

@@ -25,8 +25,7 @@ pub struct Vec<T> {
             this.grow();
         }
 
-        let tmp = this.ptr.add(this.len++);
-        tmp.write(t);
+        this.ptr.add(this.len++).write(t);
     }
 
     pub fn pop(mut this) ?T {
@@ -34,8 +33,7 @@ pub struct Vec<T> {
             return null;
         }
 
-        let tmp = this.ptr.add(--this.len);
-        return tmp.read();
+        return this.ptr.add(--this.len).read();
 
         // return if this.len > 0 {
         //     yield this.ptr.add(--this.len).read();
@@ -44,7 +42,7 @@ pub struct Vec<T> {
 
     pub fn insert(mut this, idx: usize, t: T) {
         if idx > this.len {
-            core::panic("Vec::insert(): index is greater than length!");
+            panic("Vec::insert(): index is greater than length!");
         }
 
         if !this.can_insert(1) {
@@ -52,10 +50,12 @@ pub struct Vec<T> {
         }
 
         let src = this.ptr.add(idx);
-
         if idx < this.len {
-            let dst = this.ptr.add(idx + 1);
-            mem::move(dst: dst.as_mut_ptr(), src: src.as_ptr(), num: this.len - idx);
+            mem::move(
+                dst: this.ptr.add(idx + 1).as_mut_ptr(), 
+                src: src.as_ptr(), 
+                num: this.len - idx
+            );
         }
 
         src.write(t);
@@ -80,7 +80,9 @@ pub struct Vec<T> {
                 this.ptr = ptr;
                 this.cap = cap;
             },
-            Option::None => panic("Out of memory!"),
+            Option::None => {
+                panic("Out of memory!");
+            },
         }
     }
 
@@ -89,9 +91,7 @@ pub struct Vec<T> {
             return null;
         }
 
-        let tmp = this.ptr.add(idx);
-        return tmp.as_ptr();
-
+        return this.ptr.add(idx).as_ptr();
         // return idx < this.len { yield this.ptr.add(idx).as_ptr(); };
     }
 
@@ -100,14 +100,15 @@ pub struct Vec<T> {
             return null;
         }
 
-        let tmp = this.ptr.add(idx);
-        return tmp.as_mut_ptr();
+        return this.ptr.add(idx).as_mut_ptr();
     }
 
     fn grow(mut this) {
-        mut tmp: usize;
-        if this.cap > 0 { tmp = this.cap * 2; } else { tmp = 1; }
-        this.reserve(tmp);
+        this.reserve(if this.cap > 0 {
+            yield this.cap * 2;
+        } else {
+            yield 1;
+        });
     }
 
     fn can_insert(this, count: usize) bool {

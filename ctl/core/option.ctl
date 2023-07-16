@@ -13,8 +13,12 @@ pub union Option<T> { // ?T
     // ! operator
     pub fn unwrap(this) T {
         match *this {
-            Option::Some(inner) => return inner,
-            Option::None => ::core::panic("Option::unwrap(): value is null!"),
+            Option::Some(inner) => {
+                return inner;
+            },
+            Option::None => {
+                ::core::panic("Option::unwrap(): value is null!");
+            },
         }
     }
 }
