@@ -1668,7 +1668,7 @@ impl TypeChecker {
                         ExprData::Instance(
                             [(
                                 "None".into(),
-                                CheckedExpr::new(TypeId::Void, ExprData::Void),
+                                self.check_expr(scopes, Located::new(Expr::Void, span), target),
                             )]
                             .into(),
                         ),
