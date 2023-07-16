@@ -17,8 +17,6 @@ typedef double    CTL(f64);
 
 typedef struct {} CTL(void);
 
-const CTL(bool) CTL(TRUE)  = 1;
-const CTL(bool) CTL(FALSE) = 0;
-const CTL(void) CTL(VOID)  = {};
+const CTL(void) CTL(VOID) = {};
 
 #endif

@@ -5,8 +5,8 @@ pub union Option<T> { // ?T
     // ?? operator
     // pub fn unwrap_or(this, or: fn() T) T {
     //     match this {
-    //         Option::Some(value) => yield *value,
-    //         Option::None        => yield or(),
+    //         Option::Some(value) => return *value,
+    //         Option::None        => return or(),
     //     }
     // }
 
@@ -14,7 +14,7 @@ pub union Option<T> { // ?T
     pub fn unwrap(this) T {
         match *this {
             Option::Some(inner) => return inner,
-            Option::None => ::core::panic("attempt to unwrap() empty Option"),
+            Option::None => ::core::panic("Option::unwrap(): value is null!"),
         }
     }
 }

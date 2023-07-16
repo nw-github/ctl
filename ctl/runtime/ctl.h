@@ -5,9 +5,15 @@
 
 #include <gc.h>
 #include <stdio.h>
+#include <string.h>
 
 inline CTL(void) print_i32(int32_t const num) {
     printf("%d", num);
+    return CTL(VOID);
+}
+
+inline CTL(void) print_usize(CTL(usize) const num) {
+    printf("%lu", num);
     return CTL(VOID);
 }
 
@@ -31,15 +37,22 @@ inline CTL(void) eprintln(uint8_t const *buf, CTL(usize) const len) {
     return CTL(VOID);
 }
 
-// inline CTL(char) char_at(CTL(str) const s, CTL(usize) pos) {    
-//     return s.data[pos]; // TODO: UTF-8
-// }
-// 
-// inline CTL(str) slice(CTL(str) const s, CTL(usize) start, CTL(usize) end) {    
-//     return (CTL(str)){
-//         .data = s.data + start,
-//         .len  = end - start,
-//     }; // TODO: UTF-8
-// }
+inline CTL(void) ctl_memcpy(uint8_t *dst, uint8_t const *src, CTL(usize) len) {
+    memcpy(dst, src, len);
+    return CTL_VOID;
+}
+
+inline CTL(void) ctl_memmove(uint8_t *dst, uint8_t const *src, CTL(usize) len) {
+    memmove(dst, src, len);
+    return CTL_VOID;
+}
+
+inline CTL(usize) ctl_malloc(CTL(usize) size) {
+    return (CTL(usize))GC_MALLOC(size);
+}
+
+inline CTL(usize) ctl_realloc(uint8_t *old, CTL(usize) size) {
+    return (CTL(usize))GC_REALLOC(old, size);
+}
 
 #endif // CTL_RUNTIME_H
