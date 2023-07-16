@@ -557,7 +557,24 @@ impl Compiler {
                     self.compile_expr(scopes, *else_branch, state);
                 }
             }
-            ExprData::Loop { .. } => todo!(),
+            ExprData::Loop {
+                cond,
+                body,
+                do_while,
+            } => {
+                if do_while {
+                    self.buffer.emit("while (");
+                    self.compile_expr(scopes, *cond, state);
+                    self.buffer.emit(") ");
+                    self.emit_block(scopes, body, state);
+                } else {
+                    self.buffer.emit("do ");
+                    self.emit_block(scopes, body, state);
+                    self.buffer.emit("while (");
+                    self.compile_expr(scopes, *cond, state);
+                    self.buffer.emit(");");
+                }
+            }
             ExprData::For { .. } => todo!(),
             ExprData::Member { source, member } => {
                 self.compile_expr(scopes, *source, state);
