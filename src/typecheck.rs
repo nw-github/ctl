@@ -95,6 +95,29 @@ impl GenericUserType {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
+pub enum CInt {
+    Char,
+    Short,
+    Int,
+    Long,
+    LongLong,
+}
+
+impl CInt {
+    pub fn bits(&self) -> u8 {
+        use std::ffi::*;
+
+        match self {
+            CInt::Char => std::mem::size_of::<c_char>() as u8,
+            CInt::Short => std::mem::size_of::<c_short>() as u8,
+            CInt::Int => std::mem::size_of::<c_int>() as u8,
+            CInt::Long => std::mem::size_of::<c_long>() as u8,
+            CInt::LongLong => std::mem::size_of::<c_longlong>() as u8,
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Eq, Clone, EnumAsInner, Hash)]
 pub enum TypeId {
     #[default]
@@ -103,6 +126,8 @@ pub enum TypeId {
     Never,
     Int(u8),
     Uint(u8),
+    CInt(CInt),
+    CUint(CInt),
     Isize,
     Usize,
     F32,
@@ -129,6 +154,8 @@ impl TypeId {
                     | TypeId::Usize
                     | TypeId::F32
                     | TypeId::F64
+                    | TypeId::CInt(_)
+                    | TypeId::CUint(_)
             ),
             BinaryOp::Sub
             | BinaryOp::Mul
@@ -146,12 +173,19 @@ impl TypeId {
                         | TypeId::Usize
                         | TypeId::F32
                         | TypeId::F64
+                        | TypeId::CInt(_)
+                        | TypeId::CUint(_)
                 )
             }
             BinaryOp::And | BinaryOp::Xor | BinaryOp::Or | BinaryOp::Shl | BinaryOp::Shr => {
                 matches!(
                     self,
-                    TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize
+                    TypeId::Int(_)
+                        | TypeId::Uint(_)
+                        | TypeId::Isize
+                        | TypeId::Usize
+                        | TypeId::CInt(_)
+                        | TypeId::CUint(_)
                 )
             }
             BinaryOp::Equal | BinaryOp::NotEqual => {
@@ -163,7 +197,9 @@ impl TypeId {
                         | TypeId::Usize
                         | TypeId::F32
                         | TypeId::F64
-                        | TypeId::Bool // FIXME: option<T> should be comparable with T
+                        | TypeId::Bool // FIXME: option<T> should be comparable with T without coercion
+                        | TypeId::CInt(_)
+                        | TypeId::CUint(_)
                 )
             }
             BinaryOp::LogicalOr | BinaryOp::LogicalAnd => {
@@ -289,6 +325,23 @@ impl TypeId {
             TypeId::Array(inner) => format!("[{}; {}]", inner.0.name(scopes), inner.1),
             TypeId::Isize => "isize".into(),
             TypeId::Usize => "usize".into(),
+            TypeId::CInt(ty) | TypeId::CUint(ty) => {
+                let name = match ty {
+                    crate::typecheck::CInt::Char => "char",
+                    crate::typecheck::CInt::Short => "short",
+                    crate::typecheck::CInt::Int => "int",
+                    crate::typecheck::CInt::Long => "long",
+                    crate::typecheck::CInt::LongLong => "longlong",
+                };
+                format!(
+                    "c_{}{name}",
+                    if matches!(self, TypeId::CUint(_)) {
+                        "u"
+                    } else {
+                        ""
+                    }
+                )
+            }
         }
     }
 
@@ -301,6 +354,8 @@ impl TypeId {
                 | TypeId::F64
                 | TypeId::Isize
                 | TypeId::Usize
+                | TypeId::CInt(_)
+                | TypeId::CUint(_)
         )
     }
 
@@ -308,7 +363,12 @@ impl TypeId {
         match (self, target) {
             (
                 TypeId::IntGeneric,
-                TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize,
+                TypeId::Int(_)
+                | TypeId::Uint(_)
+                | TypeId::Isize
+                | TypeId::Usize
+                | TypeId::CInt(_)
+                | TypeId::CUint(_),
             ) => true,
             (TypeId::FloatGeneric, TypeId::F32 | TypeId::F64) => true,
             (TypeId::MutPtr(ty), TypeId::Ptr(target)) if ty == target => true,
@@ -1511,12 +1571,21 @@ impl TypeChecker {
                     Plus => expr.ty.is_numeric(),
                     Neg => matches!(
                         expr.ty,
-                        TypeId::Int(_) | TypeId::Isize | TypeId::F32 | TypeId::F64
+                        TypeId::Int(_)
+                            | TypeId::Isize
+                            | TypeId::F32
+                            | TypeId::F64
+                            | TypeId::CInt(_)
                     ),
                     PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
                         if matches!(
                             expr.ty,
-                            TypeId::Int(_) | TypeId::Isize | TypeId::Uint(_) | TypeId::Usize
+                            TypeId::Int(_)
+                                | TypeId::Isize
+                                | TypeId::Uint(_)
+                                | TypeId::Usize
+                                | TypeId::CInt(_)
+                                | TypeId::CUint(_)
                         ) {
                             if !Self::is_assignable(scopes, &expr) {
                                 return self
@@ -1535,6 +1604,8 @@ impl TypeChecker {
                             | TypeId::Uint(_)
                             | TypeId::Usize
                             | TypeId::Bool
+                            | TypeId::CInt(_)
+                            | TypeId::CUint(_)
                     ),
                     Deref => {
                         if let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = &expr.ty {
@@ -1723,6 +1794,8 @@ impl TypeChecker {
                     TypeId::Uint(bits) => (false, bits),
                     TypeId::Isize => (true, std::mem::size_of::<isize>() as u8 * 8),
                     TypeId::Usize => (false, std::mem::size_of::<usize>() as u8 * 8),
+                    TypeId::CInt(ty) => (true, ty.bits()),
+                    TypeId::CUint(ty) => (false, ty.bits()),
                     _ => unreachable!(),
                 };
 
@@ -2177,6 +2250,8 @@ impl TypeChecker {
                     match (&expr.ty, &ty) {
                         (TypeId::Int(a), TypeId::Int(b) | TypeId::Uint(b)) if a <= b => {}
                         (TypeId::Uint(a), TypeId::Uint(b)) if a <= b => {}
+                        (TypeId::CInt(a), TypeId::CInt(b) | TypeId::CUint(b)) if a <= b => {}
+                        (TypeId::CUint(a), TypeId::CUint(b)) if a <= b => {}
                         // TODO: these should only be allowable with an unsafe pointer type, or
                         // should be unsafe to do
                         (TypeId::Usize, TypeId::Ptr(_) | TypeId::MutPtr(_)) => {}
@@ -2722,6 +2797,16 @@ impl TypeChecker {
                             "bool" => Some(TypeId::Bool),
                             "str" => Self::find_core_string(scopes),
                             "char" => Some(TypeId::Char),
+                            "c_char" => Some(TypeId::CInt(CInt::Char)),
+                            "c_short" => Some(TypeId::CInt(CInt::Short)),
+                            "c_int" => Some(TypeId::CInt(CInt::Int)),
+                            "c_long" => Some(TypeId::CInt(CInt::Long)),
+                            "c_longlong" => Some(TypeId::CInt(CInt::LongLong)),
+                            "c_uchar" => Some(TypeId::CUint(CInt::Char)),
+                            "c_ushort" => Some(TypeId::CUint(CInt::Short)),
+                            "c_uint" => Some(TypeId::CUint(CInt::Int)),
+                            "c_ulong" => Some(TypeId::CUint(CInt::Long)),
+                            "c_ulonglong" => Some(TypeId::CUint(CInt::LongLong)),
                             _ => TypeId::from_int_name(symbol),
                         })
                         .ok_or_else(|| Error::new(err, path.span)),

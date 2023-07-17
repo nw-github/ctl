@@ -10,6 +10,10 @@ pub struct str {
         return this.data;
     }
 
+    pub fn as_c_str(this) *c_char {
+        return this.data as *c_char;
+    }
+
     pub fn slice(this, kw start: usize, kw end: usize) str {
         if end < start || start > this.len {
             return "";

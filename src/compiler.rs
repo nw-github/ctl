@@ -59,6 +59,19 @@ impl Buffer {
                     self.emit(format!("CTL_SBITINT({bits})"));
                 }
             }
+            TypeId::CInt(ty) | TypeId::CUint(ty) => {
+                if matches!(id, TypeId::CUint(_)) {
+                    self.emit("unsigned ");
+                }
+                
+                match ty {
+                    crate::typecheck::CInt::Char => self.emit("char"),
+                    crate::typecheck::CInt::Short => self.emit("short"),
+                    crate::typecheck::CInt::Int => self.emit("int"),
+                    crate::typecheck::CInt::Long => self.emit("long"),
+                    crate::typecheck::CInt::LongLong => self.emit("long long"),
+                }
+            }
             TypeId::Isize => self.emit("CTL(isize)"),
             TypeId::Usize => self.emit("CTL(usize)"),
             TypeId::F32 => self.emit("CTL(f32)"),
@@ -97,6 +110,18 @@ impl Buffer {
             TypeId::Never => self.emit("never"),
             TypeId::Int(bits) => self.emit(format!("i{bits}")),
             TypeId::Uint(bits) => self.emit(format!("u{bits}")),
+            TypeId::CInt(ty) | TypeId::CUint(ty) => {
+                if matches!(id, TypeId::CUint(_)) {
+                    self.emit("u");
+                }
+                match ty {
+                    crate::typecheck::CInt::Char => self.emit("char"),
+                    crate::typecheck::CInt::Short => self.emit("short"),
+                    crate::typecheck::CInt::Int => self.emit("int"),
+                    crate::typecheck::CInt::Long => self.emit("long"),
+                    crate::typecheck::CInt::LongLong => self.emit("longlong"),
+                } 
+            }
             TypeId::Isize => self.emit("isize"),
             TypeId::Usize => self.emit("usize"),
             TypeId::F32 => self.emit("f32"),

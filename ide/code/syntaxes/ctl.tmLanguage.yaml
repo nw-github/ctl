@@ -531,6 +531,12 @@ repository:
           1:
             name: entity.name.type.numeric.ctl
       -
+        comment: c types
+        match: '\b(c_char|c_uchar|c_short|c_ushort|c_int|c_uint|c_long|c_ulong|c_longlong|c_ulonglong)\b'
+        captures:
+          1:
+            name: entity.name.type.c.ctl
+      -
         comment: parameterized types
         begin: \b([A-Z][A-Za-z0-9]*)(<)
         beginCaptures:
