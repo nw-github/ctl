@@ -1,17 +1,17 @@
 pub struct str {
-    data: *u8,
-    len:   usize,
+    ptr: *u8,
+    len:  usize,
 
     pub fn len(this) usize {
         return this.len;
     }
 
     pub fn as_ptr(this) *u8 {
-        return this.data;
+        return this.ptr;
     }
 
     pub fn as_c_str(this) *c_char {
-        return this.data as *c_char;
+        return this.ptr as *c_char;
     }
 
     pub fn slice(this, kw start: usize, kw end: usize) str {
@@ -20,7 +20,7 @@ pub struct str {
         }
 
         return str(
-            data: (this.data as usize + start) as *u8,
+            ptr: (this.ptr as usize + start) as *u8,
             len: end - start
         );
     }

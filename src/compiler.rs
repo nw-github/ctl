@@ -240,7 +240,7 @@ macro_rules! tmpbuf {
 macro_rules! tmpvar {
     ($self: expr) => {{
         $self.tmpvar += 1;
-        format!("$tmp{}", $self.tmpvar)
+        format!("${}", $self.tmpvar)
     }};
 }
 
@@ -511,7 +511,6 @@ impl Compiler {
                 }
                 UnaryOp::Addr | UnaryOp::AddrMut => {
                     // TODO: addr of void
-                    self.buffer.emit_cast(scopes, &expr.ty);
                     self.buffer.emit("(&");
                     self.compile_expr(scopes, *inner, state);
                     self.buffer.emit(")");
@@ -595,12 +594,10 @@ impl Compiler {
                     .insert((**expr.ty.as_user_type().unwrap()).clone());
 
                 self.buffer.emit_cast(scopes, &expr.ty);
-                self.buffer.emit("{");
-                self.buffer
-                    .emit(format!(".data = (uint8_t const*)u8\"{value}\","));
-                self.buffer
-                    .emit(format!(".len = (CTL(usize)){},", value.len()));
-                self.buffer.emit("}");
+                self.buffer.emit(format!(
+                    "{{ .ptr = (uint8_t const*)u8\"{value}\", .len = (CTL(usize)){} }}",
+                    value.len()
+                ));
             }
             ExprData::Char(value) => {
                 self.buffer.emit_cast(scopes, &expr.ty);
