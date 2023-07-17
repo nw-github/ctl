@@ -2414,9 +2414,9 @@ impl TypeChecker {
                 }
 
                 if let Some(this_param) = f.proto.params.get(0).filter(|p| p.name == THIS_PARAM) {
-                    if let TypeId::MutPtr(inner) = &this_param.ty {
+                    if this_param.ty.is_mut_ptr() {
                         let mut ty = &this.ty;
-                        if ty == inner.as_ref() && !Self::can_addrmut(scopes, &this) {
+                        if !ty.is_ptr() && !ty.is_mut_ptr() && !Self::can_addrmut(scopes, &this) {
                             return self.error(Error::new(
                                 format!("cannot call method '{member}' with immutable receiver"),
                                 span,
