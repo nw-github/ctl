@@ -201,6 +201,7 @@ impl TypeId {
                         | TypeId::Bool // FIXME: option<T> should be comparable with T without coercion
                         | TypeId::CInt(_)
                         | TypeId::CUint(_)
+                        | TypeId::Char
                 )
             }
             BinaryOp::LogicalOr | BinaryOp::LogicalAnd => {
@@ -359,6 +360,14 @@ impl TypeId {
                 | TypeId::CInt(_)
                 | TypeId::CUint(_)
         )
+    }
+
+    pub fn is_void_like(&self) -> bool {
+        match self {
+            TypeId::Void | TypeId::Never | TypeId::CVoid => true,
+            //TypeId::Array(arr) => arr.1 == 0,
+            _ => false,
+        }
     }
 
     fn coerces_to(&self, scopes: &Scopes, target: &TypeId) -> bool {

@@ -43,7 +43,7 @@ impl Buffer {
 
     fn emit_type(&mut self, scopes: &Scopes, id: &TypeId) {
         match id {
-            TypeId::Void => self.emit("CTL(void)"),
+            TypeId::Void => self.emit("void"),
             TypeId::Never => self.emit("void"),
             TypeId::CVoid => self.emit("void"),
             TypeId::Int(bits) | TypeId::Uint(bits) => {
@@ -122,7 +122,7 @@ impl Buffer {
                     crate::typecheck::CInt::Int => self.emit("int"),
                     crate::typecheck::CInt::Long => self.emit("long"),
                     crate::typecheck::CInt::LongLong => self.emit("longlong"),
-                } 
+                }
             }
             TypeId::Isize => self.emit("isize"),
             TypeId::Usize => self.emit("usize"),
@@ -197,7 +197,13 @@ impl Buffer {
         self.emit(" ");
         self.emit_fn_name(scopes, state);
         self.emit("(");
-        for (i, param) in f.proto.params.iter().enumerate() {
+        for (i, param) in f
+            .proto
+            .params
+            .iter()
+            .filter(|param| !param.ty.is_void_like())
+            .enumerate()
+        {
             if i > 0 {
                 self.emit(", ");
             }
@@ -240,6 +246,7 @@ macro_rules! tmpvar {
 
 macro_rules! enter_block {
     ($self: expr, $scopes: expr, $ty: expr, $body: expr) => {{
+        let ty = $ty;
         let old = std::mem::replace(
             &mut $self.cur_block,
             BlockInfo {
@@ -253,17 +260,20 @@ macro_rules! enter_block {
         let written = tmpbuf! {
             $self,
             {
-                $self.buffer.emit_type($scopes, $ty);
-                $self.buffer.emit(format!(" {};", $self.cur_block.var));
+                if !ty.is_void_like() {
+                    $self.buffer.emit_type($scopes, ty);
+                    $self.buffer.emit(format!(" {};", $self.cur_block.var));
+                }
                 $body;
                 $self.buffer.emit(format!("{}:;", $self.cur_block.label));
             }
         };
 
         $self.temporaries.emit(written.0);
-        $self
-            .buffer
-            .emit(std::mem::replace(&mut $self.cur_block, old).var);
+        let label = std::mem::replace(&mut $self.cur_block, old).var;
+        if !ty.is_void_like() {
+            $self.buffer.emit(label);
+        }
     }};
 }
 
@@ -350,7 +360,7 @@ impl Compiler {
         for scope in scopes.scopes().iter() {
             for &id in scope.vars.iter() {
                 let var = scopes.get_var(id);
-                if var.is_static {
+                if var.is_static && !var.ty.is_void_like() {
                     this.buffer.emit("static ");
                     this.buffer.emit_type(scopes, &var.ty);
                     this.buffer.emit(" ");
@@ -419,13 +429,18 @@ impl Compiler {
                     self,
                     {
                         let var = scopes.get_var(id);
-                        self.emit_local_decl(scopes, var, state);
-                        if let Some(value) = &var.value {
-                            self.buffer.emit(" = ");
-                            self.compile_expr_inner(scopes, value.clone(), state);
-                        }
+                        if !var.ty.is_void_like() {
+                            self.emit_local_decl(scopes, var, state);
+                            if let Some(value) = &var.value {
+                                self.buffer.emit(" = ");
+                                self.compile_expr_inner(scopes, value.clone(), state);
+                            }
 
-                        self.buffer.emit(";");
+                            self.buffer.emit(";");
+                        } else if let Some(value) = &var.value {
+                            self.compile_expr_inner(scopes, value.clone(), state);
+                            self.buffer.emit(";");
+                        }
                     }
                 }
             }
@@ -495,6 +510,7 @@ impl Compiler {
                     self.buffer.emit(")");
                 }
                 UnaryOp::Addr | UnaryOp::AddrMut => {
+                    // TODO: addr of void
                     self.buffer.emit_cast(scopes, &expr.ty);
                     self.buffer.emit("(&");
                     self.compile_expr(scopes, *inner, state);
@@ -541,7 +557,11 @@ impl Compiler {
                 // FIXME: keyword arguments can be specified out of order. this evaluates them in
                 // parameter order instead of argument order.
                 self.buffer.emit("(");
-                for (i, arg) in args.into_iter().enumerate() {
+                for (i, arg) in args
+                    .into_iter()
+                    .filter(|arg| !arg.ty.is_void_like())
+                    .enumerate()
+                {
                     if i > 0 {
                         self.buffer.emit(", ");
                     }
@@ -590,7 +610,7 @@ impl Compiler {
                     self.buffer.emit(format!("{:#x}", value as u32));
                 }
             }
-            ExprData::Void => self.buffer.emit("CTL(VOID)"),
+            ExprData::Void => {}
             ExprData::Symbol(symbol) => match symbol {
                 Symbol::Func => {
                     let func = expr.ty.into_func().unwrap();
@@ -602,7 +622,11 @@ impl Compiler {
                         },
                     )
                 }
-                Symbol::Var(id) => self.buffer.emit_var_name(scopes, id),
+                Symbol::Var(id) => {
+                    if !scopes.get_var(id).ty.is_void_like() {
+                        self.buffer.emit_var_name(scopes, id);
+                    }
+                }
             },
             ExprData::Instance(members) => {
                 self.buffer.emit_cast(scopes, &expr.ty);
@@ -627,9 +651,11 @@ impl Compiler {
                         }
                     }
 
-                    self.buffer.emit(format!(".{name} = "));
-                    self.compile_expr(scopes, value, state);
-                    self.buffer.emit(", ");
+                    if !value.ty.is_void_like() {
+                        self.buffer.emit(format!(".{name} = "));
+                        self.compile_expr(scopes, value, state);
+                        self.buffer.emit(", ");
+                    }
                 }
                 self.buffer.emit("}");
 
@@ -642,18 +668,32 @@ impl Compiler {
                     );
                 }
             }
+            ExprData::Member { source, member } => {
+                if !expr.ty.is_void_like() {
+                    self.compile_expr(scopes, *source, state);
+                    self.buffer.emit(format!(".{member}"));
+                }
+            }
             ExprData::Assign {
                 target,
                 binary,
                 value,
             } => {
-                self.compile_expr(scopes, *target, state);
-                if let Some(binary) = binary {
-                    self.buffer.emit(format!(" {binary}= "));
+                if !expr.ty.is_void_like() {
+                    self.compile_expr(scopes, *target, state);
+                    if let Some(binary) = binary {
+                        self.buffer.emit(format!(" {binary}= "));
+                    } else {
+                        self.buffer.emit(" = ");
+                    }
+                    self.compile_expr(scopes, *value, state);
                 } else {
-                    self.buffer.emit(" = ");
+                    self.compile_expr(scopes, *target, state);
+                    self.buffer.emit(";");
+
+                    self.compile_expr(scopes, *value, state);
+                    self.buffer.emit(";");
                 }
-                self.compile_expr(scopes, *value, state);
             }
             ExprData::Block(block) => {
                 enter_block! {
@@ -678,7 +718,9 @@ impl Compiler {
                         stmt! {
                             self,
                             {
-                                self.buffer.emit(format!("{} = ", self.cur_block.var));
+                                if !expr.ty.is_void_like() {
+                                    self.buffer.emit(format!("{} = ", self.cur_block.var));
+                                }
                                 if has_default_opt {
                                     self.buffer.emit_cast(scopes, &expr.ty);
                                     let tag = scopes
@@ -688,9 +730,13 @@ impl Compiler {
                                         .unwrap()
                                         .variant_tag("Some")
                                         .unwrap();
-                                    self.buffer.emit(format!("{{ .$tag = {tag}, .Some = "));
-                                    self.compile_expr(scopes, *if_branch, state);
-                                    self.buffer.emit(", }");
+                                    if !if_branch.ty.is_void_like() {
+                                        self.buffer.emit(format!("{{ .$tag = {tag}, .Some = "));
+                                        self.compile_expr(scopes, *if_branch, state);
+                                        self.buffer.emit(", }");
+                                    } else {
+                                        self.buffer.emit(format!("{{ .$tag = {tag} }}"));
+                                    }
                                 } else {
                                     self.compile_expr(scopes, *if_branch, state);
                                 }
@@ -702,7 +748,9 @@ impl Compiler {
                             stmt! {
                                 self,
                                 {
-                                    self.buffer.emit(format!("{} = ", self.cur_block.var));
+                                    if !expr.ty.is_void_like() {
+                                        self.buffer.emit(format!("{} = ", self.cur_block.var));
+                                    }
                                     self.compile_expr(scopes, *else_branch, state);
                                 }
                             }
@@ -721,8 +769,11 @@ impl Compiler {
                 let written = tmpbuf! {
                     self,
                     {
-                        self.buffer.emit_type(scopes, &expr.ty);
-                        self.buffer.emit(format!(" {}; for (;;) {{", self.cur_loop));
+                        if !expr.ty.is_void_like() {
+                            self.buffer.emit_type(scopes, &expr.ty);
+                            self.buffer.emit(format!(" {};", self.cur_loop));
+                        }
+                        self.buffer.emit("for (;;) {");
 
                         macro_rules! cond {
                             () => {
@@ -750,13 +801,11 @@ impl Compiler {
                 };
 
                 self.temporaries.emit(written.0);
-                self.buffer.emit(std::mem::replace(&mut self.cur_loop, old));
+                if !expr.ty.is_void_like() {
+                    self.buffer.emit(std::mem::replace(&mut self.cur_loop, old));
+                }
             }
             ExprData::For { .. } => todo!(),
-            ExprData::Member { source, member } => {
-                self.compile_expr(scopes, *source, state);
-                self.buffer.emit(format!(".{member}"));
-            }
             ExprData::Subscript { .. } => todo!(),
             ExprData::Return(expr) => {
                 // TODO: when return is used as anything except a StmtExpr, we will have to change
@@ -765,12 +814,16 @@ impl Compiler {
                 self.compile_expr(scopes, *expr, state);
             }
             ExprData::Yield(expr) => {
-                self.buffer.emit(format!("{} = ", self.cur_block.var));
+                if !expr.ty.is_void_like() {
+                    self.buffer.emit(format!("{} = ", self.cur_block.var));
+                }
                 self.compile_expr(scopes, *expr, state);
                 self.buffer.emit(format!("; goto {}", self.cur_block.label));
             }
             ExprData::Break(expr) => {
-                self.buffer.emit(format!("{} = ", self.cur_loop));
+                if !expr.ty.is_void_like() {
+                    self.buffer.emit(format!("{} = ", self.cur_loop));
+                }
                 self.compile_expr(scopes, *expr, state);
                 self.buffer.emit("; break;");
             }
@@ -785,6 +838,7 @@ impl Compiler {
                 enter_block! {
                     self, scopes, &expr.ty,
                     {
+                        // TODO: update to exclude void when literal patterns are implemented
                         let tmp_name = tmpvar!(self);
                         state.fill_generics(scopes, &mut scrutinee.ty);
 
@@ -804,9 +858,11 @@ impl Compiler {
                             ));
 
                             if let Some(id) = pattern.binding {
-                                self.emit_local_decl(scopes, scopes.get_var(id), state);
-                                self.buffer
-                                    .emit(format!(" = {tmp_name}.{};", pattern.variant.0));
+                                if !scopes.get_var(id).ty.is_void_like() {
+                                    self.emit_local_decl(scopes, scopes.get_var(id), state);
+                                    self.buffer
+                                        .emit(format!(" = {tmp_name}.{};", pattern.variant.0));
+                                }
                             }
 
                             stmt! {
@@ -833,19 +889,24 @@ impl Compiler {
         state.fill_generics(scopes, &mut expr.ty);
 
         if Self::needs_temporary(&expr) {
-            let tmp = tmpvar!(self);
-            let written = tmpbuf! {
-                self,
-                {
-                    self.buffer.emit_type(scopes, &expr.ty);
-                    self.buffer.emit(format!(" {tmp} = "));
-                    self.compile_expr_inner(scopes, expr, state);
-                    self.buffer.emit(";");
-                }
-            };
+            if !expr.ty.is_void_like() {
+                let tmp = tmpvar!(self);
+                let written = tmpbuf! {
+                    self,
+                    {
+                        self.buffer.emit_type(scopes, &expr.ty);
+                        self.buffer.emit(format!(" {tmp} = "));
+                        self.compile_expr_inner(scopes, expr, state);
+                        self.buffer.emit(";");
+                    }
+                };
 
-            self.temporaries.emit(written.0);
-            self.buffer.emit(tmp);
+                self.temporaries.emit(written.0);
+                self.buffer.emit(tmp);
+            } else {
+                self.compile_expr_inner(scopes, expr, state);
+                self.buffer.emit(";");
+            }
         } else {
             self.compile_expr_inner(scopes, expr, state);
         }
@@ -893,6 +954,9 @@ impl Compiler {
     fn emit_member(&mut self, scopes: &Scopes, ut: &GenericUserType, name: &str, member: &Member) {
         let mut ty = member.ty.clone();
         ty.fill_type_generics(scopes, ut);
+        if member.ty.is_void_like() {
+            return;
+        }
 
         self.buffer.emit_type(scopes, &ty);
         self.buffer.emit(format!(" {name}"));
@@ -947,6 +1011,9 @@ impl Compiler {
     fn emit_local_decl(&mut self, scopes: &Scopes, var: &Variable, state: &State) {
         let mut ty = var.ty.clone();
         state.fill_generics(scopes, &mut ty);
+        if ty.is_void_like() {
+            return;
+        }
 
         self.buffer.emit_type(scopes, &ty);
         if !var.mutable {

@@ -74,9 +74,7 @@ pub struct Vec<T> {
                 this.ptr = ptr;
                 this.cap = cap;
             },
-            Option::None => {
-                panic("Out of memory!");
-            },
+            Option::None => panic("Out of memory!"),
         }
     }
 
