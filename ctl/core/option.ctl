@@ -4,10 +4,10 @@ pub union Option<T> { // ?T
 
     // ?? operator
     // pub fn unwrap_or(this, or: fn() T) T {
-    //     match this {
-    //         Option::Some(value) => return *value,
-    //         Option::None        => return or(),
-    //     }
+    //     return match this {
+    //         Option::Some(value) => *value,
+    //         Option::None        => or(),
+    //     };
     // }
 
     // ! operator

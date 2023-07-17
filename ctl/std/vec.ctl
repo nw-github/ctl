@@ -29,15 +29,9 @@ pub struct Vec<T> {
     }
 
     pub fn pop(mut this) ?T {
-        if this.len == 0 {
-            return null;
-        }
-
-        return this.ptr.add(--this.len).read();
-
-        // return if this.len > 0 {
-        //     yield this.ptr.add(--this.len).read();
-        // };
+        return if this.len > 0 {
+            yield this.ptr.add(--this.len).read();
+        };
     }
 
     pub fn insert(mut this, idx: usize, t: T) {
@@ -87,20 +81,15 @@ pub struct Vec<T> {
     }
 
     pub fn get(this, idx: usize) ?*T {
-        if idx >= this.len {
-            return null;
-        }
-
-        return this.ptr.add(idx).as_ptr();
-        // return idx < this.len { yield this.ptr.add(idx).as_ptr(); };
+        return if idx < this.len {
+            yield this.ptr.add(idx).as_ptr();
+        };
     }
 
     pub fn get_mut(mut this, idx: usize) ?*mut T {
-        if idx >= this.len {
-            return null;
-        }
-
-        return this.ptr.add(idx).as_mut_ptr();
+        return if idx < this.len {
+            yield this.ptr.add(idx).as_mut_ptr();
+        };
     }
 
     fn grow(mut this) {

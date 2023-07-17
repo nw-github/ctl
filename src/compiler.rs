@@ -397,7 +397,7 @@ impl Compiler {
                             self.buffer.emit(" = ");
                             self.compile_expr_inner(scopes, value.clone(), state);
                         }
-    
+
                         self.buffer.emit(";");
                     }
                 }
@@ -640,6 +640,7 @@ impl Compiler {
                 cond,
                 if_branch,
                 else_branch,
+                has_default_opt,
             } => {
                 enter_block! {
                     self, scopes, &expr.ty,
@@ -651,7 +652,21 @@ impl Compiler {
                             self,
                             {
                                 self.buffer.emit(format!("{} = ", self.cur_block.var));
-                                self.compile_expr(scopes, *if_branch, state);
+                                if has_default_opt {
+                                    self.buffer.emit_cast(scopes, &expr.ty);
+                                    let tag = scopes
+                                        .get_user_type(expr.ty.as_user_type().unwrap().id)
+                                        .data
+                                        .as_union()
+                                        .unwrap()
+                                        .variant_tag("Some")
+                                        .unwrap();
+                                    self.buffer.emit(format!("{{ .$tag = {tag}, .Some = "));
+                                    self.compile_expr(scopes, *if_branch, state);
+                                    self.buffer.emit(", }");
+                                } else {
+                                    self.compile_expr(scopes, *if_branch, state);
+                                }
                             }
                         }
 
@@ -691,7 +706,7 @@ impl Compiler {
                                         self.compile_expr(scopes, *cond, state);
                                         self.buffer.emit(") { break; }");
                                     }
-                                }                                
+                                }
                             };
                         }
 
@@ -736,7 +751,10 @@ impl Compiler {
             ExprData::Error => {
                 panic!("ICE: ExprData::Error in compile_expr");
             }
-            ExprData::Match { expr: mut scrutinee, body } => {
+            ExprData::Match {
+                expr: mut scrutinee,
+                body,
+            } => {
                 enter_block! {
                     self, scopes, &expr.ty,
                     {
@@ -747,17 +765,17 @@ impl Compiler {
                         self.buffer.emit(format!(" {tmp_name} = "));
                         self.compile_expr(scopes, *scrutinee, state);
                         self.buffer.emit(";");
-        
+
                         for (i, (pattern, expr)) in body.into_iter().enumerate() {
                             if i > 0 {
                                 self.buffer.emit("else ");
                             }
-        
+
                             self.buffer.emit(format!(
                                 "if ({tmp_name}.{UNION_TAG_NAME} == {}) {{",
                                 pattern.variant.1
                             ));
-        
+
                             if let Some(id) = pattern.binding {
                                 self.emit_local_decl(scopes, scopes.get_var(id), state);
                                 self.buffer
@@ -784,12 +802,7 @@ impl Compiler {
         }
     }
 
-    fn compile_expr(
-        &mut self,
-        scopes: &Scopes,
-        mut expr: CheckedExpr,
-        state: &State,
-    ) {
+    fn compile_expr(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
         state.fill_generics(scopes, &mut expr.ty);
 
         if Self::needs_temporary(&expr) {

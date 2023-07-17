@@ -1887,6 +1887,7 @@ impl TypeChecker {
 
                 let if_branch = self.check_expr(scopes, *if_branch, target);
                 let mut out_type = if_branch.ty.clone();
+                let mut has_default_opt = false;
                 let else_branch = if let Some(e) = else_branch {
                     Some(type_check!(
                         self,
@@ -1903,8 +1904,16 @@ impl TypeChecker {
                         matches!(scopes[b.scope].kind, ScopeKind::Block(_, yields) if yields))
                     {
                         out_type = Self::make_option(scopes, out_type).unwrap();
+                        has_default_opt = true;
+
+                        Some(self.check_expr(
+                            scopes,
+                            Located::new(Expr::None, span),
+                            Some(&out_type),
+                        ))
+                    } else {
+                        None
                     }
-                    None
                 };
 
                 CheckedExpr::new(
@@ -1913,6 +1922,7 @@ impl TypeChecker {
                         cond: cond.into(),
                         if_branch: if_branch.into(),
                         else_branch: else_branch.map(|e| e.into()),
+                        has_default_opt,
                     },
                 )
             }
@@ -1940,20 +1950,22 @@ impl TypeChecker {
                         .map(|target| &target.generics[0])
                 };
 
-                let body = self.create_block(
-                    scopes,
-                    None,
-                    body,
-                    ScopeKind::Loop(target.cloned(), inf),
-                );
-                let ScopeKind::Loop(target, inf) = &scopes[body.scope].kind else {
+                let body =
+                    self.create_block(scopes, None, body, ScopeKind::Loop(target.cloned(), false));
+                let ScopeKind::Loop(target, breaks) = &scopes[body.scope].kind else {
                     panic!("ICE: target of loop changed from loop to something else");
                 };
 
-                CheckedExpr::new(
+                let mut out_type =
                     target
                         .clone()
-                        .unwrap_or(if *inf { TypeId::Never } else { TypeId::Void }),
+                        .unwrap_or(if inf { TypeId::Never } else { TypeId::Void });
+                if !inf && *breaks {
+                    out_type = Self::make_option(scopes, out_type).unwrap();
+                }
+
+                CheckedExpr::new(
+                    out_type,
                     ExprData::Loop {
                         cond: cond.into(),
                         body,
@@ -2092,7 +2104,7 @@ impl TypeChecker {
                     return self.error(Error::new("break outside of loop", span));
                 };
 
-                let ScopeKind::Loop(target, inf) = scopes[scope].kind.clone() else {
+                let ScopeKind::Loop(target, _) = scopes[scope].kind.clone() else {
                     unreachable!()
                 };
 
@@ -2100,13 +2112,9 @@ impl TypeChecker {
                 let mut expr = self.check_expr(scopes, *expr, target.as_ref());
                 if let Some(target) = &target {
                     expr = type_check!(self, scopes, expr, target, span);
-                } else if inf {
-                    scopes[scope].kind = ScopeKind::Loop(Some(expr.ty.clone()), inf);
+                    scopes[scope].kind = ScopeKind::Loop(Some(target.clone()), true);
                 } else {
-                    scopes[scope].kind = ScopeKind::Loop(
-                        Some(Self::make_option(scopes, expr.ty.clone()).unwrap()),
-                        inf,
-                    );
+                    scopes[scope].kind = ScopeKind::Loop(Some(expr.ty.clone()), true);
                 }
 
                 CheckedExpr::new(TypeId::Never, ExprData::Break(expr.into()))
