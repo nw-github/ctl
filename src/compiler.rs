@@ -883,9 +883,30 @@ impl Compiler {
     }
 
     fn compile_expr(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
+        fn has_side_effects(expr: &CheckedExpr) -> bool {
+            match &expr.data {
+                ExprData::Unary { op, .. } => matches!(
+                    op,
+                    UnaryOp::PostIncrement
+                        | UnaryOp::PostDecrement
+                        | UnaryOp::PreIncrement
+                        | UnaryOp::PreDecrement
+                ),
+                ExprData::Call { .. } => true,
+                ExprData::Array(_) => todo!(),
+                ExprData::ArrayWithInit { .. } => todo!(),
+                ExprData::Tuple(_) => todo!(),
+                ExprData::Map(_) => todo!(),
+                ExprData::Assign { .. } => true,
+                ExprData::For { .. } => todo!(),
+                ExprData::Subscript { .. } => todo!(),
+                _ => false,
+            }
+        }
+
         state.fill_generics(scopes, &mut expr.ty);
 
-        if Self::needs_temporary(&expr) {
+        if has_side_effects(&expr) {
             if !expr.ty.is_void_like() {
                 let tmp = tmpvar!(self);
                 let written = tmpbuf! {
@@ -906,37 +927,6 @@ impl Compiler {
             }
         } else {
             self.compile_expr_inner(scopes, expr, state);
-        }
-    }
-
-    fn needs_temporary(expr: &CheckedExpr) -> bool {
-        match &expr.data {
-            ExprData::Unary { op, expr } => match op {
-                UnaryOp::PostIncrement
-                | UnaryOp::PostDecrement
-                | UnaryOp::PreIncrement
-                | UnaryOp::PreDecrement => true,
-                _ => Self::needs_temporary(expr),
-            },
-            ExprData::Call { .. } => true,
-            ExprData::Instance(args) => {
-                for arg in args.values() {
-                    if Self::needs_temporary(arg) {
-                        return true;
-                    }
-                }
-
-                false
-            }
-            ExprData::Array(_) => todo!(),
-            ExprData::ArrayWithInit { .. } => todo!(),
-            ExprData::Tuple(_) => todo!(),
-            ExprData::Map(_) => todo!(),
-            ExprData::Assign { .. } => true,
-            ExprData::For { .. } => todo!(),
-            ExprData::Member { source, .. } => Self::needs_temporary(source),
-            ExprData::Subscript { .. } => todo!(),
-            _ => false,
         }
     }
 

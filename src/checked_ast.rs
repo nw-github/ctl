@@ -15,7 +15,7 @@ pub struct UnionPattern {
 }
 
 pub mod expr {
-    use std::collections::HashMap;
+    use indexmap::IndexMap;
 
     use crate::{
         ast::expr::{BinaryOp, UnaryOp},
@@ -40,7 +40,7 @@ pub mod expr {
             args: Vec<CheckedExpr>,
             inst: Option<GenericUserType>,
         },
-        Instance(HashMap<String, CheckedExpr>),
+        Instance(IndexMap<String, CheckedExpr>),
         Array(Vec<CheckedExpr>),
         ArrayWithInit {
             init: Box<CheckedExpr>,

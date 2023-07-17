@@ -1,12 +1,10 @@
 use core::panic;
-use std::{
-    collections::{hash_map::Entry, HashMap},
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
 use concat_idents::concat_idents;
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
+use indexmap::{IndexMap, map::Entry};
 
 use crate::{
     ast::{
@@ -628,7 +626,7 @@ pub struct Scope {
     pub types: Vec<UserTypeId>,
     pub vars: Vec<VariableId>,
     pub name: Option<String>,
-    pub children: HashMap<String, ScopeId>,
+    pub children: IndexMap<String, ScopeId>,
 }
 
 pub struct Scopes {
@@ -2668,8 +2666,8 @@ impl TypeChecker {
         target: Option<&TypeId>,
         scopes: &mut Scopes,
         span: Span,
-    ) -> (HashMap<String, CheckedExpr>, TypeId) {
-        let mut result = HashMap::with_capacity(args.len());
+    ) -> (IndexMap<String, CheckedExpr>, TypeId) {
+        let mut result = IndexMap::with_capacity(args.len());
         let mut last_pos = 0;
         for (name, expr) in args {
             if let Some(name) = name {
@@ -2769,7 +2767,7 @@ impl TypeChecker {
 
     fn make_positional(
         params: &[CheckedParam],
-        mut args: HashMap<String, CheckedExpr>,
+        mut args: IndexMap<String, CheckedExpr>,
     ) -> Vec<CheckedExpr> {
         if params.len() == args.len() {
             let mut result = Vec::with_capacity(args.len());
