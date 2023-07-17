@@ -1061,10 +1061,18 @@ impl<'a> Parser<'a> {
                             if path.as_identifier().is_some()
                                 && this.advance_if_kind(Token::Colon).is_some()
                             {
-                                return Ok((
-                                    Some(path.as_identifier().unwrap().into()),
-                                    this.expression()?,
-                                ));
+                                let ident = path.as_identifier().unwrap().to_string();
+                                if this.matches(|t| matches!(t, Token::Comma | Token::RParen)) {
+                                    return Ok((
+                                        Some(ident.clone()),
+                                        L::new(Expr::Path(Path::from(ident)), expr.span),
+                                    ));
+                                } else {
+                                    return Ok((
+                                        Some(ident),
+                                        this.expression()?,
+                                    ));
+                                }
                             }
                         }
 

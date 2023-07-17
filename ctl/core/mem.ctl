@@ -29,7 +29,7 @@ pub struct NonNull<T> {
 
     pub fn from_addr<U>(addr: usize) ?NonNull<U> {
         return if addr > 0 {
-            return NonNull::<U>(addr: addr);
+            return NonNull::<U>(addr:);
         };
     }
 
