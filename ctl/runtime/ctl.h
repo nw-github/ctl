@@ -5,7 +5,6 @@
 
 #include <gc.h>
 #include <stdio.h>
-#include <string.h>
 
 inline CTL(void) print_i32(int32_t const num) {
     printf("%d", num);
@@ -35,16 +34,6 @@ inline CTL(void) eprint(uint8_t const *buf, CTL(usize) const len) {
 inline CTL(void) eprintln(uint8_t const *buf, CTL(usize) const len) {
     fprintf(stderr, "%.*s\n", (int)len, buf);
     return CTL(VOID);
-}
-
-inline CTL(void) ctl_memcpy(uint8_t *dst, uint8_t const *src, CTL(usize) len) {
-    memcpy(dst, src, len);
-    return CTL_VOID;
-}
-
-inline CTL(void) ctl_memmove(uint8_t *dst, uint8_t const *src, CTL(usize) len) {
-    memmove(dst, src, len);
-    return CTL_VOID;
 }
 
 inline CTL(usize) ctl_malloc(CTL(usize) size) {

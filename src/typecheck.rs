@@ -128,6 +128,7 @@ pub enum TypeId {
     Uint(u8),
     CInt(CInt),
     CUint(CInt),
+    CVoid,
     Isize,
     Usize,
     F32,
@@ -342,6 +343,7 @@ impl TypeId {
                     }
                 )
             }
+            TypeId::CVoid => "c_void".into(),
         }
     }
 
@@ -2797,6 +2799,7 @@ impl TypeChecker {
                             "bool" => Some(TypeId::Bool),
                             "str" => Self::find_core_string(scopes),
                             "char" => Some(TypeId::Char),
+                            "c_void" => Some(TypeId::CVoid),
                             "c_char" => Some(TypeId::CInt(CInt::Char)),
                             "c_short" => Some(TypeId::CInt(CInt::Short)),
                             "c_int" => Some(TypeId::CInt(CInt::Int)),

@@ -45,6 +45,7 @@ impl Buffer {
         match id {
             TypeId::Void => self.emit("CTL(void)"),
             TypeId::Never => self.emit("void"),
+            TypeId::CVoid => self.emit("void"),
             TypeId::Int(bits) | TypeId::Uint(bits) => {
                 let unsigned = matches!(id, TypeId::Uint(_));
                 if (8..=64).contains(bits) && bits.is_power_of_two() {
@@ -63,7 +64,7 @@ impl Buffer {
                 if matches!(id, TypeId::CUint(_)) {
                     self.emit("unsigned ");
                 }
-                
+
                 match ty {
                     crate::typecheck::CInt::Char => self.emit("char"),
                     crate::typecheck::CInt::Short => self.emit("short"),
@@ -107,6 +108,7 @@ impl Buffer {
     fn emit_generic_mangled_name(&mut self, scopes: &Scopes, id: &TypeId) {
         match id {
             TypeId::Void => self.emit("void"),
+            TypeId::CVoid => self.emit("c_void"),
             TypeId::Never => self.emit("never"),
             TypeId::Int(bits) => self.emit(format!("i{bits}")),
             TypeId::Uint(bits) => self.emit(format!("u{bits}")),

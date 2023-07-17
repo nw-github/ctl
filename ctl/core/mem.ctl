@@ -7,17 +7,17 @@ pub fn size_of_val<T>(_: *T) usize {
 
 /// Copies `num` T's from `src` to `dst` without destroying the contents in `dst`.
 pub fn copy<T>(kw dst: *mut T, kw src: *T, kw num: usize) {
-    extern fn ctl_memcpy(dst: *mut u8, src: *u8, len: usize);
+    extern fn memcpy(dst: *mut c_void, src: *c_void, len: usize) *mut c_void;
 
-    ctl_memcpy(dst as *mut u8, src as *u8, num * size_of::<T>());
+    memcpy(dst as *mut c_void, src as *c_void, num * size_of::<T>());
 }
 
 /// Copies `num` T's from `src` to `dst` without destroying the contents in `dst`. Behaves as if
 /// `src` is first copied to a temporary buffer, then copied to dst.
 pub fn move<T>(kw dst: *mut T, kw src: *T, kw num: usize) {
-    extern fn ctl_memmove(dst: *mut u8, src: *u8, len: usize);
+    extern fn memmove(dst: *mut c_void, src: *c_void, len: usize) *mut c_void;
 
-    ctl_memmove(dst as *mut u8, src as *u8, num * size_of::<T>());
+    memmove(dst as *mut c_void, src as *c_void, num * size_of::<T>());
 }
 
 pub struct NonNull<T> {
