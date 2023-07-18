@@ -451,7 +451,8 @@ impl Compiler {
         }
     }
 
-    fn compile_expr_inner(&mut self, scopes: &Scopes, expr: CheckedExpr, state: &State) {
+    fn compile_expr_inner(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
+        state.fill_generics(scopes, &mut expr.ty);
         match expr.data {
             ExprData::Binary { op, left, right } => {
                 if expr.ty == TypeId::Bool {
@@ -904,9 +905,8 @@ impl Compiler {
             }
         }
 
-        state.fill_generics(scopes, &mut expr.ty);
-
         if has_side_effects(&expr) {
+            state.fill_generics(scopes, &mut expr.ty);
             if !expr.ty.is_void_like() {
                 let tmp = tmpvar!(self);
                 let written = tmpbuf! {
