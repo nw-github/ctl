@@ -834,6 +834,20 @@ impl Scopes {
 
         None
     }
+
+    pub fn find_nonmember_fn(&self, name: &str) -> Option<FunctionId> {
+        for (id, scope) in self.iter().filter(|(_, s)| !matches!(s.kind, ScopeKind::UserType(_))) {
+            if let Some(item) = self.find_func_in(name, id) {
+                return Some(item);
+            }
+
+            if matches!(scope.kind, ScopeKind::Module(_)) {
+                break;
+            }
+        }
+
+        None
+    }
 }
 
 #[derive(Debug, EnumAsInner)]
@@ -3027,7 +3041,7 @@ impl TypeChecker {
                     }
 
                     Self::resolve_path_from(&data[1..], ty.body_scope, scopes, span)
-                } else if let Some(id) = scopes.find_func(name) {
+                } else if let Some(id) = scopes.find_nonmember_fn(name) {
                     if is_end {
                         let f = scopes.get_func(id);
                         return Ok(ResolvedPath::Func(GenericFunc::new(
