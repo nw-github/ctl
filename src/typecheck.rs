@@ -102,18 +102,9 @@ pub enum CInt {
     LongLong,
 }
 
-impl CInt {
-    pub fn bits(&self) -> u8 {
-        use std::ffi::*;
-
-        match self {
-            CInt::Char => std::mem::size_of::<c_char>() as u8,
-            CInt::Short => std::mem::size_of::<c_short>() as u8,
-            CInt::Int => std::mem::size_of::<c_int>() as u8,
-            CInt::Long => std::mem::size_of::<c_long>() as u8,
-            CInt::LongLong => std::mem::size_of::<c_longlong>() as u8,
-        }
-    }
+pub struct IntStats {
+    bits: u8,
+    signed: bool,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, EnumAsInner, Hash)]
@@ -366,6 +357,35 @@ impl TypeId {
             //TypeId::Array(arr) => arr.1 == 0,
             _ => false,
         }
+    }
+
+    pub fn integer_stats(&self) -> Option<IntStats> {
+        use std::ffi::*;
+
+        let (bytes, signed) = match self {
+            TypeId::Int(bits) | TypeId::Uint(bits) => {
+                (*bits / 8, matches!(self, TypeId::Int(_)))
+            }
+            TypeId::CInt(cint) | TypeId::CUint(cint) => {
+                let bits = match cint {
+                    CInt::Char => std::mem::size_of::<c_char>(),
+                    CInt::Short => std::mem::size_of::<c_short>(),
+                    CInt::Int => std::mem::size_of::<c_int>(),
+                    CInt::Long => std::mem::size_of::<c_long>(),
+                    CInt::LongLong => std::mem::size_of::<c_longlong>(),
+                };
+                (bits as u8, matches!(self, TypeId::CInt(_)))
+            }
+            TypeId::Isize => {
+                (std::mem::size_of::<isize>() as u8, true)
+            }
+            TypeId::Usize => {
+                (std::mem::size_of::<usize>() as u8, false)
+            }
+            _ => return None,
+        };
+
+        Some(IntStats { bits: bytes * 8, signed })
     }
 
     fn coerces_to(&self, scopes: &Scopes, target: &TypeId) -> bool {
@@ -1798,36 +1818,30 @@ impl TypeChecker {
                         .unwrap_or(TypeId::Int(32))
                 };
 
-                let (signed, bits) = match ty {
-                    TypeId::Int(bits) => (true, bits),
-                    TypeId::Uint(bits) => (false, bits),
-                    TypeId::Isize => (true, std::mem::size_of::<isize>() as u8 * 8),
-                    TypeId::Usize => (false, std::mem::size_of::<usize>() as u8 * 8),
-                    TypeId::CInt(ty) => (true, ty.bits()),
-                    TypeId::CUint(ty) => (false, ty.bits()),
-                    _ => unreachable!(),
-                };
-
+                let IntStats { signed, bits } = ty.integer_stats().unwrap();
                 if signed {
                     let result = match i128::from_str_radix(&value, base as u32) {
                         Ok(result) => result,
                         Err(e) => {
                             return self.error(Error::new(
-                                format!("Integer literal '{value}' is too large: {e}."),
+                                format!("integer literal '{value}' is too large: {e}."),
                                 expr.span,
                             ));
                         }
                     };
 
-                    if result >= 1 << (bits - 1) {
+                    let max = (1 << (bits - 1)) - 1;
+                    if result > max {
                         return self.error(Error::new(
-                            "Integer literal is larger than its type allows",
+                            format!("integer literal is larger than its type allows ({max})"),
                             expr.span,
                         ));
                     }
-                    if result <= -(1 << (bits - 1)) {
+
+                    let min = -(1 << (bits - 1));
+                    if result < min {
                         return self.error(Error::new(
-                            "Integer literal is smaller than its type allows",
+                            format!("integer literal is smaller than its type allows ({min})"),
                             expr.span,
                         ));
                     }
@@ -1838,15 +1852,16 @@ impl TypeChecker {
                         Ok(result) => result,
                         Err(_) => {
                             return self.error(Error::new(
-                                format!("Integer literal '{value}' is too large."),
+                                format!("integer literal '{value}' is too large."),
                                 expr.span,
                             ));
                         }
                     };
 
-                    if result >= 1 << bits {
+                    let max = (1 << bits) - 1;
+                    if result >= max {
                         return self.error(Error::new(
-                            "Integer literal is larger than its type allows",
+                            format!("integer literal is larger than its type allows ({max})"),
                             expr.span,
                         ));
                     }
