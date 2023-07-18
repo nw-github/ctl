@@ -34,6 +34,25 @@ pub struct Vec<T> {
         };
     }
 
+    pub fn append(mut this, rhs: *mut Vec<T>) {
+        if !this.can_insert(rhs.len) {
+            this.grow();
+        }
+
+        mem::copy(
+            dst: this.ptr.add(this.len).as_mut_ptr(),
+            src: rhs.ptr.as_ptr(),
+            num: rhs.len
+        );
+
+        this.len += rhs.len;
+        rhs.len = 0;
+    }
+
+    pub fn clear(mut this) {
+        this.len = 0;
+    }
+
     pub fn insert(mut this, idx: usize, t: T) {
         if idx > this.len {
             panic("Vec::insert(): index is greater than length!");
