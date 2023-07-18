@@ -1,0 +1,2 @@
+yaml:
+    npx js-yaml syntaxes/ctl.tmLanguage.yaml > syntaxes/ctl.tmLanguage.json
