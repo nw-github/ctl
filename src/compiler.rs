@@ -247,32 +247,22 @@ macro_rules! tmpvar {
 macro_rules! enter_block {
     ($self: expr, $scopes: expr, $ty: expr, $body: expr) => {{
         let ty = $ty;
-        let old = std::mem::replace(
-            &mut $self.cur_block,
-            BlockInfo {
-                label: {
-                    $self.tmpblk += 1;
-                    format!("blk{}", $self.tmpblk)
-                },
-                var: tmpvar!($self),
-            },
-        );
+        let old = std::mem::replace(&mut $self.cur_block, tmpvar!($self));
         let written = tmpbuf! {
             $self,
             {
                 if !ty.is_void_like() {
                     $self.buffer.emit_type($scopes, ty);
-                    $self.buffer.emit(format!(" {};", $self.cur_block.var));
+                    $self.buffer.emit(format!(" {};", $self.cur_block));
                 }
                 $body;
-                $self.buffer.emit(format!("{}:;", $self.cur_block.label));
             }
         };
 
         $self.temporaries.emit(written.0);
-        let label = std::mem::replace(&mut $self.cur_block, old).var;
+        let var = std::mem::replace(&mut $self.cur_block, old);
         if !ty.is_void_like() {
-            $self.buffer.emit(label);
+            $self.buffer.emit(var);
         }
     }};
 }
@@ -290,21 +280,15 @@ macro_rules! stmt {
 }
 
 #[derive(Default)]
-pub struct BlockInfo {
-    label: String,
-    var: String,
-}
-
-#[derive(Default)]
 pub struct Compiler {
     buffer: Buffer,
     temporaries: Buffer,
     structs: HashSet<GenericUserType>,
     funcs: HashSet<State>,
     tmpvar: usize,
-    tmpblk: usize,
-    cur_block: BlockInfo,
+    cur_block: String,
     cur_loop: String,
+    yielded: bool,
 }
 
 impl Compiler {
@@ -717,7 +701,7 @@ impl Compiler {
                             self,
                             {
                                 if !expr.ty.is_void_like() {
-                                    self.buffer.emit(format!("{} = ", self.cur_block.var));
+                                    self.buffer.emit(format!("{} = ", self.cur_block));
                                 }
                                 if has_default_opt {
                                     self.buffer.emit_cast(scopes, &expr.ty);
@@ -747,7 +731,7 @@ impl Compiler {
                                 self,
                                 {
                                     if !expr.ty.is_void_like() {
-                                        self.buffer.emit(format!("{} = ", self.cur_block.var));
+                                        self.buffer.emit(format!("{} = ", self.cur_block));
                                     }
                                     self.compile_expr(scopes, *else_branch, state);
                                 }
@@ -810,13 +794,15 @@ impl Compiler {
                 // the generated code to accomodate it
                 self.buffer.emit("return ");
                 self.compile_expr(scopes, *expr, state);
+                self.yielded = true;
             }
             ExprData::Yield(expr) => {
                 if !expr.ty.is_void_like() {
-                    self.buffer.emit(format!("{} = ", self.cur_block.var));
+                    self.buffer.emit(format!("{} = ", self.cur_block));
                 }
                 self.compile_expr(scopes, *expr, state);
-                self.buffer.emit(format!("; goto {}", self.cur_block.label));
+                self.buffer.emit(";");
+                self.yielded = true;
             }
             ExprData::Break(expr) => {
                 if !expr.ty.is_void_like() {
@@ -824,6 +810,7 @@ impl Compiler {
                 }
                 self.compile_expr(scopes, *expr, state);
                 self.buffer.emit("; break;");
+                self.yielded = true;
             }
             ExprData::Continue => self.buffer.emit("continue;"),
             ExprData::Error => {
@@ -934,6 +921,10 @@ impl Compiler {
         self.buffer.emit("{");
         for stmt in block.body.into_iter() {
             self.compile_stmt(scopes, stmt, state);
+            if self.yielded {
+                self.yielded = false;
+                break;
+            }
         }
         self.buffer.emit("}");
     }
