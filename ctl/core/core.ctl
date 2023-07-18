@@ -5,7 +5,7 @@
 
 pub fn panic(s: str) never {
     // TODO: c_int
-    extern fn exit(code: i32) never;
+    extern fn _Exit(code: c_int) never;
 
     // TODO: core is not allowed to depend on anything, but this is annoyingly redundant
     extern fn eprint(buf: *u8, len: usize);
@@ -15,5 +15,5 @@ pub fn panic(s: str) never {
     eprint(prefix.as_ptr(), prefix.len());
     eprintln(s.as_ptr(), s.len());
 
-    exit(101);
+    _Exit(101);
 }
