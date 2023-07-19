@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use concat_idents::concat_idents;
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
-use indexmap::{map::Entry, IndexMap};
+use indexmap::{map::Entry, IndexMap, IndexSet};
 
 use crate::{
     ast::{
@@ -45,9 +45,23 @@ impl GenericFunc {
                     target = &ti.0;
                 }
                 (TypeId::UserType(src), target) => {
-                    if let Some(target) = target.as_user_type() {
-                        if !src.generics.is_empty() && !target.generics.is_empty() {
-                            for (src, target) in src.generics.iter().zip(target.generics.iter()) {
+                    if let Some(t) = target.as_user_type() {
+                        if src.id != t.id {
+                            if let Some(inner) = scopes
+                                .as_option_inner(target)
+                                .and_then(|i| i.as_user_type())
+                            {
+                                for (src, target) in src.generics.iter().zip(inner.generics.iter())
+                                {
+                                    self.infer_generics(src, target, scopes);
+                                }
+
+                                break;
+                            }
+                        }
+
+                        if !src.generics.is_empty() && !t.generics.is_empty() {
+                            for (src, target) in src.generics.iter().zip(t.generics.iter()) {
                                 self.infer_generics(src, target, scopes);
                             }
 
@@ -209,8 +223,8 @@ impl TypeId {
         id
     }
 
-    pub fn fill_type_generics(&mut self, scopes: &Scopes, instance: &GenericUserType) {
-        if instance.generics.is_empty() {
+    pub fn fill_type_generics(&mut self, scopes: &Scopes, inst: &GenericUserType) {
+        if inst.generics.is_empty() {
             return;
         }
 
@@ -222,12 +236,12 @@ impl TypeId {
                 TypeId::UserType(ty) => {
                     if !ty.generics.is_empty() {
                         for ty in ty.generics.iter_mut() {
-                            ty.fill_type_generics(scopes, instance);
+                            ty.fill_type_generics(scopes, inst);
                         }
                     } else if let Some(&index) =
                         scopes.get_user_type(ty.id).data.as_struct_generic()
                     {
-                        *src = instance.generics[index].clone();
+                        *src = inst.generics[index].clone();
                     }
 
                     break;
@@ -399,7 +413,8 @@ impl TypeId {
             (TypeId::FloatGeneric, TypeId::F32 | TypeId::F64) => true,
             (TypeId::MutPtr(ty), TypeId::Ptr(target)) if ty == target => true,
             (ty, target)
-                if TypeChecker::as_option_inner(scopes, target)
+                if scopes
+                    .as_option_inner(target)
                     .map_or(false, |inner| ty.coerces_to(scopes, inner)) =>
             {
                 true
@@ -480,7 +495,7 @@ macro_rules! id {
                     let index = self.$vec.len();
                     self.$vec.push(Scoped::new(item, scope));
                     let itemid = $name(index);
-                    self[scope].$vec.push(itemid);
+                    self[scope].$vec.insert(itemid);
                     itemid
                 }
             });
@@ -639,9 +654,9 @@ pub struct Scoped<T> {
 pub struct Scope {
     pub kind: ScopeKind,
     pub parent: Option<ScopeId>,
-    pub fns: Vec<FunctionId>,
-    pub types: Vec<UserTypeId>,
-    pub vars: Vec<VariableId>,
+    pub fns: IndexSet<FunctionId>,
+    pub types: IndexSet<UserTypeId>,
+    pub vars: IndexSet<VariableId>,
     pub name: Option<String>,
     pub children: IndexMap<String, ScopeId>,
 }
@@ -847,6 +862,20 @@ impl Scopes {
         }
 
         None
+    }
+
+    pub fn find_core_option(&self) -> Option<UserTypeId> {
+        let core = self.scopes()[0].children.get("core")?;
+        let option = self[*core].children.get("option")?;
+        self.find_user_type_in("Option", *option)
+    }
+
+    pub fn as_option_inner<'a>(&self, ty: &'a TypeId) -> Option<&'a TypeId> {
+        self.find_core_option().and_then(|opt| {
+            ty.as_user_type()
+                .filter(|ut| ut.id == opt)
+                .map(|ut| &ut.generics[0])
+        })
     }
 }
 
@@ -1674,11 +1703,11 @@ impl TypeChecker {
                         true
                     }
                     Unwrap => {
-                        if let Some(inner) = Self::as_option_inner(scopes, &expr.ty) {
+                        if let Some(inner) = scopes.as_option_inner(&expr.ty) {
                             let func = scopes.find_func_in(
                                 "unwrap",
                                 scopes
-                                    .get_user_type(Self::find_core_option(scopes).unwrap())
+                                    .get_user_type(scopes.find_core_option().unwrap())
                                     .body_scope,
                             );
 
@@ -1779,8 +1808,7 @@ impl TypeChecker {
             }
             Expr::Char(s) => CheckedExpr::new(TypeId::Char, ExprData::Char(s)),
             Expr::None => {
-                if let Some(inner) = target.and_then(|target| Self::as_option_inner(scopes, target))
-                {
+                if let Some(inner) = target.and_then(|target| scopes.as_option_inner(target)) {
                     CheckedExpr::new(
                         Self::make_option(scopes, inner.clone()).unwrap(),
                         ExprData::Instance(
@@ -1817,7 +1845,7 @@ impl TypeChecker {
                                 match target {
                                     TypeId::MutPtr(ty) | TypeId::Ptr(ty) => target = ty,
                                     other => {
-                                        if let Some(inner) = Self::as_option_inner(scopes, other) {
+                                        if let Some(inner) = scopes.as_option_inner(other) {
                                             target = inner;
                                         } else {
                                             break;
@@ -1995,7 +2023,7 @@ impl TypeChecker {
                 } else {
                     target
                         .and_then(|t| t.as_user_type())
-                        .filter(|t| t.id == Self::find_core_option(scopes).unwrap())
+                        .filter(|t| t.id == scopes.find_core_option().unwrap())
                         .map(|target| &target.generics[0])
                 };
 
@@ -2064,7 +2092,7 @@ impl TypeChecker {
                 } else {
                     target
                         .and_then(|t| t.as_user_type())
-                        .filter(|t| t.id == Self::find_core_option(scopes).unwrap())
+                        .filter(|t| t.id == scopes.find_core_option().unwrap())
                         .map(|target| &target.generics[0])
                 };
 
@@ -2778,6 +2806,15 @@ impl TypeChecker {
         }
 
         let mut ret = scopes.get_func(func.id).proto.ret.clone();
+        if scopes
+            .get_func(scopes.current_function().unwrap())
+            .proto
+            .name
+            == "test"
+        {
+            eprintln!("{}", ret.name(scopes));
+        }
+
         if !func.generics.is_empty() {
             if let Some(target) = target {
                 func.infer_generics(&ret, target, scopes);
@@ -2892,12 +2929,6 @@ impl TypeChecker {
         Self::fd_resolve_type(scopes, ty).unwrap_or_else(|err| self.error(err))
     }
 
-    fn find_core_option(scopes: &Scopes) -> Option<UserTypeId> {
-        let core = scopes.scopes()[0].children.get("core")?;
-        let option = scopes[*core].children.get("option")?;
-        scopes.find_user_type_in("Option", *option)
-    }
-
     fn find_core_string(scopes: &Scopes) -> Option<TypeId> {
         let core = scopes.scopes()[0].children.get("core")?;
         let option = scopes[*core].children.get("string")?;
@@ -2913,19 +2944,11 @@ impl TypeChecker {
     fn make_option(scopes: &Scopes, ty: TypeId) -> Option<TypeId> {
         Some(TypeId::UserType(
             GenericUserType {
-                id: Self::find_core_option(scopes)?,
+                id: scopes.find_core_option()?,
                 generics: vec![ty],
             }
             .into(),
         ))
-    }
-
-    fn as_option_inner<'a>(scopes: &Scopes, ty: &'a TypeId) -> Option<&'a TypeId> {
-        Self::find_core_option(scopes).and_then(|opt| {
-            ty.as_user_type()
-                .filter(|ut| ut.id == opt)
-                .map(|ut| &ut.generics[0])
-        })
     }
 
     fn create_block(
@@ -2979,9 +3002,15 @@ impl TypeChecker {
 
     fn resolve_use(scopes: &mut Scopes, path: &Path, span: Span) -> Result<(), Error> {
         match Self::resolve_path(scopes, path, span)? {
-            ResolvedPath::UserType(ut) => scopes.current().types.push(ut.id),
-            ResolvedPath::Func(func) => scopes.current().fns.push(func.id),
-            ResolvedPath::Var(id) => scopes.current().vars.push(id),
+            ResolvedPath::UserType(ut) => {
+                scopes.current().types.insert(ut.id);
+            }
+            ResolvedPath::Func(func) => {
+                scopes.current().fns.insert(func.id);
+            }
+            ResolvedPath::Var(id) => {
+                scopes.current().vars.insert(id);
+            }
             ResolvedPath::Module(id) => {
                 let name = scopes[id].name.as_ref().unwrap().clone();
                 scopes.current().children.insert(name, id);
@@ -3005,10 +3034,11 @@ impl TypeChecker {
                 CheckedExpr::new(target.clone(), expr.data)
             }
             (ty, target)
-                if Self::as_option_inner(scopes, target)
+                if scopes
+                    .as_option_inner(target)
                     .map_or(false, |inner| ty.coerces_to(scopes, inner)) =>
             {
-                let inner = Self::as_option_inner(scopes, target).unwrap();
+                let inner = scopes.as_option_inner(target).unwrap();
                 let expr = Self::coerce_expr(scopes, expr, inner);
                 Self::coerce_expr(
                     scopes,
