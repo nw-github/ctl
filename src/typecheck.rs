@@ -2071,13 +2071,16 @@ impl TypeChecker {
                     panic!("ICE: target of loop changed from loop to something else");
                 };
 
-                let mut out_type =
-                    target
-                        .clone()
-                        .unwrap_or(if inf { TypeId::Never } else { TypeId::Void });
-                if !inf && *breaks {
-                    out_type = Self::make_option(scopes, out_type).unwrap();
-                }
+                let out_type = if inf {
+                    TypeId::Never
+                } else {
+                    breaks
+                        .then(|| {
+                            // TODO: coerce the break statements
+                            Self::make_option(scopes, target.clone().unwrap()).unwrap()
+                        })
+                        .unwrap_or(TypeId::Void)
+                };
 
                 CheckedExpr::new(
                     out_type,
