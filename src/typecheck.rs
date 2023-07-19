@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use concat_idents::concat_idents;
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
-use indexmap::{IndexMap, map::Entry};
+use indexmap::{map::Entry, IndexMap};
 
 use crate::{
     ast::{
@@ -363,9 +363,7 @@ impl TypeId {
         use std::ffi::*;
 
         let (bytes, signed) = match self {
-            TypeId::Int(bits) | TypeId::Uint(bits) => {
-                (*bits / 8, matches!(self, TypeId::Int(_)))
-            }
+            TypeId::Int(bits) | TypeId::Uint(bits) => (*bits / 8, matches!(self, TypeId::Int(_))),
             TypeId::CInt(cint) | TypeId::CUint(cint) => {
                 let bits = match cint {
                     CInt::Char => std::mem::size_of::<c_char>(),
@@ -376,16 +374,15 @@ impl TypeId {
                 };
                 (bits as u8, matches!(self, TypeId::CInt(_)))
             }
-            TypeId::Isize => {
-                (std::mem::size_of::<isize>() as u8, true)
-            }
-            TypeId::Usize => {
-                (std::mem::size_of::<usize>() as u8, false)
-            }
+            TypeId::Isize => (std::mem::size_of::<isize>() as u8, true),
+            TypeId::Usize => (std::mem::size_of::<usize>() as u8, false),
             _ => return None,
         };
 
-        Some(IntStats { bits: bytes * 8, signed })
+        Some(IntStats {
+            bits: bytes * 8,
+            signed,
+        })
     }
 
     fn coerces_to(&self, scopes: &Scopes, target: &TypeId) -> bool {
@@ -836,7 +833,10 @@ impl Scopes {
     }
 
     pub fn find_nonmember_fn(&self, name: &str) -> Option<FunctionId> {
-        for (id, scope) in self.iter().filter(|(_, s)| !matches!(s.kind, ScopeKind::UserType(_))) {
+        for (id, scope) in self
+            .iter()
+            .filter(|(_, s)| !matches!(s.kind, ScopeKind::UserType(_)))
+        {
             if let Some(item) = self.find_func_in(name, id) {
                 return Some(item);
             }
@@ -1969,7 +1969,10 @@ impl TypeChecker {
                     panic!("ICE: target of block changed from block to something else");
                 };
                 CheckedExpr::new(
-                    yields.then(|| target.clone()).flatten().unwrap_or(TypeId::Void),
+                    yields
+                        .then(|| target.clone())
+                        .flatten()
+                        .unwrap_or(TypeId::Void),
                     ExprData::Block(block),
                 )
             }

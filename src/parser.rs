@@ -1068,10 +1068,7 @@ impl<'a> Parser<'a> {
                                         L::new(Expr::Path(Path::from(ident)), expr.span),
                                     ));
                                 } else {
-                                    return Ok((
-                                        Some(ident),
-                                        this.expression()?,
-                                    ));
+                                    return Ok((Some(ident), this.expression()?));
                                 }
                             }
                         }
