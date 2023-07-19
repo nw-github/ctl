@@ -1,2 +1,4 @@
 -std=c11
 -I./ctl
+-Wall 
+-Wextra
