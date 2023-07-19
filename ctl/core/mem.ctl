@@ -20,6 +20,18 @@ pub fn move<T>(kw dst: *mut T, kw src: *T, kw num: usize) {
     memmove(dst as *mut c_void, src as *c_void, num * size_of::<T>());
 }
 
+pub fn swap<T>(lhs: *mut T, rhs: *mut T) {
+    let tmp = *lhs;
+    *lhs = *rhs;
+    *rhs = tmp;
+}
+
+pub fn replace<T>(ptr: *mut T, val: T) T {
+    let old = *ptr;
+    *ptr = val;
+    return old;
+}
+
 pub struct NonNull<T> {
     addr: usize,
 
