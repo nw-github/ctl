@@ -66,7 +66,6 @@ pub mod expr {
             cond: Box<CheckedExpr>,
             if_branch: Box<CheckedExpr>,
             else_branch: Option<Box<CheckedExpr>>,
-            has_default_opt: bool,
         },
         Loop {
             cond: Box<CheckedExpr>,

@@ -1965,11 +1965,11 @@ impl TypeChecker {
             Expr::Block(body) => {
                 let block =
                     self.create_block(scopes, None, body, ScopeKind::Block(target.cloned(), false));
-                let ScopeKind::Block(target, _) = &scopes[block.scope].kind else {
+                let ScopeKind::Block(target, yields) = &scopes[block.scope].kind else {
                     panic!("ICE: target of block changed from block to something else");
                 };
                 CheckedExpr::new(
-                    target.clone().unwrap_or(TypeId::Void),
+                    yields.then(|| target.clone()).flatten().unwrap_or(TypeId::Void),
                     ExprData::Block(block),
                 )
             }
@@ -1996,15 +1996,20 @@ impl TypeChecker {
                         .map(|target| &target.generics[0])
                 };
 
-                let if_branch = self.check_expr(scopes, *if_branch, target);
+                let if_span = if_branch.span;
+                let mut if_branch = self.check_expr(scopes, *if_branch, target);
+                if let Some(target) = target {
+                    if_branch = type_check!(self, scopes, if_branch, target, if_span);
+                }
+
                 let mut out_type = if_branch.ty.clone();
-                let mut has_default_opt = false;
                 let else_branch = if let Some(e) = else_branch {
+                    let span = e.span;
                     Some(type_check!(
                         self,
                         scopes,
                         self.check_expr(scopes, *e, Some(&if_branch.ty)),
-                        &if_branch.ty,
+                        &out_type,
                         span
                     ))
                 } else {
@@ -2015,7 +2020,7 @@ impl TypeChecker {
                         matches!(scopes[b.scope].kind, ScopeKind::Block(_, yields) if yields))
                     {
                         out_type = Self::make_option(scopes, out_type).unwrap();
-                        has_default_opt = true;
+                        if_branch = Self::coerce_expr(scopes, if_branch, &out_type);
 
                         Some(self.check_expr(
                             scopes,
@@ -2033,7 +2038,6 @@ impl TypeChecker {
                         cond: cond.into(),
                         if_branch: if_branch.into(),
                         else_branch: else_branch.map(|e| e.into()),
-                        has_default_opt,
                     },
                 )
             }

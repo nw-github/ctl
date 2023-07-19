@@ -689,7 +689,6 @@ impl Compiler {
                 cond,
                 if_branch,
                 else_branch,
-                has_default_opt,
             } => {
                 enter_block! {
                     self, scopes, &expr.ty,
@@ -703,25 +702,7 @@ impl Compiler {
                                 if !expr.ty.is_void_like() {
                                     self.buffer.emit(format!("{} = ", self.cur_block));
                                 }
-                                if has_default_opt {
-                                    self.buffer.emit_cast(scopes, &expr.ty);
-                                    let tag = scopes
-                                        .get_user_type(expr.ty.as_user_type().unwrap().id)
-                                        .data
-                                        .as_union()
-                                        .unwrap()
-                                        .variant_tag("Some")
-                                        .unwrap();
-                                    if !if_branch.ty.is_void_like() {
-                                        self.buffer.emit(format!("{{ .$tag = {tag}, .Some = "));
-                                        self.compile_expr(scopes, *if_branch, state);
-                                        self.buffer.emit(", }");
-                                    } else {
-                                        self.buffer.emit(format!("{{ .$tag = {tag} }}"));
-                                    }
-                                } else {
-                                    self.compile_expr(scopes, *if_branch, state);
-                                }
+                                self.compile_expr(scopes, *if_branch, state);
                             }
                         }
 
