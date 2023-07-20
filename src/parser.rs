@@ -97,7 +97,7 @@ impl<'a> Parser<'a> {
                 Some(Ok(token))
                     if matches!(
                         token.data,
-                        Pub | Struct | Enum | Union | Interface | Fn | Let | Loop | If | Return
+                        Pub | Struct | Enum | Union | Trait | Fn | Let | Loop | If | Return
                     ) =>
                 {
                     break
@@ -266,7 +266,7 @@ impl<'a> Parser<'a> {
         if self.advance_if_kind(Token::LAngle).is_some() {
             self.comma_separated(Token::RAngle, "expected '>'", |this| {
                 let ident = this.expect_id("expected type name")?;
-                Ok((ident.into(), this.parse_interface_impl()?))
+                Ok((ident.into(), this.parse_trait_impl()?))
             })
             .map(|t| t.0)
         } else {
@@ -274,7 +274,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_interface_impl(&mut self) -> Result<Vec<L<Path>>> {
+    fn parse_trait_impl(&mut self) -> Result<Vec<L<Path>>> {
         let mut impls = Vec::new();
         if self.advance_if_kind(Token::Colon).is_some() {
             loop {
@@ -376,7 +376,7 @@ impl<'a> Parser<'a> {
         span: &mut Span,
     ) -> Result<stmt::Struct> {
         let type_params = self.parse_generic_params()?;
-        let impls = self.parse_interface_impl()?;
+        let impls = self.parse_trait_impl()?;
 
         self.expect_kind(Token::LCurly, "expected '{'")?;
 
@@ -438,7 +438,7 @@ impl<'a> Parser<'a> {
         span: &mut Span,
     ) -> Result<stmt::Struct> {
         let type_params = self.parse_generic_params()?;
-        let impls = self.parse_interface_impl()?;
+        let impls = self.parse_trait_impl()?;
 
         self.expect_kind(Token::LCurly, "expected '{'")?;
 
@@ -668,11 +668,11 @@ impl<'a> Parser<'a> {
                     token.span,
                 ))
             })())
-        } else if let Some(token) = self.advance_if_kind(Token::Interface) {
+        } else if let Some(token) = self.advance_if_kind(Token::Trait) {
             Some((|| {
                 let name = self.expect_id("expected name")?.into();
                 let type_params = self.parse_generic_params()?;
-                let impls = self.parse_interface_impl()?;
+                let impls = self.parse_trait_impl()?;
                 self.expect_kind(Token::LCurly, "expected '{'")?;
 
                 let mut functions = Vec::new();
@@ -685,7 +685,7 @@ impl<'a> Parser<'a> {
                 })?;
 
                 Ok(L::new(
-                    Stmt::UserType(ParsedUserType::Interface {
+                    Stmt::UserType(ParsedUserType::Trait {
                         public: public.is_some(),
                         name,
                         type_params,
@@ -698,7 +698,7 @@ impl<'a> Parser<'a> {
         } else if let Some(token) = self.advance_if_kind(Token::Enum) {
             Some((|| {
                 let name = self.expect_id("expected name")?.into();
-                let impls = self.parse_interface_impl()?;
+                let impls = self.parse_trait_impl()?;
                 self.expect_kind(Token::LCurly, "expected '{'")?;
 
                 let mut functions = Vec::new();

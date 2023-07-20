@@ -328,7 +328,7 @@ pub mod stmt {
             tag: Option<Located<Path>>,
             base: Struct,
         },
-        Interface {
+        Trait {
             public: bool,
             name: String,
             type_params: Vec<(String, Vec<Located<Path>>)>,

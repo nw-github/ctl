@@ -48,14 +48,14 @@ pub fn print_stmt(stmt: &Located<Stmt>, src: &str, indent: usize) {
                     print_struct("Union", base, src, indent)
                 }
             }
-            ParsedUserType::Interface {
+            ParsedUserType::Trait {
                 public,
                 name,
                 type_params,
                 impls,
                 functions,
             } => {
-                print!("{tabs}Interface[{name}]");
+                print!("{tabs}Trait[{name}]");
                 print_bool!(public);
                 println!();
 

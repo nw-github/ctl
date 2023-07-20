@@ -616,7 +616,7 @@ pub enum UserTypeData {
     Enum,
     FuncGeneric(usize),
     StructGeneric(usize),
-    Interface,
+    Trait,
 }
 
 impl UserTypeData {
@@ -1278,7 +1278,7 @@ impl TypeChecker {
                         }
                     })
                 }
-                ParsedUserType::Interface {
+                ParsedUserType::Trait {
                     public,
                     name,
                     type_params,
@@ -1289,7 +1289,7 @@ impl TypeChecker {
                         name: name.clone(),
                         public: *public,
                         body_scope: ScopeId(0),
-                        data: UserTypeData::Interface,
+                        data: UserTypeData::Trait,
                         type_params: type_params.len(),
                         impls: Default::default(),
                     });
@@ -1551,7 +1551,7 @@ impl TypeChecker {
 
                     CheckedStmt::None
                 }
-                ParsedUserType::Interface {
+                ParsedUserType::Trait {
                     name,
                     type_params,
                     impls,
@@ -3117,7 +3117,7 @@ impl TypeChecker {
 
     fn resolve_impl(scopes: &Scopes, path: &Path, span: Span) -> Result<GenericUserType, Error> {
         match Self::resolve_path(scopes, path, span)? {
-            ResolvedPath::UserType(ty) if scopes.get_user_type(ty.id).data.is_interface() => Ok(ty),
+            ResolvedPath::UserType(ty) if scopes.get_user_type(ty.id).data.is_trait() => Ok(ty),
             ResolvedPath::None(err) => Err(Error::new(err, span)),
             _ => Err(Error::new("expected trait", span)),
         }
