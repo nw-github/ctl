@@ -37,7 +37,7 @@ pub mod expr {
         },
         Call {
             func: GenericFunc,
-            args: Vec<CheckedExpr>,
+            args: IndexMap<String, CheckedExpr>,
             inst: Option<GenericUserType>,
         },
         Instance(IndexMap<String, CheckedExpr>),

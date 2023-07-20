@@ -1,15 +1,17 @@
 use std::collections::{HashMap, HashSet};
 
+use indexmap::IndexMap;
+
 use crate::{
     ast::expr::UnaryOp,
     checked_ast::{
         expr::{CheckedExpr, ExprData},
         stmt::CheckedStmt,
-        Block,
     },
     lexer::Span,
     typecheck::{
-        GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId, Variable, VariableId,
+        CheckedParam, GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId,
+        Variable, VariableId,
     },
     Error,
 };
@@ -534,6 +536,8 @@ impl Compiler {
                     return;
                 }
 
+                let args = Self::make_positional(&scopes.get_func(func.id).proto.params, args);
+
                 let next_state = State { func, inst };
                 self.buffer.emit_fn_name(scopes, &next_state);
                 self.funcs.insert(next_state);
@@ -541,6 +545,7 @@ impl Compiler {
                 // FIXME: keyword arguments can be specified out of order. this evaluates them in
                 // parameter order instead of argument order.
                 self.buffer.emit("(");
+
                 for (i, arg) in args
                     .into_iter()
                     .filter(|arg| !arg.ty.is_void_like())
@@ -681,7 +686,7 @@ impl Compiler {
                 enter_block! {
                     self, scopes, &expr.ty,
                     {
-                        self.emit_block(scopes, block, state);
+                        self.emit_block(scopes, block.body, state);
                     }
                 }
             }
@@ -753,9 +758,9 @@ impl Compiler {
 
                         if !do_while {
                             cond!();
-                            self.emit_block(scopes, body, state);
+                            self.emit_block(scopes, body.body, state);
                         } else {
-                            self.emit_block(scopes, body, state);
+                            self.emit_block(scopes, body.body, state);
                             cond!();
                         }
 
@@ -898,9 +903,9 @@ impl Compiler {
         }
     }
 
-    fn emit_block(&mut self, scopes: &Scopes, block: Block, state: &State) {
+    fn emit_block(&mut self, scopes: &Scopes, block: Vec<CheckedStmt>, state: &State) {
         self.buffer.emit("{");
-        for stmt in block.body.into_iter() {
+        for stmt in block.into_iter() {
             self.compile_stmt(scopes, stmt, state);
             if self.yielded {
                 self.yielded = false;
@@ -1065,5 +1070,20 @@ impl Compiler {
         }
 
         result.insert(ut, deps);
+    }
+
+    fn make_positional(
+        params: &[CheckedParam],
+        mut args: IndexMap<String, CheckedExpr>,
+    ) -> Vec<CheckedExpr> {
+        if params.len() == args.len() {
+            let mut result = Vec::with_capacity(args.len());
+            for param in params {
+                result.push(args.remove(&param.name).unwrap());
+            }
+            result
+        } else {
+            Vec::new()
+        }
     }
 }

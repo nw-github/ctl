@@ -153,9 +153,55 @@ impl<'a> Parser<'a> {
             }
         }
     }
+    
+    fn type_path(&mut self) -> Result<L<Path>> {
+        let root = self.advance_if_kind(Token::ScopeRes);
+        let sup = if root.is_none() && self.advance_if_kind(Token::Super).is_some() {
+            self.expect_kind(Token::ScopeRes, "expected '::'")?;
+            true
+        } else {
+            false
+        };
+
+        let mut data = Vec::new();
+        let mut span = root.as_ref().map(|t| t.span);
+        loop {
+            let (ident, ispan) = self.expect_id_with_span("expected type name")?;
+            if let Some(span) = &mut span {
+                span.extend_to(ispan);
+            } else {
+                span = Some(ispan);
+            }
+            if self.advance_if_kind(Token::LAngle).is_some() {
+                let (params, pspan) =
+                    self.comma_separated(Token::RAngle, "expected '>'", |this| {
+                        this.parse_type()
+                    })?;
+                span.as_mut().unwrap().extend_to(pspan);
+                data.push((ident.into(), params));
+            } else {
+                data.push((ident.into(), Vec::new()));
+            }
+
+            if self.advance_if_kind(Token::ScopeRes).is_none() {
+                break;
+            }
+        }
+
+        Ok(L::new(
+            if root.is_some() {
+                Path::Root(data)
+            } else if sup {
+                Path::Super(data)
+            } else {
+                Path::Normal(data)
+            },
+            span.unwrap(),
+        ))
+    }
 
     fn pattern(&mut self) -> Result<Pattern> {
-        let ty = self.parse_type()?;
+        let path = self.type_path()?;
         if self.advance_if_kind(Token::LParen).is_some() {
             // TODO: make this a pattern
             let mutable = self.advance_if_kind(Token::Mut);
@@ -163,11 +209,11 @@ impl<'a> Parser<'a> {
             self.expect_kind(Token::RParen, "expected ')'")?;
 
             Ok(Pattern {
-                ty,
+                path,
                 binding: Some((mutable.is_some(), id.into())),
             })
         } else {
-            Ok(Pattern { ty, binding: None })
+            Ok(Pattern { path, binding: None })
         }
     }
 
@@ -216,10 +262,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_generic_params(&mut self) -> Result<Vec<String>> {
+    fn parse_generic_params(&mut self) -> Result<Vec<(String, Vec<L<Path>>)>> {
         if self.advance_if_kind(Token::LAngle).is_some() {
             self.comma_separated(Token::RAngle, "expected '>'", |this| {
-                this.expect_id("expected type name").map(|id| id.into())
+                let ident = this.expect_id("expected type name")?;
+                Ok((ident.into(), this.parse_interface_impl()?))
             })
             .map(|t| t.0)
         } else {
@@ -231,7 +278,7 @@ impl<'a> Parser<'a> {
         let mut impls = Vec::new();
         if self.advance_if_kind(Token::Colon).is_some() {
             loop {
-                impls.push(self.path()?);
+                impls.push(self.type_path()?);
                 if self.advance_if_kind(Token::Plus).is_none() {
                     break;
                 }
@@ -287,51 +334,8 @@ impl<'a> Parser<'a> {
                     is_dyn,
                 }
             } else {
-                // TODO: super::
-                let root = self.advance_if_kind(Token::ScopeRes);
-                let sup = if root.is_none() && self.advance_if_kind(Token::Super).is_some() {
-                    self.expect_kind(Token::ScopeRes, "expected '::'")?;
-                    true
-                } else {
-                    false
-                };
-
-                let mut data = Vec::new();
-                let mut span = root.as_ref().map(|t| t.span);
-                loop {
-                    let (ident, ispan) = self.expect_id_with_span("expected type name")?;
-                    if let Some(span) = &mut span {
-                        span.extend_to(ispan);
-                    } else {
-                        span = Some(ispan);
-                    }
-                    if self.advance_if_kind(Token::LAngle).is_some() {
-                        let (params, pspan) =
-                            self.comma_separated(Token::RAngle, "expected '>'", |this| {
-                                this.parse_type()
-                            })?;
-                        span.as_mut().unwrap().extend_to(pspan);
-                        data.push((ident.into(), params));
-                    } else {
-                        data.push((ident.into(), Vec::new()));
-                    }
-
-                    if self.advance_if_kind(Token::ScopeRes).is_none() {
-                        break;
-                    }
-                }
-
                 TypeHint::Regular {
-                    path: L::new(
-                        if root.is_some() {
-                            Path::Root(data)
-                        } else if sup {
-                            Path::Super(data)
-                        } else {
-                            Path::Normal(data)
-                        },
-                        span.unwrap(),
-                    ),
+                    path: self.type_path()?,
                     is_dyn,
                 }
             }

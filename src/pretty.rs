@@ -62,8 +62,8 @@ pub fn print_stmt(stmt: &Located<Stmt>, src: &str, indent: usize) {
                 let plus_1 = INDENT.repeat(indent + 1);
                 if !type_params.is_empty() {
                     println!("{tabs}Type Params:");
-                    for param in type_params {
-                        println!("{plus_1}{param}");
+                    for (name, path) in type_params {
+                        println!("{plus_1}{name}: {path:?}");
                     }
                 }
 
@@ -396,8 +396,8 @@ fn print_prototype(
     let plus_2 = INDENT.repeat(indent + 2);
     if !type_params.is_empty() {
         println!("{plus_1}Type Params:");
-        for param in type_params {
-            println!("{plus_2}{param}");
+        for (name, path) in type_params {
+            println!("{plus_2}{name}: {path:?}");
         }
     }
     if !params.is_empty() {
@@ -444,8 +444,8 @@ fn print_struct(
     let plus_1 = INDENT.repeat(indent + 1);
     if !type_params.is_empty() {
         println!("{tabs}Type Params:");
-        for param in type_params {
-            println!("{plus_1}{param}");
+        for (name, impls) in type_params {
+            println!("{plus_1}{name}: {impls:?}");
         }
     }
 

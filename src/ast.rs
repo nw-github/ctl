@@ -38,7 +38,7 @@ impl Path {
 
 #[derive(Debug, Clone)]
 pub struct Pattern {
-    pub ty: TypeHint,
+    pub path: Located<Path>,
     pub binding: Option<(bool, String)>,
 }
 
@@ -292,7 +292,7 @@ pub mod stmt {
         pub name: String,
         pub is_async: bool,
         pub is_extern: bool,
-        pub type_params: Vec<String>,
+        pub type_params: Vec<(String, Vec<Located<Path>>)>,
         pub params: Vec<Param>,
         pub ret: TypeHint,
     }
@@ -315,7 +315,7 @@ pub mod stmt {
     pub struct Struct {
         pub public: bool,
         pub name: String,
-        pub type_params: Vec<String>,
+        pub type_params: Vec<(String, Vec<Located<Path>>)>,
         pub members: Vec<(String, MemVar)>,
         pub impls: Vec<Located<Path>>,
         pub functions: Vec<Fn>,
@@ -331,7 +331,7 @@ pub mod stmt {
         Interface {
             public: bool,
             name: String,
-            type_params: Vec<String>,
+            type_params: Vec<(String, Vec<Located<Path>>)>,
             impls: Vec<Located<Path>>,
             functions: Vec<Prototype>,
         },
