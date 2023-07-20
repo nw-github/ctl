@@ -1421,14 +1421,19 @@ impl TypeChecker {
                 scopes.get_func_mut(id).body_scope = scopes.current_id();
 
                 if !proto.type_params.is_empty() {
-                    for (i, (name, _)) in proto.type_params.iter().enumerate() {
+                    for (i, (name, impls)) in proto.type_params.iter().enumerate() {
                         scopes.insert_user_type(UserType {
                             public: false,
                             name: name.clone(),
                             body_scope: scopes.current_id(),
                             data: UserTypeData::FuncGeneric(i),
                             type_params: 0,
-                            impls: Default::default(),
+                            impls: impls
+                                .iter()
+                                .flat_map(|path| {
+                                    Self::resolve_impl(scopes, &path.data, path.span)
+                                })
+                                .collect(),
                         });
                     }
 
@@ -2764,6 +2769,11 @@ impl TypeChecker {
                     scopes.get_func_mut(id).proto.params[i].ty,
                     &proto.params[i].ty
                 );
+            }
+
+            for (name, impls) in proto.type_params.iter() {
+                let id = scopes.find_user_type(name).unwrap();
+                resolve_impls!(self, scopes.get_user_type_mut(id), impls, scopes);
             }
 
             resolve_forward_declare!(self, scopes, scopes.get_func_mut(id).proto.ret, &proto.ret);
