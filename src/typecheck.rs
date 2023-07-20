@@ -2806,15 +2806,6 @@ impl TypeChecker {
         }
 
         let mut ret = scopes.get_func(func.id).proto.ret.clone();
-        if scopes
-            .get_func(scopes.current_function().unwrap())
-            .proto
-            .name
-            == "test"
-        {
-            eprintln!("{}", ret.name(scopes));
-        }
-
         if !func.generics.is_empty() {
             if let Some(target) = target {
                 func.infer_generics(&ret, target, scopes);
