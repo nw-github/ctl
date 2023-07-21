@@ -22,14 +22,14 @@ const UNION_TAG_NAME: &str = "$tag";
 #[derive(Hash, PartialEq, Eq, Clone)]
 struct State {
     func: GenericFunc,
-    inst: Option<GenericUserType>,
+    inst: Option<TypeId>,
 }
 
 impl State {
     pub fn fill_generics(&self, scopes: &Scopes, ty: &mut TypeId) {
         ty.fill_func_generics(scopes, &self.func);
 
-        if let Some(inst) = self.inst.as_ref() {
+        if let Some(inst) = self.inst.as_ref().and_then(|inst| inst.as_user_type()) {
             ty.fill_type_generics(scopes, inst);
         }
     }
@@ -156,7 +156,7 @@ impl Buffer {
         let f = scopes.get_func(state.func.id);
         if !f.proto.is_extern {
             if let Some(inst) = state.inst.as_ref() {
-                self.emit_type_name(scopes, inst);
+                self.emit_generic_mangled_name(scopes, inst);
                 self.emit("_");
                 self.emit(&f.proto.name);
             } else {
@@ -509,15 +509,24 @@ impl Compiler {
                 mut func,
                 args,
                 mut inst,
+                trait_fn,
             } => {
-                for ty in func.generics.iter_mut() {
-                    state.fill_generics(scopes, ty);
+                if let Some(inst) = inst.as_mut() {
+                    state.fill_generics(scopes, inst);
                 }
 
-                if let Some(inst) = inst.as_mut() {
-                    for ty in inst.generics.iter_mut() {
-                        state.fill_generics(scopes, ty);
+                if trait_fn {
+                    let f = scopes.get_func(func.id);
+                    if let Some(ut) = inst.as_ref().and_then(|i| i.as_user_type()) {
+                        let ut = scopes.get_user_type(ut.id);
+                        func.id = scopes.find_func_in(&f.proto.name, ut.body_scope).unwrap();
+                    } else {
+                        todo!("trait implementations for non-struct types");
                     }
+                }
+
+                for ty in func.generics.iter_mut() {
+                    state.fill_generics(scopes, ty);
                 }
 
                 if scopes.scopes()[0]

@@ -314,7 +314,7 @@ pub mod stmt {
     #[derive(Debug, Clone)]
     pub struct Struct {
         pub public: bool,
-        pub name: String,
+        pub name: Located<String>,
         pub type_params: Vec<(String, Vec<Located<Path>>)>,
         pub members: Vec<(String, MemVar)>,
         pub impls: Vec<Located<Path>>,
@@ -337,7 +337,7 @@ pub mod stmt {
         },
         Enum {
             public: bool,
-            name: String,
+            name: Located<String>,
             impls: Vec<Located<Path>>,
             variants: Vec<(String, Option<super::Expr>)>,
             functions: Vec<Fn>,

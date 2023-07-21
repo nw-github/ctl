@@ -86,7 +86,7 @@ pub fn print_stmt(stmt: &Located<Stmt>, src: &str, indent: usize) {
                 functions,
                 public,
             } => {
-                print!("{tabs}Enum[{name}]");
+                print!("{tabs}Enum[{}]", name.data);
                 print_bool!(public);
                 println!();
 
@@ -437,7 +437,7 @@ fn print_struct(
     indent: usize,
 ) {
     let tabs = INDENT.repeat(indent);
-    println!("{tabs}{type_name}[{name}]");
+    println!("{tabs}{type_name}[{}]", name.data);
     print_bool!(public);
     println!();
 

@@ -372,7 +372,7 @@ impl<'a> Parser<'a> {
     fn parse_struct_body(
         &mut self,
         public: bool,
-        name: String,
+        name: L<String>,
         span: &mut Span,
     ) -> Result<stmt::Struct> {
         let type_params = self.parse_generic_params()?;
@@ -434,7 +434,7 @@ impl<'a> Parser<'a> {
     fn parse_union_body(
         &mut self,
         public: bool,
-        name: String,
+        name: L<String>,
         span: &mut Span,
     ) -> Result<stmt::Struct> {
         let type_params = self.parse_generic_params()?;
@@ -635,11 +635,11 @@ impl<'a> Parser<'a> {
             })())
         } else if let Some(mut token) = self.advance_if_kind(Token::Struct) {
             Some((|| {
-                let name = self.expect_id("expected name")?;
+                let name = self.expect_id_with_span("expected name")?;
                 Ok(L::new(
                     Stmt::UserType(ParsedUserType::Struct(self.parse_struct_body(
                         public.is_some(),
-                        name.into(),
+                        L::new(name.0.into(), name.1),
                         &mut token.span,
                     )?)),
                     token.span,
@@ -655,13 +655,13 @@ impl<'a> Parser<'a> {
                     None
                 };
 
-                let name = self.expect_id("expected name")?;
+                let name = self.expect_id_with_span("expected name")?;
                 Ok(L::new(
                     Stmt::UserType(ParsedUserType::Union {
                         tag,
                         base: self.parse_union_body(
                             public.is_some(),
-                            name.into(),
+                            L::new(name.0.into(), name.1),
                             &mut token.span,
                         )?,
                     }),
@@ -697,7 +697,7 @@ impl<'a> Parser<'a> {
             })())
         } else if let Some(token) = self.advance_if_kind(Token::Enum) {
             Some((|| {
-                let name = self.expect_id("expected name")?.into();
+                let name = self.expect_id_with_span("expected name")?;
                 let impls = self.parse_trait_impl()?;
                 self.expect_kind(Token::LCurly, "expected '{'")?;
 
@@ -745,7 +745,7 @@ impl<'a> Parser<'a> {
                 Ok(L::new(
                     Stmt::UserType(ParsedUserType::Enum {
                         public: public.is_some(),
-                        name,
+                        name: L::new(name.0.into(), name.1),
                         impls,
                         variants,
                         functions,

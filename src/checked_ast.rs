@@ -19,7 +19,7 @@ pub mod expr {
 
     use crate::{
         ast::expr::{BinaryOp, UnaryOp},
-        typecheck::{GenericFunc, GenericUserType, Symbol, TypeId},
+        typecheck::{GenericFunc, Symbol, TypeId},
     };
 
     use super::{Block, UnionPattern};
@@ -38,7 +38,8 @@ pub mod expr {
         Call {
             func: GenericFunc,
             args: IndexMap<String, CheckedExpr>,
-            inst: Option<GenericUserType>,
+            inst: Option<TypeId>,
+            trait_fn: bool,
         },
         Instance(IndexMap<String, CheckedExpr>),
         Array(Vec<CheckedExpr>),
