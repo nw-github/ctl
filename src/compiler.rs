@@ -98,6 +98,7 @@ impl Buffer {
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
+            TypeId::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_type"),
         }
     }
 
@@ -149,6 +150,7 @@ impl Buffer {
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
             TypeId::Array(_) => todo!(),
+            TypeId::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_generic_mangled_name"),
         }
     }
 

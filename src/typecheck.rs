@@ -145,6 +145,7 @@ pub enum TypeId {
     Ptr(Box<TypeId>),
     MutPtr(Box<TypeId>),
     Array(Box<(TypeId, usize)>),
+    TraitSelf,
 }
 
 impl TypeId {
@@ -280,6 +281,28 @@ impl TypeId {
         }
     }
 
+    pub fn fill_this(&mut self, this: &TypeId) {
+        let mut src = self;
+        loop {
+            match src {
+                TypeId::Array(t) => src = &mut t.0,
+                TypeId::Ptr(t) | TypeId::MutPtr(t) => src = t,
+                TypeId::UserType(ty) => {
+                    for ty in ty.generics.iter_mut() {
+                        ty.fill_this(this);
+                    }
+
+                    break;
+                }
+                TypeId::TraitSelf => {
+                    *src = this.clone();
+                    break;
+                }
+                _ => break,
+            }
+        }
+    }
+
     pub fn name(&self, scopes: &Scopes) -> String {
         match self {
             TypeId::Void => "void".into(),
@@ -348,6 +371,7 @@ impl TypeId {
                 )
             }
             TypeId::CVoid => "c_void".into(),
+            TypeId::TraitSelf => "This".into(),
         }
     }
 
@@ -786,6 +810,10 @@ impl Scopes {
             if let ScopeKind::UserType(id) = scope.kind {
                 let ty = self.get_user_type(id);
                 if !ty.data.is_func_generic() && !ty.data.is_struct_generic() {
+                    if ty.data.is_trait() {
+                        return Some(TypeId::TraitSelf);
+                    }
+
                     return Some(TypeId::UserType(
                         GenericUserType::new(
                             id,
@@ -1713,13 +1741,25 @@ impl TypeChecker {
         }
     }
 
-    fn check_impl(&mut self, scopes: &Scopes, ut: &UserType, gtr: &GenericUserType, span: Span) {
-        fn is_impl_for(sproto: &CheckedPrototype, tproto: &CheckedPrototype) -> bool {
+    fn check_impl(
+        &mut self,
+        scopes: &Scopes,
+        this: &TypeId,
+        ut: &UserType,
+        gtr: &GenericUserType,
+        span: Span,
+    ) {
+        fn is_impl_for(
+            this: &TypeId,
+            sproto: &CheckedPrototype,
+            tproto: &CheckedPrototype,
+        ) -> bool {
             if sproto.params.len() != tproto.params.len() {
                 return false;
             }
 
-            for (s, t) in sproto.params.iter().zip(tproto.params.iter()) {
+            for (s, mut t) in sproto.params.iter().zip(tproto.params.iter().cloned()) {
+                t.ty.fill_this(this);
                 if s.ty != t.ty {
                     return false;
                 }
@@ -1736,14 +1776,14 @@ impl TypeChecker {
         // TODO: default implementations
         let tr = scopes.get_user_type(gtr.id);
         for tr in tr.impls.iter() {
-            self.check_impl(scopes, ut, tr, span);
+            self.check_impl(scopes, this, ut, tr, span);
         }
 
         let scope = tr.body_scope;
         for &tr_func in scopes[scope].fns.iter() {
             let tr_func = scopes.get_func(tr_func);
             if let Some(ut_func) = scopes.find_func_in(&tr_func.proto.name, ut.body_scope) {
-                if is_impl_for(&scopes.get_func(ut_func).proto, &tr_func.proto) {
+                if is_impl_for(this, &scopes.get_func(ut_func).proto, &tr_func.proto) {
                     continue;
                 }
             }
@@ -1761,7 +1801,7 @@ impl TypeChecker {
 
     fn check_impls(&mut self, scopes: &Scopes, ut: &UserType, span: Span) {
         for tr in ut.impls.iter() {
-            self.check_impl(scopes, ut, tr, span);
+            self.check_impl(scopes, &scopes.this_type().unwrap(), ut, tr, span);
         }
     }
 
