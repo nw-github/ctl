@@ -2059,7 +2059,9 @@ impl TypeChecker {
                 }
             }
 
-            if sproto.ret != tproto.ret {
+            let mut ret = tproto.ret.clone();
+            ret.fill_this(this);
+            if sproto.ret != ret {
                 return false;
             }
 
