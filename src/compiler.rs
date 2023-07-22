@@ -4,10 +4,7 @@ use indexmap::IndexMap;
 
 use crate::{
     ast::expr::UnaryOp,
-    checked_ast::{
-        expr::{CheckedExpr, ExprData},
-        stmt::CheckedStmt,
-    },
+    checked_ast::{CheckedExpr, CheckedStmt, ExprData},
     lexer::Span,
     typecheck::{
         CheckedParam, GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId,
@@ -16,7 +13,6 @@ use crate::{
     Error,
 };
 
-const RT_STATIC_INIT: &str = "CTL_init_statics";
 const UNION_TAG_NAME: &str = "$tag";
 
 #[derive(Hash, PartialEq, Eq, Clone)]
@@ -341,7 +337,6 @@ impl Compiler {
         let functions = std::mem::take(&mut this.buffer);
 
         this.buffer.emit("#include <runtime/ctl.h>\n");
-
         this.emit_structs(scopes, prototypes.0)?;
 
         let mut statics = Vec::new();
@@ -361,28 +356,20 @@ impl Compiler {
         }
 
         this.buffer.emit(functions.0);
-
-        let static_init = !statics.is_empty();
-        if static_init {
-            this.buffer.emit(format!("void {RT_STATIC_INIT}() {{"));
-            for id in statics {
-                this.buffer.emit_var_name(scopes, id);
-                this.buffer.emit(" = ");
-                //this.compile_expr(scopes, scopes.get_var(id).value.clone().unwrap(), None);
-                this.buffer.emit(";");
-
-                todo!("statics")
-            }
-            this.buffer.emit("}");
-        }
-
         this.buffer.emit("int main(int argc, char **argv) {");
         this.buffer.emit("GC_INIT();");
         this.buffer.emit("(void)argc;");
         this.buffer.emit("(void)argv;");
-        if static_init {
-            this.buffer.emit(format!("{RT_STATIC_INIT}();"));
+        
+        for id in statics {
+            this.buffer.emit_var_name(scopes, id);
+            this.buffer.emit(" = ");
+            //this.compile_expr(scopes, scopes.get_var(id).value.clone().unwrap(), None);
+            this.buffer.emit(";");
+
+            todo!("statics")
         }
+
         this.buffer.emit("return ");
         this.buffer.emit_fn_name(
             scopes,
