@@ -156,16 +156,13 @@ pub struct Vec<T> {
             return;
         }
 
-        match std::alloc::alloc::<T>(cap) {
+        let ptr = if this.len == 0 {
+            yield std::alloc::alloc::<T>(cap);
+        } else {
+            yield std::alloc::realloc(this.ptr.as_mut_ptr(), cap);
+        };
+        match ptr {
             Option::Some(ptr) => {
-                if this.len > 0 {
-                    mem::copy(
-                        dst: ptr.as_mut_ptr(), 
-                        src: this.ptr.as_ptr(), 
-                        num: this.len
-                    );
-                }
-
                 this.ptr = ptr;
                 this.cap = cap;
             },

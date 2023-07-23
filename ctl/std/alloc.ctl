@@ -8,7 +8,7 @@ pub fn alloc<T>(count: usize) ?NonNull<T> {
 }
 
 pub fn realloc<T>(addr: *mut T, count: usize) ?NonNull<T> {
-    extern fn ctl_realloc(addr: usize, size: usize) usize;
+    extern fn ctl_realloc(addr: *mut u8, size: usize) usize;
 
-    return NonNull::from_addr(ctl_realloc(addr as usize, size_of::<T>() * count));
+    return NonNull::from_addr(ctl_realloc(addr as *mut u8, size_of::<T>() * count));
 }
