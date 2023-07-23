@@ -303,7 +303,7 @@ pub mod stmt {
     #[derive(Debug, Clone)]
     pub struct Fn {
         pub proto: Prototype,
-        pub body: Vec<super::Stmt>,
+        pub body: Option<Vec<super::Stmt>>,
     }
 
     #[derive(Debug, Clone)]

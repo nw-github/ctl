@@ -425,8 +425,10 @@ fn print_fn(
     indent: usize,
 ) {
     print_prototype(header, indent);
-    println!("{}Body: ", INDENT.repeat(indent));
-    print_stmts(body, src, indent + 1);
+    if let Some(body) = body {
+        println!("{}Body: ", INDENT.repeat(indent));
+        print_stmts(body, src, indent + 1);
+    }
 }
 
 fn print_struct(

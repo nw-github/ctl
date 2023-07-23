@@ -1403,35 +1403,31 @@ impl Scopes {
                                         default: None,
                                     });
                                 }
-                                // TODO: generic params
-                                scopes.forward_declare_fn(
+                                scopes.forward_declare_proto(
                                     scopes.current_id(),
                                     true,
-                                    &Fn {
-                                        proto: Prototype {
-                                            public: true,
-                                            name: name.clone(),
-                                            is_async: false,
-                                            is_extern: false,
-                                            type_params: base.type_params.clone(),
-                                            params,
-                                            ret: TypeHint::Regular(Located::new(
-                                                Path::Normal(vec![(
-                                                    base.name.data.clone(),
-                                                    base.type_params
-                                                        .iter()
-                                                        .map(|(name, _)| {
-                                                            TypeHint::Regular(Located::new(
-                                                                Path::from(name.clone()),
-                                                                stmt.span,
-                                                            ))
-                                                        })
-                                                        .collect(),
-                                                )]),
-                                                stmt.span,
-                                            )),
-                                        },
-                                        body: Vec::new(),
+                                    &Prototype {
+                                        public: true,
+                                        name: name.clone(),
+                                        is_async: false,
+                                        is_extern: false,
+                                        type_params: base.type_params.clone(),
+                                        params,
+                                        ret: TypeHint::Regular(Located::new(
+                                            Path::Normal(vec![(
+                                                base.name.data.clone(),
+                                                base.type_params
+                                                    .iter()
+                                                    .map(|(name, _)| {
+                                                        TypeHint::Regular(Located::new(
+                                                            Path::from(name.clone()),
+                                                            stmt.span,
+                                                        ))
+                                                    })
+                                                    .collect(),
+                                            )]),
+                                            stmt.span,
+                                        )),
                                     },
                                 );
                             }
@@ -1610,11 +1606,13 @@ impl Scopes {
 
     fn forward_declare_fn(&mut self, scope: ScopeId, cons: bool, f: &Fn) {
         let id = self.forward_declare_proto(scope, cons, &f.proto);
-        self.enter_id(self.get_func(id).body_scope, |scopes| {
-            for stmt in f.body.iter() {
-                scopes.forward_declare(stmt);
-            }
-        });
+        if let Some(body) = &f.body {
+            self.enter_id(self.get_func(id).body_scope, |scopes| {
+                for stmt in body.iter() {
+                    scopes.forward_declare(stmt);
+                }
+            });
+        }
     }
 }
 
@@ -2192,14 +2190,16 @@ impl TypeChecker {
     fn check_fn(&mut self, scopes: &mut Scopes, f: Fn) -> FunctionId {
         // TODO: disallow private type in public interface
         let id = self.check_proto(scopes, f.proto);
-        scopes.enter_id(scopes.get_func(id).body_scope, |scopes| {
-            scopes.get_func_mut(id).body = Some(
-                f.body
-                    .into_iter()
-                    .map(|stmt| self.check_stmt(scopes, stmt))
-                    .collect(),
-            );
-        });
+        if let Some(body) = f.body {
+            scopes.enter_id(scopes.get_func(id).body_scope, |scopes| {
+                scopes.get_func_mut(id).body = Some(
+                    body
+                        .into_iter()
+                        .map(|stmt| self.check_stmt(scopes, stmt))
+                        .collect(),
+                );
+            });
+        }
 
         id
     }

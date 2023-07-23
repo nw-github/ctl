@@ -390,7 +390,7 @@ impl<'a> Parser<'a> {
 
                 functions.push(Fn {
                     proto: header,
-                    body,
+                    body: Some(body),
                 });
             } else {
                 let (name, ty) = this.parse_var_name()?;
@@ -455,7 +455,7 @@ impl<'a> Parser<'a> {
 
                 functions.push(Fn {
                     proto: header,
-                    body,
+                    body: Some(body),
                 });
             } else if this.advance_if_kind(Token::Shared).is_some() {
                 let name = this.expect_id("expected name")?.into();
@@ -615,7 +615,7 @@ impl<'a> Parser<'a> {
                     Ok(L::new(
                         Stmt::Fn(Fn {
                             proto: header,
-                            body: Vec::new(),
+                            body: None,
                         }),
                         Span::combine(public.map_or(span, |p| p.span), semi.span),
                     ))
@@ -626,7 +626,7 @@ impl<'a> Parser<'a> {
                     Ok(L::new(
                         Stmt::Fn(Fn {
                             proto: header,
-                            body,
+                            body: Some(body),
                         }),
                         Span::combine(public.map_or(span, |p| p.span), body_span),
                     ))
@@ -715,7 +715,7 @@ impl<'a> Parser<'a> {
                         let (body, _) = this.parse_block(lcurly.span)?;
                         functions.push(Fn {
                             proto: header,
-                            body,
+                            body: Some(body),
                         });
                     } else if let Some(header) = this.try_prototype(false, true) {
                         let (header, _) = header?;
@@ -723,7 +723,7 @@ impl<'a> Parser<'a> {
                         let (body, _) = this.parse_block(lcurly.span)?;
                         functions.push(Fn {
                             proto: header,
-                            body,
+                            body: Some(body),
                         });
                     } else {
                         variants.push((

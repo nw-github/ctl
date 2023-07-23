@@ -325,11 +325,9 @@ impl Compiler {
                 prototypes.emit_prototype(scopes, &state);
                 prototypes.emit(";");
 
-                if !f.proto.is_extern {
-                    if let Some(body) = f.body.clone() {
-                        this.buffer.emit_prototype(scopes, &state);
-                        this.emit_block(scopes, body, &state);
-                    }
+                if let Some(body) = f.body.clone() {
+                    this.buffer.emit_prototype(scopes, &state);
+                    this.emit_block(scopes, body, &state);
                 }
             }
         }
