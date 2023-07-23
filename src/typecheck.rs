@@ -1808,7 +1808,6 @@ impl TypeChecker {
                         }
 
                         resolve_impls!(self, scopes.get_user_type_mut(id), base.impls, scopes);
-                        self.check_impls(scopes, scopes.get_user_type(id), base.name.span);
 
                         for i in 0..base.members.len() {
                             resolve_forward_declare!(
@@ -1834,6 +1833,8 @@ impl TypeChecker {
                         for f in base.functions {
                             self.check_fn(scopes, f);
                         }
+
+                        self.check_impls(scopes, scopes.get_user_type(id), base.name.span);
                     });
                     CheckedStmt::None
                 }
@@ -1846,7 +1847,6 @@ impl TypeChecker {
                         }
 
                         resolve_impls!(self, scopes.get_user_type_mut(id), base.impls, scopes);
-                        self.check_impls(scopes, scopes.get_user_type(id), base.name.span);
 
                         for i in 0..base.members.len() {
                             resolve_forward_declare!(
@@ -1877,6 +1877,8 @@ impl TypeChecker {
                         for f in base.functions {
                             self.check_fn(scopes, f);
                         }
+
+                        self.check_impls(scopes, scopes.get_user_type(id), base.name.span);
                     });
 
                     CheckedStmt::None
@@ -1914,7 +1916,6 @@ impl TypeChecker {
                     let id = scopes.find_user_type(&name.data).unwrap();
                     scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
                         resolve_impls!(self, scopes.get_user_type_mut(id), impls, scopes);
-                        self.check_impls(scopes, scopes.get_user_type(id), name.span);
 
                         for (name, expr) in variants {
                             scopes.get_var_mut(scopes.find_var(&name).unwrap()).value = expr
@@ -1924,6 +1925,8 @@ impl TypeChecker {
                         for f in functions {
                             self.check_fn(scopes, f);
                         }
+
+                        self.check_impls(scopes, scopes.get_user_type(id), name.span);
                     });
 
                     CheckedStmt::None
@@ -2087,7 +2090,7 @@ impl TypeChecker {
                     scopes.get_user_type(scopes.find_user_type_in(t, tr_func.body_scope).unwrap());
 
                 if s.impls.len() != t.impls.len() {
-                    return Err(format!("generic parameter {} is incorrect (1)", i + 1));
+                    return Err(format!("generic parameter {} is incorrect", i + 1));
                 }
 
                 for (s, t) in s.impls.iter().zip(t.impls.iter().cloned()) {
