@@ -153,7 +153,7 @@ impl<'a> Parser<'a> {
             }
         }
     }
-    
+
     fn type_path(&mut self) -> Result<L<Path>> {
         let root = self.advance_if_kind(Token::ScopeRes);
         let sup = if root.is_none() && self.advance_if_kind(Token::Super).is_some() {
@@ -174,9 +174,7 @@ impl<'a> Parser<'a> {
             }
             if self.advance_if_kind(Token::LAngle).is_some() {
                 let (params, pspan) =
-                    self.comma_separated(Token::RAngle, "expected '>'", |this| {
-                        this.parse_type()
-                    })?;
+                    self.comma_separated(Token::RAngle, "expected '>'", |this| this.parse_type())?;
                 span.as_mut().unwrap().extend_to(pspan);
                 data.push((ident.into(), params));
             } else {
@@ -213,7 +211,10 @@ impl<'a> Parser<'a> {
                 binding: Some((mutable.is_some(), id.into())),
             })
         } else {
-            Ok(Pattern { path, binding: None })
+            Ok(Pattern {
+                path,
+                binding: None,
+            })
         }
     }
 
@@ -307,6 +308,9 @@ impl<'a> Parser<'a> {
         let ty = if self.advance_if_kind(Token::LBrace).is_some() {
             let inner = self.parse_type()?;
             if self.advance_if_kind(Token::RBrace).is_some() {
+                TypeHint::Vec(inner.into())
+            } else if self.advance_if_kind(Token::Range).is_some() {
+                self.expect_kind(Token::RBrace, "expected ']'")?;
                 TypeHint::Slice(inner.into())
             } else if self.advance_if_kind(Token::Semicolon).is_some() {
                 let count = self.expression()?;
@@ -319,6 +323,10 @@ impl<'a> Parser<'a> {
             } else {
                 return self.error("expected ']', ';', or ':'");
             }
+        } else if self.advance_if_kind(Token::LCurly).is_some() {
+            let inner = self.parse_type()?.into();
+            self.expect_kind(Token::RCurly, "expected '}'")?;
+            TypeHint::Set(inner)
         } else if self.advance_if_kind(Token::LParen).is_some() {
             TypeHint::Tuple(
                 self.comma_separated(Token::RParen, "expected ')'", Self::parse_type)?
@@ -326,19 +334,10 @@ impl<'a> Parser<'a> {
             )
         } else if self.advance_if_kind(Token::Void).is_some() {
             TypeHint::Void
+        } else if let Some(this) = self.advance_if_kind(Token::ThisType) {
+            TypeHint::Regular(L::new(Path::from(THIS_TYPE.to_owned()), this.span))
         } else {
-            let is_dyn = self.advance_if_kind(Token::Dyn).is_some();
-            if let Some(this) = self.advance_if_kind(Token::ThisType) {
-                TypeHint::Regular {
-                    path: L::new(Path::from(THIS_TYPE.to_owned()), this.span),
-                    is_dyn,
-                }
-            } else {
-                TypeHint::Regular {
-                    path: self.type_path()?,
-                    is_dyn,
-                }
-            }
+            TypeHint::Regular(self.type_path()?)
         };
 
         if self.advance_if_kind(Token::Exclamation).is_some() {
@@ -1234,7 +1233,32 @@ impl<'a> Parser<'a> {
                     )
                 }
             }
-            Token::LCurly => self.block_expr(token.span)?,
+            Token::LCurly => {
+                if let Some(item) = self.try_item() {
+                    let (mut stmts, span) = self.parse_block(token.span)?;
+                    stmts.insert(0, item?);
+                    L::new(Expr::Block(stmts), span)
+                } else if self.matches(|t| matches!(t, Token::Let | Token::Mut)) {
+                    self.block_expr(token.span)?
+                } else {
+                    let first = self.expression()?;
+                    if self.advance_if_kind(Token::Comma).is_some() {
+                        let (mut rest, span) =
+                            self.comma_separated(Token::RCurly, "expected '}'", Self::expression)?;
+                        rest.insert(0, first);
+                        L::new(Expr::Set(rest), token.span.extended_to(span))
+                    } else {
+                        let mut first_span = first.span;
+                        let semi = self.expect_kind(Token::Semicolon, "expected ';'")?;
+                        let (mut stmts, span) = self.parse_block(token.span)?;
+                        stmts.insert(
+                            0,
+                            L::new(Stmt::Expr(first), first_span.extended_to(semi.span)),
+                        );
+                        L::new(Expr::Block(stmts), span)
+                    }
+                }
+            }
             Token::If => {
                 let cond = self.expression()?;
                 let lcurly = self.expect_kind(Token::LCurly, "expected block")?;

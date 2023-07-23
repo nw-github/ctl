@@ -945,7 +945,7 @@ impl Scopes {
 
     fn resolve_type(&self, ty: &TypeHint) -> Result<TypeId, Error> {
         Ok(match ty {
-            TypeHint::Regular { path, .. } => {
+            TypeHint::Regular(path) => {
                 return match self.resolve_path(&path.data, path.span)? {
                     ResolvedPath::UserType(ut) => Ok(TypeId::UserType(ut.into())),
                     ResolvedPath::Func(_) => {
@@ -1003,7 +1003,7 @@ impl Scopes {
                 TypeId::Array((self.resolve_type(ty)?, n).into())
             }
             TypeHint::Option(ty) => self.make_option(self.resolve_type(ty)?).ok_or(Error::new(
-                "ICE: core::option::Option not found",
+                "core::option::Option not found",
                 Span::default(),
             ))?,
             _ => todo!(),
@@ -1307,25 +1307,21 @@ impl Scopes {
                                         is_extern: false,
                                         type_params: base.type_params.clone(),
                                         params,
-                                        ret: TypeHint::Regular {
-                                            is_dyn: false,
-                                            path: Located::new(
-                                                Path::Normal(vec![(
-                                                    base.name.data.clone(),
-                                                    base.type_params
-                                                        .iter()
-                                                        .map(|(name, _)| TypeHint::Regular {
-                                                            is_dyn: false,
-                                                            path: Located::new(
-                                                                Path::from(name.clone()),
-                                                                stmt.span,
-                                                            ),
-                                                        })
-                                                        .collect(),
-                                                )]),
-                                                stmt.span,
-                                            ),
-                                        },
+                                        ret: TypeHint::Regular(Located::new(
+                                            Path::Normal(vec![(
+                                                base.name.data.clone(),
+                                                base.type_params
+                                                    .iter()
+                                                    .map(|(name, _)| {
+                                                        TypeHint::Regular(Located::new(
+                                                            Path::from(name.clone()),
+                                                            stmt.span,
+                                                        ))
+                                                    })
+                                                    .collect(),
+                                            )]),
+                                            stmt.span,
+                                        )),
                                     },
                                 );
 
@@ -1398,13 +1394,15 @@ impl Scopes {
 
                             for (name, member) in base.members.iter() {
                                 let mut params = shared.clone();
-                                params.push(Param {
-                                    mutable: false,
-                                    keyword: false,
-                                    name: name.clone(),
-                                    ty: member.ty.clone(),
-                                    default: None,
-                                });
+                                if !matches!(member.ty, TypeHint::Void) {
+                                    params.push(Param {
+                                        mutable: false,
+                                        keyword: false,
+                                        name: name.clone(),
+                                        ty: member.ty.clone(),
+                                        default: None,
+                                    });
+                                }
                                 // TODO: generic params
                                 scopes.forward_declare_fn(
                                     scopes.current_id(),
@@ -1417,25 +1415,21 @@ impl Scopes {
                                             is_extern: false,
                                             type_params: base.type_params.clone(),
                                             params,
-                                            ret: TypeHint::Regular {
-                                                is_dyn: false,
-                                                path: Located::new(
-                                                    Path::Normal(vec![(
-                                                        base.name.data.clone(),
-                                                        base.type_params
-                                                            .iter()
-                                                            .map(|(name, _)| TypeHint::Regular {
-                                                                is_dyn: false,
-                                                                path: Located::new(
-                                                                    Path::from(name.clone()),
-                                                                    stmt.span,
-                                                                ),
-                                                            })
-                                                            .collect(),
-                                                    )]),
-                                                    stmt.span,
-                                                ),
-                                            },
+                                            ret: TypeHint::Regular(Located::new(
+                                                Path::Normal(vec![(
+                                                    base.name.data.clone(),
+                                                    base.type_params
+                                                        .iter()
+                                                        .map(|(name, _)| {
+                                                            TypeHint::Regular(Located::new(
+                                                                Path::from(name.clone()),
+                                                                stmt.span,
+                                                            ))
+                                                        })
+                                                        .collect(),
+                                                )]),
+                                                stmt.span,
+                                            )),
                                         },
                                         body: Vec::new(),
                                     },
@@ -1866,12 +1860,14 @@ impl TypeChecker {
 
                         for (name, member) in base.members.iter() {
                             let init = scopes.find_func(name).unwrap();
-                            resolve_forward_declare!(
-                                self,
-                                scopes,
-                                scopes.get_func_mut(init).proto.params[0].ty,
-                                &member.ty
-                            );
+                            if !scopes.get_func_mut(init).proto.params.is_empty() {
+                                resolve_forward_declare!(
+                                    self,
+                                    scopes,
+                                    scopes.get_func_mut(init).proto.params[0].ty,
+                                    &member.ty
+                                );
+                            }
                         }
 
                         for f in base.functions {
@@ -2432,6 +2428,7 @@ impl TypeChecker {
             }
             Expr::Tuple(_) => todo!(),
             Expr::Map(_) => todo!(),
+            Expr::Set(_) => todo!(),
             Expr::Range { .. } => todo!(),
             Expr::String(s) => {
                 CheckedExpr::new(scopes.find_core_string().unwrap(), ExprData::String(s))

@@ -212,6 +212,12 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
                 print_expr(el, src, indent + 1);
             }
         }
+        Expr::Set(elements) => {
+            println!("{tabs}Set");
+            for el in elements {
+                print_expr(el, src, indent + 1);
+            }
+        }
         Expr::Map(expr) => {
             println!("{tabs}Map");
             let tabs = INDENT.repeat(indent + 1);

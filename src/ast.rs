@@ -198,6 +198,7 @@ pub mod expr {
         },
         Tuple(Vec<super::Expr>),
         Map(Vec<(super::Expr, super::Expr)>),
+        Set(Vec<super::Expr>),
         Bool(bool),
         Integer {
             base: u8,
@@ -263,10 +264,12 @@ pub mod stmt {
 
     #[derive(Debug, Clone)]
     pub enum TypeHint {
-        Regular { is_dyn: bool, path: Located<Path> },
+        Regular(Located<Path>),
         Array(Box<TypeHint>, Box<super::Expr>),
+        Vec(Box<TypeHint>),
         Slice(Box<TypeHint>),
         Tuple(Vec<TypeHint>),
+        Set(Box<TypeHint>),
         Map(Box<TypeHint>, Box<TypeHint>),
         Option(Box<TypeHint>),
         Result(Box<TypeHint>, Box<TypeHint>),
