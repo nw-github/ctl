@@ -2025,6 +2025,90 @@ impl TypeChecker {
         }
     }
 
+    fn signatures_match(
+        scopes: &Scopes,
+        this: &TypeId,
+        lhs_id: FunctionId,
+        rhs_id: FunctionId,
+        rhs_ty: &GenericUserType,
+    ) -> Result<(), String> {
+        let lhs = scopes.get_func(lhs_id);
+        let rhs = scopes.get_func(rhs_id);
+
+        let sproto = &lhs.proto;
+        let tproto = &rhs.proto;
+        if sproto.params.len() != tproto.params.len()
+            || sproto.type_params.len() != tproto.type_params.len()
+        {
+            return Err("type parameters are incorrect".into());
+        }
+
+        let compare_types = |a: &TypeId, mut b: TypeId| {
+            b.fill_this(this);
+            b.fill_type_generics(scopes, rhs_ty);
+            b.fill_func_generics(
+                scopes,
+                &GenericFunc::new(
+                    lhs_id,
+                    sproto
+                        .type_params
+                        .iter()
+                        .map(|name| {
+                            TypeId::UserType(
+                                GenericUserType::new(
+                                    scopes.find_user_type_in(name, lhs.body_scope).unwrap(),
+                                    vec![],
+                                )
+                                .into(),
+                            )
+                        })
+                        .collect(),
+                ),
+            );
+
+            a == &b
+        };
+
+        if !compare_types(&sproto.ret, tproto.ret.clone()) {
+            return Err("return type is incorrect".into());
+        }
+
+        for (i, (s, t)) in sproto
+            .params
+            .iter()
+            .zip(tproto.params.iter().cloned())
+            .enumerate()
+        {
+            if !compare_types(&s.ty, t.ty) {
+                return Err(format!("parameter {} is incorrect", i + 1));
+            }
+        }
+
+        for (i, (s, t)) in sproto
+            .type_params
+            .iter()
+            .zip(tproto.type_params.iter())
+            .enumerate()
+        {
+            let s = scopes.get_user_type(scopes.find_user_type_in(s, lhs.body_scope).unwrap());
+            let t = scopes.get_user_type(scopes.find_user_type_in(t, rhs.body_scope).unwrap());
+
+            if s.impls.len() != t.impls.len() {
+                return Err(format!("generic parameter {} is incorrect", i + 1));
+            }
+
+            for (s, t) in s.impls.iter().zip(t.impls.iter().cloned()) {
+                for (s, t) in s.generics.iter().zip(t.generics.into_iter()) {
+                    if !compare_types(s, t) {
+                        return Err(format!("generic parameter {} is incorrect", i + 1));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn check_impl(
         &mut self,
         scopes: &Scopes,
@@ -2033,78 +2117,6 @@ impl TypeChecker {
         gtr: &GenericUserType,
         span: Span,
     ) {
-        fn is_impl_for(
-            scopes: &Scopes,
-            this: &TypeId,
-            ut_func: &Function,
-            tr_func: &Function,
-            gtr: &GenericUserType,
-        ) -> Result<(), String> {
-            let sproto = &ut_func.proto;
-            let tproto = &tr_func.proto;
-            if sproto.params.len() != tproto.params.len()
-                || sproto.type_params.len() != tproto.type_params.len()
-            {
-                return Err("type parameters are incorrect".into());
-            }
-
-            let compare_types = |a: &TypeId, mut b: TypeId| {
-                b.fill_this(this);
-                b.fill_type_generics(scopes, gtr);
-                match (a, &b) {
-                    (a, b) if a == b => true,
-                    (TypeId::UserType(a), TypeId::UserType(b))
-                        if scopes.get_user_type(a.id).data.as_func_generic()
-                            == scopes.get_user_type(b.id).data.as_func_generic() =>
-                    {
-                        true
-                    }
-                    _ => false,
-                }
-            };
-
-            if !compare_types(&sproto.ret, tproto.ret.clone()) {
-                return Err("return type is incorrect".into());
-            }
-
-            for (i, (s, t)) in sproto
-                .params
-                .iter()
-                .zip(tproto.params.iter().cloned())
-                .enumerate()
-            {
-                if !compare_types(&s.ty, t.ty) {
-                    return Err(format!("parameter {} is incorrect", i + 1));
-                }
-            }
-
-            for (i, (s, t)) in sproto
-                .type_params
-                .iter()
-                .zip(tproto.type_params.iter())
-                .enumerate()
-            {
-                let s =
-                    scopes.get_user_type(scopes.find_user_type_in(s, ut_func.body_scope).unwrap());
-                let t =
-                    scopes.get_user_type(scopes.find_user_type_in(t, tr_func.body_scope).unwrap());
-
-                if s.impls.len() != t.impls.len() {
-                    return Err(format!("generic parameter {} is incorrect", i + 1));
-                }
-
-                for (s, t) in s.impls.iter().zip(t.impls.iter().cloned()) {
-                    for (s, t) in s.generics.iter().zip(t.generics.into_iter()) {
-                        if !compare_types(s, t) {
-                            return Err(format!("generic parameter {} is incorrect", i + 1));
-                        }
-                    }
-                }
-            }
-
-            Ok(())
-        }
-
         // TODO: detect and fail on circular trait dependencies
         // TODO: default implementations
         let tr = scopes.get_user_type(gtr.id);
@@ -2112,17 +2124,15 @@ impl TypeChecker {
             self.check_impl(scopes, this, ut, tr, span);
         }
 
-        let scope = tr.body_scope;
-        for &tr_func in scopes[scope].fns.iter() {
-            let tr_func = scopes.get_func(tr_func);
-            if let Some(ut_func) = scopes.find_func_in(&tr_func.proto.name, ut.body_scope) {
-                if let Err(err) = is_impl_for(scopes, this, scopes.get_func(ut_func), tr_func, gtr)
-                {
+        for &rhs in scopes[tr.body_scope].fns.iter() {
+            let rhs_func = scopes.get_func(rhs);
+            if let Some(lhs) = scopes.find_func_in(&rhs_func.proto.name, ut.body_scope) {
+                if let Err(err) = Self::signatures_match(scopes, this, lhs, rhs, gtr) {
                     self.error::<()>(Error::new(
                         format!(
                             "must implement '{}::{}': {err}",
                             gtr.name(scopes),
-                            tr_func.proto.name
+                            rhs_func.proto.name
                         ),
                         span,
                     ));
