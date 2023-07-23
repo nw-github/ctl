@@ -1222,6 +1222,406 @@ impl Scopes {
     fn is_private_mod(&self, scope: ScopeId, public: bool) -> bool {
         !public && self.module_of(self.current_id()) != self.module_of(self[scope].parent.unwrap())
     }
+
+    fn forward_declare(&mut self, stmt: &Located<Stmt>) {
+        match &stmt.data {
+            Stmt::Module { public, name, body } => {
+                self.enter(Some(name.clone()), ScopeKind::Module(*public), |scopes| {
+                    for stmt in body {
+                        scopes.forward_declare(stmt)
+                    }
+                });
+            }
+            Stmt::UserType(data) => match data {
+                ParsedUserType::Struct(base) => {
+                    let mut params = Vec::with_capacity(base.members.len());
+                    let mut members = Vec::with_capacity(base.members.len());
+                    for (name, member) in base.members.iter() {
+                        members.push((
+                            name.clone(),
+                            Member {
+                                public: member.public,
+                                shared: member.shared,
+                                ty: self
+                                    .resolve_type(&member.ty)
+                                    .unwrap_or(TypeId::Unknown)
+                                    .clone(),
+                            },
+                        ));
+
+                        params.push(Param {
+                            mutable: false,
+                            keyword: true,
+                            name: name.clone(),
+                            ty: member.ty.clone(),
+                            default: None,
+                        });
+                    }
+
+                    let id = self.insert_user_type(UserType {
+                        name: base.name.data.clone(),
+                        public: base.public,
+                        body_scope: ScopeId(0),
+                        data: UserTypeData::Struct {
+                            members,
+                            init: FunctionId(0),
+                        },
+                        type_params: base.type_params.len(),
+                        impls: Default::default(),
+                    });
+                    let parent = self.current_id();
+                    self.enter(
+                        Some(base.name.data.clone()),
+                        ScopeKind::UserType(id),
+                        |scopes| {
+                            scopes.get_user_type_mut(id).body_scope = scopes.current_id();
+
+                            for (i, (name, impls)) in base.type_params.iter().enumerate() {
+                                scopes.insert_user_type(UserType {
+                                    public: false,
+                                    name: name.clone(),
+                                    body_scope: scopes.current_id(),
+                                    data: UserTypeData::StructGeneric(i),
+                                    type_params: 0,
+                                    impls: impls
+                                        .iter()
+                                        .flat_map(|path| scopes.resolve_impl(&path.data, path.span))
+                                        .collect(),
+                                });
+                            }
+
+                            for path in base.impls.iter() {
+                                if let Ok(ty) = scopes.resolve_impl(&path.data, path.span) {
+                                    scopes.get_user_type_mut(id).impls.insert(ty);
+                                }
+                            }
+
+                            *scopes.get_user_type_mut(id).data.as_struct_mut().unwrap().1 = scopes
+                                .forward_declare_proto(
+                                    parent,
+                                    true,
+                                    &Prototype {
+                                        public: base.public,
+                                        name: base.name.data.clone(),
+                                        is_async: false,
+                                        is_extern: false,
+                                        type_params: base.type_params.clone(),
+                                        params,
+                                        ret: TypeHint::Regular {
+                                            is_dyn: false,
+                                            path: Located::new(
+                                                Path::Normal(vec![(
+                                                    base.name.data.clone(),
+                                                    base.type_params
+                                                        .iter()
+                                                        .map(|(name, _)| TypeHint::Regular {
+                                                            is_dyn: false,
+                                                            path: Located::new(
+                                                                Path::from(name.clone()),
+                                                                stmt.span,
+                                                            ),
+                                                        })
+                                                        .collect(),
+                                                )]),
+                                                stmt.span,
+                                            ),
+                                        },
+                                    },
+                                );
+
+                            for f in base.functions.iter() {
+                                scopes.forward_declare_fn(scopes.current_id(), false, f);
+                            }
+                        },
+                    )
+                }
+                ParsedUserType::Union { tag: _, base } => {
+                    let mut variants = Vec::with_capacity(base.members.len());
+                    let mut shared = vec![];
+                    for (name, member) in base.members.iter() {
+                        variants.push((
+                            name.clone(),
+                            Member {
+                                public: member.public,
+                                shared: member.shared,
+                                ty: self
+                                    .resolve_type(&member.ty)
+                                    .unwrap_or(TypeId::Unknown)
+                                    .clone(),
+                            },
+                        ));
+
+                        if member.shared {
+                            shared.push(Param {
+                                mutable: false,
+                                keyword: true,
+                                name: name.clone(),
+                                ty: member.ty.clone(),
+                                default: None,
+                            });
+                        }
+                    }
+
+                    let id = self.insert_user_type(UserType {
+                        name: base.name.data.clone(),
+                        public: base.public,
+                        body_scope: ScopeId(0),
+                        data: UserTypeData::Union(Union { variants }),
+                        type_params: base.type_params.len(),
+                        impls: Default::default(),
+                    });
+                    self.enter(
+                        Some(base.name.data.clone()),
+                        ScopeKind::UserType(id),
+                        |scopes| {
+                            scopes.get_user_type_mut(id).body_scope = scopes.current_id();
+
+                            for (i, (name, impls)) in base.type_params.iter().enumerate() {
+                                scopes.insert_user_type(UserType {
+                                    public: false,
+                                    name: name.clone(),
+                                    body_scope: scopes.current_id(),
+                                    data: UserTypeData::StructGeneric(i),
+                                    type_params: 0,
+                                    impls: impls
+                                        .iter()
+                                        .flat_map(|path| scopes.resolve_impl(&path.data, path.span))
+                                        .collect(),
+                                });
+                            }
+
+                            for path in base.impls.iter() {
+                                if let Ok(ty) = scopes.resolve_impl(&path.data, path.span) {
+                                    scopes.get_user_type_mut(id).impls.insert(ty);
+                                }
+                            }
+
+                            for (name, member) in base.members.iter() {
+                                let mut params = shared.clone();
+                                params.push(Param {
+                                    mutable: false,
+                                    keyword: false,
+                                    name: name.clone(),
+                                    ty: member.ty.clone(),
+                                    default: None,
+                                });
+                                // TODO: generic params
+                                scopes.forward_declare_fn(
+                                    scopes.current_id(),
+                                    true,
+                                    &Fn {
+                                        proto: Prototype {
+                                            public: true,
+                                            name: name.clone(),
+                                            is_async: false,
+                                            is_extern: false,
+                                            type_params: base.type_params.clone(),
+                                            params,
+                                            ret: TypeHint::Regular {
+                                                is_dyn: false,
+                                                path: Located::new(
+                                                    Path::Normal(vec![(
+                                                        base.name.data.clone(),
+                                                        base.type_params
+                                                            .iter()
+                                                            .map(|(name, _)| TypeHint::Regular {
+                                                                is_dyn: false,
+                                                                path: Located::new(
+                                                                    Path::from(name.clone()),
+                                                                    stmt.span,
+                                                                ),
+                                                            })
+                                                            .collect(),
+                                                    )]),
+                                                    stmt.span,
+                                                ),
+                                            },
+                                        },
+                                        body: Vec::new(),
+                                    },
+                                );
+                            }
+
+                            for f in base.functions.iter() {
+                                scopes.forward_declare_fn(scopes.current_id(), false, f);
+                            }
+                        },
+                    )
+                }
+                ParsedUserType::Trait {
+                    public,
+                    name,
+                    type_params,
+                    impls,
+                    functions,
+                } => {
+                    let id = self.insert_user_type(UserType {
+                        name: name.clone(),
+                        public: *public,
+                        body_scope: ScopeId(0),
+                        data: UserTypeData::Trait,
+                        type_params: type_params.len(),
+                        impls: Default::default(),
+                    });
+                    self.enter(Some(name.clone()), ScopeKind::UserType(id), |scopes| {
+                        scopes.get_user_type_mut(id).body_scope = scopes.current_id();
+
+                        for (i, (name, impls)) in type_params.iter().enumerate() {
+                            scopes.insert_user_type(UserType {
+                                public: false,
+                                name: name.clone(),
+                                body_scope: scopes.current_id(),
+                                data: UserTypeData::StructGeneric(i),
+                                type_params: 0,
+                                impls: impls
+                                    .iter()
+                                    .flat_map(|path| scopes.resolve_impl(&path.data, path.span))
+                                    .collect(),
+                            });
+                        }
+
+                        for path in impls.iter() {
+                            if let Ok(ty) = scopes.resolve_impl(&path.data, path.span) {
+                                scopes.get_user_type_mut(id).impls.insert(ty);
+                            }
+                        }
+
+                        for proto in functions.iter() {
+                            scopes.forward_declare_proto(scopes.current_id(), false, proto);
+                        }
+                    })
+                }
+                ParsedUserType::Enum {
+                    public,
+                    name,
+                    impls,
+                    variants,
+                    functions,
+                } => {
+                    let id = self.insert_user_type(UserType {
+                        public: *public,
+                        name: name.data.clone(),
+                        body_scope: ScopeId(0),
+                        data: UserTypeData::Enum,
+                        type_params: 0,
+                        impls: impls
+                            .iter()
+                            .flat_map(|path| self.resolve_impl(&path.data, path.span))
+                            .collect(),
+                    });
+
+                    self.enter(Some(name.data.clone()), ScopeKind::UserType(id), |scopes| {
+                        scopes.get_user_type_mut(id).body_scope = scopes.current_id();
+
+                        for (name, _) in variants {
+                            scopes.insert_var(Variable {
+                                name: name.clone(),
+                                public: true,
+                                ty: TypeId::UserType(GenericUserType::new(id, vec![]).into()),
+                                is_static: true,
+                                mutable: false,
+                                value: None,
+                            });
+                        }
+
+                        for f in functions.iter() {
+                            scopes.forward_declare_fn(scopes.current_id(), false, f);
+                        }
+                    });
+                }
+            },
+            Stmt::Fn(f) => self.forward_declare_fn(self.current_id(), false, f),
+            Stmt::Static { public, name, .. } => {
+                self.insert_var(Variable {
+                    name: name.clone(),
+                    public: *public,
+                    ty: TypeId::Unknown,
+                    is_static: true,
+                    mutable: false,
+                    value: None,
+                });
+            }
+            Stmt::Use(path) => {
+                _ = self.resolve_use(path, stmt.span);
+            }
+            _ => {}
+        }
+    }
+
+    fn forward_declare_proto(
+        &mut self,
+        scope: ScopeId,
+        constructor: bool,
+        proto: &Prototype,
+    ) -> FunctionId {
+        let checked = Function {
+            proto: CheckedPrototype {
+                public: proto.public,
+                name: proto.name.clone(),
+                is_async: proto.is_async,
+                is_extern: proto.is_extern,
+                type_params: proto.type_params.iter().map(|x| x.0.clone()).collect(),
+                params: proto
+                    .params
+                    .iter()
+                    .map(|param| CheckedParam {
+                        mutable: param.mutable,
+                        keyword: param.keyword,
+                        name: param.name.clone(),
+                        ty: self.resolve_type(&param.ty).unwrap_or(TypeId::Unknown),
+                    })
+                    .collect(),
+                ret: self.resolve_type(&proto.ret).unwrap_or(TypeId::Unknown),
+            },
+            body: None,
+            body_scope: ScopeId(0),
+            constructor,
+        };
+
+        let id = self.insert_func_in(checked, scope);
+        self.enter(
+            Some(proto.name.clone()),
+            ScopeKind::Function(id),
+            |scopes| {
+                scopes.get_func_mut(id).body_scope = scopes.current_id();
+
+                if !proto.type_params.is_empty() {
+                    for (i, (name, impls)) in proto.type_params.iter().enumerate() {
+                        scopes.insert_user_type(UserType {
+                            public: false,
+                            name: name.clone(),
+                            body_scope: scopes.current_id(),
+                            data: UserTypeData::FuncGeneric(i),
+                            type_params: 0,
+                            impls: impls
+                                .iter()
+                                .flat_map(|path| scopes.resolve_impl(&path.data, path.span))
+                                .collect(),
+                        });
+                    }
+
+                    for (i, original) in proto.params.iter().enumerate() {
+                        scopes.get_func_mut(id).proto.params[i].ty =
+                            scopes.resolve_type(&original.ty).unwrap_or(TypeId::Unknown);
+                    }
+
+                    scopes.get_func_mut(id).proto.ret =
+                        scopes.resolve_type(&proto.ret).unwrap_or(TypeId::Unknown);
+                }
+            },
+        );
+
+        id
+    }
+
+    fn forward_declare_fn(&mut self, scope: ScopeId, cons: bool, f: &Fn) {
+        let id = self.forward_declare_proto(scope, cons, &f.proto);
+        self.enter_id(self.get_func(id).body_scope, |scopes| {
+            for stmt in f.body.iter() {
+                scopes.forward_declare(stmt);
+            }
+        });
+    }
 }
 
 #[derive(Debug, EnumAsInner)]
@@ -1286,20 +1686,6 @@ macro_rules! type_check {
 
         Self::coerce_expr(source, $target, $scopes)
     }};
-}
-
-macro_rules! user_type {
-    ($self: expr, $scopes: expr, $id: expr, $span: expr) => {
-        $scopes.get_user_type(match &$id {
-            TypeId::UserType(data) => data.id,
-            _ => {
-                return $self.error(Error::new(
-                    format!("cannot get member of type '{}'", $id.name($scopes)),
-                    $span,
-                ));
-            }
-        })
-    };
 }
 
 macro_rules! resolve_forward_declare {
@@ -1368,12 +1754,10 @@ impl TypeChecker {
                 match &file.ast.data {
                     Stmt::Module { name, body, .. } if name == &project => {
                         for stmt in body {
-                            self.forward_declare(scopes, stmt);
+                            scopes.forward_declare(stmt);
                         }
                     }
-                    _ => {
-                        self.forward_declare(scopes, &file.ast);
-                    }
+                    _ => scopes.forward_declare(&file.ast),
                 }
             }
 
@@ -1397,411 +1781,6 @@ impl TypeChecker {
 
             scopes.current_id()
         })
-    }
-
-    fn forward_declare(&mut self, scopes: &mut Scopes, stmt: &Located<Stmt>) {
-        match &stmt.data {
-            Stmt::Module { public, name, body } => {
-                scopes.enter(Some(name.clone()), ScopeKind::Module(*public), |scopes| {
-                    for stmt in body {
-                        self.forward_declare(scopes, stmt)
-                    }
-                });
-            }
-            Stmt::UserType(data) => match data {
-                ParsedUserType::Struct(base) => {
-                    let mut params = Vec::with_capacity(base.members.len());
-                    let mut members = Vec::with_capacity(base.members.len());
-                    for (name, member) in base.members.iter() {
-                        members.push((
-                            name.clone(),
-                            Member {
-                                public: member.public,
-                                shared: member.shared,
-                                ty: scopes
-                                    .resolve_type(&member.ty)
-                                    .unwrap_or(TypeId::Unknown)
-                                    .clone(),
-                            },
-                        ));
-
-                        params.push(Param {
-                            mutable: false,
-                            keyword: true,
-                            name: name.clone(),
-                            ty: member.ty.clone(),
-                            default: None,
-                        });
-                    }
-
-                    let id = scopes.insert_user_type(UserType {
-                        name: base.name.data.clone(),
-                        public: base.public,
-                        body_scope: ScopeId(0),
-                        data: UserTypeData::Struct {
-                            members,
-                            init: FunctionId(0),
-                        },
-                        type_params: base.type_params.len(),
-                        impls: Default::default(),
-                    });
-                    let parent = scopes.current_id();
-                    scopes.enter(
-                        Some(base.name.data.clone()),
-                        ScopeKind::UserType(id),
-                        |scopes| {
-                            scopes.get_user_type_mut(id).body_scope = scopes.current_id();
-
-                            for (i, (name, impls)) in base.type_params.iter().enumerate() {
-                                scopes.insert_user_type(UserType {
-                                    public: false,
-                                    name: name.clone(),
-                                    body_scope: scopes.current_id(),
-                                    data: UserTypeData::StructGeneric(i),
-                                    type_params: 0,
-                                    impls: impls
-                                        .iter()
-                                        .flat_map(|path| scopes.resolve_impl(&path.data, path.span))
-                                        .collect(),
-                                });
-                            }
-
-                            for path in base.impls.iter() {
-                                if let Ok(ty) = scopes.resolve_impl(&path.data, path.span) {
-                                    scopes.get_user_type_mut(id).impls.insert(ty);
-                                }
-                            }
-
-                            *scopes.get_user_type_mut(id).data.as_struct_mut().unwrap().1 = self
-                                .forward_declare_proto(
-                                    scopes,
-                                    parent,
-                                    true,
-                                    &Prototype {
-                                        public: base.public,
-                                        name: base.name.data.clone(),
-                                        is_async: false,
-                                        is_extern: false,
-                                        type_params: base.type_params.clone(),
-                                        params,
-                                        ret: TypeHint::Regular {
-                                            is_dyn: false,
-                                            path: Located::new(
-                                                Path::Normal(vec![(
-                                                    base.name.data.clone(),
-                                                    base.type_params
-                                                        .iter()
-                                                        .map(|(name, _)| TypeHint::Regular {
-                                                            is_dyn: false,
-                                                            path: Located::new(
-                                                                Path::from(name.clone()),
-                                                                stmt.span,
-                                                            ),
-                                                        })
-                                                        .collect(),
-                                                )]),
-                                                stmt.span,
-                                            ),
-                                        },
-                                    },
-                                );
-
-                            for f in base.functions.iter() {
-                                self.forward_declare_fn(scopes, scopes.current_id(), false, f);
-                            }
-                        },
-                    )
-                }
-                ParsedUserType::Union { tag: _, base } => {
-                    let mut variants = Vec::with_capacity(base.members.len());
-                    let mut shared = vec![];
-                    for (name, member) in base.members.iter() {
-                        variants.push((
-                            name.clone(),
-                            Member {
-                                public: member.public,
-                                shared: member.shared,
-                                ty: scopes
-                                    .resolve_type(&member.ty)
-                                    .unwrap_or(TypeId::Unknown)
-                                    .clone(),
-                            },
-                        ));
-
-                        if member.shared {
-                            shared.push(Param {
-                                mutable: false,
-                                keyword: true,
-                                name: name.clone(),
-                                ty: member.ty.clone(),
-                                default: None,
-                            });
-                        }
-                    }
-
-                    let id = scopes.insert_user_type(UserType {
-                        name: base.name.data.clone(),
-                        public: base.public,
-                        body_scope: ScopeId(0),
-                        data: UserTypeData::Union(Union { variants }),
-                        type_params: base.type_params.len(),
-                        impls: Default::default(),
-                    });
-                    scopes.enter(
-                        Some(base.name.data.clone()),
-                        ScopeKind::UserType(id),
-                        |scopes| {
-                            scopes.get_user_type_mut(id).body_scope = scopes.current_id();
-
-                            for (i, (name, impls)) in base.type_params.iter().enumerate() {
-                                scopes.insert_user_type(UserType {
-                                    public: false,
-                                    name: name.clone(),
-                                    body_scope: scopes.current_id(),
-                                    data: UserTypeData::StructGeneric(i),
-                                    type_params: 0,
-                                    impls: impls
-                                        .iter()
-                                        .flat_map(|path| scopes.resolve_impl(&path.data, path.span))
-                                        .collect(),
-                                });
-                            }
-
-                            for path in base.impls.iter() {
-                                if let Ok(ty) = scopes.resolve_impl(&path.data, path.span) {
-                                    scopes.get_user_type_mut(id).impls.insert(ty);
-                                }
-                            }
-
-                            for (name, member) in base.members.iter() {
-                                let mut params = shared.clone();
-                                params.push(Param {
-                                    mutable: false,
-                                    keyword: false,
-                                    name: name.clone(),
-                                    ty: member.ty.clone(),
-                                    default: None,
-                                });
-                                // TODO: generic params
-                                self.forward_declare_fn(
-                                    scopes,
-                                    scopes.current_id(),
-                                    true,
-                                    &Fn {
-                                        proto: Prototype {
-                                            public: true,
-                                            name: name.clone(),
-                                            is_async: false,
-                                            is_extern: false,
-                                            type_params: base.type_params.clone(),
-                                            params,
-                                            ret: TypeHint::Regular {
-                                                is_dyn: false,
-                                                path: Located::new(
-                                                    Path::Normal(vec![(
-                                                        base.name.data.clone(),
-                                                        base.type_params
-                                                            .iter()
-                                                            .map(|(name, _)| TypeHint::Regular {
-                                                                is_dyn: false,
-                                                                path: Located::new(
-                                                                    Path::from(name.clone()),
-                                                                    stmt.span,
-                                                                ),
-                                                            })
-                                                            .collect(),
-                                                    )]),
-                                                    stmt.span,
-                                                ),
-                                            },
-                                        },
-                                        body: Vec::new(),
-                                    },
-                                );
-                            }
-
-                            for f in base.functions.iter() {
-                                self.forward_declare_fn(scopes, scopes.current_id(), false, f);
-                            }
-                        },
-                    )
-                }
-                ParsedUserType::Trait {
-                    public,
-                    name,
-                    type_params,
-                    impls,
-                    functions,
-                } => {
-                    let id = scopes.insert_user_type(UserType {
-                        name: name.clone(),
-                        public: *public,
-                        body_scope: ScopeId(0),
-                        data: UserTypeData::Trait,
-                        type_params: type_params.len(),
-                        impls: Default::default(),
-                    });
-                    scopes.enter(Some(name.clone()), ScopeKind::UserType(id), |scopes| {
-                        scopes.get_user_type_mut(id).body_scope = scopes.current_id();
-
-                        for (i, (name, impls)) in type_params.iter().enumerate() {
-                            scopes.insert_user_type(UserType {
-                                public: false,
-                                name: name.clone(),
-                                body_scope: scopes.current_id(),
-                                data: UserTypeData::StructGeneric(i),
-                                type_params: 0,
-                                impls: impls
-                                    .iter()
-                                    .flat_map(|path| scopes.resolve_impl(&path.data, path.span))
-                                    .collect(),
-                            });
-                        }
-
-                        for path in impls.iter() {
-                            if let Ok(ty) = scopes.resolve_impl(&path.data, path.span) {
-                                scopes.get_user_type_mut(id).impls.insert(ty);
-                            }
-                        }
-
-                        for proto in functions.iter() {
-                            self.forward_declare_proto(scopes, scopes.current_id(), false, proto);
-                        }
-                    })
-                }
-                ParsedUserType::Enum {
-                    public,
-                    name,
-                    impls,
-                    variants,
-                    functions,
-                } => {
-                    let id = scopes.insert_user_type(UserType {
-                        public: *public,
-                        name: name.data.clone(),
-                        body_scope: ScopeId(0),
-                        data: UserTypeData::Enum,
-                        type_params: 0,
-                        impls: impls
-                            .iter()
-                            .flat_map(|path| scopes.resolve_impl(&path.data, path.span))
-                            .collect(),
-                    });
-
-                    scopes.enter(Some(name.data.clone()), ScopeKind::UserType(id), |scopes| {
-                        scopes.get_user_type_mut(id).body_scope = scopes.current_id();
-
-                        for (name, _) in variants {
-                            scopes.insert_var(Variable {
-                                name: name.clone(),
-                                public: true,
-                                ty: TypeId::UserType(GenericUserType::new(id, vec![]).into()),
-                                is_static: true,
-                                mutable: false,
-                                value: None,
-                            });
-                        }
-
-                        for f in functions.iter() {
-                            self.forward_declare_fn(scopes, scopes.current_id(), false, f);
-                        }
-                    });
-                }
-            },
-            Stmt::Fn(f) => {
-                self.forward_declare_fn(scopes, scopes.current_id(), false, f);
-            }
-            Stmt::Static { public, name, .. } => {
-                scopes.insert_var(Variable {
-                    name: name.clone(),
-                    public: *public,
-                    ty: TypeId::Unknown,
-                    is_static: true,
-                    mutable: false,
-                    value: None,
-                });
-            }
-            Stmt::Use(path) => {
-                _ = scopes.resolve_use(path, stmt.span);
-            }
-            _ => {}
-        }
-    }
-
-    fn forward_declare_proto(
-        &mut self,
-        scopes: &mut Scopes,
-        scope: ScopeId,
-        constructor: bool,
-        proto: &Prototype,
-    ) -> FunctionId {
-        let checked = Function {
-            proto: CheckedPrototype {
-                public: proto.public,
-                name: proto.name.clone(),
-                is_async: proto.is_async,
-                is_extern: proto.is_extern,
-                type_params: proto.type_params.iter().map(|x| x.0.clone()).collect(),
-                params: proto
-                    .params
-                    .iter()
-                    .map(|param| CheckedParam {
-                        mutable: param.mutable,
-                        keyword: param.keyword,
-                        name: param.name.clone(),
-                        ty: scopes.resolve_type(&param.ty).unwrap_or(TypeId::Unknown),
-                    })
-                    .collect(),
-                ret: scopes.resolve_type(&proto.ret).unwrap_or(TypeId::Unknown),
-            },
-            body: None,
-            body_scope: ScopeId(0),
-            constructor,
-        };
-
-        let id = scopes.insert_func_in(checked, scope);
-        scopes.enter(
-            Some(proto.name.clone()),
-            ScopeKind::Function(id),
-            |scopes| {
-                scopes.get_func_mut(id).body_scope = scopes.current_id();
-
-                if !proto.type_params.is_empty() {
-                    for (i, (name, impls)) in proto.type_params.iter().enumerate() {
-                        scopes.insert_user_type(UserType {
-                            public: false,
-                            name: name.clone(),
-                            body_scope: scopes.current_id(),
-                            data: UserTypeData::FuncGeneric(i),
-                            type_params: 0,
-                            impls: impls
-                                .iter()
-                                .flat_map(|path| scopes.resolve_impl(&path.data, path.span))
-                                .collect(),
-                        });
-                    }
-
-                    for (i, original) in proto.params.iter().enumerate() {
-                        scopes.get_func_mut(id).proto.params[i].ty =
-                            scopes.resolve_type(&original.ty).unwrap_or(TypeId::Unknown);
-                    }
-
-                    scopes.get_func_mut(id).proto.ret =
-                        scopes.resolve_type(&proto.ret).unwrap_or(TypeId::Unknown);
-                }
-            },
-        );
-
-        id
-    }
-
-    fn forward_declare_fn(&mut self, scopes: &mut Scopes, scope: ScopeId, cons: bool, f: &Fn) {
-        let id = self.forward_declare_proto(scopes, scope, cons, &f.proto);
-        scopes.enter_id(scopes.get_func(id).body_scope, |scopes| {
-            for stmt in f.body.iter() {
-                self.forward_declare(scopes, stmt);
-            }
-        });
     }
 
     fn check_stmt(&mut self, scopes: &mut Scopes, stmt: Located<Stmt>) -> CheckedStmt {
@@ -2772,8 +2751,15 @@ impl TypeChecker {
 
                 let source = self.check_expr(scopes, *source, None);
                 let id = source.ty.strip_references();
-                let ty = user_type!(self, scopes, id, span);
-
+                let ty = scopes.get_user_type(match &id {
+                    TypeId::UserType(data) => data.id,
+                    _ => {
+                        return self.error(Error::new(
+                            format!("cannot get member of type '{}'", id.name(scopes)),
+                            span,
+                        ));
+                    }
+                });
                 if let Some(members) = ty.data.members() {
                     if let Some((_, var)) = members.iter().find(|m| m.0 == member) {
                         if ty.data.is_union() && !var.shared {
