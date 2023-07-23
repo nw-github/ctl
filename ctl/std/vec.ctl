@@ -12,6 +12,12 @@ pub struct Vec<T> {
         return Vec::<U>(ptr: NonNull::dangling(), len: 0, cap: 0);
     }
 
+    pub fn with_capacity<U>(cap: usize) Vec<U> {
+        mut self: Vec<U> = Vec::new();
+        self.reserve(cap);
+        return self;
+    }
+
     pub fn len(this) usize {
         return this.len;
     }

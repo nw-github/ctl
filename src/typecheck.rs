@@ -915,10 +915,10 @@ impl Scopes {
 
     fn find_core_string(&self) -> Option<TypeId> {
         let core = self.scopes[0].children.get("core")?;
-        let option = self[*core].children.get("string")?;
+        let string = self[*core].children.get("string")?;
         Some(TypeId::UserType(
             GenericUserType {
-                id: self.find_user_type_in("str", *option)?,
+                id: self.find_user_type_in("str", *string)?,
                 generics: vec![],
             }
             .into(),
@@ -944,6 +944,22 @@ impl Scopes {
     }
 
     fn resolve_type(&self, ty: &TypeHint) -> Result<TypeId, Error> {
+        let make_path = |path: &[&str], generics: &[TypeHint]| {
+            Path::Normal(
+                path.iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        (
+                            p.to_string(),
+                            (i + 1 == path.len())
+                                .then(|| generics.into())
+                                .unwrap_or(vec![]),
+                        )
+                    })
+                    .collect(),
+            )
+        };
+
         Ok(match ty {
             TypeHint::Regular(path) => {
                 return match self.resolve_path(&path.data, path.span)? {
@@ -1002,11 +1018,28 @@ impl Scopes {
                 let n = TypeChecker::consteval(self, count, Some(&TypeId::Usize))?;
                 TypeId::Array((self.resolve_type(ty)?, n).into())
             }
-            TypeHint::Option(ty) => self.make_option(self.resolve_type(ty)?).ok_or(Error::new(
-                "core::option::Option not found",
+            TypeHint::Option(ty) => self.resolve_type(&TypeHint::Regular(Located::new(
+                make_path(&["core", "option", "Option"], &[(**ty).clone()]),
                 Span::default(),
-            ))?,
-            _ => todo!(),
+            )))?,
+            TypeHint::Vec(ty) => self.resolve_type(&TypeHint::Regular(Located::new(
+                make_path(&["std", "vec", "Vec"], &[(**ty).clone()]),
+                Span::default(),
+            )))?,
+            TypeHint::Map(key, value) => self.resolve_type(&TypeHint::Regular(Located::new(
+                make_path(
+                    &["std", "map", "Map"],
+                    &[(**key).clone(), (**value).clone()],
+                ),
+                Span::default(),
+            )))?,
+            TypeHint::Set(ty) => self.resolve_type(&TypeHint::Regular(Located::new(
+                make_path(&["std", "set", "Set"], &[(**ty).clone()]),
+                Span::default(),
+            )))?,
+            TypeHint::Slice(_) => todo!(),
+            TypeHint::Tuple(_) => todo!(),
+            TypeHint::Result(_, _) => todo!(),
         })
     }
 
