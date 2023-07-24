@@ -620,7 +620,7 @@ impl Compiler {
                         .as_user_type()
                         .and_then(|ut| scopes.get_user_type(ut.id).data.as_union())
                     {
-                        if union
+                        if !union.is_unsafe && union
                             .variants
                             .iter()
                             .find(|n| n.0 == name)
@@ -934,29 +934,43 @@ impl Compiler {
 
         self.buffer.emit(prototypes);
         for ut in Self::get_struct_order(scopes, &structs)? {
-            self.buffer.emit("struct ");
-            self.buffer.emit_type_name(scopes, ut);
-            self.buffer.emit("{");
-
             let members = scopes.get_user_type(ut.id).data.members().unwrap();
             if let Some(union) = scopes.get_user_type(ut.id).data.as_union() {
-                self.buffer.emit_type(scopes, &union.tag_type());
-                self.buffer.emit(format!(" {UNION_TAG_NAME};"));
+                if union.is_unsafe {
+                    self.buffer.emit("union ");
+                    self.buffer.emit_type_name(scopes, ut);
+                    self.buffer.emit("{");
 
-                for (name, member) in members {
-                    if member.shared {
+                    for (name, member) in members {
                         self.emit_member(scopes, ut, name, member);
                     }
-                }
+                } else {
+                    self.buffer.emit("struct ");
+                    self.buffer.emit_type_name(scopes, ut);
+                    self.buffer.emit("{");
 
-                self.buffer.emit(" union {");
-                for (name, member) in members {
-                    if !member.shared {
-                        self.emit_member(scopes, ut, name, member);
+                    self.buffer.emit_type(scopes, &union.tag_type());
+                    self.buffer.emit(format!(" {UNION_TAG_NAME};"));
+
+                    for (name, member) in members {
+                        if member.shared {
+                            self.emit_member(scopes, ut, name, member);
+                        }
                     }
+
+                    self.buffer.emit(" union {");
+                    for (name, member) in members {
+                        if !member.shared {
+                            self.emit_member(scopes, ut, name, member);
+                        }
+                    }
+                    self.buffer.emit("};");
                 }
-                self.buffer.emit("};");
             } else {
+                self.buffer.emit("struct ");
+                self.buffer.emit_type_name(scopes, ut);
+                self.buffer.emit("{");
+
                 for (name, member) in members {
                     self.emit_member(scopes, ut, name, member);
                 }

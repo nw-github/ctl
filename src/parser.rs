@@ -605,6 +605,30 @@ impl<'a> Parser<'a> {
 
     //
 
+    fn parse_union(&mut self, public: bool, mut span: Span, is_unsafe: bool) -> Result<L<Stmt>> {
+        let tag = if self.advance_if_kind(Token::LParen).is_some() {
+            let tag = self.path()?;
+            self.expect_kind(Token::RParen, "expected ')'")?;
+            Some(tag)
+        } else {
+            None
+        };
+
+        let name = self.expect_id_with_span("expected name")?;
+        Ok(L::new(
+            Stmt::UserType(ParsedUserType::Union {
+                tag,
+                base: self.parse_union_body(
+                    public,
+                    L::new(name.0.into(), name.1),
+                    &mut span,
+                )?,
+                is_unsafe,
+            }),
+            span,
+        ))
+    }
+
     fn try_item(&mut self) -> Option<Result<L<Stmt>>> {
         let public = self.advance_if_kind(Token::Pub);
         if let Some(header) = self.try_prototype(public.is_some(), false) {
@@ -644,28 +668,12 @@ impl<'a> Parser<'a> {
                     token.span,
                 ))
             })())
-        } else if let Some(mut token) = self.advance_if_kind(Token::Union) {
+        } else if let Some(token) = self.advance_if_kind(Token::Union) {
+            Some(self.parse_union(public.is_some(), token.span, false))
+        } else if let Some(token) = self.advance_if_kind(Token::Unsafe) {
             Some((|| {
-                let tag = if self.advance_if_kind(Token::LParen).is_some() {
-                    let tag = self.path()?;
-                    self.expect_kind(Token::RParen, "expected ')'")?;
-                    Some(tag)
-                } else {
-                    None
-                };
-
-                let name = self.expect_id_with_span("expected name")?;
-                Ok(L::new(
-                    Stmt::UserType(ParsedUserType::Union {
-                        tag,
-                        base: self.parse_union_body(
-                            public.is_some(),
-                            L::new(name.0.into(), name.1),
-                            &mut token.span,
-                        )?,
-                    }),
-                    token.span,
-                ))
+                self.expect_kind(Token::Union, "expected 'union'")?;
+                self.parse_union(public.is_some(), token.span, true)
             })())
         } else if let Some(token) = self.advance_if_kind(Token::Trait) {
             Some((|| {

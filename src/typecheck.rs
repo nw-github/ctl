@@ -627,6 +627,7 @@ pub struct Member {
 #[derive(Debug, Clone)]
 pub struct Union {
     pub variants: Vec<(String, Member)>,
+    pub is_unsafe: bool,
 }
 
 impl Union {
@@ -1378,7 +1379,11 @@ impl Scopes {
                         },
                     )
                 }
-                ParsedUserType::Union { tag: _, base } => {
+                ParsedUserType::Union {
+                    tag: _,
+                    base,
+                    is_unsafe,
+                } => {
                     let mut variants = Vec::with_capacity(base.members.len());
                     let mut shared = vec![];
                     for (name, member) in base.members.iter() {
@@ -1409,7 +1414,10 @@ impl Scopes {
                         name: base.name.data.clone(),
                         public: base.public,
                         body_scope: ScopeId(0),
-                        data: UserTypeData::Union(Union { variants }),
+                        data: UserTypeData::Union(Union {
+                            variants,
+                            is_unsafe: *is_unsafe,
+                        }),
                         type_params: base.type_params.len(),
                         impls: Default::default(),
                     });
@@ -1877,7 +1885,21 @@ impl TypeChecker {
                     });
                     CheckedStmt::None
                 }
-                ParsedUserType::Union { tag: _, base } => {
+                ParsedUserType::Union {
+                    tag: _,
+                    base,
+                    is_unsafe,
+                } => {
+                    for member in base.members.iter() {
+                        if member.1.shared && is_unsafe {
+                            // FIXME: span should be related to the member
+                            self.error::<()>(Error::new(
+                                "cannot have shared members in an unsafe union",
+                                stmt.span,
+                            ));
+                        }
+                    }
+
                     let id = scopes.find_user_type(&base.name.data).unwrap();
                     scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
                         for (name, impls) in base.type_params.iter() {
@@ -2240,8 +2262,7 @@ impl TypeChecker {
         if let Some(body) = f.body {
             scopes.enter_id(scopes.get_func(id).body_scope, |scopes| {
                 scopes.get_func_mut(id).body = Some(
-                    body
-                        .into_iter()
+                    body.into_iter()
                         .map(|stmt| self.check_stmt(scopes, stmt))
                         .collect(),
                 );
@@ -2819,11 +2840,14 @@ impl TypeChecker {
                 });
                 if let Some(members) = ty.data.members() {
                     if let Some((_, var)) = members.iter().find(|m| m.0 == member) {
-                        if ty.data.is_union() && !var.shared {
-                            return self.error(Error::new(
-                                "cannot access union variant with '.' (only shared members)",
-                                span,
-                            ));
+                        if let Some(union) = ty.data.as_union() {
+                            if !var.shared && !union.is_unsafe {
+                                // TODO: access to unsafe union members should be unsafe
+                                return self.error(Error::new(
+                                    "cannot access union variant with '.' (only shared members)",
+                                    span,
+                                ));
+                            }
                         }
 
                         if !var.public && !scopes.is_sub_scope(ty.scope) {

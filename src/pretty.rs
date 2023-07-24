@@ -41,11 +41,13 @@ pub fn print_stmt(stmt: &Located<Stmt>, src: &str, indent: usize) {
         Stmt::Fn(f) => print_fn(f, src, indent),
         Stmt::UserType(ty) => match ty {
             ParsedUserType::Struct(base) => print_struct("Struct", base, src, indent),
-            ParsedUserType::Union { tag, base } => {
+            ParsedUserType::Union { tag, base, is_unsafe } => {
                 if let Some(tag) = tag {
                     print_struct(&format!("Union({})", tag.span.text(src)), base, src, indent);
+                    print_bool!(is_unsafe);
                 } else {
-                    print_struct("Union", base, src, indent)
+                    print_struct("Union", base, src, indent);
+                    print_bool!(is_unsafe);
                 }
             }
             ParsedUserType::Trait {

@@ -330,6 +330,7 @@ pub mod stmt {
         Union {
             tag: Option<Located<Path>>,
             base: Struct,
+            is_unsafe: bool,
         },
         Trait {
             public: bool,
