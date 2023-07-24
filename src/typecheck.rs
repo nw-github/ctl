@@ -689,6 +689,20 @@ pub struct Scoped<T> {
     pub scope: ScopeId,
 }
 
+#[derive(Deref, DerefMut, Constructor)]
+pub struct Visible<T> {
+    #[deref]
+    #[deref_mut]
+    pub item: T,
+    pub public: bool,
+}
+
+impl<T: std::hash::Hash> std::hash::Hash for Visible<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.item.hash(state);
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct Scope {
     pub kind: ScopeKind,
@@ -1043,7 +1057,7 @@ impl Scopes {
         })
     }
 
-    fn resolve_use(&mut self, path: &Path, span: Span) -> Result<(), Error> {
+    fn resolve_use(&mut self, _public: bool, path: &Path, span: Span) -> Result<(), Error> {
         match self.resolve_path(path, span)? {
             ResolvedPath::UserType(ut) => {
                 self.current().types.insert(ut.id);
@@ -1564,8 +1578,8 @@ impl Scopes {
                     value: None,
                 });
             }
-            Stmt::Use(path) => {
-                _ = self.resolve_use(path, stmt.span);
+            Stmt::Use { path, public } => {
+                _ = self.resolve_use(*public, path, stmt.span);
             }
             _ => {}
         }
@@ -2042,8 +2056,8 @@ impl TypeChecker {
                 var.value = Some(value);
                 CheckedStmt::None
             }
-            Stmt::Use(path) => {
-                if let Err(err) = scopes.resolve_use(&path, stmt.span) {
+            Stmt::Use { public, path } => {
+                if let Err(err) = scopes.resolve_use(public, &path, stmt.span) {
                     self.error(err)
                 } else {
                     CheckedStmt::None

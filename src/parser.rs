@@ -783,7 +783,13 @@ impl<'a> Parser<'a> {
                     Ok(())
                 })?;
 
-                Ok(L::new(Stmt::Use(Path::Root(components)), span))
+                Ok(L::new(
+                    Stmt::Use {
+                        public: public.is_some(),
+                        path: Path::Root(components),
+                    },
+                    span,
+                ))
             })())
         } else {
             self.advance_if_kind(Token::Static).map(|token| {
