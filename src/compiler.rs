@@ -623,7 +623,7 @@ impl Compiler {
                     .insert((**expr.ty.as_user_type().unwrap()).clone());
 
                 self.buffer.emit_cast(scopes, &expr.ty);
-                self.buffer.emit("{ .slc = { .ptr = (uint8_t const*)u8\"");
+                self.buffer.emit("{ .slc = { .ptr = (uint8_t const*)\"");
                 for byte in value.as_bytes() {
                     self.buffer.emit(format!("\\x{byte:x}"));
                 }
