@@ -73,6 +73,10 @@ pub struct Raw<T> {
         };
     }
 
+    pub fn from_mut<U>(ptr: RawMut<U>) Raw<U> {
+        return Raw::from_ptr(ptr.as_ptr());
+    }
+
     pub fn dangling<U>() Raw<U> {
         return Raw(addr: 0xDEADBEEF);
     }

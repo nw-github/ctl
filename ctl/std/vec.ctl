@@ -1,3 +1,4 @@
+use core::mem::Raw;
 use core::mem::RawMut;
 use core::option::Option;
 use core::mem;
@@ -149,8 +150,16 @@ pub struct Vec<T> {
         };
     }
 
-    pub fn as_raw(this) RawMut<T> {
+    pub fn as_raw(this) Raw<T> {
+        return Raw::from_mut(this.ptr);
+    }
+
+    pub fn as_raw_mut(mut this) RawMut<T> {
         return this.ptr;
+    }
+
+    pub /* unsafe */ fn set_len(mut this, len: usize) {
+        this.len = len;
     }
 
     fn grow(mut this) {
