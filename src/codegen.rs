@@ -8,26 +8,52 @@ use crate::{
     lexer::Span,
     typecheck::{
         CheckedParam, GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId,
-        Variable, VariableId,
+        VariableId,
     },
     Error,
 };
 
 const UNION_TAG_NAME: &str = "$tag";
 
-#[derive(Hash, PartialEq, Eq, Clone)]
+#[derive(PartialEq, Eq, Clone)]
 struct State {
     func: GenericFunc,
     inst: Option<TypeId>,
+    tmpvar: usize,
+    emitted_names: HashMap<String, VariableId>,
+    renames: HashMap<VariableId, String>,
 }
 
 impl State {
+    pub fn new(func: GenericFunc, inst: Option<TypeId>) -> Self {
+        Self {
+            func,
+            inst,
+            tmpvar: 0,
+            emitted_names: Default::default(),
+            renames: Default::default(),
+        }
+    }
+
     pub fn fill_generics(&self, scopes: &Scopes, ty: &mut TypeId) {
         ty.fill_func_generics(scopes, &self.func);
 
         if let Some(inst) = self.inst.as_ref().and_then(|inst| inst.as_user_type()) {
             ty.fill_type_generics(scopes, inst);
         }
+    }
+
+    pub fn tmpvar(&mut self) -> String {
+        let v = format!("${}", self.tmpvar);
+        self.tmpvar += 1;
+        v
+    }
+}
+
+impl std::hash::Hash for State {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.func.hash(state);
+        self.inst.hash(state);
     }
 }
 
@@ -238,17 +264,10 @@ macro_rules! tmpbuf {
     }};
 }
 
-macro_rules! tmpvar {
-    ($self: expr) => {{
-        $self.tmpvar += 1;
-        format!("${}", $self.tmpvar)
-    }};
-}
-
 macro_rules! enter_block {
-    ($self: expr, $scopes: expr, $ty: expr, $body: expr) => {{
+    ($self: expr, $state: expr, $scopes: expr, $ty: expr, $body: expr) => {{
         let ty = $ty;
-        let old = std::mem::replace(&mut $self.cur_block, tmpvar!($self));
+        let old = std::mem::replace(&mut $self.cur_block, $state.tmpvar());
         let written = tmpbuf! {
             $self,
             {
@@ -286,12 +305,9 @@ pub struct Codegen {
     temporaries: Buffer,
     structs: HashSet<GenericUserType>,
     funcs: HashSet<State>,
-    tmpvar: usize,
     cur_block: String,
     cur_loop: String,
     yielded: bool,
-    emitted_names: HashMap<String, VariableId>,
-    renames: HashMap<VariableId, String>,
 }
 
 impl Codegen {
@@ -303,25 +319,18 @@ impl Codegen {
             ));
         };
 
-        let main = GenericFunc::new(main, Vec::new());
+        let main = &mut State::new(GenericFunc::new(main, Vec::new()), None);
         let mut this = Self {
-            funcs: [State {
-                inst: None,
-                func: main.clone(),
-            }]
-            .into(),
+            funcs: [main.clone()].into(),
             ..Self::default()
         };
 
-        let conv_argv = (scopes.get_func(main.id).proto.params.len() == 1).then(|| {
+        let conv_argv = (scopes.get_func(main.func.id).proto.params.len() == 1).then(|| {
             let id = scopes
                 .find_func_in("convert_argv", scopes.find_module("std").unwrap())
                 .unwrap();
 
-            let state = State {
-                inst: None,
-                func: GenericFunc::new(id, vec![]),
-            };
+            let state = State::new(GenericFunc::new(id, vec![]), None);
             this.funcs.insert(state.clone());
             state
         });
@@ -332,7 +341,7 @@ impl Codegen {
             let diff = this.funcs.difference(&emitted).cloned().collect::<Vec<_>>();
             emitted.extend(this.funcs.drain());
 
-            for state in diff {
+            for mut state in diff {
                 let f = scopes.get_func(state.func.id);
                 if f.proto.is_extern {
                     prototypes.emit("extern ");
@@ -345,12 +354,8 @@ impl Codegen {
                     this.buffer.emit_prototype(scopes, &state);
 
                     let func = scopes.get_func(state.func.id);
-
-                    this.emitted_names.clear();
-                    this.renames.clear();
-                    this.tmpvar = 0;
                     for param in &func.proto.params {
-                        this.emitted_names.insert(
+                        state.emitted_names.insert(
                             param.name.clone(),
                             *scopes[func.body_scope]
                                 .vars
@@ -360,7 +365,7 @@ impl Codegen {
                         );
                     }
 
-                    this.emit_block(scopes, body, &state);
+                    this.emit_block(scopes, body, &mut state);
                 }
             }
         }
@@ -378,7 +383,7 @@ impl Codegen {
                     this.buffer.emit("static ");
                     this.buffer.emit_type(scopes, &var.ty);
                     this.buffer.emit(" ");
-                    this.emit_var_name(scopes, id);
+                    this.emit_var_name(scopes, id, main);
                     this.buffer.emit(";");
 
                     statics.push(id);
@@ -390,7 +395,7 @@ impl Codegen {
         this.buffer.emit("int main(int argc, char **argv) {");
         this.buffer.emit("GC_INIT();");
         for id in statics {
-            this.emit_var_name(scopes, id);
+            this.emit_var_name(scopes, id, main);
             this.buffer.emit(" = ");
             //this.gen_expr(scopes, scopes.get_var(id).value.clone().unwrap(), None);
             this.buffer.emit(";");
@@ -400,13 +405,7 @@ impl Codegen {
 
         if let Some(state) = conv_argv {
             this.buffer.emit("return ");
-            this.buffer.emit_fn_name(
-                scopes,
-                &State {
-                    func: main,
-                    inst: None,
-                },
-            );
+            this.buffer.emit_fn_name(scopes, main);
             this.buffer.emit("(");
             this.buffer.emit_fn_name(scopes, &state);
             this.buffer.emit("(argc, (const char **)argv)); }");
@@ -414,20 +413,14 @@ impl Codegen {
             this.buffer.emit("(void)argc;");
             this.buffer.emit("(void)argv;");
             this.buffer.emit("return ");
-            this.buffer.emit_fn_name(
-                scopes,
-                &State {
-                    func: main,
-                    inst: None,
-                },
-            );
+            this.buffer.emit_fn_name(scopes, main);
             this.buffer.emit("(); }");
         }
 
         Ok(this.buffer.0)
     }
 
-    fn gen_stmt(&mut self, scopes: &Scopes, stmt: CheckedStmt, state: &State) {
+    fn gen_stmt(&mut self, scopes: &Scopes, stmt: CheckedStmt, state: &mut State) {
         match stmt {
             CheckedStmt::Module(block) => {
                 for stmt in block.body.into_iter() {
@@ -470,7 +463,7 @@ impl Codegen {
         }
     }
 
-    fn gen_expr_inner(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
+    fn gen_expr_inner(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &mut State) {
         state.fill_generics(scopes, &mut expr.ty);
         match expr.data {
             ExprData::Binary { op, left, right } => {
@@ -591,7 +584,7 @@ impl Codegen {
 
                 let args = Self::make_positional(&scopes.get_func(func.id).proto.params, args);
 
-                let next_state = State { func, inst };
+                let next_state = State::new(func, inst);
                 self.buffer.emit_fn_name(scopes, &next_state);
                 self.funcs.insert(next_state);
 
@@ -656,17 +649,11 @@ impl Codegen {
             ExprData::Symbol(symbol) => match symbol {
                 Symbol::Func => {
                     let func = expr.ty.into_func().unwrap();
-                    self.buffer.emit_fn_name(
-                        scopes,
-                        &State {
-                            func: *func,
-                            inst: None,
-                        },
-                    )
+                    self.buffer.emit_fn_name(scopes, &State::new(*func, None))
                 }
                 Symbol::Var(id) => {
                     if !scopes.get_var(id).ty.is_void_like() {
-                        self.emit_var_name(scopes, id);
+                        self.emit_var_name(scopes, id, state);
                     }
                 }
             },
@@ -740,7 +727,7 @@ impl Codegen {
             }
             ExprData::Block(block) => {
                 enter_block! {
-                    self, scopes, &expr.ty,
+                    self, state, scopes, &expr.ty,
                     {
                         self.emit_block(scopes, block.body, state);
                     }
@@ -752,7 +739,7 @@ impl Codegen {
                 else_branch,
             } => {
                 enter_block! {
-                    self, scopes, &expr.ty,
+                    self, state, scopes, &expr.ty,
                     {
                         self.buffer.emit("if (");
                         self.gen_expr(scopes, *cond, state);
@@ -789,7 +776,7 @@ impl Codegen {
                 body,
                 do_while,
             } => {
-                let old = std::mem::replace(&mut self.cur_loop, tmpvar!(self));
+                let old = std::mem::replace(&mut self.cur_loop, state.tmpvar());
                 let written = tmpbuf! {
                     self,
                     {
@@ -863,10 +850,10 @@ impl Codegen {
                 body,
             } => {
                 enter_block! {
-                    self, scopes, &expr.ty,
+                    self, state, scopes, &expr.ty,
                     {
                         // TODO: update to exclude void when literal patterns are implemented
-                        let tmp_name = tmpvar!(self);
+                        let tmp_name = state.tmpvar();
                         state.fill_generics(scopes, &mut scrutinee.ty);
 
                         self.buffer.emit_type(scopes, &scrutinee.ty);
@@ -912,7 +899,7 @@ impl Codegen {
         }
     }
 
-    fn gen_expr(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
+    fn gen_expr(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &mut State) {
         fn has_side_effects(expr: &CheckedExpr) -> bool {
             match &expr.data {
                 ExprData::Unary { op, .. } => matches!(
@@ -947,10 +934,10 @@ impl Codegen {
         }
     }
 
-    fn gen_to_tmp(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
+    fn gen_to_tmp(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &mut State) {
         state.fill_generics(scopes, &mut expr.ty);
 
-        let tmp = tmpvar!(self);
+        let tmp = state.tmpvar();
         let written = tmpbuf! {
             self,
             {
@@ -965,7 +952,7 @@ impl Codegen {
         self.buffer.emit(tmp);
     }
 
-    fn emit_block(&mut self, scopes: &Scopes, block: Vec<CheckedStmt>, state: &State) {
+    fn emit_block(&mut self, scopes: &Scopes, block: Vec<CheckedStmt>, state: &mut State) {
         self.buffer.emit("{");
         for stmt in block.into_iter() {
             self.gen_stmt(scopes, stmt, state);
@@ -1048,7 +1035,7 @@ impl Codegen {
         Ok(())
     }
 
-    fn emit_local_decl(&mut self, scopes: &Scopes, id: VariableId, state: &State) {
+    fn emit_local_decl(&mut self, scopes: &Scopes, id: VariableId, state: &mut State) {
         let var = scopes.get_var(id);
         let mut ty = var.ty.clone();
         state.fill_generics(scopes, &mut ty);
@@ -1061,23 +1048,28 @@ impl Codegen {
             self.buffer.emit(" const");
         }
         self.buffer.emit(" ");
-        self.emit_var_name(scopes, id);
+        self.emit_var_name(scopes, id, state);
     }
 
-    fn emit_var_name(&mut self, scopes: &Scopes, id: VariableId) {
+    fn emit_var_name(&mut self, scopes: &Scopes, id: VariableId, state: &mut State) {
         use std::collections::hash_map::*;
 
         let var = scopes.get_var(id);
         if var.is_static {
             self.buffer.emit(scopes.full_name(var.scope, &var.name));
         } else {
-            match self.emitted_names.entry(var.name.clone()) {
+            match state.emitted_names.entry(var.name.clone()) {
                 Entry::Occupied(entry) if *entry.get() == id => {
                     self.buffer.emit(&var.name);
                 }
                 Entry::Occupied(_) => {
-                    self.buffer
-                        .emit(self.renames.entry(id).or_insert_with(|| tmpvar!(self)));
+                    let len = state.renames.len();
+                    self.buffer.emit(
+                        state
+                            .renames
+                            .entry(id)
+                            .or_insert_with(|| format!("$r{len}")),
+                    );
                 }
                 Entry::Vacant(entry) => {
                     entry.insert(id);
