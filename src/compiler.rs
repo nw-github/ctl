@@ -517,9 +517,20 @@ impl Compiler {
                 }
                 UnaryOp::Addr | UnaryOp::AddrMut => {
                     // TODO: addr of void
-                    self.buffer.emit("(&");
-                    self.compile_expr(scopes, *inner, state);
-                    self.buffer.emit(")");
+                    self.buffer.emit("&");
+                    match inner.data {
+                        ExprData::Unary { op, .. } if op == UnaryOp::Deref => {
+                            self.compile_expr(scopes, *inner, state);
+                        }
+                        ExprData::Symbol(_)
+                        | ExprData::Member { .. }
+                        | ExprData::Subscript { .. } => {
+                            self.compile_expr(scopes, *inner, state);
+                        }
+                        _ => {
+                            self.compile_to_tmp(scopes, *inner, state);
+                        }
+                    }
                 }
                 UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in compile_expr"),
                 UnaryOp::Try => todo!(),
@@ -911,19 +922,7 @@ impl Compiler {
         if has_side_effects(&expr) {
             state.fill_generics(scopes, &mut expr.ty);
             if !expr.ty.is_void_like() {
-                let tmp = tmpvar!(self);
-                let written = tmpbuf! {
-                    self,
-                    {
-                        self.buffer.emit_type(scopes, &expr.ty);
-                        self.buffer.emit(format!(" {tmp} = "));
-                        self.compile_expr_inner(scopes, expr, state);
-                        self.buffer.emit(";");
-                    }
-                };
-
-                self.temporaries.emit(written.0);
-                self.buffer.emit(tmp);
+                self.compile_to_tmp(scopes, expr, state);
             } else {
                 self.compile_expr_inner(scopes, expr, state);
                 self.buffer.emit(";");
@@ -931,6 +930,24 @@ impl Compiler {
         } else {
             self.compile_expr_inner(scopes, expr, state);
         }
+    }
+
+    fn compile_to_tmp(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
+        state.fill_generics(scopes, &mut expr.ty);
+
+        let tmp = tmpvar!(self);
+        let written = tmpbuf! {
+            self,
+            {
+                self.buffer.emit_type(scopes, &expr.ty);
+                self.buffer.emit(format!(" {tmp} = "));
+                self.compile_expr_inner(scopes, expr, state);
+                self.buffer.emit(";");
+            }
+        };
+
+        self.temporaries.emit(written.0);
+        self.buffer.emit(tmp);
     }
 
     fn emit_block(&mut self, scopes: &Scopes, block: Vec<CheckedStmt>, state: &State) {
