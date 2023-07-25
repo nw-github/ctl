@@ -19,7 +19,7 @@ pub fn eprint(s: str) {
 }
 
 fn convert_argv(argc: c_int, argv: **c_char) [str..] {
-    use core::option::Option;
+    use core::opt::Option;
     use std::vec::Vec;
 
     let argc = argc as! usize;

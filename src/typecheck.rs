@@ -925,7 +925,7 @@ impl Scopes {
 
     pub fn find_core_option(&self) -> Option<UserTypeId> {
         let core = self.scopes()[0].children.get("core")?;
-        let option = self[*core].children.get("option")?;
+        let option = self[*core].children.get("opt")?;
         self.find_user_type_in("Option", *option)
     }
 
@@ -1025,7 +1025,7 @@ impl Scopes {
                 TypeId::Array((self.resolve_type(ty)?, n).into())
             }
             TypeHint::Option(ty) => {
-                self.make_type(&["core", "option", "Option"], &[(**ty).clone()])?
+                self.make_type(&["core", "opt", "Option"], &[(**ty).clone()])?
             }
             TypeHint::Vec(ty) => self.make_type(&["std", "vec", "Vec"], &[(**ty).clone()])?,
             TypeHint::Map(key, value) => self.make_type(

@@ -1,6 +1,6 @@
 use core::mem::RawMut;
 use core::mem::size_of;
-use core::option::Option;
+use core::opt::Option;
 
 extern fn ctl_malloc(size: usize) ?*mut c_void;
 extern fn ctl_realloc(addr: *mut c_void, size: usize) ?*mut c_void;
