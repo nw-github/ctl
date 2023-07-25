@@ -205,7 +205,7 @@ impl Buffer {
         }
     }
 
-    fn emit_prototype(&mut self, scopes: &Scopes, state: &State) {
+    fn emit_prototype(&mut self, scopes: &Scopes, state: &mut State, is_prototype: bool) {
         let f = scopes.get_func(state.func.id);
         let mut ret = f.proto.ret.clone();
         state.fill_generics(scopes, &mut ret);
@@ -229,15 +229,25 @@ impl Buffer {
                 self.emit(", ");
             }
 
-            let mut ty = param.ty.clone();
-            state.fill_generics(scopes, &mut ty);
-
-            self.emit_type(scopes, &ty);
-            if !param.mutable {
-                self.emit(" const");
+            if f.proto.is_extern || is_prototype {
+                let mut ty = param.ty.clone();
+                state.fill_generics(scopes, &mut ty);
+                
+                self.emit_type(scopes, &ty);
+                if !param.mutable {
+                    self.emit(" const");
+                }
+            } else {
+                self.emit_local_decl(
+                    scopes,
+                    *scopes[f.body_scope]
+                        .vars
+                        .iter()
+                        .find(|&&v| scopes.get_var(v).name == param.name)
+                        .unwrap(),
+                    state,
+                );
             }
-
-            self.emit(format!(" {}", param.name));
         }
 
         if f.proto.variadic {
@@ -251,6 +261,52 @@ impl Buffer {
         } else {
             self.emit(")");
         }
+    }
+
+    fn emit_var_name(&mut self, scopes: &Scopes, id: VariableId, state: &mut State) {
+        use std::collections::hash_map::*;
+
+        let var = scopes.get_var(id);
+        if var.is_static {
+            self.emit(scopes.full_name(var.scope, &var.name));
+        } else {
+            match state.emitted_names.entry(var.name.clone()) {
+                Entry::Occupied(entry) if *entry.get() == id => {
+                    self.emit("$");
+                    self.emit(&var.name);
+                }
+                Entry::Occupied(_) => {
+                    let len = state.renames.len();
+                    self.emit(
+                        state
+                            .renames
+                            .entry(id)
+                            .or_insert_with(|| format!("$r{len}")),
+                    );
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(id);
+                    self.emit("$");
+                    self.emit(&var.name);
+                }
+            }
+        }
+    }
+
+    fn emit_local_decl(&mut self, scopes: &Scopes, id: VariableId, state: &mut State) {
+        let var = scopes.get_var(id);
+        let mut ty = var.ty.clone();
+        state.fill_generics(scopes, &mut ty);
+        if ty.is_void_like() {
+            return;
+        }
+
+        self.emit_type(scopes, &ty);
+        if !var.mutable {
+            self.emit(" const");
+        }
+        self.emit(" ");
+        self.emit_var_name(scopes, id, state);
     }
 }
 
@@ -347,24 +403,11 @@ impl Codegen {
                     prototypes.emit("extern ");
                 }
 
-                prototypes.emit_prototype(scopes, &state);
+                prototypes.emit_prototype(scopes, &mut state, true);
                 prototypes.emit(";");
 
                 if let Some(body) = f.body.clone() {
-                    this.buffer.emit_prototype(scopes, &state);
-
-                    let func = scopes.get_func(state.func.id);
-                    for param in &func.proto.params {
-                        state.emitted_names.insert(
-                            param.name.clone(),
-                            *scopes[func.body_scope]
-                                .vars
-                                .iter()
-                                .find(|&&v| scopes.get_var(v).name == param.name)
-                                .unwrap(),
-                        );
-                    }
-
+                    this.buffer.emit_prototype(scopes, &mut state, false);
                     this.emit_block(scopes, body, &mut state);
                 }
             }
@@ -381,9 +424,7 @@ impl Codegen {
                 let var = scopes.get_var(id);
                 if var.is_static && !var.ty.is_void_like() {
                     this.buffer.emit("static ");
-                    this.buffer.emit_type(scopes, &var.ty);
-                    this.buffer.emit(" ");
-                    this.emit_var_name(scopes, id, main);
+                    this.buffer.emit_local_decl(scopes, id, main);
                     this.buffer.emit(";");
 
                     statics.push(id);
@@ -395,7 +436,7 @@ impl Codegen {
         this.buffer.emit("int main(int argc, char **argv) {");
         this.buffer.emit("GC_INIT();");
         for id in statics {
-            this.emit_var_name(scopes, id, main);
+            this.buffer.emit_var_name(scopes, id, main);
             this.buffer.emit(" = ");
             //this.gen_expr(scopes, scopes.get_var(id).value.clone().unwrap(), None);
             this.buffer.emit(";");
@@ -442,7 +483,7 @@ impl Codegen {
                     {
                         let var = scopes.get_var(id);
                         if !var.ty.is_void_like() {
-                            self.emit_local_decl(scopes, id, state);
+                            self.buffer.emit_local_decl(scopes, id, state);
                             if let Some(value) = &var.value {
                                 self.buffer.emit(" = ");
                                 self.gen_expr_inner(scopes, value.clone(), state);
@@ -653,7 +694,7 @@ impl Codegen {
                 }
                 Symbol::Var(id) => {
                     if !scopes.get_var(id).ty.is_void_like() {
-                        self.emit_var_name(scopes, id, state);
+                        self.buffer.emit_var_name(scopes, id, state);
                     }
                 }
             },
@@ -873,7 +914,7 @@ impl Codegen {
 
                             if let Some(id) = pattern.binding {
                                 if !scopes.get_var(id).ty.is_void_like() {
-                                    self.emit_local_decl(scopes, id, state);
+                                    self.buffer.emit_local_decl(scopes, id, state);
                                     self.buffer
                                         .emit(format!(" = {tmp_name}.{};", pattern.variant.0));
                                 }
@@ -974,9 +1015,6 @@ impl Codegen {
         self.buffer.emit_type(scopes, &ty);
         self.buffer.emit(format!(" {name}"));
         self.buffer.emit(";");
-        if !member.public {
-            self.buffer.emit("/* private */ \n")
-        }
     }
 
     fn emit_structs(&mut self, scopes: &Scopes, prototypes: String) -> Result<(), Error> {
@@ -1033,50 +1071,6 @@ impl Codegen {
         }
 
         Ok(())
-    }
-
-    fn emit_local_decl(&mut self, scopes: &Scopes, id: VariableId, state: &mut State) {
-        let var = scopes.get_var(id);
-        let mut ty = var.ty.clone();
-        state.fill_generics(scopes, &mut ty);
-        if ty.is_void_like() {
-            return;
-        }
-
-        self.buffer.emit_type(scopes, &ty);
-        if !var.mutable {
-            self.buffer.emit(" const");
-        }
-        self.buffer.emit(" ");
-        self.emit_var_name(scopes, id, state);
-    }
-
-    fn emit_var_name(&mut self, scopes: &Scopes, id: VariableId, state: &mut State) {
-        use std::collections::hash_map::*;
-
-        let var = scopes.get_var(id);
-        if var.is_static {
-            self.buffer.emit(scopes.full_name(var.scope, &var.name));
-        } else {
-            match state.emitted_names.entry(var.name.clone()) {
-                Entry::Occupied(entry) if *entry.get() == id => {
-                    self.buffer.emit(&var.name);
-                }
-                Entry::Occupied(_) => {
-                    let len = state.renames.len();
-                    self.buffer.emit(
-                        state
-                            .renames
-                            .entry(id)
-                            .or_insert_with(|| format!("$r{len}")),
-                    );
-                }
-                Entry::Vacant(entry) => {
-                    entry.insert(id);
-                    self.buffer.emit(&var.name);
-                }
-            }
-        }
     }
 
     fn get_struct_order<'a>(
