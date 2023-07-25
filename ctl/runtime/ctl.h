@@ -2,7 +2,6 @@
 #define CTL_RUNTIME_H
 
 #include <gc.h>
-#include <stdio.h>
 #include <stdint.h>
 
 #define CTL_SBITINT(bits) _BitInt(bits)
