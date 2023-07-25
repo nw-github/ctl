@@ -179,19 +179,14 @@ impl Buffer {
         }
     }
 
-    fn emit_var_name(&mut self, scopes: &Scopes, id: VariableId) {
-        let var = scopes.get_var(id);
-        if var.is_static {
-            self.emit(scopes.full_name(var.scope, &var.name));
-        } else {
-            self.emit(&var.name);
-        }
-    }
-
     fn emit_prototype(&mut self, scopes: &Scopes, state: &State) {
         let f = scopes.get_func(state.func.id);
         let mut ret = f.proto.ret.clone();
         state.fill_generics(scopes, &mut ret);
+
+        if ret.is_never() {
+            self.emit("_Noreturn ");
+        }
 
         self.emit_type(scopes, &ret);
         self.emit(" ");
@@ -295,6 +290,8 @@ pub struct Compiler {
     cur_block: String,
     cur_loop: String,
     yielded: bool,
+    emitted_names: HashMap<String, VariableId>,
+    renames: HashMap<VariableId, String>,
 }
 
 impl Compiler {
@@ -346,6 +343,23 @@ impl Compiler {
 
                 if let Some(body) = f.body.clone() {
                     this.buffer.emit_prototype(scopes, &state);
+
+                    let func = scopes.get_func(state.func.id);
+
+                    this.emitted_names.clear();
+                    this.renames.clear();
+                    this.tmpvar = 0;
+                    for param in &func.proto.params {
+                        this.emitted_names.insert(
+                            param.name.clone(),
+                            *scopes[func.body_scope]
+                                .vars
+                                .iter()
+                                .find(|&&v| scopes.get_var(v).name == param.name)
+                                .unwrap(),
+                        );
+                    }
+
                     this.emit_block(scopes, body, &state);
                 }
             }
@@ -364,7 +378,7 @@ impl Compiler {
                     this.buffer.emit("static ");
                     this.buffer.emit_type(scopes, &var.ty);
                     this.buffer.emit(" ");
-                    this.buffer.emit_var_name(scopes, id);
+                    this.emit_var_name(scopes, id);
                     this.buffer.emit(";");
 
                     statics.push(id);
@@ -376,7 +390,7 @@ impl Compiler {
         this.buffer.emit("int main(int argc, char **argv) {");
         this.buffer.emit("GC_INIT();");
         for id in statics {
-            this.buffer.emit_var_name(scopes, id);
+            this.emit_var_name(scopes, id);
             this.buffer.emit(" = ");
             //this.compile_expr(scopes, scopes.get_var(id).value.clone().unwrap(), None);
             this.buffer.emit(";");
@@ -395,7 +409,7 @@ impl Compiler {
             );
             this.buffer.emit("(");
             this.buffer.emit_fn_name(scopes, &state);
-            this.buffer.emit("(argc, argv)); }");
+            this.buffer.emit("(argc, (const char **)argv)); }");
         } else {
             this.buffer.emit("(void)argc;");
             this.buffer.emit("(void)argv;");
@@ -435,7 +449,7 @@ impl Compiler {
                     {
                         let var = scopes.get_var(id);
                         if !var.ty.is_void_like() {
-                            self.emit_local_decl(scopes, var, state);
+                            self.emit_local_decl(scopes, id, state);
                             if let Some(value) = &var.value {
                                 self.buffer.emit(" = ");
                                 self.compile_expr_inner(scopes, value.clone(), state);
@@ -652,7 +666,7 @@ impl Compiler {
                 }
                 Symbol::Var(id) => {
                     if !scopes.get_var(id).ty.is_void_like() {
-                        self.buffer.emit_var_name(scopes, id);
+                        self.emit_var_name(scopes, id);
                     }
                 }
             },
@@ -872,7 +886,7 @@ impl Compiler {
 
                             if let Some(id) = pattern.binding {
                                 if !scopes.get_var(id).ty.is_void_like() {
-                                    self.emit_local_decl(scopes, scopes.get_var(id), state);
+                                    self.emit_local_decl(scopes, id, state);
                                     self.buffer
                                         .emit(format!(" = {tmp_name}.{};", pattern.variant.0));
                                 }
@@ -1034,7 +1048,8 @@ impl Compiler {
         Ok(())
     }
 
-    fn emit_local_decl(&mut self, scopes: &Scopes, var: &Variable, state: &State) {
+    fn emit_local_decl(&mut self, scopes: &Scopes, id: VariableId, state: &State) {
+        let var = scopes.get_var(id);
         let mut ty = var.ty.clone();
         state.fill_generics(scopes, &mut ty);
         if ty.is_void_like() {
@@ -1045,7 +1060,31 @@ impl Compiler {
         if !var.mutable {
             self.buffer.emit(" const");
         }
-        self.buffer.emit(format!(" {}", var.name));
+        self.buffer.emit(" ");
+        self.emit_var_name(scopes, id);
+    }
+
+    fn emit_var_name(&mut self, scopes: &Scopes, id: VariableId) {
+        use std::collections::hash_map::*;
+
+        let var = scopes.get_var(id);
+        if var.is_static {
+            self.buffer.emit(scopes.full_name(var.scope, &var.name));
+        } else {
+            match self.emitted_names.entry(var.name.clone()) {
+                Entry::Occupied(entry) if *entry.get() == id => {
+                    self.buffer.emit(&var.name);
+                }
+                Entry::Occupied(_) => {
+                    self.buffer
+                        .emit(self.renames.entry(id).or_insert_with(|| tmpvar!(self)));
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(id);
+                    self.buffer.emit(&var.name);
+                }
+            }
+        }
     }
 
     fn get_struct_order<'a>(
