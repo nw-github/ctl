@@ -1143,7 +1143,7 @@ impl Compiler {
     ) -> Vec<CheckedExpr> {
         let mut result = Vec::with_capacity(args.len());
         for param in params {
-            result.push(args.remove(&param.name).unwrap());
+            result.push(args.shift_remove(&param.name).unwrap());
         }
         result.extend(args.drain(..).map(|(_, arg)| arg));
         result
