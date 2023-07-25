@@ -594,6 +594,7 @@ pub struct CheckedPrototype {
     pub name: String,
     pub is_async: bool,
     pub is_extern: bool,
+    pub variadic: bool,
     pub type_params: Vec<String>,
     pub params: Vec<CheckedParam>,
     pub ret: TypeId,
@@ -1346,9 +1347,10 @@ impl Scopes {
                                     true,
                                     &Prototype {
                                         public: base.public,
-                                        name: base.name.data.clone(),
+                                        name: base.name.clone(),
                                         is_async: false,
                                         is_extern: false,
+                                        variadic: false,
                                         type_params: base.type_params.clone(),
                                         params,
                                         ret: TypeHint::Regular(Located::new(
@@ -1459,9 +1461,10 @@ impl Scopes {
                                     true,
                                     &Prototype {
                                         public: true,
-                                        name: name.clone(),
+                                        name: Located::new(name.clone(), Span::default()),
                                         is_async: false,
                                         is_extern: false,
+                                        variadic: false,
                                         type_params: base.type_params.clone(),
                                         params,
                                         ret: TypeHint::Regular(Located::new(
@@ -1598,9 +1601,10 @@ impl Scopes {
         let checked = Function {
             proto: CheckedPrototype {
                 public: proto.public,
-                name: proto.name.clone(),
+                name: proto.name.data.clone(),
                 is_async: proto.is_async,
                 is_extern: proto.is_extern,
+                variadic: proto.variadic,
                 type_params: proto.type_params.iter().map(|x| x.0.clone()).collect(),
                 params: proto
                     .params
@@ -1621,7 +1625,7 @@ impl Scopes {
 
         let id = self.insert_func_in(checked, scope);
         self.enter(
-            Some(proto.name.clone()),
+            Some(proto.name.data.clone()),
             ScopeKind::Function(id),
             |scopes| {
                 scopes.get_func_mut(id).body_scope = scopes.current_id();
@@ -2211,7 +2215,11 @@ impl TypeChecker {
 
     fn check_proto(&mut self, scopes: &mut Scopes, proto: Prototype) -> FunctionId {
         // TODO: disallow private type in public interface
-        let id = scopes.find_func(&proto.name).unwrap();
+        let id = scopes.find_func(&proto.name.data).unwrap();
+        if proto.variadic && !proto.is_extern {
+            self.error::<()>(Error::new("only extern functions may be variadic", proto.name.span));
+        }
+
         scopes.enter_id(scopes.get_func(id).body_scope, |scopes| {
             for i in 0..proto.params.len() {
                 resolve_forward_declare!(
@@ -3366,6 +3374,8 @@ impl TypeChecker {
     ) -> (IndexMap<String, CheckedExpr>, TypeId) {
         let mut result = IndexMap::with_capacity(args.len());
         let mut last_pos = 0;
+        let variadic = scopes.get_func(func.id).proto.variadic;
+        let mut num = 0;
         for (name, expr) in args {
             if let Some(name) = name {
                 match result.entry(name.clone()) {
@@ -3397,9 +3407,12 @@ impl TypeChecker {
                     self.check_arg(func, scopes, expr, param, inst),
                 );
                 last_pos = i + 1;
-            } else {
+            } else if !variadic {
                 // TODO: a better error here would be nice
                 self.error::<()>(Error::new("too many positional arguments", expr.span));
+            } else {
+                num += 1;
+                result.insert(format!("${num}"), self.check_expr(scopes, expr, None));
             }
         }
 
@@ -3413,7 +3426,7 @@ impl TypeChecker {
         //     }
         // }
 
-        if params.len() != result.len() {
+        if params.len() > result.len() {
             let mut missing = String::new();
             for param in params {
                 if !result.contains_key(&param.name) {

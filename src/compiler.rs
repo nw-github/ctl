@@ -219,7 +219,13 @@ impl Buffer {
             self.emit(format!(" {}", param.name));
         }
 
-        if f.proto.params.is_empty() {
+        if f.proto.variadic {
+            if f.proto.params.is_empty() {
+                self.emit("...)");
+            } else {
+                self.emit(", ...)");
+            }
+        } else if f.proto.params.is_empty() {
             self.emit("void)");
         } else {
             self.emit(")");
@@ -606,10 +612,11 @@ impl Compiler {
                     .insert((**expr.ty.as_user_type().unwrap()).clone());
 
                 self.buffer.emit_cast(scopes, &expr.ty);
-                self.buffer.emit(format!(
-                    "{{ .slc = {{ .ptr = (uint8_t const*)u8\"{value}\", .len = (usize){} }} }}",
-                    value.len()
-                ));
+                self.buffer.emit("{ .slc = { .ptr = (uint8_t const*)u8\"");
+                for byte in value.as_bytes() {
+                    self.buffer.emit(format!("\\x{byte:x}"));
+                }
+                self.buffer.emit(format!("\", .len = (usize){} }} }}", value.len()));
             }
             ExprData::Char(value) => {
                 self.buffer.emit_cast(scopes, &expr.ty);
@@ -1117,14 +1124,11 @@ impl Compiler {
         params: &[CheckedParam],
         mut args: IndexMap<String, CheckedExpr>,
     ) -> Vec<CheckedExpr> {
-        if params.len() == args.len() {
-            let mut result = Vec::with_capacity(args.len());
-            for param in params {
-                result.push(args.remove(&param.name).unwrap());
-            }
-            result
-        } else {
-            Vec::new()
+        let mut result = Vec::with_capacity(args.len());
+        for param in params {
+            result.push(args.remove(&param.name).unwrap());
         }
+        result.extend(args.drain(..).map(|(_, arg)| arg));
+        result
     }
 }

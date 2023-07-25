@@ -532,19 +532,21 @@ impl<'a> Parser<'a> {
         is_async: bool,
         is_extern: bool,
     ) -> Result<Prototype> {
-        let name = self.expect_id("expected name")?;
+        let name = self.expect_id_with_span("expected name")?;
+        let mut variadic = false;
         let type_params = self.parse_generic_params()?;
         self.expect_kind(Token::LParen, "expected parameter list")?;
         let params = if self.advance_if_kind(Token::RParen).is_none() {
             let mut count = 0;
-            self.comma_separated(Token::RParen, "expected ')'", |this| {
+            let mut params = Vec::new();
+            loop {
                 count += 1;
 
-                let keyword = this.advance_if_kind(Token::Keyword).is_some();
-                let mutable = this.advance_if_kind(Token::Mut).is_some();
+                let keyword = self.advance_if_kind(Token::Keyword).is_some();
+                let mutable = self.advance_if_kind(Token::Mut).is_some();
                 let mut has_default = false;
-                if allow_method && count == 1 && this.advance_if_kind(Token::This).is_some() {
-                    Ok(Param {
+                if allow_method && count == 1 && self.advance_if_kind(Token::This).is_some() {
+                    params.push(Param {
                         mutable: false,
                         keyword,
                         name: THIS_PARAM.into(),
@@ -555,13 +557,16 @@ impl<'a> Parser<'a> {
                         },
                         default: None,
                     })
+                } else if self.advance_if_kind(Token::Ellipses).is_some() {
+                    variadic = true;
+                    break;
                 } else {
-                    let name = this.expect_id("expected name")?.into();
-                    this.expect_kind(Token::Colon, "expected type")?;
-                    let ty = this.parse_type()?;
-                    let default = if this.advance_if_kind(Token::Assign).is_some() {
+                    let name = self.expect_id("expected name")?.into();
+                    self.expect_kind(Token::Colon, "expected type")?;
+                    let ty = self.parse_type()?;
+                    let default = if self.advance_if_kind(Token::Assign).is_some() {
                         has_default = true;
-                        Some(this.expression()?)
+                        Some(self.expression()?)
                     } else {
                         if !keyword && has_default {
                             todo!("positional parameters must not follow a default parameter")
@@ -570,7 +575,7 @@ impl<'a> Parser<'a> {
                         None
                     };
 
-                    Ok(Param {
+                    params.push(Param {
                         mutable,
                         keyword,
                         name,
@@ -578,17 +583,24 @@ impl<'a> Parser<'a> {
                         default,
                     })
                 }
-            })?
-            .0
+
+                if self.advance_if_kind(Token::Comma).is_none() {
+                    break;
+                }
+            }
+
+            self.expect_kind(Token::RParen, "expected ')'")?;
+            params
         } else {
             Vec::new()
         };
 
         Ok(Prototype {
-            name: name.into(),
+            name: L::new(name.0.into(), name.1),
             public: is_public,
             is_async,
             is_extern,
+            variadic,
             type_params,
             params,
             ret: if !self.matches(|kind| matches!(kind, Token::Semicolon | Token::LCurly)) {

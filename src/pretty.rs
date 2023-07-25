@@ -388,6 +388,7 @@ fn print_prototype(
         is_async,
         is_extern,
         type_params,
+        variadic,
         params,
         ret,
         public,
@@ -395,9 +396,10 @@ fn print_prototype(
     indent: usize,
 ) {
     let tabs = INDENT.repeat(indent);
-    print!("{tabs}Fn[{name}]");
+    print!("{tabs}Fn[{}]", name.data);
     print_bool!(is_async);
     print_bool!(is_extern);
+    print_bool!(variadic);
     print_bool!(public);
     println!();
 

@@ -294,9 +294,10 @@ pub mod stmt {
     #[derive(Debug, Clone)]
     pub struct Prototype {
         pub public: bool,
-        pub name: String,
+        pub name: Located<String>,
         pub is_async: bool,
         pub is_extern: bool,
+        pub variadic: bool,
         pub type_params: Vec<(String, Vec<Located<Path>>)>,
         pub params: Vec<Param>,
         pub ret: TypeHint,
