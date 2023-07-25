@@ -923,7 +923,7 @@ impl Scopes {
         None
     }
 
-    fn find_core_option(&self) -> Option<UserTypeId> {
+    pub fn find_core_option(&self) -> Option<UserTypeId> {
         let core = self.scopes()[0].children.get("core")?;
         let option = self[*core].children.get("option")?;
         self.find_user_type_in("Option", *option)

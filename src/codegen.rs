@@ -116,7 +116,11 @@ impl Buffer {
             }
             TypeId::Func(_) => todo!(),
             TypeId::UserType(ut) => {
-                self.emit_type_name(scopes, ut);
+                if is_opt_ptr(scopes, id) {
+                    self.emit_type(scopes, &ut.generics[0]);
+                } else {
+                    self.emit_type_name(scopes, ut);
+                }
             }
             TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
@@ -232,7 +236,7 @@ impl Buffer {
             if f.proto.is_extern || is_prototype {
                 let mut ty = param.ty.clone();
                 state.fill_generics(scopes, &mut ty);
-                
+
                 self.emit_type(scopes, &ty);
                 if !param.mutable {
                     self.emit(" const");
@@ -367,7 +371,7 @@ pub struct Codegen {
 }
 
 impl Codegen {
-    pub fn compile(scope: ScopeId, scopes: &Scopes) -> Result<String, Error> {
+    pub fn build(scope: ScopeId, scopes: &Scopes) -> Result<String, Error> {
         let Some(main) = scopes.find_func_in("main", scope) else {
             return Err(Error::new(
                 "no main function found",
@@ -478,11 +482,11 @@ impl Codegen {
                 }
             }
             CheckedStmt::Let(id) => {
-                stmt! {
-                    self,
-                    {
-                        let var = scopes.get_var(id);
-                        if !var.ty.is_void_like() {
+                let var = scopes.get_var(id);
+                if !var.ty.is_void_like() {
+                    stmt! {
+                        self,
+                        {
                             self.buffer.emit_local_decl(scopes, id, state);
                             if let Some(value) = &var.value {
                                 self.buffer.emit(" = ");
@@ -490,11 +494,10 @@ impl Codegen {
                             }
 
                             self.buffer.emit(";");
-                        } else if let Some(value) = &var.value {
-                            self.gen_expr_inner(scopes, value.clone(), state);
-                            self.buffer.emit(";");
                         }
                     }
+                } else if let Some(value) = &var.value {
+                    self.gen_stmt(scopes, CheckedStmt::Expr(value.clone()), state);
                 }
             }
             CheckedStmt::None => {}
@@ -698,45 +701,53 @@ impl Codegen {
                     }
                 }
             },
-            ExprData::Instance(members) => {
-                self.buffer.emit_cast(scopes, &expr.ty);
-                self.buffer.emit("{");
-                for (name, value) in members {
-                    if let Some(union) = expr
-                        .ty
-                        .as_user_type()
-                        .and_then(|ut| scopes.get_user_type(ut.id).data.as_union())
-                    {
-                        if !union.is_unsafe
-                            && union
-                                .variants
-                                .iter()
-                                .find(|n| n.0 == name)
-                                .filter(|m| !m.1.shared)
-                                .is_some()
+            ExprData::Instance(mut members) => {
+                if is_opt_ptr(scopes, &expr.ty) {
+                    if let Some(some) = members.remove("Some") {
+                        self.gen_expr(scopes, some, state);
+                    } else {
+                        self.buffer.emit(" NULL");
+                    }
+                } else {
+                    self.buffer.emit_cast(scopes, &expr.ty);
+                    self.buffer.emit("{");
+                    for (name, value) in members {
+                        if let Some(union) = expr
+                            .ty
+                            .as_user_type()
+                            .and_then(|ut| scopes.get_user_type(ut.id).data.as_union())
                         {
-                            self.buffer.emit(format!(
-                                ".{UNION_TAG_NAME} = {},",
-                                union.variant_tag(&name).unwrap()
-                            ));
+                            if !union.is_unsafe
+                                && union
+                                    .variants
+                                    .iter()
+                                    .find(|n| n.0 == name)
+                                    .filter(|m| !m.1.shared)
+                                    .is_some()
+                            {
+                                self.buffer.emit(format!(
+                                    ".{UNION_TAG_NAME} = {},",
+                                    union.variant_tag(&name).unwrap()
+                                ));
+                            }
+                        }
+    
+                        if !value.ty.is_void_like() {
+                            self.buffer.emit(format!(".{name} = "));
+                            self.gen_expr(scopes, value, state);
+                            self.buffer.emit(", ");
                         }
                     }
-
-                    if !value.ty.is_void_like() {
-                        self.buffer.emit(format!(".{name} = "));
-                        self.gen_expr(scopes, value, state);
-                        self.buffer.emit(", ");
+                    self.buffer.emit("}");
+    
+                    if let TypeId::UserType(data) = expr.ty {
+                        self.structs.insert((*data).clone());
+                    } else {
+                        panic!(
+                            "ICE: Constructing instance of non-struct type {}!",
+                            expr.ty.name(scopes)
+                        );
                     }
-                }
-                self.buffer.emit("}");
-
-                if let TypeId::UserType(data) = expr.ty {
-                    self.structs.insert((*data).clone());
-                } else {
-                    panic!(
-                        "ICE: Constructing instance of non-struct type {}!",
-                        expr.ty.name(scopes)
-                    );
                 }
             }
             ExprData::Member { source, member } => {
@@ -896,6 +907,7 @@ impl Codegen {
                         // TODO: update to exclude void when literal patterns are implemented
                         let tmp_name = state.tmpvar();
                         state.fill_generics(scopes, &mut scrutinee.ty);
+                        let opt_ptr = is_opt_ptr(scopes, &scrutinee.ty);
 
                         self.buffer.emit_type(scopes, &scrutinee.ty);
                         self.buffer.emit(format!(" {tmp_name} = "));
@@ -907,16 +919,34 @@ impl Codegen {
                                 self.buffer.emit("else ");
                             }
 
-                            self.buffer.emit(format!(
-                                "if ({tmp_name}.{UNION_TAG_NAME} == {}) {{",
-                                pattern.variant.1
-                            ));
+                            if opt_ptr && pattern.variant.0 == "Some" {
+                                self.buffer.emit(format!(
+                                    "if ({tmp_name} != NULL) {{",
+                                ));
 
-                            if let Some(id) = pattern.binding {
-                                if !scopes.get_var(id).ty.is_void_like() {
-                                    self.buffer.emit_local_decl(scopes, id, state);
-                                    self.buffer
-                                        .emit(format!(" = {tmp_name}.{};", pattern.variant.0));
+                                if let Some(id) = pattern.binding {
+                                    if !scopes.get_var(id).ty.is_void_like() {
+                                        self.buffer.emit_local_decl(scopes, id, state);
+                                        self.buffer
+                                            .emit(format!(" = {tmp_name};"));
+                                    }
+                                }
+                            } else if opt_ptr && pattern.variant.0 == "None" {
+                                self.buffer.emit(format!(
+                                    "if ({tmp_name} == NULL) {{",
+                                ));
+                            } else {
+                                self.buffer.emit(format!(
+                                    "if ({tmp_name}.{UNION_TAG_NAME} == {}) {{",
+                                    pattern.variant.1
+                                ));
+
+                                if let Some(id) = pattern.binding {
+                                    if !scopes.get_var(id).ty.is_void_like() {
+                                        self.buffer.emit_local_decl(scopes, id, state);
+                                        self.buffer
+                                            .emit(format!(" = {tmp_name}.{};", pattern.variant.0));
+                                    }
                                 }
                             }
 
@@ -1179,4 +1209,13 @@ impl Codegen {
         result.extend(args.drain(..).map(|(_, arg)| arg));
         result
     }
+}
+
+fn is_opt_ptr(scopes: &Scopes, ty: &TypeId) -> bool {
+    ty.as_user_type()
+        .filter(|ut| {
+            Some(ut.id) == scopes.find_core_option()
+                && (ut.generics[0].is_ptr() || ut.generics[0].is_mut_ptr())
+        })
+        .is_some()
 }

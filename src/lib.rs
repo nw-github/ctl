@@ -122,7 +122,7 @@ impl Pipeline<Checked> {
     pub fn codegen(self) -> std::result::Result<String, Vec<(PathBuf, Vec<Error>)>> {
         let module = self.state.0;
         if module.errors.is_empty() {
-            match Codegen::compile(module.scope, &module.scopes) {
+            match Codegen::build(module.scope, &module.scopes) {
                 Ok(str) => Ok(str),
                 Err(_) => todo!(),
             }
