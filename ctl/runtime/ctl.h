@@ -16,30 +16,6 @@ typedef uint8_t     CTL_bool;
 typedef float       f32;
 typedef double      f64;
 
-inline void print_i32(int32_t const num) {
-    printf("%d", num);
-}
-
-inline void print_usize(usize const num) {
-    printf("%lu", num);
-}
-
-inline void print(uint8_t const *buf, usize const len) {
-    printf("%.*s", (int)len, buf);
-}
-
-inline void println(uint8_t const *buf, usize const len) {
-    printf("%.*s\n", (int)len, buf);
-}
-
-inline void eprint(uint8_t const *buf, usize const len) {
-    fprintf(stderr, "%.*s", (int)len, buf);
-}
-
-inline void eprintln(uint8_t const *buf, usize const len) {
-    fprintf(stderr, "%.*s\n", (int)len, buf);
-}
-
 inline usize ctl_malloc(usize size) {
     return (usize)GC_MALLOC(size);
 }

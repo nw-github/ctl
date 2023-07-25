@@ -1,25 +1,21 @@
-pub fn println(s: str) {
-    extern fn println(buf: *u8, len: usize);
+extern fn printf(fmt: *c_char, ...) c_int;
+extern fn write(fd: c_int, buf: *c_void, count: usize) isize;
 
-    println(s.as_ptr(), s.len());
+pub fn println(s: str) {
+    printf("%.*s\n".as_c_str(), s.len() as! c_int, s.as_c_str());
 }
 
 pub fn print(s: str) {
-    extern fn print(buf: *u8, len: usize);
-
-    print(s.as_ptr(), s.len());
+    printf("%.*s".as_c_str(), s.len() as! c_int, s.as_c_str());
 }
 
 pub fn eprintln(s: str) {
-    extern fn eprintln(buf: *u8, len: usize);
-
-    eprintln(s.as_ptr(), s.len());
+    write(2, s.as_ptr() as *c_void, s.len());
+    write(2, &10u8 as *c_void, 1);
 }
 
 pub fn eprint(s: str) {
-    extern fn eprint(buf: *u8, len: usize);
-
-    eprint(s.as_ptr(), s.len());
+    write(2, s.as_ptr() as *c_void, s.len());
 }
 
 fn convert_argv(argc: c_int, argv: **c_char) [str..] {
