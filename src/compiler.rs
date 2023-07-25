@@ -310,6 +310,19 @@ impl Compiler {
             ..Self::default()
         };
 
+        let conv_argv = (scopes.get_func(main.id).proto.params.len() == 1).then(|| {
+            let id = scopes
+                .find_func_in("convert_argv", scopes.find_module("std").unwrap())
+                .unwrap();
+
+            let state = State {
+                inst: None,
+                func: GenericFunc::new(id, vec![]),
+            };
+            this.funcs.insert(state.clone());
+            state
+        });
+
         let mut prototypes = Buffer::default();
         let mut emitted = HashSet::new();
         while !this.funcs.is_empty() {
@@ -356,9 +369,6 @@ impl Compiler {
         this.buffer.emit(functions.0);
         this.buffer.emit("int main(int argc, char **argv) {");
         this.buffer.emit("GC_INIT();");
-        this.buffer.emit("(void)argc;");
-        this.buffer.emit("(void)argv;");
-        
         for id in statics {
             this.buffer.emit_var_name(scopes, id);
             this.buffer.emit(" = ");
@@ -368,15 +378,31 @@ impl Compiler {
             todo!("statics")
         }
 
-        this.buffer.emit("return ");
-        this.buffer.emit_fn_name(
-            scopes,
-            &State {
-                func: main,
-                inst: None,
-            },
-        );
-        this.buffer.emit("(); }");
+        if let Some(state) = conv_argv {
+            this.buffer.emit("return ");
+            this.buffer.emit_fn_name(
+                scopes,
+                &State {
+                    func: main,
+                    inst: None,
+                },
+            );
+            this.buffer.emit("(");
+            this.buffer.emit_fn_name(scopes, &state);
+            this.buffer.emit("(argc, argv)); }");
+        } else {
+            this.buffer.emit("(void)argc;");
+            this.buffer.emit("(void)argv;");
+            this.buffer.emit("return ");
+            this.buffer.emit_fn_name(
+                scopes,
+                &State {
+                    func: main,
+                    inst: None,
+                },
+            );
+            this.buffer.emit("(); }");
+        }
 
         Ok(this.buffer.0)
     }
@@ -620,12 +646,13 @@ impl Compiler {
                         .as_user_type()
                         .and_then(|ut| scopes.get_user_type(ut.id).data.as_union())
                     {
-                        if !union.is_unsafe && union
-                            .variants
-                            .iter()
-                            .find(|n| n.0 == name)
-                            .filter(|m| !m.1.shared)
-                            .is_some()
+                        if !union.is_unsafe
+                            && union
+                                .variants
+                                .iter()
+                                .find(|n| n.0 == name)
+                                .filter(|m| !m.1.shared)
+                                .is_some()
                         {
                             self.buffer.emit(format!(
                                 ".{UNION_TAG_NAME} = {},",
@@ -1053,7 +1080,11 @@ impl Compiler {
             return;
         }
 
-        self.buffer.emit("typedef struct ");
+        if scopes.get_user_type(ut.id).data.as_union().map_or(false, |u| u.is_unsafe) {
+            self.buffer.emit("typedef union ");
+        } else {
+            self.buffer.emit("typedef struct ");
+        }
         self.buffer.emit_type_name(scopes, &ut);
         self.buffer.emit(" ");
         self.buffer.emit_type_name(scopes, &ut);

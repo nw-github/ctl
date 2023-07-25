@@ -22,3 +22,17 @@ pub fn eprint(s: str) {
     eprint(s.as_ptr(), s.len());
 }
 
+fn convert_argv(argc: c_int, argv: **c_char) [str..] {
+    use core::option::Option;
+    use std::vec::Vec;
+
+    {
+        let argc = { yield argc as! usize; };
+        mut args: [str] = Vec::with_capacity(argc);
+        mut i = 0usize;
+        while i < argc {
+            args.push(core::string::str::from_c_str(*core::mem::offset(argv, i++)));
+        }
+        return args.as_span();
+    }
+}
