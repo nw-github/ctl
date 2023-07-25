@@ -71,12 +71,12 @@ impl Buffer {
                     crate::typecheck::CInt::LongLong => self.emit("long long"),
                 }
             }
-            TypeId::Isize => self.emit("CTL(isize)"),
-            TypeId::Usize => self.emit("CTL(usize)"),
-            TypeId::F32 => self.emit("CTL(f32)"),
-            TypeId::F64 => self.emit("CTL(f64)"),
-            TypeId::Bool => self.emit("CTL(bool)"),
-            TypeId::Char => self.emit("CTL(char)"),
+            TypeId::Isize => self.emit("isize"),
+            TypeId::Usize => self.emit("usize"),
+            TypeId::F32 => self.emit("f32"),
+            TypeId::F64 => self.emit("f64"),
+            TypeId::Bool => self.emit("CTL_bool"),
+            TypeId::Char => self.emit("CTL_char"),
             TypeId::IntGeneric | TypeId::FloatGeneric => {
                 panic!("ICE: Int/FloatGeneric in emit_type");
             }
@@ -524,7 +524,7 @@ impl Compiler {
                     .filter(|&id| id == func.id)
                     .is_some()
                 {
-                    self.buffer.emit("(CTL(usize))sizeof");
+                    self.buffer.emit("(usize)sizeof");
                     self.buffer.emit_cast(scopes, &func.generics[0]);
                     if let TypeId::UserType(ty) = &func.generics[0] {
                         self.structs.insert((**ty).clone());
@@ -581,7 +581,7 @@ impl Compiler {
 
                 self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(format!(
-                    "{{ .ptr = (uint8_t const*)u8\"{value}\", .len = (CTL(usize)){} }}",
+                    "{{ .ptr = (uint8_t const*)u8\"{value}\", .len = (usize){} }}",
                     value.len()
                 ));
             }
