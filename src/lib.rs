@@ -1,6 +1,6 @@
 mod ast;
 mod checked_ast;
-mod compiler;
+mod codegen;
 mod lexer;
 mod parser;
 mod pretty;
@@ -12,7 +12,7 @@ use std::{
 };
 
 use anyhow::Context;
-use compiler::Compiler;
+use codegen::Codegen;
 use lexer::{Lexer, Span};
 use parser::ParsedFile;
 use typecheck::Module;
@@ -122,7 +122,7 @@ impl Pipeline<Checked> {
     pub fn codegen(self) -> std::result::Result<String, Vec<(PathBuf, Vec<Error>)>> {
         let module = self.state.0;
         if module.errors.is_empty() {
-            match Compiler::compile(module.scope, &module.scopes) {
+            match Codegen::compile(module.scope, &module.scopes) {
                 Ok(str) => Ok(str),
                 Err(_) => todo!(),
             }

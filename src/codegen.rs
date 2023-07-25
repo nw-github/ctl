@@ -281,7 +281,7 @@ macro_rules! stmt {
 }
 
 #[derive(Default)]
-pub struct Compiler {
+pub struct Codegen {
     buffer: Buffer,
     temporaries: Buffer,
     structs: HashSet<GenericUserType>,
@@ -294,7 +294,7 @@ pub struct Compiler {
     renames: HashMap<VariableId, String>,
 }
 
-impl Compiler {
+impl Codegen {
     pub fn compile(scope: ScopeId, scopes: &Scopes) -> Result<String, Error> {
         let Some(main) = scopes.find_func_in("main", scope) else {
             return Err(Error::new(
@@ -392,7 +392,7 @@ impl Compiler {
         for id in statics {
             this.emit_var_name(scopes, id);
             this.buffer.emit(" = ");
-            //this.compile_expr(scopes, scopes.get_var(id).value.clone().unwrap(), None);
+            //this.gen_expr(scopes, scopes.get_var(id).value.clone().unwrap(), None);
             this.buffer.emit(";");
 
             todo!("statics")
@@ -427,18 +427,18 @@ impl Compiler {
         Ok(this.buffer.0)
     }
 
-    fn compile_stmt(&mut self, scopes: &Scopes, stmt: CheckedStmt, state: &State) {
+    fn gen_stmt(&mut self, scopes: &Scopes, stmt: CheckedStmt, state: &State) {
         match stmt {
             CheckedStmt::Module(block) => {
                 for stmt in block.body.into_iter() {
-                    self.compile_stmt(scopes, stmt, state);
+                    self.gen_stmt(scopes, stmt, state);
                 }
             }
             CheckedStmt::Expr(expr) => {
                 stmt! {
                     self,
                     {
-                        self.compile_expr_inner(scopes, expr, state);
+                        self.gen_expr_inner(scopes, expr, state);
                         self.buffer.emit(";");
                     }
                 }
@@ -452,12 +452,12 @@ impl Compiler {
                             self.emit_local_decl(scopes, id, state);
                             if let Some(value) = &var.value {
                                 self.buffer.emit(" = ");
-                                self.compile_expr_inner(scopes, value.clone(), state);
+                                self.gen_expr_inner(scopes, value.clone(), state);
                             }
 
                             self.buffer.emit(";");
                         } else if let Some(value) = &var.value {
-                            self.compile_expr_inner(scopes, value.clone(), state);
+                            self.gen_expr_inner(scopes, value.clone(), state);
                             self.buffer.emit(";");
                         }
                     }
@@ -465,12 +465,12 @@ impl Compiler {
             }
             CheckedStmt::None => {}
             CheckedStmt::Error => {
-                panic!("ICE: CheckedStmt::Error in compile_stmt");
+                panic!("ICE: CheckedStmt::Error in gen_stmt");
             }
         }
     }
 
-    fn compile_expr_inner(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
+    fn gen_expr_inner(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
         state.fill_generics(scopes, &mut expr.ty);
         match expr.data {
             ExprData::Binary { op, left, right } => {
@@ -479,9 +479,9 @@ impl Compiler {
                     self.buffer.emit("(");
                 }
                 self.buffer.emit("(");
-                self.compile_expr(scopes, *left, state);
+                self.gen_expr(scopes, *left, state);
                 self.buffer.emit(format!(" {op} "));
-                self.compile_expr(scopes, *right, state);
+                self.gen_expr(scopes, *right, state);
                 self.buffer.emit(")");
 
                 if expr.ty == TypeId::Bool {
@@ -491,42 +491,42 @@ impl Compiler {
             ExprData::Unary { op, expr: inner } => match op {
                 UnaryOp::Plus => {
                     self.buffer.emit("+");
-                    self.compile_expr(scopes, *inner, state);
+                    self.gen_expr(scopes, *inner, state);
                 }
                 UnaryOp::Neg => {
                     self.buffer.emit("-");
-                    self.compile_expr(scopes, *inner, state);
+                    self.gen_expr(scopes, *inner, state);
                 }
                 UnaryOp::PostIncrement => {
-                    self.compile_expr(scopes, *inner, state);
+                    self.gen_expr(scopes, *inner, state);
                     self.buffer.emit("++");
                 }
                 UnaryOp::PostDecrement => {
-                    self.compile_expr(scopes, *inner, state);
+                    self.gen_expr(scopes, *inner, state);
                     self.buffer.emit("--");
                 }
                 UnaryOp::PreIncrement => {
                     self.buffer.emit("++");
-                    self.compile_expr(scopes, *inner, state);
+                    self.gen_expr(scopes, *inner, state);
                 }
                 UnaryOp::PreDecrement => {
                     self.buffer.emit("--");
-                    self.compile_expr(scopes, *inner, state);
+                    self.gen_expr(scopes, *inner, state);
                 }
                 UnaryOp::Not => {
                     if inner.ty == TypeId::Bool {
                         self.buffer.emit_cast(scopes, &expr.ty);
                         self.buffer.emit("(");
-                        self.compile_expr(scopes, *inner, state);
+                        self.gen_expr(scopes, *inner, state);
                         self.buffer.emit(" ^ 1)");
                     } else {
                         self.buffer.emit("~");
-                        self.compile_expr(scopes, *inner, state);
+                        self.gen_expr(scopes, *inner, state);
                     }
                 }
                 UnaryOp::Deref => {
                     self.buffer.emit("(*");
-                    self.compile_expr(scopes, *inner, state);
+                    self.gen_expr(scopes, *inner, state);
                     self.buffer.emit(")");
                 }
                 UnaryOp::Addr | UnaryOp::AddrMut => {
@@ -534,19 +534,19 @@ impl Compiler {
                     self.buffer.emit("&");
                     match inner.data {
                         ExprData::Unary { op, .. } if op == UnaryOp::Deref => {
-                            self.compile_expr(scopes, *inner, state);
+                            self.gen_expr(scopes, *inner, state);
                         }
                         ExprData::Symbol(_)
                         | ExprData::Member { .. }
                         | ExprData::Subscript { .. } => {
-                            self.compile_expr(scopes, *inner, state);
+                            self.gen_expr(scopes, *inner, state);
                         }
                         _ => {
-                            self.compile_to_tmp(scopes, *inner, state);
+                            self.gen_to_tmp(scopes, *inner, state);
                         }
                     }
                 }
-                UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in compile_expr"),
+                UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in gen_expr"),
                 UnaryOp::Try => todo!(),
             },
             ExprData::Call {
@@ -608,7 +608,7 @@ impl Compiler {
                         self.buffer.emit(", ");
                     }
 
-                    self.compile_expr(scopes, arg, state);
+                    self.gen_expr(scopes, arg, state);
                 }
                 self.buffer.emit(")");
             }
@@ -696,7 +696,7 @@ impl Compiler {
 
                     if !value.ty.is_void_like() {
                         self.buffer.emit(format!(".{name} = "));
-                        self.compile_expr(scopes, value, state);
+                        self.gen_expr(scopes, value, state);
                         self.buffer.emit(", ");
                     }
                 }
@@ -713,7 +713,7 @@ impl Compiler {
             }
             ExprData::Member { source, member } => {
                 if !expr.ty.is_void_like() {
-                    self.compile_expr(scopes, *source, state);
+                    self.gen_expr(scopes, *source, state);
                     self.buffer.emit(format!(".{member}"));
                 }
             }
@@ -723,18 +723,18 @@ impl Compiler {
                 value,
             } => {
                 if !expr.ty.is_void_like() {
-                    self.compile_expr(scopes, *target, state);
+                    self.gen_expr(scopes, *target, state);
                     if let Some(binary) = binary {
                         self.buffer.emit(format!(" {binary}= "));
                     } else {
                         self.buffer.emit(" = ");
                     }
-                    self.compile_expr(scopes, *value, state);
+                    self.gen_expr(scopes, *value, state);
                 } else {
-                    self.compile_expr(scopes, *target, state);
+                    self.gen_expr(scopes, *target, state);
                     self.buffer.emit(";");
 
-                    self.compile_expr(scopes, *value, state);
+                    self.gen_expr(scopes, *value, state);
                     self.buffer.emit(";");
                 }
             }
@@ -755,7 +755,7 @@ impl Compiler {
                     self, scopes, &expr.ty,
                     {
                         self.buffer.emit("if (");
-                        self.compile_expr(scopes, *cond, state);
+                        self.gen_expr(scopes, *cond, state);
                         self.buffer.emit(") {");
                         stmt! {
                             self,
@@ -763,7 +763,7 @@ impl Compiler {
                                 if !expr.ty.is_void_like() {
                                     self.buffer.emit(format!("{} = ", self.cur_block));
                                 }
-                                self.compile_expr(scopes, *if_branch, state);
+                                self.gen_expr(scopes, *if_branch, state);
                             }
                         }
 
@@ -775,7 +775,7 @@ impl Compiler {
                                     if !expr.ty.is_void_like() {
                                         self.buffer.emit(format!("{} = ", self.cur_block));
                                     }
-                                    self.compile_expr(scopes, *else_branch, state);
+                                    self.gen_expr(scopes, *else_branch, state);
                                 }
                             }
                         }
@@ -805,7 +805,7 @@ impl Compiler {
                                     self,
                                     {
                                         self.buffer.emit("if (!");
-                                        self.compile_expr(scopes, *cond, state);
+                                        self.gen_expr(scopes, *cond, state);
                                         self.buffer.emit(") { break; }");
                                     }
                                 }
@@ -835,14 +835,14 @@ impl Compiler {
                 // TODO: when return is used as anything except a StmtExpr, we will have to change
                 // the generated code to accomodate it
                 self.buffer.emit("return ");
-                self.compile_expr(scopes, *expr, state);
+                self.gen_expr(scopes, *expr, state);
                 self.yielded = true;
             }
             ExprData::Yield(expr) => {
                 if !expr.ty.is_void_like() {
                     self.buffer.emit(format!("{} = ", self.cur_block));
                 }
-                self.compile_expr(scopes, *expr, state);
+                self.gen_expr(scopes, *expr, state);
                 self.buffer.emit(";");
                 self.yielded = true;
             }
@@ -850,13 +850,13 @@ impl Compiler {
                 if !expr.ty.is_void_like() {
                     self.buffer.emit(format!("{} = ", self.cur_loop));
                 }
-                self.compile_expr(scopes, *expr, state);
+                self.gen_expr(scopes, *expr, state);
                 self.buffer.emit("; break;");
                 self.yielded = true;
             }
             ExprData::Continue => self.buffer.emit("continue;"),
             ExprData::Error => {
-                panic!("ICE: ExprData::Error in compile_expr");
+                panic!("ICE: ExprData::Error in gen_expr");
             }
             ExprData::Match {
                 expr: mut scrutinee,
@@ -871,7 +871,7 @@ impl Compiler {
 
                         self.buffer.emit_type(scopes, &scrutinee.ty);
                         self.buffer.emit(format!(" {tmp_name} = "));
-                        self.compile_expr(scopes, *scrutinee, state);
+                        self.gen_expr(scopes, *scrutinee, state);
                         self.buffer.emit(";");
 
                         for (i, (pattern, expr)) in body.into_iter().enumerate() {
@@ -895,7 +895,7 @@ impl Compiler {
                             stmt! {
                                 self,
                                 {
-                                    self.compile_expr(scopes, expr, state);
+                                    self.gen_expr(scopes, expr, state);
                                     self.buffer.emit("; }");
                                 }
                             }
@@ -906,13 +906,13 @@ impl Compiler {
             ExprData::As(inner, _) => {
                 self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit("(");
-                self.compile_expr(scopes, *inner, state);
+                self.gen_expr(scopes, *inner, state);
                 self.buffer.emit(")");
             }
         }
     }
 
-    fn compile_expr(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
+    fn gen_expr(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
         fn has_side_effects(expr: &CheckedExpr) -> bool {
             match &expr.data {
                 ExprData::Unary { op, .. } => matches!(
@@ -937,17 +937,17 @@ impl Compiler {
         if has_side_effects(&expr) {
             state.fill_generics(scopes, &mut expr.ty);
             if !expr.ty.is_void_like() {
-                self.compile_to_tmp(scopes, expr, state);
+                self.gen_to_tmp(scopes, expr, state);
             } else {
-                self.compile_expr_inner(scopes, expr, state);
+                self.gen_expr_inner(scopes, expr, state);
                 self.buffer.emit(";");
             }
         } else {
-            self.compile_expr_inner(scopes, expr, state);
+            self.gen_expr_inner(scopes, expr, state);
         }
     }
 
-    fn compile_to_tmp(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
+    fn gen_to_tmp(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &State) {
         state.fill_generics(scopes, &mut expr.ty);
 
         let tmp = tmpvar!(self);
@@ -956,7 +956,7 @@ impl Compiler {
             {
                 self.buffer.emit_type(scopes, &expr.ty);
                 self.buffer.emit(format!(" {tmp} = "));
-                self.compile_expr_inner(scopes, expr, state);
+                self.gen_expr_inner(scopes, expr, state);
                 self.buffer.emit(";");
             }
         };
@@ -968,7 +968,7 @@ impl Compiler {
     fn emit_block(&mut self, scopes: &Scopes, block: Vec<CheckedStmt>, state: &State) {
         self.buffer.emit("{");
         for stmt in block.into_iter() {
-            self.compile_stmt(scopes, stmt, state);
+            self.gen_stmt(scopes, stmt, state);
             if self.yielded {
                 self.yielded = false;
                 break;
