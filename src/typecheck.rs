@@ -1088,7 +1088,20 @@ impl Scopes {
             Path::Normal(data) => {
                 let (name, generics) = data.first().unwrap();
                 let is_end = data.len() == 1;
-                if let Some(id) = self.find_user_type(name) {
+                if let Some(id) = self.find_var(name) {
+                    if is_end {
+                        return Ok(ResolvedPath::Var(id));
+                    }
+
+                    if !generics.is_empty() {
+                        return Err(Error::new(
+                            "variables cannot be parameterized with generics",
+                            span,
+                        ));
+                    }
+
+                    Err(Error::new(format!("'{name}' is a variable"), span))
+                } else if let Some(id) = self.find_user_type(name) {
                     let ty = self.get_user_type(id);
                     if is_end {
                         return Ok(ResolvedPath::UserType(GenericUserType::new(
@@ -1108,19 +1121,6 @@ impl Scopes {
                     }
 
                     Err(Error::new(format!("'{name}' is a function"), span))
-                } else if let Some(id) = self.find_var(name) {
-                    if is_end {
-                        return Ok(ResolvedPath::Var(id));
-                    }
-
-                    if !generics.is_empty() {
-                        return Err(Error::new(
-                            "variables cannot be parameterized with generics",
-                            span,
-                        ));
-                    }
-
-                    Err(Error::new(format!("'{name}' is a variable"), span))
                 } else if let Some(id) = self.find_module(name) {
                     if is_end {
                         return Ok(ResolvedPath::Module(id));
@@ -1149,7 +1149,24 @@ impl Scopes {
     ) -> Result<ResolvedPath, Error> {
         for (i, (name, generics)) in data.iter().enumerate() {
             let is_end = i + 1 == data.len();
-            if let Some(id) = self.find_user_type_in(name, scope) {
+            if let Some(id) = self.find_var_in(name, scope) {
+                if !self.get_var(id).public {
+                    return Err(Error::new(format!("variable '{name}' is private"), span));
+                }
+
+                if !generics.is_empty() {
+                    return Err(Error::new(
+                        "variables cannot be parameterized with generics",
+                        span,
+                    ));
+                }
+
+                if is_end {
+                    return Ok(ResolvedPath::Var(id));
+                }
+
+                return Err(Error::new(format!("'{name}' is a variable"), span));
+            } else if let Some(id) = self.find_user_type_in(name, scope) {
                 let ty = self.get_user_type(id);
                 if !ty.public && self.module_of(ty.scope) != self.module_of(self.current_id()) {
                     return Err(Error::new(format!("type '{name}' is private"), span));
@@ -1177,23 +1194,6 @@ impl Scopes {
                 }
 
                 return Err(Error::new(format!("'{name}' is a function"), span));
-            } else if let Some(id) = self.find_var_in(name, scope) {
-                if !self.get_var(id).public {
-                    return Err(Error::new(format!("variable '{name}' is private"), span));
-                }
-
-                if !generics.is_empty() {
-                    return Err(Error::new(
-                        "variables cannot be parameterized with generics",
-                        span,
-                    ));
-                }
-
-                if is_end {
-                    return Ok(ResolvedPath::Var(id));
-                }
-
-                return Err(Error::new(format!("'{name}' is a variable"), span));
             } else if let Some(id) = self.find_module_in(name, scope) {
                 if self.is_private_mod(id, *self[id].kind.as_module().unwrap()) {
                     return Err(Error::new(
@@ -3044,13 +3044,15 @@ impl TypeChecker {
                             if a <= b || throwing => {}
                         (TypeId::CUint(a), TypeId::CUint(b)) if a <= b || throwing => {}
                         (
-                            TypeId::CInt(_) | TypeId::CUint(_),
+                            TypeId::CInt(_) | TypeId::CUint(_) | TypeId::Usize | TypeId::Isize,
                             TypeId::Int(_) | TypeId::Uint(_) | TypeId::Usize | TypeId::Isize,
                         ) if throwing => {}
                         (
                             TypeId::Int(_) | TypeId::Uint(_) | TypeId::Usize | TypeId::Isize,
-                            TypeId::CInt(_) | TypeId::CUint(_),
+                            TypeId::CInt(_) | TypeId::CUint(_) | TypeId::Usize | TypeId::Isize,
                         ) if throwing => {}
+                        (TypeId::F32, TypeId::F64) => {}
+                        (TypeId::F64, TypeId::F32) if throwing => {}
                         // TODO: these should only be allowable with an unsafe pointer type, or
                         // should be unsafe to do
                         (TypeId::Usize, TypeId::Ptr(_) | TypeId::MutPtr(_)) => {}
@@ -3061,7 +3063,7 @@ impl TypeChecker {
                             expr = self.error(Error::new(
                                 format!(
                                     "cannot{}cast expression of type '{}' to '{}'",
-                                    if throwing { " infallibly " } else { " " },
+                                    if !throwing { " infallibly " } else { " " },
                                     expr.ty.name(scopes),
                                     ty.name(scopes)
                                 ),
