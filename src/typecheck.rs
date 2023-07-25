@@ -928,18 +928,6 @@ impl Scopes {
         self.find_user_type_in("Option", *option)
     }
 
-    fn find_core_string(&self) -> Option<TypeId> {
-        let core = self.scopes[0].children.get("core")?;
-        let string = self[*core].children.get("string")?;
-        Some(TypeId::UserType(
-            GenericUserType {
-                id: self.find_user_type_in("str", *string)?,
-                generics: vec![],
-            }
-            .into(),
-        ))
-    }
-
     fn as_option_inner<'a>(&self, ty: &'a TypeId) -> Option<&'a TypeId> {
         self.find_core_option().and_then(|opt| {
             ty.as_user_type()
@@ -958,9 +946,9 @@ impl Scopes {
         ))
     }
 
-    fn resolve_type(&self, ty: &TypeHint) -> Result<TypeId, Error> {
-        let make_path = |path: &[&str], generics: &[TypeHint]| {
-            Path::Normal(
+    fn make_type(&self, path: &[&str], generics: &[TypeHint]) -> Result<TypeId, Error> {
+        self.resolve_type(&TypeHint::Regular(Located::new(
+            Path::Root(
                 path.iter()
                     .enumerate()
                     .map(|(i, p)| {
@@ -972,9 +960,12 @@ impl Scopes {
                         )
                     })
                     .collect(),
-            )
-        };
+            ),
+            Span::default(),
+        )))
+    }
 
+    fn resolve_type(&self, ty: &TypeHint) -> Result<TypeId, Error> {
         Ok(match ty {
             TypeHint::Regular(path) => {
                 return match self.resolve_path(&path.data, path.span)? {
@@ -998,7 +989,6 @@ impl Scopes {
                             "f32" => Some(TypeId::F32),
                             "f64" => Some(TypeId::F64),
                             "bool" => Some(TypeId::Bool),
-                            "str" => self.find_core_string(),
                             "char" => Some(TypeId::Char),
                             "c_void" => Some(TypeId::CVoid),
                             "c_char" => Some(TypeId::CInt(CInt::Char)),
@@ -1033,33 +1023,19 @@ impl Scopes {
                 let n = TypeChecker::consteval(self, count, Some(&TypeId::Usize))?;
                 TypeId::Array((self.resolve_type(ty)?, n).into())
             }
-            TypeHint::Option(ty) => self.resolve_type(&TypeHint::Regular(Located::new(
-                make_path(&["core", "option", "Option"], &[(**ty).clone()]),
-                Span::default(),
-            )))?,
-            TypeHint::Vec(ty) => self.resolve_type(&TypeHint::Regular(Located::new(
-                make_path(&["std", "vec", "Vec"], &[(**ty).clone()]),
-                Span::default(),
-            )))?,
-            TypeHint::Map(key, value) => self.resolve_type(&TypeHint::Regular(Located::new(
-                make_path(
-                    &["std", "map", "Map"],
-                    &[(**key).clone(), (**value).clone()],
-                ),
-                Span::default(),
-            )))?,
-            TypeHint::Set(ty) => self.resolve_type(&TypeHint::Regular(Located::new(
-                make_path(&["std", "set", "Set"], &[(**ty).clone()]),
-                Span::default(),
-            )))?,
-            TypeHint::Slice(ty) => self.resolve_type(&TypeHint::Regular(Located::new(
-                make_path(&["core", "span", "Span"], &[(**ty).clone()]),
-                Span::default(),
-            )))?,
-            TypeHint::SliceMut(ty) => self.resolve_type(&TypeHint::Regular(Located::new(
-                make_path(&["core", "span", "SpanMut"], &[(**ty).clone()]),
-                Span::default(),
-            )))?,
+            TypeHint::Option(ty) => {
+                self.make_type(&["core", "option", "Option"], &[(**ty).clone()])?
+            }
+            TypeHint::Vec(ty) => self.make_type(&["std", "vec", "Vec"], &[(**ty).clone()])?,
+            TypeHint::Map(key, value) => self.make_type(
+                &["std", "map", "Map"],
+                &[(**key).clone(), (**value).clone()],
+            )?,
+            TypeHint::Set(ty) => self.make_type(&["std", "set", "Set"], &[(**ty).clone()])?,
+            TypeHint::Slice(ty) => self.make_type(&["core", "span", "Span"], &[(**ty).clone()])?,
+            TypeHint::SliceMut(ty) => {
+                self.make_type(&["core", "span", "SpanMut"], &[(**ty).clone()])?
+            }
             TypeHint::Tuple(_) => todo!(),
             TypeHint::Result(_, _) => todo!(),
         })
@@ -1278,10 +1254,23 @@ impl Scopes {
         !public && self.module_of(self.current_id()) != self.module_of(self[scope].parent.unwrap())
     }
 
+    fn include_universal(&mut self) {
+        _ = self.resolve_use(
+            false,
+            &Path::Root(vec![
+                ("core".into(), vec![]),
+                ("string".into(), vec![]),
+                ("str".into(), vec![]),
+            ]),
+            Span::default(),
+        );
+    }
+
     fn forward_declare(&mut self, stmt: &Located<Stmt>) {
         match &stmt.data {
             Stmt::Module { public, name, body } => {
                 self.enter(Some(name.clone()), ScopeKind::Module(*public), |scopes| {
+                    scopes.include_universal();
                     for stmt in body {
                         scopes.forward_declare(stmt)
                     }
@@ -1807,6 +1796,7 @@ impl TypeChecker {
             for file in module.iter() {
                 match &file.ast.data {
                     Stmt::Module { name, body, .. } if name == &project => {
+                        scopes.include_universal();
                         for stmt in body {
                             scopes.forward_declare(stmt);
                         }
@@ -1818,6 +1808,7 @@ impl TypeChecker {
             for mut file in module {
                 match file.ast.data {
                     Stmt::Module { name, body, .. } if name == project => {
+                        scopes.include_universal();
                         for stmt in body {
                             self.check_stmt(scopes, stmt);
                         }
@@ -1844,6 +1835,7 @@ impl TypeChecker {
                 name,
                 body,
             } => CheckedStmt::Module(scopes.find_enter(&name, |scopes| {
+                scopes.include_universal();
                 Block {
                     body: body
                         .into_iter()
@@ -2505,9 +2497,10 @@ impl TypeChecker {
             Expr::Map(_) => todo!(),
             Expr::Set(_) => todo!(),
             Expr::Range { .. } => todo!(),
-            Expr::String(s) => {
-                CheckedExpr::new(scopes.find_core_string().unwrap(), ExprData::String(s))
-            }
+            Expr::String(s) => CheckedExpr::new(
+                scopes.make_type(&["core", "string", "str"], &[]).unwrap(),
+                ExprData::String(s),
+            ),
             Expr::Char(s) => CheckedExpr::new(TypeId::Char, ExprData::Char(s)),
             Expr::None => {
                 if let Some(inner) = target.and_then(|target| scopes.as_option_inner(target)) {

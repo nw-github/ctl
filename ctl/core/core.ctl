@@ -1,8 +1,3 @@
-// export {
-//     option,
-//     string,
-// }
-
 pub fn panic(s: str) never {
     // TODO: c_int
     extern fn _Exit(code: c_int) never;
@@ -16,4 +11,8 @@ pub fn panic(s: str) never {
     eprintln(s.as_ptr(), s.len());
 
     _Exit(101);
+}
+
+pub fn unreachable() never {
+    panic("entered unreachable code");
 }
