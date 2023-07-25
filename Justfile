@@ -1,5 +1,5 @@
-run path:
-    cargo -q r -- {{path}} | clang -Wall -Wextra -std=c11 -lgc -I./ctl -x c - && ./a.out
+run path *ARGS:
+    cargo -q r -- {{path}} | clang -Wall -Wextra -std=c11 -lgc -I./ctl -x c - && ./a.out {{ARGS}}
 
 print path:
     cargo -q r -- {{path}} | clang-format
