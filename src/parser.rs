@@ -1269,7 +1269,9 @@ impl<'a> Parser<'a> {
                 }
             }
             Token::LCurly => {
-                if let Some(item) = self.try_item() {
+                if let Some(rcurly) = self.advance_if_kind(Token::RCurly) {
+                    L::new(Expr::Block(vec![]), token.span.extended_to(rcurly.span))
+                } else if let Some(item) = self.try_item() {
                     let (mut stmts, span) = self.parse_block(token.span)?;
                     stmts.insert(0, item?);
                     L::new(Expr::Block(stmts), span)
@@ -1282,6 +1284,8 @@ impl<'a> Parser<'a> {
                             self.comma_separated(Token::RCurly, "expected '}'", Self::expression)?;
                         rest.insert(0, first);
                         L::new(Expr::Set(rest), token.span.extended_to(span))
+                    } else if let Some(rcurly) = self.advance_if_kind(Token::RCurly) {
+                        L::new(Expr::Set(vec![first]), token.span.extended_to(rcurly.span))
                     } else {
                         let mut first_span = first.span;
                         let semi = self.expect_kind(Token::Semicolon, "expected ';'")?;
