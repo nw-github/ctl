@@ -83,7 +83,7 @@ pub enum ExprData {
         callee: Box<CheckedExpr>,
         args: Vec<CheckedExpr>,
     },
-    As(Box<CheckedExpr>),
+    As(Box<CheckedExpr>, bool),
     Return(Box<CheckedExpr>),
     Yield(Box<CheckedExpr>),
     Break(Box<CheckedExpr>),

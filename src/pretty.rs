@@ -358,8 +358,9 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
             println!("{tabs}Is ({pattern:?})");
             print_expr(expr, src, indent + 1);
         }
-        Expr::As { expr, ty } => {
+        Expr::As { expr, ty, throwing } => {
             println!("{tabs}As ({ty:?})");
+            print_bool!(throwing);
             print_expr(expr, src, indent + 1);
         }
         Expr::Match { expr, body } => {

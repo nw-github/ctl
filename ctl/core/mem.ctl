@@ -52,6 +52,14 @@ pub /*unsafe*/ fn transmute<In, Out>(i: In) Out {
     return Transmuter::In::<In, Out>(i).Out;
 }
 
+pub /*unsafe*/ fn offset<U>(ptr: *U, count: usize) *U {
+    return ((ptr as usize) + count * size_of::<U>()) as *U;
+}
+
+pub /*unsafe*/ fn offset_mut<T>(ptr: *mut T, count: usize) *mut T {
+    return ((ptr as usize) + count * size_of::<T>()) as *mut T;
+}
+
 pub struct NonNull<T> {
     addr: usize,
 

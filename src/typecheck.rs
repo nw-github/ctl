@@ -32,7 +32,7 @@ impl GenericFunc {
                     src = gi;
                     target = ti;
                 }
-                (TypeId::MutPtr(gi), TypeId::MutPtr(ti)) => {
+                (TypeId::Ptr(gi) | TypeId::MutPtr(gi), TypeId::MutPtr(ti)) => {
                     src = gi;
                     target = ti;
                 }
@@ -1052,7 +1052,14 @@ impl Scopes {
                 make_path(&["std", "set", "Set"], &[(**ty).clone()]),
                 Span::default(),
             )))?,
-            TypeHint::Slice(_) => todo!(),
+            TypeHint::Slice(ty) => self.resolve_type(&TypeHint::Regular(Located::new(
+                make_path(&["core", "span", "Span"], &[(**ty).clone()]),
+                Span::default(),
+            )))?,
+            TypeHint::SliceMut(ty) => self.resolve_type(&TypeHint::Regular(Located::new(
+                make_path(&["core", "span", "SpanMut"], &[(**ty).clone()]),
+                Span::default(),
+            )))?,
             TypeHint::Tuple(_) => todo!(),
             TypeHint::Result(_, _) => todo!(),
         })
@@ -3021,15 +3028,25 @@ impl TypeChecker {
                     },
                 )
             }
-            Expr::As { expr, ty } => {
+            Expr::As { expr, ty, throwing } => {
                 let mut expr = self.check_expr(scopes, *expr, None);
                 let ty = self.resolve_type(scopes, &ty);
                 if !expr.ty.coerces_to(scopes, &ty) {
                     match (&expr.ty, &ty) {
-                        (TypeId::Int(a), TypeId::Int(b) | TypeId::Uint(b)) if a <= b => {}
-                        (TypeId::Uint(a), TypeId::Uint(b)) if a <= b => {}
-                        (TypeId::CInt(a), TypeId::CInt(b) | TypeId::CUint(b)) if a <= b => {}
-                        (TypeId::CUint(a), TypeId::CUint(b)) if a <= b => {}
+                        (TypeId::Int(a), TypeId::Int(b) | TypeId::Uint(b))
+                            if a <= b || throwing => {}
+                        (TypeId::Uint(a), TypeId::Uint(b)) if a <= b || throwing => {}
+                        (TypeId::CInt(a), TypeId::CInt(b) | TypeId::CUint(b))
+                            if a <= b || throwing => {}
+                        (TypeId::CUint(a), TypeId::CUint(b)) if a <= b || throwing => {}
+                        (
+                            TypeId::CInt(_) | TypeId::CUint(_),
+                            TypeId::Int(_) | TypeId::Uint(_) | TypeId::Usize | TypeId::Isize,
+                        ) if throwing => {}
+                        (
+                            TypeId::Int(_) | TypeId::Uint(_) | TypeId::Usize | TypeId::Isize,
+                            TypeId::CInt(_) | TypeId::CUint(_),
+                        ) if throwing => {}
                         // TODO: these should only be allowable with an unsafe pointer type, or
                         // should be unsafe to do
                         (TypeId::Usize, TypeId::Ptr(_) | TypeId::MutPtr(_)) => {}
@@ -3039,7 +3056,8 @@ impl TypeChecker {
                         _ => {
                             expr = self.error(Error::new(
                                 format!(
-                                    "cannot infallibly cast expression of type '{}' to '{}'",
+                                    "cannot{}cast expression of type '{}' to '{}'",
+                                    if throwing { " infallibly " } else { " " },
                                     expr.ty.name(scopes),
                                     ty.name(scopes)
                                 ),
@@ -3048,7 +3066,7 @@ impl TypeChecker {
                         }
                     }
 
-                    CheckedExpr::new(ty, ExprData::As(expr.into()))
+                    CheckedExpr::new(ty, ExprData::As(expr.into(), throwing))
                 } else {
                     Self::coerce_expr(expr, &ty, scopes)
                 }

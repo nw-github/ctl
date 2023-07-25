@@ -306,22 +306,29 @@ impl<'a> Parser<'a> {
         }
 
         let ty = if self.advance_if_kind(Token::LBrace).is_some() {
-            let inner = self.parse_type()?;
-            if self.advance_if_kind(Token::RBrace).is_some() {
-                TypeHint::Vec(inner.into())
-            } else if self.advance_if_kind(Token::Range).is_some() {
+            if self.advance_if_kind(Token::Mut).is_some() {
+                let inner = self.parse_type()?;
+                self.expect_kind(Token::Range, "expected '..'")?;
                 self.expect_kind(Token::RBrace, "expected ']'")?;
-                TypeHint::Slice(inner.into())
-            } else if self.advance_if_kind(Token::Semicolon).is_some() {
-                let count = self.expression()?;
-                self.expect_kind(Token::RBrace, "expected ']'")?;
-                TypeHint::Array(inner.into(), count.into())
-            } else if self.advance_if_kind(Token::Colon).is_some() {
-                let value = self.parse_type()?;
-                self.expect_kind(Token::RBrace, "expected ']'")?;
-                TypeHint::Map(inner.into(), value.into())
+                TypeHint::SliceMut(inner.into())
             } else {
-                return self.error("expected ']', ';', or ':'");
+                let inner = self.parse_type()?;
+                if self.advance_if_kind(Token::RBrace).is_some() {
+                    TypeHint::Vec(inner.into())
+                } else if self.advance_if_kind(Token::Range).is_some() {
+                    self.expect_kind(Token::RBrace, "expected ']'")?;
+                    TypeHint::Slice(inner.into())
+                } else if self.advance_if_kind(Token::Semicolon).is_some() {
+                    let count = self.expression()?;
+                    self.expect_kind(Token::RBrace, "expected ']'")?;
+                    TypeHint::Array(inner.into(), count.into())
+                } else if self.advance_if_kind(Token::Colon).is_some() {
+                    let value = self.parse_type()?;
+                    self.expect_kind(Token::RBrace, "expected ']'")?;
+                    TypeHint::Map(inner.into(), value.into())
+                } else {
+                    return self.error("expected ']', ';', or ':'");
+                }
             }
         } else if self.advance_if_kind(Token::LCurly).is_some() {
             let inner = self.parse_type()?.into();
@@ -1018,12 +1025,14 @@ impl<'a> Parser<'a> {
     fn cast(&mut self) -> Result<L<Expr>> {
         let mut expr = self.unary()?;
         while self.advance_if_kind(Token::As).is_some() {
+            let bang = self.advance_if_kind(Token::Exclamation);
             let ty = self.parse_type()?;
             let span = expr.span;
             expr = L::new(
                 Expr::As {
                     expr: expr.into(),
                     ty,
+                    throwing: bang.is_some(),
                 },
                 span,
             );

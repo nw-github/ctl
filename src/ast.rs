@@ -182,6 +182,7 @@ pub mod expr {
         As {
             expr: Box<super::Expr>,
             ty: TypeHint,
+            throwing: bool,
         },
         Unary {
             op: UnaryOp,
@@ -268,6 +269,7 @@ pub mod stmt {
         Array(Box<TypeHint>, Box<super::Expr>),
         Vec(Box<TypeHint>),
         Slice(Box<TypeHint>),
+        SliceMut(Box<TypeHint>),
         Tuple(Vec<TypeHint>),
         Set(Box<TypeHint>),
         Map(Box<TypeHint>, Box<TypeHint>),

@@ -30,6 +30,14 @@ pub struct Vec<T> {
         return this.cap;
     }
 
+    pub fn as_span(this) [T..] {
+        return core::span::Span::new(this.ptr.as_mut_ptr(), this.len);
+    }
+
+    pub fn as_span_mut(this) [mut T..] {
+        return core::span::SpanMut::new(this.ptr.as_mut_ptr(), this.len);
+    }
+
     pub fn push(mut this, t: T) {
         if !this.can_insert(1) {
             this.grow();

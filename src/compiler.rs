@@ -843,7 +843,7 @@ impl Compiler {
                     }
                 }
             }
-            ExprData::As(inner) => {
+            ExprData::As(inner, _) => {
                 self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit("(");
                 self.compile_expr(scopes, *inner, state);
