@@ -2217,7 +2217,10 @@ impl TypeChecker {
         // TODO: disallow private type in public interface
         let id = scopes.find_func(&proto.name.data).unwrap();
         if proto.variadic && !proto.is_extern {
-            self.error::<()>(Error::new("only extern functions may be variadic", proto.name.span));
+            self.error::<()>(Error::new(
+                "only extern functions may be variadic",
+                proto.name.span,
+            ));
         }
 
         scopes.enter_id(scopes.get_func(id).body_scope, |scopes| {

@@ -627,7 +627,8 @@ impl Compiler {
                 for byte in value.as_bytes() {
                     self.buffer.emit(format!("\\x{byte:x}"));
                 }
-                self.buffer.emit(format!("\", .len = (usize){} }} }}", value.len()));
+                self.buffer
+                    .emit(format!("\", .len = (usize){} }} }}", value.len()));
             }
             ExprData::Char(value) => {
                 self.buffer.emit_cast(scopes, &expr.ty);
@@ -1104,7 +1105,12 @@ impl Compiler {
             return;
         }
 
-        if scopes.get_user_type(ut.id).data.as_union().map_or(false, |u| u.is_unsafe) {
+        if scopes
+            .get_user_type(ut.id)
+            .data
+            .as_union()
+            .map_or(false, |u| u.is_unsafe)
+        {
             self.buffer.emit("typedef union ");
         } else {
             self.buffer.emit("typedef struct ");

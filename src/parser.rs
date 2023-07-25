@@ -637,11 +637,7 @@ impl<'a> Parser<'a> {
         Ok(L::new(
             Stmt::UserType(ParsedUserType::Union {
                 tag,
-                base: self.parse_union_body(
-                    public,
-                    L::new(name.0.into(), name.1),
-                    &mut span,
-                )?,
+                base: self.parse_union_body(public, L::new(name.0.into(), name.1), &mut span)?,
                 is_unsafe,
             }),
             span,
