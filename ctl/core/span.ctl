@@ -1,3 +1,6 @@
+use core::mem::Raw;
+use core::mem::RawMut;
+
 pub struct Span<T> {
     ptr: *T,
     len: usize,
@@ -19,6 +22,10 @@ pub struct Span<T> {
         return if idx < this.len {
             yield core::mem::offset(this.ptr, idx);
         };
+    }
+
+    pub fn as_raw(this) Raw<T> {
+        return Raw::from_ptr(this.ptr);
     }
 }
 
@@ -48,5 +55,13 @@ pub struct SpanMut<T> {
         return if idx < this.len {
             yield core::mem::offset_mut(this.ptr, idx);
         };
+    }
+
+    pub fn as_raw(this) Raw<T> {
+        return Raw::from_ptr(this.ptr);
+    }
+
+    pub fn as_raw_mut(this) RawMut<T> {
+        return RawMut::from_ptr(this.ptr);
     }
 }

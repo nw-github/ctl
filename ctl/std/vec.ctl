@@ -1,15 +1,15 @@
-use core::mem::NonNull;
+use core::mem::RawMut;
 use core::option::Option;
 use core::mem;
 use core::panic;
 
 pub struct Vec<T> {
-    ptr: NonNull<T>,
+    ptr: RawMut<T>,
     len: usize,
     cap: usize,
 
     pub fn new<U>() Vec<U> {
-        return Vec::<U>(ptr: NonNull::dangling(), len: 0, cap: 0);
+        return Vec::<U>(ptr: RawMut::dangling(), len: 0, cap: 0);
     }
 
     pub fn with_capacity<U>(cap: usize) Vec<U> {
@@ -149,7 +149,7 @@ pub struct Vec<T> {
         };
     }
 
-    pub fn as_raw(this) NonNull<T> {
+    pub fn as_raw(this) RawMut<T> {
         return this.ptr;
     }
 

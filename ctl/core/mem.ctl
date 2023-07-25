@@ -60,29 +60,69 @@ pub /*unsafe*/ fn offset_mut<T>(ptr: *mut T, count: usize) *mut T {
     return ((ptr as usize) + count * size_of::<T>()) as *mut T;
 }
 
-pub struct NonNull<T> {
+pub struct Raw<T> {
     addr: usize,
 
-    pub fn from_ptr<U>(ptr: *U) NonNull<U> {
-        return NonNull(addr: ptr as usize);
+    pub fn from_ptr<U>(ptr: *U) Raw<U> {
+        return Raw(addr: ptr as usize);
     }
 
-    pub fn from_addr<U>(addr: usize) ?NonNull<U> {
+    pub fn from_addr<U>(addr: usize) ?Raw<U> {
         return if addr > 0 {
-            yield NonNull::<U>(addr:);
+            yield Raw::<U>(addr:);
         };
     }
 
-    pub fn dangling<U>() NonNull<U> {
-        return NonNull(addr: 0xDEADBEEF);
+    pub fn dangling<U>() Raw<U> {
+        return Raw(addr: 0xDEADBEEF);
     }
 
-    pub fn add(this, count: usize) NonNull<T> {
-        return NonNull(addr: this.addr + count * size_of::<T>());
+    pub fn add(this, count: usize) Raw<T> {
+        return Raw(addr: this.addr + count * size_of::<T>());
     }
 
-    pub fn sub(this, count: usize) NonNull<T> {
-        return NonNull(addr: this.addr - count * size_of::<T>());
+    pub fn sub(this, count: usize) Raw<T> {
+        return Raw(addr: this.addr - count * size_of::<T>());
+    }
+
+    pub /*unsafe*/ fn as_ptr(this) *T {
+        return this.addr as *T;
+    }
+
+    pub /*unsafe*/ fn as_mut_ptr(this) *mut T {
+        return this.addr as *mut T;
+    }
+
+    pub /*unsafe*/ fn read(this) T {
+        mut t: T;
+        copy(dst: &mut t, src: this.as_ptr(), num: 1);
+        return t;
+    }
+}
+
+pub struct RawMut<T> {
+    addr: usize,
+
+    pub fn from_ptr<U>(ptr: *U) RawMut<U> {
+        return RawMut(addr: ptr as usize);
+    }
+
+    pub fn from_addr<U>(addr: usize) ?RawMut<U> {
+        return if addr > 0 {
+            yield RawMut::<U>(addr:);
+        };
+    }
+
+    pub fn dangling<U>() RawMut<U> {
+        return RawMut(addr: 0xDEADBEEF);
+    }
+
+    pub fn add(this, count: usize) RawMut<T> {
+        return RawMut(addr: this.addr + count * size_of::<T>());
+    }
+
+    pub fn sub(this, count: usize) RawMut<T> {
+        return RawMut(addr: this.addr - count * size_of::<T>());
     }
 
     pub /*unsafe*/ fn as_ptr(this) *T {

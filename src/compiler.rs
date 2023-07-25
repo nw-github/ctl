@@ -607,7 +607,7 @@ impl Compiler {
 
                 self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(format!(
-                    "{{ .ptr = (uint8_t const*)u8\"{value}\", .len = (usize){} }}",
+                    "{{ .slc = {{ .ptr = (uint8_t const*)u8\"{value}\", .len = (usize){} }} }}",
                     value.len()
                 ));
             }
