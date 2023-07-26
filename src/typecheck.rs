@@ -929,6 +929,12 @@ impl Scopes {
         self.find_user_type_in("Option", *option)
     }
 
+    pub fn find_core_iter(&self) -> Option<UserTypeId> {
+        let core = self.scopes()[0].children.get("core")?;
+        let iter = self[*core].children.get("iter")?;
+        self.find_user_type_in("Iter", *iter)
+    }
+
     fn as_option_inner<'a>(&self, ty: &'a TypeId) -> Option<&'a TypeId> {
         self.find_core_option().and_then(|opt| {
             ty.as_user_type()
@@ -2110,8 +2116,6 @@ impl TypeChecker {
         }
 
         let compare_types = |a: &TypeId, mut b: TypeId| {
-            b.fill_this(this);
-            b.fill_type_generics(scopes, rhs_ty);
             b.fill_func_generics(
                 scopes,
                 &GenericFunc::new(
@@ -2131,12 +2135,22 @@ impl TypeChecker {
                         .collect(),
                 ),
             );
+            b.fill_type_generics(scopes, rhs_ty);
+            b.fill_this(this);
 
-            a == &b
+            if a != &b {
+                Err(format!(
+                    "expected '{}', got '{}'",
+                    tproto.ret.name(scopes),
+                    sproto.ret.name(scopes)
+                ))
+            } else {
+                Ok(())
+            }
         };
 
-        if !compare_types(&sproto.ret, tproto.ret.clone()) {
-            return Err("return type is incorrect".into());
+        if let Err(err) = compare_types(&sproto.ret, tproto.ret.clone()) {
+            return Err(format!("return type is incorrect: {err}"));
         }
 
         for (i, (s, t)) in sproto
@@ -2145,8 +2159,8 @@ impl TypeChecker {
             .zip(tproto.params.iter().cloned())
             .enumerate()
         {
-            if !compare_types(&s.ty, t.ty) {
-                return Err(format!("parameter {} is incorrect", i + 1));
+            if let Err(err) = compare_types(&s.ty, t.ty) {
+                return Err(format!("parameter {} is incorrect: {err}", i + 1));
             }
         }
 
@@ -2165,8 +2179,8 @@ impl TypeChecker {
 
             for (s, t) in s.impls.iter().zip(t.impls.iter().cloned()) {
                 for (s, t) in s.generics.iter().zip(t.generics.into_iter()) {
-                    if !compare_types(s, t) {
-                        return Err(format!("generic parameter {} is incorrect", i + 1));
+                    if let Err(err) = compare_types(s, t) {
+                        return Err(format!("generic parameter {} is incorrect: {err}", i + 1));
                     }
                 }
             }
@@ -2782,6 +2796,10 @@ impl TypeChecker {
                 body,
                 do_while,
             } => {
+                // if let Some(Expr::Is { expr, pattern }) = cond.map(|cond| cond.data) {
+                //     
+                // }
+
                 let cond = cond.map(|cond| {
                     let span = cond.span;
                     type_check!(
@@ -2825,7 +2843,106 @@ impl TypeChecker {
                     },
                 )
             }
-            Expr::For { .. } => todo!(),
+            Expr::For {
+                var,
+                mutable,
+                iter,
+                body,
+            } => {
+                let span = iter.span;
+                let iter = self.check_expr(scopes, *iter, None);
+                let core_iter = scopes.find_core_iter().unwrap();
+                if iter
+                    .ty
+                    .as_user_type()
+                    .and_then(|ut| {
+                        scopes
+                            .get_user_type(ut.id)
+                            .impls
+                            .iter()
+                            .find(|i| i.id == core_iter)
+                    })
+                    .is_none()
+                {
+                    self.error(Error::new(
+                        format!("type '{}' does not implement 'Iter'", iter.ty.name(scopes)),
+                        span,
+                    ))
+                }
+
+                macro_rules! lbox {
+                    ($e: expr) => {
+                        Located::new($e, Span::default()).into()
+                    };
+                }
+
+                macro_rules! l {
+                    ($e: expr) => {
+                        Located::new($e, Span::default())
+                    };
+                }
+
+                let iter = scopes.insert_var(Variable {
+                    public: false,
+                    name: "$iter".into(),
+                    ty: iter.ty.clone(),
+                    is_static: false,
+                    mutable: true,
+                    value: Some(iter),
+                });
+                let body = self.check_expr(
+                    scopes,
+                    l!(Expr::Loop {
+                        cond: None,
+                        body: vec![l!(Stmt::Expr(l!(Expr::Match {
+                            expr: lbox!(Expr::Call {
+                                callee: lbox!(Expr::Member {
+                                    source: lbox!(Expr::Path(Path::from("$iter".to_string()))),
+                                    generics: vec![],
+                                    member: "next".into(),
+                                }),
+                                args: vec![],
+                            }),
+                            body: vec![
+                                (
+                                    Pattern {
+                                        path: l!(Path::Root(vec![
+                                            ("core".into(), vec![]),
+                                            ("opt".into(), vec![]),
+                                            ("Option".into(), vec![]),
+                                            ("Some".into(), vec![]),
+                                        ])),
+                                        binding: Some((mutable, var))
+                                    },
+                                    l!(Expr::Block(body))
+                                ),
+                                (
+                                    Pattern {
+                                        path: l!(Path::Root(vec![
+                                            ("core".into(), vec![]),
+                                            ("opt".into(), vec![]),
+                                            ("Option".into(), vec![]),
+                                            ("None".into(), vec![]),
+                                        ])),
+                                        binding: None
+                                    },
+                                    l!(Expr::Break(lbox!(Expr::Void)))
+                                )
+                            ],
+                        })))],
+                        do_while: false
+                    }),
+                    Some(&TypeId::Void),
+                );
+
+                CheckedExpr::new(
+                    body.ty.clone(),
+                    ExprData::For {
+                        iter,
+                        body: body.into(),
+                    },
+                )
+            }
             Expr::Member {
                 source,
                 member,

@@ -65,9 +65,8 @@ pub enum ExprData {
         do_while: bool,
     },
     For {
-        var: String,
-        iter: Box<CheckedExpr>,
-        body: Block,
+        iter: VariableId,
+        body: Box<CheckedExpr>,
     },
     Match {
         expr: Box<CheckedExpr>,

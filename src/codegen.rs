@@ -729,7 +729,7 @@ impl Codegen {
                                 ));
                             }
                         }
-    
+
                         if !value.ty.is_void_like() {
                             self.buffer.emit(format!(".{name} = "));
                             self.gen_expr(scopes, value, state);
@@ -737,7 +737,7 @@ impl Codegen {
                         }
                     }
                     self.buffer.emit("}");
-    
+
                     if let TypeId::UserType(data) = expr.ty {
                         self.structs.insert((*data).clone());
                     } else {
@@ -868,7 +868,15 @@ impl Codegen {
                     self.buffer.emit(std::mem::replace(&mut self.cur_loop, old));
                 }
             }
-            ExprData::For { .. } => todo!(),
+            ExprData::For { iter, body } => {
+                
+                self.buffer.emit_local_decl(scopes, iter, state);
+                self.buffer.emit(" = ");
+                self.gen_expr_inner(scopes, scopes.get_var(iter).value.clone().unwrap(), state);
+                self.buffer.emit(";");
+
+                self.gen_expr(scopes, *body, state);
+            }
             ExprData::Subscript { .. } => todo!(),
             ExprData::Return(expr) => {
                 // TODO: when return is used as anything except a StmtExpr, we will have to change
