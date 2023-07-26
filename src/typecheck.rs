@@ -2506,7 +2506,6 @@ impl TypeChecker {
             }
             Expr::Tuple(_) => todo!(),
             Expr::Map(_) => todo!(),
-            Expr::Set(_) => todo!(),
             Expr::Range { .. } => todo!(),
             Expr::String(s) => CheckedExpr::new(
                 scopes.make_type(&["core", "string", "str"], &[]).unwrap(),
@@ -2783,17 +2782,18 @@ impl TypeChecker {
                 body,
                 do_while,
             } => {
-                let span = cond.span;
-                let cond = type_check!(
-                    self,
-                    scopes,
-                    self.check_expr(scopes, *cond, Some(&TypeId::Bool)),
-                    &TypeId::Bool,
-                    span
-                );
+                let cond = cond.map(|cond| {
+                    let span = cond.span;
+                    type_check!(
+                        self,
+                        scopes,
+                        self.check_expr(scopes, *cond, Some(&TypeId::Bool)),
+                        &TypeId::Bool,
+                        span
+                    )
+                });
 
-                let inf = matches!(cond.data, ExprData::Bool(true));
-                let target = if inf {
+                let target = if cond.is_none() {
                     target
                 } else {
                     target
@@ -2807,7 +2807,7 @@ impl TypeChecker {
                     panic!("ICE: target of loop changed from loop to something else");
                 };
 
-                let out_type = if inf {
+                let out_type = if cond.is_none() {
                     TypeId::Never
                 } else {
                     // TODO: coerce the break statements
@@ -2819,7 +2819,7 @@ impl TypeChecker {
                 CheckedExpr::new(
                     out_type,
                     ExprData::Loop {
-                        cond: cond.into(),
+                        cond: cond.map(|cond| cond.into()),
                         body,
                         do_while,
                     },

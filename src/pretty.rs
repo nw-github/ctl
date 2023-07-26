@@ -218,12 +218,6 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
                 print_expr(el, src, indent + 1);
             }
         }
-        Expr::Set(elements) => {
-            println!("{tabs}Set");
-            for el in elements {
-                print_expr(el, src, indent + 1);
-            }
-        }
         Expr::Map(expr) => {
             println!("{tabs}Map");
             let tabs = INDENT.repeat(indent + 1);
@@ -294,8 +288,10 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
             println!();
 
             let tabs = INDENT.repeat(indent + 1);
-            println!("{tabs}Condition: ");
-            print_expr(cond, src, indent + 2);
+            if let Some(cond) = cond {
+                println!("{tabs}Condition: ");
+                print_expr(cond, src, indent + 2);
+            }
 
             println!("{tabs}Body: ");
             print_stmts(body, src, indent + 2);
@@ -349,8 +345,9 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
         Expr::None => {
             println!("{tabs}None");
         }
-        Expr::For { var, iter, body } => {
+        Expr::For { var, mutable, iter, body } => {
             println!("{tabs}For[{var}]");
+            print_bool!(mutable);
             let tabs = INDENT.repeat(indent + 1);
             println!("{tabs}In: ");
             print_expr(iter, src, indent + 2);

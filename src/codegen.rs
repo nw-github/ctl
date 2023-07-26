@@ -651,8 +651,6 @@ impl Codegen {
             }
             ExprData::Array(_) => todo!(),
             ExprData::ArrayWithInit { .. } => todo!(),
-            ExprData::Tuple(_) => todo!(),
-            ExprData::Map(_) => todo!(),
             ExprData::Bool(value) => {
                 self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(if value { "1" } else { "0" })
@@ -840,12 +838,14 @@ impl Codegen {
 
                         macro_rules! cond {
                             () => {
-                                stmt! {
-                                    self,
-                                    {
-                                        self.buffer.emit("if (!");
-                                        self.gen_expr(scopes, *cond, state);
-                                        self.buffer.emit(") { break; }");
+                                if let Some(cond) = cond {
+                                    stmt! {
+                                        self,
+                                        {
+                                            self.buffer.emit("if (!");
+                                            self.gen_expr(scopes, *cond, state);
+                                            self.buffer.emit(") { break; }");
+                                        }
                                     }
                                 }
                             };
@@ -983,10 +983,7 @@ impl Codegen {
                 ExprData::Call { .. } => true,
                 ExprData::Array(_) => todo!(),
                 ExprData::ArrayWithInit { .. } => todo!(),
-                ExprData::Tuple(_) => todo!(),
-                ExprData::Map(_) => todo!(),
                 ExprData::Assign { .. } => true,
-                ExprData::For { .. } => todo!(),
                 ExprData::Subscript { .. } => todo!(),
                 _ => false,
             }

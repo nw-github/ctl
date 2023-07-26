@@ -199,7 +199,6 @@ pub mod expr {
         },
         Tuple(Vec<super::Expr>),
         Map(Vec<(super::Expr, super::Expr)>),
-        Set(Vec<super::Expr>),
         Bool(bool),
         Integer {
             base: u8,
@@ -224,12 +223,13 @@ pub mod expr {
             else_branch: Option<Box<super::Expr>>,
         },
         Loop {
-            cond: Box<super::Expr>,
+            cond: Option<Box<super::Expr>>,
             body: Vec<super::Stmt>,
             do_while: bool,
         },
         For {
             var: String,
+            mutable: bool,
             iter: Box<super::Expr>,
             body: Vec<super::Stmt>,
         },

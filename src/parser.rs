@@ -1300,7 +1300,7 @@ impl<'a> Parser<'a> {
 
                 L::new(
                     Expr::Loop {
-                        cond: cond.into(),
+                        cond: Some(cond.into()),
                         body,
                         do_while: false,
                     },
@@ -1314,14 +1314,14 @@ impl<'a> Parser<'a> {
                 let (cond, do_while) = if self.advance_if_kind(Token::While).is_some() {
                     let cond = self.expression()?;
                     span.extend_to(cond.span);
-                    (cond, true)
+                    (Some(cond.into()), true)
                 } else {
-                    (L::new(Expr::Bool(true), token.span), false)
+                    (None, false)
                 };
 
                 L::new(
                     Expr::Loop {
-                        cond: cond.into(),
+                        cond,
                         body,
                         do_while,
                     },
@@ -1329,6 +1329,7 @@ impl<'a> Parser<'a> {
                 )
             }
             Token::For => {
+                let mutable = self.advance_if_kind(Token::Mut);
                 let var = self.expect_id("expected variable name")?;
                 self.expect_kind(Token::In, "expected 'in'")?;
                 // TODO: parse for foo in 0.. {} as |0..| |{}| instead of |0..{}|
@@ -1338,6 +1339,7 @@ impl<'a> Parser<'a> {
                 L::new(
                     Expr::For {
                         var: var.into(),
+                        mutable: mutable.is_some(),
                         iter: iter.into(),
                         body,
                     },

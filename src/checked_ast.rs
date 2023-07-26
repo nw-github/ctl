@@ -40,8 +40,6 @@ pub enum ExprData {
         init: Box<CheckedExpr>,
         count: usize,
     },
-    Tuple(Vec<CheckedExpr>),
-    Map(Vec<(CheckedExpr, CheckedExpr)>),
     Bool(bool),
     Signed(i128),
     Unsigned(u128),
@@ -62,7 +60,7 @@ pub enum ExprData {
         else_branch: Option<Box<CheckedExpr>>,
     },
     Loop {
-        cond: Box<CheckedExpr>,
+        cond: Option<Box<CheckedExpr>>,
         body: Block,
         do_while: bool,
     },
