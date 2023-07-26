@@ -26,7 +26,7 @@ fn convert_argv(argc: c_int, argv: **c_char) [str..] {
     mut args: [str] = Vec::with_capacity(argc);
     mut i = 0usize;
     while i < argc {
-        args.push(str::from_c_str(*core::mem::offset(argv, i++)));
+        args.push(str::from_c_str(*core::ptr::offset(argv, i++)));
     }
     return args.as_span();
 }

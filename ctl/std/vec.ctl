@@ -1,5 +1,5 @@
-use core::mem::Raw;
-use core::mem::RawMut;
+use core::ptr::Raw;
+use core::ptr::RawMut;
 use core::opt::Option;
 use core::mem;
 use core::panic;

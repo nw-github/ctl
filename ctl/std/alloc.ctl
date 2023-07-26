@@ -1,4 +1,4 @@
-use core::mem::RawMut;
+use core::ptr::RawMut;
 use core::mem::size_of;
 use core::opt::Option;
 

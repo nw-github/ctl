@@ -1,5 +1,5 @@
-use core::mem::Raw;
-use core::mem::RawMut;
+use core::ptr::Raw;
+use core::ptr::RawMut;
 
 pub struct Span<T> {
     ptr: *T,
@@ -20,7 +20,7 @@ pub struct Span<T> {
 
     pub fn get(this, idx: usize) ?*T {
         return if idx < this.len {
-            yield core::mem::offset(this.ptr, idx);
+            yield core::ptr::offset(this.ptr, idx);
         };
     }
 
@@ -47,13 +47,13 @@ pub struct SpanMut<T> {
 
     pub fn get(this, idx: usize) ?*T {
         return if idx < this.len {
-            yield core::mem::offset(this.ptr, idx);
+            yield core::ptr::offset(this.ptr, idx);
         };
     }
 
     pub fn get_mut(this, idx: usize) ?*mut T {
         return if idx < this.len {
-            yield core::mem::offset_mut(this.ptr, idx);
+            yield core::ptr::offset_mut(this.ptr, idx);
         };
     }
 
