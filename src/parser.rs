@@ -1264,36 +1264,7 @@ impl<'a> Parser<'a> {
                     )
                 }
             }
-            Token::LCurly => {
-                if let Some(rcurly) = self.advance_if_kind(Token::RCurly) {
-                    L::new(Expr::Block(vec![]), token.span.extended_to(rcurly.span))
-                } else if let Some(item) = self.try_item() {
-                    let (mut stmts, span) = self.parse_block(token.span)?;
-                    stmts.insert(0, item?);
-                    L::new(Expr::Block(stmts), span)
-                } else if self.matches(|t| matches!(t, Token::Let | Token::Mut)) {
-                    self.block_expr(token.span)?
-                } else {
-                    let first = self.expression()?;
-                    if self.advance_if_kind(Token::Comma).is_some() {
-                        let (mut rest, span) =
-                            self.comma_separated(Token::RCurly, "expected '}'", Self::expression)?;
-                        rest.insert(0, first);
-                        L::new(Expr::Set(rest), token.span.extended_to(span))
-                    } else if let Some(rcurly) = self.advance_if_kind(Token::RCurly) {
-                        L::new(Expr::Set(vec![first]), token.span.extended_to(rcurly.span))
-                    } else {
-                        let mut first_span = first.span;
-                        let semi = self.expect_kind(Token::Semicolon, "expected ';'")?;
-                        let (mut stmts, span) = self.parse_block(token.span)?;
-                        stmts.insert(
-                            0,
-                            L::new(Stmt::Expr(first), first_span.extended_to(semi.span)),
-                        );
-                        L::new(Expr::Block(stmts), span)
-                    }
-                }
-            }
+            Token::LCurly => self.block_expr(token.span)?,
             Token::If => {
                 let cond = self.expression()?;
                 let lcurly = self.expect_kind(Token::LCurly, "expected block")?;
