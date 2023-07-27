@@ -3521,10 +3521,6 @@ impl TypeChecker {
             target.fill_func_generics(scopes, func);
         }
 
-        if let Some(inst) = inst {
-            target.fill_type_generics(scopes, inst);
-        }
-
         type_check_bail!(self, scopes, expr, &target, span)
     }
 
