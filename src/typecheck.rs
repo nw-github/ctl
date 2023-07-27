@@ -1792,8 +1792,14 @@ impl TypeChecker {
             this.check_one(&mut scopes, &mut errors, &parsed.path, parsed.state.0);
         }
 
+        let scope = this.check_one(&mut scopes, &mut errors, path, module);
+        this.check_trait_impls(&scopes);
+        if !this.errors.is_empty() {
+            errors.push(("".into(), this.errors));
+        }
+
         Ok(Module {
-            scope: this.check_one(&mut scopes, &mut errors, path, module),
+            scope,
             scopes,
             errors,
         })
@@ -1894,8 +1900,6 @@ impl TypeChecker {
                         for f in base.functions {
                             self.check_fn(scopes, f);
                         }
-
-                        self.check_impls(scopes, scopes.get_user_type(id), base.name.span);
                     });
                     CheckedStmt::None
                 }
@@ -1954,8 +1958,6 @@ impl TypeChecker {
                         for f in base.functions {
                             self.check_fn(scopes, f);
                         }
-
-                        self.check_impls(scopes, scopes.get_user_type(id), base.name.span);
                     });
 
                     CheckedStmt::None
@@ -2002,8 +2004,6 @@ impl TypeChecker {
                         for f in functions {
                             self.check_fn(scopes, f);
                         }
-
-                        self.check_impls(scopes, scopes.get_user_type(id), name.span);
                     });
 
                     CheckedStmt::None
@@ -2102,6 +2102,46 @@ impl TypeChecker {
         }
     }
 
+    fn check_trait_impls(&mut self, scopes: &Scopes) {
+        for tr_id in scopes
+            .types
+            .iter()
+            .enumerate()
+            .filter(|(_, ut)| ut.data.is_trait())
+            .map(|(i, _)| UserTypeId(i))
+        {
+            for (i, ut) in
+                scopes.types.iter().enumerate().filter(|(_, ut)| {
+                    ut.data.is_struct() || ut.data.is_enum() || ut.data.is_union()
+                })
+            {
+                if let Some(im) = ut.impls.iter().find(|im| im.id == tr_id) {
+                    self.check_impl(
+                        scopes,
+                        &TypeId::UserType(
+                            GenericUserType::new(
+                                UserTypeId(i),
+                                scopes[ut.body_scope]
+                                    .types
+                                    .iter()
+                                    .filter(|&&id| {
+                                        scopes.get_user_type(id).data.is_struct_generic()
+                                    })
+                                    .map(|&id| {
+                                        TypeId::UserType(GenericUserType::new(id, vec![]).into())
+                                    })
+                                    .collect(),
+                            )
+                            .into(),
+                        ),
+                        im,
+                        Span::default(),
+                    );
+                }
+            }
+        }
+    }
+
     fn signatures_match(
         scopes: &Scopes,
         this: &TypeId,
@@ -2194,19 +2234,13 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn check_impl(
-        &mut self,
-        scopes: &Scopes,
-        this: &TypeId,
-        ut: &UserType,
-        gtr: &GenericUserType,
-        span: Span,
-    ) {
+    fn check_impl(&mut self, scopes: &Scopes, this: &TypeId, gtr: &GenericUserType, span: Span) {
         // TODO: detect and fail on circular trait dependencies
         // TODO: default implementations
+        let ut = scopes.get_user_type(this.as_user_type().unwrap().id);
         let tr = scopes.get_user_type(gtr.id);
         for tr in tr.impls.iter() {
-            self.check_impl(scopes, this, ut, tr, span);
+            self.check_impl(scopes, this, tr, span);
         }
 
         for &rhs in scopes[tr.body_scope].fns.iter() {
@@ -2232,12 +2266,6 @@ impl TypeChecker {
                     span,
                 ));
             }
-        }
-    }
-
-    fn check_impls(&mut self, scopes: &Scopes, ut: &UserType, span: Span) {
-        for tr in ut.impls.iter() {
-            self.check_impl(scopes, &scopes.this_type().unwrap(), ut, tr, span);
         }
     }
 
