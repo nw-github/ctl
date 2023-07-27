@@ -214,6 +214,12 @@ impl Buffer {
         let mut ret = f.proto.ret.clone();
         state.fill_generics(scopes, &mut ret);
 
+        if f.proto.is_extern {
+            self.emit("extern ");
+        } else {
+            self.emit("static ");
+        }
+
         if ret.is_never() {
             self.emit("_Noreturn ");
         }
@@ -402,15 +408,10 @@ impl Codegen {
             emitted.extend(this.funcs.drain());
 
             for mut state in diff {
-                let f = scopes.get_func(state.func.id);
-                if f.proto.is_extern {
-                    prototypes.emit("extern ");
-                }
-
                 prototypes.emit_prototype(scopes, &mut state, true);
                 prototypes.emit(";");
 
-                if let Some(body) = f.body.clone() {
+                if let Some(body) = scopes.get_func(state.func.id).body.clone() {
                     this.buffer.emit_prototype(scopes, &mut state, false);
                     this.emit_block(scopes, body, &mut state);
                 }
