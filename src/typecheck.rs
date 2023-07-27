@@ -1273,10 +1273,7 @@ impl Scopes {
 
         _ = self.resolve_use(
             false,
-            &Path::Root(vec![
-                ("core".into(), vec![]),
-                ("panic".into(), vec![]),
-            ]),
+            &Path::Root(vec![("core".into(), vec![]), ("panic".into(), vec![])]),
             Span::default(),
         );
     }
@@ -2847,7 +2844,7 @@ impl TypeChecker {
                 do_while,
             } => {
                 // if let Some(Expr::Is { expr, pattern }) = cond.map(|cond| cond.data) {
-                //     
+                //
                 // }
 
                 let cond = cond.map(|cond| {
@@ -3258,23 +3255,15 @@ impl TypeChecker {
         };
 
         let span = pattern.path.span;
-        let result = match scopes.resolve_path(&pattern.path.data, span) {
-            Ok(path) => path,
+        let Some(union) = (match scopes.resolve_path(&pattern.path.data, span) {
+            Ok(path) => path.as_func()
+                .map(|f| scopes.get_func(f.id))
+                .filter(|f| f.constructor)
+                .and_then(|f| f.proto.ret.as_user_type())
+                .filter(|ty| ty.id == ut.id)
+                .and_then(|ty| scopes.get_user_type(ty.id).data.as_union()),
             Err(err) => return self.error(err),
-        };
-
-        let Some(func) = result.as_func() else {
-            return self.error(Error::new("pattern does not match the scrutinee", span));
-        };
-
-        let func = scopes.get_func(func.id);
-        if !func.constructor {
-            return self.error(Error::new("pattern does not match the scrutinee", span));
-        }
-
-        let Some(union) = func.proto.ret.as_user_type()
-            .filter(|ty| ty.id == ut.id)
-            .and_then(|ty| scopes.get_user_type(ty.id).data.as_union()) else {
+        }) else {
             return self.error(Error::new("pattern does not match the scrutinee", span));
         };
 
