@@ -1358,7 +1358,7 @@ impl Scopes {
                                     true,
                                     &Prototype {
                                         public: base.public,
-                                        name: base.name.clone(),
+                                        name: Located::new(String::new(), base.name.span),
                                         is_async: false,
                                         is_extern: false,
                                         variadic: false,
@@ -3325,165 +3325,213 @@ impl TypeChecker {
         args: Vec<(Option<String>, Located<Expr>)>,
         span: Span,
     ) -> CheckedExpr {
-        if let Expr::Member {
-            source,
-            member,
-            generics,
-        } = callee.data
-        {
-            let this = self.check_expr(scopes, *source, None);
-            let id = this.ty.strip_references().clone();
-            let Some(ut) = id.as_user_type() else {
-                return self.error(Error::new(
-                    format!("cannot get member of type '{}'", id.name(scopes)),
-                    span,
-                ));
-            };
-            let ty = scopes.get_user_type(ut.id);
-            if let Some((tr, func)) = Self::get_member_fn(scopes, &member, ty) {
-                let f = scopes.get_func(func);
-                if !f.proto.public && !scopes.is_sub_scope(ty.scope) {
+        match callee.data {
+            Expr::Member {
+                source,
+                member,
+                generics,
+            } => {
+                let this = self.check_expr(scopes, *source, None);
+                let id = this.ty.strip_references().clone();
+                let Some(ut) = id.as_user_type() else {
                     return self.error(Error::new(
-                        format!(
-                            "cannot access private method '{member}' of type '{}'",
-                            id.name(scopes)
-                        ),
+                        format!("cannot get member of type '{}'", id.name(scopes)),
                         span,
                     ));
-                }
+                };
+                let ty = scopes.get_user_type(ut.id);
+                if let Some((tr, func)) = Self::get_member_fn(scopes, &member, ty) {
+                    let f = scopes.get_func(func);
+                    if !f.proto.public && !scopes.is_sub_scope(ty.scope) {
+                        return self.error(Error::new(
+                            format!(
+                                "cannot access private method '{member}' of type '{}'",
+                                id.name(scopes)
+                            ),
+                            span,
+                        ));
+                    }
 
-                if let Some(this_param) = f.proto.params.get(0).filter(|p| p.name == THIS_PARAM) {
-                    if this_param.ty.is_mut_ptr() {
-                        let mut ty = &this.ty;
-                        if !ty.is_ptr() && !ty.is_mut_ptr() && !Self::can_addrmut(&this, scopes) {
-                            return self.error(Error::new(
-                                format!("cannot call method '{member}' with immutable receiver"),
-                                span,
-                            ));
-                        } else {
-                            while let TypeId::MutPtr(inner) = ty {
-                                ty = inner;
-                            }
-
-                            if matches!(ty, TypeId::Ptr(_)) {
+                    if let Some(this_param) = f.proto.params.get(0).filter(|p| p.name == THIS_PARAM)
+                    {
+                        if this_param.ty.is_mut_ptr() {
+                            let mut ty = &this.ty;
+                            if !ty.is_ptr() && !ty.is_mut_ptr() && !Self::can_addrmut(&this, scopes)
+                            {
                                 return self.error(Error::new(
                                     format!(
-                                        "cannot call method '{member}' through an immutable pointer"
+                                        "cannot call method '{member}' with immutable receiver"
                                     ),
                                     span,
                                 ));
+                            } else {
+                                while let TypeId::MutPtr(inner) = ty {
+                                    ty = inner;
+                                }
+
+                                if matches!(ty, TypeId::Ptr(_)) {
+                                    return self.error(Error::new(
+                                        format!(
+                                            "cannot call method '{member}' through an immutable pointer"
+                                        ),
+                                        span,
+                                    ));
+                                }
                             }
                         }
-                    }
 
-                    let mut result = IndexMap::from([(
-                        THIS_PARAM.into(),
-                        if !matches!(this.ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
-                            if matches!(this_param.ty, TypeId::Ptr(_)) {
-                                CheckedExpr::new(
-                                    TypeId::Ptr(this.ty.clone().into()),
-                                    ExprData::Unary {
-                                        op: UnaryOp::Addr,
-                                        expr: this.into(),
-                                    },
-                                )
+                        let mut result = IndexMap::from([(
+                            THIS_PARAM.into(),
+                            if !matches!(this.ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
+                                if matches!(this_param.ty, TypeId::Ptr(_)) {
+                                    CheckedExpr::new(
+                                        TypeId::Ptr(this.ty.clone().into()),
+                                        ExprData::Unary {
+                                            op: UnaryOp::Addr,
+                                            expr: this.into(),
+                                        },
+                                    )
+                                } else {
+                                    CheckedExpr::new(
+                                        TypeId::MutPtr(this.ty.clone().into()),
+                                        ExprData::Unary {
+                                            op: UnaryOp::AddrMut,
+                                            expr: this.into(),
+                                        },
+                                    )
+                                }
                             } else {
-                                CheckedExpr::new(
-                                    TypeId::MutPtr(this.ty.clone().into()),
-                                    ExprData::Unary {
-                                        op: UnaryOp::AddrMut,
-                                        expr: this.into(),
-                                    },
-                                )
-                            }
-                        } else {
-                            Self::auto_deref(this, &this_param.ty)
-                        },
-                    )]);
+                                Self::auto_deref(this, &this_param.ty)
+                            },
+                        )]);
 
-                    let mut func =
-                        match scopes.resolve_generics(f.proto.type_params.len(), &generics, span) {
+                        let mut func = match scopes.resolve_generics(
+                            f.proto.type_params.len(),
+                            &generics,
+                            span,
+                        ) {
                             Ok(generics) => GenericFunc::new(func, generics),
                             Err(error) => return self.error(error),
                         };
-                    let (args, ret) = self.check_fn_args(
-                        tr.as_ref().or(Some(ut)),
-                        &mut func,
-                        args,
-                        &Vec::from(&f.proto.params[1..]),
-                        target,
-                        scopes,
-                        span,
-                    );
+                        let (args, ret) = self.check_fn_args(
+                            tr.as_ref().or(Some(ut)),
+                            &mut func,
+                            args,
+                            &Vec::from(&f.proto.params[1..]),
+                            target,
+                            scopes,
+                            span,
+                        );
 
-                    result.extend(args);
-                    return CheckedExpr::new(
-                        ret,
-                        ExprData::Call {
-                            func,
-                            inst: Some(id),
-                            args: result,
-                            trait_fn: tr.is_some(),
-                        },
-                    );
+                        result.extend(args);
+                        return CheckedExpr::new(
+                            ret,
+                            ExprData::Call {
+                                func,
+                                inst: Some(id),
+                                args: result,
+                                trait_fn: tr.is_some(),
+                            },
+                        );
+                    }
+                }
+
+                self.error(Error::new(
+                    format!("no method '{member}' found on type '{}'", id.name(scopes)),
+                    span,
+                ))
+            }
+            Expr::Path(path) => {
+                let result = match scopes.resolve_path(&path, callee.span) {
+                    Ok(path) => path,
+                    Err(err) => return self.error(err),
+                };
+
+                match result {
+                    ResolvedPath::UserType(ty) => {
+                        let ut = scopes.get_user_type(ty.id);
+                        let Some(st) = ut.data.as_struct() else {
+                            return self.error(Error::new(
+                                format!("cannot construct type '{}'", ut.name),
+                                span,
+                            ))
+                        };
+
+                        if st.0.iter().any(|member| !member.1.public)
+                            && !scopes.is_sub_scope(ut.scope)
+                        {
+                            self.error::<()>(Error::new(
+                                "cannot construct type with private members",
+                                span,
+                            ));
+                        }
+
+                        let (args, ret) = self.check_fn_args(
+                            None,
+                            &mut GenericFunc::new(*st.1, ty.generics),
+                            args,
+                            &scopes.get_func(*st.1).proto.params.clone(),
+                            target,
+                            scopes,
+                            span,
+                        );
+
+                        CheckedExpr::new(ret, ExprData::Instance(args))
+                    }
+                    ResolvedPath::Func(mut func) => {
+                        let f = scopes.get_func(func.id);
+                        let constructor = f.constructor;
+                        let (args, ret) = self.check_fn_args(
+                            None,
+                            &mut func,
+                            args,
+                            &f.proto.params.clone(),
+                            target,
+                            scopes,
+                            span,
+                        );
+
+                        CheckedExpr::new(
+                            ret,
+                            if constructor {
+                                ExprData::Instance(args)
+                            } else {
+                                ExprData::Call {
+                                    func,
+                                    args,
+                                    inst: None,
+                                    trait_fn: false,
+                                }
+                            },
+                        )
+                    }
+                    ResolvedPath::Var(id) => {
+                        // closure, fn pointer
+                        self.error(Error::new(
+                            format!(
+                                "cannot call value of type '{}'",
+                                &scopes.get_var(id).ty.name(scopes)
+                            ),
+                            span,
+                        ))
+                    }
+                    ResolvedPath::Module(scope) => self.error(Error::new(
+                        format!(
+                            "cannot call module '{}'",
+                            scopes[scope].name.as_ref().unwrap()
+                        ),
+                        span,
+                    )),
+                    ResolvedPath::None(err) => self.error(Error::new(err, callee.span)),
                 }
             }
-
-            self.error(Error::new(
-                format!("no method '{member}' found on type '{}'", id.name(scopes)),
-                span,
-            ))
-        } else {
-            match self.check_expr(scopes, callee, None).ty {
-                TypeId::Func(mut func) => {
-                    let f = scopes.get_func(func.id);
-                    let constructor = f.constructor;
-                    if constructor {
-                        let ret = f.proto.ret.clone();
-                        let ut = scopes.get_user_type(ret.as_user_type().unwrap().id);
-                        if let Some(st) = ut.data.as_struct() {
-                            if st.0.iter().any(|member| !member.1.public)
-                                && !scopes.is_sub_scope(ut.scope)
-                            {
-                                return CheckedExpr::new(
-                                    ret,
-                                    self.error(Error::new(
-                                        "cannot construct type with private members",
-                                        span,
-                                    )),
-                                );
-                            }
-                        }
-                    }
-
-                    let (args, ret) = self.check_fn_args(
-                        None,
-                        &mut func,
-                        args,
-                        &f.proto.params.clone(),
-                        target,
-                        scopes,
-                        span,
-                    );
-
-                    CheckedExpr::new(
-                        ret,
-                        if constructor {
-                            ExprData::Instance(args)
-                        } else {
-                            ExprData::Call {
-                                func: *func,
-                                args,
-                                inst: None,
-                                trait_fn: false,
-                            }
-                        },
-                    )
-                }
-                ty => self.error(Error::new(
-                    format!("cannot call value of type '{}'", &ty.name(scopes)),
+            _ => {
+                let expr = self.check_expr(scopes, callee, target);
+                // closure, fn pointer
+                self.error(Error::new(
+                    format!("cannot call value of type '{}'", &expr.ty.name(scopes)),
                     span,
-                )),
+                ))
             }
         }
     }
