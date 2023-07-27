@@ -2222,6 +2222,15 @@ impl TypeChecker {
                         span,
                     ));
                 }
+            } else {
+                self.error::<()>(Error::new(
+                    format!(
+                        "must implement '{}::{}'",
+                        gtr.name(scopes),
+                        rhs_func.proto.name
+                    ),
+                    span,
+                ));
             }
         }
     }
