@@ -26,6 +26,13 @@ pub struct Span<T> {
     pub fn as_raw(this) Raw<T> {
         return Raw::from_ptr(this.ptr);
     }
+
+    pub fn iter(this) Iter<T> {
+        return Iter(
+            ptr: this.ptr,
+            end: core::ptr::offset(this.ptr, this.len)
+        );
+    }
 }
 
 pub struct SpanMut<T> {
@@ -62,5 +69,41 @@ pub struct SpanMut<T> {
 
     pub fn as_raw_mut(this) RawMut<T> {
         return RawMut::from_ptr(this.ptr);
+    }
+
+    pub fn iter(this) Iter<T> {
+        return Iter(
+            ptr: this.ptr,
+            end: core::ptr::offset(this.ptr, this.len)
+        );
+    }
+
+    pub fn iter_mut(this) IterMut<T> {
+        return IterMut(
+            ptr: this.ptr,
+            end: core::ptr::offset_mut(this.ptr, this.len)
+        );
+    }
+}
+
+pub struct Iter<T>: core::iter::Iter<*T> {
+    ptr: *T,
+    end: *T,
+
+    pub fn next(mut this) ?*T {
+        return if !core::ptr::eq(this.ptr, this.end) {
+            yield core::mem::replace(&mut this.ptr, core::ptr::offset(this.ptr, 1));
+        };
+    }
+}
+
+pub struct IterMut<T>: core::iter::Iter<*mut T> {
+    ptr: *mut T,
+    end: *mut T,
+
+    pub fn next(mut this) ?*mut T {
+        return if !core::ptr::eq(this.ptr, this.end) {
+            yield core::mem::replace(&mut this.ptr, core::ptr::offset_mut(this.ptr, 1));
+        };
     }
 }
