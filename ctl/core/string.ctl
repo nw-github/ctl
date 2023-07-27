@@ -1,6 +1,8 @@
 use core::span::Span;
+use core::hash::Hash;
+use core::hash::Hasher;
 
-pub struct str {
+pub struct str: Hash {
     span: [u8..],
 
     pub fn from_c_str(ptr: *c_char) str {
@@ -27,5 +29,9 @@ pub struct str {
 
     pub fn as_bytes(this) [u8..] {
         return this.span;
+    }
+
+    pub fn hash<H: Hasher>(this, h: *mut H) {
+        h.hash(this.span);
     }
 }
