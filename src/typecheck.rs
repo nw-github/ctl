@@ -1581,11 +1581,16 @@ impl Scopes {
                 }
             },
             Stmt::Fn(f) => self.forward_declare_fn(self.current_id(), false, f),
-            Stmt::Static { public, name, .. } => {
+            Stmt::Static {
+                public, name, ty, ..
+            } => {
                 self.insert_var(Variable {
                     name: name.clone(),
                     public: *public,
-                    ty: TypeId::Unknown,
+                    ty: ty
+                        .as_ref()
+                        .and_then(|ty| self.resolve_type(ty).ok())
+                        .unwrap_or(TypeId::Unknown),
                     is_static: true,
                     mutable: false,
                     value: None,
