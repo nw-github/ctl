@@ -24,7 +24,6 @@ pub struct RangeTo<T>: RangeBounds<T> {
 
 // ..=bar
 pub struct RangeToInclusive<T>: RangeBounds<T> {
-    pub start: T,
     pub end: T,
 
     pub fn begin(this) Bound<T> {

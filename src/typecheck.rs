@@ -1,4 +1,3 @@
-use core::panic;
 use std::path::PathBuf;
 
 use concat_idents::concat_idents;
@@ -1268,6 +1267,15 @@ impl Scopes {
                 ("core".into(), vec![]),
                 ("string".into(), vec![]),
                 ("str".into(), vec![]),
+            ]),
+            Span::default(),
+        );
+
+        _ = self.resolve_use(
+            false,
+            &Path::Root(vec![
+                ("core".into(), vec![]),
+                ("panic".into(), vec![]),
             ]),
             Span::default(),
         );
@@ -3500,9 +3508,7 @@ impl TypeChecker {
         inst: Option<&GenericUserType>,
     ) -> CheckedExpr {
         let mut target = param.ty.clone();
-        if !func.generics.is_empty() {
-            target.fill_func_generics(scopes, func);
-        }
+        target.fill_func_generics(scopes, func);
 
         if let Some(inst) = inst {
             target.fill_type_generics(scopes, inst);

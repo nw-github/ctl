@@ -17,7 +17,7 @@ pub union Option<T> { // ?T
                 return inner;
             },
             Option::None => {
-                ::core::panic("Option::unwrap(): value is null!");
+                panic("Option::unwrap(): value is null!");
             },
         }
     }

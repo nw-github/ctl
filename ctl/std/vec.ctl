@@ -2,7 +2,6 @@ use core::ptr::Raw;
 use core::ptr::RawMut;
 use core::opt::Option;
 use core::mem;
-use core::panic;
 
 pub struct Vec<T> {
     ptr: RawMut<T>,
@@ -189,7 +188,7 @@ pub struct Vec<T> {
                 this.ptr = ptr;
                 this.cap = cap;
             },
-            Option::None => panic("Out of memory!"),
+            Option::None => panic("Vec::reserve(): out of memory!"),
         }
     }
 }
