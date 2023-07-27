@@ -6,7 +6,6 @@ pub struct Span<T> {
     len: usize,
 
     pub /* unsafe */ fn new<U>(ptr: *U, len: usize) [U..] {
-        // these are the same type, but we have to convince the type system
         return Span(ptr:, len:);
     }
 
