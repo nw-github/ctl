@@ -1,6 +1,3 @@
-#ifndef CTL_RUNTIME_H
-#define CTL_RUNTIME_H
-
 #include <gc.h>
 #include <stdint.h>
 
@@ -15,12 +12,10 @@ typedef uint8_t     CTL_bool;
 typedef float       f32;
 typedef double      f64;
 
-inline void *ctl_malloc(usize size) {
+static inline void *ctl_malloc(usize size) {
     return GC_MALLOC(size);
 }
 
-inline void *ctl_realloc(void *old, usize size) {
+static inline void *ctl_realloc(void *old, usize size) {
     return GC_REALLOC(old, size);
 }
-
-#endif // CTL_RUNTIME_H

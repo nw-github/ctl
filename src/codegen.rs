@@ -419,7 +419,7 @@ impl Codegen {
 
         let functions = std::mem::take(&mut this.buffer);
 
-        this.buffer.emit("#include <runtime/ctl.h>\n");
+        this.buffer.emit(include_str!("../ctl/ctl.h"));
         this.emit_structs(scopes, prototypes.0)?;
 
         let mut statics = Vec::new();
