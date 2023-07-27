@@ -2838,6 +2838,7 @@ impl TypeChecker {
                     out_type,
                     ExprData::Loop {
                         cond: cond.map(|cond| cond.into()),
+                        iter: None,
                         body,
                         do_while,
                     },
@@ -2882,7 +2883,7 @@ impl TypeChecker {
                     };
                 }
 
-                let iter = scopes.insert_var(Variable {
+                let id = scopes.insert_var(Variable {
                     public: false,
                     name: "$iter".into(),
                     ty: iter.ty.clone(),
@@ -2890,7 +2891,7 @@ impl TypeChecker {
                     mutable: true,
                     value: Some(iter),
                 });
-                let body = self.check_expr(
+                let mut body = self.check_expr(
                     scopes,
                     l!(Expr::Loop {
                         cond: None,
@@ -2935,13 +2936,9 @@ impl TypeChecker {
                     Some(&TypeId::Void),
                 );
 
-                CheckedExpr::new(
-                    body.ty.clone(),
-                    ExprData::For {
-                        iter,
-                        body: body.into(),
-                    },
-                )
+                let ExprData::Loop { iter, .. } = &mut body.data else { unreachable!() };
+                *iter = Some(id);
+                body
             }
             Expr::Member {
                 source,

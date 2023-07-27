@@ -823,6 +823,7 @@ impl Codegen {
             }
             ExprData::Loop {
                 cond,
+                iter,
                 body,
                 do_while,
             } => {
@@ -834,6 +835,14 @@ impl Codegen {
                             self.buffer.emit_type(scopes, &expr.ty);
                             self.buffer.emit(format!(" {};", self.cur_loop));
                         }
+
+                        if let Some(iter) = iter {
+                            self.buffer.emit_local_decl(scopes, iter, state);
+                            self.buffer.emit(" = ");
+                            self.gen_expr_inner(scopes, scopes.get_var(iter).value.clone().unwrap(), state);
+                            self.buffer.emit(";");
+                        }
+
                         self.buffer.emit("for (;;) {");
 
                         macro_rules! cond {
@@ -867,15 +876,6 @@ impl Codegen {
                 if !expr.ty.is_void_like() {
                     self.buffer.emit(std::mem::replace(&mut self.cur_loop, old));
                 }
-            }
-            ExprData::For { iter, body } => {
-                
-                self.buffer.emit_local_decl(scopes, iter, state);
-                self.buffer.emit(" = ");
-                self.gen_expr_inner(scopes, scopes.get_var(iter).value.clone().unwrap(), state);
-                self.buffer.emit(";");
-
-                self.gen_expr(scopes, *body, state);
             }
             ExprData::Subscript { .. } => todo!(),
             ExprData::Return(expr) => {

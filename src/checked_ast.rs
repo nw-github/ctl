@@ -61,12 +61,9 @@ pub enum ExprData {
     },
     Loop {
         cond: Option<Box<CheckedExpr>>,
+        iter: Option<VariableId>,
         body: Block,
         do_while: bool,
-    },
-    For {
-        iter: VariableId,
-        body: Box<CheckedExpr>,
     },
     Match {
         expr: Box<CheckedExpr>,
