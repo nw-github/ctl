@@ -202,7 +202,10 @@ impl<'a> Parser<'a> {
         if self.advance_if_kind(Token::Question).is_some() {
             let mutable = self.advance_if_kind(Token::Mut);
             let id = self.expect_id_with_span("expected name")?;
-            return Ok(Pattern::Option(mutable.is_some(), L::new(id.0.into(), id.1)));
+            return Ok(Pattern::Option(
+                mutable.is_some(),
+                L::new(id.0.into(), id.1),
+            ));
         }
 
         if let Some(token) = self.advance_if_kind(Token::None) {
@@ -885,13 +888,138 @@ impl<'a> Parser<'a> {
     }
 
     fn statement(&mut self) -> Result<L<Stmt>> {
-        let expr = self.expression()?;
-        let mut span = expr.span;
-        if !expr.data.is_block_expr() {
-            span.extend_to(self.expect_kind(Token::Semicolon, "expected ';'")?.span);
-        }
+        let expr = if let Some(token) = self.advance_if_kind(Token::If) {
+            self.if_expr(token)?
+        } else if let Some(token) = self.advance_if_kind(Token::While) {
+            self.while_expr(token)?
+        } else if let Some(token) = self.advance_if_kind(Token::Loop) {
+            self.loop_expr(token)?
+        } else if let Some(token) = self.advance_if_kind(Token::For) {
+            self.for_expr(token)?
+        } else if let Some(token) = self.advance_if_kind(Token::Match) {
+            self.match_expr(token)?
+        } else if let Some(token) = self.advance_if_kind(Token::LCurly) {
+            self.block_expr(token.span)?
+        } else {
+            let expr = self.expression()?;
+            self.expect_kind(Token::Semicolon, "expected ';'")?;
+            expr
+        };
 
+        let span = expr.span;
         Ok(L::new(Stmt::Expr(expr), span))
+    }
+
+    fn if_expr(&mut self, token: L<Token>) -> Result<L<Expr>> {
+        let cond = self.expression()?;
+        let lcurly = self.expect_kind(Token::LCurly, "expected block")?;
+        let if_branch = self.block_expr(lcurly.span)?;
+        let else_branch = if self.advance_if_kind(Token::Else).is_some() {
+            if !self.matches_kind(Token::If) {
+                let lcurly = self.expect_kind(Token::LCurly, "expected block")?;
+                Some(self.block_expr(lcurly.span)?)
+            } else {
+                Some(self.expression()?)
+            }
+        } else {
+            None
+        };
+        let span = Span::combine(
+            token.span,
+            else_branch.as_ref().map_or(if_branch.span, |e| e.span),
+        );
+        Ok(L::new(
+            Expr::If {
+                cond: cond.into(),
+                if_branch: if_branch.into(),
+                else_branch: else_branch.map(|e| e.into()),
+            },
+            span,
+        ))
+    }
+
+    fn while_expr(&mut self, token: L<Token>) -> Result<L<Expr>> {
+        let tspan = token.span;
+        let cond = self.expression()?;
+        let lcurly = self.expect_kind(Token::LCurly, "expected '{'")?;
+        let (body, span) = self.parse_block(lcurly.span)?;
+
+        Ok(L::new(
+            Expr::Loop {
+                cond: Some(cond.into()),
+                body,
+                do_while: false,
+            },
+            Span::combine(tspan, span),
+        ))
+    }
+
+    fn loop_expr(&mut self, token: L<Token>) -> Result<L<Expr>> {
+        let mut span = token.span;
+        let lcurly = self.expect_kind(Token::LCurly, "expected '{'")?;
+        let (body, _) = self.parse_block(lcurly.span)?;
+        let (cond, do_while) = if self.advance_if_kind(Token::While).is_some() {
+            let cond = self.expression()?;
+            span.extend_to(cond.span);
+            (Some(cond.into()), true)
+        } else {
+            (None, false)
+        };
+
+        Ok(L::new(
+            Expr::Loop {
+                cond,
+                body,
+                do_while,
+            },
+            span,
+        ))
+    }
+
+    fn for_expr(&mut self, token: L<Token>) -> Result<L<Expr>> {
+        let mutable = self.advance_if_kind(Token::Mut);
+        let var = self.expect_id("expected variable name")?;
+        self.expect_kind(Token::In, "expected 'in'")?;
+        // TODO: parse for foo in 0.. {} as |0..| |{}| instead of |0..{}|
+        let iter = self.expression()?;
+        let lcurly = self.expect_kind(Token::LCurly, "expected '{'")?;
+        let (body, span) = self.parse_block(lcurly.span)?;
+        Ok(L::new(
+            Expr::For {
+                var: var.into(),
+                mutable: mutable.is_some(),
+                iter: iter.into(),
+                body,
+            },
+            Span::combine(token.span, span),
+        ))
+    }
+
+    fn match_expr(&mut self, token: L<Token>) -> Result<L<Expr>> {
+        let expr = self.expression()?;
+        self.expect_kind(Token::LCurly, "expected block")?;
+        let mut body = Vec::new();
+        let span = self.advance_until(Token::RCurly, token.span, |this| {
+            let pattern = this.pattern()?;
+            this.expect_kind(Token::FatArrow, "expected '=>'")?;
+            let expr = this.expression()?;
+            if !expr.data.is_block_expr() {
+                this.expect_kind(Token::Comma, "expected ','")?;
+            } else {
+                this.advance_if_kind(Token::Comma);
+            }
+
+            body.push((pattern, expr));
+            Ok(())
+        })?;
+
+        Ok(L::new(
+            Expr::Match {
+                expr: expr.into(),
+                body,
+            },
+            span,
+        ))
     }
 
     //
@@ -1273,113 +1401,11 @@ impl<'a> Parser<'a> {
                 }
             }
             Token::LCurly => self.block_expr(token.span)?,
-            Token::If => {
-                let cond = self.expression()?;
-                let lcurly = self.expect_kind(Token::LCurly, "expected block")?;
-                let if_branch = self.block_expr(lcurly.span)?;
-                let else_branch = if self.advance_if_kind(Token::Else).is_some() {
-                    if !self.matches_kind(Token::If) {
-                        let lcurly = self.expect_kind(Token::LCurly, "expected block")?;
-                        Some(self.block_expr(lcurly.span)?)
-                    } else {
-                        Some(self.expression()?)
-                    }
-                } else {
-                    None
-                };
-                let span = Span::combine(
-                    token.span,
-                    else_branch.as_ref().map_or(if_branch.span, |e| e.span),
-                );
-                L::new(
-                    Expr::If {
-                        cond: cond.into(),
-                        if_branch: if_branch.into(),
-                        else_branch: else_branch.map(|e| e.into()),
-                    },
-                    span,
-                )
-            }
-            Token::While => {
-                let tspan = token.span;
-                let cond = self.expression()?;
-                let lcurly = self.expect_kind(Token::LCurly, "expected '{'")?;
-                let (body, span) = self.parse_block(lcurly.span)?;
-
-                L::new(
-                    Expr::Loop {
-                        cond: Some(cond.into()),
-                        body,
-                        do_while: false,
-                    },
-                    Span::combine(tspan, span),
-                )
-            }
-            Token::Loop => {
-                let mut span = token.span;
-                let lcurly = self.expect_kind(Token::LCurly, "expected '{'")?;
-                let (body, _) = self.parse_block(lcurly.span)?;
-                let (cond, do_while) = if self.advance_if_kind(Token::While).is_some() {
-                    let cond = self.expression()?;
-                    span.extend_to(cond.span);
-                    (Some(cond.into()), true)
-                } else {
-                    (None, false)
-                };
-
-                L::new(
-                    Expr::Loop {
-                        cond,
-                        body,
-                        do_while,
-                    },
-                    span,
-                )
-            }
-            Token::For => {
-                let mutable = self.advance_if_kind(Token::Mut);
-                let var = self.expect_id("expected variable name")?;
-                self.expect_kind(Token::In, "expected 'in'")?;
-                // TODO: parse for foo in 0.. {} as |0..| |{}| instead of |0..{}|
-                let iter = self.expression()?;
-                let lcurly = self.expect_kind(Token::LCurly, "expected '{'")?;
-                let (body, span) = self.parse_block(lcurly.span)?;
-                L::new(
-                    Expr::For {
-                        var: var.into(),
-                        mutable: mutable.is_some(),
-                        iter: iter.into(),
-                        body,
-                    },
-                    Span::combine(token.span, span),
-                )
-            }
-            Token::Match => {
-                let expr = self.expression()?;
-                self.expect_kind(Token::LCurly, "expected block")?;
-                let mut body = Vec::new();
-                let span = self.advance_until(Token::RCurly, token.span, |this| {
-                    let pattern = this.pattern()?;
-                    this.expect_kind(Token::FatArrow, "expected '=>'")?;
-                    let expr = this.expression()?;
-                    if !expr.data.is_block_expr() {
-                        this.expect_kind(Token::Comma, "expected ','")?;
-                    } else {
-                        this.advance_if_kind(Token::Comma);
-                    }
-
-                    body.push((pattern, expr));
-                    Ok(())
-                })?;
-
-                L::new(
-                    Expr::Match {
-                        expr: expr.into(),
-                        body,
-                    },
-                    span,
-                )
-            }
+            Token::If => self.if_expr(token)?,
+            Token::While => self.while_expr(token)?,
+            Token::Loop => self.loop_expr(token)?,
+            Token::For => self.for_expr(token)?,
+            Token::Match => self.match_expr(token)?,
             Token::LBrace => {
                 if let Some(rbrace) = self.advance_if_kind(Token::RBrace) {
                     L::new(
@@ -1402,7 +1428,7 @@ impl<'a> Parser<'a> {
                                 this.expect_kind(Token::Colon, "expected ':'")?;
                                 let value = this.expression()?;
                                 exprs.push((key, value));
-
+        
                                 if !this.matches_kind(Token::RBrace) {
                                     this.expect_kind(Token::Comma, "expected ','")?;
                                 }
@@ -1411,7 +1437,7 @@ impl<'a> Parser<'a> {
                         } else {
                             self.expect_kind(Token::RBrace, "expected ']' or ','")?.span
                         };
-
+        
                         L::new(Expr::Map(exprs), span)
                     } else if self.advance_if_kind(Token::Semicolon).is_some() {
                         let count = self.expression()?;
@@ -1436,14 +1462,14 @@ impl<'a> Parser<'a> {
                             if !this.matches_kind(Token::RBrace) {
                                 this.expect_kind(Token::Comma, "expected ','")?;
                             }
-
+        
                             Ok(())
                         })?;
-
+        
                         L::new(Expr::Array(exprs), span)
                     }
                 }
-            }
+            },
             _ => {
                 return Err(Error::new("unexpected token", token.span));
             }
