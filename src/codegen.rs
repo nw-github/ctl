@@ -597,6 +597,7 @@ impl Codegen {
                     state.fill_generics(scopes, inst);
                 }
 
+                let original_id = func.id;
                 if trait_fn {
                     let f = scopes.get_func(func.id);
                     if let Some(ut) = inst.as_ref().and_then(|i| i.as_user_type()) {
@@ -627,7 +628,7 @@ impl Codegen {
                     return;
                 }
 
-                let args = Self::make_positional(&scopes.get_func(func.id).proto.params, args);
+                let args = Self::make_positional(&scopes.get_func(original_id).proto.params, args);
 
                 let next_state = State::new(func, inst);
                 self.buffer.emit_fn_name(scopes, &next_state);
@@ -1014,22 +1015,22 @@ impl Codegen {
         tmp_name: &str,
         mut scrutinee: &TypeId,
     ) {
-        let mut count = 0;
-        while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = scrutinee {
-            scrutinee = inner;
-            count += 1;
-        }
-
-        let opt_ptr = is_opt_ptr(scopes, scrutinee.strip_references());
-        let tmp_name = format!("({}{tmp_name})", "*".repeat(count));
         match pattern {
             CheckedPattern::UnionMember {
                 binding,
                 variant,
                 ptr,
             } => {
+                let mut count = 0;
+                while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = scrutinee {
+                    scrutinee = inner;
+                    count += 1;
+                }
+        
+                let opt_ptr = is_opt_ptr(scopes, scrutinee.strip_references());
+                let tmp_name = format!("({}{tmp_name})", "*".repeat(count));
                 if opt_ptr && variant.0 == "Some" {
-                    self.buffer.emit(format!("if ({tmp_name} != NULL) {{",));
+                    self.buffer.emit(format!("if ({tmp_name} != NULL) {{"));
 
                     if let &Some(id) = binding {
                         if !scopes.get_var(id).ty.is_void_like() {
