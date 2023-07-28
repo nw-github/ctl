@@ -2349,6 +2349,18 @@ impl TypeChecker {
         expr: Located<Expr>,
         target: Option<&TypeId>,
     ) -> CheckedExpr {
+        macro_rules! lbox {
+            ($e: expr) => {
+                Located::new($e, Span::default()).into()
+            };
+        }
+
+        macro_rules! l {
+            ($e: expr) => {
+                Located::new($e, Span::default())
+            };
+        }
+
         let span = expr.span;
         match expr.data {
             Expr::Binary { op, left, right } => {
@@ -2918,18 +2930,6 @@ impl TypeChecker {
                     ))
                 }
 
-                macro_rules! lbox {
-                    ($e: expr) => {
-                        Located::new($e, Span::default()).into()
-                    };
-                }
-
-                macro_rules! l {
-                    ($e: expr) => {
-                        Located::new($e, Span::default())
-                    };
-                }
-
                 let id = scopes.insert_var(Variable {
                     public: false,
                     name: "$iter".into(),
@@ -3136,7 +3136,22 @@ impl TypeChecker {
 
                 CheckedExpr::new(TypeId::Never, ExprData::Continue)
             }
-            Expr::Is { .. } => todo!(),
+            Expr::Is { expr, pattern } => {
+                self.check_expr(
+                    scopes,
+                    l!(Expr::Match {
+                        expr,
+                        body: vec![
+                            (pattern, l!(Expr::Bool(true))),
+                            (
+                                Pattern::Path(l!(Path::from("_".to_string()))),
+                                l!(Expr::Bool(false))
+                            )
+                        ],
+                    }),
+                    Some(&TypeId::Bool),
+                )
+            },
             Expr::Match { expr, body } => {
                 let scrutinee_span = expr.span;
                 let scrutinee = self.check_expr(scopes, *expr, None);
