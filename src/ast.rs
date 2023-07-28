@@ -256,6 +256,15 @@ pub mod expr {
         },
         Continue,
     }
+
+    impl Expr {
+        pub fn is_block_expr(&self) -> bool {
+            matches!(
+                self,
+                Expr::If { .. } | Expr::For { .. } | Expr::Block(_) | Expr::Match { .. }
+            ) || matches!(self, Expr::Loop { do_while, .. } if !do_while )
+        }
+    }
 }
 
 pub mod stmt {

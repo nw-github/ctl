@@ -875,11 +875,7 @@ impl<'a> Parser<'a> {
     fn statement(&mut self) -> Result<L<Stmt>> {
         let expr = self.expression()?;
         let mut span = expr.span;
-        if !(matches!(
-            expr.data,
-            Expr::If { .. } | Expr::For { .. } | Expr::Block(_) | Expr::Match { .. }
-        ) || matches!(expr.data, Expr::Loop { do_while, .. } if !do_while ))
-        {
+        if !expr.data.is_block_expr() {
             span.extend_to(self.expect_kind(Token::Semicolon, "expected ';'")?.span);
         }
 
@@ -1354,7 +1350,11 @@ impl<'a> Parser<'a> {
                     let pattern = this.pattern()?;
                     this.expect_kind(Token::FatArrow, "expected '=>'")?;
                     let expr = this.expression()?;
-                    this.expect_kind(Token::Comma, "expected ','")?;
+                    if !expr.data.is_block_expr() {
+                        this.expect_kind(Token::Comma, "expected ','")?;
+                    } else {
+                        this.advance_if_kind(Token::Comma);
+                    }
 
                     body.push((pattern, expr));
                     Ok(())
