@@ -3136,22 +3136,20 @@ impl TypeChecker {
 
                 CheckedExpr::new(TypeId::Never, ExprData::Continue)
             }
-            Expr::Is { expr, pattern } => {
-                self.check_expr(
-                    scopes,
-                    l!(Expr::Match {
-                        expr,
-                        body: vec![
-                            (pattern, l!(Expr::Bool(true))),
-                            (
-                                Pattern::Path(l!(Path::from("_".to_string()))),
-                                l!(Expr::Bool(false))
-                            )
-                        ],
-                    }),
-                    Some(&TypeId::Bool),
-                )
-            },
+            Expr::Is { expr, pattern } => self.check_expr(
+                scopes,
+                l!(Expr::Match {
+                    expr,
+                    body: vec![
+                        (pattern, l!(Expr::Bool(true))),
+                        (
+                            Pattern::Path(l!(Path::from("_".to_string()))),
+                            l!(Expr::Bool(false))
+                        )
+                    ],
+                }),
+                Some(&TypeId::Bool),
+            ),
             Expr::Match { expr, body } => {
                 let scrutinee_span = expr.span;
                 let scrutinee = self.check_expr(scopes, *expr, None);
@@ -3241,24 +3239,29 @@ impl TypeChecker {
         pattern: Pattern,
     ) -> CheckedPattern {
         let (path, binding) = match pattern {
-            Pattern::PathWithBindings { path, binding } => (path, Some(binding)),
-            Pattern::Path(path) => {
-                if let Some(ident) = path.data.as_identifier() {
-                    return CheckedPattern::CatchAll(scopes.insert_var(Variable {
-                        public: false,
-                        name: ident.into(),
-                        ty: scrutinee.ty.clone(),
-                        is_static: false,
-                        mutable: false,
-                        value: None,
-                    }));
-                }
-
-                (path, None)
+            Pattern::PathWithBindings { path, binding } => {
+                (scopes.resolve_path(&path.data, span), Some(binding))
             }
+            Pattern::Path(path) => match scopes.resolve_path(&path.data, span) {
+                original @ Ok(ResolvedPath::None(_)) => {
+                    if let Some(ident) = path.data.as_identifier() {
+                        return CheckedPattern::CatchAll(scopes.insert_var(Variable {
+                            public: false,
+                            name: ident.into(),
+                            ty: scrutinee.ty.clone(),
+                            is_static: false,
+                            mutable: false,
+                            value: None,
+                        }));
+                    }
+
+                    (original, None)
+                }
+                path => (path, None),
+            },
             Pattern::Option(mutable, binding) => (
-                Located::new(
-                    Path::Root(vec![
+                scopes.resolve_path(
+                    &Path::Root(vec![
                         ("core".into(), vec![]),
                         ("opt".into(), vec![]),
                         ("Option".into(), vec![]),
@@ -3269,8 +3272,8 @@ impl TypeChecker {
                 Some((mutable, binding.data)),
             ),
             Pattern::Null(span) => (
-                Located::new(
-                    Path::Root(vec![
+                scopes.resolve_path(
+                    &Path::Root(vec![
                         ("core".into(), vec![]),
                         ("opt".into(), vec![]),
                         ("Option".into(), vec![]),
@@ -3280,6 +3283,16 @@ impl TypeChecker {
                 ),
                 None,
             ),
+            Pattern::MutCatchAll(name) => {
+                return CheckedPattern::CatchAll(scopes.insert_var(Variable {
+                    public: false,
+                    name: name.data,
+                    ty: scrutinee.ty.clone(),
+                    is_static: false,
+                    mutable: true,
+                    value: None,
+                }));
+            }
         };
 
         let Some(ut) = scrutinee.ty
@@ -3288,12 +3301,15 @@ impl TypeChecker {
             return self.error(Error::new("match scrutinee must be a union type", span));
         };
 
-        let span = path.span;
-        let Some(union) = (match scopes.resolve_path(&path.data, span) {
+        let mut variant = String::new();
+        let Some(union) = (match path {
             Ok(path) => path.as_func()
                 .map(|f| scopes.get_func(f.id))
                 .filter(|f| f.constructor)
-                .and_then(|f| f.proto.ret.as_user_type())
+                .and_then(|f| {
+                    variant = f.proto.name.clone();
+                    f.proto.ret.as_user_type()
+                })
                 .filter(|ty| ty.id == ut.id)
                 .and_then(|ty| scopes.get_user_type(ty.id).data.as_union()),
             Err(err) => return self.error(err),
@@ -3301,12 +3317,11 @@ impl TypeChecker {
             return self.error(Error::new("pattern does not match the scrutinee", span));
         };
 
-        let name = path.data.components().last().unwrap().0.clone();
-        let (_, member) = union.variants.iter().find(|(m, _)| m == &name).unwrap();
+        let (_, member) = union.variants.iter().find(|(m, _)| m == &variant).unwrap();
 
         let mut ty = member.ty.clone();
         ty.fill_type_generics(scopes, ut);
-        let tag = union.variant_tag(&name).unwrap();
+        let tag = union.variant_tag(&variant).unwrap();
         if let Some((mutable, binding)) = binding {
             CheckedPattern::UnionMember {
                 binding: Some(scopes.insert_var(Variable {
@@ -3317,16 +3332,16 @@ impl TypeChecker {
                     mutable,
                     value: None,
                 })),
-                variant: (name, tag),
+                variant: (variant, tag),
             }
         } else if ty.is_void() {
             CheckedPattern::UnionMember {
                 binding: None,
-                variant: (name, tag),
+                variant: (variant, tag),
             }
         } else {
             self.error(Error::new(
-                format!("union variant '{name}' has data that must be bound"),
+                format!("union variant '{variant}' has data that must be bound"),
                 span,
             ))
         }

@@ -43,6 +43,7 @@ pub enum Pattern {
         binding: (bool, String),
     },
     Path(Located<Path>),
+    MutCatchAll(Located<String>),
     Option(bool, Located<String>),
     Null(Span),
 }

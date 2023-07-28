@@ -209,6 +209,11 @@ impl<'a> Parser<'a> {
             return Ok(Pattern::Null(token.span));
         }
 
+        if self.advance_if_kind(Token::Mut).is_some() {
+            let id = self.expect_id_with_span("expected name")?;
+            return Ok(Pattern::MutCatchAll(L::new(id.0.into(), id.1)));
+        }
+
         let path = self.type_path()?;
         if self.advance_if_kind(Token::LParen).is_some() {
             // TODO: make this a pattern
