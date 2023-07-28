@@ -1222,32 +1222,30 @@ impl<'a> Parser<'a> {
         let mut expr = self.primary()?;
         loop {
             if self.advance_if_kind(Token::LParen).is_some() {
-                let (args, span) = if let Some(rparen) = self.advance_if_kind(Token::RParen) {
-                    (Vec::new(), rparen.span)
-                } else {
-                    self.comma_separated(Token::RParen, "expected ')'", |this| {
-                        let expr = this.expression()?;
-                        if let Expr::Path(path) = &expr.data {
-                            if path.as_identifier().is_some()
-                                && this.advance_if_kind(Token::Colon).is_some()
-                            {
-                                let ident = path.as_identifier().unwrap().to_string();
-                                if this.matches(|t| matches!(t, Token::Comma | Token::RParen)) {
-                                    return Ok((
-                                        Some(ident.clone()),
-                                        L::new(Expr::Path(Path::from(ident)), expr.span),
-                                    ));
-                                } else {
-                                    return Ok((Some(ident), this.expression()?));
-                                }
+                let mut args = Vec::new();
+                let span = self.advance_until(Token::RParen, expr.span, |this| {
+                    let mut expr = this.expression()?;
+                    let mut name = None;
+                    if let Expr::Path(path) = &expr.data {
+                        if let Some(ident) = path
+                            .as_identifier()
+                            .filter(|_| this.advance_if_kind(Token::Colon).is_some())
+                        {
+                            name = Some(ident.to_string());
+                            if !this.matches(|t| matches!(t, Token::Comma | Token::RParen)) {
+                                expr = this.expression()?;
                             }
                         }
+                    }
 
-                        Ok((None, expr))
-                    })?
-                };
+                    args.push((name, expr));
+                    if !this.matches_kind(Token::RParen) {
+                        this.expect_kind(Token::Comma, "expected ','")?;
+                    }
 
-                let span = Span::combine(expr.span, span);
+                    Ok(())
+                })?;
+
                 expr = L::new(
                     Expr::Call {
                         callee: expr.into(),
@@ -1428,7 +1426,7 @@ impl<'a> Parser<'a> {
                                 this.expect_kind(Token::Colon, "expected ':'")?;
                                 let value = this.expression()?;
                                 exprs.push((key, value));
-        
+
                                 if !this.matches_kind(Token::RBrace) {
                                     this.expect_kind(Token::Comma, "expected ','")?;
                                 }
@@ -1437,7 +1435,7 @@ impl<'a> Parser<'a> {
                         } else {
                             self.expect_kind(Token::RBrace, "expected ']' or ','")?.span
                         };
-        
+
                         L::new(Expr::Map(exprs), span)
                     } else if self.advance_if_kind(Token::Semicolon).is_some() {
                         let count = self.expression()?;
@@ -1462,14 +1460,14 @@ impl<'a> Parser<'a> {
                             if !this.matches_kind(Token::RBrace) {
                                 this.expect_kind(Token::Comma, "expected ','")?;
                             }
-        
+
                             Ok(())
                         })?;
-        
+
                         L::new(Expr::Array(exprs), span)
                     }
                 }
-            },
+            }
             _ => {
                 return Err(Error::new("unexpected token", token.span));
             }
