@@ -5,20 +5,27 @@ pub union Option<T> { // ?T
     // ?? operator
     // pub fn unwrap_or(this, or: fn() T) T {
     //     return match this {
-    //         Option::Some(value) => *value,
-    //         Option::None        => or(),
+    //         ?value => *value,
+    //         null   => or(),
     //     };
     // }
 
     // ! operator
     pub fn unwrap(this) T {
         match *this {
-            Option::Some(inner) => {
+            ?inner => {
                 return inner;
             },
-            Option::None => {
+            null => {
                 panic("Option::unwrap(): value is null!");
             },
         }
+    }
+
+    pub fn unwrap_or(this, or: T) T {
+        return match *this {
+            ?val => val,
+            null => or,
+        };
     }
 }

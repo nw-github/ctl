@@ -1,6 +1,5 @@
 use core::ptr::Raw;
 use core::ptr::RawMut;
-use core::opt::Option;
 use core::mem;
 
 pub struct Vec<T> {
@@ -184,11 +183,11 @@ pub struct Vec<T> {
             yield std::alloc::realloc(this.ptr.as_mut_ptr(), cap);
         };
         match ptr {
-            Option::Some(ptr) => {
+            ?ptr => {
                 this.ptr = ptr;
                 this.cap = cap;
             },
-            Option::None => panic("Vec::reserve(): out of memory!"),
+            null => panic("Vec::reserve(): out of memory!"),
         }
     }
 }
