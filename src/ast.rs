@@ -1,6 +1,6 @@
 use enum_as_inner::EnumAsInner;
 
-use crate::lexer::Located;
+use crate::lexer::{Located, Span};
 
 use self::stmt::TypeHint;
 
@@ -37,9 +37,14 @@ impl Path {
 }
 
 #[derive(Debug, Clone)]
-pub struct Pattern {
-    pub path: Located<Path>,
-    pub binding: Option<(bool, String)>,
+pub enum Pattern {
+    PathWithBindings {
+        path: Located<Path>,
+        binding: (bool, String),
+    },
+    Path(Located<Path>),
+    Option(bool, Located<String>),
+    Null(Span),
 }
 
 pub mod expr {

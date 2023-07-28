@@ -11,7 +11,7 @@ use crate::{
         stmt::{Fn, Param, ParsedUserType, Prototype, Stmt, TypeHint},
         Path, Pattern,
     },
-    checked_ast::{Block, CheckedExpr, CheckedStmt, ExprData, UnionPattern},
+    checked_ast::{Block, CheckedExpr, CheckedPattern, CheckedStmt, ExprData},
     lexer::{Located, Span},
     parser::ParsedFile,
     Error, Pipeline, THIS_PARAM, THIS_TYPE,
@@ -2952,28 +2952,9 @@ impl TypeChecker {
                                 args: vec![],
                             }),
                             body: vec![
+                                (Pattern::Option(mutable, l!(var)), l!(Expr::Block(body))),
                                 (
-                                    Pattern {
-                                        path: l!(Path::Root(vec![
-                                            ("core".into(), vec![]),
-                                            ("opt".into(), vec![]),
-                                            ("Option".into(), vec![]),
-                                            ("Some".into(), vec![]),
-                                        ])),
-                                        binding: Some((mutable, var))
-                                    },
-                                    l!(Expr::Block(body))
-                                ),
-                                (
-                                    Pattern {
-                                        path: l!(Path::Root(vec![
-                                            ("core".into(), vec![]),
-                                            ("opt".into(), vec![]),
-                                            ("Option".into(), vec![]),
-                                            ("None".into(), vec![]),
-                                        ])),
-                                        binding: None
-                                    },
+                                    Pattern::Null(Span::default()),
                                     l!(Expr::Break(lbox!(Expr::Void)))
                                 )
                             ],
@@ -3163,11 +3144,10 @@ impl TypeChecker {
                 let mut result = Vec::new();
                 for (pattern, expr) in body.into_iter() {
                     let span = expr.span;
-                    let (var, variant) =
-                        self.check_pattern(scopes, &scrutinee, scrutinee_span, pattern);
-                    let (var, mut expr) = scopes.enter(None, ScopeKind::None, |scopes| {
-                        let var = var.map(|var| scopes.insert_var(var));
-                        (var, self.check_expr(scopes, expr, target.as_ref()))
+                    let (pattern, mut expr) = scopes.enter(None, ScopeKind::None, |scopes| {
+                        let pattern =
+                            self.check_pattern(scopes, &scrutinee, scrutinee_span, pattern);
+                        (pattern, self.check_expr(scopes, expr, target.as_ref()))
                     });
 
                     if let Some(target) = &target {
@@ -3177,10 +3157,7 @@ impl TypeChecker {
                     }
 
                     result.push((
-                        UnionPattern {
-                            binding: var,
-                            variant,
-                        },
+                        pattern,
                         CheckedExpr::new(TypeId::Never, ExprData::Yield(expr.into())),
                     ));
                 }
@@ -3243,19 +3220,61 @@ impl TypeChecker {
 
     fn check_pattern(
         &mut self,
-        scopes: &Scopes,
+        scopes: &mut Scopes,
         scrutinee: &CheckedExpr,
         span: Span,
         pattern: Pattern,
-    ) -> (Option<Variable>, (String, usize)) {
+    ) -> CheckedPattern {
+        let (path, binding) = match pattern {
+            Pattern::PathWithBindings { path, binding } => (path, Some(binding)),
+            Pattern::Path(path) => {
+                if let Some(ident) = path.data.as_identifier() {
+                    return CheckedPattern::CatchAll(scopes.insert_var(Variable {
+                        public: false,
+                        name: ident.into(),
+                        ty: scrutinee.ty.clone(),
+                        is_static: false,
+                        mutable: false,
+                        value: None,
+                    }));
+                }
+
+                (path, None)
+            }
+            Pattern::Option(mutable, binding) => (
+                Located::new(
+                    Path::Root(vec![
+                        ("core".into(), vec![]),
+                        ("opt".into(), vec![]),
+                        ("Option".into(), vec![]),
+                        ("Some".into(), vec![]),
+                    ]),
+                    binding.span,
+                ),
+                Some((mutable, binding.data)),
+            ),
+            Pattern::Null(span) => (
+                Located::new(
+                    Path::Root(vec![
+                        ("core".into(), vec![]),
+                        ("opt".into(), vec![]),
+                        ("Option".into(), vec![]),
+                        ("None".into(), vec![]),
+                    ]),
+                    span,
+                ),
+                None,
+            ),
+        };
+
         let Some(ut) = scrutinee.ty
             .as_user_type()
             .filter(|ut| scopes.get_user_type(ut.id).data.is_union()) else {
             return self.error(Error::new("match scrutinee must be a union type", span));
         };
 
-        let span = pattern.path.span;
-        let Some(union) = (match scopes.resolve_path(&pattern.path.data, span) {
+        let span = path.span;
+        let Some(union) = (match scopes.resolve_path(&path.data, span) {
             Ok(path) => path.as_func()
                 .map(|f| scopes.get_func(f.id))
                 .filter(|f| f.constructor)
@@ -3267,26 +3286,29 @@ impl TypeChecker {
             return self.error(Error::new("pattern does not match the scrutinee", span));
         };
 
-        let name = pattern.path.data.components().last().unwrap().0.clone();
+        let name = path.data.components().last().unwrap().0.clone();
         let (_, member) = union.variants.iter().find(|(m, _)| m == &name).unwrap();
 
         let mut ty = member.ty.clone();
         ty.fill_type_generics(scopes, ut);
         let tag = union.variant_tag(&name).unwrap();
-        if let Some((mutable, binding)) = pattern.binding {
-            (
-                Some(Variable {
+        if let Some((mutable, binding)) = binding {
+            CheckedPattern::UnionMember {
+                binding: Some(scopes.insert_var(Variable {
                     public: false,
                     name: binding,
                     ty,
                     is_static: false,
                     mutable,
                     value: None,
-                }),
-                (name, tag),
-            )
+                })),
+                variant: (name, tag),
+            }
         } else if ty.is_void() {
-            (None, (name, tag))
+            CheckedPattern::UnionMember {
+                binding: None,
+                variant: (name, tag),
+            }
         } else {
             self.error(Error::new(
                 format!("union variant '{name}' has data that must be bound"),

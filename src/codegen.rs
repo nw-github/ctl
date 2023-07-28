@@ -4,7 +4,7 @@ use indexmap::IndexMap;
 
 use crate::{
     ast::expr::UnaryOp,
-    checked_ast::{CheckedExpr, CheckedStmt, ExprData},
+    checked_ast::{CheckedExpr, CheckedPattern, CheckedStmt, ExprData},
     lexer::Span,
     typecheck::{
         CheckedParam, GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId,
@@ -928,36 +928,13 @@ impl Codegen {
                                 self.buffer.emit("else ");
                             }
 
-                            if opt_ptr && pattern.variant.0 == "Some" {
-                                self.buffer.emit(format!(
-                                    "if ({tmp_name} != NULL) {{",
-                                ));
-
-                                if let Some(id) = pattern.binding {
-                                    if !scopes.get_var(id).ty.is_void_like() {
-                                        self.buffer.emit_local_decl(scopes, id, state);
-                                        self.buffer
-                                            .emit(format!(" = {tmp_name};"));
-                                    }
-                                }
-                            } else if opt_ptr && pattern.variant.0 == "None" {
-                                self.buffer.emit(format!(
-                                    "if ({tmp_name} == NULL) {{",
-                                ));
-                            } else {
-                                self.buffer.emit(format!(
-                                    "if ({tmp_name}.{UNION_TAG_NAME} == {}) {{",
-                                    pattern.variant.1
-                                ));
-
-                                if let Some(id) = pattern.binding {
-                                    if !scopes.get_var(id).ty.is_void_like() {
-                                        self.buffer.emit_local_decl(scopes, id, state);
-                                        self.buffer
-                                            .emit(format!(" = {tmp_name}.{};", pattern.variant.0));
-                                    }
-                                }
-                            }
+                            self.gen_pattern(
+                                scopes, 
+                                state, 
+                                &pattern, 
+                                opt_ptr, 
+                                &tmp_name, 
+                            );
 
                             stmt! {
                                 self,
@@ -1027,6 +1004,50 @@ impl Codegen {
 
         self.temporaries.emit(written.0);
         self.buffer.emit(tmp);
+    }
+
+    fn gen_pattern(
+        &mut self,
+        scopes: &Scopes,
+        state: &mut State,
+        pattern: &CheckedPattern,
+        opt_ptr: bool,
+        tmp_name: &str,
+    ) {
+        match pattern {
+            CheckedPattern::UnionMember { binding, variant } => {
+                if opt_ptr && variant.0 == "Some" {
+                    self.buffer.emit(format!("if ({tmp_name} != NULL) {{",));
+
+                    if let &Some(id) = binding {
+                        if !scopes.get_var(id).ty.is_void_like() {
+                            self.buffer.emit_local_decl(scopes, id, state);
+                            self.buffer.emit(format!(" = {tmp_name};"));
+                        }
+                    }
+                } else if opt_ptr && variant.0 == "None" {
+                    self.buffer.emit(format!("if ({tmp_name} == NULL) {{",));
+                } else {
+                    self.buffer.emit(format!(
+                        "if ({tmp_name}.{UNION_TAG_NAME} == {}) {{",
+                        variant.1
+                    ));
+
+                    if let &Some(id) = binding {
+                        if !scopes.get_var(id).ty.is_void_like() {
+                            self.buffer.emit_local_decl(scopes, id, state);
+                            self.buffer.emit(format!(" = {tmp_name}.{};", variant.0));
+                        }
+                    }
+                }
+            }
+            CheckedPattern::CatchAll(binding) => {
+                self.buffer.emit("if (1) {");
+                self.buffer.emit_local_decl(scopes, *binding, state);
+                self.buffer.emit(format!(" = {tmp_name};"));
+            }
+            CheckedPattern::Error => panic!("ICE: CheckedPattern::Error in gen_pattern"),
+        }
     }
 
     fn emit_block(&mut self, scopes: &Scopes, block: Vec<CheckedStmt>, state: &mut State) {

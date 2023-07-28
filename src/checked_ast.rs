@@ -11,10 +11,15 @@ pub struct Block {
     pub scope: ScopeId,
 }
 
-#[derive(Debug, Clone)]
-pub struct UnionPattern {
-    pub binding: Option<VariableId>,
-    pub variant: (String, usize),
+#[derive(Debug, Clone, Default)]
+pub enum CheckedPattern {
+    UnionMember {
+        binding: Option<VariableId>,
+        variant: (String, usize),
+    },
+    CatchAll(VariableId),
+    #[default]
+    Error,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -67,7 +72,7 @@ pub enum ExprData {
     },
     Match {
         expr: Box<CheckedExpr>,
-        body: Vec<(UnionPattern, CheckedExpr)>,
+        body: Vec<(CheckedPattern, CheckedExpr)>,
     },
     Member {
         source: Box<CheckedExpr>,

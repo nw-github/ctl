@@ -199,6 +199,16 @@ impl<'a> Parser<'a> {
     }
 
     fn pattern(&mut self) -> Result<Pattern> {
+        if self.advance_if_kind(Token::Question).is_some() {
+            let mutable = self.advance_if_kind(Token::Mut);
+            let id = self.expect_id_with_span("expected name")?;
+            return Ok(Pattern::Option(mutable.is_some(), L::new(id.0.into(), id.1)));
+        }
+
+        if let Some(token) = self.advance_if_kind(Token::None) {
+            return Ok(Pattern::Null(token.span));
+        }
+
         let path = self.type_path()?;
         if self.advance_if_kind(Token::LParen).is_some() {
             // TODO: make this a pattern
@@ -206,15 +216,12 @@ impl<'a> Parser<'a> {
             let id = self.expect_id("expected identifier")?;
             self.expect_kind(Token::RParen, "expected ')'")?;
 
-            Ok(Pattern {
+            Ok(Pattern::PathWithBindings {
                 path,
-                binding: Some((mutable.is_some(), id.into())),
+                binding: (mutable.is_some(), id.into()),
             })
         } else {
-            Ok(Pattern {
-                path,
-                binding: None,
-            })
+            Ok(Pattern::Path(path))
         }
     }
 
