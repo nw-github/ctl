@@ -3873,24 +3873,32 @@ impl TypeChecker {
         }
     }
 
-    fn auto_deref(mut expr: CheckedExpr, target: &TypeId) -> CheckedExpr {
-        #[allow(clippy::redundant_clone)]
-        let mut ty = expr.ty.clone();
-        while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = &ty {
-            match target {
-                TypeId::Ptr(t) | TypeId::MutPtr(t) if t == inner => break,
-                other if other == &ty => break,
-                _ => {}
-            }
+    fn auto_deref(mut expr: CheckedExpr, mut target: &TypeId) -> CheckedExpr {
+        let mut indirection = 0;
+        while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = target {
+            target = inner;
+            indirection += 1;
+        }
 
+        let mut ty = &expr.ty;
+        let mut my_indirection = 0;
+        while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = ty {
+            ty = inner;
+            my_indirection += 1;
+        }
+
+        while my_indirection > indirection {
+            my_indirection -= 1;
+            let (TypeId::Ptr(inner) | TypeId::MutPtr(inner)) = expr.ty.clone() else {
+                unreachable!()
+            };
             expr = CheckedExpr::new(
-                (**inner).clone(),
+                (*inner).clone(),
                 ExprData::Unary {
                     op: UnaryOp::Deref,
                     expr: expr.into(),
                 },
             );
-            ty = expr.ty.clone();
         }
 
         expr
