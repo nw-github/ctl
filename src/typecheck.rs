@@ -3318,21 +3318,21 @@ impl TypeChecker {
         let mut ty = member.ty.clone();
         ty.fill_type_generics(scopes, ut);
         let ptr = scrutinee.ty.is_ptr() || scrutinee.ty.is_mut_ptr();
-        if ptr {
-            let mut s = &scrutinee.ty;
-            while let TypeId::MutPtr(inner) = s {
-                s = inner;
-            }
-
-            if matches!(s, TypeId::Ptr(_)) {
-                ty = TypeId::Ptr(ty.into());
-            } else {
-                ty = TypeId::MutPtr(ty.into());
-            }
-        }
-
         let tag = union.variant_tag(&variant).unwrap();
         if let Some((mutable, binding)) = binding {
+            if ptr {
+                let mut s = &scrutinee.ty;
+                while let TypeId::MutPtr(inner) = s {
+                    s = inner;
+                }
+    
+                if matches!(s, TypeId::Ptr(_)) {
+                    ty = TypeId::Ptr(ty.into());
+                } else {
+                    ty = TypeId::MutPtr(ty.into());
+                }
+            }
+            
             CheckedPattern::UnionMember {
                 binding: Some(scopes.insert_var(Variable {
                     public: false,
