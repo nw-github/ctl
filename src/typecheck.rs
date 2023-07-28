@@ -934,7 +934,7 @@ impl Scopes {
         self.find_user_type_in("Iter", *iter)
     }
 
-    fn as_option_inner<'a>(&self, ty: &'a TypeId) -> Option<&'a TypeId> {
+    pub fn as_option_inner<'a>(&self, ty: &'a TypeId) -> Option<&'a TypeId> {
         self.find_core_option().and_then(|opt| {
             ty.as_user_type()
                 .filter(|ut| ut.id == opt)
@@ -1247,12 +1247,7 @@ impl Scopes {
                 span,
             ))
         } else {
-            let mut generics = Vec::new();
-            for ty in args.iter() {
-                generics.push(self.resolve_type(ty)?);
-            }
-
-            Ok(generics)
+            args.iter().map(|ty| self.resolve_type(ty)).collect()
         }
     }
 
@@ -3296,9 +3291,10 @@ impl TypeChecker {
         };
 
         let Some(ut) = scrutinee.ty
+            .strip_references()
             .as_user_type()
             .filter(|ut| scopes.get_user_type(ut.id).data.is_union()) else {
-            return self.error(Error::new("match scrutinee must be a union type", span));
+            return self.error(Error::new("match scrutinee must be union or pointer to union", span));
         };
 
         let mut variant = String::new();
@@ -3321,6 +3317,20 @@ impl TypeChecker {
 
         let mut ty = member.ty.clone();
         ty.fill_type_generics(scopes, ut);
+        let ptr = scrutinee.ty.is_ptr() || scrutinee.ty.is_mut_ptr();
+        if ptr {
+            let mut s = &scrutinee.ty;
+            while let TypeId::MutPtr(inner) = s {
+                s = inner;
+            }
+
+            if matches!(s, TypeId::Ptr(_)) {
+                ty = TypeId::Ptr(ty.into());
+            } else {
+                ty = TypeId::MutPtr(ty.into());
+            }
+        }
+
         let tag = union.variant_tag(&variant).unwrap();
         if let Some((mutable, binding)) = binding {
             CheckedPattern::UnionMember {
@@ -3333,11 +3343,13 @@ impl TypeChecker {
                     value: None,
                 })),
                 variant: (variant, tag),
+                ptr,
             }
         } else if ty.is_void() {
             CheckedPattern::UnionMember {
                 binding: None,
                 variant: (variant, tag),
+                ptr,
             }
         } else {
             self.error(Error::new(

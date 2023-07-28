@@ -916,7 +916,7 @@ impl Codegen {
                         // TODO: update to exclude void when literal patterns are implemented
                         let tmp_name = state.tmpvar();
                         state.fill_generics(scopes, &mut scrutinee.ty);
-                        let opt_ptr = is_opt_ptr(scopes, &scrutinee.ty);
+                        let ty = scrutinee.ty.clone();
 
                         self.buffer.emit_type(scopes, &scrutinee.ty);
                         self.buffer.emit(format!(" {tmp_name} = "));
@@ -929,11 +929,11 @@ impl Codegen {
                             }
 
                             self.gen_pattern(
-                                scopes, 
-                                state, 
-                                &pattern, 
-                                opt_ptr, 
-                                &tmp_name, 
+                                scopes,
+                                state,
+                                &pattern,
+                                &tmp_name,
+                                &ty,
                             );
 
                             stmt! {
@@ -1011,18 +1011,31 @@ impl Codegen {
         scopes: &Scopes,
         state: &mut State,
         pattern: &CheckedPattern,
-        opt_ptr: bool,
         tmp_name: &str,
+        mut scrutinee: &TypeId,
     ) {
+        let mut count = 0;
+        while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = scrutinee {
+            scrutinee = inner;
+            count += 1;
+        }
+
+        let opt_ptr = is_opt_ptr(scopes, scrutinee.strip_references());
+        let tmp_name = format!("({}{tmp_name})", "*".repeat(count));
         match pattern {
-            CheckedPattern::UnionMember { binding, variant } => {
+            CheckedPattern::UnionMember {
+                binding,
+                variant,
+                ptr,
+            } => {
                 if opt_ptr && variant.0 == "Some" {
                     self.buffer.emit(format!("if ({tmp_name} != NULL) {{",));
 
                     if let &Some(id) = binding {
                         if !scopes.get_var(id).ty.is_void_like() {
                             self.buffer.emit_local_decl(scopes, id, state);
-                            self.buffer.emit(format!(" = {tmp_name};"));
+                            self.buffer
+                                .emit(format!(" = {}{tmp_name};", if *ptr { "&" } else { "" }));
                         }
                     }
                 } else if opt_ptr && variant.0 == "None" {
@@ -1036,7 +1049,11 @@ impl Codegen {
                     if let &Some(id) = binding {
                         if !scopes.get_var(id).ty.is_void_like() {
                             self.buffer.emit_local_decl(scopes, id, state);
-                            self.buffer.emit(format!(" = {tmp_name}.{};", variant.0));
+                            self.buffer.emit(format!(
+                                " = {}{tmp_name}.{};",
+                                if *ptr { "&" } else { "" },
+                                variant.0,
+                            ));
                         }
                     }
                 }
@@ -1239,10 +1256,8 @@ impl Codegen {
 }
 
 fn is_opt_ptr(scopes: &Scopes, ty: &TypeId) -> bool {
-    ty.as_user_type()
-        .filter(|ut| {
-            Some(ut.id) == scopes.find_core_option()
-                && (ut.generics[0].is_ptr() || ut.generics[0].is_mut_ptr())
-        })
-        .is_some()
+    scopes
+        .as_option_inner(ty)
+        .map(|inner| inner.is_ptr() || inner.is_mut_ptr())
+        .unwrap_or(false)
 }

@@ -16,6 +16,7 @@ pub enum CheckedPattern {
     UnionMember {
         binding: Option<VariableId>,
         variant: (String, usize),
+        ptr: bool,
     },
     CatchAll(VariableId),
     #[default]
