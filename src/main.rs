@@ -1,6 +1,6 @@
 use clap::Parser;
 use ctl::Pipeline;
-use std::{fs::File, io::Write, path::PathBuf};
+use std::{fs::File, io::Write, path::{PathBuf, Path}};
 
 #[derive(Parser)]
 struct Arguments {
@@ -8,10 +8,24 @@ struct Arguments {
     output: Option<PathBuf>,
     #[clap(action, short, long)]
     dump_ast: bool,
+    #[clap(action, long)]
+    no_core: bool,
+    #[clap(action, long)]
+    no_std: bool,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Arguments::parse();
+    let root = Path::new(file!()).parent().unwrap().parent().unwrap();
+    let mut libs = Vec::new();
+    if !args.no_core {
+        libs.push(root.join("ctl/core"));
+    }
+
+    if !args.no_std {
+        libs.push(root.join("ctl/std"));
+    }
+
     let result = Pipeline::new(args.input.clone())
         .parse()?
         .inspect(|ast| {
@@ -19,7 +33,7 @@ fn main() -> anyhow::Result<()> {
                 ast.dump()
             }
         })
-        .typecheck()?
+        .typecheck(libs)?
         .codegen();
 
     match result {

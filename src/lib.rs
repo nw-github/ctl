@@ -103,14 +103,9 @@ impl Pipeline<Parsed> {
         }
     }
 
-    pub fn typecheck(self) -> anyhow::Result<Pipeline<Checked>> {
-        let root = Path::new(file!()).parent().unwrap().parent().unwrap();
+    pub fn typecheck(self, libs: Vec<PathBuf>) -> anyhow::Result<Pipeline<Checked>> {
         Ok(Pipeline {
-            state: Checked(TypeChecker::check(
-                &self.path,
-                self.state.0,
-                vec![root.join("ctl/core"), root.join("ctl/std")],
-            )?),
+            state: Checked(TypeChecker::check(&self.path, self.state.0, libs)?),
             path: self.path,
         })
     }
