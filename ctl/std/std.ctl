@@ -19,11 +19,8 @@ pub fn eprint(s: str) {
 }
 
 fn convert_argv(argc: c_int, argv: **c_char) [str..] {
-    use core::opt::Option;
-    use std::vec::Vec;
-
     let argc = argc as! usize;
-    mut args: [str] = Vec::with_capacity(argc);
+    mut args: [str] = std::vec::Vec::with_capacity(argc);
     mut i = 0usize;
     while i < argc {
         args.push(str::from_c_str(*core::ptr::offset(argv, i++)));

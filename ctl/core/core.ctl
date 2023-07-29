@@ -1,5 +1,4 @@
 pub fn panic(s: str) never {
-    // TODO: c_int
     extern fn _Exit(code: c_int) never;
     extern fn write(fd: c_int, buf: *c_void, count: usize) isize;
 
