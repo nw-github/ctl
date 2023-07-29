@@ -2584,13 +2584,14 @@ impl TypeChecker {
                 if let Some(inner) = target.and_then(|target| scopes.as_option_inner(target)) {
                     CheckedExpr::new(
                         scopes.make_option(inner.clone()).unwrap(),
-                        ExprData::Instance(
-                            [(
+                        ExprData::Instance {
+                            members: [(
                                 "None".into(),
                                 self.check_expr(scopes, Located::new(Expr::Void, span), target),
                             )]
                             .into(),
-                        ),
+                            variant: Some("None".into()),
+                        },
                     )
                 } else {
                     self.error(Error::new("cannot infer type of option literal null", span))
@@ -3325,14 +3326,14 @@ impl TypeChecker {
                 while let TypeId::MutPtr(inner) = s {
                     s = inner;
                 }
-    
+
                 if matches!(s, TypeId::Ptr(_)) {
                     ty = TypeId::Ptr(ty.into());
                 } else {
                     ty = TypeId::MutPtr(ty.into());
                 }
             }
-            
+
             CheckedPattern::UnionMember {
                 binding: Some(scopes.insert_var(Variable {
                     public: false,
@@ -3540,11 +3541,18 @@ impl TypeChecker {
                             span,
                         );
 
-                        CheckedExpr::new(ret, ExprData::Instance(args))
+                        CheckedExpr::new(
+                            ret,
+                            ExprData::Instance {
+                                members: args,
+                                variant: None,
+                            },
+                        )
                     }
                     ResolvedPath::Func(mut func) => {
                         let f = scopes.get_func(func.id);
                         let constructor = f.constructor;
+                        let variant = constructor.then(|| f.proto.name.clone());
                         let (args, ret) = self.check_fn_args(
                             None,
                             &mut func,
@@ -3558,7 +3566,10 @@ impl TypeChecker {
                         CheckedExpr::new(
                             ret,
                             if constructor {
-                                ExprData::Instance(args)
+                                ExprData::Instance {
+                                    members: args,
+                                    variant,
+                                }
                             } else {
                                 ExprData::Call {
                                     func,
@@ -3862,7 +3873,10 @@ impl TypeChecker {
                 Self::coerce_expr(
                     CheckedExpr::new(
                         scopes.make_option(expr.ty.clone()).unwrap(),
-                        ExprData::Instance([("Some".into(), expr)].into()),
+                        ExprData::Instance {
+                            members: [("Some".into(), expr)].into(),
+                            variant: Some("Some".into()),
+                        },
                     ),
                     target,
                     scopes,

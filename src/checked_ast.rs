@@ -40,7 +40,10 @@ pub enum ExprData {
         inst: Option<TypeId>,
         trait_fn: bool,
     },
-    Instance(IndexMap<String, CheckedExpr>),
+    Instance {
+        members: IndexMap<String, CheckedExpr>,
+        variant: Option<String>,
+    },
     Array(Vec<CheckedExpr>),
     ArrayWithInit {
         init: Box<CheckedExpr>,
