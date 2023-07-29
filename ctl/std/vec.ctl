@@ -17,6 +17,17 @@ pub struct Vec<T> {
         return self;
     }
 
+    pub fn from_span<U>(span: [U..]) Vec<U> {
+        mut self: [U] = Vec::with_capacity(span.len());
+        mem::copy(
+            dst: self.as_raw_mut().as_mut_ptr(),
+            src: span.as_raw().as_ptr(),
+            num: span.len()
+        );
+        self.set_len(span.len());
+        return self;
+    }
+
     pub fn len(this) usize {
         return this.len;
     }
@@ -53,6 +64,15 @@ pub struct Vec<T> {
         this.ptr.add(this.len++).write(t);
     }
 
+    pub fn push_within_capacity(mut this, t: T) ?T {
+        if this.can_insert(1) {
+            this.ptr.add(this.len++).write(t);
+            return null;
+        } else {
+            return t;
+        }
+    }
+
     pub fn pop(mut this) ?T {
         return if this.len > 0 {
             yield this.ptr.add(--this.len).read();
@@ -70,8 +90,7 @@ pub struct Vec<T> {
             num: rhs.len
         );
 
-        this.len += rhs.len;
-        rhs.len = 0;
+        this.len += mem::replace(&mut rhs.len, 0);
     }
 
     pub fn clear(mut this) {
