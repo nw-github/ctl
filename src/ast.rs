@@ -261,6 +261,7 @@ pub mod expr {
             inclusive: bool,
         },
         Continue,
+        Error,
     }
 
     impl Expr {
@@ -295,6 +296,7 @@ pub mod stmt {
         Void,
         This,
         MutThis,
+        Error,
     }
 
     #[derive(Debug, Clone)]
@@ -392,5 +394,6 @@ pub mod stmt {
             name: String,
             body: Vec<super::Stmt>,
         },
+        Error,
     }
 }

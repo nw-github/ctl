@@ -54,8 +54,6 @@ impl Error {
     }
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
-
 pub struct Pipeline<S: CompileState> {
     path: PathBuf,
     state: S,

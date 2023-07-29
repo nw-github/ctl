@@ -107,6 +107,8 @@ pub enum Token<'a> {
     Float(&'a str),
     String(Cow<'a, str>),
     Char(char),
+
+    Eof,
 }
 
 impl Token<'_> {
@@ -455,12 +457,8 @@ impl<'a> Lexer<'a> {
     pub fn is_identifier_first_char(ch: char) -> bool {
         matches!(ch, '_' | 'a'..='z' | 'A'..='Z')
     }
-}
 
-impl<'a> Iterator for Lexer<'a> {
-    type Item = Result<Located<Token<'a>>, Located<Error>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next_internal(&mut self) -> Option<<Self as Iterator>::Item> {
         loop {
             self.advance_while(char::is_whitespace);
             if self.advance_match("//") {
@@ -664,5 +662,16 @@ impl<'a> Iterator for Lexer<'a> {
                 len: self.loc.pos - start.pos,
             },
         )))
+    }
+}
+
+impl<'a> Iterator for Lexer<'a> {
+    type Item = Result<Located<Token<'a>>, Located<Error>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(self.next_internal().unwrap_or(Ok(Located::new(Token::Eof, Span {
+            loc: self.loc,
+            len: 0,
+        }))))
     }
 }

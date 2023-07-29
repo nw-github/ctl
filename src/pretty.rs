@@ -145,6 +145,7 @@ pub fn print_stmt(stmt: &Located<Stmt>, src: &str, indent: usize) {
         Stmt::Use { .. } => {
             println!("{tabs}Use[{}]", stmt.span.text(src));
         }
+        Stmt::Error => {}
     }
 }
 
@@ -374,6 +375,7 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
                 print_expr(expr, src, indent + 2);
             }
         }
+        Expr::Error => {}
     }
 }
 

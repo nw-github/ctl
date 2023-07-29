@@ -1044,6 +1044,7 @@ impl Scopes {
             }
             TypeHint::Tuple(_) => todo!(),
             TypeHint::Result(_, _) => todo!(),
+            TypeHint::Error => TypeId::Unknown,
         })
     }
 
@@ -2099,6 +2100,7 @@ impl TypeChecker {
                     CheckedStmt::None
                 }
             }
+            Stmt::Error => CheckedStmt::Error,
         }
     }
 
@@ -3224,6 +3226,7 @@ impl TypeChecker {
                     Self::coerce_expr(expr, &ty, scopes)
                 }
             }
+            Expr::Error => CheckedExpr::new(TypeId::Unknown, ExprData::Error)
         }
     }
 
