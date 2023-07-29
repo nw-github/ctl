@@ -787,8 +787,10 @@ impl Codegen {
                 }
             }
             ExprData::Member { source, member } => {
-                self.gen_expr(scopes, *source, state);
-                self.buffer.emit(format!(".{member}"));
+                if !expr.ty.is_void_like() {
+                    self.gen_expr(scopes, *source, state);
+                    self.buffer.emit(format!(".{member}"));
+                }
             }
             ExprData::Assign {
                 target,
