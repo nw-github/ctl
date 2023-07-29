@@ -37,6 +37,14 @@ pub struct Vec<T> {
         return core::span::SpanMut::new(this.ptr.as_mut_ptr(), this.len);
     }
 
+    pub fn iter(this) core::span::Iter<T> {
+        return this.as_span().iter();
+    }
+
+    pub fn iter_mut(this) core::span::IterMut<T> {
+        return this.as_span_mut().iter_mut();
+    }
+
     pub fn push(mut this, t: T) {
         if !this.can_insert(1) {
             this.grow();

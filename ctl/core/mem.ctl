@@ -32,6 +32,12 @@ pub fn replace<T>(ptr: *mut T, val: T) T {
     return old;
 }
 
+pub fn compare<T>(lhs: *T, rhs: *T, num: usize) bool {
+    extern fn memcmp(dst: *c_void, src: *c_void, len: usize) c_int;
+
+    return memcmp(lhs as *c_void, rhs as *c_void, num * size_of::<T>()) == 0;
+}
+
 pub /*unsafe*/ fn transmute<In, Out>(i: In) Out {
     // TODO: this is fine since we transpile to c, but whenever a spec gets written this usage of 
     // unions in CTL code should be considered UB

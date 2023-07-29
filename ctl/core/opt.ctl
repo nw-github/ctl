@@ -28,4 +28,21 @@ pub union Option<T> { // ?T
             null => or,
         };
     }
+    
+    pub fn as_mut(mut this) ?*mut T {
+        return match this {
+            ?val => val,
+            null => null,
+        };
+    }
+
+    pub fn get_or_insert(mut this, or: T) *mut T {
+        return match this {
+            ?val => val,
+            empty => {
+                *empty = Option::Some(or);
+                yield this.as_mut()!;
+            }
+        };
+    }
 }
