@@ -3412,30 +3412,27 @@ impl TypeChecker {
                             }
                         }
 
-                        let mut result = IndexMap::from([(
-                            THIS_PARAM.into(),
-                            if !matches!(this.ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
-                                if matches!(this_param.ty, TypeId::Ptr(_)) {
-                                    CheckedExpr::new(
-                                        TypeId::Ptr(this.ty.clone().into()),
-                                        ExprData::Unary {
-                                            op: UnaryOp::Addr,
-                                            expr: this.into(),
-                                        },
-                                    )
-                                } else {
-                                    CheckedExpr::new(
-                                        TypeId::MutPtr(this.ty.clone().into()),
-                                        ExprData::Unary {
-                                            op: UnaryOp::AddrMut,
-                                            expr: this.into(),
-                                        },
-                                    )
-                                }
+                        let this = if !matches!(this.ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
+                            if matches!(this_param.ty, TypeId::Ptr(_)) {
+                                CheckedExpr::new(
+                                    TypeId::Ptr(this.ty.clone().into()),
+                                    ExprData::Unary {
+                                        op: UnaryOp::Addr,
+                                        expr: this.into(),
+                                    },
+                                )
                             } else {
-                                Self::auto_deref(this, &this_param.ty)
-                            },
-                        )]);
+                                CheckedExpr::new(
+                                    TypeId::MutPtr(this.ty.clone().into()),
+                                    ExprData::Unary {
+                                        op: UnaryOp::AddrMut,
+                                        expr: this.into(),
+                                    },
+                                )
+                            }
+                        } else {
+                            Self::auto_deref(this, &this_param.ty)
+                        };
 
                         let mut func =
                             match scopes.resolve_generics(f.type_params.len(), &generics, span) {
@@ -3445,20 +3442,19 @@ impl TypeChecker {
                         let (args, ret) = self.check_fn_args(
                             tr.as_ref().or(Some(ut)),
                             &mut func,
+                            Some(this),
                             args,
-                            &Vec::from(&f.params[1..]),
                             target,
                             scopes,
                             span,
                         );
 
-                        result.extend(args);
                         return CheckedExpr::new(
                             ret,
                             ExprData::Call {
                                 func,
                                 inst: Some(id),
-                                args: result,
+                                args,
                                 trait_fn: tr.is_some(),
                             },
                         );
@@ -3496,8 +3492,8 @@ impl TypeChecker {
                         let (args, ret) = self.check_fn_args(
                             None,
                             &mut GenericFunc::new(*st.1, ty.generics),
+                            None,
                             args,
-                            &scopes.get_func(*st.1).params.clone(),
                             target,
                             scopes,
                             span,
@@ -3515,15 +3511,8 @@ impl TypeChecker {
                         let f = scopes.get_func(func.id);
                         let constructor = f.constructor;
                         let variant = constructor.then(|| f.name.clone());
-                        let (args, ret) = self.check_fn_args(
-                            None,
-                            &mut func,
-                            args,
-                            &f.params.clone(),
-                            target,
-                            scopes,
-                            span,
-                        );
+                        let (args, ret) =
+                            self.check_fn_args(None, &mut func, None, args, target, scopes, span);
 
                         CheckedExpr::new(
                             ret,
@@ -3603,8 +3592,8 @@ impl TypeChecker {
         &mut self,
         inst: Option<&GenericUserType>,
         func: &mut GenericFunc,
+        this: Option<CheckedExpr>,
         args: Vec<(Option<String>, Located<Expr>)>,
-        params: &[CheckedParam],
         target: Option<&TypeId>,
         scopes: &mut Scopes,
         span: Span,
@@ -3615,6 +3604,11 @@ impl TypeChecker {
 
         let mut result = IndexMap::with_capacity(args.len());
         let mut last_pos = 0;
+        if let Some(this) = this {
+            result.insert(THIS_PARAM.into(), this);
+            last_pos += 1;
+        }
+
         let variadic = scopes.get_func(func.id).variadic;
         let mut num = 0;
         for (name, expr) in args {
@@ -3627,8 +3621,13 @@ impl TypeChecker {
                         ));
                     }
                     Entry::Vacant(entry) => {
-                        if let Some(param) = params.iter().find(|p| p.name == name) {
-                            entry.insert(self.check_arg(func, scopes, expr, param, inst));
+                        if let Some(param) = scopes
+                            .get_func(func.id)
+                            .params
+                            .iter()
+                            .find(|p| p.name == name)
+                        {
+                            entry.insert(self.check_arg(func, scopes, expr, &param.clone(), inst));
                         } else {
                             self.error::<()>(Error::new(
                                 format!("unknown parameter: '{name}'"),
@@ -3637,7 +3636,9 @@ impl TypeChecker {
                         }
                     }
                 }
-            } else if let Some((i, param)) = params
+            } else if let Some((i, param)) = scopes
+                .get_func(func.id)
+                .params
                 .iter()
                 .enumerate()
                 .skip(last_pos)
@@ -3645,7 +3646,7 @@ impl TypeChecker {
             {
                 result.insert(
                     param.name.clone(),
-                    self.check_arg(func, scopes, expr, param, inst),
+                    self.check_arg(func, scopes, expr, &param.clone(), inst),
                 );
                 last_pos = i + 1;
             } else if !variadic {
@@ -3667,9 +3668,14 @@ impl TypeChecker {
         //     }
         // }
 
-        if params.len() > result.len() {
+        if scopes.get_func(func.id).params.len() > result.len() {
             let mut missing = String::new();
-            for param in params.iter().filter(|p| !result.contains_key(&p.name)) {
+            for param in scopes
+                .get_func(func.id)
+                .params
+                .iter()
+                .filter(|p| !result.contains_key(&p.name))
+            {
                 if !missing.is_empty() {
                     missing.push_str(", ");
                 }
@@ -3680,7 +3686,7 @@ impl TypeChecker {
             self.error::<()>(Error::new(
                 format!(
                     "expected {} argument(s), found {} (missing {missing})",
-                    params.len(),
+                    scopes.get_func(func.id).params.len(),
                     result.len()
                 ),
                 span,
