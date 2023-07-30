@@ -187,13 +187,13 @@ impl Buffer {
 
     fn emit_fn_name(&mut self, scopes: &Scopes, state: &State) {
         let f = scopes.get_func(state.func.id);
-        if !f.proto.is_extern {
+        if !f.is_extern {
             if let Some(inst) = state.inst.as_ref() {
                 self.emit_generic_mangled_name(scopes, inst);
                 self.emit("_");
-                self.emit(&f.proto.name);
+                self.emit(&f.name);
             } else {
-                self.emit(scopes.full_name(f.scope, &f.proto.name));
+                self.emit(scopes.full_name(f.scope, &f.name));
             }
 
             if !state.func.generics.is_empty() {
@@ -205,7 +205,7 @@ impl Buffer {
                 self.emit("$$");
             }
         } else {
-            self.emit(&f.proto.name);
+            self.emit(&f.name);
         }
     }
 
@@ -228,10 +228,10 @@ impl Buffer {
 
     fn emit_prototype(&mut self, scopes: &Scopes, state: &mut State, is_prototype: bool) {
         let f = scopes.get_func(state.func.id);
-        let mut ret = f.proto.ret.clone();
+        let mut ret = f.ret.clone();
         state.fill_generics(scopes, &mut ret);
 
-        if f.proto.is_extern {
+        if f.is_extern {
             self.emit("extern ");
         } else {
             self.emit("static ");
@@ -245,7 +245,7 @@ impl Buffer {
         self.emit(" ");
         self.emit_fn_name(scopes, state);
         self.emit("(");
-        for (i, param) in f.proto.params.iter().enumerate() {
+        for (i, param) in f.params.iter().enumerate() {
             let mut ty = param.ty.clone();
             state.fill_generics(scopes, &mut ty);
             if ty.is_void_like() {
@@ -256,7 +256,7 @@ impl Buffer {
                 self.emit(", ");
             }
 
-            if f.proto.is_extern || is_prototype {
+            if f.is_extern || is_prototype {
                 self.emit_type(scopes, &ty);
                 if !param.mutable {
                     self.emit(" const");
@@ -274,13 +274,13 @@ impl Buffer {
             }
         }
 
-        if f.proto.variadic {
-            if f.proto.params.is_empty() {
+        if f.variadic {
+            if f.params.is_empty() {
                 self.emit("...)");
             } else {
                 self.emit(", ...)");
             }
-        } else if f.proto.params.is_empty() {
+        } else if f.params.is_empty() {
             self.emit("void)");
         } else {
             self.emit(")");
@@ -415,7 +415,7 @@ impl Codegen {
             ..Self::default()
         };
 
-        let conv_argv = (scopes.get_func(main.func.id).proto.params.len() == 1).then(|| {
+        let conv_argv = (scopes.get_func(main.func.id).params.len() == 1).then(|| {
             let id = scopes
                 .find_func_in("convert_argv", scopes.find_module("std").unwrap())
                 .unwrap();
@@ -633,7 +633,7 @@ impl Codegen {
                     let f = scopes.get_func(func.id);
                     if let Some(ut) = inst.as_ref().and_then(|i| i.as_user_type()) {
                         let ut = scopes.get_user_type(ut.id);
-                        func.id = scopes.find_func_in(&f.proto.name, ut.body_scope).unwrap();
+                        func.id = scopes.find_func_in(&f.name, ut.body_scope).unwrap();
                     } else {
                         todo!("trait implementations for non-struct types");
                     }
@@ -659,7 +659,7 @@ impl Codegen {
                     return;
                 }
 
-                let args = Self::make_positional(&scopes.get_func(original_id).proto.params, args);
+                let args = Self::make_positional(&scopes.get_func(original_id).params, args);
 
                 let next_state = State::new(func, inst);
                 self.buffer.emit_fn_name(scopes, &next_state);

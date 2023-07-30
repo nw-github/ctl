@@ -8,7 +8,7 @@ use indexmap::{map::Entry, IndexMap, IndexSet};
 use crate::{
     ast::{
         expr::{BinaryOp, Expr, UnaryOp},
-        stmt::{Fn, Param, ParsedUserType, Prototype, Stmt, Struct, TypeHint},
+        stmt::{Fn, MemVar, Param, ParsedUserType, Stmt, Struct, TypeHint},
         Path, Pattern,
     },
     checked_ast::{Block, CheckedExpr, CheckedPattern, CheckedStmt, ExprData},
@@ -316,15 +316,11 @@ impl TypeId {
             TypeId::Func(func) => {
                 let f = scopes.get_func(func.id);
 
-                let mut result = format!("fn {}", f.proto.name);
+                let mut result = format!("fn {}", f.name);
                 if !func.generics.is_empty() {
                     result.push('<');
-                    for (i, (param, concrete)) in f
-                        .proto
-                        .type_params
-                        .iter()
-                        .zip(func.generics.iter())
-                        .enumerate()
+                    for (i, (param, concrete)) in
+                        f.type_params.iter().zip(func.generics.iter()).enumerate()
                     {
                         if i > 0 {
                             result.push_str(", ");
@@ -335,14 +331,14 @@ impl TypeId {
                 }
 
                 result.push('(');
-                for (i, param) in f.proto.params.iter().enumerate() {
+                for (i, param) in f.params.iter().enumerate() {
                     if i > 0 {
                         result.push_str(", ");
                     }
 
                     result.push_str(&format!("{}: {}", param.name, param.ty.name(scopes)));
                 }
-                format!("{result}) {}", f.proto.ret.name(scopes))
+                format!("{result}) {}", f.ret.name(scopes))
             }
             TypeId::UserType(ty) => ty.name(scopes),
             TypeId::Array(inner) => format!("[{}; {}]", inner.0.name(scopes), inner.1),
@@ -563,7 +559,7 @@ macro_rules! id {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct ScopeId(pub usize);
 
-id!(FunctionId => Function, fns, proto.name, func);
+id!(FunctionId => Function, fns, name, func);
 id!(UserTypeId => UserType, types, name, user_type);
 id!(VariableId => Variable, vars, name, var);
 
@@ -587,18 +583,6 @@ pub struct CheckedParam {
     //pub default: Option<CheckedExpr>,
 }
 
-#[derive(Debug, Clone)]
-pub struct CheckedPrototype {
-    pub public: bool,
-    pub name: String,
-    pub is_async: bool,
-    pub is_extern: bool,
-    pub variadic: bool,
-    pub type_params: Vec<String>,
-    pub params: Vec<CheckedParam>,
-    pub ret: TypeId,
-}
-
 #[derive(Default, Debug, Clone)]
 pub struct Variable {
     pub public: bool,
@@ -611,7 +595,14 @@ pub struct Variable {
 
 #[derive(Debug)]
 pub struct Function {
-    pub proto: CheckedPrototype,
+    pub public: bool,
+    pub name: String,
+    pub is_async: bool,
+    pub is_extern: bool,
+    pub variadic: bool,
+    pub type_params: Vec<String>,
+    pub params: Vec<CheckedParam>,
+    pub ret: TypeId,
     pub body: Option<Vec<CheckedStmt>>,
     pub constructor: bool,
     pub body_scope: ScopeId,
@@ -1123,7 +1114,7 @@ impl Scopes {
                         let f = self.get_func(id);
                         return Ok(ResolvedPath::Func(GenericFunc::new(
                             id,
-                            self.resolve_generics(f.proto.type_params.len(), generics, span)?,
+                            self.resolve_generics(f.type_params.len(), generics, span)?,
                         )));
                     }
 
@@ -1189,14 +1180,14 @@ impl Scopes {
                 scope = ty.body_scope;
             } else if let Some(id) = self.find_func_in(name, scope) {
                 let func = self.get_func(id);
-                if !func.proto.public {
+                if !func.public {
                     return Err(Error::new(format!("function '{name}' is private"), span));
                 }
 
                 if is_end {
                     return Ok(ResolvedPath::Func(GenericFunc::new(
                         id,
-                        self.resolve_generics(func.proto.type_params.len(), generics, span)?,
+                        self.resolve_generics(func.type_params.len(), generics, span)?,
                     )));
                 }
 
@@ -1335,14 +1326,14 @@ impl Scopes {
                             }
 
                             *scopes.get_user_type_mut(id).data.as_struct_mut().unwrap().1 = scopes
-                                .forward_declare_proto(
-                                    parent,
+                                .forward_declare_fn(
                                     true,
-                                    &Self::constructor_proto(base, stmt.span),
+                                    &Self::struct_constructor_fn(base, stmt.span),
+                                    Some(parent),
                                 );
 
                             for f in base.functions.iter() {
-                                scopes.forward_declare_fn(scopes.current_id(), false, f);
+                                scopes.forward_declare_fn(false, f, None);
                             }
                         },
                     )
@@ -1353,7 +1344,6 @@ impl Scopes {
                     is_unsafe,
                 } => {
                     let mut variants = Vec::with_capacity(base.members.len());
-                    let mut shared = vec![];
                     for member in base.members.iter() {
                         variants.push(Member {
                             public: member.public,
@@ -1364,16 +1354,6 @@ impl Scopes {
                                 .unwrap_or(TypeId::Unknown)
                                 .clone(),
                         });
-
-                        if member.shared {
-                            shared.push(Param {
-                                mutable: false,
-                                keyword: true,
-                                name: member.name.clone(),
-                                ty: member.ty.clone(),
-                                default: None,
-                            });
-                        }
                     }
 
                     let id = self.insert_user_type(UserType {
@@ -1414,34 +1394,15 @@ impl Scopes {
                             }
 
                             for member in base.members.iter() {
-                                let mut params = shared.clone();
-                                if !matches!(member.ty, TypeHint::Void) {
-                                    params.push(Param {
-                                        mutable: false,
-                                        keyword: false,
-                                        name: member.name.clone(),
-                                        ty: member.ty.clone(),
-                                        default: None,
-                                    });
-                                }
-                                scopes.forward_declare_proto(
-                                    scopes.current_id(),
+                                scopes.forward_declare_fn(
                                     true,
-                                    &Prototype {
-                                        public: true,
-                                        name: Located::new(member.name.clone(), Span::default()),
-                                        is_async: false,
-                                        is_extern: false,
-                                        variadic: false,
-                                        type_params: base.type_params.clone(),
-                                        params,
-                                        ret: Self::typehint_for_struct(base, stmt.span),
-                                    },
+                                    &Self::variant_constructor_fn(base, member, stmt.span),
+                                    None,
                                 );
                             }
 
                             for f in base.functions.iter() {
-                                scopes.forward_declare_fn(scopes.current_id(), false, f);
+                                scopes.forward_declare_fn(false, f, None);
                             }
                         },
                     )
@@ -1484,8 +1445,8 @@ impl Scopes {
                             }
                         }
 
-                        for proto in functions.iter() {
-                            scopes.forward_declare_proto(scopes.current_id(), false, proto);
+                        for f in functions.iter() {
+                            scopes.forward_declare_fn(false, f, None);
                         }
                     })
                 }
@@ -1523,12 +1484,12 @@ impl Scopes {
                         }
 
                         for f in functions.iter() {
-                            scopes.forward_declare_fn(scopes.current_id(), false, f);
+                            scopes.forward_declare_fn(false, f, None);
                         }
                     });
                 }
             },
-            Stmt::Fn(f) => self.forward_declare_fn(self.current_id(), false, f),
+            Stmt::Fn(f) => _ = self.forward_declare_fn(false, f, None),
             Stmt::Static {
                 public, name, ty, ..
             } => {
@@ -1551,46 +1512,44 @@ impl Scopes {
         }
     }
 
-    fn forward_declare_proto(
+    fn forward_declare_fn(
         &mut self,
-        scope: ScopeId,
         constructor: bool,
-        proto: &Prototype,
+        f: &Fn,
+        scope: Option<ScopeId>,
     ) -> FunctionId {
         let checked = Function {
-            proto: CheckedPrototype {
-                public: proto.public,
-                name: proto.name.data.clone(),
-                is_async: proto.is_async,
-                is_extern: proto.is_extern,
-                variadic: proto.variadic,
-                type_params: proto.type_params.iter().map(|x| x.0.clone()).collect(),
-                params: proto
-                    .params
-                    .iter()
-                    .map(|param| CheckedParam {
-                        mutable: param.mutable,
-                        keyword: param.keyword,
-                        name: param.name.clone(),
-                        ty: self.resolve_type(&param.ty).unwrap_or(TypeId::Unknown),
-                    })
-                    .collect(),
-                ret: self.resolve_type(&proto.ret).unwrap_or(TypeId::Unknown),
-            },
+            public: f.public,
+            name: f.name.data.clone(),
+            is_async: f.is_async,
+            is_extern: f.is_extern,
+            variadic: f.variadic,
+            type_params: f.type_params.iter().map(|x| x.0.clone()).collect(),
+            params: f
+                .params
+                .iter()
+                .map(|param| CheckedParam {
+                    mutable: param.mutable,
+                    keyword: param.keyword,
+                    name: param.name.clone(),
+                    ty: self.resolve_type(&param.ty).unwrap_or(TypeId::Unknown),
+                })
+                .collect(),
+            ret: self.resolve_type(&f.ret).unwrap_or(TypeId::Unknown),
             body: None,
             body_scope: ScopeId(0),
             constructor,
         };
 
-        let id = self.insert_func_in(checked, scope);
+        let id = self.insert_func_in(checked, scope.unwrap_or(self.current));
         self.enter(
-            Some(proto.name.data.clone()),
+            Some(f.name.data.clone()),
             ScopeKind::Function(id),
             |scopes| {
                 scopes.get_func_mut(id).body_scope = scopes.current_id();
 
-                if !proto.type_params.is_empty() {
-                    for (i, (name, impls)) in proto.type_params.iter().enumerate() {
+                if !f.type_params.is_empty() {
+                    for (i, (name, impls)) in f.type_params.iter().enumerate() {
                         scopes.insert_user_type(UserType {
                             public: false,
                             name: name.clone(),
@@ -1604,29 +1563,24 @@ impl Scopes {
                         });
                     }
 
-                    for (i, original) in proto.params.iter().enumerate() {
-                        scopes.get_func_mut(id).proto.params[i].ty =
+                    for (i, original) in f.params.iter().enumerate() {
+                        scopes.get_func_mut(id).params[i].ty =
                             scopes.resolve_type(&original.ty).unwrap_or(TypeId::Unknown);
                     }
 
-                    scopes.get_func_mut(id).proto.ret =
-                        scopes.resolve_type(&proto.ret).unwrap_or(TypeId::Unknown);
+                    scopes.get_func_mut(id).ret =
+                        scopes.resolve_type(&f.ret).unwrap_or(TypeId::Unknown);
+                }
+
+                if let Some(body) = &f.body {
+                    for stmt in body.iter() {
+                        scopes.forward_declare(stmt);
+                    }
                 }
             },
         );
 
         id
-    }
-
-    fn forward_declare_fn(&mut self, scope: ScopeId, cons: bool, f: &Fn) {
-        let id = self.forward_declare_proto(scope, cons, &f.proto);
-        if let Some(body) = &f.body {
-            self.enter_id(self.get_func(id).body_scope, |scopes| {
-                for stmt in body.iter() {
-                    scopes.forward_declare(stmt);
-                }
-            });
-        }
     }
 
     fn typehint_for_struct(base: &Struct, span: Span) -> TypeHint {
@@ -1644,8 +1598,8 @@ impl Scopes {
         ))
     }
 
-    fn constructor_proto(base: &Struct, span: Span) -> Prototype {
-        Prototype {
+    fn struct_constructor_fn(base: &Struct, span: Span) -> Fn {
+        Fn {
             public: base.public,
             name: Located::new(String::new(), base.name.span),
             is_async: false,
@@ -1664,6 +1618,42 @@ impl Scopes {
                 })
                 .collect(),
             ret: Self::typehint_for_struct(base, span),
+            body: None,
+        }
+    }
+
+    fn variant_constructor_fn(base: &Struct, member: &MemVar, span: Span) -> Fn {
+        let mut params: Vec<_> = base
+            .members
+            .iter()
+            .filter(|m| m.shared)
+            .map(|m| Param {
+                mutable: false,
+                keyword: true,
+                name: member.name.clone(),
+                ty: member.ty.clone(),
+                default: None,
+            })
+            .collect();
+        if !matches!(member.ty, TypeHint::Void) {
+            params.push(Param {
+                mutable: false,
+                keyword: false,
+                name: member.name.clone(),
+                ty: member.ty.clone(),
+                default: None,
+            });
+        }
+        Fn {
+            public: true,
+            name: Located::new(member.name.clone(), Span::default()),
+            is_async: false,
+            is_extern: false,
+            variadic: false,
+            type_params: base.type_params.clone(),
+            params,
+            ret: Self::typehint_for_struct(base, span),
+            body: None,
         }
     }
 }
@@ -1877,14 +1867,14 @@ impl TypeChecker {
                             );
                         }
 
-                        self.check_proto(
+                        self.check_fn(
                             scopes,
-                            Scopes::constructor_proto(&base, stmt.span),
-                            parent,
+                            Scopes::struct_constructor_fn(&base, stmt.span),
+                            Some(parent),
                         );
 
                         for f in base.functions {
-                            self.check_fn(scopes, f);
+                            self.check_fn(scopes, f, None);
                         }
                     });
                     CheckedStmt::None
@@ -1929,11 +1919,11 @@ impl TypeChecker {
                             );
 
                             let init = scopes.find_func(&member.name).unwrap();
-                            if !scopes.get_func_mut(init).proto.params.is_empty() {
+                            if !scopes.get_func_mut(init).params.is_empty() {
                                 resolve_forward_declare!(
                                     self,
                                     scopes,
-                                    scopes.get_func_mut(init).proto.params[0].ty,
+                                    scopes.get_func_mut(init).params[0].ty,
                                     &member.ty
                                 );
                             }
@@ -1941,13 +1931,13 @@ impl TypeChecker {
                             resolve_forward_declare!(
                                 self,
                                 scopes,
-                                scopes.get_func_mut(init).proto.ret,
+                                scopes.get_func_mut(init).ret,
                                 &this
                             );
                         }
 
                         for f in base.functions {
-                            self.check_fn(scopes, f);
+                            self.check_fn(scopes, f, None);
                         }
                     });
 
@@ -1968,9 +1958,8 @@ impl TypeChecker {
                         }
 
                         resolve_impls!(self, scopes.get_user_type_mut(id), impls, scopes);
-
                         for f in functions {
-                            self.check_proto(scopes, f, scopes.current);
+                            self.check_fn(scopes, f, None);
                         }
                     });
 
@@ -1993,7 +1982,7 @@ impl TypeChecker {
                         }
 
                         for f in functions {
-                            self.check_fn(scopes, f);
+                            self.check_fn(scopes, f, None);
                         }
                     });
 
@@ -2052,7 +2041,7 @@ impl TypeChecker {
                 }
             }
             Stmt::Fn(f) => {
-                self.check_fn(scopes, f);
+                self.check_fn(scopes, f, None);
                 CheckedStmt::None
             }
             Stmt::Static {
@@ -2143,12 +2132,7 @@ impl TypeChecker {
     ) -> Result<(), String> {
         let lhs = scopes.get_func(lhs_id);
         let rhs = scopes.get_func(rhs_id);
-
-        let sproto = &lhs.proto;
-        let tproto = &rhs.proto;
-        if sproto.params.len() != tproto.params.len()
-            || sproto.type_params.len() != tproto.type_params.len()
-        {
+        if lhs.params.len() != rhs.params.len() || lhs.type_params.len() != rhs.type_params.len() {
             return Err("type parameters are incorrect".into());
         }
 
@@ -2157,8 +2141,7 @@ impl TypeChecker {
                 scopes,
                 &GenericFunc::new(
                     lhs_id,
-                    sproto
-                        .type_params
+                    lhs.type_params
                         .iter()
                         .map(|name| {
                             TypeId::UserType(
@@ -2178,22 +2161,22 @@ impl TypeChecker {
             if a != &b {
                 Err(format!(
                     "expected '{}', got '{}'",
-                    tproto.ret.name(scopes),
-                    sproto.ret.name(scopes)
+                    rhs.ret.name(scopes),
+                    lhs.ret.name(scopes)
                 ))
             } else {
                 Ok(())
             }
         };
 
-        if let Err(err) = compare_types(&sproto.ret, tproto.ret.clone()) {
+        if let Err(err) = compare_types(&lhs.ret, rhs.ret.clone()) {
             return Err(format!("return type is incorrect: {err}"));
         }
 
-        for (i, (s, t)) in sproto
+        for (i, (s, t)) in lhs
             .params
             .iter()
-            .zip(tproto.params.iter().cloned())
+            .zip(rhs.params.iter().cloned())
             .enumerate()
         {
             if let Err(err) = compare_types(&s.ty, t.ty) {
@@ -2201,10 +2184,10 @@ impl TypeChecker {
             }
         }
 
-        for (i, (s, t)) in sproto
+        for (i, (s, t)) in lhs
             .type_params
             .iter()
-            .zip(tproto.type_params.iter())
+            .zip(rhs.type_params.iter())
             .enumerate()
         {
             let s = scopes.get_user_type(scopes.find_user_type_in(s, lhs.body_scope).unwrap());
@@ -2237,64 +2220,60 @@ impl TypeChecker {
 
         for &rhs in scopes[tr.body_scope].fns.iter() {
             let rhs_func = scopes.get_func(rhs);
-            if let Some(lhs) = scopes.find_func_in(&rhs_func.proto.name, ut.body_scope) {
+            if let Some(lhs) = scopes.find_func_in(&rhs_func.name, ut.body_scope) {
                 if let Err(err) = Self::signatures_match(scopes, this, lhs, rhs, gtr) {
                     self.error::<()>(Error::new(
                         format!(
                             "must implement '{}::{}': {err}",
                             gtr.name(scopes),
-                            rhs_func.proto.name
+                            rhs_func.name
                         ),
                         span,
                     ));
                 }
             } else {
                 self.error::<()>(Error::new(
-                    format!(
-                        "must implement '{}::{}'",
-                        gtr.name(scopes),
-                        rhs_func.proto.name
-                    ),
+                    format!("must implement '{}::{}'", gtr.name(scopes), rhs_func.name),
                     span,
                 ));
             }
         }
     }
 
-    fn check_proto(&mut self, scopes: &mut Scopes, proto: Prototype, scope: ScopeId) -> FunctionId {
+    fn check_fn(&mut self, scopes: &mut Scopes, f: Fn, scope: Option<ScopeId>) -> FunctionId {
         // TODO: disallow private type in public interface
-        let id = scopes.find_func_in(&proto.name.data, scope).unwrap();
-        if proto.variadic && !proto.is_extern {
+        let id = scopes
+            .find_func_in(&f.name.data, scope.unwrap_or(scopes.current))
+            .unwrap();
+        if f.variadic && !f.is_extern {
             self.error::<()>(Error::new(
                 "only extern functions may be variadic",
-                proto.name.span,
+                f.name.span,
             ));
         }
 
         scopes.enter_id(scopes.get_func(id).body_scope, |scopes| {
-            for i in 0..proto.params.len() {
+            for i in 0..f.params.len() {
                 resolve_forward_declare!(
                     self,
                     scopes,
-                    scopes.get_func_mut(id).proto.params[i].ty,
-                    &proto.params[i].ty
+                    scopes.get_func_mut(id).params[i].ty,
+                    &f.params[i].ty
                 );
             }
 
-            resolve_forward_declare!(self, scopes, scopes.get_func_mut(id).proto.ret, &proto.ret);
-
-            for (name, impls) in proto.type_params.iter() {
+            resolve_forward_declare!(self, scopes, scopes.get_func_mut(id).ret, &f.ret);
+            for (name, impls) in f.type_params.iter() {
                 let id = scopes.find_user_type(name).unwrap();
                 resolve_impls!(self, scopes.get_user_type_mut(id), impls, scopes);
             }
 
-            if proto.is_extern {
+            if f.is_extern {
                 return;
             }
 
             for param in scopes
                 .get_func_mut(id)
-                .proto
                 .params
                 .iter()
                 .map(|param| Variable {
@@ -2309,24 +2288,15 @@ impl TypeChecker {
             {
                 scopes.insert_var(param);
             }
-        });
 
-        id
-    }
-
-    fn check_fn(&mut self, scopes: &mut Scopes, f: Fn) -> FunctionId {
-        // TODO: disallow private type in public interface
-        let id = self.check_proto(scopes, f.proto, scopes.current);
-        if let Some(body) = f.body {
-            scopes.enter_id(scopes.get_func(id).body_scope, |scopes| {
+            if let Some(body) = f.body {
                 scopes.get_func_mut(id).body = Some(
                     body.into_iter()
                         .map(|stmt| self.check_stmt(scopes, stmt))
                         .collect(),
                 );
-            });
-        }
-
+            }
+        });
         id
     }
 
@@ -2936,7 +2906,7 @@ impl TypeChecker {
             Expr::Return(expr) => {
                 let target = scopes
                     .current_function()
-                    .map(|id| scopes.get_func(id).proto.ret.clone())
+                    .map(|id| scopes.get_func(id).ret.clone())
                     .expect("return should only be possible inside functions");
                 let span = expr.span;
                 CheckedExpr::new(
@@ -3313,8 +3283,8 @@ impl TypeChecker {
                 .map(|f| scopes.get_func(f.id))
                 .filter(|f| f.constructor)
                 .and_then(|f| {
-                    variant = f.proto.name.clone();
-                    f.proto.ret.as_user_type()
+                    variant = f.name.clone();
+                    f.ret.as_user_type()
                 })
                 .filter(|ty| ty.id == ut.id)
                 .and_then(|ty| scopes.get_user_type(ty.id).data.as_union()),
@@ -3416,7 +3386,7 @@ impl TypeChecker {
                 let ty = scopes.get_user_type(ut.id);
                 if let Some((tr, func)) = Self::get_member_fn(scopes, &member, ty) {
                     let f = scopes.get_func(func);
-                    if !f.proto.public && !scopes.is_sub_scope(ty.scope) {
+                    if !f.public && !scopes.is_sub_scope(ty.scope) {
                         return self.error(Error::new(
                             format!(
                                 "cannot access private method '{member}' of type '{}'",
@@ -3426,8 +3396,7 @@ impl TypeChecker {
                         ));
                     }
 
-                    if let Some(this_param) = f.proto.params.get(0).filter(|p| p.name == THIS_PARAM)
-                    {
+                    if let Some(this_param) = f.params.get(0).filter(|p| p.name == THIS_PARAM) {
                         if this_param.ty.is_mut_ptr() {
                             let mut ty = &this.ty;
                             if !ty.is_ptr() && !ty.is_mut_ptr() && !Self::can_addrmut(&this, scopes)
@@ -3479,19 +3448,16 @@ impl TypeChecker {
                             },
                         )]);
 
-                        let mut func = match scopes.resolve_generics(
-                            f.proto.type_params.len(),
-                            &generics,
-                            span,
-                        ) {
-                            Ok(generics) => GenericFunc::new(func, generics),
-                            Err(error) => return self.error(error),
-                        };
+                        let mut func =
+                            match scopes.resolve_generics(f.type_params.len(), &generics, span) {
+                                Ok(generics) => GenericFunc::new(func, generics),
+                                Err(error) => return self.error(error),
+                            };
                         let (args, ret) = self.check_fn_args(
                             tr.as_ref().or(Some(ut)),
                             &mut func,
                             args,
-                            &Vec::from(&f.proto.params[1..]),
+                            &Vec::from(&f.params[1..]),
                             target,
                             scopes,
                             span,
@@ -3542,7 +3508,7 @@ impl TypeChecker {
                             None,
                             &mut GenericFunc::new(*st.1, ty.generics),
                             args,
-                            &scopes.get_func(*st.1).proto.params.clone(),
+                            &scopes.get_func(*st.1).params.clone(),
                             target,
                             scopes,
                             span,
@@ -3559,12 +3525,12 @@ impl TypeChecker {
                     ResolvedPath::Func(mut func) => {
                         let f = scopes.get_func(func.id);
                         let constructor = f.constructor;
-                        let variant = constructor.then(|| f.proto.name.clone());
+                        let variant = constructor.then(|| f.name.clone());
                         let (args, ret) = self.check_fn_args(
                             None,
                             &mut func,
                             args,
-                            &f.proto.params.clone(),
+                            &f.params.clone(),
                             target,
                             scopes,
                             span,
@@ -3655,12 +3621,12 @@ impl TypeChecker {
         span: Span,
     ) -> (IndexMap<String, CheckedExpr>, TypeId) {
         if let Some(target) = target {
-            func.infer_generics(&scopes.get_func(func.id).proto.ret, target, scopes);
+            func.infer_generics(&scopes.get_func(func.id).ret, target, scopes);
         }
 
         let mut result = IndexMap::with_capacity(args.len());
         let mut last_pos = 0;
-        let variadic = scopes.get_func(func.id).proto.variadic;
+        let variadic = scopes.get_func(func.id).variadic;
         let mut num = 0;
         for (name, expr) in args {
             if let Some(name) = name {
@@ -3734,7 +3700,7 @@ impl TypeChecker {
             ));
         }
 
-        let mut ret = scopes.get_func(func.id).proto.ret.clone();
+        let mut ret = scopes.get_func(func.id).ret.clone();
         if !func.generics.is_empty() {
             if let Some(target) = target {
                 func.infer_generics(&ret, target, scopes);
@@ -3746,7 +3712,7 @@ impl TypeChecker {
                     self.error::<()>(Error::new(
                         format!(
                             "cannot infer type of generic parameter '{}'",
-                            scopes.get_func(func.id).proto.type_params[i]
+                            scopes.get_func(func.id).type_params[i]
                         ),
                         span,
                     ));
@@ -3754,7 +3720,7 @@ impl TypeChecker {
 
                 // let f = scopes.get_func(func.id);
                 // let param = scopes
-                //     .find_user_type_in(&f.proto.type_params[i], f.body_scope)
+                //     .find_user_type_in(&f.type_params[i], f.body_scope)
                 //     .unwrap();
                 // for bound in scopes.get_user_type(param).impls.iter() {
                 //     if !ty.implements_trait(scopes, bound) {

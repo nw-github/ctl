@@ -301,7 +301,7 @@ pub mod stmt {
     }
 
     #[derive(Debug, Clone)]
-    pub struct Prototype {
+    pub struct Fn {
         pub public: bool,
         pub name: Located<String>,
         pub is_async: bool,
@@ -310,11 +310,6 @@ pub mod stmt {
         pub type_params: Vec<(String, Vec<Located<Path>>)>,
         pub params: Vec<Param>,
         pub ret: TypeHint,
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct Fn {
-        pub proto: Prototype,
         pub body: Option<Vec<super::Stmt>>,
     }
 
@@ -350,7 +345,7 @@ pub mod stmt {
             name: String,
             type_params: Vec<(String, Vec<Located<Path>>)>,
             impls: Vec<Located<Path>>,
-            functions: Vec<Prototype>,
+            functions: Vec<Fn>,
         },
         Enum {
             public: bool,

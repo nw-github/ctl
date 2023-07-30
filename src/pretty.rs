@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         expr::Expr,
-        stmt::{Fn, ParsedUserType, Prototype, Stmt, Struct},
+        stmt::{Fn, ParsedUserType, Stmt, Struct},
     },
     lexer::Located,
 };
@@ -82,7 +82,7 @@ pub fn print_stmt(stmt: &Located<Stmt>, src: &str, indent: usize) {
 
                 println!("{tabs}Functions:");
                 for f in functions {
-                    print_prototype(f, indent + 1);
+                    print_fn(f, src, indent + 1);
                 }
             }
             ParsedUserType::Enum {
@@ -346,7 +346,12 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
         Expr::None => {
             println!("{tabs}None");
         }
-        Expr::For { var, mutable, iter, body } => {
+        Expr::For {
+            var,
+            mutable,
+            iter,
+            body,
+        } => {
             println!("{tabs}For[{var}]");
             print_bool!(mutable);
             let tabs = INDENT.repeat(indent + 1);
@@ -385,8 +390,8 @@ fn print_stmts(stmts: &[Located<Stmt>], src: &str, indent: usize) {
     }
 }
 
-fn print_prototype(
-    Prototype {
+fn print_fn(
+    Fn {
         name,
         is_async,
         is_extern,
@@ -395,7 +400,9 @@ fn print_prototype(
         params,
         ret,
         public,
-    }: &Prototype,
+        body,
+    }: &Fn,
+    src: &str,
     indent: usize,
 ) {
     let tabs = INDENT.repeat(indent);
@@ -422,17 +429,6 @@ fn print_prototype(
     }
 
     println!("{plus_1}Return Type: {ret:?}");
-}
-
-fn print_fn(
-    Fn {
-        proto: header,
-        body,
-    }: &Fn,
-    src: &str,
-    indent: usize,
-) {
-    print_prototype(header, indent);
     if let Some(body) = body {
         println!("{}Body: ", INDENT.repeat(indent));
         print_stmts(body, src, indent + 1);

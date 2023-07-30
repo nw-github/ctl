@@ -3,7 +3,7 @@ use std::{iter::Peekable, path::PathBuf};
 use crate::{
     ast::{
         expr::{Expr, UnaryOp},
-        stmt::{Fn, MemVar, Param, ParsedUserType, Prototype, Stmt, Struct, TypeHint},
+        stmt::{Fn, MemVar, Param, ParsedUserType, Stmt, Struct, TypeHint},
         Path, Pattern,
     },
     lexer::{Lexer, Located as L, Span, Token},
@@ -78,22 +78,19 @@ impl<'a> Parser<'a> {
 
     fn try_item(&mut self) -> Option<L<Stmt>> {
         let public = self.advance_if_kind(Token::Pub);
-        if let Some((proto, span)) = self.try_prototype(public.is_some(), false) {
+        if let Some((mut proto, span)) = self.try_prototype(public.is_some(), false) {
             if proto.is_extern {
                 let semi = self.expect_kind(Token::Semicolon, "expected ';'");
                 Some(L::new(
-                    Stmt::Fn(Fn { proto, body: None }),
+                    Stmt::Fn(proto),
                     Span::combine(public.map_or(span, |p| p.span), semi.span),
                 ))
             } else {
                 let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
                 let (body, body_span) = self.parse_block(lcurly.span);
-
+                proto.body = Some(body);
                 Some(L::new(
-                    Stmt::Fn(Fn {
-                        proto,
-                        body: Some(body),
-                    }),
+                    Stmt::Fn(proto),
                     Span::combine(public.map_or(span, |p| p.span), body_span),
                 ))
             }
@@ -137,21 +134,15 @@ impl<'a> Parser<'a> {
             let mut variants = Vec::new();
             let span = self.advance_until(Token::RCurly, token.span, |this| {
                 if this.advance_if_kind(Token::Pub).is_some() {
-                    if let Ok((proto, _)) = this.expect_prototype(true, true) {
+                    if let Ok((mut func, _)) = this.expect_prototype(true, true) {
                         let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
-                        let (body, _) = this.parse_block(lcurly.span);
-                        functions.push(Fn {
-                            proto,
-                            body: Some(body),
-                        });
+                        func.body = Some(this.parse_block(lcurly.span).0);
+                        functions.push(func);
                     }
-                } else if let Some((header, _)) = this.try_prototype(false, true) {
+                } else if let Some((mut func, _)) = this.try_prototype(false, true) {
                     let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
-                    let (body, _) = this.parse_block(lcurly.span);
-                    functions.push(Fn {
-                        proto: header,
-                        body: Some(body),
-                    });
+                    func.body = Some(this.parse_block(lcurly.span).0);
+                    functions.push(func);
                 } else {
                     variants.push((
                         this.expect_id("expected variant name"),
@@ -1079,14 +1070,10 @@ impl<'a> Parser<'a> {
         let mut members = Vec::new();
         let span = self.advance_until(Token::RCurly, span, |this| {
             let public = this.advance_if_kind(Token::Pub).is_some();
-            if let Some((proto, _)) = this.try_prototype(public, true) {
+            if let Some((mut func, _)) = this.try_prototype(public, true) {
                 let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
-                let (body, _) = this.parse_block(lcurly.span);
-
-                functions.push(Fn {
-                    proto,
-                    body: Some(body),
-                });
+                func.body = Some(this.parse_block(lcurly.span).0);
+                functions.push(func);
             } else {
                 let name = this.expect_id("expected name");
                 this.expect_kind(Token::Colon, "expected type");
@@ -1134,19 +1121,15 @@ impl<'a> Parser<'a> {
         self.expect_kind(Token::LCurly, "expected '{'");
         let span = self.advance_until(Token::RCurly, span, |this| {
             if this.advance_if_kind(Token::Pub).is_some() {
-                if let Ok((proto, _)) = this.expect_prototype(true, true) {
+                if let Ok((mut func, _)) = this.expect_prototype(true, true) {
                     let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
-                    functions.push(Fn {
-                        proto,
-                        body: Some(this.parse_block(lcurly.span).0),
-                    });
+                    func.body = Some(this.parse_block(lcurly.span).0);
+                    functions.push(func);
                 }
-            } else if let Some((proto, _)) = this.try_prototype(false, true) {
+            } else if let Some((mut func, _)) = this.try_prototype(false, true) {
                 let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
-                functions.push(Fn {
-                    proto,
-                    body: Some(this.parse_block(lcurly.span).0),
-                });
+                func.body = Some(this.parse_block(lcurly.span).0);
+                functions.push(func);
             } else if this.advance_if_kind(Token::Shared).is_some() {
                 let name = this.expect_id("expected name");
                 this.expect_kind(Token::Colon, "expected type");
@@ -1211,7 +1194,7 @@ impl<'a> Parser<'a> {
         is_public: bool,
         is_async: bool,
         is_extern: bool,
-    ) -> Prototype {
+    ) -> Fn {
         let name = self.expect_located_id("expected name");
         let mut variadic = false;
         let type_params = self.parse_generic_params();
@@ -1278,7 +1261,7 @@ impl<'a> Parser<'a> {
             Vec::new()
         };
 
-        Prototype {
+        Fn {
             name,
             public: is_public,
             is_async,
@@ -1291,10 +1274,11 @@ impl<'a> Parser<'a> {
             } else {
                 TypeHint::Void
             },
+            body: None,
         }
     }
 
-    fn try_prototype(&mut self, is_public: bool, allow_method: bool) -> Option<(Prototype, Span)> {
+    fn try_prototype(&mut self, is_public: bool, allow_method: bool) -> Option<(Fn, Span)> {
         if let Some(token) = self.advance_if_kind(Token::Extern) {
             self.expect_kind(Token::Fn, "expected 'fn'");
             Some((
@@ -1317,11 +1301,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect_prototype(
-        &mut self,
-        is_public: bool,
-        allow_method: bool,
-    ) -> Result<(Prototype, Span), ()> {
+    fn expect_prototype(&mut self, is_public: bool, allow_method: bool) -> Result<(Fn, Span), ()> {
         loop {
             if let Some(proto) = self.try_prototype(is_public, allow_method) {
                 return Ok(proto);
