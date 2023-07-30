@@ -504,6 +504,7 @@ macro_rules! id {
             });
 
             concat_idents!(fn_name = find_, $suffix {
+                #[allow(dead_code)]
                 pub fn fn_name(&self, name: &str) -> Option<$name> {
                     for (id, scope) in self.iter() {
                         concat_idents!(fn_name = find_, $suffix, _in {
