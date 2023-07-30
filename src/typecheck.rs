@@ -3707,22 +3707,22 @@ impl TypeChecker {
                     ));
                 }
 
-                // let f = scopes.get_func(func.id);
-                // let param = scopes
-                //     .find_user_type_in(&f.type_params[i], f.body_scope)
-                //     .unwrap();
-                // for bound in scopes.get_user_type(param).impls.iter() {
-                //     if !ty.implements_trait(scopes, bound) {
-                //         self.error::<()>(Error::new(
-                //             format!(
-                //                 "type '{}' does not implement '{}'",
-                //                 ty.name(scopes),
-                //                 bound.name(scopes),
-                //             ),
-                //             span,
-                //         ));
-                //     }
-                // }
+                let f = scopes.get_func(func.id);
+                let param = scopes
+                    .find_user_type_in(&f.type_params[i], f.body_scope)
+                    .unwrap();
+                for bound in scopes.get_user_type(param).impls.iter() {
+                    if !ty.implements_trait(scopes, bound) {
+                        self.error::<()>(Error::new(
+                            format!(
+                                "type '{}' does not implement '{}'",
+                                ty.name(scopes),
+                                bound.name(scopes),
+                            ),
+                            span,
+                        ));
+                    }
+                }
             }
         }
 
