@@ -26,14 +26,6 @@ impl Path {
             (comps.len() == 1 && comps[0].1.is_empty()).then_some(comps[0].0.as_str())
         })
     }
-
-    pub fn components(&self) -> &[(String, Vec<TypeHint>)] {
-        match self {
-            Path::Root(data) => data,
-            Path::Super(data) => data,
-            Path::Normal(data) => data,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -329,6 +321,7 @@ pub mod stmt {
     #[derive(Debug, Clone)]
     pub struct MemVar {
         pub public: bool,
+        pub name: String,
         pub shared: bool,
         pub ty: TypeHint,
         pub default: Option<super::Expr>,
@@ -339,7 +332,7 @@ pub mod stmt {
         pub public: bool,
         pub name: Located<String>,
         pub type_params: Vec<(String, Vec<Located<Path>>)>,
-        pub members: Vec<(String, MemVar)>,
+        pub members: Vec<MemVar>,
         pub impls: Vec<Located<Path>>,
         pub functions: Vec<Fn>,
     }

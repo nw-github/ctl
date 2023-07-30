@@ -8,7 +8,7 @@ use indexmap::{map::Entry, IndexMap, IndexSet};
 use crate::{
     ast::{
         expr::{BinaryOp, Expr, UnaryOp},
-        stmt::{Fn, Param, ParsedUserType, Prototype, Stmt, TypeHint, Struct},
+        stmt::{Fn, Param, ParsedUserType, Prototype, Stmt, Struct, TypeHint},
         Path, Pattern,
     },
     checked_ast::{Block, CheckedExpr, CheckedPattern, CheckedStmt, ExprData},
@@ -620,13 +620,14 @@ pub struct Function {
 #[derive(Debug, Clone)]
 pub struct Member {
     pub public: bool,
+    pub name: String,
     pub shared: bool,
     pub ty: TypeId,
 }
 
 #[derive(Debug, Clone)]
 pub struct Union {
-    pub variants: Vec<(String, Member)>,
+    pub variants: Vec<Member>,
     pub is_unsafe: bool,
 }
 
@@ -638,15 +639,15 @@ impl Union {
     pub fn variant_tag(&self, name: &str) -> Option<usize> {
         self.variants
             .iter()
-            .filter(|m| !m.1.shared)
-            .position(|(n, _)| name == n)
+            .filter(|m| !m.shared)
+            .position(|m| m.name == name)
     }
 }
 
 #[derive(Debug, EnumAsInner)]
 pub enum UserTypeData {
     Struct {
-        members: Vec<(String, Member)>,
+        members: Vec<Member>,
         init: FunctionId,
     },
     Union(Union),
@@ -657,7 +658,7 @@ pub enum UserTypeData {
 }
 
 impl UserTypeData {
-    pub fn members(&self) -> Option<&[(String, Member)]> {
+    pub fn members(&self) -> Option<&[Member]> {
         match self {
             UserTypeData::Struct { members, .. } => Some(members),
             UserTypeData::Union(union) => Some(&union.variants),
@@ -1291,17 +1292,16 @@ impl Scopes {
                         public: base.public,
                         body_scope: ScopeId(0),
                         data: UserTypeData::Struct {
-                            members: base.members.iter().map(|(name, member)| (
-                                name.clone(),
-                                Member {
+                            members: base
+                                .members
+                                .iter()
+                                .map(|member| Member {
                                     public: member.public,
+                                    name: member.name.clone(),
                                     shared: member.shared,
-                                    ty: self
-                                        .resolve_type(&member.ty)
-                                        .unwrap_or(TypeId::Unknown)
-                                        .clone(),
-                                },
-                            )).collect(),
+                                    ty: self.resolve_type(&member.ty).unwrap_or(TypeId::Unknown),
+                                })
+                                .collect(),
                             init: FunctionId(0),
                         },
                         type_params: base.type_params.len(),
@@ -1354,24 +1354,22 @@ impl Scopes {
                 } => {
                     let mut variants = Vec::with_capacity(base.members.len());
                     let mut shared = vec![];
-                    for (name, member) in base.members.iter() {
-                        variants.push((
-                            name.clone(),
-                            Member {
-                                public: member.public,
-                                shared: member.shared,
-                                ty: self
-                                    .resolve_type(&member.ty)
-                                    .unwrap_or(TypeId::Unknown)
-                                    .clone(),
-                            },
-                        ));
+                    for member in base.members.iter() {
+                        variants.push(Member {
+                            public: member.public,
+                            name: member.name.clone(),
+                            shared: member.shared,
+                            ty: self
+                                .resolve_type(&member.ty)
+                                .unwrap_or(TypeId::Unknown)
+                                .clone(),
+                        });
 
                         if member.shared {
                             shared.push(Param {
                                 mutable: false,
                                 keyword: true,
-                                name: name.clone(),
+                                name: member.name.clone(),
                                 ty: member.ty.clone(),
                                 default: None,
                             });
@@ -1415,13 +1413,13 @@ impl Scopes {
                                 }
                             }
 
-                            for (name, member) in base.members.iter() {
+                            for member in base.members.iter() {
                                 let mut params = shared.clone();
                                 if !matches!(member.ty, TypeHint::Void) {
                                     params.push(Param {
                                         mutable: false,
                                         keyword: false,
-                                        name: name.clone(),
+                                        name: member.name.clone(),
                                         ty: member.ty.clone(),
                                         default: None,
                                     });
@@ -1431,7 +1429,7 @@ impl Scopes {
                                     true,
                                     &Prototype {
                                         public: true,
-                                        name: Located::new(name.clone(), Span::default()),
+                                        name: Located::new(member.name.clone(), Span::default()),
                                         is_async: false,
                                         is_extern: false,
                                         variadic: false,
@@ -1638,10 +1636,7 @@ impl Scopes {
                 base.type_params
                     .iter()
                     .map(|(name, _)| {
-                        TypeHint::Regular(Located::new(
-                            Path::from(name.clone()),
-                            span,
-                        ))
+                        TypeHint::Regular(Located::new(Path::from(name.clone()), span))
                     })
                     .collect(),
             )]),
@@ -1657,13 +1652,17 @@ impl Scopes {
             is_extern: false,
             variadic: false,
             type_params: base.type_params.clone(),
-            params: base.members.iter().map(|(name, member)| Param {
-                mutable: false,
-                keyword: true,
-                name: name.clone(),
-                ty: member.ty.clone(),
-                default: None,
-            }).collect(),
+            params: base
+                .members
+                .iter()
+                .map(|member| Param {
+                    mutable: false,
+                    keyword: true,
+                    name: member.name.clone(),
+                    ty: member.ty.clone(),
+                    default: None,
+                })
+                .collect(),
             ret: Self::typehint_for_struct(base, span),
         }
     }
@@ -1873,17 +1872,15 @@ impl TypeChecker {
                             resolve_forward_declare!(
                                 self,
                                 scopes,
-                                scopes.get_user_type_mut(id).data.as_struct_mut().unwrap().0[i]
-                                    .1
-                                    .ty,
-                                &base.members[i].1.ty
+                                scopes.get_user_type_mut(id).data.as_struct_mut().unwrap().0[i].ty,
+                                &base.members[i].ty
                             );
                         }
 
                         self.check_proto(
-                            scopes, 
-                            Scopes::constructor_proto(&base, stmt.span), 
-                            parent
+                            scopes,
+                            Scopes::constructor_proto(&base, stmt.span),
+                            parent,
                         );
 
                         for f in base.functions {
@@ -1898,7 +1895,7 @@ impl TypeChecker {
                     is_unsafe,
                 } => {
                     for member in base.members.iter() {
-                        if member.1.shared && is_unsafe {
+                        if member.shared && is_unsafe {
                             // FIXME: span should be related to the member
                             self.error::<()>(Error::new(
                                 "cannot have shared members in an unsafe union",
@@ -1917,7 +1914,7 @@ impl TypeChecker {
 
                         resolve_impls!(self, scopes.get_user_type_mut(id), base.impls, scopes);
 
-                        for (i, (name, member)) in base.members.iter().enumerate() {
+                        for (i, member) in base.members.iter().enumerate() {
                             resolve_forward_declare!(
                                 self,
                                 scopes,
@@ -1927,12 +1924,11 @@ impl TypeChecker {
                                     .as_union_mut()
                                     .unwrap()
                                     .variants[i]
-                                    .1
                                     .ty,
-                                &base.members[i].1.ty
+                                &base.members[i].ty
                             );
 
-                            let init = scopes.find_func(name).unwrap();
+                            let init = scopes.find_func(&member.name).unwrap();
                             if !scopes.get_func_mut(init).proto.params.is_empty() {
                                 resolve_forward_declare!(
                                     self,
@@ -1943,9 +1939,9 @@ impl TypeChecker {
                             }
 
                             resolve_forward_declare!(
-                                self, 
-                                scopes, 
-                                scopes.get_func_mut(init).proto.ret, 
+                                self,
+                                scopes,
+                                scopes.get_func_mut(init).proto.ret,
                                 &this
                             );
                         }
@@ -2838,7 +2834,7 @@ impl TypeChecker {
             }
             Expr::Member {
                 source,
-                member,
+                member: name,
                 generics,
             } => {
                 if !generics.is_empty() {
@@ -2860,9 +2856,9 @@ impl TypeChecker {
                     }
                 });
                 if let Some(members) = ty.data.members() {
-                    if let Some((_, var)) = members.iter().find(|m| m.0 == member) {
+                    if let Some(member) = members.iter().find(|m| m.name == name) {
                         if let Some(union) = ty.data.as_union() {
-                            if !var.shared && !union.is_unsafe {
+                            if !member.shared && !union.is_unsafe {
                                 // TODO: access to unsafe union members should be unsafe
                                 return self.error(Error::new(
                                     "cannot access union variant with '.' (only shared members)",
@@ -2871,17 +2867,18 @@ impl TypeChecker {
                             }
                         }
 
-                        if !var.public && !scopes.is_sub_scope(ty.scope) {
+                        if !member.public && !scopes.is_sub_scope(ty.scope) {
                             return self.error(Error::new(
                                 format!(
-                                    "cannot access private member '{member}' of type {}",
+                                    "cannot access private member '{}' of type {}",
+                                    member.name,
                                     id.name(scopes)
                                 ),
                                 span,
                             ));
                         }
 
-                        let mut ty = var.ty.clone();
+                        let mut ty = member.ty.clone();
                         if let Some(instance) = id.as_user_type() {
                             ty.fill_type_generics(scopes, instance);
                         }
@@ -2891,14 +2888,14 @@ impl TypeChecker {
                             ty,
                             ExprData::Member {
                                 source: Self::auto_deref(source, &id).into(),
-                                member,
+                                member: name,
                             },
                         );
                     }
                 }
 
                 self.error(Error::new(
-                    format!("type {} has no member '{member}'", &source.ty.name(scopes)),
+                    format!("type {} has no member '{name}'", &source.ty.name(scopes)),
                     span,
                 ))
             }
@@ -3326,7 +3323,7 @@ impl TypeChecker {
             return self.error(Error::new("pattern does not match the scrutinee", span));
         };
 
-        let (_, member) = union.variants.iter().find(|(m, _)| m == &variant).unwrap();
+        let member = union.variants.iter().find(|m| m.name == variant).unwrap();
 
         let mut ty = member.ty.clone();
         ty.fill_type_generics(scopes, ut);
@@ -3534,9 +3531,7 @@ impl TypeChecker {
                             ))
                         };
 
-                        if st.0.iter().any(|member| !member.1.public)
-                            && !scopes.is_sub_scope(ut.scope)
-                        {
+                        if st.0.iter().any(|m| !m.public) && !scopes.is_sub_scope(ut.scope) {
                             self.error::<()>(Error::new(
                                 "cannot construct type with private members",
                                 span,

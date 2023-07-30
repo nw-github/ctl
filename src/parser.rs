@@ -1096,15 +1096,13 @@ impl<'a> Parser<'a> {
                     .map(|_| this.expression());
                 this.expect_kind(Token::Comma, "expected ','");
 
-                members.push((
+                members.push(MemVar {
+                    public,
+                    ty,
                     name,
-                    MemVar {
-                        public,
-                        ty,
-                        default: value,
-                        shared: false,
-                    },
-                ));
+                    default: value,
+                    shared: false,
+                });
             }
         });
 
@@ -1158,15 +1156,13 @@ impl<'a> Parser<'a> {
                     .map(|_| this.expression());
                 this.expect_kind(Token::Comma, "expected ','");
 
-                members.push((
+                members.push(MemVar {
+                    public,
                     name,
-                    MemVar {
-                        public,
-                        shared: true,
-                        ty,
-                        default: value,
-                    },
-                ));
+                    shared: true,
+                    ty,
+                    default: value,
+                });
             } else {
                 let name = this.expect_id("expected variant name");
                 let (ty, value) = if this.advance_if_kind(Token::LParen).is_some() {
@@ -1182,15 +1178,13 @@ impl<'a> Parser<'a> {
                 };
 
                 this.expect_kind(Token::Comma, "expected ','");
-                members.push((
+                members.push(MemVar {
+                    public,
                     name,
-                    MemVar {
-                        public,
-                        shared: false,
-                        ty,
-                        default: value,
-                    },
-                ));
+                    shared: false,
+                    ty,
+                    default: value,
+                });
             }
         });
 

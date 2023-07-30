@@ -330,7 +330,7 @@ impl Buffer {
             if var.is_static {
                 self.emit("static ");
             }
-    
+
             self.emit_type(scopes, &ty);
             if !var.mutable {
                 self.emit(" const");
@@ -752,12 +752,7 @@ impl Codegen {
                             .and_then(|ut| scopes.get_user_type(ut.id).data.as_union()),
                     ) {
                         if !union.is_unsafe
-                            && union
-                                .variants
-                                .iter()
-                                .find(|n| n.0 == name)
-                                .filter(|m| !m.1.shared)
-                                .is_some()
+                            && union.variants.iter().any(|m| m.name == name && !m.shared)
                         {
                             self.buffer.emit(format!(
                                 ".{UNION_TAG_NAME} = {},",
@@ -1119,12 +1114,12 @@ impl Codegen {
         self.yielded = old;
     }
 
-    fn emit_member(&mut self, scopes: &Scopes, ut: &GenericUserType, name: &str, member: &Member) {
+    fn emit_member(&mut self, scopes: &Scopes, ut: &GenericUserType, member: &Member) {
         let mut ty = member.ty.clone();
         ty.fill_type_generics(scopes, ut);
         if !ty.is_void_like() {
             self.buffer.emit_type(scopes, &ty);
-            self.buffer.emit(format!(" {name}"));
+            self.buffer.emit(format!(" {}", member.name));
             self.buffer.emit(";");
         }
     }
@@ -1144,8 +1139,8 @@ impl Codegen {
                     self.buffer.emit_type_name(scopes, ut);
                     self.buffer.emit("{");
 
-                    for (name, member) in members {
-                        self.emit_member(scopes, ut, name, member);
+                    for member in members {
+                        self.emit_member(scopes, ut, member);
                     }
                 } else {
                     self.buffer.emit("struct ");
@@ -1155,17 +1150,13 @@ impl Codegen {
                     self.buffer.emit_type(scopes, &union.tag_type());
                     self.buffer.emit(format!(" {UNION_TAG_NAME};"));
 
-                    for (name, member) in members {
-                        if member.shared {
-                            self.emit_member(scopes, ut, name, member);
-                        }
+                    for member in members.iter().filter(|m| m.shared) {
+                        self.emit_member(scopes, ut, member);
                     }
 
                     self.buffer.emit(" union {");
-                    for (name, member) in members {
-                        if !member.shared {
-                            self.emit_member(scopes, ut, name, member);
-                        }
+                    for member in members.iter().filter(|m| !m.shared) {
+                        self.emit_member(scopes, ut, member);
                     }
                     self.buffer.emit("};");
                 }
@@ -1174,8 +1165,8 @@ impl Codegen {
                 self.buffer.emit_type_name(scopes, ut);
                 self.buffer.emit("{");
 
-                for (name, member) in members {
-                    self.emit_member(scopes, ut, name, member);
+                for member in members {
+                    self.emit_member(scopes, ut, member);
                 }
             }
 
@@ -1258,7 +1249,7 @@ impl Codegen {
         self.buffer.emit(";");
 
         let mut deps = Vec::new();
-        for (_, member) in scopes.get_user_type(ut.id).data.members().unwrap().iter() {
+        for member in scopes.get_user_type(ut.id).data.members().unwrap().iter() {
             let mut ty = member.ty.clone();
             ty.fill_type_generics(scopes, &ut);
 
