@@ -8,7 +8,7 @@ use indexmap::{map::Entry, IndexMap, IndexSet};
 use crate::{
     ast::{
         expr::{BinaryOp, Expr, UnaryOp},
-        stmt::{Fn, Param, ParsedUserType, Prototype, Stmt, TypeHint},
+        stmt::{Fn, Param, ParsedUserType, Prototype, Stmt, TypeHint, Struct},
         Path, Pattern,
     },
     checked_ast::{Block, CheckedExpr, CheckedPattern, CheckedStmt, ExprData},
@@ -1286,36 +1286,22 @@ impl Scopes {
             }
             Stmt::UserType(data) => match data {
                 ParsedUserType::Struct(base) => {
-                    let mut params = Vec::with_capacity(base.members.len());
-                    let mut members = Vec::with_capacity(base.members.len());
-                    for (name, member) in base.members.iter() {
-                        members.push((
-                            name.clone(),
-                            Member {
-                                public: member.public,
-                                shared: member.shared,
-                                ty: self
-                                    .resolve_type(&member.ty)
-                                    .unwrap_or(TypeId::Unknown)
-                                    .clone(),
-                            },
-                        ));
-
-                        params.push(Param {
-                            mutable: false,
-                            keyword: true,
-                            name: name.clone(),
-                            ty: member.ty.clone(),
-                            default: None,
-                        });
-                    }
-
                     let id = self.insert_user_type(UserType {
                         name: base.name.data.clone(),
                         public: base.public,
                         body_scope: ScopeId(0),
                         data: UserTypeData::Struct {
-                            members,
+                            members: base.members.iter().map(|(name, member)| (
+                                name.clone(),
+                                Member {
+                                    public: member.public,
+                                    shared: member.shared,
+                                    ty: self
+                                        .resolve_type(&member.ty)
+                                        .unwrap_or(TypeId::Unknown)
+                                        .clone(),
+                                },
+                            )).collect(),
                             init: FunctionId(0),
                         },
                         type_params: base.type_params.len(),
@@ -1352,30 +1338,7 @@ impl Scopes {
                                 .forward_declare_proto(
                                     parent,
                                     true,
-                                    &Prototype {
-                                        public: base.public,
-                                        name: Located::new(String::new(), base.name.span),
-                                        is_async: false,
-                                        is_extern: false,
-                                        variadic: false,
-                                        type_params: base.type_params.clone(),
-                                        params,
-                                        ret: TypeHint::Regular(Located::new(
-                                            Path::Normal(vec![(
-                                                base.name.data.clone(),
-                                                base.type_params
-                                                    .iter()
-                                                    .map(|(name, _)| {
-                                                        TypeHint::Regular(Located::new(
-                                                            Path::from(name.clone()),
-                                                            stmt.span,
-                                                        ))
-                                                    })
-                                                    .collect(),
-                                            )]),
-                                            stmt.span,
-                                        )),
-                                    },
+                                    &Self::constructor_proto(base, stmt.span),
                                 );
 
                             for f in base.functions.iter() {
@@ -1474,21 +1437,7 @@ impl Scopes {
                                         variadic: false,
                                         type_params: base.type_params.clone(),
                                         params,
-                                        ret: TypeHint::Regular(Located::new(
-                                            Path::Normal(vec![(
-                                                base.name.data.clone(),
-                                                base.type_params
-                                                    .iter()
-                                                    .map(|(name, _)| {
-                                                        TypeHint::Regular(Located::new(
-                                                            Path::from(name.clone()),
-                                                            stmt.span,
-                                                        ))
-                                                    })
-                                                    .collect(),
-                                            )]),
-                                            stmt.span,
-                                        )),
+                                        ret: Self::typehint_for_struct(base, stmt.span),
                                     },
                                 );
                             }
@@ -1681,6 +1630,43 @@ impl Scopes {
             });
         }
     }
+
+    fn typehint_for_struct(base: &Struct, span: Span) -> TypeHint {
+        TypeHint::Regular(Located::new(
+            Path::Normal(vec![(
+                base.name.data.clone(),
+                base.type_params
+                    .iter()
+                    .map(|(name, _)| {
+                        TypeHint::Regular(Located::new(
+                            Path::from(name.clone()),
+                            span,
+                        ))
+                    })
+                    .collect(),
+            )]),
+            span,
+        ))
+    }
+
+    fn constructor_proto(base: &Struct, span: Span) -> Prototype {
+        Prototype {
+            public: base.public,
+            name: Located::new(String::new(), base.name.span),
+            is_async: false,
+            is_extern: false,
+            variadic: false,
+            type_params: base.type_params.clone(),
+            params: base.members.iter().map(|(name, member)| Param {
+                mutable: false,
+                keyword: true,
+                name: name.clone(),
+                ty: member.ty.clone(),
+                default: None,
+            }).collect(),
+            ret: Self::typehint_for_struct(base, span),
+        }
+    }
 }
 
 #[derive(Debug, EnumAsInner)]
@@ -1813,6 +1799,11 @@ impl TypeChecker {
         path: &std::path::Path,
         module: Vec<ParsedFile>,
     ) -> ScopeId {
+        eprintln!("=============");
+        for file in module.iter() {
+            eprintln!("{:?}", file.path);
+        }
+
         let project = crate::derive_module_name(path);
         scopes.enter(Some(project.clone()), ScopeKind::Module(true), |scopes| {
             for file in module.iter() {
@@ -1869,13 +1860,14 @@ impl TypeChecker {
             Stmt::UserType(data) => match data {
                 ParsedUserType::Struct(base) => {
                     let id = scopes.find_user_type(&base.name.data).unwrap();
+                    let parent = scopes.current_id();
                     scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
                         for (name, impls) in base.type_params.iter() {
                             let id = scopes.find_user_type(name).unwrap();
                             resolve_impls!(self, scopes.get_user_type_mut(id), impls, scopes);
                         }
 
-                        resolve_impls!(self, scopes.get_user_type_mut(id), base.impls, scopes);
+                        resolve_impls!(self, scopes.get_user_type_mut(id), &base.impls, scopes);
 
                         for i in 0..base.members.len() {
                             resolve_forward_declare!(
@@ -1888,15 +1880,11 @@ impl TypeChecker {
                             );
                         }
 
-                        let init = *scopes.get_user_type(id).data.as_struct().unwrap().1;
-                        for i in 0..base.members.len() {
-                            resolve_forward_declare!(
-                                self,
-                                scopes,
-                                scopes.get_func_mut(init).proto.params[i].ty,
-                                &base.members[i].1.ty
-                            );
-                        }
+                        self.check_proto(
+                            scopes, 
+                            Scopes::constructor_proto(&base, stmt.span), 
+                            parent
+                        );
 
                         for f in base.functions {
                             self.check_fn(scopes, f);
@@ -1921,6 +1909,7 @@ impl TypeChecker {
 
                     let id = scopes.find_user_type(&base.name.data).unwrap();
                     scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
+                        let this = Scopes::typehint_for_struct(&base, stmt.span);
                         for (name, impls) in base.type_params.iter() {
                             let id = scopes.find_user_type(name).unwrap();
                             resolve_impls!(self, scopes.get_user_type_mut(id), impls, scopes);
@@ -1928,7 +1917,7 @@ impl TypeChecker {
 
                         resolve_impls!(self, scopes.get_user_type_mut(id), base.impls, scopes);
 
-                        for i in 0..base.members.len() {
+                        for (i, (name, member)) in base.members.iter().enumerate() {
                             resolve_forward_declare!(
                                 self,
                                 scopes,
@@ -1942,9 +1931,7 @@ impl TypeChecker {
                                     .ty,
                                 &base.members[i].1.ty
                             );
-                        }
 
-                        for (name, member) in base.members.iter() {
                             let init = scopes.find_func(name).unwrap();
                             if !scopes.get_func_mut(init).proto.params.is_empty() {
                                 resolve_forward_declare!(
@@ -1954,6 +1941,13 @@ impl TypeChecker {
                                     &member.ty
                                 );
                             }
+
+                            resolve_forward_declare!(
+                                self, 
+                                scopes, 
+                                scopes.get_func_mut(init).proto.ret, 
+                                &this
+                            );
                         }
 
                         for f in base.functions {
@@ -1980,7 +1974,7 @@ impl TypeChecker {
                         resolve_impls!(self, scopes.get_user_type_mut(id), impls, scopes);
 
                         for f in functions {
-                            self.check_proto(scopes, f);
+                            self.check_proto(scopes, f, scopes.current);
                         }
                     });
 
@@ -2271,9 +2265,9 @@ impl TypeChecker {
         }
     }
 
-    fn check_proto(&mut self, scopes: &mut Scopes, proto: Prototype) -> FunctionId {
+    fn check_proto(&mut self, scopes: &mut Scopes, proto: Prototype, scope: ScopeId) -> FunctionId {
         // TODO: disallow private type in public interface
-        let id = scopes.find_func(&proto.name.data).unwrap();
+        let id = scopes.find_func_in(&proto.name.data, scope).unwrap();
         if proto.variadic && !proto.is_extern {
             self.error::<()>(Error::new(
                 "only extern functions may be variadic",
@@ -2326,7 +2320,7 @@ impl TypeChecker {
 
     fn check_fn(&mut self, scopes: &mut Scopes, f: Fn) -> FunctionId {
         // TODO: disallow private type in public interface
-        let id = self.check_proto(scopes, f.proto);
+        let id = self.check_proto(scopes, f.proto, scopes.current);
         if let Some(body) = f.body {
             scopes.enter_id(scopes.get_func(id).body_scope, |scopes| {
                 scopes.get_func_mut(id).body = Some(

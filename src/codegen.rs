@@ -946,9 +946,6 @@ impl Codegen {
                 self.buffer.emit("continue;");
                 //self.yielded = true;
             }
-            ExprData::Error => {
-                panic!("ICE: ExprData::Error in gen_expr");
-            }
             ExprData::Match {
                 expr: mut scrutinee,
                 body,
@@ -996,6 +993,7 @@ impl Codegen {
                 self.gen_expr(scopes, *inner, state);
                 self.buffer.emit(")");
             }
+            ExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }
     }
 
