@@ -1601,7 +1601,7 @@ impl Scopes {
     fn struct_constructor_fn(base: &Struct, span: Span) -> Fn {
         Fn {
             public: base.public,
-            name: Located::new(String::new(), base.name.span),
+            name: base.name.clone(),
             is_async: false,
             is_extern: false,
             variadic: false,
@@ -1630,8 +1630,8 @@ impl Scopes {
             .map(|m| Param {
                 mutable: false,
                 keyword: true,
-                name: member.name.clone(),
-                ty: member.ty.clone(),
+                name: m.name.clone(),
+                ty: m.ty.clone(),
                 default: None,
             })
             .collect();
@@ -1896,13 +1896,12 @@ impl TypeChecker {
 
                     let id = scopes.find_user_type(&base.name.data).unwrap();
                     scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
-                        let this = Scopes::typehint_for_struct(&base, stmt.span);
                         for (name, impls) in base.type_params.iter() {
                             let id = scopes.find_user_type(name).unwrap();
                             resolve_impls!(self, scopes.get_user_type_mut(id), impls, scopes);
                         }
 
-                        resolve_impls!(self, scopes.get_user_type_mut(id), base.impls, scopes);
+                        resolve_impls!(self, scopes.get_user_type_mut(id), &base.impls, scopes);
 
                         for (i, member) in base.members.iter().enumerate() {
                             resolve_forward_declare!(
@@ -1918,21 +1917,10 @@ impl TypeChecker {
                                 &base.members[i].ty
                             );
 
-                            let init = scopes.find_func(&member.name).unwrap();
-                            if !scopes.get_func_mut(init).params.is_empty() {
-                                resolve_forward_declare!(
-                                    self,
-                                    scopes,
-                                    scopes.get_func_mut(init).params[0].ty,
-                                    &member.ty
-                                );
-                            }
-
-                            resolve_forward_declare!(
-                                self,
+                            self.check_fn(
                                 scopes,
-                                scopes.get_func_mut(init).ret,
-                                &this
+                                Scopes::variant_constructor_fn(&base, member, stmt.span),
+                                None,
                             );
                         }
 
