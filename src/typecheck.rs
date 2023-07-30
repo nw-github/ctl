@@ -1615,7 +1615,7 @@ impl Scopes {
                     keyword: true,
                     name: member.name.clone(),
                     ty: member.ty.clone(),
-                    default: None,
+                    default: member.default.clone(),
                 })
                 .collect(),
             ret: Self::typehint_for_struct(base, span),
@@ -1633,7 +1633,7 @@ impl Scopes {
                 keyword: true,
                 name: m.name.clone(),
                 ty: m.ty.clone(),
-                default: None,
+                default: m.default.clone(),
             })
             .collect();
         if !matches!(member.ty, TypeHint::Void) {
@@ -3669,14 +3669,12 @@ impl TypeChecker {
 
         if params.len() > result.len() {
             let mut missing = String::new();
-            for param in params {
-                if !result.contains_key(&param.name) {
-                    if !missing.is_empty() {
-                        missing.push_str(", ");
-                    }
-
-                    missing.push_str(&param.name);
+            for param in params.iter().filter(|p| !result.contains_key(&p.name)) {
+                if !missing.is_empty() {
+                    missing.push_str(", ");
                 }
+
+                missing.push_str(&param.name);
             }
 
             self.error::<()>(Error::new(
@@ -3696,7 +3694,7 @@ impl TypeChecker {
             }
 
             ret.fill_func_generics(scopes, func);
-            for (i, ty) in func.generics.iter_mut().enumerate() {
+            for (i, ty) in func.generics.iter().enumerate() {
                 if ty.is_unknown() {
                     self.error::<()>(Error::new(
                         format!(
@@ -3705,14 +3703,20 @@ impl TypeChecker {
                         ),
                         span,
                     ));
+
+                    continue;
                 }
 
                 let f = scopes.get_func(func.id);
                 let param = scopes
                     .find_user_type_in(&f.type_params[i], f.body_scope)
                     .unwrap();
-                for bound in scopes.get_user_type(param).impls.iter() {
-                    if !ty.implements_trait(scopes, bound) {
+                for mut bound in scopes.get_user_type(param).impls.iter().cloned() {
+                    for bty in bound.generics.iter_mut() {
+                        bty.fill_func_generics(scopes, func);
+                    }
+
+                    if !ty.implements_trait(scopes, &bound) {
                         self.error::<()>(Error::new(
                             format!(
                                 "type '{}' does not implement '{}'",
