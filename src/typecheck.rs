@@ -100,6 +100,21 @@ impl GenericUserType {
 
         result
     }
+
+    fn implements_trait(&self, scopes: &Scopes, bound: &GenericUserType) -> bool {
+        for tr in scopes.get_user_type(self.id).impls.iter() {
+            let mut tr = tr.as_user_type().unwrap().clone();
+            for ut in tr.generics.iter_mut() {
+                ut.fill_type_generics(scopes, self);
+            }
+
+            if &*tr == bound {
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
@@ -456,23 +471,6 @@ impl TypeId {
             bits: bytes * 8,
             signed,
         })
-    }
-
-    fn implements_trait(&self, scopes: &Scopes, bound: &GenericUserType) -> bool {
-        if let Some(this) = self.as_user_type() {
-            for tr in scopes.get_user_type(this.id).impls.iter() {
-                let mut tr = tr.as_user_type().unwrap().clone();
-                for ut in tr.generics.iter_mut() {
-                    ut.fill_type_generics(scopes, this);
-                }
-
-                if &*tr == bound {
-                    return true;
-                }
-            }
-        }
-
-        false
     }
 
     fn coerces_to(&self, scopes: &Scopes, target: &TypeId) -> bool {
@@ -3412,28 +3410,21 @@ impl TypeChecker {
                     continue;
                 }
 
-                let f = scopes.get_func(func.id);
-                let param = scopes
-                    .find_user_type_in(&f.type_params[i], f.body_scope)
-                    .unwrap();
-                resolve_impls!(self, scopes, scopes.get_user_type_mut(param));
-                for bound in scopes.get_user_type(param).impls.iter() {
-                    let mut bound = bound.as_user_type().unwrap().clone();
-                    for bty in bound.generics.iter_mut() {
-                        bty.fill_func_generics(scopes, func);
-                    }
-
-                    if !ty.implements_trait(scopes, &bound) {
-                        self.error::<()>(Error::new(
-                            format!(
-                                "type '{}' does not implement '{}'",
-                                ty.name(scopes),
-                                bound.name(scopes),
-                            ),
-                            span,
-                        ));
-                    }
+                if let Some(ty) = ty.as_user_type() {
+                    let f = scopes.get_func(func.id);
+                    let param = scopes
+                        .find_user_type_in(&f.type_params[i], f.body_scope)
+                        .unwrap();
+                    resolve_impls!(self, scopes, scopes.get_user_type_mut(param));
+                    self.check_bounds(
+                        scopes,
+                        Some(func),
+                        ty,
+                        &scopes.get_user_type(param).impls,
+                        span,
+                    );
                 }
+                
             }
         }
 
@@ -3442,6 +3433,35 @@ impl TypeChecker {
         }
 
         (result, ret)
+    }
+
+    fn check_bounds(
+        &mut self,
+        scopes: &Scopes,
+        func: Option<&GenericFunc>,
+        ty: &GenericUserType,
+        bounds: &[TypeId],
+        span: Span,
+    ) {
+        for bound in bounds.iter() {
+            let mut bound = bound.as_user_type().unwrap().clone();
+            if let Some(func) = func {
+                for bty in bound.generics.iter_mut() {
+                    bty.fill_func_generics(scopes, func);
+                }
+            }
+
+            if !ty.implements_trait(scopes, &bound) {
+                self.error::<()>(Error::new(
+                    format!(
+                        "type '{}' does not implement '{}'",
+                        ty.name(scopes),
+                        bound.name(scopes),
+                    ),
+                    span,
+                ));
+            }
+        }
     }
 
     fn create_block(
@@ -3704,22 +3724,21 @@ impl TypeChecker {
 
                     self.error(Error::new(format!("'{name}' is a variable"), span))
                 } else if let Some(id) = scopes.find_user_type_from(name, here) {
-                    let ty = scopes.get_user_type(id);
                     if is_end {
-                        return Some(ResolvedPath::UserType(GenericUserType::new(
-                            id,
-                            self.resolve_generics_from(
-                                scopes,
-                                ty.type_params,
-                                generics,
-                                span,
-                                fwd,
-                                here,
-                            ),
-                        )));
+                        let ut = GenericUserType::new(id, self.resolve_generics_from(
+                            scopes,
+                            scopes.get_user_type(id).type_params,
+                            generics,
+                            span,
+                            fwd,
+                            here,
+                        ));
+                        //resolve_impls!(self, scopes, scopes.get_user_type_mut(id));
+                        //self.check_bounds(scopes, None, &ut, &scopes.get_user_type(id).impls, span);
+                        return Some(ResolvedPath::UserType(ut));
                     }
 
-                    self.resolve_path_in(scopes, &data[1..], ty.body_scope, span, fwd, here)
+                    self.resolve_path_in(scopes, &data[1..], scopes.get_user_type(id).body_scope, span, fwd, here)
                 } else if let Some(id) = scopes.find_nonmember_fn_from(name, here) {
                     if is_end {
                         let f = scopes.get_func(id);
