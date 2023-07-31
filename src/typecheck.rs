@@ -2112,17 +2112,8 @@ impl TypeChecker {
                     // FIXME: addr of should change the target to remove one pointer
                     target
                         .map(|mut target| {
-                            loop {
-                                match target {
-                                    TypeId::MutPtr(ty) | TypeId::Ptr(ty) => target = ty,
-                                    other => {
-                                        if let Some(inner) = scopes.as_option_inner(other) {
-                                            target = inner;
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                }
+                            while let Some(inner) = scopes.as_option_inner(target) {
+                                target = inner;
                             }
                             target
                         })
@@ -2802,11 +2793,11 @@ impl TypeChecker {
                 (expr.ty.clone(), expr)
             }
             Deref => {
-                let expr = self.check_expr(
-                    scopes,
-                    expr,
-                    target.and_then(|t| t.as_mut_ptr().or(t.as_ptr()).map(|t| &**t)),
-                );
+                let expr = if let Some(target) = target {
+                    self.check_expr(scopes, expr, Some(&TypeId::Ptr(target.clone().into())))
+                } else {
+                    self.check_expr(scopes, expr, target)
+                };
 
                 if let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = &expr.ty {
                     ((**inner).clone(), expr)
@@ -2815,11 +2806,19 @@ impl TypeChecker {
                 }
             }
             Addr => {
-                let expr = self.check_expr(scopes, expr, target);
+                let expr = self.check_expr(
+                    scopes,
+                    expr,
+                    target.and_then(|t| t.as_mut_ptr().or(t.as_ptr()).map(|t| &**t)),
+                );
                 (TypeId::Ptr(expr.ty.clone().into()), expr)
             }
             AddrMut => {
-                let expr = self.check_expr(scopes, expr, target);
+                let expr = self.check_expr(
+                    scopes,
+                    expr,
+                    target.and_then(|t| t.as_mut_ptr().or(t.as_ptr()).map(|t| &**t)),
+                );
                 if !Self::can_addrmut(&expr, scopes) {
                     self.error::<()>(Error::new(
                         "cannot create mutable pointer to immutable memory location",
@@ -3780,8 +3779,7 @@ impl TypeChecker {
                 return self.error(Error::new(format!("'{name}' is a variable"), span));
             } else if let Some(id) = scopes.find_user_type_in(name, scope) {
                 let ty = scopes.get_user_type(id);
-                if !ty.public && scopes.module_of(ty.scope) != scopes.module_of(here)
-                {
+                if !ty.public && scopes.module_of(ty.scope) != scopes.module_of(here) {
                     return self.error(Error::new(format!("type '{name}' is private"), span));
                 }
 
