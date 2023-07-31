@@ -157,6 +157,8 @@ impl Error {
     }
 }
 
+pub type FileIndex = usize;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Location {
     pub row: usize,
@@ -168,6 +170,7 @@ pub struct Location {
 pub struct Span {
     pub loc: Location,
     pub len: usize,
+    pub file: FileIndex,
 }
 
 impl Span {
@@ -185,6 +188,7 @@ impl Span {
         Self {
             loc: self.loc,
             len: b.loc.pos - self.loc.pos + b.len,
+            file: self.file,
         }
     }
 
@@ -202,10 +206,11 @@ pub struct Located<T> {
 pub struct Lexer<'a> {
     src: &'a str,
     loc: Location,
+    file: FileIndex,
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(src: &'a str) -> Self {
+    pub fn new(src: &'a str, file: FileIndex) -> Self {
         Self {
             src,
             loc: Location {
@@ -213,6 +218,7 @@ impl<'a> Lexer<'a> {
                 col: 1,
                 pos: 0,
             },
+            file,
         }
     }
 
@@ -285,6 +291,7 @@ impl<'a> Lexer<'a> {
                     Span {
                         loc: self.loc,
                         len: 1,
+                        file: self.file,
                     },
                 ));
             }
@@ -309,6 +316,7 @@ impl<'a> Lexer<'a> {
                         Span {
                             loc: self.loc,
                             len: 0,
+                            file: self.file,
                         },
                     ));
                 }
@@ -325,6 +333,7 @@ impl<'a> Lexer<'a> {
                     Span {
                         loc: self.loc,
                         len: 0,
+                        file: self.file,
                     },
                 ))
             }
@@ -335,6 +344,7 @@ impl<'a> Lexer<'a> {
                     Span {
                         loc: self.loc,
                         len: 0,
+                        file: self.file,
                     },
                 ))
             }
@@ -346,6 +356,7 @@ impl<'a> Lexer<'a> {
                 Span {
                     loc: self.loc,
                     len: 0,
+                    file: self.file,
                 },
             ))
         } else {
@@ -476,6 +487,7 @@ impl<'a> Lexer<'a> {
                             Span {
                                 loc: self.loc,
                                 len: 0,
+                                file: self.file,
                             },
                         )));
                     } else {
@@ -650,6 +662,7 @@ impl<'a> Lexer<'a> {
                     Span {
                         loc: self.loc,
                         len: 0,
+                        file: self.file,
                     },
                 )))
             }
@@ -660,6 +673,7 @@ impl<'a> Lexer<'a> {
             Span {
                 loc: start,
                 len: self.loc.pos - start.pos,
+                file: self.file,
             },
         )))
     }
@@ -672,6 +686,7 @@ impl<'a> Iterator for Lexer<'a> {
         Some(self.next_internal().unwrap_or(Ok(Located::new(Token::Eof, Span {
             loc: self.loc,
             len: 0,
+            file: self.file,
         }))))
     }
 }

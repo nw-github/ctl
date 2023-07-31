@@ -46,10 +46,13 @@ impl Error {
         }
     }
 
-    pub fn display(&self, file: &str) {
+    pub fn display(&self, paths: &[PathBuf]) {
         eprintln!(
-            "{file}:{}:{}: {}",
-            self.span.loc.row, self.span.loc.col, self.diagnostic
+            "{}:{}:{}: {}",
+            paths[self.span.file].display(),
+            self.span.loc.row,
+            self.span.loc.col,
+            self.diagnostic
         )
     }
 }
@@ -57,13 +60,15 @@ impl Error {
 pub struct Pipeline<S: CompileState> {
     path: PathBuf,
     state: S,
+    files: usize,
 }
 
 impl Pipeline<Source> {
-    pub fn new(path: PathBuf) -> Self {
+    pub fn new(path: PathBuf, files: usize) -> Self {
         Pipeline {
             path,
             state: Source,
+            files,
         }
     }
 
@@ -79,18 +84,19 @@ impl Pipeline<Source> {
                 let path = file.path();
                 if file.file_type()?.is_file() && path.extension() == Some(OsStr::new("ctl")) {
                     let buffer = std::fs::read_to_string(&path)?;
-                    sources.push(Parser::parse(&buffer, path)?);
+                    sources.push(Parser::parse(&buffer, self.files + sources.len(), path)?);
                 }
             }
         } else {
             let buffer = std::fs::read_to_string(&self.path)
                 .with_context(|| format!("loading path {}", self.path.display()))?;
-            sources.push(Parser::parse(&buffer, self.path.clone())?);
+            sources.push(Parser::parse(&buffer, self.files, self.path.clone())?);
         }
 
         Ok(Pipeline {
             path: self.path,
             state: Parsed(sources),
+            files: self.files,
         })
     }
 }
@@ -107,20 +113,21 @@ impl Pipeline<Parsed> {
         Ok(Pipeline {
             state: Checked(TypeChecker::check(&self.path, self.state.0, libs)?),
             path: self.path,
+            files: self.files,
         })
     }
 }
 
 impl Pipeline<Checked> {
-    pub fn codegen(self) -> std::result::Result<String, Vec<(PathBuf, Vec<Error>)>> {
+    pub fn codegen(self) -> std::result::Result<String, (Vec<PathBuf>, Vec<Error>)> {
         let module = self.state.0;
         if module.errors.is_empty() {
             match Codegen::build(module.scope, &module.scopes) {
                 Ok(str) => Ok(str),
-                Err(_) => todo!(),
+                Err(err) => Err((module.files, vec![err])),
             }
         } else {
-            Err(module.errors)
+            Err((module.files, module.errors))
         }
     }
 }

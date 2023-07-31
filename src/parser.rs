@@ -6,7 +6,7 @@ use crate::{
         stmt::{Fn, MemVar, Param, ParsedUserType, Stmt, Struct, TypeHint},
         Path, Pattern,
     },
-    lexer::{Lexer, Located as L, Span, Token},
+    lexer::{Lexer, Located as L, Span, Token, FileIndex},
     Error, THIS_PARAM, THIS_TYPE,
 };
 
@@ -45,16 +45,16 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn new(src: &'a str) -> Self {
+    fn new(src: &'a str, file: FileIndex) -> Self {
         Self {
-            lexer: Lexer::new(src).peekable(),
+            lexer: Lexer::new(src, file).peekable(),
             needs_sync: false,
             errors: Vec::new(),
         }
     }
 
-    pub fn parse(buffer: &'a str, path: PathBuf) -> std::io::Result<ParsedFile> {
-        let mut this = Self::new(buffer);
+    pub fn parse(src: &'a str, file: FileIndex, path: PathBuf) -> std::io::Result<ParsedFile> {
+        let mut this = Self::new(src, file);
         let mut stmts = Vec::new();
         while !this.matches_kind(Token::Eof) {
             stmts.push(this.item());

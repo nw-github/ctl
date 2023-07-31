@@ -26,7 +26,7 @@ fn main() -> anyhow::Result<()> {
         libs.push(root.join("ctl/std"));
     }
 
-    let result = Pipeline::new(args.input.clone())
+    let result = Pipeline::new(args.input.clone(), 0)
         .parse()?
         .inspect(|ast| {
             if args.dump_ast {
@@ -45,12 +45,10 @@ fn main() -> anyhow::Result<()> {
                 println!("{result}");
             }
         }
-        Err(errors) => {
+        Err((paths, errors)) => {
             eprintln!("Compilation failed: ");
-            for (file, errors) in errors {
-                for err in errors {
-                    err.display(&file.to_string_lossy());
-                }
+            for error in errors {
+                error.display(&paths);
             }
 
             std::process::exit(1);

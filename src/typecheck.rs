@@ -1124,7 +1124,8 @@ macro_rules! resolve_impls {
 
 pub struct Module {
     pub scopes: Scopes,
-    pub errors: Vec<(PathBuf, Vec<Error>)>,
+    pub errors: Vec<Error>,
+    pub files: Vec<PathBuf>,
     pub scope: ScopeId,
 }
 
@@ -1140,38 +1141,31 @@ impl TypeChecker {
     ) -> anyhow::Result<Module> {
         let mut this = Self { errors: vec![] };
         let mut scopes = Scopes::new();
-        let mut errors = Vec::new();
+        let mut files: Vec<_> = module.iter().map(|file| file.path.clone()).collect();
 
         for lib in libs {
-            let parsed = Pipeline::new(lib).parse()?;
-            this.check_one(&mut scopes, &mut errors, &parsed.path, parsed.state.0);
+            let parsed = Pipeline::new(lib, files.len()).parse()?;
+            this.check_one(&mut scopes, &parsed.path, parsed.state.0, &mut files);
         }
 
-        let scope = this.check_one(&mut scopes, &mut errors, path, module);
+        let scope = this.check_one(&mut scopes, path, module, &mut vec![]);
         this.check_trait_impls(&scopes);
-        if !this.errors.is_empty() {
-            errors.push(("".into(), this.errors));
-        }
 
         Ok(Module {
             scope,
             scopes,
-            errors,
+            errors: this.errors,
+            files,
         })
     }
 
     fn check_one(
         &mut self,
         scopes: &mut Scopes,
-        errors: &mut Vec<(PathBuf, Vec<Error>)>,
         path: &std::path::Path,
         module: Vec<ParsedFile>,
+        paths: &mut Vec<PathBuf>,
     ) -> ScopeId {
-        eprintln!("=============");
-        for file in module.iter() {
-            eprintln!("{:?}", file.path);
-        }
-
         let project = crate::derive_module_name(path);
         scopes.enter(Some(project.clone()), ScopeKind::Module(true), |scopes| {
             for file in module.iter() {
@@ -1186,8 +1180,11 @@ impl TypeChecker {
                 }
             }
 
+            paths.reserve(module.len());
             for file in module {
-                self.errors = file.errors;
+                self.errors.extend(file.errors);
+                paths.push(file.path);
+
                 match file.ast.data {
                     Stmt::Module { name, body, .. } if name == project => {
                         self.include_universal(scopes, false);
@@ -1198,10 +1195,6 @@ impl TypeChecker {
                     _ => {
                         self.check_stmt(scopes, file.ast);
                     }
-                }
-
-                if !self.errors.is_empty() {
-                    errors.push((file.path, std::mem::take(&mut self.errors)));
                 }
             }
 
