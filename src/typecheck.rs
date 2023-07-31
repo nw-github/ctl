@@ -1110,16 +1110,24 @@ macro_rules! resolve_type {
 }
 
 macro_rules! resolve_impls {
-    ($self: expr, $scopes: expr, $ty: expr) => {
+    ($self: expr, $scopes: expr, $ty: expr) => {{
+        let mut removals = Vec::new();
         for i in 0..$ty.impls.len() {
             resolve_type!($self, $scopes, $ty.impls[i]);
 
             let id = $ty.impls[i].as_user_type().map(|t| t.id);
             if !id.map_or(false, |id| $scopes.get_user_type(id).data.is_trait()) {
-                $self.error::<()>(Error::new("expected trait", Span::default()));
+                if !$ty.impls[i].is_unknown() {
+                    $self.error::<()>(Error::new("expected trait", Span::default()));
+                }
+                removals.push(i);
             }
         }
-    };
+
+        for (i, index) in removals.iter().enumerate() {
+            $ty.impls.remove(index - i);
+        }
+    }};
 }
 
 pub struct Module {
