@@ -127,7 +127,7 @@ impl Buffer {
                     self.emit_type_name(scopes, ut);
                 }
             }
-            TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
+            TypeId::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
             TypeId::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_type"),
         }
@@ -179,7 +179,7 @@ impl Buffer {
             TypeId::UserType(ut) => {
                 self.emit_type_name(scopes, ut);
             }
-            TypeId::Unknown => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
+            TypeId::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
             TypeId::Array(_) => todo!(),
             TypeId::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_generic_mangled_name"),
         }
@@ -1132,7 +1132,7 @@ impl Codegen {
 
         self.buffer.emit(prototypes);
         for ut in Self::get_struct_order(scopes, &structs)? {
-            let Some(members) = scopes.get_user_type(ut.id).data.members() else { continue; };
+            let Some(members) = scopes.get_user_type(ut.id).members() else { continue; };
             if let Some(union) = scopes.get_user_type(ut.id).data.as_union() {
                 if union.is_unsafe {
                     self.buffer.emit("union ");
@@ -1249,7 +1249,7 @@ impl Codegen {
         self.buffer.emit(";");
 
         let mut deps = Vec::new();
-        for member in scopes.get_user_type(ut.id).data.members().unwrap().iter() {
+        for member in scopes.get_user_type(ut.id).members().unwrap().iter() {
             let mut ty = member.ty.clone();
             ty.fill_type_generics(scopes, &ut);
 
