@@ -1503,6 +1503,24 @@ impl TypeChecker {
             Some(f.name.data.clone()),
             ScopeKind::Function(id),
             |scopes| {
+                if !f.type_params.is_empty() {
+                    for (i, (name, impls)) in f.type_params.iter().enumerate() {
+                        let id = scopes.insert_user_type(UserType {
+                            public: false,
+                            name: name.clone(),
+                            body_scope: scopes.current_id(),
+                            data: UserTypeData::FuncGeneric(i),
+                            type_params: 0,
+                            impls: Vec::new(),
+                        });
+
+                        scopes.get_user_type_mut(id).impls = impls
+                            .iter()
+                            .flat_map(|path| self.resolve_impl(scopes, path, true))
+                            .collect();
+                    }
+                }
+
                 scopes.get_func_mut(id).body_scope = scopes.current_id();
                 scopes.get_func_mut(id).params = f
                     .params
@@ -1515,22 +1533,6 @@ impl TypeChecker {
                     })
                     .collect();
                 scopes.get_func_mut(id).ret = self.resolve_type(scopes, &f.ret, true);
-
-                if !f.type_params.is_empty() {
-                    for (i, (name, impls)) in f.type_params.iter().enumerate() {
-                        scopes.insert_user_type(UserType {
-                            public: false,
-                            name: name.clone(),
-                            body_scope: scopes.current_id(),
-                            data: UserTypeData::FuncGeneric(i),
-                            type_params: 0,
-                            impls: impls
-                                .iter()
-                                .flat_map(|path| self.resolve_impl(scopes, path, true))
-                                .collect(),
-                        });
-                    }
-                }
 
                 if let Some(body) = &f.body {
                     for stmt in body.iter() {
