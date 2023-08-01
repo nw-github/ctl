@@ -224,17 +224,17 @@ impl<'a> Lexer<'a> {
 
     #[inline]
     fn peek(&self) -> Option<char> {
-        self.src.chars().nth(self.loc.pos)
+        self.src[self.loc.pos..].chars().next()
     }
 
     #[inline]
     fn peek_next(&self) -> Option<char> {
-        self.src.chars().nth(self.loc.pos + 1)
+        self.src[self.loc.pos..].chars().nth(1)
     }
 
     fn advance(&mut self) -> Option<char> {
         if let Some(ch) = self.peek() {
-            self.loc.pos += 1;
+            self.loc.pos += ch.len_utf8();
             if ch == '\n' {
                 self.loc.col = 1;
                 self.loc.row += 1;
@@ -374,7 +374,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn numeric_literal(&mut self, start: usize) -> Token<'a> {
-        if self.src.chars().nth(start) == Some('0') {
+        if self.src[start..].starts_with('0') {
             if self.advance_if('x') {
                 return Token::Int {
                     base: 16,
