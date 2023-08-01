@@ -44,12 +44,12 @@ pub enum ExprData {
         members: IndexMap<String, CheckedExpr>,
         variant: Option<String>,
     },
-    Vec(Vec<CheckedExpr>),
     Array(Vec<CheckedExpr>),
     ArrayWithInit {
         init: Box<CheckedExpr>,
         count: usize,
     },
+    Vec(Vec<CheckedExpr>),
     VecWithInit {
         init: Box<CheckedExpr>,
         count: Box<CheckedExpr>,

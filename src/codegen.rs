@@ -685,8 +685,107 @@ impl Codegen {
             }
             ExprData::Array(_) => todo!(),
             ExprData::ArrayWithInit { .. } => todo!(),
-            ExprData::Vec(_) => todo!(),
-            ExprData::VecWithInit { .. } => todo!(),
+            ExprData::Vec(exprs) => {
+                let ut = (**expr.ty.as_user_type().unwrap()).clone();
+
+                let inner = &ut.generics[0];
+                let tmp = state.tmpvar();
+                let len = exprs.len();
+                let written = tmpbuf! {
+                    self,
+                    {
+                        let arr = state.tmpvar();
+
+                        self.buffer.emit_type(scopes, inner);
+                        self.buffer.emit(format!(" {arr}[{len}] = {{"));
+                        for expr in exprs {
+                            self.gen_expr(scopes, expr, state);
+                            self.buffer.emit(",");
+                        }
+                        self.buffer.emit("};");
+
+                        let next_state = State::new(
+                            GenericFunc::new(
+                                scopes
+                                    .find_func_in("with_capacity", scopes.get_user_type(ut.id).body_scope)
+                                    .unwrap(),
+                                vec![inner.clone()],
+                            ),
+                            state.inst.clone(),
+                        );
+
+                        self.buffer.emit_type(scopes, &expr.ty);
+                        self.buffer.emit(format!(" {tmp} = "));
+                        self.buffer.emit_fn_name(scopes, &next_state);
+                        self.buffer.emit(
+                            format!(
+                                concat!(
+                                    "({len});",
+                                    "__builtin_memcpy((void *){tmp}.ptr.addr, (const void *){arr}, {len} * sizeof {arr}[0]);",
+                                    "{tmp}.len = {len};"
+                                ),
+                                len = len,
+                                tmp = tmp,
+                                arr = arr,
+                            )
+                        );
+                        self.funcs.insert(next_state);
+                    }
+                };
+
+                self.temporaries.emit(written.0);
+                self.buffer.emit(tmp);
+
+                if let Some(ut) = inner.as_user_type() {
+                    self.structs.insert((**ut).clone());
+                }
+                self.structs.insert(ut);
+            }
+            ExprData::VecWithInit { init, count } => {
+                let ut = (**expr.ty.as_user_type().unwrap()).clone();
+
+                let inner = &ut.generics[0];
+                let tmp = state.tmpvar();
+                let written = tmpbuf! {
+                    self,
+                    {
+                        let len = state.tmpvar();
+                        self.buffer.emit_type(scopes, &count.ty);
+                        self.buffer.emit(format!(" {len} = "));
+                        self.gen_expr(scopes, *count, state);
+                        self.buffer.emit(";");
+
+                        let next_state = State::new(
+                            GenericFunc::new(
+                                scopes
+                                    .find_func_in("with_capacity", scopes.get_user_type(ut.id).body_scope)
+                                    .unwrap(),
+                                vec![inner.clone()],
+                            ),
+                            state.inst.clone(),
+                        );
+
+                        self.buffer.emit_type(scopes, &expr.ty);
+                        self.buffer.emit(format!(" {tmp} = "));
+                        self.buffer.emit_fn_name(scopes, &next_state);
+                        self.buffer.emit(format!("({len}); for (usize i = 0; i < {len}; i++) {{ (("));
+                        self.buffer.emit_type(scopes, inner);
+                        self.buffer.emit(format!(" *){tmp}.ptr.addr)[i] = "));
+                        self.gen_expr(scopes, *init, state);
+                        self.buffer.emit(format!("; }} {tmp}.len = {len};"));
+
+                        self.funcs.insert(next_state);
+                    }
+                };
+
+                self.temporaries.emit(written.0);
+                self.buffer.emit(tmp);
+
+                if let Some(ut) = inner.as_user_type() {
+                    self.structs.insert((**ut).clone());
+                }
+                self.structs.insert(ut);
+            }
             ExprData::Map(_) => todo!(),
             ExprData::Bool(value) => {
                 self.buffer.emit_cast(scopes, &expr.ty);
