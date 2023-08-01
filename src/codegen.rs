@@ -133,12 +133,6 @@ impl Buffer {
         }
     }
 
-    fn emit_cast(&mut self, scopes: &Scopes, id: &TypeId) {
-        self.emit("(");
-        self.emit_type(scopes, id);
-        self.emit(")");
-    }
-
     fn emit_generic_mangled_name(&mut self, scopes: &Scopes, id: &TypeId) {
         match id {
             TypeId::Void => self.emit("void"),
@@ -342,6 +336,16 @@ impl Buffer {
             Err(ty)
         }
     }
+
+    fn emit_member(&mut self, scopes: &Scopes, ut: &GenericUserType, member: &Member) {
+        let mut ty = member.ty.clone();
+        ty.fill_type_generics(scopes, ut);
+        if !ty.is_void_like() {
+            self.emit_type(scopes, &ty);
+            self.emit(format!(" {}", member.name));
+            self.emit(";");
+        }
+    }
 }
 
 macro_rules! tmpbuf {
@@ -362,7 +366,7 @@ macro_rules! enter_block {
             $self,
             {
                 if !ty.is_void_like() {
-                    $self.buffer.emit_type($scopes, ty);
+                    $self.emit_type($scopes, ty);
                     $self.buffer.emit(format!(" {};", $self.cur_block));
                 }
                 $body;
@@ -540,7 +544,7 @@ impl Codegen {
         match expr.data {
             ExprData::Binary { op, left, right } => {
                 if expr.ty == TypeId::Bool {
-                    self.buffer.emit_cast(scopes, &expr.ty);
+                    self.emit_cast(scopes, &expr.ty);
                     self.buffer.emit("(");
                 }
                 self.buffer.emit("(");
@@ -583,7 +587,7 @@ impl Codegen {
                 }
                 UnaryOp::Not => {
                     if inner.ty == TypeId::Bool {
-                        self.buffer.emit_cast(scopes, &expr.ty);
+                        self.emit_cast(scopes, &expr.ty);
                         self.buffer.emit("(");
                         self.gen_expr(scopes, *inner, state);
                         self.buffer.emit(" ^ 1)");
@@ -652,10 +656,7 @@ impl Codegen {
                     .is_some()
                 {
                     self.buffer.emit("(usize)sizeof");
-                    self.buffer.emit_cast(scopes, &func.generics[0]);
-                    if let TypeId::UserType(ty) = &func.generics[0] {
-                        self.structs.insert((**ty).clone());
-                    }
+                    self.emit_cast(scopes, &func.generics[0]);
                     return;
                 }
 
@@ -696,7 +697,7 @@ impl Codegen {
                     {
                         let arr = state.tmpvar();
 
-                        self.buffer.emit_type(scopes, inner);
+                        self.emit_type(scopes, inner);
                         self.buffer.emit(format!(" {arr}[{len}] = {{"));
                         for expr in exprs {
                             self.gen_expr(scopes, expr, state);
@@ -714,7 +715,7 @@ impl Codegen {
                             state.inst.clone(),
                         );
 
-                        self.buffer.emit_type(scopes, &expr.ty);
+                        self.emit_type(scopes, &expr.ty);
                         self.buffer.emit(format!(" {tmp} = "));
                         self.buffer.emit_fn_name(scopes, &next_state);
                         self.buffer.emit(
@@ -735,11 +736,6 @@ impl Codegen {
 
                 self.temporaries.emit(written.0);
                 self.buffer.emit(tmp);
-
-                if let Some(ut) = inner.as_user_type() {
-                    self.structs.insert((**ut).clone());
-                }
-                self.structs.insert(ut);
             }
             ExprData::VecWithInit { init, count } => {
                 let ut = (**expr.ty.as_user_type().unwrap()).clone();
@@ -750,7 +746,7 @@ impl Codegen {
                     self,
                     {
                         let len = state.tmpvar();
-                        self.buffer.emit_type(scopes, &count.ty);
+                        self.emit_type(scopes, &count.ty);
                         self.buffer.emit(format!(" {len} = "));
                         self.gen_expr(scopes, *count, state);
                         self.buffer.emit(";");
@@ -765,11 +761,11 @@ impl Codegen {
                             state.inst.clone(),
                         );
 
-                        self.buffer.emit_type(scopes, &expr.ty);
+                        self.emit_type(scopes, &expr.ty);
                         self.buffer.emit(format!(" {tmp} = "));
                         self.buffer.emit_fn_name(scopes, &next_state);
                         self.buffer.emit(format!("({len}); for (usize i = 0; i < {len}; i++) {{ (("));
-                        self.buffer.emit_type(scopes, inner);
+                        self.emit_type(scopes, inner);
                         self.buffer.emit(format!(" *){tmp}.ptr.addr)[i] = "));
                         self.gen_expr(scopes, *init, state);
                         self.buffer.emit(format!("; }} {tmp}.len = {len};"));
@@ -780,11 +776,6 @@ impl Codegen {
 
                 self.temporaries.emit(written.0);
                 self.buffer.emit(tmp);
-
-                if let Some(ut) = inner.as_user_type() {
-                    self.structs.insert((**ut).clone());
-                }
-                self.structs.insert(ut);
             }
             ExprData::Map(exprs) => {
                 let ut = (**expr.ty.as_user_type().unwrap()).clone();
@@ -815,7 +806,7 @@ impl Codegen {
                             Some(expr.ty.clone()),
                         );
 
-                        self.buffer.emit_type(scopes, &expr.ty);
+                        self.emit_type(scopes, &expr.ty);
                         self.buffer.emit(format!(" {tmp} = "));
                         self.buffer.emit_fn_name(scopes, &with_capacity);
                         self.buffer.emit(format!("({});", exprs.len()));
@@ -835,36 +826,25 @@ impl Codegen {
 
                 self.temporaries.emit(written.0);
                 self.buffer.emit(tmp);
-
-                if let Some(ut) = key.as_user_type() {
-                    self.structs.insert((**ut).clone());
-                }
-                if let Some(ut) = val.as_user_type() {
-                    self.structs.insert((**ut).clone());
-                }
-                self.structs.insert(ut);
             }
             ExprData::Bool(value) => {
-                self.buffer.emit_cast(scopes, &expr.ty);
+                self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(if value { "1" } else { "0" })
             }
             ExprData::Signed(value) => {
-                self.buffer.emit_cast(scopes, &expr.ty);
+                self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(format!("{value}"));
             }
             ExprData::Unsigned(value) => {
-                self.buffer.emit_cast(scopes, &expr.ty);
+                self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(format!("{value}"));
             }
             ExprData::Float(value) => {
-                self.buffer.emit_cast(scopes, &expr.ty);
+                self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(value);
             }
             ExprData::String(value) => {
-                self.structs
-                    .insert((**expr.ty.as_user_type().unwrap()).clone());
-
-                self.buffer.emit_cast(scopes, &expr.ty);
+                self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit("{ .span = { .ptr = (uint8_t const*)\"");
                 for byte in value.as_bytes() {
                     self.buffer.emit(format!("\\x{byte:x}"));
@@ -873,7 +853,7 @@ impl Codegen {
                     .emit(format!("\", .len = (usize){} }} }}", value.len()));
             }
             ExprData::Char(value) => {
-                self.buffer.emit_cast(scopes, &expr.ty);
+                self.emit_cast(scopes, &expr.ty);
                 if value as u32 <= 127 {
                     self.buffer.emit(format!("'{value}'"));
                 } else {
@@ -903,7 +883,7 @@ impl Codegen {
                         self.buffer.emit(" NULL");
                     }
                 } else {
-                    self.buffer.emit_cast(scopes, &expr.ty);
+                    self.emit_cast(scopes, &expr.ty);
                     self.buffer.emit("{");
                     if let Some((name, union)) = variant.zip(
                         expr.ty
@@ -929,15 +909,6 @@ impl Codegen {
                         }
                     }
                     self.buffer.emit("}");
-
-                    if let TypeId::UserType(data) = expr.ty {
-                        self.structs.insert((*data).clone());
-                    } else {
-                        panic!(
-                            "ICE: Constructing instance of non-struct type {}!",
-                            expr.ty.name(scopes)
-                        );
-                    }
                 }
             }
             ExprData::Member { source, member } => {
@@ -1024,7 +995,7 @@ impl Codegen {
                     self,
                     {
                         if !expr.ty.is_void_like() {
-                            self.buffer.emit_type(scopes, &expr.ty);
+                            self.emit_type(scopes, &expr.ty);
                             self.buffer.emit(format!(" {};", self.cur_loop));
                         }
 
@@ -1112,7 +1083,7 @@ impl Codegen {
                         state.fill_generics(scopes, &mut scrutinee.ty);
                         let ty = scrutinee.ty.clone();
 
-                        self.buffer.emit_type(scopes, &scrutinee.ty);
+                        self.emit_type(scopes, &scrutinee.ty);
                         self.buffer.emit(format!(" {tmp_name} = "));
                         self.gen_expr(scopes, *scrutinee, state);
                         self.buffer.emit(";");
@@ -1142,7 +1113,7 @@ impl Codegen {
                 }
             }
             ExprData::As(inner, _) => {
-                self.buffer.emit_cast(scopes, &expr.ty);
+                self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit("(");
                 self.gen_expr(scopes, *inner, state);
                 self.buffer.emit(")");
@@ -1188,7 +1159,7 @@ impl Codegen {
         let written = tmpbuf! {
             self,
             {
-                self.buffer.emit_type(scopes, &expr.ty);
+                self.emit_type(scopes, &expr.ty);
                 self.buffer.emit(format!(" {tmp} = "));
                 self.gen_expr_inner(scopes, expr, state);
                 self.buffer.emit(";");
@@ -1273,16 +1244,6 @@ impl Codegen {
         self.yielded = old;
     }
 
-    fn emit_member(&mut self, scopes: &Scopes, ut: &GenericUserType, member: &Member) {
-        let mut ty = member.ty.clone();
-        ty.fill_type_generics(scopes, ut);
-        if !ty.is_void_like() {
-            self.buffer.emit_type(scopes, &ty);
-            self.buffer.emit(format!(" {}", member.name));
-            self.buffer.emit(";");
-        }
-    }
-
     fn emit_structs(&mut self, scopes: &Scopes, prototypes: String) -> Result<(), Error> {
         let mut structs = HashMap::new();
         for ut in std::mem::take(&mut self.structs) {
@@ -1299,7 +1260,7 @@ impl Codegen {
                     self.buffer.emit("{");
 
                     for member in members {
-                        self.emit_member(scopes, ut, member);
+                        self.buffer.emit_member(scopes, ut, member);
                     }
                 } else {
                     self.buffer.emit("struct ");
@@ -1310,12 +1271,12 @@ impl Codegen {
                     self.buffer.emit(format!(" {UNION_TAG_NAME};"));
 
                     for member in members.iter().filter(|m| m.shared) {
-                        self.emit_member(scopes, ut, member);
+                        self.buffer.emit_member(scopes, ut, member);
                     }
 
                     self.buffer.emit(" union {");
                     for member in members.iter().filter(|m| !m.shared) {
-                        self.emit_member(scopes, ut, member);
+                        self.buffer.emit_member(scopes, ut, member);
                     }
                     self.buffer.emit("};");
                 }
@@ -1325,7 +1286,7 @@ impl Codegen {
                 self.buffer.emit("{");
 
                 for member in members {
-                    self.emit_member(scopes, ut, member);
+                    self.buffer.emit_member(scopes, ut, member);
                 }
             }
 
@@ -1438,6 +1399,20 @@ impl Codegen {
         }
         result.extend(args.drain(..).map(|(_, arg)| arg));
         result
+    }
+
+    fn emit_type(&mut self, scopes: &Scopes, id: &TypeId) {
+        if let Some(ut) = id.as_user_type() {
+            self.structs.insert((**ut).clone());
+        }
+
+        self.buffer.emit_type(scopes, id);
+    }
+
+    fn emit_cast(&mut self, scopes: &Scopes, id: &TypeId) {
+        self.buffer.emit("(");
+        self.emit_type(scopes, id);
+        self.buffer.emit(")");
     }
 }
 
