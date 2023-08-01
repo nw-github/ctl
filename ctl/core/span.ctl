@@ -1,5 +1,7 @@
 use core::ptr::Raw;
 use core::ptr::RawMut;
+use core::range::RangeBounds;
+use core::range::Bound;
 
 pub struct Span<T> {
     ptr: *T,
@@ -31,6 +33,29 @@ pub struct Span<T> {
         return Iter(
             ptr: this.ptr,
             end: core::ptr::offset(this.ptr, this.len)
+        );
+    }
+
+    pub fn subspan<R: RangeBounds<usize> >(this, range: R) [T..] {
+        let start = match range.begin() {
+            Bound::Inclusive(start) => start,
+            Bound::Exclusive(start) => start + 1,
+            Bound::Unbounded => 0,
+        };
+
+        let end = match range.end() {
+            Bound::Inclusive(end) => end + 1,
+            Bound::Exclusive(end) => end,
+            Bound::Unbounded => this.len(),
+        };
+
+        if end < start || start > this.len || end > this.len {
+            core::panic("Span::subspan(): invalid range!");
+        }
+
+        return Span(
+            ptr: (this.ptr as usize + start * core::mem::size_of::<T>()) as *T,
+            len: end - start
         );
     }
 }
@@ -82,6 +107,29 @@ pub struct SpanMut<T> {
         return IterMut(
             ptr: this.ptr,
             end: core::ptr::offset_mut(this.ptr, this.len)
+        );
+    }
+
+    pub fn subspan<R: RangeBounds<usize> >(this, range: R) [mut T..] {
+        let start = match range.begin() {
+            Bound::Inclusive(start) => start,
+            Bound::Exclusive(start) => start + 1,
+            Bound::Unbounded => 0,
+        };
+
+        let end = match range.end() {
+            Bound::Inclusive(end) => end + 1,
+            Bound::Exclusive(end) => end,
+            Bound::Unbounded => this.len(),
+        };
+
+        if end < start || start > this.len || end > this.len {
+            core::panic("SpanMut::subspan(): invalid range!");
+        }
+
+        return Span(
+            ptr: (this.ptr as usize + start * core::mem::size_of::<T>()) as *T,
+            len: end - start
         );
     }
 }
