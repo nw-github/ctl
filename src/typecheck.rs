@@ -2059,7 +2059,7 @@ impl TypeChecker {
                                 span
                             ));
                         }
-                        
+
                         (Some(vec), ty)
                     } else if let Some(expr) = elements.next() {
                         let expr = self.check_expr(scopes, expr, None);
@@ -2067,7 +2067,8 @@ impl TypeChecker {
                         checked.push(expr);
                         (Some(vec), ty)
                     } else {
-                        return self.error(Error::new("cannot infer type of array literal", expr.span));
+                        return self
+                            .error(Error::new("cannot infer type of array literal", expr.span));
                     }
                 };
 
@@ -2791,16 +2792,16 @@ impl TypeChecker {
                 Some(&TypeId::Bool),
             ),
             Expr::Match { expr, body } => {
-                let scrutinee_span = expr.span;
                 let scrutinee = self.check_expr(scopes, *expr, None);
                 let mut target = target.cloned();
                 let mut result = Vec::new();
                 for (pattern, expr) in body.into_iter() {
                     let span = expr.span;
                     let (pattern, mut expr) = scopes.enter(None, ScopeKind::None, |scopes| {
-                        let pattern =
-                            self.check_pattern(scopes, &scrutinee, scrutinee_span, pattern);
-                        (pattern, self.check_expr(scopes, expr, target.as_ref()))
+                        (
+                            self.check_pattern(scopes, &scrutinee, pattern),
+                            self.check_expr(scopes, expr, target.as_ref()),
+                        )
                     });
 
                     if let Some(target) = &target {
@@ -3017,15 +3018,15 @@ impl TypeChecker {
         &mut self,
         scopes: &mut Scopes,
         scrutinee: &CheckedExpr,
-        span: Span,
         pattern: Pattern,
     ) -> CheckedPattern {
-        let (path, binding) = match pattern {
+        let (span, path, binding) = match pattern {
             Pattern::PathWithBindings { path, binding } => (
-                self.resolve_path(scopes, &path.data, span, false),
+                path.span,
+                self.resolve_path(scopes, &path.data, path.span, false),
                 Some(binding),
             ),
-            Pattern::Path(path) => match self.resolve_path(scopes, &path.data, span, false) {
+            Pattern::Path(path) => match self.resolve_path(scopes, &path.data, path.span, false) {
                 original @ Some(ResolvedPath::None(_)) => {
                     if let Some(ident) = path.data.as_identifier() {
                         return CheckedPattern::CatchAll(scopes.insert_var(Variable {
@@ -3038,11 +3039,12 @@ impl TypeChecker {
                         }));
                     }
 
-                    (original, None)
+                    (path.span, original, None)
                 }
-                path => (path, None),
+                p => (path.span, p, None),
             },
             Pattern::Option(mutable, binding) => (
+                binding.span,
                 self.resolve_path(
                     scopes,
                     &Path::Root(vec![
@@ -3057,6 +3059,7 @@ impl TypeChecker {
                 Some((mutable, binding.data)),
             ),
             Pattern::Null(span) => (
+                span,
                 self.resolve_path(
                     scopes,
                     &Path::Root(vec![
@@ -3090,6 +3093,14 @@ impl TypeChecker {
             .filter(|ut| scopes.get_user_type(ut.id).data.is_union()) else {
             return self.error(Error::new("match scrutinee must be union or pointer to union", span));
         };
+
+        for i in 0..scopes.get_user_type_mut(ut.id).members_mut().unwrap().len() {
+            resolve_type!(
+                self,
+                scopes,
+                scopes.get_user_type_mut(ut.id).members_mut().unwrap()[i].ty
+            );
+        }
 
         let mut variant = String::new();
         let Some(union) = path
