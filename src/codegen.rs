@@ -786,7 +786,64 @@ impl Codegen {
                 }
                 self.structs.insert(ut);
             }
-            ExprData::Map(_) => todo!(),
+            ExprData::Map(exprs) => {
+                let ut = (**expr.ty.as_user_type().unwrap()).clone();
+
+                let key = &ut.generics[0];
+                let val = &ut.generics[1];
+                let tmp = state.tmpvar();
+                let written = tmpbuf! {
+                    self,
+                    {
+                        let with_capacity = State::new(
+                            GenericFunc::new(
+                                scopes
+                                    .find_func_in("with_capacity", scopes.get_user_type(ut.id).body_scope)
+                                    .unwrap(),
+                                vec![key.clone(), val.clone()],
+                            ),
+                            state.inst.clone(),
+                        );
+
+                        let insert = State::new(
+                            GenericFunc::new(
+                                scopes
+                                    .find_func_in("insert", scopes.get_user_type(ut.id).body_scope)
+                                    .unwrap(),
+                                vec![],
+                            ),
+                            Some(expr.ty.clone()),
+                        );
+
+                        self.buffer.emit_type(scopes, &expr.ty);
+                        self.buffer.emit(format!(" {tmp} = "));
+                        self.buffer.emit_fn_name(scopes, &with_capacity);
+                        self.buffer.emit(format!("({});", exprs.len()));
+
+                        for (key, val) in exprs {
+                            self.buffer.emit_fn_name(scopes, &insert);
+                            self.buffer.emit(format!("(&{tmp}, "));
+                            self.gen_expr(scopes, key, state);
+                            self.buffer.emit(",");
+                            self.gen_expr(scopes, val, state);
+                            self.buffer.emit(");");
+                        }
+                        self.funcs.insert(with_capacity);
+                        self.funcs.insert(insert);
+                    }
+                };
+
+                self.temporaries.emit(written.0);
+                self.buffer.emit(tmp);
+
+                if let Some(ut) = key.as_user_type() {
+                    self.structs.insert((**ut).clone());
+                }
+                if let Some(ut) = val.as_user_type() {
+                    self.structs.insert((**ut).clone());
+                }
+                self.structs.insert(ut);
+            }
             ExprData::Bool(value) => {
                 self.buffer.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(if value { "1" } else { "0" })

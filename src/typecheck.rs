@@ -2039,7 +2039,7 @@ impl TypeChecker {
                 let mut elements = elements.into_iter();
                 let (vec, ty) = if let Some(TypeId::Array(inner)) = target {
                     (None, inner.0.clone())
-                } else if let Some(expr) = elements.next() {
+                } else {
                     let Some(vec) = scopes.find_type(&["std", "vec", "Vec"]) else {
                         return self.error(Error::new("no symbol 'Vec' found in this module", expr.span));
                     };
@@ -2049,23 +2049,26 @@ impl TypeChecker {
                         .filter(|ut| ut.id == vec)
                         .map(|ut| ut.generics[0].clone())
                     {
-                        let span = expr.span;
-                        checked.push(type_check!(
-                            self,
-                            scopes,
-                            self.check_expr(scopes, expr, Some(&ty)),
-                            &ty,
-                            span
-                        ));
+                        if let Some(expr) = elements.next() {
+                            let span = expr.span;
+                            checked.push(type_check!(
+                                self,
+                                scopes,
+                                self.check_expr(scopes, expr, Some(&ty)),
+                                &ty,
+                                span
+                            ));
+                        }
+                        
                         (Some(vec), ty)
-                    } else {
+                    } else if let Some(expr) = elements.next() {
                         let expr = self.check_expr(scopes, expr, None);
                         let ty = expr.ty.clone();
                         checked.push(expr);
                         (Some(vec), ty)
+                    } else {
+                        return self.error(Error::new("cannot infer type of array literal", expr.span));
                     }
-                } else {
-                    return self.error(Error::new("cannot infer type of array literal", expr.span));
                 };
 
                 checked.extend(elements.map(|e| {
