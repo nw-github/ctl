@@ -67,7 +67,11 @@ impl<'a> Parser<'a> {
                     name: crate::derive_module_name(&path),
                     body: stmts,
                 },
-                Span::default(),
+                Span {
+                    loc: Default::default(),
+                    len: 0,
+                    file,
+                },
             ),
             errors: this.errors,
             path,

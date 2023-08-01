@@ -1000,16 +1000,20 @@ impl Scopes {
         None
     }
 
+    pub fn find_type(&self, path: &[&str]) -> Option<UserTypeId> {
+        let mut scope = ScopeId(0);
+        for part in path[0..path.len() - 1].iter() {
+            scope = *self[scope].children.get(*part)?;
+        }
+        self.find_user_type_in(path.last().unwrap(), scope)
+    }
+
     pub fn find_core_option(&self) -> Option<UserTypeId> {
-        let core = self.scopes()[0].children.get("core")?;
-        let option = self[*core].children.get("opt")?;
-        self.find_user_type_in("Option", *option)
+        self.find_type(&["core", "opt", "Option"])
     }
 
     pub fn find_core_iter(&self) -> Option<UserTypeId> {
-        let core = self.scopes()[0].children.get("core")?;
-        let iter = self[*core].children.get("iter")?;
-        self.find_user_type_in("Iter", *iter)
+        self.find_type(&["core", "iter", "Iter"])
     }
 
     pub fn as_option_inner<'a>(&self, ty: &'a TypeId) -> Option<&'a TypeId> {
@@ -2033,13 +2037,33 @@ impl TypeChecker {
             Expr::Array(elements) => {
                 let mut checked = Vec::with_capacity(elements.len());
                 let mut elements = elements.into_iter();
-                let inner = if let Some(TypeId::Array(inner)) = target {
-                    inner.0.clone()
+                let (vec, ty) = if let Some(TypeId::Array(inner)) = target {
+                    (None, inner.0.clone())
                 } else if let Some(expr) = elements.next() {
-                    let expr = self.check_expr(scopes, expr, None);
-                    let ty = expr.ty.clone();
-                    checked.push(expr);
-                    ty
+                    let Some(vec) = scopes.find_type(&["std", "vec", "Vec"]) else {
+                        return self.error(Error::new("no symbol 'Vec' found in this module", expr.span));
+                    };
+
+                    if let Some(ty) = target
+                        .and_then(|target| target.as_user_type())
+                        .filter(|ut| ut.id == vec)
+                        .map(|ut| ut.generics[0].clone())
+                    {
+                        let span = expr.span;
+                        checked.push(type_check!(
+                            self,
+                            scopes,
+                            self.check_expr(scopes, expr, Some(&ty)),
+                            &ty,
+                            span
+                        ));
+                        (Some(vec), ty)
+                    } else {
+                        let expr = self.check_expr(scopes, expr, None);
+                        let ty = expr.ty.clone();
+                        checked.push(expr);
+                        (Some(vec), ty)
+                    }
                 } else {
                     return self.error(Error::new("cannot infer type of array literal", expr.span));
                 };
@@ -2049,47 +2073,93 @@ impl TypeChecker {
                     type_check!(
                         self,
                         scopes,
-                        self.check_expr(scopes, e, Some(&inner)),
-                        &inner,
+                        self.check_expr(scopes, e, Some(&ty)),
+                        &ty,
                         span
                     )
                 }));
-                CheckedExpr::new(
-                    TypeId::Array(Box::new((inner, checked.len()))),
-                    ExprData::Array(checked),
-                )
+
+                if let Some(vec) = vec {
+                    CheckedExpr::new(
+                        TypeId::UserType(GenericUserType::new(vec, vec![ty]).into()),
+                        ExprData::Vec(checked),
+                    )
+                } else {
+                    CheckedExpr::new(
+                        TypeId::Array(Box::new((ty, checked.len()))),
+                        ExprData::Array(checked),
+                    )
+                }
             }
             Expr::ArrayWithInit { init, count } => {
-                let init = if let Some(TypeId::Array(inner)) = target {
+                if let Some(TypeId::Array(inner)) = target {
                     let span = init.span;
-                    type_check!(
+                    let init = type_check!(
                         self,
                         scopes,
                         self.check_expr(scopes, *init, Some(&inner.0)),
                         &inner.0,
                         span
-                    )
-                } else {
-                    self.check_expr(scopes, *init, None)
-                };
+                    );
 
-                match Self::consteval(scopes, &count, Some(&TypeId::Usize)) {
-                    Ok(count) => CheckedExpr::new(
-                        TypeId::Array(Box::new((init.ty.clone(), count))),
-                        ExprData::ArrayWithInit {
+                    match Self::consteval(scopes, &count, Some(&TypeId::Usize)) {
+                        Ok(count) => CheckedExpr::new(
+                            TypeId::Array(Box::new((init.ty.clone(), count))),
+                            ExprData::ArrayWithInit {
+                                init: init.into(),
+                                count,
+                            },
+                        ),
+                        Err(err) => self.error(err),
+                    }
+                } else {
+                    let Some(vec) = scopes.find_type(&["std", "vec", "Vec"]) else {
+                        return self.error(Error::new("no symbol 'Vec' found in this module", expr.span));
+                    };
+
+                    let (init, ty) = if let Some(ty) = target
+                        .and_then(|target| target.as_user_type())
+                        .filter(|ut| ut.id == vec)
+                        .map(|ut| ut.generics[0].clone())
+                    {
+                        let span = init.span;
+                        (
+                            type_check!(
+                                self,
+                                scopes,
+                                self.check_expr(scopes, *init, Some(&ty)),
+                                &ty,
+                                span
+                            ),
+                            ty,
+                        )
+                    } else {
+                        let expr = self.check_expr(scopes, *init, None);
+                        let ty = expr.ty.clone();
+                        (expr, ty)
+                    };
+
+                    let span = count.span;
+                    CheckedExpr::new(
+                        TypeId::UserType(GenericUserType::new(vec, vec![ty]).into()),
+                        ExprData::VecWithInit {
                             init: init.into(),
-                            count,
+                            count: type_check!(
+                                self,
+                                scopes,
+                                self.check_expr(scopes, *count, Some(&TypeId::Usize)),
+                                &TypeId::Usize,
+                                span
+                            )
+                            .into(),
                         },
-                    ),
-                    Err(err) => self.error(err),
+                    )
                 }
             }
             Expr::Tuple(_) => todo!(),
             Expr::Map(elements) => {
                 // TODO: make sure the key type respects the trait bounds
-                let Some(std_map) = scopes.scopes()[0].children.get("std")
-                    .and_then(|core| scopes[*core].children.get("map"))
-                    .and_then(|map| scopes.find_user_type_in("Map", *map)) else {
+                let Some(std_map) = scopes.find_type(&["std", "map", "Map"]) else {
                     return self.error(Error::new("no symbol 'Map' found in this module", expr.span));
                 };
 

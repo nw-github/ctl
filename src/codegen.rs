@@ -685,6 +685,8 @@ impl Codegen {
             }
             ExprData::Array(_) => todo!(),
             ExprData::ArrayWithInit { .. } => todo!(),
+            ExprData::Vec(_) => todo!(),
+            ExprData::VecWithInit { .. } => todo!(),
             ExprData::Map(_) => todo!(),
             ExprData::Bool(value) => {
                 self.buffer.emit_cast(scopes, &expr.ty);
