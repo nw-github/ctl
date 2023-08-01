@@ -2044,7 +2044,16 @@ impl TypeChecker {
                     return self.error(Error::new("cannot infer type of array literal", expr.span));
                 };
 
-                checked.extend(elements.map(|e| self.check_expr(scopes, e, Some(&inner))));
+                checked.extend(elements.map(|e| {
+                    let span = e.span;
+                    type_check!(
+                        self,
+                        scopes,
+                        self.check_expr(scopes, e, Some(&inner)),
+                        &inner,
+                        span
+                    )
+                }));
                 CheckedExpr::new(
                     TypeId::Array(Box::new((inner, checked.len()))),
                     ExprData::Array(checked),
@@ -2076,7 +2085,60 @@ impl TypeChecker {
                 }
             }
             Expr::Tuple(_) => todo!(),
-            Expr::Map(_) => todo!(),
+            Expr::Map(elements) => {
+                // TODO: make sure the key type respects the trait bounds
+                let Some(std_map) = scopes.scopes()[0].children.get("std")
+                    .and_then(|core| scopes[*core].children.get("map"))
+                    .and_then(|map| scopes.find_user_type_in("Map", *map)) else {
+                    return self.error(Error::new("no symbol 'Map' found in this module", expr.span));
+                };
+
+                let mut result = Vec::with_capacity(elements.len());
+                let mut elements = elements.into_iter();
+                let (key_ty, val_ty) = if let Some((k, v)) = target
+                    .and_then(|target| target.as_user_type())
+                    .filter(|ut| ut.id == std_map)
+                    .map(|ut| (ut.generics[0].clone(), ut.generics[1].clone()))
+                {
+                    (k, v)
+                } else if let Some((key, val)) = elements.next() {
+                    let key = self.check_expr(scopes, key, None);
+                    let val = self.check_expr(scopes, val, None);
+
+                    let k = key.ty.clone();
+                    let v = val.ty.clone();
+                    result.push((key, val));
+                    (k, v)
+                } else {
+                    return self.error(Error::new("cannot infer type of map literal", expr.span));
+                };
+
+                result.extend(elements.map(|(key, val)| {
+                    let kspan = key.span;
+                    let vspan = val.span;
+                    (
+                        type_check!(
+                            self,
+                            scopes,
+                            self.check_expr(scopes, key, Some(&key_ty)),
+                            &key_ty,
+                            kspan
+                        ),
+                        type_check!(
+                            self,
+                            scopes,
+                            self.check_expr(scopes, val, Some(&val_ty)),
+                            &val_ty,
+                            vspan
+                        ),
+                    )
+                }));
+
+                CheckedExpr::new(
+                    TypeId::UserType(GenericUserType::new(std_map, vec![key_ty, val_ty]).into()),
+                    ExprData::Map(result),
+                )
+            }
             Expr::Range { .. } => todo!(),
             Expr::String(s) => CheckedExpr::new(
                 self.make_type(scopes, &["core", "string", "str"], &[], false),
@@ -2097,7 +2159,7 @@ impl TypeChecker {
                         },
                     )
                 } else {
-                    self.error(Error::new("cannot infer type of option literal null", span))
+                    self.error(Error::new("cannot infer type of option null literal", span))
                 }
             }
             Expr::Void => CheckedExpr::new(TypeId::Void, ExprData::Void),
@@ -2115,7 +2177,6 @@ impl TypeChecker {
                     })
                 } else {
                     // FIXME: attempt to promote the literal if its too large for i32
-                    // FIXME: addr of should change the target to remove one pointer
                     target
                         .map(|mut target| {
                             while let Some(inner) = scopes.as_option_inner(target) {
@@ -3424,7 +3485,6 @@ impl TypeChecker {
                         span,
                     );
                 }
-                
             }
         }
 
@@ -3725,20 +3785,30 @@ impl TypeChecker {
                     self.error(Error::new(format!("'{name}' is a variable"), span))
                 } else if let Some(id) = scopes.find_user_type_from(name, here) {
                     if is_end {
-                        let ut = GenericUserType::new(id, self.resolve_generics_from(
-                            scopes,
-                            scopes.get_user_type(id).type_params,
-                            generics,
-                            span,
-                            fwd,
-                            here,
-                        ));
+                        let ut = GenericUserType::new(
+                            id,
+                            self.resolve_generics_from(
+                                scopes,
+                                scopes.get_user_type(id).type_params,
+                                generics,
+                                span,
+                                fwd,
+                                here,
+                            ),
+                        );
                         //resolve_impls!(self, scopes, scopes.get_user_type_mut(id));
                         //self.check_bounds(scopes, None, &ut, &scopes.get_user_type(id).impls, span);
                         return Some(ResolvedPath::UserType(ut));
                     }
 
-                    self.resolve_path_in(scopes, &data[1..], scopes.get_user_type(id).body_scope, span, fwd, here)
+                    self.resolve_path_in(
+                        scopes,
+                        &data[1..],
+                        scopes.get_user_type(id).body_scope,
+                        span,
+                        fwd,
+                        here,
+                    )
                 } else if let Some(id) = scopes.find_nonmember_fn_from(name, here) {
                     if is_end {
                         let f = scopes.get_func(id);

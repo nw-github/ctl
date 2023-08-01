@@ -49,6 +49,7 @@ pub enum ExprData {
         init: Box<CheckedExpr>,
         count: usize,
     },
+    Map(Vec<(CheckedExpr, CheckedExpr)>),
     Bool(bool),
     Signed(i128),
     Unsigned(u128),
