@@ -2213,7 +2213,87 @@ impl TypeChecker {
                     ExprData::Map(result),
                 )
             }
-            Expr::Range { .. } => todo!(),
+            Expr::Range {
+                start,
+                end,
+                inclusive,
+            } => match (start, end) {
+                // this could be skipped by just transforming these expressions to calls
+                (Some(start), Some(end)) => {
+                    let start = self.check_expr(scopes, *start, None);
+                    let span = end.span;
+                    let end = type_check_bail!(
+                        self,
+                        scopes,
+                        self.check_expr(scopes, *end, Some(&start.ty)),
+                        &start.ty,
+                        span
+                    );
+
+                    CheckedExpr::new(
+                        TypeId::UserType(
+                            GenericUserType::new(
+                                scopes
+                                    .find_type(&[
+                                        "core",
+                                        "range",
+                                        if inclusive { "RangeInclusive" } else { "Range" },
+                                    ])
+                                    .unwrap(),
+                                vec![start.ty.clone()],
+                            )
+                            .into(),
+                        ),
+                        ExprData::Instance {
+                            members: [("start".into(), start), ("end".into(), end)].into(),
+                            variant: None,
+                        },
+                    )
+                }
+                (None, Some(end)) => {
+                    let end = self.check_expr(scopes, *end, None);
+                    CheckedExpr::new(
+                        TypeId::UserType(
+                            GenericUserType::new(
+                                scopes
+                                    .find_type(&[
+                                        "core",
+                                        "range",
+                                        if inclusive {
+                                            "RangeToInclusive"
+                                        } else {
+                                            "RangeTo"
+                                        },
+                                    ])
+                                    .unwrap(),
+                                vec![end.ty.clone()],
+                            )
+                            .into(),
+                        ),
+                        ExprData::Instance {
+                            members: [("end".into(), end)].into(),
+                            variant: None,
+                        },
+                    )
+                }
+                (Some(start), None) => {
+                    let start = self.check_expr(scopes, *start, None);
+                    CheckedExpr::new(
+                        TypeId::UserType(
+                            GenericUserType::new(
+                                scopes.find_type(&["core", "range", "RangeFrom"]).unwrap(),
+                                vec![start.ty.clone()],
+                            )
+                            .into(),
+                        ),
+                        ExprData::Instance {
+                            members: [("start".into(), start)].into(),
+                            variant: None,
+                        },
+                    )
+                }
+                (None, None) => todo!(),
+            },
             Expr::String(s) => CheckedExpr::new(
                 self.make_type(scopes, &["core", "string", "str"], &[], false),
                 ExprData::String(s),
