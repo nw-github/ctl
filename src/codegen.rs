@@ -8,7 +8,7 @@ use crate::{
     lexer::Span,
     typecheck::{
         CheckedParam, GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId,
-        VariableId,
+        UserTypeData, VariableId,
     },
     Error,
 };
@@ -65,7 +65,12 @@ impl Buffer {
         self.0.push_str(source.as_ref());
     }
 
-    fn emit_type(&mut self, scopes: &Scopes, id: &TypeId) {
+    fn emit_type(
+        &mut self,
+        scopes: &Scopes,
+        id: &TypeId,
+        mut structs: Option<&mut HashSet<GenericUserType>>,
+    ) {
         match id {
             TypeId::Void => self.emit("void"),
             TypeId::Never => self.emit("void"),
@@ -107,26 +112,36 @@ impl Buffer {
                 panic!("ICE: Int/FloatGeneric in emit_type");
             }
             TypeId::Ptr(inner) => {
-                self.emit_type(scopes, inner);
+                self.emit_type(scopes, inner, structs);
                 self.emit(" const*");
             }
             TypeId::MutPtr(inner) => {
-                self.emit_type(scopes, inner);
+                self.emit_type(scopes, inner, structs);
                 self.emit(" *");
             }
             TypeId::Func(_) => todo!(),
-            TypeId::UserType(ut) => {
-                let tmp = scopes.get_user_type(ut.id);
-                if tmp.data.is_func_generic() || tmp.data.is_struct_generic() {
+            TypeId::UserType(ut) => match &scopes.get_user_type(ut.id).data {
+                UserTypeData::Struct { .. } | UserTypeData::Union(_) => {
+                    if let Some(structs) = &mut structs {
+                        structs.insert((**ut).clone());
+                    }
+
+                    if is_opt_ptr(scopes, id) {
+                        self.emit_type(scopes, &ut.generics[0], structs);
+                    } else {
+                        self.emit_type_name(scopes, ut);
+                    }
+                }
+                UserTypeData::Enum(backing) => {
+                    self.emit_type(scopes, backing, structs);
+                }
+                UserTypeData::FuncGeneric(_) | UserTypeData::StructGeneric(_) => {
                     panic!("ICE: Template type in emit_type");
                 }
-
-                if is_opt_ptr(scopes, id) {
-                    self.emit_type(scopes, &ut.generics[0]);
-                } else {
-                    self.emit_type_name(scopes, ut);
+                UserTypeData::Trait => {
+                    panic!("ICE: Trait type in emit_type");
                 }
-            }
+            },
             TypeId::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_type"),
             TypeId::Array(_) => todo!(),
             TypeId::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_type"),
@@ -220,7 +235,13 @@ impl Buffer {
         }
     }
 
-    fn emit_prototype(&mut self, scopes: &Scopes, state: &mut State, is_prototype: bool) {
+    fn emit_prototype(
+        &mut self,
+        scopes: &Scopes,
+        state: &mut State,
+        is_prototype: bool,
+        structs: &mut HashSet<GenericUserType>,
+    ) {
         let f = scopes.get_func(state.func.id);
         let mut ret = f.ret.clone();
         state.fill_generics(scopes, &mut ret);
@@ -235,7 +256,7 @@ impl Buffer {
             self.emit("_Noreturn ");
         }
 
-        self.emit_type(scopes, &ret);
+        self.emit_type(scopes, &ret, is_prototype.then_some(structs));
         self.emit(" ");
         self.emit_fn_name(scopes, state);
         self.emit("(");
@@ -251,7 +272,7 @@ impl Buffer {
             }
 
             if f.is_extern || is_prototype {
-                self.emit_type(scopes, &ty);
+                self.emit_type(scopes, &ty, is_prototype.then_some(structs));
                 if !param.mutable {
                     self.emit(" const");
                 }
@@ -264,6 +285,7 @@ impl Buffer {
                         .find(|&&v| scopes.get_var(v).name == param.name)
                         .unwrap(),
                     state,
+                    structs,
                 );
             }
         }
@@ -316,6 +338,7 @@ impl Buffer {
         scopes: &Scopes,
         id: VariableId,
         state: &mut State,
+        structs: &mut HashSet<GenericUserType>,
     ) -> Result<TypeId, TypeId> {
         let var = scopes.get_var(id);
         let mut ty = var.ty.clone();
@@ -325,7 +348,7 @@ impl Buffer {
                 self.emit("static ");
             }
 
-            self.emit_type(scopes, &ty);
+            self.emit_type(scopes, &ty, Some(structs));
             if !var.mutable {
                 self.emit(" const");
             }
@@ -341,7 +364,7 @@ impl Buffer {
         let mut ty = member.ty.clone();
         ty.fill_type_generics(scopes, ut);
         if !ty.is_void_like() {
-            self.emit_type(scopes, &ty);
+            self.emit_type(scopes, &ty, None);
             self.emit(format!(" {}", member.name));
             self.emit(";");
         }
@@ -436,11 +459,12 @@ impl Codegen {
             emitted.extend(this.funcs.drain());
 
             for mut state in diff {
-                prototypes.emit_prototype(scopes, &mut state, true);
+                prototypes.emit_prototype(scopes, &mut state, true, &mut this.structs);
                 prototypes.emit(";");
 
                 if let Some(body) = scopes.get_func(state.func.id).body.clone() {
-                    this.buffer.emit_prototype(scopes, &mut state, false);
+                    this.buffer
+                        .emit_prototype(scopes, &mut state, false, &mut this.structs);
                     this.emit_block(scopes, body, &mut state);
                 }
             }
@@ -458,7 +482,11 @@ impl Codegen {
             .flat_map(|s| s.vars.iter())
             .filter(|&&v| scopes.get_var(v).is_static)
         {
-            if this.buffer.emit_local_decl(scopes, id, main).is_ok() {
+            if this
+                .buffer
+                .emit_local_decl(scopes, id, main, &mut this.structs)
+                .is_ok()
+            {
                 this.buffer.emit(";");
                 statics.push((id, false));
             } else {
@@ -518,7 +546,7 @@ impl Codegen {
                     self,
                     {
                         let var = scopes.get_var(id);
-                        match self.buffer.emit_local_decl(scopes, id, state) {
+                        match self.buffer.emit_local_decl(scopes, id, state, &mut self.structs) {
                             Ok(ty) => if let Some(mut expr) = var.value.clone() {
                                 expr.ty = ty;
                                 self.buffer.emit(" = ");
@@ -998,7 +1026,12 @@ impl Codegen {
 
                         if let Some(iter) = iter {
                             let mut expr = scopes.get_var(iter).value.clone().unwrap();
-                            let (Ok(ty) | Err(ty)) = self.buffer.emit_local_decl(scopes, iter, state);
+                            let (Ok(ty) | Err(ty)) = self.buffer.emit_local_decl(
+                                scopes,
+                                iter,
+                                state,
+                                &mut self.structs
+                            );
                             expr.ty = ty;
 
                             self.buffer.emit(" = ");
@@ -1192,7 +1225,11 @@ impl Codegen {
                 if opt_ptr && variant.0 == "Some" {
                     self.buffer.emit(format!("if ({tmp_name} != NULL) {{"));
                     if binding
-                        .filter(|&id| self.buffer.emit_local_decl(scopes, id, state).is_ok())
+                        .filter(|&id| {
+                            self.buffer
+                                .emit_local_decl(scopes, id, state, &mut self.structs)
+                                .is_ok()
+                        })
                         .is_some()
                     {
                         self.buffer
@@ -1207,7 +1244,11 @@ impl Codegen {
                     ));
 
                     if binding
-                        .filter(|&id| self.buffer.emit_local_decl(scopes, id, state).is_ok())
+                        .filter(|&id| {
+                            self.buffer
+                                .emit_local_decl(scopes, id, state, &mut self.structs)
+                                .is_ok()
+                        })
                         .is_some()
                     {
                         self.buffer.emit(format!(
@@ -1220,7 +1261,11 @@ impl Codegen {
             }
             CheckedPattern::CatchAll(binding) => {
                 self.buffer.emit("if (1) {");
-                if self.buffer.emit_local_decl(scopes, *binding, state).is_ok() {
+                if self
+                    .buffer
+                    .emit_local_decl(scopes, *binding, state, &mut self.structs)
+                    .is_ok()
+                {
                     self.buffer.emit(format!(" = {tmp_name};"));
                 }
             }
@@ -1264,7 +1309,7 @@ impl Codegen {
                     self.buffer.emit_type_name(scopes, ut);
                     self.buffer.emit("{");
 
-                    self.buffer.emit_type(scopes, &union.tag_type());
+                    self.buffer.emit_type(scopes, &union.tag_type(), None);
                     self.buffer.emit(format!(" {UNION_TAG_NAME};"));
 
                     for member in members.iter().filter(|m| m.shared) {
@@ -1399,11 +1444,7 @@ impl Codegen {
     }
 
     fn emit_type(&mut self, scopes: &Scopes, id: &TypeId) {
-        if let Some(ut) = id.as_user_type() {
-            self.structs.insert((**ut).clone());
-        }
-
-        self.buffer.emit_type(scopes, id);
+        self.buffer.emit_type(scopes, id, Some(&mut self.structs));
     }
 
     fn emit_cast(&mut self, scopes: &Scopes, id: &TypeId) {

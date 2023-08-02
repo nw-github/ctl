@@ -716,7 +716,7 @@ pub enum UserTypeData {
         init: FunctionId,
     },
     Union(Union),
-    Enum,
+    Enum(TypeId),
     FuncGeneric(usize),
     StructGeneric(usize),
     Trait,
@@ -1434,11 +1434,12 @@ impl TypeChecker {
                     variants,
                     functions,
                 } => {
+                    let backing = TypeId::Uint(8);
                     let id = scopes.insert_user_type(UserType {
                         public: *public,
                         name: name.data.clone(),
                         body_scope: ScopeId(0),
-                        data: UserTypeData::Enum,
+                        data: UserTypeData::Enum(backing.clone()),
                         type_params: 0,
                         impls: impls
                             .iter()
@@ -1449,14 +1450,17 @@ impl TypeChecker {
                     scopes.enter(Some(name.data.clone()), ScopeKind::UserType(id), |scopes| {
                         scopes.get_user_type_mut(id).body_scope = scopes.current_id();
 
-                        for (name, _) in variants {
+                        for (i, (name, _)) in variants.iter().enumerate() {
                             scopes.insert_var(Variable {
                                 name: name.clone(),
                                 public: true,
                                 ty: TypeId::UserType(GenericUserType::new(id, vec![]).into()),
                                 is_static: true,
                                 mutable: false,
-                                value: None,
+                                value: Some(CheckedExpr::new(
+                                    backing.clone(),
+                                    ExprData::Unsigned(i as u128),
+                                )),
                             });
                         }
 
