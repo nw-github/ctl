@@ -2836,12 +2836,12 @@ impl TypeChecker {
                             if a <= b || throwing => {}
                         (TypeId::CUint(a), TypeId::CUint(b)) if a <= b || throwing => {}
                         (
-                            TypeId::CInt(_) | TypeId::CUint(_) | TypeId::Usize | TypeId::Isize,
-                            TypeId::Int(_) | TypeId::Uint(_) | TypeId::Usize | TypeId::Isize,
+                            TypeId::CInt(_) | TypeId::CUint(_) | TypeId::Usize | TypeId::Isize | TypeId::Char,
+                            TypeId::Int(_) | TypeId::Uint(_) | TypeId::Usize | TypeId::Isize | TypeId::Char,
                         ) if throwing => {}
                         (
-                            TypeId::Int(_) | TypeId::Uint(_) | TypeId::Usize | TypeId::Isize,
-                            TypeId::CInt(_) | TypeId::CUint(_) | TypeId::Usize | TypeId::Isize,
+                            TypeId::Int(_) | TypeId::Uint(_) | TypeId::Usize | TypeId::Isize | TypeId::Char,
+                            TypeId::CInt(_) | TypeId::CUint(_) | TypeId::Usize | TypeId::Isize | TypeId::Char,
                         ) if throwing => {}
                         (TypeId::F32, TypeId::F64) => {}
                         (TypeId::F64, TypeId::F32) if throwing => {}
@@ -2851,6 +2851,9 @@ impl TypeChecker {
                         (TypeId::Ptr(_), TypeId::Ptr(_) | TypeId::Usize) => {}
                         (TypeId::MutPtr(_), TypeId::Ptr(_) | TypeId::MutPtr(_) | TypeId::Usize) => {
                         }
+                        (TypeId::Char, TypeId::Uint(num)) if *num > 32 || throwing => {}
+                        (TypeId::Char, TypeId::Int(num)) if *num > 33 || throwing => {}
+                        (a, b) if a == b => {}
                         _ => {
                             expr = self.error(Error::new(
                                 format!(
