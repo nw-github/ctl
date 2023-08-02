@@ -1,10 +1,4 @@
-use crate::{
-    ast::{
-        expr::Expr,
-        stmt::{Fn, ParsedUserType, StmtData, Struct}, Stmt,
-    },
-    lexer::Located,
-};
+use crate::ast::{Expr, ExprData, Fn, ParsedUserType, Stmt, StmtData, Struct};
 
 const INDENT: &str = "  ";
 
@@ -151,15 +145,15 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
     }
 }
 
-pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
+pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
     let tabs = INDENT.repeat(indent);
     match &expr.data {
-        Expr::Binary { op, left, right } => {
+        ExprData::Binary { op, left, right } => {
             println!("{tabs}Binary({op:?})");
             print_expr(left, src, indent + 1);
             print_expr(right, src, indent + 1);
         }
-        Expr::Range {
+        ExprData::Range {
             start,
             end,
             inclusive,
@@ -178,11 +172,11 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
                 print_expr(end, src, indent + 2);
             }
         }
-        Expr::Unary { op, expr } => {
+        ExprData::Unary { op, expr } => {
             println!("{tabs}Unary({op:?})");
             print_expr(expr, src, indent + 1);
         }
-        Expr::Call { callee, args } => {
+        ExprData::Call { callee, args } => {
             println!("{tabs}Call");
             let tabs = INDENT.repeat(indent + 1);
             println!("{tabs}Callee: ");
@@ -200,13 +194,13 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
                 }
             }
         }
-        Expr::Array(elements) => {
+        ExprData::Array(elements) => {
             println!("{tabs}Array");
             for el in elements {
                 print_expr(el, src, indent + 1);
             }
         }
-        Expr::ArrayWithInit { init, count } => {
+        ExprData::ArrayWithInit { init, count } => {
             println!("{tabs}ArrayWithInit");
 
             let tabs = INDENT.repeat(indent + 1);
@@ -215,13 +209,13 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
             println!("{tabs}Count: ");
             print_expr(count, src, indent + 2);
         }
-        Expr::Tuple(elements) => {
+        ExprData::Tuple(elements) => {
             println!("{tabs}Tuple");
             for el in elements {
                 print_expr(el, src, indent + 1);
             }
         }
-        Expr::Map(expr) => {
+        ExprData::Map(expr) => {
             println!("{tabs}Map");
             let tabs = INDENT.repeat(indent + 1);
             for (key, value) in expr {
@@ -231,22 +225,22 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
                 print_expr(value, src, indent + 2);
             }
         }
-        Expr::Integer { base, value, width } => {
+        ExprData::Integer { base, value, width } => {
             println!("{tabs}Integer(base {base}, width {width:?}) = {value}");
         }
-        Expr::Float(value) => {
+        ExprData::Float(value) => {
             println!("{tabs}Float = {value}");
         }
-        Expr::String(value) => {
+        ExprData::String(value) => {
             println!("{tabs}String = \'{value}\'");
         }
-        Expr::Char(value) => {
+        ExprData::Char(value) => {
             println!("{tabs}Char = \'{value}\'");
         }
-        Expr::Path(_) => {
+        ExprData::Path(_) => {
             println!("{tabs}Path[{}]", expr.span.text(src));
         }
-        Expr::Assign {
+        ExprData::Assign {
             target,
             binary,
             value,
@@ -258,11 +252,11 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
             println!("{tabs}Value: ");
             print_expr(value, src, indent + 2);
         }
-        Expr::Block(expr) => {
+        ExprData::Block(expr) => {
             println!("{tabs}Block");
             print_stmts(expr, src, indent + 1);
         }
-        Expr::If {
+        ExprData::If {
             cond,
             if_branch,
             else_branch,
@@ -281,7 +275,7 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
                 print_expr(else_branch, src, indent + 2);
             }
         }
-        Expr::Loop {
+        ExprData::Loop {
             cond,
             body,
             do_while,
@@ -299,7 +293,7 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
             println!("{tabs}Body: ");
             print_stmts(body, src, indent + 2);
         }
-        Expr::Member {
+        ExprData::Member {
             source,
             member,
             generics,
@@ -314,7 +308,7 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
             }
             print_expr(source, src, indent + 1);
         }
-        Expr::Subscript { callee, args } => {
+        ExprData::Subscript { callee, args } => {
             println!("{tabs}Subscript");
             let tabs = INDENT.repeat(indent + 1);
             println!("{tabs}Callee: ");
@@ -327,28 +321,28 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
                 }
             }
         }
-        Expr::Return(expr) => {
+        ExprData::Return(expr) => {
             println!("{tabs}Return");
             print_expr(expr, src, indent + 1);
         }
-        Expr::Yield(expr) => {
+        ExprData::Yield(expr) => {
             println!("{tabs}Yield");
             print_expr(expr, src, indent + 1);
         }
-        Expr::Break(expr) => {
+        ExprData::Break(expr) => {
             println!("{tabs}Break");
             print_expr(expr, src, indent + 1);
         }
-        Expr::Bool(value) => {
+        ExprData::Bool(value) => {
             println!("{tabs}Bool = {value}");
         }
-        Expr::Continue => {
+        ExprData::Continue => {
             println!("{tabs}Continue");
         }
-        Expr::None => {
+        ExprData::None => {
             println!("{tabs}None");
         }
-        Expr::For {
+        ExprData::For {
             var,
             mutable,
             iter,
@@ -362,17 +356,17 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
             println!("{tabs}Body: ");
             print_stmts(body, src, indent + 2);
         }
-        Expr::Void => println!("{tabs}Void"),
-        Expr::Is { expr, pattern } => {
+        ExprData::Void => println!("{tabs}Void"),
+        ExprData::Is { expr, pattern } => {
             println!("{tabs}Is ({pattern:?})");
             print_expr(expr, src, indent + 1);
         }
-        Expr::As { expr, ty, throwing } => {
+        ExprData::As { expr, ty, throwing } => {
             println!("{tabs}As ({ty:?})");
             print_bool!(throwing);
             print_expr(expr, src, indent + 1);
         }
-        Expr::Match { expr, body } => {
+        ExprData::Match { expr, body } => {
             println!("{tabs}Match");
             print_expr(expr, src, indent + 1);
 
@@ -382,7 +376,7 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
                 print_expr(expr, src, indent + 2);
             }
         }
-        Expr::Error => {}
+        ExprData::Error => {}
     }
 }
 

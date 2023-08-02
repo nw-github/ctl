@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 
 use crate::{
-    ast::expr::{BinaryOp, UnaryOp},
+    ast::{BinaryOp, UnaryOp},
     typecheck::{GenericFunc, ScopeId, Symbol, TypeId, VariableId},
 };
 
@@ -24,7 +24,7 @@ pub enum CheckedPattern {
 }
 
 #[derive(Default, Debug, Clone)]
-pub enum ExprData {
+pub enum CheckedExprData {
     Binary {
         op: BinaryOp,
         left: Box<CheckedExpr>,
@@ -104,7 +104,7 @@ pub enum ExprData {
 #[derive(Debug, Default, Clone, derive_more::Constructor)]
 pub struct CheckedExpr {
     pub ty: TypeId,
-    pub data: ExprData,
+    pub data: CheckedExprData,
 }
 
 #[derive(Debug, Default, Clone)]

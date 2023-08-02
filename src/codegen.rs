@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use indexmap::IndexMap;
 
 use crate::{
-    ast::expr::UnaryOp,
-    checked_ast::{CheckedExpr, CheckedPattern, CheckedStmt, ExprData},
+    ast::UnaryOp,
+    checked_ast::{CheckedExpr, CheckedPattern, CheckedStmt, CheckedExprData},
     lexer::Span,
     typecheck::{
         CheckedParam, GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId,
@@ -571,7 +571,7 @@ impl Codegen {
 
     fn gen_expr_inner(&mut self, scopes: &Scopes, expr: CheckedExpr, state: &mut State) {
         match expr.data {
-            ExprData::Binary { op, left, right } => {
+            CheckedExprData::Binary { op, left, right } => {
                 if expr.ty == TypeId::Bool {
                     self.emit_cast(scopes, &expr.ty);
                     self.buffer.emit("(");
@@ -586,7 +586,7 @@ impl Codegen {
                     self.buffer.emit(" ? 1 : 0)");
                 }
             }
-            ExprData::Unary {
+            CheckedExprData::Unary {
                 op,
                 expr: mut inner,
             } => match op {
@@ -634,12 +634,12 @@ impl Codegen {
                     // TODO: addr of void
                     self.buffer.emit("&");
                     match inner.data {
-                        ExprData::Unary { op, .. } if op == UnaryOp::Deref => {
+                        CheckedExprData::Unary { op, .. } if op == UnaryOp::Deref => {
                             self.gen_expr(scopes, *inner, state);
                         }
-                        ExprData::Symbol(_)
-                        | ExprData::Member { .. }
-                        | ExprData::Subscript { .. } => {
+                        CheckedExprData::Symbol(_)
+                        | CheckedExprData::Member { .. }
+                        | CheckedExprData::Subscript { .. } => {
                             self.gen_expr(scopes, *inner, state);
                         }
                         _ => {
@@ -651,7 +651,7 @@ impl Codegen {
                 UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in gen_expr"),
                 UnaryOp::Try => todo!(),
             },
-            ExprData::Call {
+            CheckedExprData::Call {
                 mut func,
                 args,
                 mut inst,
@@ -713,9 +713,9 @@ impl Codegen {
                 }
                 self.buffer.emit(")");
             }
-            ExprData::Array(_) => todo!(),
-            ExprData::ArrayWithInit { .. } => todo!(),
-            ExprData::Vec(exprs) => {
+            CheckedExprData::Array(_) => todo!(),
+            CheckedExprData::ArrayWithInit { .. } => todo!(),
+            CheckedExprData::Vec(exprs) => {
                 let ut = (**expr.ty.as_user_type().unwrap()).clone();
 
                 let inner = &ut.generics[0];
@@ -766,7 +766,7 @@ impl Codegen {
                 self.temporaries.emit(written.0);
                 self.buffer.emit(tmp);
             }
-            ExprData::VecWithInit { init, count } => {
+            CheckedExprData::VecWithInit { init, count } => {
                 let ut = (**expr.ty.as_user_type().unwrap()).clone();
 
                 let inner = &ut.generics[0];
@@ -806,7 +806,7 @@ impl Codegen {
                 self.temporaries.emit(written.0);
                 self.buffer.emit(tmp);
             }
-            ExprData::Map(exprs) => {
+            CheckedExprData::Map(exprs) => {
                 let ut = (**expr.ty.as_user_type().unwrap()).clone();
 
                 let key = &ut.generics[0];
@@ -856,23 +856,23 @@ impl Codegen {
                 self.temporaries.emit(written.0);
                 self.buffer.emit(tmp);
             }
-            ExprData::Bool(value) => {
+            CheckedExprData::Bool(value) => {
                 self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(if value { "1" } else { "0" })
             }
-            ExprData::Signed(value) => {
+            CheckedExprData::Signed(value) => {
                 self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(format!("{value}"));
             }
-            ExprData::Unsigned(value) => {
+            CheckedExprData::Unsigned(value) => {
                 self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(format!("{value}"));
             }
-            ExprData::Float(value) => {
+            CheckedExprData::Float(value) => {
                 self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(value);
             }
-            ExprData::String(value) => {
+            CheckedExprData::String(value) => {
                 self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit("{ .span = { .ptr = (uint8_t const*)\"");
                 for byte in value.as_bytes() {
@@ -881,12 +881,12 @@ impl Codegen {
                 self.buffer
                     .emit(format!("\", .len = (usize){} }} }}", value.len()));
             }
-            ExprData::Char(value) => {
+            CheckedExprData::Char(value) => {
                 self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(format!("0x{:x}", value as u32));
             }
-            ExprData::Void => {}
-            ExprData::Symbol(symbol) => match symbol {
+            CheckedExprData::Void => {}
+            CheckedExprData::Symbol(symbol) => match symbol {
                 Symbol::Func => {
                     let func = expr.ty.into_func().unwrap();
                     self.buffer.emit_fn_name(scopes, &State::new(*func, None))
@@ -897,7 +897,7 @@ impl Codegen {
                     }
                 }
             },
-            ExprData::Instance {
+            CheckedExprData::Instance {
                 mut members,
                 variant,
             } => {
@@ -936,13 +936,13 @@ impl Codegen {
                     self.buffer.emit("}");
                 }
             }
-            ExprData::Member { source, member } => {
+            CheckedExprData::Member { source, member } => {
                 if !expr.ty.is_void_like() {
                     self.gen_expr(scopes, *source, state);
                     self.buffer.emit(format!(".{member}"));
                 }
             }
-            ExprData::Assign {
+            CheckedExprData::Assign {
                 target,
                 binary,
                 value,
@@ -963,7 +963,7 @@ impl Codegen {
                     self.buffer.emit(";");
                 }
             }
-            ExprData::Block(block) => {
+            CheckedExprData::Block(block) => {
                 enter_block! {
                     self, state, scopes, &expr.ty,
                     {
@@ -971,7 +971,7 @@ impl Codegen {
                     }
                 }
             }
-            ExprData::If {
+            CheckedExprData::If {
                 cond,
                 if_branch,
                 else_branch,
@@ -1009,7 +1009,7 @@ impl Codegen {
                     }
                 }
             }
-            ExprData::Loop {
+            CheckedExprData::Loop {
                 cond,
                 iter,
                 body,
@@ -1073,15 +1073,15 @@ impl Codegen {
                     self.buffer.emit(std::mem::replace(&mut self.cur_loop, old));
                 }
             }
-            ExprData::Subscript { .. } => todo!(),
-            ExprData::Return(expr) => {
+            CheckedExprData::Subscript { .. } => todo!(),
+            CheckedExprData::Return(expr) => {
                 // TODO: when return is used as anything except a StmtExpr, we will have to change
                 // the generated code to accomodate it
                 self.buffer.emit("return ");
                 self.gen_expr(scopes, *expr, state);
                 //self.yielded = true;
             }
-            ExprData::Yield(expr) => {
+            CheckedExprData::Yield(expr) => {
                 if !expr.ty.is_void_like() {
                     self.buffer.emit(format!("{} = ", self.cur_block));
                 }
@@ -1089,7 +1089,7 @@ impl Codegen {
                 self.buffer.emit(";");
                 //self.yielded = true;
             }
-            ExprData::Break(expr) => {
+            CheckedExprData::Break(expr) => {
                 if !expr.ty.is_void_like() {
                     self.buffer.emit(format!("{} = ", self.cur_loop));
                 }
@@ -1097,11 +1097,11 @@ impl Codegen {
                 self.buffer.emit("; break;");
                 //self.yielded = true;
             }
-            ExprData::Continue => {
+            CheckedExprData::Continue => {
                 self.buffer.emit("continue;");
                 //self.yielded = true;
             }
-            ExprData::Match {
+            CheckedExprData::Match {
                 expr: mut scrutinee,
                 body,
             } => {
@@ -1142,31 +1142,31 @@ impl Codegen {
                     }
                 }
             }
-            ExprData::As(inner, _) => {
+            CheckedExprData::As(inner, _) => {
                 self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit("(");
                 self.gen_expr(scopes, *inner, state);
                 self.buffer.emit(")");
             }
-            ExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
+            CheckedExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }
     }
 
     fn gen_expr(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &mut State) {
         fn has_side_effects(expr: &CheckedExpr) -> bool {
             match &expr.data {
-                ExprData::Unary { op, .. } => matches!(
+                CheckedExprData::Unary { op, .. } => matches!(
                     op,
                     UnaryOp::PostIncrement
                         | UnaryOp::PostDecrement
                         | UnaryOp::PreIncrement
                         | UnaryOp::PreDecrement
                 ),
-                ExprData::Call { .. } => true,
-                ExprData::Array(_) => todo!(),
-                ExprData::ArrayWithInit { .. } => todo!(),
-                ExprData::Assign { .. } => true,
-                ExprData::Subscript { .. } => todo!(),
+                CheckedExprData::Call { .. } => true,
+                CheckedExprData::Array(_) => todo!(),
+                CheckedExprData::ArrayWithInit { .. } => todo!(),
+                CheckedExprData::Assign { .. } => true,
+                CheckedExprData::Subscript { .. } => todo!(),
                 _ => false,
             }
         }

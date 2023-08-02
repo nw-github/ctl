@@ -7,11 +7,10 @@ use indexmap::{map::Entry, IndexMap, IndexSet};
 
 use crate::{
     ast::{
-        expr::{BinaryOp, Expr, UnaryOp},
-        stmt::{Fn, MemVar, Param, ParsedUserType, StmtData, Struct, TypeHint},
-        Path, Pattern, Stmt,
+        BinaryOp, ExprData, Fn, MemVar, Param, ParsedUserType, Path, Pattern, Stmt, StmtData,
+        Struct, TypeHint, UnaryOp,
     },
-    checked_ast::{Block, CheckedExpr, CheckedPattern, CheckedStmt, ExprData},
+    checked_ast::{Block, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt},
     lexer::{Located, Span},
     parser::ParsedFile,
     Error, Pipeline, THIS_PARAM, THIS_TYPE,
@@ -1459,7 +1458,7 @@ impl TypeChecker {
                                 mutable: false,
                                 value: Some(CheckedExpr::new(
                                     backing.clone(),
-                                    ExprData::Unsigned(i as u128),
+                                    CheckedExprData::Unsigned(i as u128),
                                 )),
                             });
                         }
@@ -1982,7 +1981,7 @@ impl TypeChecker {
     fn check_expr(
         &mut self,
         scopes: &mut Scopes,
-        expr: Located<Expr>,
+        expr: Located<ExprData>,
         target: Option<&TypeId>,
     ) -> CheckedExpr {
         macro_rules! lbox {
@@ -1999,7 +1998,7 @@ impl TypeChecker {
 
         let span = expr.span;
         match expr.data {
-            Expr::Binary { op, left, right } => {
+            ExprData::Binary { op, left, right } => {
                 let left = self.check_expr(scopes, *left, target);
                 let right_span = right.span;
                 let right = type_check_bail!(
@@ -2034,7 +2033,7 @@ impl TypeChecker {
                             | BinaryOp::LogicalAnd => TypeId::Bool,
                             _ => left.ty.clone(),
                         },
-                        ExprData::Binary {
+                        CheckedExprData::Binary {
                             op,
                             left: left.into(),
                             right: right.into(),
@@ -2042,9 +2041,9 @@ impl TypeChecker {
                     )
                 }
             }
-            Expr::Unary { op, expr } => self.check_unary(scopes, *expr, target, op),
-            Expr::Call { callee, args } => self.check_call(scopes, target, *callee, args, span),
-            Expr::Array(elements) => {
+            ExprData::Unary { op, expr } => self.check_unary(scopes, *expr, target, op),
+            ExprData::Call { callee, args } => self.check_call(scopes, target, *callee, args, span),
+            ExprData::Array(elements) => {
                 let mut checked = Vec::with_capacity(elements.len());
                 let mut elements = elements.into_iter();
                 let (vec, ty) = if let Some(TypeId::Array(inner)) = target {
@@ -2096,16 +2095,16 @@ impl TypeChecker {
                 if let Some(vec) = vec {
                     CheckedExpr::new(
                         TypeId::UserType(GenericUserType::new(vec, vec![ty]).into()),
-                        ExprData::Vec(checked),
+                        CheckedExprData::Vec(checked),
                     )
                 } else {
                     CheckedExpr::new(
                         TypeId::Array(Box::new((ty, checked.len()))),
-                        ExprData::Array(checked),
+                        CheckedExprData::Array(checked),
                     )
                 }
             }
-            Expr::ArrayWithInit { init, count } => {
+            ExprData::ArrayWithInit { init, count } => {
                 if let Some(TypeId::Array(inner)) = target {
                     let span = init.span;
                     let init = type_check!(
@@ -2119,7 +2118,7 @@ impl TypeChecker {
                     match Self::consteval(scopes, &count, Some(&TypeId::Usize)) {
                         Ok(count) => CheckedExpr::new(
                             TypeId::Array(Box::new((init.ty.clone(), count))),
-                            ExprData::ArrayWithInit {
+                            CheckedExprData::ArrayWithInit {
                                 init: init.into(),
                                 count,
                             },
@@ -2156,7 +2155,7 @@ impl TypeChecker {
                     let span = count.span;
                     CheckedExpr::new(
                         TypeId::UserType(GenericUserType::new(vec, vec![ty]).into()),
-                        ExprData::VecWithInit {
+                        CheckedExprData::VecWithInit {
                             init: init.into(),
                             count: type_check!(
                                 self,
@@ -2170,8 +2169,8 @@ impl TypeChecker {
                     )
                 }
             }
-            Expr::Tuple(_) => todo!(),
-            Expr::Map(elements) => {
+            ExprData::Tuple(_) => todo!(),
+            ExprData::Map(elements) => {
                 // TODO: make sure the key type respects the trait bounds
                 let Some(std_map) = scopes.find_type(&["std", "map", "Map"]) else {
                     return self.error(Error::new("no symbol 'Map' found in this module", expr.span));
@@ -2220,10 +2219,10 @@ impl TypeChecker {
 
                 CheckedExpr::new(
                     TypeId::UserType(GenericUserType::new(std_map, vec![key_ty, val_ty]).into()),
-                    ExprData::Map(result),
+                    CheckedExprData::Map(result),
                 )
             }
-            Expr::Range {
+            ExprData::Range {
                 start,
                 end,
                 inclusive,
@@ -2254,7 +2253,7 @@ impl TypeChecker {
                             )
                             .into(),
                         ),
-                        ExprData::Instance {
+                        CheckedExprData::Instance {
                             members: [("start".into(), start), ("end".into(), end)].into(),
                             variant: None,
                         },
@@ -2280,7 +2279,7 @@ impl TypeChecker {
                             )
                             .into(),
                         ),
-                        ExprData::Instance {
+                        CheckedExprData::Instance {
                             members: [("end".into(), end)].into(),
                             variant: None,
                         },
@@ -2296,7 +2295,7 @@ impl TypeChecker {
                             )
                             .into(),
                         ),
-                        ExprData::Instance {
+                        CheckedExprData::Instance {
                             members: [("start".into(), start)].into(),
                             variant: None,
                         },
@@ -2304,19 +2303,19 @@ impl TypeChecker {
                 }
                 (None, None) => todo!(),
             },
-            Expr::String(s) => CheckedExpr::new(
+            ExprData::String(s) => CheckedExpr::new(
                 self.make_type(scopes, &["core", "string", "str"], &[], false),
-                ExprData::String(s),
+                CheckedExprData::String(s),
             ),
-            Expr::Char(s) => CheckedExpr::new(TypeId::Char, ExprData::Char(s)),
-            Expr::None => {
+            ExprData::Char(s) => CheckedExpr::new(TypeId::Char, CheckedExprData::Char(s)),
+            ExprData::None => {
                 if let Some(inner) = target.and_then(|target| scopes.as_option_inner(target)) {
                     CheckedExpr::new(
                         scopes.make_option(inner.clone()).unwrap(),
-                        ExprData::Instance {
+                        CheckedExprData::Instance {
                             members: [(
                                 "None".into(),
-                                self.check_expr(scopes, Located::new(Expr::Void, span), target),
+                                self.check_expr(scopes, Located::new(ExprData::Void, span), target),
                             )]
                             .into(),
                             variant: Some("None".into()),
@@ -2326,12 +2325,12 @@ impl TypeChecker {
                     self.error(Error::new("cannot infer type of option null literal", span))
                 }
             }
-            Expr::Void => CheckedExpr::new(TypeId::Void, ExprData::Void),
-            Expr::Bool(value) => CheckedExpr {
+            ExprData::Void => CheckedExpr::new(TypeId::Void, CheckedExprData::Void),
+            ExprData::Bool(value) => CheckedExpr {
                 ty: TypeId::Bool,
-                data: ExprData::Bool(value),
+                data: CheckedExprData::Bool(value),
             },
-            Expr::Integer { base, value, width } => {
+            ExprData::Integer { base, value, width } => {
                 let ty = if let Some(width) = width {
                     TypeId::from_int_name(&width).unwrap_or_else(|| {
                         self.error(Error::new(
@@ -2381,7 +2380,7 @@ impl TypeChecker {
                         ));
                     }
 
-                    CheckedExpr::new(ty, ExprData::Signed(result))
+                    CheckedExpr::new(ty, CheckedExprData::Signed(result))
                 } else {
                     let result = match u128::from_str_radix(&value, base as u32) {
                         Ok(result) => result,
@@ -2401,10 +2400,10 @@ impl TypeChecker {
                         ));
                     }
 
-                    CheckedExpr::new(ty, ExprData::Unsigned(result))
+                    CheckedExpr::new(ty, CheckedExprData::Unsigned(result))
                 }
             }
-            Expr::Float(value) => CheckedExpr::new(
+            ExprData::Float(value) => CheckedExpr::new(
                 target
                     .map(|mut target| {
                         while let TypeId::MutPtr(ty) | TypeId::Ptr(ty) = target {
@@ -2415,16 +2414,17 @@ impl TypeChecker {
                     .filter(|target| TypeId::FloatGeneric.coerces_to(scopes, target))
                     .cloned()
                     .unwrap_or(TypeId::F64),
-                ExprData::Float(value),
+                CheckedExprData::Float(value),
             ),
-            Expr::Path(path) => match self.resolve_path(scopes, &path, span, false) {
+            ExprData::Path(path) => match self.resolve_path(scopes, &path, span, false) {
                 Some(ResolvedPath::Var(id)) => CheckedExpr::new(
                     scopes.get_var(id).ty.clone(),
-                    ExprData::Symbol(Symbol::Var(id)),
+                    CheckedExprData::Symbol(Symbol::Var(id)),
                 ),
-                Some(ResolvedPath::Func(id)) => {
-                    CheckedExpr::new(TypeId::Func(id.into()), ExprData::Symbol(Symbol::Func))
-                }
+                Some(ResolvedPath::Func(id)) => CheckedExpr::new(
+                    TypeId::Func(id.into()),
+                    CheckedExprData::Symbol(Symbol::Func),
+                ),
                 Some(ResolvedPath::UserType(ut)) => {
                     let Some(st) = scopes.get_user_type(ut.id).data.as_struct() else {
                         return self.error(Error::new("expected value", span));
@@ -2432,7 +2432,7 @@ impl TypeChecker {
 
                     CheckedExpr::new(
                         TypeId::Func(GenericFunc::new(*st.1, ut.generics).into()),
-                        ExprData::Symbol(Symbol::Func),
+                        CheckedExprData::Symbol(Symbol::Func),
                     )
                 }
                 Some(ResolvedPath::Module(_)) => {
@@ -2441,7 +2441,7 @@ impl TypeChecker {
                 Some(ResolvedPath::None(err)) => self.error(err),
                 None => Default::default(),
             },
-            Expr::Assign {
+            ExprData::Assign {
                 target: lhs,
                 binary,
                 value,
@@ -2476,14 +2476,14 @@ impl TypeChecker {
 
                 CheckedExpr::new(
                     lhs.ty.clone(),
-                    ExprData::Assign {
+                    CheckedExprData::Assign {
                         target: lhs.into(),
                         binary,
                         value: rhs.into(),
                     },
                 )
             }
-            Expr::Block(body) => {
+            ExprData::Block(body) => {
                 let block =
                     self.create_block(scopes, body, ScopeKind::Block(target.cloned(), false));
                 let ScopeKind::Block(target, yields) = &scopes[block.scope].kind else {
@@ -2494,10 +2494,10 @@ impl TypeChecker {
                         .then(|| target.clone())
                         .flatten()
                         .unwrap_or(TypeId::Void),
-                    ExprData::Block(block),
+                    CheckedExprData::Block(block),
                 )
             }
-            Expr::If {
+            ExprData::If {
                 cond,
                 if_branch,
                 else_branch,
@@ -2540,7 +2540,7 @@ impl TypeChecker {
                     // this separates these two cases:
                     //   let x /* void? */ = if whatever { yield void; };
                     //   let x /* void */ = if whatever { };
-                    if matches!(&if_branch.data, ExprData::Block(b) if
+                    if matches!(&if_branch.data, CheckedExprData::Block(b) if
                         matches!(scopes[b.scope].kind, ScopeKind::Block(_, yields) if yields))
                     {
                         out_type = scopes.make_option(out_type).unwrap();
@@ -2548,7 +2548,7 @@ impl TypeChecker {
 
                         Some(self.check_expr(
                             scopes,
-                            Located::new(Expr::None, span),
+                            Located::new(ExprData::None, span),
                             Some(&out_type),
                         ))
                     } else {
@@ -2558,14 +2558,14 @@ impl TypeChecker {
 
                 CheckedExpr::new(
                     out_type,
-                    ExprData::If {
+                    CheckedExprData::If {
                         cond: cond.into(),
                         if_branch: if_branch.into(),
                         else_branch: else_branch.map(|e| e.into()),
                     },
                 )
             }
-            Expr::Loop {
+            ExprData::Loop {
                 cond,
                 body,
                 do_while,
@@ -2610,7 +2610,7 @@ impl TypeChecker {
 
                 CheckedExpr::new(
                     out_type,
-                    ExprData::Loop {
+                    CheckedExprData::Loop {
                         cond: cond.map(|cond| cond.into()),
                         iter: None,
                         body,
@@ -2618,7 +2618,7 @@ impl TypeChecker {
                     },
                 )
             }
-            Expr::For {
+            ExprData::For {
                 var,
                 mutable,
                 iter,
@@ -2655,23 +2655,25 @@ impl TypeChecker {
                 });
                 let mut body = self.check_expr(
                     scopes,
-                    l!(Expr::Loop {
+                    l!(ExprData::Loop {
                         cond: None,
                         body: vec![Stmt {
-                            data: StmtData::Expr(l!(Expr::Match {
-                                expr: lbox!(Expr::Call {
-                                    callee: lbox!(Expr::Member {
-                                        source: lbox!(Expr::Path(Path::from("$iter".to_string()))),
+                            data: StmtData::Expr(l!(ExprData::Match {
+                                expr: lbox!(ExprData::Call {
+                                    callee: lbox!(ExprData::Member {
+                                        source: lbox!(ExprData::Path(Path::from(
+                                            "$iter".to_string()
+                                        ))),
                                         generics: vec![],
                                         member: "next".into(),
                                     }),
                                     args: vec![],
                                 }),
                                 body: vec![
-                                    (Pattern::Option(mutable, l!(var)), l!(Expr::Block(body))),
+                                    (Pattern::Option(mutable, l!(var)), l!(ExprData::Block(body))),
                                     (
                                         Pattern::Null(Span::default()),
-                                        l!(Expr::Break(lbox!(Expr::Void)))
+                                        l!(ExprData::Break(lbox!(ExprData::Void)))
                                     )
                                 ],
                             })),
@@ -2683,11 +2685,11 @@ impl TypeChecker {
                     Some(&TypeId::Void),
                 );
 
-                let ExprData::Loop { iter, .. } = &mut body.data else { unreachable!() };
+                let CheckedExprData::Loop { iter, .. } = &mut body.data else { unreachable!() };
                 *iter = Some(id);
                 body
             }
-            Expr::Member {
+            ExprData::Member {
                 source,
                 member: name,
                 generics,
@@ -2753,7 +2755,7 @@ impl TypeChecker {
                         let id = id.clone();
                         return CheckedExpr::new(
                             ty,
-                            ExprData::Member {
+                            CheckedExprData::Member {
                                 source: Self::auto_deref(source, &id).into(),
                                 member: name,
                             },
@@ -2766,7 +2768,7 @@ impl TypeChecker {
                     span,
                 ))
             }
-            Expr::Subscript { callee, args } => {
+            ExprData::Subscript { callee, args } => {
                 if args.len() > 1 {
                     self.error::<()>(Error::new(
                         "multidimensional subscript is not supported",
@@ -2788,7 +2790,7 @@ impl TypeChecker {
                 if let TypeId::Array(target) = &callee.ty {
                     CheckedExpr::new(
                         target.0.clone(),
-                        ExprData::Subscript {
+                        CheckedExprData::Subscript {
                             callee: callee.into(),
                             args: vec![arg],
                         },
@@ -2800,7 +2802,7 @@ impl TypeChecker {
                     ))
                 }
             }
-            Expr::Return(expr) => {
+            ExprData::Return(expr) => {
                 let target = scopes
                     .current_function()
                     .map(|id| scopes.get_func(id).ret.clone())
@@ -2808,7 +2810,7 @@ impl TypeChecker {
                 let span = expr.span;
                 CheckedExpr::new(
                     TypeId::Never,
-                    ExprData::Return(
+                    CheckedExprData::Return(
                         type_check!(
                             self,
                             scopes,
@@ -2820,7 +2822,7 @@ impl TypeChecker {
                     ),
                 )
             }
-            Expr::Yield(expr) => {
+            ExprData::Yield(expr) => {
                 let ScopeKind::Block(target, _) = scopes.current().kind.clone() else {
                     return self.error(Error::new("yield outside of block", span));
                 };
@@ -2834,9 +2836,9 @@ impl TypeChecker {
                     scopes.current().kind = ScopeKind::Block(Some(expr.ty.clone()), true);
                 }
 
-                CheckedExpr::new(TypeId::Never, ExprData::Yield(expr.into()))
+                CheckedExpr::new(TypeId::Never, CheckedExprData::Yield(expr.into()))
             }
-            Expr::Break(expr) => {
+            ExprData::Break(expr) => {
                 let Some(scope) = scopes.iter().find_map(|(id, scope)| {
                     matches!(scope.kind, ScopeKind::Loop(_, _)).then_some(id)
                 }) else {
@@ -2856,9 +2858,9 @@ impl TypeChecker {
                     scopes[scope].kind = ScopeKind::Loop(Some(expr.ty.clone()), true);
                 }
 
-                CheckedExpr::new(TypeId::Never, ExprData::Break(expr.into()))
+                CheckedExpr::new(TypeId::Never, CheckedExprData::Break(expr.into()))
             }
-            Expr::Continue => {
+            ExprData::Continue => {
                 if scopes
                     .iter()
                     .find_map(|(id, scope)| {
@@ -2869,23 +2871,23 @@ impl TypeChecker {
                     return self.error(Error::new("continue outside of loop", span));
                 }
 
-                CheckedExpr::new(TypeId::Never, ExprData::Continue)
+                CheckedExpr::new(TypeId::Never, CheckedExprData::Continue)
             }
-            Expr::Is { expr, pattern } => self.check_expr(
+            ExprData::Is { expr, pattern } => self.check_expr(
                 scopes,
-                l!(Expr::Match {
+                l!(ExprData::Match {
                     expr,
                     body: vec![
-                        (pattern, l!(Expr::Bool(true))),
+                        (pattern, l!(ExprData::Bool(true))),
                         (
                             Pattern::Path(l!(Path::from("_".to_string()))),
-                            l!(Expr::Bool(false))
+                            l!(ExprData::Bool(false))
                         )
                     ],
                 }),
                 Some(&TypeId::Bool),
             ),
-            Expr::Match { expr, body } => {
+            ExprData::Match { expr, body } => {
                 let scrutinee = self.check_expr(scopes, *expr, None);
                 let mut target = target.cloned();
                 let mut result = Vec::new();
@@ -2906,19 +2908,19 @@ impl TypeChecker {
 
                     result.push((
                         pattern,
-                        CheckedExpr::new(TypeId::Never, ExprData::Yield(expr.into())),
+                        CheckedExpr::new(TypeId::Never, CheckedExprData::Yield(expr.into())),
                     ));
                 }
 
                 CheckedExpr::new(
                     target.unwrap_or(TypeId::Void),
-                    ExprData::Match {
+                    CheckedExprData::Match {
                         expr: scrutinee.into(),
                         body: result,
                     },
                 )
             }
-            Expr::As { expr, ty, throwing } => {
+            ExprData::As { expr, ty, throwing } => {
                 let mut expr = self.check_expr(scopes, *expr, None);
                 let ty = self.resolve_type(scopes, &ty, false);
                 if !expr.ty.coerces_to(scopes, &ty) {
@@ -2967,19 +2969,19 @@ impl TypeChecker {
                         }
                     }
 
-                    CheckedExpr::new(ty, ExprData::As(expr.into(), throwing))
+                    CheckedExpr::new(ty, CheckedExprData::As(expr.into(), throwing))
                 } else {
                     Self::coerce_expr(expr, &ty, scopes)
                 }
             }
-            Expr::Error => CheckedExpr::default(),
+            ExprData::Error => CheckedExpr::default(),
         }
     }
 
     fn check_unary(
         &mut self,
         scopes: &mut Scopes,
-        expr: Located<Expr>,
+        expr: Located<ExprData>,
         target: Option<&TypeId>,
         op: UnaryOp,
     ) -> CheckedExpr {
@@ -3086,13 +3088,13 @@ impl TypeChecker {
 
                     return CheckedExpr::new(
                         inner.clone(),
-                        ExprData::Call {
+                        CheckedExprData::Call {
                             inst: Some(expr.ty.clone()),
                             args: IndexMap::from([(
                                 THIS_PARAM.into(),
                                 CheckedExpr::new(
                                     TypeId::Ptr(expr.ty.clone().into()),
-                                    ExprData::Unary {
+                                    CheckedExprData::Unary {
                                         op: UnaryOp::Addr,
                                         expr: expr.into(),
                                     },
@@ -3110,7 +3112,7 @@ impl TypeChecker {
 
         CheckedExpr::new(
             out_ty,
-            ExprData::Unary {
+            CheckedExprData::Unary {
                 op,
                 expr: expr.into(),
             },
@@ -3291,12 +3293,12 @@ impl TypeChecker {
         &mut self,
         scopes: &mut Scopes,
         target: Option<&TypeId>,
-        callee: Located<Expr>,
-        args: Vec<(Option<String>, Located<Expr>)>,
+        callee: Located<ExprData>,
+        args: Vec<(Option<String>, Located<ExprData>)>,
         span: Span,
     ) -> CheckedExpr {
         match callee.data {
-            Expr::Member {
+            ExprData::Member {
                 source,
                 member,
                 generics,
@@ -3353,7 +3355,7 @@ impl TypeChecker {
                             if matches!(this_param.ty, TypeId::Ptr(_)) {
                                 CheckedExpr::new(
                                     TypeId::Ptr(this.ty.clone().into()),
-                                    ExprData::Unary {
+                                    CheckedExprData::Unary {
                                         op: UnaryOp::Addr,
                                         expr: this.into(),
                                     },
@@ -3361,7 +3363,7 @@ impl TypeChecker {
                             } else {
                                 CheckedExpr::new(
                                     TypeId::MutPtr(this.ty.clone().into()),
-                                    ExprData::Unary {
+                                    CheckedExprData::Unary {
                                         op: UnaryOp::AddrMut,
                                         expr: this.into(),
                                     },
@@ -3394,7 +3396,7 @@ impl TypeChecker {
 
                         return CheckedExpr::new(
                             ret,
-                            ExprData::Call {
+                            CheckedExprData::Call {
                                 func,
                                 inst: Some(id),
                                 args,
@@ -3409,7 +3411,7 @@ impl TypeChecker {
                     span,
                 ))
             }
-            Expr::Path(path) => {
+            ExprData::Path(path) => {
                 match self.resolve_path(scopes, &path, callee.span, false) {
                     Some(ResolvedPath::UserType(ty)) => {
                         let ut = scopes.get_user_type(ty.id);
@@ -3439,7 +3441,7 @@ impl TypeChecker {
 
                         CheckedExpr::new(
                             ret,
-                            ExprData::Instance {
+                            CheckedExprData::Instance {
                                 members: args,
                                 variant: None,
                             },
@@ -3455,12 +3457,12 @@ impl TypeChecker {
                         CheckedExpr::new(
                             ret,
                             if constructor {
-                                ExprData::Instance {
+                                CheckedExprData::Instance {
                                     members: args,
                                     variant,
                                 }
                             } else {
-                                ExprData::Call {
+                                CheckedExprData::Call {
                                     func,
                                     args,
                                     inst: None,
@@ -3505,7 +3507,7 @@ impl TypeChecker {
         &mut self,
         func: &mut GenericFunc,
         scopes: &mut Scopes,
-        expr: Located<Expr>,
+        expr: Located<ExprData>,
         param: &CheckedParam,
         inst: Option<&GenericUserType>,
     ) -> CheckedExpr {
@@ -3532,7 +3534,7 @@ impl TypeChecker {
         inst: Option<&GenericUserType>,
         func: &mut GenericFunc,
         this: Option<CheckedExpr>,
-        args: Vec<(Option<String>, Located<Expr>)>,
+        args: Vec<(Option<String>, Located<ExprData>)>,
         target: Option<&TypeId>,
         scopes: &mut Scopes,
         span: Span,
@@ -4179,11 +4181,11 @@ impl TypeChecker {
 
     fn consteval(
         scopes: &Scopes,
-        expr: &Located<Expr>,
+        expr: &Located<ExprData>,
         target: Option<&TypeId>,
     ) -> Result<usize, Error> {
         match &expr.data {
-            Expr::Integer { base, value, width } => {
+            ExprData::Integer { base, value, width } => {
                 if let Some(width) = width
                     .as_ref()
                     .and_then(|width| TypeId::from_int_name(width))
@@ -4209,28 +4211,30 @@ impl TypeChecker {
 
     fn is_assignable(expr: &CheckedExpr, scopes: &Scopes) -> bool {
         match &expr.data {
-            ExprData::Unary { op, expr } => {
+            CheckedExprData::Unary { op, expr } => {
                 matches!(op, UnaryOp::Deref) && matches!(expr.ty, TypeId::MutPtr(_))
             }
-            ExprData::Symbol(_) | ExprData::Member { .. } => Self::can_addrmut(expr, scopes),
-            ExprData::Subscript { callee, .. } => Self::is_assignable(callee, scopes),
+            CheckedExprData::Symbol(_) | CheckedExprData::Member { .. } => {
+                Self::can_addrmut(expr, scopes)
+            }
+            CheckedExprData::Subscript { callee, .. } => Self::is_assignable(callee, scopes),
             _ => false,
         }
     }
 
     fn can_addrmut(expr: &CheckedExpr, scopes: &Scopes) -> bool {
         match &expr.data {
-            ExprData::Unary { op, expr } => {
+            CheckedExprData::Unary { op, expr } => {
                 !matches!(op, UnaryOp::Deref) || matches!(expr.ty, TypeId::MutPtr(_))
             }
-            ExprData::Symbol(symbol) => match symbol {
+            CheckedExprData::Symbol(symbol) => match symbol {
                 Symbol::Func => false,
                 Symbol::Var(id) => scopes.get_var(*id).mutable,
             },
-            ExprData::Member { source, .. } => {
+            CheckedExprData::Member { source, .. } => {
                 matches!(source.ty, TypeId::MutPtr(_)) || Self::can_addrmut(source, scopes)
             }
-            ExprData::Subscript { callee, .. } => Self::can_addrmut(callee, scopes),
+            CheckedExprData::Subscript { callee, .. } => Self::can_addrmut(callee, scopes),
             _ => true,
         }
     }
@@ -4257,7 +4261,7 @@ impl TypeChecker {
                 Self::coerce_expr(
                     CheckedExpr::new(
                         scopes.make_option(expr.ty.clone()).unwrap(),
-                        ExprData::Instance {
+                        CheckedExprData::Instance {
                             members: [("Some".into(), expr)].into(),
                             variant: Some("Some".into()),
                         },
@@ -4292,7 +4296,7 @@ impl TypeChecker {
             };
             expr = CheckedExpr::new(
                 (*inner).clone(),
-                ExprData::Unary {
+                CheckedExprData::Unary {
                     op: UnaryOp::Deref,
                     expr: expr.into(),
                 },
