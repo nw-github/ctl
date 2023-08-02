@@ -86,7 +86,7 @@ pub struct SpanMut<T> {
         };
     }
 
-    pub fn get_mut(mut this, idx: usize) ?*mut T {
+    pub fn get_mut(this, idx: usize) ?*mut T {
         return if idx < this.len {
             yield this.get_mut_unchecked(idx);
         };
@@ -96,7 +96,7 @@ pub struct SpanMut<T> {
         return core::ptr::offset(this.ptr, idx);
     }
 
-    pub unsafe fn get_mut_unchecked(mut this, idx: usize) *mut T {
+    pub unsafe fn get_mut_unchecked(this, idx: usize) *mut T {
         return core::ptr::offset_mut(this.ptr, idx);
     }
 
@@ -104,7 +104,7 @@ pub struct SpanMut<T> {
         return Raw::from_ptr(this.ptr);
     }
 
-    pub fn as_raw_mut(mut this) RawMut<T> {
+    pub fn as_raw_mut(this) RawMut<T> {
         return RawMut::from_ptr(this.ptr);
     }
 
@@ -115,7 +115,7 @@ pub struct SpanMut<T> {
         );
     }
 
-    pub fn iter_mut(mut this) IterMut<T> {
+    pub fn iter_mut(this) IterMut<T> {
         return IterMut(
             ptr: this.ptr,
             end: core::ptr::offset_mut(this.ptr, this.len)
