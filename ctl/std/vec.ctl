@@ -183,7 +183,7 @@ pub struct Vec<T> {
         return this.ptr;
     }
 
-    pub /* unsafe */ fn set_len(mut this, len: usize) {
+    pub unsafe fn set_len(mut this, len: usize) {
         this.len = len;
     }
 

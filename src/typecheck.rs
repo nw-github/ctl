@@ -1233,6 +1233,7 @@ impl TypeChecker {
                             is_async: false,
                             is_extern: false,
                             variadic: false,
+                            is_unsafe: false,
                             type_params: base.type_params.clone(),
                             params: base
                                 .members
@@ -1388,6 +1389,7 @@ impl TypeChecker {
                     type_params,
                     impls,
                     functions,
+                    is_unsafe: _,
                 } => {
                     let id = scopes.insert_user_type(UserType {
                         name: name.clone(),
@@ -4336,6 +4338,7 @@ impl TypeChecker {
             is_async: false,
             is_extern: false,
             variadic: false,
+            is_unsafe: false,
             type_params: base.type_params.clone(),
             params,
             ret: Self::typehint_for_struct(base, span),

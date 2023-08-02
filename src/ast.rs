@@ -306,6 +306,7 @@ pub mod stmt {
         pub name: Located<String>,
         pub is_async: bool,
         pub is_extern: bool,
+        pub is_unsafe: bool,
         pub variadic: bool,
         pub type_params: Vec<(String, Vec<Located<Path>>)>,
         pub params: Vec<Param>,
@@ -343,6 +344,7 @@ pub mod stmt {
         Trait {
             public: bool,
             name: String,
+            is_unsafe: bool,
             type_params: Vec<(String, Vec<Located<Path>>)>,
             impls: Vec<Located<Path>>,
             functions: Vec<Fn>,

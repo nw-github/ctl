@@ -6,7 +6,7 @@ use crate::{
         stmt::{Fn, MemVar, Param, ParsedUserType, Stmt, Struct, TypeHint},
         Path, Pattern,
     },
-    lexer::{Lexer, Located as L, Span, Token, FileIndex},
+    lexer::{FileIndex, Lexer, Located as L, Span, Token},
     Error, THIS_PARAM, THIS_TYPE,
 };
 
@@ -82,8 +82,15 @@ impl<'a> Parser<'a> {
 
     fn try_item(&mut self) -> Option<L<Stmt>> {
         let public = self.advance_if_kind(Token::Pub);
-        if let Some((mut proto, span)) = self.try_prototype(public.is_some(), false) {
-            if proto.is_extern {
+        let is_unsafe = self.advance_if_kind(Token::Unsafe);
+        let is_extern = self.advance_if_kind(Token::Extern);
+        if let Some((mut proto, span)) = self.try_prototype(
+            public.is_some(),
+            is_extern.is_some(),
+            is_unsafe.is_some(),
+            false,
+        ) {
+            if is_extern.is_some() {
                 let semi = self.expect_kind(Token::Semicolon, "expected ';'");
                 Some(L::new(
                     Stmt::Fn(proto),
@@ -99,79 +106,54 @@ impl<'a> Parser<'a> {
                 ))
             }
         } else if let Some(token) = self.advance_if_kind(Token::Struct) {
+            if let Some(token) = is_unsafe {
+                self.errors
+                    .push(Error::new("unsafe is not valid here", token.span));
+            }
+
+            if let Some(token) = is_extern {
+                self.errors
+                    .push(Error::new("extern is not valid here", token.span));
+            }
+
             Some(self.parse_struct(public.is_some(), token.span))
         } else if let Some(token) = self.advance_if_kind(Token::Union) {
-            Some(self.parse_union(public.is_some(), token.span, false))
-        } else if let Some(token) = self.advance_if_kind(Token::Unsafe) {
-            self.expect_kind(Token::Union, "expected 'union'");
-            Some(self.parse_union(public.is_some(), token.span, true))
+            if let Some(token) = is_extern {
+                self.errors
+                    .push(Error::new("extern is not valid here", token.span));
+            }
+
+            Some(self.parse_union(public.is_some(), token.span, is_unsafe.is_some()))
         } else if let Some(token) = self.advance_if_kind(Token::Trait) {
-            let name = self.expect_id("expected name");
-            let type_params = self.parse_generic_params();
-            let impls = self.parse_trait_impl();
-            self.expect_kind(Token::LCurly, "expected '{'");
+            if let Some(token) = is_extern {
+                self.errors
+                    .push(Error::new("extern is not valid here", token.span));
+            }
 
-            let mut functions = Vec::new();
-            let span = self.advance_until(Token::RCurly, token.span, |this| {
-                if let Ok((proto, _)) = this.expect_prototype(true, true) {
-                    this.expect_kind(Token::Semicolon, "expected ';'");
-                    functions.push(proto);
-                }
-            });
-
-            Some(L::new(
-                Stmt::UserType(ParsedUserType::Trait {
-                    public: public.is_some(),
-                    name,
-                    type_params,
-                    impls,
-                    functions,
-                }),
-                span,
-            ))
+            Some(self.parse_trait(public.is_some(), token.span, is_unsafe.is_some()))
         } else if let Some(token) = self.advance_if_kind(Token::Enum) {
-            let name = self.expect_located_id("expected name");
-            let impls = self.parse_trait_impl();
-            self.expect_kind(Token::LCurly, "expected '{'");
+            if let Some(token) = is_unsafe {
+                self.errors
+                    .push(Error::new("unsafe is not valid here", token.span));
+            }
 
-            let mut functions = Vec::new();
-            let mut variants = Vec::new();
-            let span = self.advance_until(Token::RCurly, token.span, |this| {
-                if this.advance_if_kind(Token::Pub).is_some() {
-                    if let Ok((mut func, _)) = this.expect_prototype(true, true) {
-                        let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
-                        func.body = Some(this.parse_block(lcurly.span).0);
-                        functions.push(func);
-                    }
-                } else if let Some((mut func, _)) = this.try_prototype(false, true) {
-                    let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
-                    func.body = Some(this.parse_block(lcurly.span).0);
-                    functions.push(func);
-                } else {
-                    variants.push((
-                        this.expect_id("expected variant name"),
-                        if this.advance_if_kind(Token::Assign).is_some() {
-                            Some(this.expression())
-                        } else {
-                            None
-                        },
-                    ));
+            if let Some(token) = is_extern {
+                self.errors
+                    .push(Error::new("extern is not valid here", token.span));
+            }
 
-                    this.expect_kind(Token::Comma, "expected ','");
-                }
-            });
-
-            Some(L::new(
-                Stmt::UserType(ParsedUserType::Enum {
-                    public: public.is_some(),
-                    name,
-                    impls,
-                    variants,
-                    functions,
-                }),
-                span,
-            ))
+            Some(self.parse_enum(public.is_some(), token.span))
         } else if let Some(token) = self.advance_if_kind(Token::Mod) {
+            if let Some(token) = is_unsafe {
+                self.errors
+                    .push(Error::new("unsafe is not valid here", token.span));
+            }
+
+            if let Some(token) = is_extern {
+                self.errors
+                    .push(Error::new("extern is not valid here", token.span));
+            }
+
             let name = self.expect_id("expected name");
             let mut body = Vec::new();
             self.expect_kind(Token::LCurly, "expected '{'");
@@ -185,6 +167,16 @@ impl<'a> Parser<'a> {
                 span,
             ))
         } else if let Some(token) = self.advance_if_kind(Token::Use) {
+            if let Some(token) = is_unsafe {
+                self.errors
+                    .push(Error::new("unsafe is not valid here", token.span));
+            }
+
+            if let Some(token) = is_extern {
+                self.errors
+                    .push(Error::new("extern is not valid here", token.span));
+            }
+
             let mut components = vec![(self.expect_id("expected path"), vec![])];
             let span = self.advance_until(Token::Semicolon, token.span, |this| {
                 this.expect_kind(Token::ScopeRes, "expected '::'");
@@ -199,6 +191,16 @@ impl<'a> Parser<'a> {
                 span,
             ))
         } else if let Some(token) = self.advance_if_kind(Token::Static) {
+            if let Some(token) = is_unsafe {
+                self.errors
+                    .push(Error::new("unsafe is not valid here", token.span));
+            }
+
+            if let Some(token) = is_extern {
+                self.errors
+                    .push(Error::new("extern is not valid here", token.span));
+            }
+
             let (name, ty) = self.parse_var_name();
             self.expect_kind(
                 Token::Assign,
@@ -1074,7 +1076,14 @@ impl<'a> Parser<'a> {
         let mut members = Vec::new();
         let span = self.advance_until(Token::RCurly, span, |this| {
             let public = this.advance_if_kind(Token::Pub).is_some();
-            if let Some((mut func, _)) = this.try_prototype(public, true) {
+            let is_unsafe = this.advance_if_kind(Token::Unsafe).is_some();
+            if is_unsafe {
+                if let Ok((mut func, _)) = this.expect_prototype(public, false, is_unsafe, true) {
+                    let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
+                    func.body = Some(this.parse_block(lcurly.span).0);
+                    functions.push(func);
+                }
+            } else if let Some((mut func, _)) = this.try_prototype(public, false, false, true) {
                 let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
                 func.body = Some(this.parse_block(lcurly.span).0);
                 functions.push(func);
@@ -1086,7 +1095,6 @@ impl<'a> Parser<'a> {
                     .advance_if_kind(Token::Assign)
                     .map(|_| this.expression());
                 this.expect_kind(Token::Comma, "expected ','");
-
                 members.push(MemVar {
                     public,
                     ty,
@@ -1124,17 +1132,20 @@ impl<'a> Parser<'a> {
 
         self.expect_kind(Token::LCurly, "expected '{'");
         let span = self.advance_until(Token::RCurly, span, |this| {
-            if this.advance_if_kind(Token::Pub).is_some() {
-                if let Ok((mut func, _)) = this.expect_prototype(true, true) {
+            let public = this.advance_if_kind(Token::Pub).is_some();
+            let is_unsafe = this.advance_if_kind(Token::Unsafe).is_some();
+            if public || is_unsafe {
+                if let Ok((mut func, _)) = this.expect_prototype(public, false, is_unsafe, true) {
                     let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
                     func.body = Some(this.parse_block(lcurly.span).0);
                     functions.push(func);
                 }
-            } else if let Some((mut func, _)) = this.try_prototype(false, true) {
+            } else if let Some((mut func, _)) = this.try_prototype(false, false, false, true) {
                 let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
                 func.body = Some(this.parse_block(lcurly.span).0);
                 functions.push(func);
             } else if this.advance_if_kind(Token::Shared).is_some() {
+                // warn if pub was specified that it is useless
                 let name = this.expect_id("expected name");
                 this.expect_kind(Token::Colon, "expected type");
                 let ty = this.parse_type();
@@ -1144,7 +1155,7 @@ impl<'a> Parser<'a> {
                 this.expect_kind(Token::Comma, "expected ','");
 
                 members.push(MemVar {
-                    public,
+                    public: true,
                     name,
                     shared: true,
                     ty,
@@ -1192,12 +1203,87 @@ impl<'a> Parser<'a> {
         )
     }
 
+    fn parse_trait(&mut self, public: bool, span: Span, is_unsafe: bool) -> L<Stmt> {
+        let name = self.expect_id("expected name");
+        let type_params = self.parse_generic_params();
+        let impls = self.parse_trait_impl();
+        self.expect_kind(Token::LCurly, "expected '{'");
+
+        let mut functions = Vec::new();
+        let span = self.advance_until(Token::RCurly, span, |this| {
+            let is_unsafe = this.advance_if_kind(Token::Unsafe);
+            if let Ok((proto, _)) = this.expect_prototype(true, false, is_unsafe.is_some(), true) {
+                this.expect_kind(Token::Semicolon, "expected ';'");
+                functions.push(proto);
+            }
+        });
+
+        L::new(
+            Stmt::UserType(ParsedUserType::Trait {
+                public,
+                is_unsafe,
+                name,
+                type_params,
+                impls,
+                functions,
+            }),
+            span,
+        )
+    }
+
+    fn parse_enum(&mut self, public: bool, span: Span) -> L<Stmt> {
+        let name = self.expect_located_id("expected name");
+        let impls = self.parse_trait_impl();
+        self.expect_kind(Token::LCurly, "expected '{'");
+
+        let mut functions = Vec::new();
+        let mut variants = Vec::new();
+        let span = self.advance_until(Token::RCurly, span, |this| {
+            let public = this.advance_if_kind(Token::Pub).is_some();
+            let is_unsafe = this.advance_if_kind(Token::Unsafe).is_some();
+            if is_unsafe {
+                if let Ok((mut func, _)) = this.expect_prototype(public, false, is_unsafe, true) {
+                    let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
+                    func.body = Some(this.parse_block(lcurly.span).0);
+                    functions.push(func);
+                }
+            } else if let Some((mut func, _)) = this.try_prototype(public, false, false, true) {
+                let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
+                func.body = Some(this.parse_block(lcurly.span).0);
+                functions.push(func);
+            } else {
+                variants.push((
+                    this.expect_id("expected variant name"),
+                    if this.advance_if_kind(Token::Assign).is_some() {
+                        Some(this.expression())
+                    } else {
+                        None
+                    },
+                ));
+
+                this.expect_kind(Token::Comma, "expected ','");
+            }
+        });
+
+        L::new(
+            Stmt::UserType(ParsedUserType::Enum {
+                public,
+                name,
+                impls,
+                variants,
+                functions,
+            }),
+            span,
+        )
+    }
+
     fn prototype(
         &mut self,
         allow_method: bool,
         is_public: bool,
         is_async: bool,
         is_extern: bool,
+        is_unsafe: bool,
     ) -> Fn {
         let name = self.expect_located_id("expected name");
         let mut variadic = false;
@@ -1270,6 +1356,7 @@ impl<'a> Parser<'a> {
             public: is_public,
             is_async,
             is_extern,
+            is_unsafe,
             variadic,
             type_params,
             params,
@@ -1282,22 +1369,22 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn try_prototype(&mut self, is_public: bool, allow_method: bool) -> Option<(Fn, Span)> {
-        if let Some(token) = self.advance_if_kind(Token::Extern) {
-            self.expect_kind(Token::Fn, "expected 'fn'");
+    fn try_prototype(
+        &mut self,
+        is_public: bool,
+        is_extern: bool,
+        is_unsafe: bool,
+        allow_method: bool,
+    ) -> Option<(Fn, Span)> {
+        if let Some(token) = self.advance_if_kind(Token::Fn) {
             Some((
-                self.prototype(allow_method, is_public, false, true),
-                token.span,
-            ))
-        } else if let Some(token) = self.advance_if_kind(Token::Fn) {
-            Some((
-                self.prototype(allow_method, is_public, false, false),
+                self.prototype(allow_method, is_public, false, is_extern, is_unsafe),
                 token.span,
             ))
         } else if let Some(token) = self.advance_if_kind(Token::Async) {
             self.expect_kind(Token::Fn, "expected 'fn'");
             Some((
-                self.prototype(allow_method, is_public, true, false),
+                self.prototype(allow_method, is_public, true, is_extern, is_unsafe),
                 token.span,
             ))
         } else {
@@ -1305,9 +1392,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect_prototype(&mut self, is_public: bool, allow_method: bool) -> Result<(Fn, Span), ()> {
+    fn expect_prototype(
+        &mut self,
+        is_public: bool,
+        is_extern: bool,
+        is_unsafe: bool,
+        allow_method: bool,
+    ) -> Result<(Fn, Span), ()> {
         loop {
-            if let Some(proto) = self.try_prototype(is_public, allow_method) {
+            if let Some(proto) = self.try_prototype(is_public, is_extern, is_unsafe, allow_method) {
                 return Ok(proto);
             }
 

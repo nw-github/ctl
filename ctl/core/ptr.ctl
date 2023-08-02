@@ -1,10 +1,10 @@
 use core::mem;
 
-pub /*unsafe*/ fn offset<U>(ptr: *U, count: usize) *U {
+pub unsafe fn offset<U>(ptr: *U, count: usize) *U {
     return ((ptr as usize) + count * mem::size_of::<U>()) as *U;
 }
 
-pub /*unsafe*/ fn offset_mut<T>(ptr: *mut T, count: usize) *mut T {
+pub unsafe fn offset_mut<T>(ptr: *mut T, count: usize) *mut T {
     return ((ptr as usize) + count * mem::size_of::<T>()) as *mut T;
 }
 
@@ -41,15 +41,15 @@ pub struct Raw<T> {
         return Raw(addr: this.addr - count * mem::size_of::<T>());
     }
 
-    pub /*unsafe*/ fn as_ptr(this) *T {
+    pub unsafe fn as_ptr(this) *T {
         return this.addr as *T;
     }
 
-    pub /*unsafe*/ fn as_mut_ptr(this) *mut T {
+    pub unsafe fn as_mut_ptr(this) *mut T {
         return this.addr as *mut T;
     }
 
-    pub /*unsafe*/ fn read(this) T {
+    pub unsafe fn read(this) T {
         mut t: T;
         mem::copy(dst: &mut t, src: this.as_ptr(), num: 1);
         return t;
@@ -81,21 +81,21 @@ pub struct RawMut<T> {
         return RawMut(addr: this.addr - count * mem::size_of::<T>());
     }
 
-    pub /*unsafe*/ fn as_ptr(this) *T {
+    pub unsafe fn as_ptr(this) *T {
         return this.addr as *T;
     }
 
-    pub /*unsafe*/ fn as_mut_ptr(this) *mut T {
+    pub unsafe fn as_mut_ptr(this) *mut T {
         return this.addr as *mut T;
     }
 
-    pub /*unsafe*/ fn write(this, t: T) {
+    pub unsafe fn write(this, t: T) {
         mem::copy(dst: this.as_mut_ptr(), src: &t, num: 1);
 
         // FIXME: when destructors are implemented, we will need a way to forget `t`
     }
 
-    pub /*unsafe*/ fn read(this) T {
+    pub unsafe fn read(this) T {
         mut t: T;
         mem::copy(dst: &mut t, src: this.as_ptr(), num: 1);
         return t;

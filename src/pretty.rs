@@ -60,9 +60,11 @@ pub fn print_stmt(stmt: &Located<Stmt>, src: &str, indent: usize) {
                 type_params,
                 impls,
                 functions,
+                is_unsafe,
             } => {
                 print!("{tabs}Trait[{name}]");
                 print_bool!(public);
+                print_bool!(is_unsafe);
                 println!();
 
                 let plus_1 = INDENT.repeat(indent + 1);
@@ -395,6 +397,7 @@ fn print_fn(
         name,
         is_async,
         is_extern,
+        is_unsafe,
         type_params,
         variadic,
         params,
@@ -409,6 +412,7 @@ fn print_fn(
     print!("{tabs}Fn[{}]", name.data);
     print_bool!(is_async);
     print_bool!(is_extern);
+    print_bool!(is_unsafe);
     print_bool!(variadic);
     print_bool!(public);
     println!();
