@@ -2909,31 +2909,37 @@ impl TypeChecker {
                 let ty = self.resolve_type(scopes, &ty, false);
                 if !expr.ty.coerces_to(scopes, &ty) {
                     match (&expr.ty, &ty) {
-                        (TypeId::Int(a), TypeId::Int(b) | TypeId::Uint(b))
-                            if a <= b || throwing => {}
-                        (TypeId::Uint(a), TypeId::Uint(b)) if a <= b || throwing => {}
-                        (TypeId::CInt(a), TypeId::CInt(b) | TypeId::CUint(b))
-                            if a <= b || throwing => {}
-                        (TypeId::CUint(a), TypeId::CUint(b)) if a <= b || throwing => {}
-                        (
-                            TypeId::CInt(_) | TypeId::CUint(_) | TypeId::Usize | TypeId::Isize | TypeId::Char,
-                            TypeId::Int(_) | TypeId::Uint(_) | TypeId::Usize | TypeId::Isize | TypeId::Char,
-                        ) if throwing => {}
-                        (
-                            TypeId::Int(_) | TypeId::Uint(_) | TypeId::Usize | TypeId::Isize | TypeId::Char,
-                            TypeId::CInt(_) | TypeId::CUint(_) | TypeId::Usize | TypeId::Isize | TypeId::Char,
-                        ) if throwing => {}
+                        (a, b) if a == b => {}
+                        (TypeId::Int(a), TypeId::Int(b) | TypeId::Uint(b)) if a <= b => {}
+                        (TypeId::Uint(a), TypeId::Uint(b)) if a <= b => {}
+                        (TypeId::CInt(a), TypeId::CInt(b) | TypeId::CUint(b)) if a <= b => {}
+                        (TypeId::Char, TypeId::Uint(num)) if *num >= 32 => {}
+                        (TypeId::Char, TypeId::Int(num)) if *num >= 33 => {}
                         (TypeId::F32, TypeId::F64) => {}
-                        (TypeId::F64, TypeId::F32) if throwing => {}
                         // TODO: these should only be allowable with an unsafe pointer type, or
                         // should be unsafe to do
                         (TypeId::Usize, TypeId::Ptr(_) | TypeId::MutPtr(_)) => {}
                         (TypeId::Ptr(_), TypeId::Ptr(_) | TypeId::Usize) => {}
                         (TypeId::MutPtr(_), TypeId::Ptr(_) | TypeId::MutPtr(_) | TypeId::Usize) => {
                         }
-                        (TypeId::Char, TypeId::Uint(num)) if *num > 32 || throwing => {}
-                        (TypeId::Char, TypeId::Int(num)) if *num > 33 || throwing => {}
-                        (a, b) if a == b => {}
+                        (TypeId::CUint(a), TypeId::CUint(b)) if a <= b => {}
+                        (
+                            TypeId::Int(_)
+                            | TypeId::Uint(_)
+                            | TypeId::CInt(_)
+                            | TypeId::CUint(_)
+                            | TypeId::Usize
+                            | TypeId::Isize
+                            | TypeId::Char,
+                            TypeId::Int(_)
+                            | TypeId::Uint(_)
+                            | TypeId::CInt(_)
+                            | TypeId::CUint(_)
+                            | TypeId::Usize
+                            | TypeId::Isize
+                            | TypeId::Char,
+                        ) if throwing => {}
+                        (TypeId::F64, TypeId::F32) if throwing => {}
                         _ => {
                             expr = self.error(Error::new(
                                 format!(
