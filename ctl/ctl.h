@@ -1,6 +1,7 @@
 #include <gc.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <locale.h>
 
 #define CTL_SBITINT(bits) _BitInt(bits)
 #define CTL_UBITINT(bits) unsigned _BitInt(bits)

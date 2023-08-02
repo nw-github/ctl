@@ -469,6 +469,7 @@ impl Codegen {
         this.buffer.emit(functions.0);
         this.buffer.emit("int main(int argc, char **argv) {");
         this.buffer.emit("GC_INIT();");
+        this.buffer.emit("setlocale(LC_ALL, \"C.UTF-8\");");
         for (id, void) in statics {
             if !void {
                 this.buffer.emit_var_name(scopes, id, main);
