@@ -177,7 +177,10 @@ impl<'a> Parser<'a> {
                     .push(Error::new("extern is not valid here", token.span));
             }
 
-            let mut components = vec![(self.expect_id("expected path"), vec![])];
+            let sup = self.advance_if_kind(Token::Super).is_some();
+            let mut components = (!sup)
+                .then(|| vec![(self.expect_id("expected path"), vec![])])
+                .unwrap_or_default();
             let span = self.advance_until(Token::Semicolon, token.span, |this| {
                 this.expect_kind(Token::ScopeRes, "expected '::'");
                 components.push((this.expect_id("expected path component"), vec![]));
@@ -186,7 +189,7 @@ impl<'a> Parser<'a> {
             Some(L::new(
                 Stmt::Use {
                     public: public.is_some(),
-                    path: Path::Root(components),
+                    path: if sup { Path::Super(components) } else { Path::Root(components) },
                 },
                 span,
             ))
@@ -652,6 +655,18 @@ impl<'a> Parser<'a> {
                         span,
                     )
                 }
+            }
+            Token::RangeInclusive => {
+                let end = self.expression();
+                let span = Span::combine(token.span, end.span);
+                L::new(
+                    Expr::Range {
+                        start: None,
+                        end: Some(end.into()),
+                        inclusive: true,
+                    },
+                    span,
+                )
             }
             Token::LCurly => self.block_expr(token.span),
             Token::If => self.if_expr(token.span),
