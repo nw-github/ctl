@@ -40,7 +40,7 @@ pub union Option<T> { // ?T
         return match this {
             ?val => val,
             empty => {
-                *empty = Option::Some(or);
+                *empty = or;
                 yield this.as_mut()!;
             }
         };

@@ -35,6 +35,12 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         );
     }
 
+    pub fn with_capacity<_K: Hash + Eq<_K>, _V>(cap: usize) Map<_K, _V> {
+        mut self: [_K: _V] = Map::new();
+        self.adjust_cap(cap);
+        return self;
+    }
+
     pub fn get(this, key: *K) ?*V {
         return match this.buckets.get(this.entry_pos(key))! {
             Bucket::Some(entry) => &entry.val,
@@ -112,9 +118,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
                     break idx;
                 }
                 //break tombstone ?? idx;
-                Bucket::None => {
-                    break tombstone.unwrap_or(idx);
-                }
+                Bucket::None => break tombstone.unwrap_or(idx),
                 Bucket::Tombstone => {
                     tombstone.get_or_insert(idx);
                 }
