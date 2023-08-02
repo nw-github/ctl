@@ -5,7 +5,13 @@ use crate::lexer::{Located, Span};
 use self::stmt::TypeHint;
 
 pub type Expr = Located<expr::Expr>;
-pub type Stmt = Located<stmt::Stmt>;
+
+#[derive(Debug, Clone)]
+pub struct Stmt {
+    pub data: stmt::StmtData,
+    pub span: Span,
+    pub attrs: Vec<Attribute>,
+}
 
 #[derive(Debug, Clone, EnumAsInner)]
 pub enum Path {
@@ -38,6 +44,12 @@ pub enum Pattern {
     MutCatchAll(Located<String>),
     Option(bool, Located<String>),
     Null(Span),
+}
+
+#[derive(Debug, Clone)]
+pub struct Attribute {
+    pub name: Located<String>,
+    pub props: Vec<Attribute>,
 }
 
 pub mod expr {
@@ -359,7 +371,7 @@ pub mod stmt {
     }
 
     #[derive(Debug, Clone)]
-    pub enum Stmt {
+    pub enum StmtData {
         Expr(super::Expr),
         Use {
             public: bool,

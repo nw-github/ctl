@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         expr::Expr,
-        stmt::{Fn, ParsedUserType, Stmt, Struct},
+        stmt::{Fn, ParsedUserType, StmtData, Struct}, Stmt,
     },
     lexer::Located,
 };
@@ -16,14 +16,14 @@ macro_rules! print_bool {
     };
 }
 
-pub fn print_stmt(stmt: &Located<Stmt>, src: &str, indent: usize) {
+pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
     let tabs = INDENT.repeat(indent);
     match &stmt.data {
-        Stmt::Expr(expr) => {
+        StmtData::Expr(expr) => {
             println!("{tabs}StmtExpr");
             print_expr(expr, src, indent + 1);
         }
-        Stmt::Let {
+        StmtData::Let {
             name,
             ty,
             mutable,
@@ -38,8 +38,8 @@ pub fn print_stmt(stmt: &Located<Stmt>, src: &str, indent: usize) {
                 print_expr(value, src, indent + 1);
             }
         }
-        Stmt::Fn(f) => print_fn(f, src, indent),
-        Stmt::UserType(ty) => match ty {
+        StmtData::Fn(f) => print_fn(f, src, indent),
+        StmtData::UserType(ty) => match ty {
             ParsedUserType::Struct(base) => print_struct("Struct", base, src, indent),
             ParsedUserType::Union {
                 tag,
@@ -120,7 +120,7 @@ pub fn print_stmt(stmt: &Located<Stmt>, src: &str, indent: usize) {
             }
         },
 
-        Stmt::Static {
+        StmtData::Static {
             name,
             ty,
             value,
@@ -137,17 +137,17 @@ pub fn print_stmt(stmt: &Located<Stmt>, src: &str, indent: usize) {
 
             print_expr(value, src, indent + 1);
         }
-        Stmt::Module { name, body, public } => {
+        StmtData::Module { name, body, public } => {
             print!("{tabs}Module[{name}]");
             print_bool!(public);
             println!();
 
             print_stmts(body, src, indent + 1);
         }
-        Stmt::Use { .. } => {
+        StmtData::Use { .. } => {
             println!("{tabs}Use[{}]", stmt.span.text(src));
         }
-        Stmt::Error => {}
+        StmtData::Error => {}
     }
 }
 
@@ -386,7 +386,7 @@ pub fn print_expr(expr: &Located<Expr>, src: &str, indent: usize) {
     }
 }
 
-fn print_stmts(stmts: &[Located<Stmt>], src: &str, indent: usize) {
+fn print_stmts(stmts: &[Stmt], src: &str, indent: usize) {
     for stmt in stmts {
         print_stmt(stmt, src, indent);
     }

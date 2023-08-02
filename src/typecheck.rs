@@ -8,8 +8,8 @@ use indexmap::{map::Entry, IndexMap, IndexSet};
 use crate::{
     ast::{
         expr::{BinaryOp, Expr, UnaryOp},
-        stmt::{Fn, MemVar, Param, ParsedUserType, Stmt, Struct, TypeHint},
-        Path, Pattern,
+        stmt::{Fn, MemVar, Param, ParsedUserType, StmtData, Struct, TypeHint},
+        Path, Pattern, Stmt,
     },
     checked_ast::{Block, CheckedExpr, CheckedPattern, CheckedStmt, ExprData},
     lexer::{Located, Span},
@@ -1180,7 +1180,7 @@ impl TypeChecker {
         scopes.enter(Some(project.clone()), ScopeKind::Module(true), |scopes| {
             for file in module.iter() {
                 match &file.ast.data {
-                    Stmt::Module { name, body, .. } if name == &project => {
+                    StmtData::Module { name, body, .. } if name == &project => {
                         self.include_universal(scopes, true);
                         for stmt in body {
                             self.forward_declare(stmt, scopes);
@@ -1196,7 +1196,7 @@ impl TypeChecker {
                 paths.push(file.path);
 
                 match file.ast.data {
-                    Stmt::Module { name, body, .. } if name == project => {
+                    StmtData::Module { name, body, .. } if name == project => {
                         self.include_universal(scopes, false);
                         for stmt in body {
                             self.check_stmt(scopes, stmt);
@@ -1212,9 +1212,9 @@ impl TypeChecker {
         })
     }
 
-    fn forward_declare(&mut self, stmt: &Located<Stmt>, scopes: &mut Scopes) {
+    fn forward_declare(&mut self, stmt: &Stmt, scopes: &mut Scopes) {
         match &stmt.data {
-            Stmt::Module { public, name, body } => {
+            StmtData::Module { public, name, body } => {
                 scopes.enter(Some(name.clone()), ScopeKind::Module(*public), |scopes| {
                     self.include_universal(scopes, true);
                     for stmt in body {
@@ -1222,7 +1222,7 @@ impl TypeChecker {
                     }
                 });
             }
-            Stmt::UserType(data) => match data {
+            StmtData::UserType(data) => match data {
                 ParsedUserType::Struct(base) => {
                     let init = self.forward_declare_fn(
                         scopes,
@@ -1470,8 +1470,8 @@ impl TypeChecker {
                     });
                 }
             },
-            Stmt::Fn(f) => _ = self.forward_declare_fn(scopes, false, f),
-            Stmt::Static {
+            StmtData::Fn(f) => _ = self.forward_declare_fn(scopes, false, f),
+            StmtData::Static {
                 public, name, ty, ..
             } => {
                 scopes.insert_var(Variable {
@@ -1486,7 +1486,9 @@ impl TypeChecker {
                     value: None,
                 });
             }
-            Stmt::Use { path, public } => self.resolve_use(scopes, *public, path, stmt.span, true),
+            StmtData::Use { path, public } => {
+                self.resolve_use(scopes, *public, path, stmt.span, true)
+            }
             _ => {}
         }
     }
@@ -1561,7 +1563,7 @@ impl TypeChecker {
         id
     }
 
-    fn check_stmt(&mut self, scopes: &mut Scopes, stmt: Located<Stmt>) -> CheckedStmt {
+    fn check_stmt(&mut self, scopes: &mut Scopes, stmt: Stmt) -> CheckedStmt {
         macro_rules! fn_by_name {
             ($scopes: expr, $name: expr) => {
                 $scopes.find_func($name).unwrap()
@@ -1569,7 +1571,7 @@ impl TypeChecker {
         }
 
         match stmt.data {
-            Stmt::Module {
+            StmtData::Module {
                 public: _,
                 name,
                 body,
@@ -1585,7 +1587,7 @@ impl TypeChecker {
                     }
                 }))
             }
-            Stmt::UserType(data) => match data {
+            StmtData::UserType(data) => match data {
                 ParsedUserType::Struct(base) => {
                     self.check_fn(scopes, fn_by_name!(scopes, &base.name.data), None);
 
@@ -1680,8 +1682,8 @@ impl TypeChecker {
                     });
                 }
             },
-            Stmt::Expr(expr) => return CheckedStmt::Expr(self.check_expr(scopes, expr, None)),
-            Stmt::Let {
+            StmtData::Expr(expr) => return CheckedStmt::Expr(self.check_expr(scopes, expr, None)),
+            StmtData::Let {
                 name,
                 ty,
                 mutable,
@@ -1731,8 +1733,8 @@ impl TypeChecker {
                     return self.error(Error::new("cannot infer type", stmt.span));
                 }
             }
-            Stmt::Fn(f) => self.check_fn(scopes, fn_by_name!(scopes, &f.name.data), f.body),
-            Stmt::Static {
+            StmtData::Fn(f) => self.check_fn(scopes, fn_by_name!(scopes, &f.name.data), f.body),
+            StmtData::Static {
                 name, ty, value, ..
             } => {
                 // FIXME: detect cycles like static X: usize = X;
@@ -1759,8 +1761,10 @@ impl TypeChecker {
                 var.ty = ty;
                 var.value = Some(value);
             }
-            Stmt::Use { public, path } => self.resolve_use(scopes, public, &path, stmt.span, false),
-            Stmt::Error => return CheckedStmt::Error,
+            StmtData::Use { public, path } => {
+                self.resolve_use(scopes, public, &path, stmt.span, false)
+            }
+            StmtData::Error => return CheckedStmt::Error,
         }
 
         CheckedStmt::None
@@ -1933,7 +1937,7 @@ impl TypeChecker {
         }
     }
 
-    fn check_fn(&mut self, scopes: &mut Scopes, id: FunctionId, body: Option<Vec<Located<Stmt>>>) {
+    fn check_fn(&mut self, scopes: &mut Scopes, id: FunctionId, body: Option<Vec<Stmt>>) {
         // TODO: disallow private type in public interface
         scopes.enter_id(scopes.get_func(id).body_scope, |scopes| {
             for i in 0..scopes.get_func(id).params.len() {
@@ -2653,23 +2657,27 @@ impl TypeChecker {
                     scopes,
                     l!(Expr::Loop {
                         cond: None,
-                        body: vec![l!(Stmt::Expr(l!(Expr::Match {
-                            expr: lbox!(Expr::Call {
-                                callee: lbox!(Expr::Member {
-                                    source: lbox!(Expr::Path(Path::from("$iter".to_string()))),
-                                    generics: vec![],
-                                    member: "next".into(),
+                        body: vec![Stmt {
+                            data: StmtData::Expr(l!(Expr::Match {
+                                expr: lbox!(Expr::Call {
+                                    callee: lbox!(Expr::Member {
+                                        source: lbox!(Expr::Path(Path::from("$iter".to_string()))),
+                                        generics: vec![],
+                                        member: "next".into(),
+                                    }),
+                                    args: vec![],
                                 }),
-                                args: vec![],
-                            }),
-                            body: vec![
-                                (Pattern::Option(mutable, l!(var)), l!(Expr::Block(body))),
-                                (
-                                    Pattern::Null(Span::default()),
-                                    l!(Expr::Break(lbox!(Expr::Void)))
-                                )
-                            ],
-                        })))],
+                                body: vec![
+                                    (Pattern::Option(mutable, l!(var)), l!(Expr::Block(body))),
+                                    (
+                                        Pattern::Null(Span::default()),
+                                        l!(Expr::Break(lbox!(Expr::Void)))
+                                    )
+                                ],
+                            })),
+                            span: Span::default(),
+                            attrs: Vec::new(),
+                        }],
                         do_while: false
                     }),
                     Some(&TypeId::Void),
@@ -3703,12 +3711,7 @@ impl TypeChecker {
         }
     }
 
-    fn create_block(
-        &mut self,
-        scopes: &mut Scopes,
-        body: Vec<Located<Stmt>>,
-        kind: ScopeKind,
-    ) -> Block {
+    fn create_block(&mut self, scopes: &mut Scopes, body: Vec<Stmt>, kind: ScopeKind) -> Block {
         scopes.enter(None, kind, |scopes| Block {
             body: body
                 .into_iter()
