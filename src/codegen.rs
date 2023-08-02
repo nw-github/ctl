@@ -855,11 +855,7 @@ impl Codegen {
             }
             ExprData::Char(value) => {
                 self.emit_cast(scopes, &expr.ty);
-                if value as u32 <= 127 {
-                    self.buffer.emit(format!("'{value}'"));
-                } else {
-                    self.buffer.emit(format!("{:#x}", value as u32));
-                }
+                self.buffer.emit(format!("0x{:x}", value as u32));
             }
             ExprData::Void => {}
             ExprData::Symbol(symbol) => match symbol {
