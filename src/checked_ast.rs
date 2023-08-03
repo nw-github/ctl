@@ -2,7 +2,7 @@ use indexmap::IndexMap;
 
 use crate::{
     ast::{BinaryOp, UnaryOp},
-    typecheck::{GenericFunc, ScopeId, Symbol, TypeId, VariableId},
+    typecheck::{GenericFunc, ScopeId, Scopes, Symbol, TypeId, VariableId},
 };
 
 #[derive(Debug, Clone)]
@@ -105,6 +105,100 @@ pub enum CheckedExprData {
 pub struct CheckedExpr {
     pub ty: TypeId,
     pub data: CheckedExprData,
+}
+
+impl CheckedExpr {
+    pub fn is_assignable(&self, scopes: &Scopes) -> bool {
+        match &self.data {
+            CheckedExprData::Unary { op, expr } => {
+                matches!(op, UnaryOp::Deref) && matches!(expr.ty, TypeId::MutPtr(_))
+            }
+            CheckedExprData::Symbol(_) | CheckedExprData::Member { .. } => self.can_addrmut(scopes),
+            CheckedExprData::Subscript { callee, .. } => callee.is_assignable(scopes),
+            _ => false,
+        }
+    }
+
+    pub fn can_addrmut(&self, scopes: &Scopes) -> bool {
+        match &self.data {
+            CheckedExprData::Unary { op, expr } => {
+                !matches!(op, UnaryOp::Deref) || matches!(expr.ty, TypeId::MutPtr(_))
+            }
+            CheckedExprData::Symbol(symbol) => match symbol {
+                Symbol::Func => false,
+                Symbol::Var(id) => scopes.get_var(*id).mutable,
+            },
+            CheckedExprData::Member { source, .. } => {
+                matches!(source.ty, TypeId::MutPtr(_)) || source.can_addrmut(scopes)
+            }
+            CheckedExprData::Subscript { callee, .. } => callee.can_addrmut(scopes),
+            _ => true,
+        }
+    }
+
+    pub fn coerce_to(self, target: &TypeId, scopes: &Scopes) -> CheckedExpr {
+        match (&self.ty, target) {
+            (
+                TypeId::IntGeneric,
+                TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize,
+            ) => CheckedExpr::new(target.clone(), self.data),
+            (TypeId::FloatGeneric, TypeId::F32 | TypeId::F64) => {
+                CheckedExpr::new(target.clone(), self.data)
+            }
+            (TypeId::MutPtr(lhs), TypeId::Ptr(rhs)) if lhs == rhs => {
+                CheckedExpr::new(target.clone(), self.data)
+            }
+            (ty, target)
+                if scopes
+                    .as_option_inner(target)
+                    .map_or(false, |inner| ty.coerces_to(scopes, inner)) =>
+            {
+                let inner = scopes.as_option_inner(target).unwrap();
+                let expr = self.coerce_to(inner, scopes);
+                CheckedExpr::new(
+                    scopes.make_option(expr.ty.clone()).unwrap(),
+                    CheckedExprData::Instance {
+                        members: [("Some".into(), expr)].into(),
+                        variant: Some("Some".into()),
+                    },
+                )
+                .coerce_to(target, scopes)
+            }
+            (TypeId::Never, _) => CheckedExpr::new(target.clone(), self.data),
+            _ => self,
+        }
+    }
+
+    pub fn auto_deref(mut self, mut target: &TypeId) -> CheckedExpr {
+        let mut indirection = 0;
+        while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = target {
+            target = inner;
+            indirection += 1;
+        }
+
+        let mut ty = &self.ty;
+        let mut my_indirection = 0;
+        while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = ty {
+            ty = inner;
+            my_indirection += 1;
+        }
+
+        while my_indirection > indirection {
+            my_indirection -= 1;
+            let (TypeId::Ptr(inner) | TypeId::MutPtr(inner)) = self.ty.clone() else {
+                unreachable!()
+            };
+            self = CheckedExpr::new(
+                (*inner).clone(),
+                CheckedExprData::Unary {
+                    op: UnaryOp::Deref,
+                    expr: self.into(),
+                },
+            );
+        }
+
+        self
+    }
 }
 
 #[derive(Debug, Default, Clone)]

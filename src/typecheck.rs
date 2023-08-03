@@ -7,8 +7,8 @@ use indexmap::{map::Entry, IndexMap, IndexSet};
 
 use crate::{
     ast::{
-        BinaryOp, ExprData, Fn, MemVar, Param, ParsedUserType, Path, Pattern, Stmt, StmtData,
-        Struct, TypeHint, UnaryOp,
+        BinaryOp, Expr, ExprData, Fn, Param, ParsedUserType, Path, Pattern, Stmt, StmtData, Struct,
+        TypeHint, UnaryOp,
     },
     checked_ast::{Block, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt},
     lexer::{Located, Span},
@@ -472,7 +472,7 @@ impl TypeId {
         })
     }
 
-    fn coerces_to(&self, scopes: &Scopes, target: &TypeId) -> bool {
+    pub fn coerces_to(&self, scopes: &Scopes, target: &TypeId) -> bool {
         match (self, target) {
             (
                 TypeId::IntGeneric,
@@ -1023,7 +1023,7 @@ impl Scopes {
         })
     }
 
-    fn make_option(&self, ty: TypeId) -> Option<TypeId> {
+    pub fn make_option(&self, ty: TypeId) -> Option<TypeId> {
         Some(TypeId::UserType(
             GenericUserType {
                 id: self.find_core_option()?,
@@ -1035,6 +1035,27 @@ impl Scopes {
 
     fn is_private_mod(&self, scope: ScopeId, public: bool) -> bool {
         !public && self.module_of(self.current_id()) != self.module_of(self[scope].parent.unwrap())
+    }
+
+    fn get_member_fn(
+        &self,
+        member: &str,
+        ut: &Scoped<UserType>,
+    ) -> Option<(Option<GenericUserType>, FunctionId)> {
+        if let Some(func) = (ut.data.is_struct() || ut.data.is_union() || ut.data.is_enum())
+            .then(|| self.find_func_in(member, ut.body_scope))
+            .flatten()
+        {
+            return Some((None, func));
+        }
+
+        for ut in ut.impls.iter().map(|ut| ut.as_user_type().unwrap()) {
+            if let Some(func) = self.find_func_in(member, self.get_user_type(ut.id).body_scope) {
+                return Some((Some((**ut).clone()), func));
+            }
+        }
+
+        None
     }
 }
 
@@ -1081,24 +1102,15 @@ macro_rules! type_mismatch {
 }
 
 macro_rules! type_check_bail {
-    ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {{
+    ($self: expr, $scopes: expr, $source: expr, $target: expr) => {{
         let source = $source;
+        let span = source.span;
+        let source = $self.check_expr($scopes, source, Some($target));
         if !source.ty.coerces_to($scopes, $target) {
-            return $self.error(type_mismatch!($scopes, $target, source.ty, $span));
+            return $self.error(type_mismatch!($scopes, $target, source.ty, span));
         }
 
-        Self::coerce_expr(source, $target, $scopes)
-    }};
-}
-
-macro_rules! type_check {
-    ($self: expr, $scopes: expr, $source: expr, $target: expr, $span: expr) => {{
-        let source = $source;
-        if !source.ty.coerces_to($scopes, $target) {
-            $self.error::<()>(type_mismatch!($scopes, $target, source.ty, $span))
-        }
-
-        Self::coerce_expr(source, $target, $scopes)
+        source.coerce_to($target, $scopes)
     }};
 }
 
@@ -1108,27 +1120,6 @@ macro_rules! resolve_type {
         ty.resolve($scopes, $self);
         $ty = ty;
     };
-}
-
-macro_rules! resolve_impls {
-    ($self: expr, $scopes: expr, $ty: expr) => {{
-        let mut removals = Vec::new();
-        for i in 0..$ty.impls.len() {
-            resolve_type!($self, $scopes, $ty.impls[i]);
-
-            let id = $ty.impls[i].as_user_type().map(|t| t.id);
-            if !id.map_or(false, |id| $scopes.get_user_type(id).data.is_trait()) {
-                if !$ty.impls[i].is_unknown() {
-                    $self.error::<()>(Error::new("expected trait", Span::default()));
-                }
-                removals.push(i);
-            }
-        }
-
-        for (i, index) in removals.iter().enumerate() {
-            $ty.impls.remove(index - i);
-        }
-    }};
 }
 
 pub struct Module {
@@ -1324,6 +1315,7 @@ impl TypeChecker {
                         |scopes| {
                             scopes.get_user_type_mut(id).body_scope = scopes.current_id();
                             let mut variants = Vec::with_capacity(base.members.len());
+                            let mut params = Vec::with_capacity(base.members.len());
                             for member in base.members.iter() {
                                 variants.push(Member {
                                     public: member.public,
@@ -1338,6 +1330,14 @@ impl TypeChecker {
                                         "cannot have shared members in an unsafe union",
                                         stmt.span,
                                     ));
+                                } else if member.shared {
+                                    params.push(Param {
+                                        mutable: false,
+                                        keyword: true,
+                                        name: member.name.clone(),
+                                        ty: member.ty.clone(),
+                                        default: member.default.clone(),
+                                    });
                                 }
                             }
 
@@ -1369,10 +1369,32 @@ impl TypeChecker {
                             }
 
                             for member in base.members.iter() {
+                                let mut params = params.clone();
+                                if !matches!(member.ty, TypeHint::Void) {
+                                    params.push(Param {
+                                        mutable: false,
+                                        keyword: false,
+                                        name: member.name.clone(),
+                                        ty: member.ty.clone(),
+                                        default: None,
+                                    });
+                                }
+
                                 self.forward_declare_fn(
                                     scopes,
                                     true,
-                                    &Self::variant_constructor_fn(base, member, stmt.span),
+                                    &Fn {
+                                        public: true,
+                                        name: Located::new(member.name.clone(), Span::default()),
+                                        is_async: false,
+                                        is_extern: false,
+                                        variadic: false,
+                                        is_unsafe: false,
+                                        type_params: base.type_params.clone(),
+                                        params,
+                                        ret: Self::typehint_for_struct(base, stmt.span),
+                                        body: None,
+                                    },
                                 );
                             }
 
@@ -1593,11 +1615,10 @@ impl TypeChecker {
                     let id = scopes.find_user_type(&base.name.data).unwrap();
                     scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
                         for (name, _) in base.type_params.iter() {
-                            let id = scopes.find_user_type(name).unwrap();
-                            resolve_impls!(self, scopes, scopes.get_user_type_mut(id));
+                            self.resolve_impls(scopes, scopes.find_user_type(name).unwrap());
                         }
 
-                        resolve_impls!(self, scopes, scopes.get_user_type_mut(id));
+                        self.resolve_impls(scopes, id);
                         for i in 0..base.members.len() {
                             resolve_type!(
                                 self,
@@ -1616,10 +1637,10 @@ impl TypeChecker {
                     scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
                         for (name, _) in base.type_params.iter() {
                             let id = scopes.find_user_type(name).unwrap();
-                            resolve_impls!(self, scopes, scopes.get_user_type_mut(id));
+                            self.resolve_impls(scopes, id);
                         }
 
-                        resolve_impls!(self, scopes, scopes.get_user_type_mut(id));
+                        self.resolve_impls(scopes, id);
                         for i in 0..base.members.len() {
                             resolve_type!(
                                 self,
@@ -1651,10 +1672,10 @@ impl TypeChecker {
                     scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
                         for (name, _) in type_params.iter() {
                             let id = scopes.find_user_type(name).unwrap();
-                            resolve_impls!(self, scopes, scopes.get_user_type_mut(id));
+                            self.resolve_impls(scopes, id);
                         }
 
-                        resolve_impls!(self, scopes, scopes.get_user_type_mut(id));
+                        self.resolve_impls(scopes, id);
                         for f in functions {
                             self.check_fn(scopes, fn_by_name!(scopes, &f.name.data), f.body);
                         }
@@ -1668,7 +1689,7 @@ impl TypeChecker {
                 } => {
                     let id = scopes.find_user_type(&name.data).unwrap();
                     scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
-                        resolve_impls!(self, scopes, scopes.get_user_type_mut(id));
+                        self.resolve_impls(scopes, id);
 
                         for (name, expr) in variants {
                             scopes.get_var_mut(scopes.find_var(&name).unwrap()).value = expr
@@ -1691,15 +1712,7 @@ impl TypeChecker {
                 if let Some(ty) = ty {
                     let ty = self.resolve_type(scopes, &ty, false);
                     if let Some(value) = value {
-                        let span = value.span;
-                        let value = type_check!(
-                            self,
-                            scopes,
-                            self.check_expr(scopes, value, Some(&ty)),
-                            &ty,
-                            span
-                        );
-
+                        let value = self.type_check(scopes, value, &ty);
                         return CheckedStmt::Let(scopes.insert_var(Variable {
                             public: false,
                             name,
@@ -1741,15 +1754,7 @@ impl TypeChecker {
                 let id = scopes.find_var(&name).unwrap();
                 let (value, ty) = if let Some(ty) = ty {
                     let ty = self.resolve_type(scopes, &ty, false);
-                    let span = value.span;
-                    let value = type_check!(
-                        self,
-                        scopes,
-                        self.check_expr(scopes, value, Some(&ty)),
-                        &ty,
-                        span
-                    );
-                    (value, ty)
+                    (self.type_check(scopes, value, &ty), ty)
                 } else {
                     let value = self.check_expr(scopes, value, None);
                     let ty = value.ty.clone();
@@ -1948,7 +1953,7 @@ impl TypeChecker {
                 let id = scopes
                     .find_user_type(&scopes.get_func(id).type_params[i])
                     .unwrap();
-                resolve_impls!(self, scopes, scopes.get_user_type_mut(id));
+                self.resolve_impls(scopes, id);
             }
 
             for param in scopes
@@ -1981,7 +1986,7 @@ impl TypeChecker {
     fn check_expr(
         &mut self,
         scopes: &mut Scopes,
-        expr: Located<ExprData>,
+        expr: Expr,
         target: Option<&TypeId>,
     ) -> CheckedExpr {
         macro_rules! lbox {
@@ -2000,15 +2005,7 @@ impl TypeChecker {
         match expr.data {
             ExprData::Binary { op, left, right } => {
                 let left = self.check_expr(scopes, *left, target);
-                let right_span = right.span;
-                let right = type_check_bail!(
-                    self,
-                    scopes,
-                    self.check_expr(scopes, *right, Some(&left.ty)),
-                    &left.ty,
-                    right_span
-                );
-
+                let right = type_check_bail!(self, scopes, *right, &left.ty);
                 if !left.ty.supports_binop(op) {
                     self.error(Error::new(
                         format!(
@@ -2059,14 +2056,7 @@ impl TypeChecker {
                         .map(|ut| ut.generics[0].clone())
                     {
                         if let Some(expr) = elements.next() {
-                            let span = expr.span;
-                            checked.push(type_check!(
-                                self,
-                                scopes,
-                                self.check_expr(scopes, expr, Some(&ty)),
-                                &ty,
-                                span
-                            ));
+                            checked.push(self.type_check(scopes, expr, &ty));
                         }
 
                         (Some(vec), ty)
@@ -2081,17 +2071,7 @@ impl TypeChecker {
                     }
                 };
 
-                checked.extend(elements.map(|e| {
-                    let span = e.span;
-                    type_check!(
-                        self,
-                        scopes,
-                        self.check_expr(scopes, e, Some(&ty)),
-                        &ty,
-                        span
-                    )
-                }));
-
+                checked.extend(elements.map(|e| self.type_check(scopes, e, &ty)));
                 if let Some(vec) = vec {
                     CheckedExpr::new(
                         TypeId::UserType(GenericUserType::new(vec, vec![ty]).into()),
@@ -2106,15 +2086,7 @@ impl TypeChecker {
             }
             ExprData::ArrayWithInit { init, count } => {
                 if let Some(TypeId::Array(inner)) = target {
-                    let span = init.span;
-                    let init = type_check!(
-                        self,
-                        scopes,
-                        self.check_expr(scopes, *init, Some(&inner.0)),
-                        &inner.0,
-                        span
-                    );
-
+                    let init = self.type_check(scopes, *init, &inner.0);
                     match Self::consteval(scopes, &count, Some(&TypeId::Usize)) {
                         Ok(count) => CheckedExpr::new(
                             TypeId::Array(Box::new((init.ty.clone(), count))),
@@ -2135,36 +2107,18 @@ impl TypeChecker {
                         .filter(|ut| ut.id == vec)
                         .map(|ut| ut.generics[0].clone())
                     {
-                        let span = init.span;
-                        (
-                            type_check!(
-                                self,
-                                scopes,
-                                self.check_expr(scopes, *init, Some(&ty)),
-                                &ty,
-                                span
-                            ),
-                            ty,
-                        )
+                        (self.type_check(scopes, *init, &ty), ty)
                     } else {
                         let expr = self.check_expr(scopes, *init, None);
                         let ty = expr.ty.clone();
                         (expr, ty)
                     };
 
-                    let span = count.span;
                     CheckedExpr::new(
                         TypeId::UserType(GenericUserType::new(vec, vec![ty]).into()),
                         CheckedExprData::VecWithInit {
                             init: init.into(),
-                            count: type_check!(
-                                self,
-                                scopes,
-                                self.check_expr(scopes, *count, Some(&TypeId::Usize)),
-                                &TypeId::Usize,
-                                span
-                            )
-                            .into(),
+                            count: self.type_check(scopes, *count, &TypeId::Usize).into(),
                         },
                     )
                 }
@@ -2197,23 +2151,9 @@ impl TypeChecker {
                 };
 
                 result.extend(elements.map(|(key, val)| {
-                    let kspan = key.span;
-                    let vspan = val.span;
                     (
-                        type_check!(
-                            self,
-                            scopes,
-                            self.check_expr(scopes, key, Some(&key_ty)),
-                            &key_ty,
-                            kspan
-                        ),
-                        type_check!(
-                            self,
-                            scopes,
-                            self.check_expr(scopes, val, Some(&val_ty)),
-                            &val_ty,
-                            vspan
-                        ),
+                        self.type_check(scopes, key, &key_ty),
+                        self.type_check(scopes, val, &val_ty),
                     )
                 }));
 
@@ -2230,15 +2170,7 @@ impl TypeChecker {
                 // this could be skipped by just transforming these expressions to calls
                 (Some(start), Some(end)) => {
                     let start = self.check_expr(scopes, *start, None);
-                    let span = end.span;
-                    let end = type_check_bail!(
-                        self,
-                        scopes,
-                        self.check_expr(scopes, *end, Some(&start.ty)),
-                        &start.ty,
-                        span
-                    );
-
+                    let end = type_check_bail!(self, scopes, *end, &start.ty);
                     CheckedExpr::new(
                         TypeId::UserType(
                             GenericUserType::new(
@@ -2446,21 +2378,14 @@ impl TypeChecker {
                 binary,
                 value,
             } => {
-                let span = lhs.span;
+                let lhs_span = lhs.span;
                 let lhs = self.check_expr(scopes, *lhs, None);
-                if !Self::is_assignable(&lhs, scopes) {
+                if !lhs.is_assignable(scopes) {
                     // TODO: report a better error here
-                    return self.error(Error::new("expression is not assignable", span));
+                    return self.error(Error::new("expression is not assignable", lhs_span));
                 }
 
-                let rhs = type_check_bail!(
-                    self,
-                    scopes,
-                    self.check_expr(scopes, *value, Some(&lhs.ty)),
-                    &lhs.ty,
-                    span
-                );
-
+                let rhs = type_check_bail!(self, scopes, *value, &lhs.ty);
                 if let Some(op) = binary {
                     if !lhs.ty.supports_binop(op) {
                         self.error::<()>(Error::new(
@@ -2502,15 +2427,7 @@ impl TypeChecker {
                 if_branch,
                 else_branch,
             } => {
-                let cond_span = cond.span;
-                let cond = type_check!(
-                    self,
-                    scopes,
-                    self.check_expr(scopes, *cond, Some(&TypeId::Bool)),
-                    &TypeId::Bool,
-                    cond_span
-                );
-
+                let cond = self.type_check(scopes, *cond, &TypeId::Bool);
                 let target = if else_branch.is_some() {
                     target
                 } else {
@@ -2523,19 +2440,12 @@ impl TypeChecker {
                 let if_span = if_branch.span;
                 let mut if_branch = self.check_expr(scopes, *if_branch, target);
                 if let Some(target) = target {
-                    if_branch = type_check!(self, scopes, if_branch, target, if_span);
+                    if_branch = self.type_check_checked(scopes, if_branch, target, if_span);
                 }
 
                 let mut out_type = if_branch.ty.clone();
                 let else_branch = if let Some(e) = else_branch {
-                    let span = e.span;
-                    Some(type_check!(
-                        self,
-                        scopes,
-                        self.check_expr(scopes, *e, Some(&if_branch.ty)),
-                        &out_type,
-                        span
-                    ))
+                    Some(self.type_check(scopes, *e, &out_type))
                 } else {
                     // this separates these two cases:
                     //   let x /* void? */ = if whatever { yield void; };
@@ -2544,7 +2454,7 @@ impl TypeChecker {
                         matches!(scopes[b.scope].kind, ScopeKind::Block(_, yields) if yields))
                     {
                         out_type = scopes.make_option(out_type).unwrap();
-                        if_branch = Self::coerce_expr(if_branch, &out_type, scopes);
+                        if_branch = if_branch.coerce_to(&out_type, scopes);
 
                         Some(self.check_expr(
                             scopes,
@@ -2574,17 +2484,7 @@ impl TypeChecker {
                 //
                 // }
 
-                let cond = cond.map(|cond| {
-                    let span = cond.span;
-                    type_check!(
-                        self,
-                        scopes,
-                        self.check_expr(scopes, *cond, Some(&TypeId::Bool)),
-                        &TypeId::Bool,
-                        span
-                    )
-                });
-
+                let cond = cond.map(|cond| self.type_check(scopes, *cond, &TypeId::Bool));
                 let target = if cond.is_none() {
                     target
                 } else {
@@ -2756,7 +2656,7 @@ impl TypeChecker {
                         return CheckedExpr::new(
                             ty,
                             CheckedExprData::Member {
-                                source: Self::auto_deref(source, &id).into(),
+                                source: source.auto_deref(&id).into(),
                                 member: name,
                             },
                         );
@@ -2777,16 +2677,12 @@ impl TypeChecker {
                 }
 
                 let callee = self.check_expr(scopes, *callee, None);
-                let arg = args.into_iter().next().unwrap();
-                let arg_span = arg.span;
                 let arg = type_check_bail!(
                     self,
                     scopes,
-                    self.check_expr(scopes, arg, Some(&TypeId::Isize)),
-                    &TypeId::Isize,
-                    arg_span
+                    args.into_iter().next().unwrap(),
+                    &TypeId::Isize
                 );
-
                 if let TypeId::Array(target) = &callee.ty {
                     CheckedExpr::new(
                         target.0.clone(),
@@ -2807,19 +2703,9 @@ impl TypeChecker {
                     .current_function()
                     .map(|id| scopes.get_func(id).ret.clone())
                     .expect("return should only be possible inside functions");
-                let span = expr.span;
                 CheckedExpr::new(
                     TypeId::Never,
-                    CheckedExprData::Return(
-                        type_check!(
-                            self,
-                            scopes,
-                            self.check_expr(scopes, *expr, Some(&target)),
-                            &target,
-                            span
-                        )
-                        .into(),
-                    ),
+                    CheckedExprData::Return(self.type_check(scopes, *expr, &target).into()),
                 )
             }
             ExprData::Yield(expr) => {
@@ -2830,7 +2716,7 @@ impl TypeChecker {
                 let span = expr.span;
                 let mut expr = self.check_expr(scopes, *expr, target.as_ref());
                 if let Some(target) = &target {
-                    expr = type_check!(self, scopes, expr, target, span);
+                    expr = self.type_check_checked(scopes, expr, target, span);
                     scopes.current().kind = ScopeKind::Block(Some(target.clone()), true);
                 } else {
                     scopes.current().kind = ScopeKind::Block(Some(expr.ty.clone()), true);
@@ -2852,7 +2738,7 @@ impl TypeChecker {
                 let span = expr.span;
                 let mut expr = self.check_expr(scopes, *expr, target.as_ref());
                 if let Some(target) = &target {
-                    expr = type_check!(self, scopes, expr, target, span);
+                    expr = self.type_check_checked(scopes, expr, target, span);
                     scopes[scope].kind = ScopeKind::Loop(Some(target.clone()), true);
                 } else {
                     scopes[scope].kind = ScopeKind::Loop(Some(expr.ty.clone()), true);
@@ -2901,7 +2787,7 @@ impl TypeChecker {
                     });
 
                     if let Some(target) = &target {
-                        expr = type_check!(self, scopes, expr, target, span);
+                        expr = self.type_check_checked(scopes, expr, target, span);
                     } else {
                         target = Some(expr.ty.clone());
                     }
@@ -2971,7 +2857,7 @@ impl TypeChecker {
 
                     CheckedExpr::new(ty, CheckedExprData::As(expr.into(), throwing))
                 } else {
-                    Self::coerce_expr(expr, &ty, scopes)
+                    expr.coerce_to(&ty, scopes)
                 }
             }
             ExprData::Error => CheckedExpr::default(),
@@ -2981,7 +2867,7 @@ impl TypeChecker {
     fn check_unary(
         &mut self,
         scopes: &mut Scopes,
-        expr: Located<ExprData>,
+        expr: Expr,
         target: Option<&TypeId>,
         op: UnaryOp,
     ) -> CheckedExpr {
@@ -3022,7 +2908,7 @@ impl TypeChecker {
                 let span = expr.span;
                 let expr = self.check_expr(scopes, expr, target);
                 if expr.ty.integer_stats().is_some() {
-                    if !Self::is_assignable(&expr, scopes) {
+                    if !expr.is_assignable(scopes) {
                         self.error::<()>(Error::new("expression is not assignable", span));
                     }
                 } else {
@@ -3065,7 +2951,7 @@ impl TypeChecker {
                     expr,
                     target.and_then(|t| t.as_mut_ptr().or(t.as_ptr()).map(|t| &**t)),
                 );
-                if !Self::can_addrmut(&expr, scopes) {
+                if !expr.can_addrmut(scopes) {
                     self.error::<()>(Error::new(
                         "cannot create mutable pointer to immutable memory location",
                         span,
@@ -3267,34 +3153,12 @@ impl TypeChecker {
         }
     }
 
-    fn get_member_fn(
-        scopes: &Scopes,
-        member: &str,
-        ut: &Scoped<UserType>,
-    ) -> Option<(Option<GenericUserType>, FunctionId)> {
-        if let Some(func) = (ut.data.is_struct() || ut.data.is_union() || ut.data.is_enum())
-            .then(|| scopes.find_func_in(member, ut.body_scope))
-            .flatten()
-        {
-            return Some((None, func));
-        }
-
-        for ut in ut.impls.iter().map(|ut| ut.as_user_type().unwrap()) {
-            if let Some(func) = scopes.find_func_in(member, scopes.get_user_type(ut.id).body_scope)
-            {
-                return Some((Some((**ut).clone()), func));
-            }
-        }
-
-        None
-    }
-
     fn check_call(
         &mut self,
         scopes: &mut Scopes,
         target: Option<&TypeId>,
-        callee: Located<ExprData>,
-        args: Vec<(Option<String>, Located<ExprData>)>,
+        callee: Expr,
+        args: Vec<(Option<String>, Expr)>,
         span: Span,
     ) -> CheckedExpr {
         match callee.data {
@@ -3312,7 +3176,7 @@ impl TypeChecker {
                     ));
                 };
                 let ty = scopes.get_user_type(ut.id);
-                if let Some((tr, func)) = Self::get_member_fn(scopes, &member, ty) {
+                if let Some((tr, func)) = scopes.get_member_fn(&member, ty) {
                     let f = scopes.get_func(func);
                     if !f.public && !scopes.is_sub_scope(ty.scope) {
                         return self.error(Error::new(
@@ -3327,8 +3191,7 @@ impl TypeChecker {
                     if let Some(this_param) = f.params.get(0).filter(|p| p.name == THIS_PARAM) {
                         if this_param.ty.is_mut_ptr() {
                             let mut ty = &this.ty;
-                            if !ty.is_ptr() && !ty.is_mut_ptr() && !Self::can_addrmut(&this, scopes)
-                            {
+                            if !ty.is_ptr() && !ty.is_mut_ptr() && !this.can_addrmut(scopes) {
                                 return self.error(Error::new(
                                     format!(
                                         "cannot call method '{member}' with immutable receiver"
@@ -3370,7 +3233,7 @@ impl TypeChecker {
                                 )
                             }
                         } else {
-                            Self::auto_deref(this, &this_param.ty)
+                            this.auto_deref(&this_param.ty)
                         };
 
                         let mut func = GenericFunc::new(
@@ -3507,7 +3370,7 @@ impl TypeChecker {
         &mut self,
         func: &mut GenericFunc,
         scopes: &mut Scopes,
-        expr: Located<ExprData>,
+        expr: Expr,
         param: &CheckedParam,
         inst: Option<&GenericUserType>,
     ) -> CheckedExpr {
@@ -3525,7 +3388,7 @@ impl TypeChecker {
             target.fill_func_generics(scopes, func);
         }
 
-        type_check!(self, scopes, expr, &target, span)
+        self.type_check_checked(scopes, expr, &target, span)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3534,7 +3397,7 @@ impl TypeChecker {
         inst: Option<&GenericUserType>,
         func: &mut GenericFunc,
         this: Option<CheckedExpr>,
-        args: Vec<(Option<String>, Located<ExprData>)>,
+        args: Vec<(Option<String>, Expr)>,
         target: Option<&TypeId>,
         scopes: &mut Scopes,
         span: Span,
@@ -3665,7 +3528,7 @@ impl TypeChecker {
                     let param = scopes
                         .find_user_type_in(&f.type_params[i], f.body_scope)
                         .unwrap();
-                    resolve_impls!(self, scopes, scopes.get_user_type_mut(param));
+                    self.resolve_impls(scopes, param);
                     self.check_bounds(
                         scopes,
                         Some(func),
@@ -3721,6 +3584,64 @@ impl TypeChecker {
                 .collect(),
             scope: scopes.current_id(),
         })
+    }
+
+    fn error<T: Default>(&mut self, error: Error) -> T {
+        self.errors.push(error);
+        T::default()
+    }
+
+    fn type_check(&mut self, scopes: &mut Scopes, expr: Expr, target: &TypeId) -> CheckedExpr {
+        let span = expr.span;
+        let source = self.check_expr(scopes, expr, Some(target));
+        if !source.ty.coerces_to(scopes, target) {
+            self.error(type_mismatch!(scopes, target, source.ty, span))
+        }
+
+        source.coerce_to(target, scopes)
+    }
+
+    fn type_check_checked(
+        &mut self,
+        scopes: &mut Scopes,
+        source: CheckedExpr,
+        target: &TypeId,
+        span: Span,
+    ) -> CheckedExpr {
+        if !source.ty.coerces_to(scopes, target) {
+            self.error(type_mismatch!(scopes, target, source.ty, span))
+        }
+
+        source.coerce_to(target, scopes)
+    }
+
+    fn make_type(
+        &mut self,
+        scopes: &Scopes,
+        path: &[&str],
+        generics: &[TypeHint],
+        fwd: bool,
+    ) -> TypeId {
+        self.resolve_type(
+            scopes,
+            &TypeHint::Regular(Located::new(
+                Path::Root(
+                    path.iter()
+                        .enumerate()
+                        .map(|(i, p)| {
+                            (
+                                p.to_string(),
+                                (i + 1 == path.len())
+                                    .then(|| generics.into())
+                                    .unwrap_or(vec![]),
+                            )
+                        })
+                        .collect(),
+                ),
+                Span::default(),
+            )),
+            fwd,
+        )
     }
 
     fn resolve_type(&mut self, scopes: &Scopes, ty: &TypeHint, fwd: bool) -> TypeId {
@@ -3841,40 +3762,6 @@ impl TypeChecker {
         }
     }
 
-    fn error<T: Default>(&mut self, error: Error) -> T {
-        self.errors.push(error);
-        T::default()
-    }
-
-    fn make_type(
-        &mut self,
-        scopes: &Scopes,
-        path: &[&str],
-        generics: &[TypeHint],
-        fwd: bool,
-    ) -> TypeId {
-        self.resolve_type(
-            scopes,
-            &TypeHint::Regular(Located::new(
-                Path::Root(
-                    path.iter()
-                        .enumerate()
-                        .map(|(i, p)| {
-                            (
-                                p.to_string(),
-                                (i + 1 == path.len())
-                                    .then(|| generics.into())
-                                    .unwrap_or(vec![]),
-                            )
-                        })
-                        .collect(),
-                ),
-                Span::default(),
-            )),
-            fwd,
-        )
-    }
-
     fn resolve_use(
         &mut self,
         scopes: &mut Scopes,
@@ -3917,6 +3804,27 @@ impl TypeChecker {
                 (TypeHint::Regular(path.clone()), scopes.current).into(),
             ))),
             _ => self.error(Error::new("expected trait", path.span)),
+        }
+    }
+
+    fn resolve_impls(&mut self, scopes: &mut Scopes, id: UserTypeId) {
+        let mut removals = Vec::new();
+        for i in 0..scopes.get_user_type(id).impls.len() {
+            resolve_type!(self, scopes, scopes.get_user_type_mut(id).impls[i]);
+            let imp = &scopes.get_user_type(id).impls[i];
+            if !imp
+                .as_user_type()
+                .map_or(false, |t| scopes.get_user_type(t.id).data.is_trait())
+            {
+                if !imp.is_unknown() {
+                    self.error(Error::new("expected trait", Span::default()))
+                }
+                removals.push(i);
+            }
+        }
+
+        for i in removals.into_iter().rev() {
+            scopes.get_user_type_mut(id).impls.remove(i);
         }
     }
 
@@ -3980,7 +3888,7 @@ impl TypeChecker {
                                 here,
                             ),
                         );
-                        //resolve_impls!(self, scopes, scopes.get_user_type_mut(id));
+                        //self.resolve_impls(scopes, id);
                         //self.check_bounds(scopes, None, &ut, &scopes.get_user_type(id).impls, span);
                         return Some(ResolvedPath::UserType(ut));
                     }
@@ -4179,11 +4087,7 @@ impl TypeChecker {
         );
     }
 
-    fn consteval(
-        scopes: &Scopes,
-        expr: &Located<ExprData>,
-        target: Option<&TypeId>,
-    ) -> Result<usize, Error> {
+    fn consteval(scopes: &Scopes, expr: &Expr, target: Option<&TypeId>) -> Result<usize, Error> {
         match &expr.data {
             ExprData::Integer { base, value, width } => {
                 if let Some(width) = width
@@ -4209,151 +4113,16 @@ impl TypeChecker {
         }
     }
 
-    fn is_assignable(expr: &CheckedExpr, scopes: &Scopes) -> bool {
-        match &expr.data {
-            CheckedExprData::Unary { op, expr } => {
-                matches!(op, UnaryOp::Deref) && matches!(expr.ty, TypeId::MutPtr(_))
-            }
-            CheckedExprData::Symbol(_) | CheckedExprData::Member { .. } => {
-                Self::can_addrmut(expr, scopes)
-            }
-            CheckedExprData::Subscript { callee, .. } => Self::is_assignable(callee, scopes),
-            _ => false,
-        }
-    }
-
-    fn can_addrmut(expr: &CheckedExpr, scopes: &Scopes) -> bool {
-        match &expr.data {
-            CheckedExprData::Unary { op, expr } => {
-                !matches!(op, UnaryOp::Deref) || matches!(expr.ty, TypeId::MutPtr(_))
-            }
-            CheckedExprData::Symbol(symbol) => match symbol {
-                Symbol::Func => false,
-                Symbol::Var(id) => scopes.get_var(*id).mutable,
-            },
-            CheckedExprData::Member { source, .. } => {
-                matches!(source.ty, TypeId::MutPtr(_)) || Self::can_addrmut(source, scopes)
-            }
-            CheckedExprData::Subscript { callee, .. } => Self::can_addrmut(callee, scopes),
-            _ => true,
-        }
-    }
-
-    fn coerce_expr(expr: CheckedExpr, target: &TypeId, scopes: &Scopes) -> CheckedExpr {
-        match (&expr.ty, target) {
-            (
-                TypeId::IntGeneric,
-                TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize,
-            ) => CheckedExpr::new(target.clone(), expr.data),
-            (TypeId::FloatGeneric, TypeId::F32 | TypeId::F64) => {
-                CheckedExpr::new(target.clone(), expr.data)
-            }
-            (TypeId::MutPtr(lhs), TypeId::Ptr(rhs)) if lhs == rhs => {
-                CheckedExpr::new(target.clone(), expr.data)
-            }
-            (ty, target)
-                if scopes
-                    .as_option_inner(target)
-                    .map_or(false, |inner| ty.coerces_to(scopes, inner)) =>
-            {
-                let inner = scopes.as_option_inner(target).unwrap();
-                let expr = Self::coerce_expr(expr, inner, scopes);
-                Self::coerce_expr(
-                    CheckedExpr::new(
-                        scopes.make_option(expr.ty.clone()).unwrap(),
-                        CheckedExprData::Instance {
-                            members: [("Some".into(), expr)].into(),
-                            variant: Some("Some".into()),
-                        },
-                    ),
-                    target,
-                    scopes,
-                )
-            }
-            (TypeId::Never, _) => CheckedExpr::new(target.clone(), expr.data),
-            _ => expr,
-        }
-    }
-
-    fn auto_deref(mut expr: CheckedExpr, mut target: &TypeId) -> CheckedExpr {
-        let mut indirection = 0;
-        while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = target {
-            target = inner;
-            indirection += 1;
-        }
-
-        let mut ty = &expr.ty;
-        let mut my_indirection = 0;
-        while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = ty {
-            ty = inner;
-            my_indirection += 1;
-        }
-
-        while my_indirection > indirection {
-            my_indirection -= 1;
-            let (TypeId::Ptr(inner) | TypeId::MutPtr(inner)) = expr.ty.clone() else {
-                unreachable!()
-            };
-            expr = CheckedExpr::new(
-                (*inner).clone(),
-                CheckedExprData::Unary {
-                    op: UnaryOp::Deref,
-                    expr: expr.into(),
-                },
-            );
-        }
-
-        expr
-    }
-
     fn typehint_for_struct(base: &Struct, span: Span) -> TypeHint {
         TypeHint::Regular(Located::new(
             Path::Normal(vec![(
                 base.name.data.clone(),
                 base.type_params
                     .iter()
-                    .map(|(name, _)| {
-                        TypeHint::Regular(Located::new(Path::from(name.clone()), span))
-                    })
+                    .map(|(n, _)| TypeHint::Regular(Located::new(Path::from(n.clone()), span)))
                     .collect(),
             )]),
             span,
         ))
-    }
-
-    fn variant_constructor_fn(base: &Struct, member: &MemVar, span: Span) -> Fn {
-        let mut params: Vec<_> = base
-            .members
-            .iter()
-            .filter(|m| m.shared)
-            .map(|m| Param {
-                mutable: false,
-                keyword: true,
-                name: m.name.clone(),
-                ty: m.ty.clone(),
-                default: m.default.clone(),
-            })
-            .collect();
-        if !matches!(member.ty, TypeHint::Void) {
-            params.push(Param {
-                mutable: false,
-                keyword: false,
-                name: member.name.clone(),
-                ty: member.ty.clone(),
-                default: None,
-            });
-        }
-        Fn {
-            public: true,
-            name: Located::new(member.name.clone(), Span::default()),
-            is_async: false,
-            is_extern: false,
-            variadic: false,
-            is_unsafe: false,
-            type_params: base.type_params.clone(),
-            params,
-            ret: Self::typehint_for_struct(base, span),
-            body: None,
-        }
     }
 }
