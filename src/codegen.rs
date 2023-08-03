@@ -4,7 +4,7 @@ use indexmap::IndexMap;
 
 use crate::{
     ast::UnaryOp,
-    checked_ast::{CheckedExpr, CheckedPattern, CheckedStmt, CheckedExprData},
+    checked_ast::{CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt},
     lexer::Span,
     typecheck::{
         CheckedParam, GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId,
@@ -279,10 +279,10 @@ impl Buffer {
             } else {
                 _ = self.emit_local_decl(
                     scopes,
-                    *scopes[f.body_scope]
+                    **scopes[f.body_scope]
                         .vars
                         .iter()
-                        .find(|&&v| scopes.get_var(v).name == param.name)
+                        .find(|&&v| scopes.get_var(*v).name == param.name)
                         .unwrap(),
                     state,
                     structs,
@@ -349,7 +349,7 @@ impl Buffer {
             }
 
             self.emit_type(scopes, &ty, Some(structs));
-            if !var.mutable {
+            if !var.mutable && !var.is_static {
                 self.emit(" const");
             }
             self.emit(" ");
@@ -429,14 +429,15 @@ pub struct Codegen {
 
 impl Codegen {
     pub fn build(scope: ScopeId, scopes: &Scopes) -> Result<String, Error> {
-        let Some(main) = scopes.find_func_in("main", scope) else {
-            return Err(Error::new(
-                "no main function found",
-                Span::default(),
-            ));
-        };
-
-        let main = &mut State::new(GenericFunc::new(main, Vec::new()), None);
+        let main = &mut State::new(
+            GenericFunc::new(
+                *scopes
+                    .find_func_in("main", scope)
+                    .ok_or(Error::new("no main function found", Span::default()))?,
+                Vec::new(),
+            ),
+            None,
+        );
         let mut this = Self {
             funcs: [main.clone()].into(),
             ..Self::default()
@@ -444,10 +445,10 @@ impl Codegen {
 
         let conv_argv = (scopes.get_func(main.func.id).params.len() == 1).then(|| {
             let id = scopes
-                .find_func_in("convert_argv", scopes.find_module("std").unwrap())
+                .find_func_in("convert_argv", *scopes.find_module("std").unwrap())
                 .unwrap();
 
-            let state = State::new(GenericFunc::new(id, vec![]), None);
+            let state = State::new(GenericFunc::new(*id, vec![]), None);
             this.funcs.insert(state.clone());
             state
         });
@@ -480,17 +481,17 @@ impl Codegen {
             .scopes()
             .iter()
             .flat_map(|s| s.vars.iter())
-            .filter(|&&v| scopes.get_var(v).is_static)
+            .filter(|&&v| scopes.get_var(*v).is_static)
         {
             if this
                 .buffer
-                .emit_local_decl(scopes, id, main, &mut this.structs)
+                .emit_local_decl(scopes, *id, main, &mut this.structs)
                 .is_ok()
             {
                 this.buffer.emit(";");
-                statics.push((id, false));
+                statics.push((*id, false));
             } else {
-                statics.push((id, true));
+                statics.push((*id, true));
             }
         }
 
@@ -665,8 +666,9 @@ impl Codegen {
                 if trait_fn {
                     let f = scopes.get_func(func.id);
                     if let Some(ut) = inst.as_ref().and_then(|i| i.as_user_type()) {
-                        let ut = scopes.get_user_type(ut.id);
-                        func.id = scopes.find_func_in(&f.name, ut.body_scope).unwrap();
+                        func.id = *scopes
+                            .find_func_in(&f.name, scopes.get_user_type(ut.id).body_scope)
+                            .unwrap();
                     } else {
                         todo!("trait implementations for non-struct types");
                     }
@@ -679,9 +681,9 @@ impl Codegen {
                 if scopes.scopes()[0]
                     .children
                     .get("core")
-                    .and_then(|&scope| scopes[scope].children.get("mem"))
-                    .and_then(|&scope| scopes.find_func_in("size_of", scope))
-                    .filter(|&id| id == func.id)
+                    .and_then(|&scope| scopes[*scope].children.get("mem"))
+                    .and_then(|&scope| scopes.find_func_in("size_of", *scope))
+                    .filter(|&id| *id == func.id)
                     .is_some()
                 {
                     self.buffer.emit("(usize)sizeof");
@@ -736,7 +738,7 @@ impl Codegen {
 
                         let next_state = State::new(
                             GenericFunc::new(
-                                scopes
+                                *scopes
                                     .find_func_in("with_capacity", scopes.get_user_type(ut.id).body_scope)
                                     .unwrap(),
                                 vec![inner.clone()],
@@ -782,7 +784,7 @@ impl Codegen {
 
                         let next_state = State::new(
                             GenericFunc::new(
-                                scopes
+                                *scopes
                                     .find_func_in("with_capacity", scopes.get_user_type(ut.id).body_scope)
                                     .unwrap(),
                                 vec![inner.clone()],
@@ -817,7 +819,7 @@ impl Codegen {
                     {
                         let with_capacity = State::new(
                             GenericFunc::new(
-                                scopes
+                                *scopes
                                     .find_func_in("with_capacity", scopes.get_user_type(ut.id).body_scope)
                                     .unwrap(),
                                 vec![key.clone(), val.clone()],
@@ -827,7 +829,7 @@ impl Codegen {
 
                         let insert = State::new(
                             GenericFunc::new(
-                                scopes
+                                *scopes
                                     .find_func_in("insert", scopes.get_user_type(ut.id).body_scope)
                                     .unwrap(),
                                 vec![],
