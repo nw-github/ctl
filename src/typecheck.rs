@@ -1127,6 +1127,7 @@ pub struct Module {
 
 pub struct TypeChecker {
     errors: Vec<Error>,
+    universal: Vec<ScopeId>,
 }
 
 impl TypeChecker {
@@ -1135,7 +1136,10 @@ impl TypeChecker {
         module: Vec<ParsedFile>,
         libs: Vec<PathBuf>,
     ) -> anyhow::Result<Module> {
-        let mut this = Self { errors: vec![] };
+        let mut this = Self {
+            errors: vec![],
+            universal: Vec::new(),
+        };
         let mut scopes = Scopes::new();
         let mut files: Vec<_> = module.iter().map(|file| file.path.clone()).collect();
 
@@ -1167,7 +1171,7 @@ impl TypeChecker {
             for file in module.iter() {
                 match &file.ast.data {
                     StmtData::Module { name, body, .. } if name == &project => {
-                        self.include_universal(scopes, true);
+                        self.include_universal(scopes);
                         for stmt in body {
                             self.forward_declare(stmt, scopes);
                         }
@@ -1183,7 +1187,7 @@ impl TypeChecker {
 
                 match file.ast.data {
                     StmtData::Module { name, body, .. } if name == project => {
-                        self.include_universal(scopes, false);
+                        self.include_universal(scopes);
                         for stmt in body {
                             self.check_stmt(scopes, stmt);
                         }
@@ -1202,7 +1206,11 @@ impl TypeChecker {
         match &stmt.data {
             StmtData::Module { public, name, body } => {
                 scopes.enter(Some(name.clone()), ScopeKind::Module, *public, |scopes| {
-                    self.include_universal(scopes, true);
+                    // FIXME: only allow core and std to define these
+                    if stmt.attrs.iter().any(|attr| attr.name.data == "autouse") {
+                        self.universal.push(scopes.current);
+                    }
+
                     for stmt in body {
                         self.forward_declare(stmt, scopes);
                     }
@@ -1536,7 +1544,9 @@ impl TypeChecker {
                 );
             }
             StmtData::Use { path, public, all } => {
-                self.resolve_use(scopes, *public, path, *all, stmt.span, true)
+                if let Some(path) = self.resolve_path(scopes, path, stmt.span, true) {
+                    self.resolve_use(scopes, *public, *all, path, stmt.span, true);
+                }
             }
             _ => {}
         }
@@ -1629,7 +1639,7 @@ impl TypeChecker {
                 body,
             } => {
                 return CheckedStmt::Module(scopes.find_enter(&name, |scopes| {
-                    self.include_universal(scopes, false);
+                    self.include_universal(scopes);
                     Block {
                         body: body
                             .into_iter()
@@ -1800,7 +1810,9 @@ impl TypeChecker {
                 var.value = Some(value);
             }
             StmtData::Use { public, path, all } => {
-                self.resolve_use(scopes, public, &path, all, stmt.span, false)
+                if let Some(path) = self.resolve_path(scopes, &path, stmt.span, false) {
+                    self.resolve_use(scopes, public, all, path, stmt.span, false);
+                }
             }
             StmtData::Error => return CheckedStmt::Error,
         }
@@ -3811,102 +3823,100 @@ impl TypeChecker {
         &mut self,
         scopes: &mut Scopes,
         public: bool,
-        path: &Path,
         all: bool,
+        path: ResolvedPath,
         span: Span,
         fwd: bool,
     ) {
-        if let Some(path) = self.resolve_path(scopes, path, span, fwd) {
-            match path {
-                ResolvedPath::UserType(ut) => {
-                    if !all {
-                        scopes.current().types.insert(Vis {
-                            item: ut.id,
-                            public,
-                        });
-                    } else if !fwd {
-                        self.error(Error::new(
-                            format!(
-                                "cannot import all items of type '{}'",
-                                scopes.get_user_type(ut.id).name
-                            ),
-                            span,
-                        ))
-                    }
+        match path {
+            ResolvedPath::UserType(ut) => {
+                if !all {
+                    scopes.current().types.insert(Vis {
+                        item: ut.id,
+                        public,
+                    });
+                } else if !fwd {
+                    self.error(Error::new(
+                        format!(
+                            "cannot import all items of type '{}'",
+                            scopes.get_user_type(ut.id).name
+                        ),
+                        span,
+                    ))
                 }
-                ResolvedPath::Func(func) => {
-                    if !all {
+            }
+            ResolvedPath::Func(func) => {
+                if !all {
+                    scopes.current().fns.insert(Vis {
+                        item: func.id,
+                        public,
+                    });
+                } else if !fwd {
+                    self.error(Error::new(
+                        format!(
+                            "cannot import all items of function '{}'",
+                            scopes.get_func(func.id).name
+                        ),
+                        span,
+                    ))
+                }
+            }
+            ResolvedPath::Var(id) => {
+                if !all {
+                    scopes.current().vars.insert(Vis { item: id, public });
+                } else if !fwd {
+                    self.error(Error::new(
+                        format!(
+                            "cannot import all items of variable '{}'",
+                            scopes.get_var(id).name
+                        ),
+                        span,
+                    ))
+                }
+            }
+            ResolvedPath::Module(id) => {
+                if !all {
+                    let name = scopes[id].name.as_ref().unwrap().clone();
+                    scopes
+                        .current()
+                        .children
+                        .insert(name, Vis { item: id, public });
+                } else {
+                    for (name, id) in scopes[id].children.clone() {
+                        scopes.current().children.insert(
+                            name,
+                            Vis {
+                                item: id.item,
+                                public,
+                            },
+                        );
+                    }
+
+                    for func in scopes[id].fns.clone() {
                         scopes.current().fns.insert(Vis {
-                            item: func.id,
+                            item: func.item,
                             public,
                         });
-                    } else if !fwd {
-                        self.error(Error::new(
-                            format!(
-                                "cannot import all items of function '{}'",
-                                scopes.get_func(func.id).name
-                            ),
-                            span,
-                        ))
+                    }
+
+                    for ty in scopes[id].types.clone() {
+                        scopes.current().types.insert(Vis {
+                            item: ty.item,
+                            public,
+                        });
+                    }
+
+                    for var in scopes[id].vars.clone() {
+                        scopes.current().vars.insert(Vis {
+                            item: var.item,
+                            public,
+                        });
                     }
                 }
-                ResolvedPath::Var(id) => {
-                    if !all {
-                        scopes.current().vars.insert(Vis { item: id, public });
-                    } else if !fwd {
-                        self.error(Error::new(
-                            format!(
-                                "cannot import all items of variable '{}'",
-                                scopes.get_var(id).name
-                            ),
-                            span,
-                        ))
-                    }
-                }
-                ResolvedPath::Module(id) => {
-                    if !all {
-                        let name = scopes[id].name.as_ref().unwrap().clone();
-                        scopes
-                            .current()
-                            .children
-                            .insert(name, Vis { item: id, public });
-                    } else {
-                        for (name, id) in scopes[id].children.clone() {
-                            scopes.current().children.insert(
-                                name,
-                                Vis {
-                                    item: id.item,
-                                    public,
-                                },
-                            );
-                        }
-
-                        for func in scopes[id].fns.clone() {
-                            scopes.current().fns.insert(Vis {
-                                item: func.item,
-                                public,
-                            });
-                        }
-
-                        for ty in scopes[id].types.clone() {
-                            scopes.current().types.insert(Vis {
-                                item: ty.item,
-                                public,
-                            });
-                        }
-
-                        for var in scopes[id].vars.clone() {
-                            scopes.current().vars.insert(Vis {
-                                item: var.item,
-                                public,
-                            });
-                        }
-                    }
-                }
-                ResolvedPath::None(err) => {
-                    if !fwd {
-                        self.error(err)
-                    }
+            }
+            ResolvedPath::None(err) => {
+                if !fwd {
+                    self.error(err)
                 }
             }
         }
@@ -4180,27 +4190,17 @@ impl TypeChecker {
         }
     }
 
-    fn include_universal(&mut self, scopes: &mut Scopes, fwd: bool) {
-        self.resolve_use(
-            scopes,
-            false,
-            &Path::Root(vec![
-                ("core".into(), vec![]),
-                ("string".into(), vec![]),
-                ("str".into(), vec![]),
-            ]),
-            false,
-            Span::default(),
-            fwd,
-        );
-        self.resolve_use(
-            scopes,
-            false,
-            &Path::Root(vec![("core".into(), vec![]), ("panic".into(), vec![])]),
-            false,
-            Span::default(),
-            fwd,
-        );
+    fn include_universal(&mut self, scopes: &mut Scopes) {
+        for scope in self.universal.clone() {
+            self.resolve_use(
+                scopes,
+                false,
+                true,
+                ResolvedPath::Module(scope),
+                Span::default(),
+                false,
+            );
+        }
     }
 
     fn consteval(scopes: &Scopes, expr: &Expr, target: Option<&TypeId>) -> Result<usize, Error> {

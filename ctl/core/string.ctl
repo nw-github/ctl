@@ -93,7 +93,7 @@ pub struct Chars: core::iter::Iter<char> {
                     cp += *this.s.get_unchecked(3) as u32 & 0x3f;
                     this.s = this.s.subspan(4usize..);
                 } else {
-                    panic("unreachable");
+                    unreachable();
                 }
 
                 yield cp as! char;
