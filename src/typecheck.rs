@@ -2540,7 +2540,9 @@ impl TypeChecker {
                 };
 
                 let out_type = if cond.is_none() {
-                    TypeId::Never
+                    breaks
+                        .then(|| target.clone().unwrap())
+                        .unwrap_or(TypeId::Never)
                 } else {
                     // TODO: coerce the break statements
                     breaks
@@ -2857,6 +2859,7 @@ impl TypeChecker {
                         (a, b) if a == b => {}
                         (TypeId::Int(a), TypeId::Int(b) | TypeId::Uint(b)) if a <= b => {}
                         (TypeId::Uint(a), TypeId::Uint(b)) if a <= b => {}
+                        (TypeId::Uint(a), TypeId::Int(b)) if (a + 1) <= *b => {}
                         (TypeId::CInt(a), TypeId::CInt(b) | TypeId::CUint(b)) if a <= b => {}
                         (TypeId::Char, TypeId::Uint(num)) if *num >= 32 => {}
                         (TypeId::Char, TypeId::Int(num)) if *num >= 33 => {}
