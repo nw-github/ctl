@@ -2,6 +2,7 @@ use core::ptr::Raw;
 use core::ptr::RawMut;
 use core::mem;
 
+[lang(vec)]
 pub struct Vec<T> {
     ptr: RawMut<T>,
     len: usize,

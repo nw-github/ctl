@@ -24,6 +24,7 @@ union Bucket<K, V> {
     }
 }
 
+[lang(map)]
 pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     buckets: [Bucket<K, V>],
     len:     usize,
@@ -103,7 +104,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     pub fn len(this) usize {
         return this.len;
     }
-    
+
     fn entry_pos(this, key: *K) usize {
         mut idx = {
             mut h = Fnv1a::new();

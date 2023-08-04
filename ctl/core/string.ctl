@@ -4,6 +4,7 @@ use core::hash::Hasher;
 use core::ops::Eq;
 use core::range::RangeBounds;
 
+[lang(string)]
 pub struct str: Hash + Eq<str> {
     span: [u8..],
 

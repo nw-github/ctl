@@ -157,7 +157,7 @@ impl CheckedExpr {
                 let inner = scopes.as_option_inner(target).unwrap();
                 let expr = self.coerce_to(inner, scopes);
                 CheckedExpr::new(
-                    scopes.make_option(expr.ty.clone()).unwrap(),
+                    scopes.make_lang_type("option", vec![expr.ty.clone()]).unwrap(),
                     CheckedExprData::Instance {
                         members: [("Some".into(), expr)].into(),
                         variant: Some("Some".into()),

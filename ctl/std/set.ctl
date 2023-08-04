@@ -2,6 +2,7 @@ use core::hash::Hash;
 use core::ops::Eq;
 use std::map::Map;
 
+[lang(set)]
 pub struct Set<T: Hash + Eq<T> > {
     inner: [T: void],
 

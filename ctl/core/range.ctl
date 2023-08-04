@@ -10,6 +10,7 @@ pub union Bound<T> {
 }
 
 // ..bar
+[lang(range_to)]
 pub struct RangeTo<T>: RangeBounds<T> {
     pub end: T,
 
@@ -23,6 +24,7 @@ pub struct RangeTo<T>: RangeBounds<T> {
 }
 
 // ..=bar
+[lang(range_to_inclusive)]
 pub struct RangeToInclusive<T>: RangeBounds<T> {
     pub end: T,
 
@@ -36,6 +38,7 @@ pub struct RangeToInclusive<T>: RangeBounds<T> {
 }
 
 // foo..
+[lang(range_from)]
 pub struct RangeFrom<T>: RangeBounds<T> {
     pub start: T,
 
@@ -49,6 +52,7 @@ pub struct RangeFrom<T>: RangeBounds<T> {
 }
 
 // foo..bar
+[lang(range)]
 pub struct Range<T>: RangeBounds<T> {
     pub start: T,
     pub end: T,
@@ -63,6 +67,7 @@ pub struct Range<T>: RangeBounds<T> {
 }
 
 // foo..=bar
+[lang(range_inclusive)]
 pub struct RangeInclusive<T>: RangeBounds<T> {
     pub start: T,
     pub end: T,
@@ -77,6 +82,7 @@ pub struct RangeInclusive<T>: RangeBounds<T> {
 }
 
 // ..
+[lang(range_full)]
 pub struct RangeFull<T>: RangeBounds<T> {
     pub fn begin(this) Bound<T> {
         return Bound::Unbounded();
@@ -86,9 +92,3 @@ pub struct RangeFull<T>: RangeBounds<T> {
         return Bound::Unbounded();
     }
 }
-
-/*
-extend<T> RangeFull: RangeBounds<T> {
-
-}
- */

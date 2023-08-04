@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use concat_idents::concat_idents;
 use derive_more::{Constructor, Deref, DerefMut};
@@ -7,8 +7,8 @@ use indexmap::{map::Entry, IndexMap, IndexSet};
 
 use crate::{
     ast::{
-        BinaryOp, Expr, ExprData, Fn, Param, ParsedUserType, Path, Pattern, Stmt, StmtData, Struct,
-        TypeHint, UnaryOp,
+        Attribute, BinaryOp, Expr, ExprData, Fn, Param, ParsedUserType, Path, Pattern, Stmt,
+        StmtData, Struct, TypeHint, UnaryOp,
     },
     checked_ast::{Block, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt},
     lexer::{Located, Span},
@@ -802,6 +802,7 @@ pub struct Scopes {
     fns: Vec<Scoped<Function>>,
     types: Vec<Scoped<UserType>>,
     vars: Vec<Scoped<Variable>>,
+    lang_types: HashMap<String, UserTypeId>,
 }
 
 impl Scopes {
@@ -812,6 +813,7 @@ impl Scopes {
             fns: Vec::new(),
             types: Vec::new(),
             vars: Vec::new(),
+            lang_types: HashMap::new(),
         }
     }
 
@@ -995,34 +997,21 @@ impl Scopes {
             .next()
     }
 
-    pub fn find_type(&self, path: &[&str]) -> Option<UserTypeId> {
-        let mut scope = ScopeId(0);
-        for part in path[0..path.len() - 1].iter() {
-            scope = self[scope].children.get(*part)?.item;
-        }
-        self.find_user_type_in(path.last().unwrap(), scope)
-            .map(|t| *t)
-    }
-
-    pub fn find_core_option(&self) -> Option<UserTypeId> {
-        self.find_type(&["core", "opt", "Option"])
-    }
-
-    pub fn find_core_iter(&self) -> Option<UserTypeId> {
-        self.find_type(&["core", "iter", "Iter"])
+    pub fn get_option_id(&self) -> Option<UserTypeId> {
+        self.lang_types.get("option").copied()
     }
 
     pub fn as_option_inner<'a>(&self, ty: &'a TypeId) -> Option<&'a TypeId> {
-        self.find_core_option().and_then(|opt| {
+        self.get_option_id().and_then(|opt| {
             ty.as_user_type()
                 .filter(|ut| ut.id == opt)
                 .map(|ut| &ut.generics[0])
         })
     }
 
-    pub fn make_option(&self, ty: TypeId) -> Option<TypeId> {
+    pub fn make_lang_type(&self, name: &str, generics: Vec<TypeId>) -> Option<TypeId> {
         Some(TypeId::UserType(
-            GenericUserType::new(self.find_core_option()?, vec![ty]).into(),
+            GenericUserType::new(self.lang_types.get(name).copied()?, generics).into(),
         ))
     }
 
@@ -1202,6 +1191,26 @@ impl TypeChecker {
         })
     }
 
+    fn insert_type(
+        &mut self,
+        scopes: &mut Scopes,
+        ty: UserType,
+        public: bool,
+        attrs: &[Attribute],
+    ) -> UserTypeId {
+        let id = scopes.insert_user_type(ty, public);
+        if let Some(attr) = attrs.iter().find(|attr| attr.name.data == "lang") {
+            let Some(name) = attr.props.get(0) else {
+                self.error::<()>(Error::new("language item must have name", attr.name.span));
+                return id;
+            };
+
+            scopes.lang_types.insert(name.name.data.clone(), id);
+        }
+
+        id
+    }
+
     fn forward_declare(&mut self, stmt: &Stmt, scopes: &mut Scopes) {
         match &stmt.data {
             StmtData::Module { public, name, body } => {
@@ -1244,7 +1253,8 @@ impl TypeChecker {
                             body: None,
                         },
                     );
-                    let id = scopes.insert_user_type(
+                    let id = self.insert_type(
+                        scopes,
                         UserType {
                             name: base.name.data.clone(),
                             body_scope: ScopeId(0),
@@ -1256,6 +1266,7 @@ impl TypeChecker {
                             impls: Vec::new(),
                         },
                         base.public,
+                        &stmt.attrs,
                     );
                     scopes.enter(
                         Some(base.name.data.clone()),
@@ -1307,7 +1318,8 @@ impl TypeChecker {
                     base,
                     is_unsafe,
                 } => {
-                    let id = scopes.insert_user_type(
+                    let id = self.insert_type(
+                        scopes,
                         UserType {
                             name: base.name.data.clone(),
                             body_scope: ScopeId(0),
@@ -1319,6 +1331,7 @@ impl TypeChecker {
                             impls: Vec::new(),
                         },
                         base.public,
+                        &stmt.attrs,
                     );
                     scopes.enter(
                         Some(base.name.data.clone()),
@@ -1426,7 +1439,8 @@ impl TypeChecker {
                     functions,
                     is_unsafe: _,
                 } => {
-                    let id = scopes.insert_user_type(
+                    let id = self.insert_type(
+                        scopes,
                         UserType {
                             name: name.clone(),
                             body_scope: ScopeId(0),
@@ -1435,6 +1449,7 @@ impl TypeChecker {
                             impls: Vec::new(),
                         },
                         *public,
+                        &stmt.attrs,
                     );
                     scopes.enter(
                         Some(name.clone()),
@@ -1479,18 +1494,21 @@ impl TypeChecker {
                     functions,
                 } => {
                     let backing = TypeId::Uint(8);
-                    let id = scopes.insert_user_type(
+                    let impls = impls
+                        .iter()
+                        .flat_map(|path| self.resolve_impl(scopes, path, true))
+                        .collect();
+                    let id = self.insert_type(
+                        scopes,
                         UserType {
                             name: name.data.clone(),
                             body_scope: ScopeId(0),
                             data: UserTypeData::Enum(backing.clone()),
                             type_params: 0,
-                            impls: impls
-                                .iter()
-                                .flat_map(|path| self.resolve_impl(scopes, path, true))
-                                .collect(),
+                            impls,
                         },
                         *public,
+                        &stmt.attrs,
                     );
 
                     scopes.enter(
@@ -2091,7 +2109,7 @@ impl TypeChecker {
                 let (vec, ty) = if let Some(TypeId::Array(inner)) = target {
                     (None, inner.0.clone())
                 } else {
-                    let Some(vec) = scopes.find_type(&["std", "vec", "Vec"]) else {
+                    let Some(vec) = scopes.lang_types.get("vec").copied() else {
                         return self.error(Error::new("no symbol 'Vec' found in this module", expr.span));
                     };
 
@@ -2143,7 +2161,7 @@ impl TypeChecker {
                         Err(err) => self.error(err),
                     }
                 } else {
-                    let Some(vec) = scopes.find_type(&["std", "vec", "Vec"]) else {
+                    let Some(vec) = scopes.lang_types.get("vec").copied() else {
                         return self.error(Error::new("no symbol 'Vec' found in this module", expr.span));
                     };
 
@@ -2171,7 +2189,7 @@ impl TypeChecker {
             ExprData::Tuple(_) => todo!(),
             ExprData::Map(elements) => {
                 // TODO: make sure the key type respects the trait bounds
-                let Some(std_map) = scopes.find_type(&["std", "map", "Map"]) else {
+                let Some(std_map) = scopes.lang_types.get("map").copied() else {
                     return self.error(Error::new("no symbol 'Map' found in this module", expr.span));
                 };
 
@@ -2216,20 +2234,13 @@ impl TypeChecker {
                 (Some(start), Some(end)) => {
                     let start = self.check_expr(scopes, *start, None);
                     let end = type_check_bail!(self, scopes, *end, &start.ty);
+                    let item = if inclusive {
+                        "range_inclusive"
+                    } else {
+                        "range"
+                    };
                     CheckedExpr::new(
-                        TypeId::UserType(
-                            GenericUserType::new(
-                                scopes
-                                    .find_type(&[
-                                        "core",
-                                        "range",
-                                        if inclusive { "RangeInclusive" } else { "Range" },
-                                    ])
-                                    .unwrap(),
-                                vec![start.ty.clone()],
-                            )
-                            .into(),
-                        ),
+                        scopes.make_lang_type(item, vec![start.ty.clone()]).unwrap(),
                         CheckedExprData::Instance {
                             members: [("start".into(), start), ("end".into(), end)].into(),
                             variant: None,
@@ -2238,24 +2249,13 @@ impl TypeChecker {
                 }
                 (None, Some(end)) => {
                     let end = self.check_expr(scopes, *end, None);
+                    let item = if inclusive {
+                        "range_to_inclusive"
+                    } else {
+                        "range_to"
+                    };
                     CheckedExpr::new(
-                        TypeId::UserType(
-                            GenericUserType::new(
-                                scopes
-                                    .find_type(&[
-                                        "core",
-                                        "range",
-                                        if inclusive {
-                                            "RangeToInclusive"
-                                        } else {
-                                            "RangeTo"
-                                        },
-                                    ])
-                                    .unwrap(),
-                                vec![end.ty.clone()],
-                            )
-                            .into(),
-                        ),
+                        scopes.make_lang_type(item, vec![end.ty.clone()]).unwrap(),
                         CheckedExprData::Instance {
                             members: [("end".into(), end)].into(),
                             variant: None,
@@ -2265,13 +2265,9 @@ impl TypeChecker {
                 (Some(start), None) => {
                     let start = self.check_expr(scopes, *start, None);
                     CheckedExpr::new(
-                        TypeId::UserType(
-                            GenericUserType::new(
-                                scopes.find_type(&["core", "range", "RangeFrom"]).unwrap(),
-                                vec![start.ty.clone()],
-                            )
-                            .into(),
-                        ),
+                        scopes
+                            .make_lang_type("range_from", vec![start.ty.clone()])
+                            .unwrap(),
                         CheckedExprData::Instance {
                             members: [("start".into(), start)].into(),
                             variant: None,
@@ -2281,7 +2277,7 @@ impl TypeChecker {
                 (None, None) => todo!(),
             },
             ExprData::String(s) => CheckedExpr::new(
-                self.make_type(scopes, &["core", "string", "str"], &[], false),
+                scopes.make_lang_type("string", vec![]).unwrap(),
                 CheckedExprData::String(s),
             ),
             ExprData::ByteString(s) => CheckedExpr::new(
@@ -2295,7 +2291,9 @@ impl TypeChecker {
             ExprData::None => {
                 if let Some(inner) = target.and_then(|target| scopes.as_option_inner(target)) {
                     CheckedExpr::new(
-                        scopes.make_option(inner.clone()).unwrap(),
+                        scopes
+                            .make_lang_type("option", vec![inner.clone()])
+                            .unwrap(),
                         CheckedExprData::Instance {
                             members: [(
                                 "None".into(),
@@ -2485,7 +2483,7 @@ impl TypeChecker {
                 } else {
                     target
                         .and_then(|t| t.as_user_type())
-                        .filter(|t| t.id == scopes.find_core_option().unwrap())
+                        .filter(|t| t.id == scopes.get_option_id().unwrap())
                         .map(|target| &target.generics[0])
                 };
 
@@ -2505,7 +2503,7 @@ impl TypeChecker {
                     if matches!(&if_branch.data, CheckedExprData::Block(b) if
                         matches!(scopes[b.scope].kind, ScopeKind::Block(_, yields) if yields))
                     {
-                        out_type = scopes.make_option(out_type).unwrap();
+                        out_type = scopes.make_lang_type("option", vec![out_type]).unwrap();
                         if_branch = if_branch.coerce_to(&out_type, scopes);
 
                         Some(self.check_expr(
@@ -2542,7 +2540,7 @@ impl TypeChecker {
                 } else {
                     target
                         .and_then(|t| t.as_user_type())
-                        .filter(|t| t.id == scopes.find_core_option().unwrap())
+                        .filter(|t| t.id == scopes.get_option_id().unwrap())
                         .map(|target| &target.generics[0])
                 };
 
@@ -2558,7 +2556,11 @@ impl TypeChecker {
                 } else {
                     // TODO: coerce the break statements
                     breaks
-                        .then(|| scopes.make_option(target.clone().unwrap()).unwrap())
+                        .then(|| {
+                            scopes
+                                .make_lang_type("option", vec![target.clone().unwrap()])
+                                .unwrap()
+                        })
                         .unwrap_or(TypeId::Void)
                 };
 
@@ -2580,7 +2582,7 @@ impl TypeChecker {
             } => {
                 let span = iter.span;
                 let iter = self.check_expr(scopes, *iter, None);
-                let core_iter = scopes.find_core_iter().unwrap();
+                let iter_id = scopes.lang_types.get("iter").copied().unwrap();
                 if iter
                     .ty
                     .as_user_type()
@@ -2589,7 +2591,7 @@ impl TypeChecker {
                             .get_user_type(ut.id)
                             .impls
                             .iter()
-                            .find(|i| i.as_user_type().unwrap().id == core_iter)
+                            .find(|i| i.as_user_type().unwrap().id == iter_id)
                     })
                     .is_none()
                 {
@@ -3026,7 +3028,7 @@ impl TypeChecker {
                     let func = scopes.find_func_in(
                         "unwrap",
                         scopes
-                            .get_user_type(scopes.find_core_option().unwrap())
+                            .get_user_type(scopes.get_option_id().unwrap())
                             .body_scope,
                     );
 
@@ -3096,31 +3098,25 @@ impl TypeChecker {
             },
             Pattern::Option(mutable, binding) => (
                 binding.span,
-                self.resolve_path(
+                self.resolve_path_in(
                     scopes,
-                    &Path::Root(vec![
-                        ("core".into(), vec![]),
-                        ("opt".into(), vec![]),
-                        ("Option".into(), vec![]),
-                        ("Some".into(), vec![]),
-                    ]),
+                    &[("Some".into(), vec![])],
+                    scopes.get_user_type(scopes.get_option_id().unwrap()).body_scope,
                     binding.span,
                     false,
+                    scopes.current,
                 ),
                 Some((mutable, binding.data)),
             ),
             Pattern::Null(span) => (
                 span,
-                self.resolve_path(
+                self.resolve_path_in(
                     scopes,
-                    &Path::Root(vec![
-                        ("core".into(), vec![]),
-                        ("opt".into(), vec![]),
-                        ("Option".into(), vec![]),
-                        ("None".into(), vec![]),
-                    ]),
+                    &[("None".into(), vec![])],
+                    scopes.get_user_type(scopes.get_option_id().unwrap()).body_scope,
                     span,
                     false,
+                    scopes.current,
                 ),
                 None,
             ),
@@ -3672,33 +3668,37 @@ impl TypeChecker {
         source.coerce_to(target, scopes)
     }
 
-    fn make_type(
+    fn resolve_lang_type(
         &mut self,
         scopes: &Scopes,
-        path: &[&str],
+        name: &str,
         generics: &[TypeHint],
-        fwd: bool,
+        fwd: Option<&TypeHint>,
+        here: ScopeId,
     ) -> TypeId {
-        self.resolve_type(
-            scopes,
-            &TypeHint::Regular(Located::new(
-                Path::Root(
-                    path.iter()
-                        .enumerate()
-                        .map(|(i, p)| {
-                            (
-                                p.to_string(),
-                                (i + 1 == path.len())
-                                    .then(|| generics.into())
-                                    .unwrap_or(vec![]),
-                            )
-                        })
-                        .collect(),
-                ),
+        if let Some(ty) = scopes.lang_types.get(name).copied() {
+            TypeId::UserType(
+                GenericUserType::new(
+                    ty,
+                    self.resolve_generics_from(
+                        scopes,
+                        generics.len(),
+                        generics,
+                        Span::default(),
+                        fwd.is_some(),
+                        here,
+                    ),
+                )
+                .into(),
+            )
+        } else if let Some(hint) = fwd {
+            TypeId::Unknown(Some((hint.clone(), here).into()))
+        } else {
+            self.error(Error::new(
+                format!("missing language item: '{name}'"),
                 Span::default(),
-            )),
-            fwd,
-        )
+            ))
+        }
     }
 
     fn resolve_type(&mut self, scopes: &Scopes, ty: &TypeHint, fwd: bool) -> TypeId {
@@ -3708,31 +3708,31 @@ impl TypeChecker {
     fn resolve_type_from(
         &mut self,
         scopes: &Scopes,
-        ty: &TypeHint,
+        hint: &TypeHint,
         here: ScopeId,
         fwd: bool,
     ) -> TypeId {
-        match ty {
+        match hint {
             TypeHint::Regular(path) => {
                 return match self.resolve_path_from(scopes, &path.data, path.span, here, fwd) {
                     Some(ResolvedPath::UserType(ut)) => TypeId::UserType(ut.into()),
                     Some(ResolvedPath::Func(_)) => {
                         if fwd {
-                            TypeId::Unknown(Some((ty.clone(), here).into()))
+                            TypeId::Unknown(Some((hint.clone(), here).into()))
                         } else {
                             self.error(Error::new("expected type, got function", path.span))
                         }
                     }
                     Some(ResolvedPath::Var(_)) => {
                         if fwd {
-                            TypeId::Unknown(Some((ty.clone(), here).into()))
+                            TypeId::Unknown(Some((hint.clone(), here).into()))
                         } else {
                             self.error(Error::new("expected type, got variable", path.span))
                         }
                     }
                     Some(ResolvedPath::Module(_)) => {
                         if fwd {
-                            TypeId::Unknown(Some((ty.clone(), here).into()))
+                            TypeId::Unknown(Some((hint.clone(), here).into()))
                         } else {
                             self.error(Error::new("expected type, got module", path.span))
                         }
@@ -3762,7 +3762,7 @@ impl TypeChecker {
 
                         match res {
                             Some(res) => res,
-                            None if fwd => TypeId::Unknown(Some((ty.clone(), here).into())),
+                            None if fwd => TypeId::Unknown(Some((hint.clone(), here).into())),
                             None => self.error(err),
                         }
                     }
@@ -3792,27 +3792,36 @@ impl TypeChecker {
                 };
                 TypeId::Array((self.resolve_type_from(scopes, ty, here, fwd), n).into())
             }
-            TypeHint::Option(ty) => {
-                self.make_type(scopes, &["core", "opt", "Option"], &[(**ty).clone()], fwd)
-            }
-            TypeHint::Vec(ty) => {
-                self.make_type(scopes, &["std", "vec", "Vec"], &[(**ty).clone()], fwd)
-            }
-            TypeHint::Map(key, value) => self.make_type(
+            TypeHint::Option(ty) => self.resolve_lang_type(
                 scopes,
-                &["std", "map", "Map"],
+                "option",
+                &[(**ty).clone()],
+                fwd.then_some(hint),
+                here,
+            ),
+            TypeHint::Vec(ty) => {
+                self.resolve_lang_type(scopes, "vec", &[(**ty).clone()], fwd.then_some(hint), here)
+            }
+            TypeHint::Map(key, value) => self.resolve_lang_type(
+                scopes,
+                "map",
                 &[(**key).clone(), (**value).clone()],
-                fwd,
+                fwd.then_some(hint),
+                here,
             ),
             TypeHint::Set(ty) => {
-                self.make_type(scopes, &["std", "set", "Set"], &[(**ty).clone()], fwd)
+                self.resolve_lang_type(scopes, "set", &[(**ty).clone()], fwd.then_some(hint), here)
             }
             TypeHint::Slice(ty) => {
-                self.make_type(scopes, &["core", "span", "Span"], &[(**ty).clone()], fwd)
+                self.resolve_lang_type(scopes, "span", &[(**ty).clone()], fwd.then_some(hint), here)
             }
-            TypeHint::SliceMut(ty) => {
-                self.make_type(scopes, &["core", "span", "SpanMut"], &[(**ty).clone()], fwd)
-            }
+            TypeHint::SliceMut(ty) => self.resolve_lang_type(
+                scopes,
+                "span_mut",
+                &[(**ty).clone()],
+                fwd.then_some(hint),
+                here,
+            ),
             TypeHint::Tuple(_) => todo!(),
             TypeHint::Result(_, _) => todo!(),
             TypeHint::Error => TypeId::Unknown(None),

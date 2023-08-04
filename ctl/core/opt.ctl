@@ -1,16 +1,8 @@
-pub union Option<T> { // ?T
+[lang(option)]
+pub union Option<T> {
     Some(T),
     None,
 
-    // ?? operator
-    // pub fn unwrap_or(this, or: fn() T) T {
-    //     return match this {
-    //         ?value => *value,
-    //         null   => or(),
-    //     };
-    // }
-
-    // ! operator
     pub fn unwrap(this) T {
         match *this {
             ?inner => {
@@ -28,7 +20,7 @@ pub union Option<T> { // ?T
             null => or,
         };
     }
-    
+
     pub fn as_mut(mut this) ?*mut T {
         return match this {
             ?val => val,
