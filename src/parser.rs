@@ -639,6 +639,8 @@ impl<'a> Parser<'a> {
             Token::Float(value) => L::new(ExprData::Float(value.into()), token.span),
             Token::String(value) => L::new(ExprData::String(value.into()), token.span),
             Token::Char(value) => L::new(ExprData::Char(value), token.span),
+            Token::ByteString(value) => L::new(ExprData::ByteString(value.into()), token.span),
+            Token::ByteChar(value) => L::new(ExprData::ByteChar(value), token.span),
             Token::LParen => {
                 let expr = self.expression();
                 if self.advance_if_kind(Token::Comma).is_some() {

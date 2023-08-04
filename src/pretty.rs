@@ -237,6 +237,12 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
         ExprData::Char(value) => {
             println!("{tabs}Char = \'{value}\'");
         }
+        ExprData::ByteString(value) => {
+            println!("{tabs}ByteString = \'{value}\'");
+        }
+        ExprData::ByteChar(value) => {
+            println!("{tabs}ByteChar = \'{value}\'");
+        }
         ExprData::Path(_) => {
             println!("{tabs}Path[{}]", expr.span.text(src));
         }

@@ -106,8 +106,9 @@ pub enum Token<'a> {
     },
     Float(&'a str),
     String(Cow<'a, str>),
+    ByteString(Cow<'a, str>),
     Char(char),
-
+    ByteChar(u8),
     Eof,
 }
 
@@ -137,6 +138,8 @@ pub enum Error {
     UnterminatedStr,
     UnterminatedChar,
     CharTooLong,
+    BadByteChar,
+    BadByteStr,
     EmptyChar,
     UnterminatedComment,
     UnrecognizedChar,
@@ -150,6 +153,8 @@ impl Error {
             Error::UnterminatedChar => "unterminated char literal",
             Error::EmptyChar => "empty char literal",
             Error::CharTooLong => "char literal must only contain one character",
+            Error::BadByteStr => "invalid character in byte string",
+            Error::BadByteChar => "invalid character in byte literal (must be ascii)",
             Error::UnterminatedComment => "unterminated block comment",
             Error::UnrecognizedChar => "unexpected character",
             Error::InvalidEscape => "invalid UTF-8 escape sequence",
@@ -351,6 +356,8 @@ impl<'a> Lexer<'a> {
         };
 
         if !self.advance_if('\'') {
+            self.advance_while(|c| c != '\'');
+            self.advance();
             Err(Located::new(
                 Error::CharTooLong,
                 Span {
@@ -458,6 +465,37 @@ impl<'a> Lexer<'a> {
             x if x == THIS_PARAM => Token::This,
             x if x == THIS_TYPE => Token::ThisType,
             id => Token::Ident(id),
+        }
+    }
+
+    fn maybe_byte_string(&mut self, start: usize) -> Result<Token<'a>, Located<Error>> {
+        match self.peek() {
+            Some('\'') => {
+                self.advance();
+                let Token::Char(c) = self.char_literal()? else { unreachable!() };
+                match c.try_into() {
+                    Ok(c) => Ok(Token::ByteChar(c)),
+                    Err(_) => Err(Located::new(Error::BadByteChar, Span {
+                        loc: self.loc,
+                        len: 0,
+                        file: self.file,
+                    }))
+                }
+            },
+            Some('"') => {
+                self.advance();
+                let Token::String(s) = self.string_literal(start)? else { unreachable!() };
+                if s.chars().any(|c| !c.is_ascii()) {
+                    Err(Located::new(Error::BadByteStr, Span {
+                        loc: self.loc,
+                        len: 0,
+                        file: self.file,
+                    }))
+                } else {
+                    Ok(Token::ByteString(s))
+                }
+            },
+            _ => Ok(self.identifier(start)),
         }
     }
 
@@ -655,6 +693,10 @@ impl<'a> Lexer<'a> {
                 Err(err) => return Some(Err(err)),
             },
             '0'..='9' => self.numeric_literal(start.pos),
+            'b' => match self.maybe_byte_string(start.pos) {
+                Ok(token) => token,
+                Err(err) => return Some(Err(err)),
+            },
             ch if Self::is_identifier_first_char(ch) => self.identifier(start.pos),
             _ => {
                 return Some(Err(Located::new(

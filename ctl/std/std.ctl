@@ -11,7 +11,7 @@ pub fn print(s: str) {
 
 pub fn eprintln(s: str) {
     write(2, s.as_ptr() as *c_void, s.len());
-    write(2, &10u8 as *c_void, 1);
+    write(2, &b'\n' as *c_void, 1);
 }
 
 pub fn eprint(s: str) {

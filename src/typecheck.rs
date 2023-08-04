@@ -2272,7 +2272,14 @@ impl TypeChecker {
                 self.make_type(scopes, &["core", "string", "str"], &[], false),
                 CheckedExprData::String(s),
             ),
+            ExprData::ByteString(s) => CheckedExpr::new(
+                TypeId::Array((TypeId::Uint(8), s.len()).into()),
+                CheckedExprData::ByteString(s),
+            ),
             ExprData::Char(s) => CheckedExpr::new(TypeId::Char, CheckedExprData::Char(s)),
+            ExprData::ByteChar(c) => {
+                CheckedExpr::new(TypeId::Uint(8), CheckedExprData::Unsigned(c as u128))
+            }
             ExprData::None => {
                 if let Some(inner) = target.and_then(|target| scopes.as_option_inner(target)) {
                     CheckedExpr::new(
@@ -3862,19 +3869,34 @@ impl TypeChecker {
                             .insert(name, Vis { item: id, public });
                     } else {
                         for (name, id) in scopes[id].children.clone() {
-                            scopes.current().children.insert(name, Vis { item: id.item, public });
+                            scopes.current().children.insert(
+                                name,
+                                Vis {
+                                    item: id.item,
+                                    public,
+                                },
+                            );
                         }
 
                         for func in scopes[id].fns.clone() {
-                            scopes.current().fns.insert(Vis { item: func.item, public });
+                            scopes.current().fns.insert(Vis {
+                                item: func.item,
+                                public,
+                            });
                         }
 
                         for ty in scopes[id].types.clone() {
-                            scopes.current().types.insert(Vis { item: ty.item, public });
+                            scopes.current().types.insert(Vis {
+                                item: ty.item,
+                                public,
+                            });
                         }
 
                         for var in scopes[id].vars.clone() {
-                            scopes.current().vars.insert(Vis { item: var.item, public });
+                            scopes.current().vars.insert(Vis {
+                                item: var.item,
+                                public,
+                            });
                         }
                     }
                 }

@@ -81,6 +81,8 @@ pub enum ExprData {
     Float(String),
     String(String),
     Char(char),
+    ByteString(String),
+    ByteChar(u8),
     Path(Path),
     Void,
     None,

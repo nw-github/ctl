@@ -6,7 +6,7 @@ pub fn panic(s: str) never {
     let prefix = "fatal error: ";
     write(2, prefix.as_ptr() as *c_void, prefix.len());
     write(2, s.as_ptr() as *c_void, s.len());
-    write(2, &10u8 as *c_void, 1);
+    write(2, &b'\n' as *c_void, 1);
 
     _Exit(101);
 }

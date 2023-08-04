@@ -60,6 +60,7 @@ pub enum CheckedExprData {
     Unsigned(u128),
     Float(String),
     String(String),
+    ByteString(String),
     Char(char),
     Void,
     Symbol(Symbol),

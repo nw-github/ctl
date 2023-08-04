@@ -883,6 +883,13 @@ impl Codegen {
                 self.buffer
                     .emit(format!("\", .len = (usize){} }} }}", value.len()));
             }
+            CheckedExprData::ByteString(value) => {
+                self.buffer.emit("(uint8_t const*)\"");
+                for byte in value.as_bytes() {
+                    self.buffer.emit(format!("\\x{byte:x}"));
+                }
+                self.buffer.emit("\"");
+            }
             CheckedExprData::Char(value) => {
                 self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(format!("0x{:x}", value as u32));
