@@ -803,6 +803,7 @@ pub struct Scopes {
     types: Vec<Scoped<UserType>>,
     vars: Vec<Scoped<Variable>>,
     lang_types: HashMap<String, UserTypeId>,
+    intrinsics: HashMap<FunctionId, String>,
 }
 
 impl Scopes {
@@ -814,6 +815,7 @@ impl Scopes {
             types: Vec::new(),
             vars: Vec::new(),
             lang_types: HashMap::new(),
+            intrinsics: HashMap::new(),
         }
     }
 
@@ -1013,6 +1015,10 @@ impl Scopes {
         Some(TypeId::UserType(
             GenericUserType::new(self.lang_types.get(name).copied()?, generics).into(),
         ))
+    }
+
+    pub fn intrinsic_name(&self, id: FunctionId) -> Option<&str> {
+        self.intrinsics.get(&id).map(|s| s.as_str())
     }
 
     fn can_access_privates(&self, here: ScopeId, scope: ScopeId) -> bool {
@@ -1252,6 +1258,7 @@ impl TypeChecker {
                             ret: Self::typehint_for_struct(base, stmt.span),
                             body: None,
                         },
+                        &stmt.attrs,
                     );
                     let id = self.insert_type(
                         scopes,
@@ -1308,7 +1315,7 @@ impl TypeChecker {
                             }
 
                             for f in base.functions.iter() {
-                                self.forward_declare_fn(scopes, false, f);
+                                self.forward_declare_fn(scopes, false, f, &[]);
                             }
                         },
                     )
@@ -1422,11 +1429,12 @@ impl TypeChecker {
                                         ret: Self::typehint_for_struct(base, stmt.span),
                                         body: None,
                                     },
+                                    &[],
                                 );
                             }
 
                             for f in base.functions.iter() {
-                                self.forward_declare_fn(scopes, false, f);
+                                self.forward_declare_fn(scopes, false, f, &[]);
                             }
                         },
                     )
@@ -1481,7 +1489,7 @@ impl TypeChecker {
                             }
 
                             for f in functions.iter() {
-                                self.forward_declare_fn(scopes, false, f);
+                                self.forward_declare_fn(scopes, false, f, &[]);
                             }
                         },
                     )
@@ -1537,13 +1545,13 @@ impl TypeChecker {
                             }
 
                             for f in functions.iter() {
-                                self.forward_declare_fn(scopes, false, f);
+                                self.forward_declare_fn(scopes, false, f, &[]);
                             }
                         },
                     );
                 }
             },
-            StmtData::Fn(f) => _ = self.forward_declare_fn(scopes, false, f),
+            StmtData::Fn(f) => _ = self.forward_declare_fn(scopes, false, f, &stmt.attrs),
             StmtData::Static {
                 public, name, ty, ..
             } => {
@@ -1570,7 +1578,13 @@ impl TypeChecker {
         }
     }
 
-    fn forward_declare_fn(&mut self, scopes: &mut Scopes, constructor: bool, f: &Fn) -> FunctionId {
+    fn forward_declare_fn(
+        &mut self,
+        scopes: &mut Scopes,
+        constructor: bool,
+        f: &Fn,
+        attrs: &[Attribute],
+    ) -> FunctionId {
         if f.variadic && !f.is_extern {
             self.error(Error::new(
                 "only extern functions may be variadic",
@@ -1594,6 +1608,26 @@ impl TypeChecker {
             f.public,
             scopes.current_id(),
         );
+
+        if let Some(attr) = attrs.iter().find(|attr| attr.name.data == "intrinsic") {
+            if let Some(attr) = attr.props.get(0) {
+                match attr.name.data.as_str() {
+                    "size_of" => {
+                        scopes.intrinsics.insert(id, attr.name.data.clone());
+                    }
+                    _ => self.error(Error::new(
+                        format!("intrinsic '{}' is not supported", attr.name.data),
+                        attr.name.span,
+                    )),
+                }
+            } else {
+                self.error(Error::new(
+                    "intrinsic function must have name",
+                    attr.name.span,
+                ))
+            }
+        }
+
         scopes.enter(
             Some(f.name.data.clone()),
             ScopeKind::Function(id),
@@ -3101,7 +3135,9 @@ impl TypeChecker {
                 self.resolve_path_in(
                     scopes,
                     &[("Some".into(), vec![])],
-                    scopes.get_user_type(scopes.get_option_id().unwrap()).body_scope,
+                    scopes
+                        .get_user_type(scopes.get_option_id().unwrap())
+                        .body_scope,
                     binding.span,
                     false,
                     scopes.current,
@@ -3113,7 +3149,9 @@ impl TypeChecker {
                 self.resolve_path_in(
                     scopes,
                     &[("None".into(), vec![])],
-                    scopes.get_user_type(scopes.get_option_id().unwrap()).body_scope,
+                    scopes
+                        .get_user_type(scopes.get_option_id().unwrap())
+                        .body_scope,
                     span,
                     false,
                     scopes.current,

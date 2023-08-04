@@ -1,4 +1,4 @@
-// TODO: we need a more sophisticated system for intrinsics
+[intrinsic(size_of)]
 pub extern fn size_of<T>() usize;
 
 pub fn size_of_val<T>(_: *T) usize {
@@ -20,6 +20,12 @@ pub fn move<T>(kw dst: *mut T, kw src: *T, kw num: usize) {
     memmove(dst as *mut c_void, src as *c_void, num * size_of::<T>());
 }
 
+pub fn compare<T>(lhs: *T, rhs: *T, num: usize) bool {
+    extern fn memcmp(dst: *c_void, src: *c_void, len: usize) c_int;
+
+    return memcmp(lhs as *c_void, rhs as *c_void, num * size_of::<T>()) == 0;
+}
+
 pub fn swap<T>(lhs: *mut T, rhs: *mut T) {
     let tmp = *lhs;
     *lhs = *rhs;
@@ -30,12 +36,6 @@ pub fn replace<T>(ptr: *mut T, val: T) T {
     let old = *ptr;
     *ptr = val;
     return old;
-}
-
-pub fn compare<T>(lhs: *T, rhs: *T, num: usize) bool {
-    extern fn memcmp(dst: *c_void, src: *c_void, len: usize) c_int;
-
-    return memcmp(lhs as *c_void, rhs as *c_void, num * size_of::<T>()) == 0;
 }
 
 pub unsafe fn transmute<In, Out>(i: In) Out {

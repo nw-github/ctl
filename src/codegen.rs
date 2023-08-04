@@ -678,16 +678,8 @@ impl Codegen {
                     state.fill_generics(scopes, ty);
                 }
 
-                if scopes.scopes()[0]
-                    .children
-                    .get("core")
-                    .and_then(|&scope| scopes[*scope].children.get("mem"))
-                    .and_then(|&scope| scopes.find_func_in("size_of", *scope))
-                    .filter(|&id| *id == func.id)
-                    .is_some()
-                {
-                    self.buffer.emit("(usize)sizeof");
-                    self.emit_cast(scopes, &func.generics[0]);
+                if let Some(name) = scopes.intrinsic_name(func.id) {
+                    self.gen_intrinsic(scopes, name, &func);
                     return;
                 }
 
@@ -1158,6 +1150,16 @@ impl Codegen {
                 self.buffer.emit(")");
             }
             CheckedExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
+        }
+    }
+
+    fn gen_intrinsic(&mut self, scopes: &Scopes, name: &str, func: &GenericFunc) {
+        match name {
+            "size_of" => {
+                self.buffer.emit("(usize)sizeof");
+                self.emit_cast(scopes, &func.generics[0]);
+            }
+            _ => unreachable!(),
         }
     }
 
