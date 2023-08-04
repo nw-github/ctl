@@ -189,14 +189,27 @@ impl<'a> Parser<'a> {
             }
 
             let sup = self.advance_if_kind(Token::Super).is_some();
-            let mut components = (!sup)
-                .then(|| vec![(self.expect_id("expected path"), vec![])])
-                .unwrap_or_default();
-            let span = self.advance_until(Token::Semicolon, token.span, |this| {
-                this.expect_kind(Token::ScopeRes, "expected '::'");
-                components.push((this.expect_id("expected path component"), vec![]));
-            });
+            if sup {
+                self.expect_kind(Token::ScopeRes, "expected '::'");
+            }
 
+            let mut components = vec![];
+            let mut all = false;
+            loop {
+                if (sup || !components.is_empty())
+                    && self.advance_if_kind(Token::Asterisk).is_some()
+                {
+                    all = true;
+                    break;
+                }
+
+                components.push((self.expect_id("expected path component"), vec![]));
+                if self.advance_if_kind(Token::ScopeRes).is_none() {
+                    break;
+                }
+            }
+
+            let semi = self.expect_kind(Token::Semicolon, "expected ';'");
             Some(Stmt {
                 data: StmtData::Use {
                     public: public.is_some(),
@@ -205,8 +218,9 @@ impl<'a> Parser<'a> {
                     } else {
                         Path::Root(components)
                     },
+                    all,
                 },
-                span,
+                span: Span::combine(token.span, semi.span),
                 attrs: std::mem::take(&mut self.attrs),
             })
         } else if let Some(token) = self.advance_if_kind(Token::Static) {

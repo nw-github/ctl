@@ -1027,7 +1027,9 @@ impl Scopes {
     }
 
     fn can_access_privates(&self, here: ScopeId, scope: ScopeId) -> bool {
-        let target = self.module_of(scope).expect("root scope passed to can_access_privates()");
+        let target = self
+            .module_of(scope)
+            .expect("root scope passed to can_access_privates()");
         self.iter_from(here).any(|(id, _)| id == target)
     }
 
@@ -1533,8 +1535,8 @@ impl TypeChecker {
                     *public,
                 );
             }
-            StmtData::Use { path, public } => {
-                self.resolve_use(scopes, *public, path, stmt.span, true)
+            StmtData::Use { path, public, all } => {
+                self.resolve_use(scopes, *public, path, *all, stmt.span, true)
             }
             _ => {}
         }
@@ -1797,8 +1799,8 @@ impl TypeChecker {
                 var.ty = ty;
                 var.value = Some(value);
             }
-            StmtData::Use { public, path } => {
-                self.resolve_use(scopes, public, &path, stmt.span, false)
+            StmtData::Use { public, path, all } => {
+                self.resolve_use(scopes, public, &path, all, stmt.span, false)
             }
             StmtData::Error => return CheckedStmt::Error,
         }
@@ -3800,32 +3802,81 @@ impl TypeChecker {
         scopes: &mut Scopes,
         public: bool,
         path: &Path,
+        all: bool,
         span: Span,
         fwd: bool,
     ) {
         if let Some(path) = self.resolve_path(scopes, path, span, fwd) {
             match path {
                 ResolvedPath::UserType(ut) => {
-                    scopes.current().types.insert(Vis {
-                        item: ut.id,
-                        public,
-                    });
+                    if !all {
+                        scopes.current().types.insert(Vis {
+                            item: ut.id,
+                            public,
+                        });
+                    } else if !fwd {
+                        self.error(Error::new(
+                            format!(
+                                "cannot import all items of type '{}'",
+                                scopes.get_user_type(ut.id).name
+                            ),
+                            span,
+                        ))
+                    }
                 }
                 ResolvedPath::Func(func) => {
-                    scopes.current().fns.insert(Vis {
-                        item: func.id,
-                        public,
-                    });
+                    if !all {
+                        scopes.current().fns.insert(Vis {
+                            item: func.id,
+                            public,
+                        });
+                    } else if !fwd {
+                        self.error(Error::new(
+                            format!(
+                                "cannot import all items of function '{}'",
+                                scopes.get_func(func.id).name
+                            ),
+                            span,
+                        ))
+                    }
                 }
                 ResolvedPath::Var(id) => {
-                    scopes.current().vars.insert(Vis { item: id, public });
+                    if !all {
+                        scopes.current().vars.insert(Vis { item: id, public });
+                    } else if !fwd {
+                        self.error(Error::new(
+                            format!(
+                                "cannot import all items of variable '{}'",
+                                scopes.get_var(id).name
+                            ),
+                            span,
+                        ))
+                    }
                 }
                 ResolvedPath::Module(id) => {
-                    let name = scopes[id].name.as_ref().unwrap().clone();
-                    scopes
-                        .current()
-                        .children
-                        .insert(name, Vis { item: id, public });
+                    if !all {
+                        let name = scopes[id].name.as_ref().unwrap().clone();
+                        scopes
+                            .current()
+                            .children
+                            .insert(name, Vis { item: id, public });
+                    } else {
+                        for (name, id) in scopes[id].children.clone() {
+                            scopes.current().children.insert(name, Vis { item: id.item, public });
+                        }
+
+                        for func in scopes[id].fns.clone() {
+                            scopes.current().fns.insert(Vis { item: func.item, public });
+                        }
+
+                        for ty in scopes[id].types.clone() {
+                            scopes.current().types.insert(Vis { item: ty.item, public });
+                        }
+
+                        for var in scopes[id].vars.clone() {
+                            scopes.current().vars.insert(Vis { item: var.item, public });
+                        }
+                    }
                 }
                 ResolvedPath::None(err) => {
                     if !fwd {
@@ -4113,6 +4164,7 @@ impl TypeChecker {
                 ("string".into(), vec![]),
                 ("str".into(), vec![]),
             ]),
+            false,
             Span::default(),
             fwd,
         );
@@ -4120,6 +4172,7 @@ impl TypeChecker {
             scopes,
             false,
             &Path::Root(vec![("core".into(), vec![]), ("panic".into(), vec![])]),
+            false,
             Span::default(),
             fwd,
         );

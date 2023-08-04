@@ -15,6 +15,7 @@ pub enum StmtData {
     Use {
         public: bool,
         path: Path,
+        all: bool,
     },
     Let {
         name: String,
