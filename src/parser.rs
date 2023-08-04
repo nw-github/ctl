@@ -98,12 +98,13 @@ impl<'a> Parser<'a> {
             is_unsafe.is_some(),
             false,
         ) {
+            let attrs = std::mem::take(&mut self.attrs);
             if is_extern.is_some() {
                 let semi = self.expect_kind(Token::Semicolon, "expected ';'");
                 Some(Stmt {
                     data: StmtData::Fn(proto),
                     span: Span::combine(public.map_or(span, |p| p.span), semi.span),
-                    attrs: std::mem::take(&mut self.attrs),
+                    attrs,
                 })
             } else {
                 let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
@@ -112,7 +113,7 @@ impl<'a> Parser<'a> {
                 Some(Stmt {
                     data: StmtData::Fn(proto),
                     span: Span::combine(public.map_or(span, |p| p.span), body_span),
-                    attrs: std::mem::take(&mut self.attrs),
+                    attrs,
                 })
             }
         } else if let Some(token) = self.advance_if_kind(Token::Struct) {
@@ -154,6 +155,7 @@ impl<'a> Parser<'a> {
 
             Some(self.parse_enum(public.is_some(), token.span))
         } else if let Some(token) = self.advance_if_kind(Token::Mod) {
+            let attrs = std::mem::take(&mut self.attrs);
             if let Some(token) = is_unsafe {
                 self.errors
                     .push(Error::new("unsafe is not valid here", token.span));
@@ -175,7 +177,7 @@ impl<'a> Parser<'a> {
                     body,
                 },
                 span,
-                attrs: std::mem::take(&mut self.attrs),
+                attrs,
             })
         } else if let Some(token) = self.advance_if_kind(Token::Use) {
             if let Some(token) = is_unsafe {
@@ -1118,6 +1120,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_struct(&mut self, public: bool, span: Span) -> Stmt {
+        let attrs = std::mem::take(&mut self.attrs);
         let name = self.expect_located_id("expected name");
         let type_params = self.parse_generic_params();
         let impls = self.parse_trait_impl();
@@ -1167,11 +1170,12 @@ impl<'a> Parser<'a> {
                 impls,
                 functions,
             })),
-            attrs: std::mem::take(&mut self.attrs),
+            attrs,
         }
     }
 
     fn parse_union(&mut self, public: bool, span: Span, is_unsafe: bool) -> Stmt {
+        let attrs = std::mem::take(&mut self.attrs);
         let tag = self.advance_if_kind(Token::LParen).map(|_| {
             let tag = self.type_path();
             self.expect_kind(Token::RParen, "expected ')'");
@@ -1253,11 +1257,12 @@ impl<'a> Parser<'a> {
                 },
                 is_unsafe,
             }),
-            attrs: std::mem::take(&mut self.attrs),
+            attrs,
         }
     }
 
     fn parse_trait(&mut self, public: bool, span: Span, is_unsafe: bool) -> Stmt {
+        let attrs = std::mem::take(&mut self.attrs);
         let name = self.expect_id("expected name");
         let type_params = self.parse_generic_params();
         let impls = self.parse_trait_impl();
@@ -1282,11 +1287,12 @@ impl<'a> Parser<'a> {
                 impls,
                 functions,
             }),
-            attrs: std::mem::take(&mut self.attrs),
+            attrs,
         }
     }
 
     fn parse_enum(&mut self, public: bool, span: Span) -> Stmt {
+        let attrs = std::mem::take(&mut self.attrs);
         let name = self.expect_located_id("expected name");
         let impls = self.parse_trait_impl();
         self.expect_kind(Token::LCurly, "expected '{'");
@@ -1329,7 +1335,7 @@ impl<'a> Parser<'a> {
                 variants,
                 functions,
             }),
-            attrs: std::mem::take(&mut self.attrs),
+            attrs,
         }
     }
 
