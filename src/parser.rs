@@ -457,7 +457,7 @@ impl<'a> Parser<'a> {
         expr
     }
 
-    binary!(coalesce, Token::NoneCoalesce | Token::ErrCoalesce, or);
+    binary!(coalesce, Token::NoneCoalesce, or);
     binary!(or, Token::Or, xor);
     binary!(xor, Token::Caret, and);
     binary!(and, Token::Ampersand, shift);
@@ -1052,7 +1052,7 @@ impl<'a> Parser<'a> {
             return TypeHint::Option(TypeHint::Option(self.parse_type().into()).into());
         }
 
-        let ty = if self.advance_if_kind(Token::LBrace).is_some() {
+        if self.advance_if_kind(Token::LBrace).is_some() {
             if self.advance_if_kind(Token::Mut).is_some() {
                 let inner = self.parse_type();
                 self.expect_kind(Token::Range, "expected '..'");
@@ -1094,12 +1094,6 @@ impl<'a> Parser<'a> {
             TypeHint::Regular(L::new(Path::from(THIS_TYPE.to_owned()), this.span))
         } else {
             TypeHint::Regular(self.type_path())
-        };
-
-        if self.advance_if_kind(Token::Exclamation).is_some() {
-            TypeHint::Result(ty.into(), self.parse_type().into())
-        } else {
-            ty
         }
     }
 

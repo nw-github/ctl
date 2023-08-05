@@ -208,8 +208,6 @@ pub enum BinaryOp {
     Shr,
     #[display(fmt = "??")]
     NoneCoalesce,
-    #[display(fmt = "!!")]
-    ErrCoalesce,
     #[display(fmt = ">")]
     Gt,
     #[display(fmt = ">=")]
@@ -242,7 +240,6 @@ impl TryFrom<Token<'_>> for BinaryOp {
             Token::Caret | Token::XorAssign => Ok(BinaryOp::Xor),
             Token::Or | Token::OrAssign => Ok(BinaryOp::Or),
             Token::NoneCoalesce | Token::NoneCoalesceAssign => Ok(BinaryOp::NoneCoalesce),
-            Token::ErrCoalesce => Ok(BinaryOp::ErrCoalesce),
             Token::RAngle => Ok(BinaryOp::Gt),
             Token::GtEqual => Ok(BinaryOp::GtEqual),
             Token::LAngle => Ok(BinaryOp::Lt),
@@ -314,7 +311,6 @@ pub enum TypeHint {
     Set(Box<TypeHint>),
     Map(Box<TypeHint>, Box<TypeHint>),
     Option(Box<TypeHint>),
-    Result(Box<TypeHint>, Box<TypeHint>),
     Ptr(Box<TypeHint>),
     MutPtr(Box<TypeHint>),
     Void,

@@ -263,7 +263,6 @@ impl TypeId {
                 matches!(self, TypeId::Bool)
             }
             BinaryOp::NoneCoalesce => todo!(),
-            BinaryOp::ErrCoalesce => todo!(),
         }
     }
 
@@ -2116,7 +2115,6 @@ impl TypeChecker {
                     CheckedExpr::new(
                         match op {
                             BinaryOp::NoneCoalesce => todo!(),
-                            BinaryOp::ErrCoalesce => todo!(),
                             BinaryOp::Gt
                             | BinaryOp::GtEqual
                             | BinaryOp::Lt
@@ -3861,7 +3859,6 @@ impl TypeChecker {
                 here,
             ),
             TypeHint::Tuple(_) => todo!(),
-            TypeHint::Result(_, _) => todo!(),
             TypeHint::Error => TypeId::Unknown(None),
         }
     }
