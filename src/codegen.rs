@@ -7,8 +7,8 @@ use crate::{
     checked_ast::{CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt},
     lexer::Span,
     typecheck::{
-        CheckedParam, GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId,
-        UserTypeData, VariableId,
+        GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId, UserTypeData,
+        VariableId,
     },
     Error,
 };
@@ -372,31 +372,31 @@ impl Buffer {
 }
 
 macro_rules! tmpbuf {
-    ($self: expr, $body: expr) => {{
+    ($self: expr, $state: expr, |$tmp: ident| $body: block) => {{
         let buffer = std::mem::take(&mut $self.buffer);
-
-        $body;
-
-        std::mem::replace(&mut $self.buffer, buffer)
+        let result = {
+            let $tmp = $state.tmpvar();
+            $body
+        };
+        $self
+            .temporaries
+            .emit(std::mem::replace(&mut $self.buffer, buffer).0);
+        result
     }};
 }
 
 macro_rules! enter_block {
-    ($self: expr, $state: expr, $scopes: expr, $ty: expr, $body: expr) => {{
+    ($self: expr, $state: expr, $scopes: expr, $ty: expr, |$tmp: ident| $body: block) => {{
         let ty = $ty;
         let old = std::mem::replace(&mut $self.cur_block, $state.tmpvar());
-        let written = tmpbuf! {
-            $self,
-            {
-                if !ty.is_void_like() {
-                    $self.emit_type($scopes, ty);
-                    $self.buffer.emit(format!(" {};", $self.cur_block));
-                }
-                $body;
+        tmpbuf!($self, $state, |$tmp| {
+            if !ty.is_void_like() {
+                $self.emit_type($scopes, ty);
+                $self.buffer.emit(format!(" {};", $self.cur_block));
             }
-        };
+            $body;
+        });
 
-        $self.temporaries.emit(written.0);
         let var = std::mem::replace(&mut $self.cur_block, old);
         if !ty.is_void_like() {
             $self.buffer.emit(var);
@@ -407,12 +407,13 @@ macro_rules! enter_block {
 macro_rules! stmt {
     ($self: expr, $body: expr) => {
         let old = std::mem::take(&mut $self.temporaries);
-        let written = tmpbuf! { $self, $body };
-
+        let buffer = std::mem::take(&mut $self.buffer);
+        $body;
+        let written = std::mem::replace(&mut $self.buffer, buffer).0;
         $self
             .buffer
             .emit(std::mem::replace(&mut $self.temporaries, old).0);
-        $self.buffer.emit(written.0);
+        $self.buffer.emit(written);
     };
 }
 
@@ -533,35 +534,36 @@ impl Codegen {
                 }
             }
             CheckedStmt::Expr(mut expr) => {
-                stmt! {
-                    self,
-                    {
-                        state.fill_generics(scopes, &mut expr.ty);
-                        self.gen_expr_inner(scopes, expr, state);
-                        self.buffer.emit(";");
-                    }
-                }
+                stmt!(self, {
+                    state.fill_generics(scopes, &mut expr.ty);
+                    self.gen_expr_inner(scopes, expr, state);
+                    self.buffer.emit(";");
+                });
             }
             CheckedStmt::Let(id) => {
-                stmt! {
-                    self,
+                stmt!(self, {
+                    let var = scopes.get_var(id);
+                    match self
+                        .buffer
+                        .emit_local_decl(scopes, id, state, &mut self.structs)
                     {
-                        let var = scopes.get_var(id);
-                        match self.buffer.emit_local_decl(scopes, id, state, &mut self.structs) {
-                            Ok(ty) => if let Some(mut expr) = var.value.clone() {
+                        Ok(ty) => {
+                            if let Some(mut expr) = var.value.clone() {
                                 expr.ty = ty;
                                 self.buffer.emit(" = ");
                                 self.gen_expr_inner(scopes, expr, state);
                             }
-                            Err(ty) => if let Some(mut expr) = var.value.clone() {
+                        }
+                        Err(ty) => {
+                            if let Some(mut expr) = var.value.clone() {
                                 expr.ty = ty;
                                 self.gen_expr_inner(scopes, expr, state);
                             }
                         }
-
-                        self.buffer.emit(";");
                     }
-                }
+
+                    self.buffer.emit(";");
+                });
             }
             CheckedStmt::None => {}
             CheckedStmt::Error => {
@@ -710,144 +712,134 @@ impl Codegen {
             CheckedExprData::Array(_) => todo!(),
             CheckedExprData::ArrayWithInit { .. } => todo!(),
             CheckedExprData::Vec(exprs) => {
-                let ut = (**expr.ty.as_user_type().unwrap()).clone();
+                let tmp = tmpbuf!(self, state, |tmp| {
+                    let arr = state.tmpvar();
+                    let len = exprs.len();
+                    let ut = (**expr.ty.as_user_type().unwrap()).clone();
+                    let inner = &ut.generics[0];
 
-                let inner = &ut.generics[0];
-                let tmp = state.tmpvar();
-                let len = exprs.len();
-                let written = tmpbuf! {
-                    self,
-                    {
-                        let arr = state.tmpvar();
-
-                        self.emit_type(scopes, inner);
-                        self.buffer.emit(format!(" {arr}[{len}] = {{"));
-                        for expr in exprs {
-                            self.gen_expr(scopes, expr, state);
-                            self.buffer.emit(",");
-                        }
-                        self.buffer.emit("};");
-
-                        let next_state = State::new(
-                            GenericFunc::new(
-                                *scopes
-                                    .find_func_in("with_capacity", scopes.get_user_type(ut.id).body_scope)
-                                    .unwrap(),
-                                vec![inner.clone()],
-                            ),
-                            state.inst.clone(),
-                        );
-
-                        self.emit_type(scopes, &expr.ty);
-                        self.buffer.emit(format!(" {tmp} = "));
-                        self.buffer.emit_fn_name(scopes, &next_state);
-                        self.buffer.emit(
-                            format!(
-                                concat!(
-                                    "({len});",
-                                    "__builtin_memcpy((void *){tmp}.ptr.addr, (const void *){arr}, {len} * sizeof {arr}[0]);",
-                                    "{tmp}.len = {len};"
-                                ),
-                                len = len,
-                                tmp = tmp,
-                                arr = arr,
-                            )
-                        );
-                        self.funcs.insert(next_state);
+                    self.emit_type(scopes, inner);
+                    self.buffer.emit(format!(" {arr}[{len}] = {{"));
+                    for expr in exprs {
+                        self.gen_expr(scopes, expr, state);
+                        self.buffer.emit(",");
                     }
-                };
+                    self.buffer.emit("};");
 
-                self.temporaries.emit(written.0);
+                    let next_state = State::new(
+                        GenericFunc::new(
+                            *scopes
+                                .find_func_in(
+                                    "with_capacity",
+                                    scopes.get_user_type(ut.id).body_scope,
+                                )
+                                .unwrap(),
+                            vec![inner.clone()],
+                        ),
+                        state.inst.clone(),
+                    );
+
+                    self.emit_type(scopes, &expr.ty);
+                    self.buffer.emit(format!(" {tmp} = "));
+                    self.buffer.emit_fn_name(scopes, &next_state);
+                    self.buffer.emit(
+                        format!(
+                            concat!(
+                                "({len});",
+                                "__builtin_memcpy((void *){tmp}.ptr.addr, (const void *){arr}, {len} * sizeof {arr}[0]);",
+                                "{tmp}.len = {len};"
+                            ),
+                            len = len,
+                            tmp = tmp,
+                            arr = arr,
+                        )
+                    );
+                    self.funcs.insert(next_state);
+                    tmp
+                });
                 self.buffer.emit(tmp);
             }
             CheckedExprData::VecWithInit { init, count } => {
-                let ut = (**expr.ty.as_user_type().unwrap()).clone();
+                let tmp = tmpbuf!(self, state, |tmp| {
+                    let ut = (**expr.ty.as_user_type().unwrap()).clone();
+                    let inner = &ut.generics[0];
+                    let len = state.tmpvar();
+                    self.emit_type(scopes, &count.ty);
+                    self.buffer.emit(format!(" {len} = "));
+                    self.gen_expr(scopes, *count, state);
+                    self.buffer.emit(";");
 
-                let inner = &ut.generics[0];
-                let tmp = state.tmpvar();
-                let written = tmpbuf! {
-                    self,
-                    {
-                        let len = state.tmpvar();
-                        self.emit_type(scopes, &count.ty);
-                        self.buffer.emit(format!(" {len} = "));
-                        self.gen_expr(scopes, *count, state);
-                        self.buffer.emit(";");
+                    let next_state = State::new(
+                        GenericFunc::new(
+                            *scopes
+                                .find_func_in(
+                                    "with_capacity",
+                                    scopes.get_user_type(ut.id).body_scope,
+                                )
+                                .unwrap(),
+                            vec![inner.clone()],
+                        ),
+                        state.inst.clone(),
+                    );
 
-                        let next_state = State::new(
-                            GenericFunc::new(
-                                *scopes
-                                    .find_func_in("with_capacity", scopes.get_user_type(ut.id).body_scope)
-                                    .unwrap(),
-                                vec![inner.clone()],
-                            ),
-                            state.inst.clone(),
-                        );
+                    self.emit_type(scopes, &expr.ty);
+                    self.buffer.emit(format!(" {tmp} = "));
+                    self.buffer.emit_fn_name(scopes, &next_state);
+                    self.buffer
+                        .emit(format!("({len}); for (usize i = 0; i < {len}; i++) {{ (("));
+                    self.emit_type(scopes, inner);
+                    self.buffer.emit(format!(" *){tmp}.ptr.addr)[i] = "));
+                    self.gen_expr(scopes, *init, state);
+                    self.buffer.emit(format!("; }} {tmp}.len = {len};"));
 
-                        self.emit_type(scopes, &expr.ty);
-                        self.buffer.emit(format!(" {tmp} = "));
-                        self.buffer.emit_fn_name(scopes, &next_state);
-                        self.buffer.emit(format!("({len}); for (usize i = 0; i < {len}; i++) {{ (("));
-                        self.emit_type(scopes, inner);
-                        self.buffer.emit(format!(" *){tmp}.ptr.addr)[i] = "));
-                        self.gen_expr(scopes, *init, state);
-                        self.buffer.emit(format!("; }} {tmp}.len = {len};"));
-
-                        self.funcs.insert(next_state);
-                    }
-                };
-
-                self.temporaries.emit(written.0);
+                    self.funcs.insert(next_state);
+                    tmp
+                });
                 self.buffer.emit(tmp);
             }
             CheckedExprData::Map(exprs) => {
-                let ut = (**expr.ty.as_user_type().unwrap()).clone();
+                let tmp = tmpbuf!(self, state, |tmp| {
+                    let ut = (**expr.ty.as_user_type().unwrap()).clone();
+                    let with_capacity = State::new(
+                        GenericFunc::new(
+                            *scopes
+                                .find_func_in(
+                                    "with_capacity",
+                                    scopes.get_user_type(ut.id).body_scope,
+                                )
+                                .unwrap(),
+                            vec![ut.generics[0].clone(), ut.generics[1].clone()],
+                        ),
+                        state.inst.clone(),
+                    );
 
-                let key = &ut.generics[0];
-                let val = &ut.generics[1];
-                let tmp = state.tmpvar();
-                let written = tmpbuf! {
-                    self,
-                    {
-                        let with_capacity = State::new(
-                            GenericFunc::new(
-                                *scopes
-                                    .find_func_in("with_capacity", scopes.get_user_type(ut.id).body_scope)
-                                    .unwrap(),
-                                vec![key.clone(), val.clone()],
-                            ),
-                            state.inst.clone(),
-                        );
+                    let insert = State::new(
+                        GenericFunc::new(
+                            *scopes
+                                .find_func_in("insert", scopes.get_user_type(ut.id).body_scope)
+                                .unwrap(),
+                            vec![],
+                        ),
+                        Some(expr.ty.clone()),
+                    );
 
-                        let insert = State::new(
-                            GenericFunc::new(
-                                *scopes
-                                    .find_func_in("insert", scopes.get_user_type(ut.id).body_scope)
-                                    .unwrap(),
-                                vec![],
-                            ),
-                            Some(expr.ty.clone()),
-                        );
+                    self.emit_type(scopes, &expr.ty);
+                    self.buffer.emit(format!(" {tmp} = "));
+                    self.buffer.emit_fn_name(scopes, &with_capacity);
+                    self.buffer.emit(format!("({});", exprs.len()));
 
-                        self.emit_type(scopes, &expr.ty);
-                        self.buffer.emit(format!(" {tmp} = "));
-                        self.buffer.emit_fn_name(scopes, &with_capacity);
-                        self.buffer.emit(format!("({});", exprs.len()));
-
-                        for (key, val) in exprs {
-                            self.buffer.emit_fn_name(scopes, &insert);
-                            self.buffer.emit(format!("(&{tmp}, "));
-                            self.gen_expr(scopes, key, state);
-                            self.buffer.emit(",");
-                            self.gen_expr(scopes, val, state);
-                            self.buffer.emit(");");
-                        }
-                        self.funcs.insert(with_capacity);
-                        self.funcs.insert(insert);
+                    for (key, val) in exprs {
+                        self.buffer.emit_fn_name(scopes, &insert);
+                        self.buffer.emit(format!("(&{tmp}, "));
+                        self.gen_expr(scopes, key, state);
+                        self.buffer.emit(",");
+                        self.gen_expr(scopes, val, state);
+                        self.buffer.emit(");");
                     }
-                };
-
-                self.temporaries.emit(written.0);
+                    self.funcs.insert(with_capacity);
+                    self.funcs.insert(insert);
+                    tmp
+                });
                 self.buffer.emit(tmp);
             }
             CheckedExprData::Bool(value) => {
@@ -965,50 +957,38 @@ impl Codegen {
                 }
             }
             CheckedExprData::Block(block) => {
-                enter_block! {
-                    self, state, scopes, &expr.ty,
-                    {
-                        self.emit_block(scopes, block.body, state);
-                    }
-                }
+                enter_block!(self, state, scopes, &expr.ty, |_tmp| {
+                    self.emit_block(scopes, block.body, state);
+                });
             }
             CheckedExprData::If {
                 cond,
                 if_branch,
                 else_branch,
             } => {
-                enter_block! {
-                    self, state, scopes, &expr.ty,
-                    {
-                        self.buffer.emit("if (");
-                        self.gen_expr(scopes, *cond, state);
-                        self.buffer.emit(") {");
-                        stmt! {
-                            self,
-                            {
-                                if !expr.ty.is_void_like() {
-                                    self.buffer.emit(format!("{} = ", self.cur_block));
-                                }
-                                self.gen_expr(scopes, *if_branch, state);
-                            }
+                enter_block!(self, state, scopes, &expr.ty, |_tmp| {
+                    self.buffer.emit("if (");
+                    self.gen_expr(scopes, *cond, state);
+                    self.buffer.emit(") {");
+                    stmt!(self, {
+                        if !expr.ty.is_void_like() {
+                            self.buffer.emit(format!("{} = ", self.cur_block));
                         }
+                        self.gen_expr(scopes, *if_branch, state);
+                    });
 
-                        if let Some(else_branch) = else_branch {
-                            self.buffer.emit("; } else {");
-                            stmt! {
-                                self,
-                                {
-                                    if !expr.ty.is_void_like() {
-                                        self.buffer.emit(format!("{} = ", self.cur_block));
-                                    }
-                                    self.gen_expr(scopes, *else_branch, state);
-                                }
+                    if let Some(else_branch) = else_branch {
+                        self.buffer.emit("; } else {");
+                        stmt!(self, {
+                            if !expr.ty.is_void_like() {
+                                self.buffer.emit(format!("{} = ", self.cur_block));
                             }
-                        }
-
-                        self.buffer.emit("; }");
+                            self.gen_expr(scopes, *else_branch, state);
+                        });
                     }
-                }
+
+                    self.buffer.emit("; }");
+                })
             }
             CheckedExprData::Loop {
                 cond,
@@ -1016,62 +996,57 @@ impl Codegen {
                 body,
                 do_while,
             } => {
-                let old = std::mem::replace(&mut self.cur_loop, state.tmpvar());
-                let written = tmpbuf! {
-                    self,
-                    {
-                        if !expr.ty.is_void_like() {
-                            self.emit_type(scopes, &expr.ty);
-                            self.buffer.emit(format!(" {};", self.cur_loop));
-                        }
+                let mut emit = false;
+                let tmp = tmpbuf!(self, state, |tmp| {
+                    let old = std::mem::replace(&mut self.cur_loop, tmp);
+                    if !expr.ty.is_void_like() {
+                        self.emit_type(scopes, &expr.ty);
+                        self.buffer.emit(format!(" {};", self.cur_loop));
+                        emit = true;
+                    }
 
-                        if let Some(iter) = iter {
-                            let mut expr = scopes.get_var(iter).value.clone().unwrap();
-                            let (Ok(ty) | Err(ty)) = self.buffer.emit_local_decl(
-                                scopes,
-                                iter,
-                                state,
-                                &mut self.structs
-                            );
-                            expr.ty = ty;
+                    if let Some(iter) = iter {
+                        let mut expr = scopes.get_var(iter).value.clone().unwrap();
+                        let (Ok(ty) | Err(ty)) =
+                            self.buffer
+                                .emit_local_decl(scopes, iter, state, &mut self.structs);
+                        expr.ty = ty;
 
-                            self.buffer.emit(" = ");
-                            self.gen_expr_inner(scopes, expr, state);
-                            self.buffer.emit(";");
-                        }
+                        self.buffer.emit(" = ");
+                        self.gen_expr_inner(scopes, expr, state);
+                        self.buffer.emit(";");
+                    }
 
-                        self.buffer.emit("for (;;) {");
+                    self.buffer.emit("for (;;) {");
 
-                        macro_rules! cond {
-                            () => {
-                                if let Some(cond) = cond {
-                                    stmt! {
-                                        self,
-                                        {
-                                            self.buffer.emit("if (!");
-                                            self.gen_expr(scopes, *cond, state);
-                                            self.buffer.emit(") { break; }");
-                                        }
+                    macro_rules! cond {
+                        () => {
+                            if let Some(cond) = cond {
+                                stmt! {
+                                    self,
+                                    {
+                                        self.buffer.emit("if (!");
+                                        self.gen_expr(scopes, *cond, state);
+                                        self.buffer.emit(") { break; }");
                                     }
                                 }
-                            };
-                        }
-
-                        if !do_while {
-                            cond!();
-                            self.emit_block(scopes, body.body, state);
-                        } else {
-                            self.emit_block(scopes, body.body, state);
-                            cond!();
-                        }
-
-                        self.buffer.emit("}");
+                            }
+                        };
                     }
-                };
 
-                self.temporaries.emit(written.0);
-                if !expr.ty.is_void_like() {
-                    self.buffer.emit(std::mem::replace(&mut self.cur_loop, old));
+                    if !do_while {
+                        cond!();
+                        self.emit_block(scopes, body.body, state);
+                    } else {
+                        self.emit_block(scopes, body.body, state);
+                        cond!();
+                    }
+
+                    self.buffer.emit("}");
+                    std::mem::replace(&mut self.cur_loop, old)
+                });
+                if emit {
+                    self.buffer.emit(tmp);
                 }
             }
             CheckedExprData::Subscript { .. } => todo!(),
@@ -1106,42 +1081,29 @@ impl Codegen {
                 expr: mut scrutinee,
                 body,
             } => {
-                enter_block! {
-                    self, state, scopes, &expr.ty,
-                    {
-                        // TODO: update to exclude void when literal patterns are implemented
-                        let tmp_name = state.tmpvar();
-                        state.fill_generics(scopes, &mut scrutinee.ty);
-                        let ty = scrutinee.ty.clone();
+                enter_block!(self, state, scopes, &expr.ty, |tmp| {
+                    // TODO: update to exclude void when literal patterns are implemented
+                    state.fill_generics(scopes, &mut scrutinee.ty);
+                    let ty = scrutinee.ty.clone();
 
-                        self.emit_type(scopes, &scrutinee.ty);
-                        self.buffer.emit(format!(" {tmp_name} = "));
-                        self.gen_expr(scopes, *scrutinee, state);
-                        self.buffer.emit(";");
+                    self.emit_type(scopes, &scrutinee.ty);
+                    self.buffer.emit(format!(" {tmp} = "));
+                    self.gen_expr(scopes, *scrutinee, state);
+                    self.buffer.emit(";");
 
-                        for (i, (pattern, expr)) in body.into_iter().enumerate() {
-                            if i > 0 {
-                                self.buffer.emit("else ");
-                            }
-
-                            self.gen_pattern(
-                                scopes,
-                                state,
-                                &pattern,
-                                &tmp_name,
-                                &ty,
-                            );
-
-                            stmt! {
-                                self,
-                                {
-                                    self.gen_expr(scopes, expr, state);
-                                    self.buffer.emit("; }");
-                                }
-                            }
+                    for (i, (pattern, expr)) in body.into_iter().enumerate() {
+                        if i > 0 {
+                            self.buffer.emit("else ");
                         }
+
+                        self.gen_pattern(scopes, state, &pattern, &tmp, &ty);
+
+                        stmt!(self, {
+                            self.gen_expr(scopes, expr, state);
+                            self.buffer.emit("; }");
+                        });
                     }
-                }
+                })
             }
             CheckedExprData::As(inner, _) => {
                 self.emit_cast(scopes, &expr.ty);
@@ -1164,26 +1126,8 @@ impl Codegen {
     }
 
     fn gen_expr(&mut self, scopes: &Scopes, mut expr: CheckedExpr, state: &mut State) {
-        fn has_side_effects(expr: &CheckedExpr) -> bool {
-            match &expr.data {
-                CheckedExprData::Unary { op, .. } => matches!(
-                    op,
-                    UnaryOp::PostIncrement
-                        | UnaryOp::PostDecrement
-                        | UnaryOp::PreIncrement
-                        | UnaryOp::PreDecrement
-                ),
-                CheckedExprData::Call { .. } => true,
-                CheckedExprData::Array(_) => todo!(),
-                CheckedExprData::ArrayWithInit { .. } => todo!(),
-                CheckedExprData::Assign { .. } => true,
-                CheckedExprData::Subscript { .. } => todo!(),
-                _ => false,
-            }
-        }
-
         state.fill_generics(scopes, &mut expr.ty);
-        if has_side_effects(&expr) {
+        if Self::has_side_effects(&expr) {
             if !expr.ty.is_void_like() {
                 self.gen_to_tmp(scopes, expr, state);
             } else {
@@ -1196,18 +1140,13 @@ impl Codegen {
     }
 
     fn gen_to_tmp(&mut self, scopes: &Scopes, expr: CheckedExpr, state: &mut State) {
-        let tmp = state.tmpvar();
-        let written = tmpbuf! {
-            self,
-            {
-                self.emit_type(scopes, &expr.ty);
-                self.buffer.emit(format!(" {tmp} = "));
-                self.gen_expr_inner(scopes, expr, state);
-                self.buffer.emit(";");
-            }
-        };
-
-        self.temporaries.emit(written.0);
+        let tmp = tmpbuf!(self, state, |tmp| {
+            self.emit_type(scopes, &expr.ty);
+            self.buffer.emit(format!(" {tmp} = "));
+            self.gen_expr_inner(scopes, expr, state);
+            self.buffer.emit(";");
+            tmp
+        });
         self.buffer.emit(tmp);
     }
 
@@ -1442,18 +1381,6 @@ impl Codegen {
         result.insert(ut, deps);
     }
 
-    fn make_positional(
-        params: &[CheckedParam],
-        mut args: IndexMap<String, CheckedExpr>,
-    ) -> Vec<CheckedExpr> {
-        let mut result = Vec::with_capacity(args.len());
-        for param in params {
-            result.push(args.shift_remove(&param.name).unwrap());
-        }
-        result.extend(args.drain(..).map(|(_, arg)| arg));
-        result
-    }
-
     fn emit_type(&mut self, scopes: &Scopes, id: &TypeId) {
         self.buffer.emit_type(scopes, id, Some(&mut self.structs));
     }
@@ -1462,6 +1389,24 @@ impl Codegen {
         self.buffer.emit("(");
         self.emit_type(scopes, id);
         self.buffer.emit(")");
+    }
+
+    fn has_side_effects(expr: &CheckedExpr) -> bool {
+        match &expr.data {
+            CheckedExprData::Unary { op, .. } => matches!(
+                op,
+                UnaryOp::PostIncrement
+                    | UnaryOp::PostDecrement
+                    | UnaryOp::PreIncrement
+                    | UnaryOp::PreDecrement
+            ),
+            CheckedExprData::Call { .. } => true,
+            CheckedExprData::Array(_) => todo!(),
+            CheckedExprData::ArrayWithInit { .. } => todo!(),
+            CheckedExprData::Assign { .. } => true,
+            CheckedExprData::Subscript { .. } => todo!(),
+            _ => false,
+        }
     }
 }
 
