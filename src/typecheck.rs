@@ -991,11 +991,21 @@ impl Scopes {
         self.find_module_from(name, self.current)
     }
 
-    pub fn find_nonmember_fn_from(&self, name: &str, scope: ScopeId) -> Option<Vis<FunctionId>> {
-        self.iter_from(scope)
+    pub fn find_free_fn_from(&self, name: &str, scope: ScopeId) -> Option<Vis<FunctionId>> {
+        for (id, scope) in self
+            .iter_from(scope)
             .filter(|(_, s)| !matches!(s.kind, ScopeKind::UserType(_)))
-            .flat_map(|(id, _)| self.find_func_in(name, id))
-            .next()
+        {
+            if let Some(item) = self.find_func_in(name, id) {
+                return Some(item);
+            }
+
+            if matches!(scope.kind, ScopeKind::Module) {
+                break;
+            }
+        }
+
+        None
     }
 
     pub fn get_option_id(&self) -> Option<UserTypeId> {
@@ -4073,7 +4083,7 @@ impl TypeChecker {
                         fwd,
                         here,
                     )
-                } else if let Some(id) = scopes.find_nonmember_fn_from(name, here) {
+                } else if let Some(id) = scopes.find_free_fn_from(name, here) {
                     if is_end {
                         let f = scopes.get_func(*id);
                         return Some(ResolvedPath::Func(GenericFunc::new(
