@@ -4,6 +4,8 @@ use concat_idents::concat_idents;
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
 use indexmap::{map::Entry, IndexMap, IndexSet};
+use num_bigint::{BigUint, BigInt};
+use num_traits::Num;
 
 use crate::{
     ast::{
@@ -126,8 +128,22 @@ pub enum CInt {
 }
 
 pub struct IntStats {
-    bits: u8,
+    bits: u32,
     signed: bool,
+}
+
+impl IntStats {
+    pub fn min_signed(&self) -> BigInt {
+        -(BigInt::from(1) << (self.bits - 1))
+    }
+
+    pub fn max_signed(&self) -> BigInt {
+        (BigInt::from(1) << (self.bits - 1)) - 1
+    }
+
+    pub fn max_unsigned(&self) -> BigUint {
+        (BigUint::from(1u8) << self.bits) - 1u8
+    }
 }
 
 #[derive(Debug, Clone, EnumAsInner)]
@@ -135,8 +151,8 @@ pub enum TypeId {
     Unknown(Option<Box<(TypeHint, ScopeId)>>),
     Void,
     Never,
-    Int(u8),
-    Uint(u8),
+    Int(u32),
+    Uint(u32),
     CInt(CInt),
     CUint(CInt),
     CVoid,
@@ -458,10 +474,10 @@ impl TypeId {
                     CInt::Long => std::mem::size_of::<c_long>(),
                     CInt::LongLong => std::mem::size_of::<c_longlong>(),
                 };
-                (bits as u8, matches!(self, TypeId::CInt(_)))
+                (bits as u32, matches!(self, TypeId::CInt(_)))
             }
-            TypeId::Isize => (std::mem::size_of::<isize>() as u8, true),
-            TypeId::Usize => (std::mem::size_of::<usize>() as u8, false),
+            TypeId::Isize => (std::mem::size_of::<isize>() as u32, true),
+            TypeId::Usize => (std::mem::size_of::<usize>() as u32, false),
             _ => return None,
         };
 
@@ -514,9 +530,9 @@ impl TypeId {
             chars.next().and_then(|c| c.to_digit(10)),
             chars.next(),
         ) {
-            (Some(a), None, None, None) => (!i || a > 1).then_some(result(a as u8)),
-            (Some(a), Some(b), None, None) => Some(result((a * 10 + b) as u8)),
-            (Some(a), Some(b), Some(c), None) => Some(result((a * 100 + b * 10 + c) as u8)),
+            (Some(a), None, None, None) => (!i || a > 1).then_some(result(a)),
+            (Some(a), Some(b), None, None) => Some(result(a * 10 + b)),
+            (Some(a), Some(b), Some(c), None) => Some(result(a * 100 + b * 10 + c)),
             _ => match name {
                 "usize" => Some(TypeId::Usize),
                 "isize" => Some(TypeId::Isize),
@@ -1547,7 +1563,7 @@ impl TypeChecker {
                                         mutable: false,
                                         value: Some(CheckedExpr::new(
                                             backing.clone(),
-                                            CheckedExprData::Unsigned(i as u128),
+                                            CheckedExprData::Unsigned(BigUint::from(i)),
                                         )),
                                     },
                                     true,
@@ -2330,7 +2346,7 @@ impl TypeChecker {
             ),
             ExprData::Char(s) => CheckedExpr::new(TypeId::Char, CheckedExprData::Char(s)),
             ExprData::ByteChar(c) => {
-                CheckedExpr::new(TypeId::Uint(8), CheckedExprData::Unsigned(c as u128))
+                CheckedExpr::new(TypeId::Uint(8), CheckedExprData::Unsigned(BigUint::from(c)))
             }
             ExprData::None => {
                 if let Some(inner) = target.and_then(|target| scopes.as_option_inner(target)) {
@@ -2378,19 +2394,19 @@ impl TypeChecker {
                         .unwrap_or(TypeId::Int(32))
                 };
 
-                let IntStats { signed, bits } = ty.integer_stats().unwrap();
-                if signed {
-                    let result = match i128::from_str_radix(&value, base as u32) {
+                let stats = ty.integer_stats().unwrap();
+                if stats.signed {
+                    let result = match BigInt::from_str_radix(&value, base as u32) {
                         Ok(result) => result,
                         Err(e) => {
                             return self.error(Error::new(
-                                format!("integer literal '{value}' is too large: {e}."),
+                                format!("integer literal '{value}' could not be parsed: {e}"),
                                 expr.span,
                             ));
                         }
                     };
 
-                    let max = (1 << (bits - 1)) - 1;
+                    let max = stats.max_signed();
                     if result > max {
                         return self.error(Error::new(
                             format!("integer literal is larger than its type allows ({max})"),
@@ -2398,7 +2414,7 @@ impl TypeChecker {
                         ));
                     }
 
-                    let min = -(1 << (bits - 1));
+                    let min = stats.min_signed();
                     if result < min {
                         return self.error(Error::new(
                             format!("integer literal is smaller than its type allows ({min})"),
@@ -2408,17 +2424,17 @@ impl TypeChecker {
 
                     CheckedExpr::new(ty, CheckedExprData::Signed(result))
                 } else {
-                    let result = match u128::from_str_radix(&value, base as u32) {
+                    let result = match BigUint::from_str_radix(&value, base as u32) {
                         Ok(result) => result,
-                        Err(_) => {
+                        Err(e) => {
                             return self.error(Error::new(
-                                format!("integer literal '{value}' is too large."),
+                                format!("integer literal '{value}' could not be parsed: {e}"),
                                 expr.span,
                             ));
                         }
                     };
 
-                    let max = (1 << bits) - 1;
+                    let max = stats.max_unsigned();
                     if result >= max {
                         return self.error(Error::new(
                             format!("integer literal is larger than its type allows ({max})"),

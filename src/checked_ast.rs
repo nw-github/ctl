@@ -1,4 +1,5 @@
 use indexmap::IndexMap;
+use num_bigint::{BigInt, BigUint};
 
 use crate::{
     ast::{BinaryOp, UnaryOp},
@@ -56,8 +57,8 @@ pub enum CheckedExprData {
     },
     Map(Vec<(CheckedExpr, CheckedExpr)>),
     Bool(bool),
-    Signed(i128),
-    Unsigned(u128),
+    Signed(BigInt),
+    Unsigned(BigUint),
     Float(String),
     String(String),
     ByteString(String),

@@ -3,8 +3,8 @@
 #include <stddef.h>
 #include <locale.h>
 
-#define CTL_SBITINT(bits) _BitInt(bits)
-#define CTL_UBITINT(bits) unsigned _BitInt(bits)
+#define SINT(bits) _BitInt(bits)
+#define UINT(bits) unsigned _BitInt(bits)
 
 typedef intptr_t  isize;
 typedef uintptr_t usize;

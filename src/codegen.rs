@@ -72,23 +72,9 @@ impl Buffer {
         mut structs: Option<&mut HashSet<GenericUserType>>,
     ) {
         match id {
-            TypeId::Void => self.emit("void"),
-            TypeId::Never => self.emit("void"),
-            TypeId::CVoid => self.emit("void"),
-            TypeId::Int(bits) | TypeId::Uint(bits) => {
-                let unsigned = matches!(id, TypeId::Uint(_));
-                if (8..=64).contains(bits) && bits.is_power_of_two() {
-                    if unsigned {
-                        self.emit(format!("uint{bits}_t"));
-                    } else {
-                        self.emit(format!("int{bits}_t"));
-                    }
-                } else if unsigned {
-                    self.emit(format!("CTL_UBITINT({bits})"));
-                } else {
-                    self.emit(format!("CTL_SBITINT({bits})"));
-                }
-            }
+            TypeId::Void | TypeId::Never | TypeId::CVoid => self.emit("void"),
+            TypeId::Int(bits) => self.emit(format!("SINT({bits})")),
+            TypeId::Uint(bits) => self.emit(format!("UINT({bits})")),
             TypeId::CInt(ty) | TypeId::CUint(ty) => {
                 if matches!(id, TypeId::CUint(_)) {
                     self.emit("unsigned ");
