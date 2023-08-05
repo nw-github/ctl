@@ -669,6 +669,7 @@ pub struct Variable {
 
 #[derive(Debug)]
 pub struct Function {
+    pub attrs: Vec<Attribute>,
     pub name: String,
     pub is_async: bool,
     pub is_extern: bool,
@@ -1603,6 +1604,7 @@ impl TypeChecker {
 
         let id = scopes.insert_func_in(
             Function {
+                attrs: attrs.to_vec(),
                 name: f.name.data.clone(),
                 is_async: f.is_async,
                 is_extern: f.is_extern,

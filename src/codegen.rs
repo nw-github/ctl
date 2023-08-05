@@ -461,6 +461,16 @@ impl Codegen {
             emitted.extend(this.funcs.drain());
 
             for mut state in diff {
+                // TODO: emit an error if a function has the c_macro attribute and a body
+                if scopes
+                    .get_func(state.func.id)
+                    .attrs
+                    .iter()
+                    .any(|attr| attr.name.data == "c_macro")
+                {
+                    continue;
+                }
+
                 prototypes.emit_prototype(scopes, &mut state, true, &mut this.structs);
                 prototypes.emit(";");
 
