@@ -685,29 +685,48 @@ impl Codegen {
                     return;
                 }
 
-                let args = Self::make_positional(&scopes.get_func(original_id).params, args);
+                let mut args: IndexMap<_, _> = args
+                    .into_iter()
+                    .filter_map(|(name, mut expr)| {
+                        state.fill_generics(scopes, &mut expr.ty);
+                        let valid = !expr.ty.is_void_like();
+                        // TODO: dont emit temporaries for expressions that cant have side effects
+                        tmpbuf!(self, state, |tmp| {
+                            if valid {
+                                self.emit_type(scopes, &expr.ty);
+                                self.buffer.emit(format!(" {tmp} = "));
+                            }
+                            self.gen_expr_inner(scopes, expr, state);
+                            self.buffer.emit(";");
+                            valid.then_some((name, tmp))
+                        })
+                    })
+                    .collect();
+
+                let mut count = 0;
+                macro_rules! arg {
+                    ($arg: expr) => {{
+                        if count > 0 {
+                            self.buffer.emit(", ");
+                        }
+
+                        self.buffer.emit($arg);
+                        count += 1;
+                    }};
+                }
 
                 let next_state = State::new(func, inst);
                 self.buffer.emit_fn_name(scopes, &next_state);
-                self.funcs.insert(next_state);
-
-                // FIXME: keyword arguments can be specified out of order. this evaluates them in
-                // parameter order instead of argument order.
                 self.buffer.emit("(");
-
-                for (i, mut arg) in args.into_iter().enumerate() {
-                    state.fill_generics(scopes, &mut arg.ty);
-                    if arg.ty.is_void_like() {
-                        continue;
-                    }
-
-                    if i > 0 {
-                        self.buffer.emit(", ");
-                    }
-
-                    self.gen_expr(scopes, arg, state);
-                }
+                scopes
+                    .get_func(original_id)
+                    .params
+                    .iter()
+                    .flat_map(|param| args.shift_remove(&param.name))
+                    .for_each(|arg| arg!(arg));
+                args.into_iter().for_each(|(_, arg)| arg!(arg));
                 self.buffer.emit(")");
+                self.funcs.insert(next_state);
             }
             CheckedExprData::Array(_) => todo!(),
             CheckedExprData::ArrayWithInit { .. } => todo!(),
