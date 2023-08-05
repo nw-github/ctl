@@ -899,7 +899,7 @@ impl Codegen {
             }
             CheckedExprData::String(value) => {
                 self.emit_cast(scopes, &expr.ty);
-                self.buffer.emit("{ .span = { .ptr = (uint8_t const*)\"");
+                self.buffer.emit("{ .span = { .ptr = (UINT(8) const*)\"");
                 for byte in value.as_bytes() {
                     self.buffer.emit(format!("\\x{byte:x}"));
                 }
@@ -907,7 +907,7 @@ impl Codegen {
                     .emit(format!("\", .len = (usize){} }} }}", value.len()));
             }
             CheckedExprData::ByteString(value) => {
-                self.buffer.emit("(uint8_t const*)\"");
+                self.buffer.emit("(UINT(8) const*)\"");
                 for byte in value.as_bytes() {
                     self.buffer.emit(format!("\\x{byte:x}"));
                 }

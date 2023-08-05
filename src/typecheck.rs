@@ -2351,7 +2351,7 @@ impl TypeChecker {
                 CheckedExprData::String(s),
             ),
             ExprData::ByteString(s) => CheckedExpr::new(
-                TypeId::Array((TypeId::Uint(8), s.len()).into()),
+                TypeId::Ptr(TypeId::Array((TypeId::Uint(8), s.len()).into()).into()),
                 CheckedExprData::ByteString(s),
             ),
             ExprData::Char(s) => CheckedExpr::new(TypeId::Char, CheckedExprData::Char(s)),
