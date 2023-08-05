@@ -27,3 +27,10 @@ fn convert_argv(argc: c_int, argv: **c_char) [str..] {
     }
     return args.as_span();
 }
+
+[autouse]
+mod prelude {
+    pub use super::vec::Vec;
+    pub use super::map::Map;
+    pub use super::set::Set;
+}
