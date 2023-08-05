@@ -1,13 +1,16 @@
 use core::hash::Hash;
 use core::ops::Eq;
-use std::map::Map;
 
 [lang(set)]
 pub struct Set<T: Hash + Eq<T> > {
     inner: [T: void],
 
     pub fn new<U: Hash + Eq<U> >() Set<U> {
-        return Set(inner: Map::new());
+        return Set(inner: [:]);
+    }
+
+    pub fn with_capacity<U: Hash + Eq<U> >(cap: usize) Set<U> {
+        return Set(inner: std::map::Map::with_capacity(cap:));
     }
 
     pub fn insert(mut this, key: T) bool {

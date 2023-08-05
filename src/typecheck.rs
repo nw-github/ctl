@@ -4,7 +4,7 @@ use concat_idents::concat_idents;
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
 use indexmap::{map::Entry, IndexMap, IndexSet};
-use num_bigint::{BigUint, BigInt};
+use num_bigint::{BigInt, BigUint};
 use num_traits::Num;
 
 use crate::{
@@ -2166,11 +2166,15 @@ impl TypeChecker {
             ExprData::Array(elements) => {
                 let mut checked = Vec::with_capacity(elements.len());
                 let mut elements = elements.into_iter();
-                let (vec, ty) = if let Some(TypeId::Array(inner)) = target {
+                let (ut, ty) = if let Some(TypeId::Array(inner)) = target {
                     (None, inner.0.clone())
                 } else {
                     let Some(vec) = scopes.lang_types.get("vec").copied() else {
-                        return self.error(Error::new("no symbol 'Vec' found in this module", expr.span));
+                        return self.error(Error::new("missing language item: Vec", expr.span));
+                    };
+
+                    let Some(set) = scopes.lang_types.get("set").copied() else {
+                        return self.error(Error::new("missing language item: Set", expr.span));
                     };
 
                     if let Some(ty) = target
@@ -2178,11 +2182,13 @@ impl TypeChecker {
                         .filter(|ut| ut.id == vec)
                         .map(|ut| ut.generics[0].clone())
                     {
-                        if let Some(expr) = elements.next() {
-                            checked.push(self.type_check(scopes, expr, &ty));
-                        }
-
                         (Some(vec), ty)
+                    } else if let Some(ty) = target
+                        .and_then(|target| target.as_user_type())
+                        .filter(|ut| ut.id == set)
+                        .map(|ut| ut.generics[0].clone())
+                    {
+                        (Some(set), ty)
                     } else if let Some(expr) = elements.next() {
                         let expr = self.check_expr(scopes, expr, None);
                         let ty = expr.ty.clone();
@@ -2195,10 +2201,14 @@ impl TypeChecker {
                 };
 
                 checked.extend(elements.map(|e| self.type_check(scopes, e, &ty)));
-                if let Some(vec) = vec {
+                if let Some(ut) = ut {
                     CheckedExpr::new(
-                        TypeId::UserType(GenericUserType::new(vec, vec![ty]).into()),
-                        CheckedExprData::Vec(checked),
+                        TypeId::UserType(GenericUserType::new(ut, vec![ty]).into()),
+                        if Some(&ut) == scopes.lang_types.get("set") {
+                            CheckedExprData::Set(checked)
+                        } else {
+                            CheckedExprData::Vec(checked)
+                        },
                     )
                 } else {
                     CheckedExpr::new(

@@ -55,6 +55,7 @@ pub enum CheckedExprData {
         init: Box<CheckedExpr>,
         count: Box<CheckedExpr>,
     },
+    Set(Vec<CheckedExpr>),
     Map(Vec<(CheckedExpr, CheckedExpr)>),
     Bool(bool),
     Signed(BigInt),

@@ -812,29 +812,53 @@ impl Codegen {
                 });
                 self.buffer.emit(tmp);
             }
+            CheckedExprData::Set(exprs) => {
+                let tmp = tmpbuf!(self, state, |tmp| {
+                    let ut = (**expr.ty.as_user_type().unwrap()).clone();
+                    let body = scopes.get_user_type(ut.id).body_scope;
+                    let with_capacity = State::new(
+                        GenericFunc::new(
+                            *scopes.find_func_in("with_capacity", body).unwrap(),
+                            vec![ut.generics[0].clone()],
+                        ),
+                        state.inst.clone(),
+                    );
+
+                    self.emit_type(scopes, &expr.ty);
+                    self.buffer.emit(format!(" {tmp} = "));
+                    self.buffer.emit_fn_name(scopes, &with_capacity);
+                    self.buffer.emit(format!("({});", exprs.len()));
+                    let insert = State::new(
+                        GenericFunc::new(*scopes.find_func_in("insert", body).unwrap(), vec![]),
+                        Some(expr.ty.clone()),
+                    );
+
+                    for val in exprs {
+                        self.buffer.emit_fn_name(scopes, &insert);
+                        self.buffer.emit(format!("(&{tmp}, "));
+                        self.gen_expr(scopes, val, state);
+                        self.buffer.emit(");");
+                    }
+                    self.funcs.insert(with_capacity);
+                    self.funcs.insert(insert);
+                    tmp
+                });
+                self.buffer.emit(tmp);
+            }
             CheckedExprData::Map(exprs) => {
                 let tmp = tmpbuf!(self, state, |tmp| {
                     let ut = (**expr.ty.as_user_type().unwrap()).clone();
+                    let body = scopes.get_user_type(ut.id).body_scope;
                     let with_capacity = State::new(
                         GenericFunc::new(
-                            *scopes
-                                .find_func_in(
-                                    "with_capacity",
-                                    scopes.get_user_type(ut.id).body_scope,
-                                )
-                                .unwrap(),
+                            *scopes.find_func_in("with_capacity", body).unwrap(),
                             vec![ut.generics[0].clone(), ut.generics[1].clone()],
                         ),
                         state.inst.clone(),
                     );
 
                     let insert = State::new(
-                        GenericFunc::new(
-                            *scopes
-                                .find_func_in("insert", scopes.get_user_type(ut.id).body_scope)
-                                .unwrap(),
-                            vec![],
-                        ),
+                        GenericFunc::new(*scopes.find_func_in("insert", body).unwrap(), vec![]),
                         Some(expr.ty.clone()),
                     );
 
