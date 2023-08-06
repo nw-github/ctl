@@ -3661,6 +3661,7 @@ impl TypeChecker {
                         Some(func),
                         ty,
                         &scopes.get_user_type(param).impls,
+                        inst,
                         span,
                     );
                 }
@@ -3680,6 +3681,7 @@ impl TypeChecker {
         func: Option<&GenericFunc>,
         ty: &GenericUserType,
         bounds: &[TypeId],
+        inst: Option<&GenericUserType>,
         span: Span,
     ) {
         for bound in bounds.iter() {
@@ -3687,6 +3689,12 @@ impl TypeChecker {
             if let Some(func) = func {
                 for bty in bound.generics.iter_mut() {
                     bty.fill_func_generics(scopes, func);
+                }
+            }
+
+            if let Some(inst) = inst {
+                for bty in bound.generics.iter_mut() {
+                    bty.fill_type_generics(scopes, inst);
                 }
             }
 
