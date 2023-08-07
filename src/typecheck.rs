@@ -499,7 +499,6 @@ impl TypeId {
                 | TypeId::CUint(_),
             ) => true,
             (TypeId::FloatGeneric, TypeId::F32 | TypeId::F64) => true,
-            (TypeId::MutPtr(ty), TypeId::Ptr(target)) if ty == target => true,
             (ty, target)
                 if scopes
                     .as_option_inner(target)
@@ -508,7 +507,19 @@ impl TypeId {
                 true
             }
             (TypeId::Never, _) => true,
+            (ty, target) if ty.may_ptr_coerce(target) => true,
             (ty, target) => ty == target,
+        }
+    }
+
+    fn may_ptr_coerce(&self, target: &TypeId) -> bool {
+        match (self, target) {
+            (TypeId::MutPtr(ty), TypeId::Ptr(target)) if ty == target => true,
+            (TypeId::MutPtr(ty), TypeId::MutPtr(target) | TypeId::Ptr(target)) => {
+                ty.may_ptr_coerce(target)
+            }
+            (TypeId::Ptr(ty), TypeId::Ptr(target)) => ty.may_ptr_coerce(target),
+            _ => false,
         }
     }
 
