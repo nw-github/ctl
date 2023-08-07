@@ -1,6 +1,7 @@
 use core::ptr::Raw;
 use core::ptr::RawMut;
 use core::mem;
+use core::iter::Iterator;
 
 [lang(vec)]
 pub struct Vec<T> {
@@ -92,6 +93,12 @@ pub struct Vec<T> {
         );
 
         this.len += mem::replace(&mut rhs.len, 0);
+    }
+
+    pub fn extend<I: Iterator<*T> >(mut this, iter: I) {
+        for elem in iter {
+            this.push(*elem);
+        }
     }
 
     pub fn clear(mut this) {

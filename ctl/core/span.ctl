@@ -2,6 +2,7 @@ use core::ptr::Raw;
 use core::ptr::RawMut;
 use core::range::RangeBounds;
 use core::range::Bound;
+use core::iter::Iterator;
 
 [lang(span)]
 pub struct Span<T> {
@@ -148,7 +149,7 @@ pub struct SpanMut<T> {
     }
 }
 
-pub struct Iter<T>: core::iter::Iter<*T> {
+pub struct Iter<T>: Iterator<*T> {
     ptr: *T,
     end: *T,
 
@@ -159,7 +160,7 @@ pub struct Iter<T>: core::iter::Iter<*T> {
     }
 }
 
-pub struct IterMut<T>: core::iter::Iter<*mut T> {
+pub struct IterMut<T>: Iterator<*mut T> {
     ptr: *mut T,
     end: *mut T,
 

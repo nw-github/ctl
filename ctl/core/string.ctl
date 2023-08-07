@@ -3,6 +3,7 @@ use core::hash::Hash;
 use core::hash::Hasher;
 use core::ops::Eq;
 use core::range::RangeBounds;
+use core::iter::Iterator;
 
 [lang(string)]
 pub struct str: Hash + Eq<str> {
@@ -66,7 +67,7 @@ pub struct str: Hash + Eq<str> {
     }
 }
 
-pub struct Chars: core::iter::Iter<char> {
+pub struct Chars: Iterator<char> {
     s: [u8..],
 
     pub fn next(mut this) ?char {

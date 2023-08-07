@@ -1,4 +1,4 @@
 [lang(iter)]
-pub trait Iter<T> {
+pub trait Iterator<T> {
     fn next(mut this) ?T;
 }
