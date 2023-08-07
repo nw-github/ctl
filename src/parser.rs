@@ -190,7 +190,12 @@ impl<'a> Parser<'a> {
                     .push(Error::new("extern is not valid here", token.span));
             }
 
-            let sup = self.advance_if_kind(Token::Super).is_some();
+            let root = self.advance_if_kind(Token::ScopeRes);
+            let sup = root
+                .is_none()
+                .then(|| self.advance_if_kind(Token::Super))
+                .flatten()
+                .is_some();
             if sup {
                 self.expect_kind(Token::ScopeRes, "expected '::'");
             }
@@ -215,10 +220,12 @@ impl<'a> Parser<'a> {
             Some(Stmt {
                 data: StmtData::Use {
                     public: public.is_some(),
-                    path: if sup {
+                    path: if root.is_some() {
+                        Path::Root(components)
+                    } else if sup {
                         Path::Super(components)
                     } else {
-                        Path::Root(components)
+                        Path::Normal(components)
                     },
                     all,
                 },
