@@ -216,7 +216,7 @@ impl std::hash::Hash for TypeId {
 impl Eq for TypeId {}
 
 impl TypeId {
-    pub fn supports_binop(&self, op: BinaryOp) -> bool {
+    pub fn supports_binop(&self, scopes: &Scopes, op: BinaryOp) -> bool {
         match op {
             BinaryOp::Add => matches!(
                 self,
@@ -273,7 +273,7 @@ impl TypeId {
                         | TypeId::CInt(_)
                         | TypeId::CUint(_)
                         | TypeId::Char
-                )
+                ) || matches!(self, TypeId::UserType(ut) if scopes.get_user_type(ut.id).data.is_enum())
             }
             BinaryOp::LogicalOr | BinaryOp::LogicalAnd => {
                 matches!(self, TypeId::Bool)
@@ -1629,7 +1629,7 @@ impl TypeChecker {
             ))
         }
 
-        let id = scopes.insert_func_in(
+        let id = scopes.insert_func(
             Function {
                 attrs: attrs.to_vec(),
                 name: f.name.data.clone(),
@@ -1644,7 +1644,6 @@ impl TypeChecker {
                 constructor,
             },
             f.public,
-            scopes.current_id(),
         );
 
         if let Some(attr) = attrs.iter().find(|attr| attr.name.data == "intrinsic") {
@@ -1718,16 +1717,12 @@ impl TypeChecker {
     fn check_stmt(&mut self, scopes: &mut Scopes, stmt: Stmt) -> CheckedStmt {
         macro_rules! fn_by_name {
             ($scopes: expr, $name: expr) => {
-                *$scopes.find_func($name).unwrap()
+                *$scopes.find_func_in($name, $scopes.current).unwrap()
             };
         }
 
         match stmt.data {
-            StmtData::Module {
-                public: _,
-                name,
-                body,
-            } => {
+            StmtData::Module { name, body, .. } => {
                 return CheckedStmt::Module(scopes.find_enter(&name, |scopes| {
                     self.include_universal(scopes);
                     Block {
@@ -1821,8 +1816,10 @@ impl TypeChecker {
                         self.resolve_impls(scopes, id);
 
                         for (name, expr) in variants {
-                            scopes.get_var_mut(*scopes.find_var(&name).unwrap()).value = expr
-                                .map(|expr| self.check_expr(scopes, expr, Some(&TypeId::Usize)));
+                            if let Some(expr) = expr {
+                                scopes.get_var_mut(*scopes.find_var(&name).unwrap()).value =
+                                    Some(self.check_expr(scopes, expr, Some(&TypeId::Usize)));
+                            }
                         }
 
                         for f in functions {
@@ -2141,7 +2138,7 @@ impl TypeChecker {
             ExprData::Binary { op, left, right } => {
                 let left = self.check_expr(scopes, *left, target);
                 let right = type_check_bail!(self, scopes, *right, &left.ty);
-                if !left.ty.supports_binop(op) {
+                if !left.ty.supports_binop(scopes, op) {
                     self.error(Error::new(
                         format!(
                             "operator '{op}' is invalid for values of type {} and {}",
@@ -2518,7 +2515,7 @@ impl TypeChecker {
 
                 let rhs = type_check_bail!(self, scopes, *value, &lhs.ty);
                 if let Some(op) = binary {
-                    if !lhs.ty.supports_binop(op) {
+                    if !lhs.ty.supports_binop(scopes, op) {
                         self.error::<()>(Error::new(
                             format!(
                                 "operator '{op}' is invalid for values of type {} and {}",
@@ -3430,6 +3427,7 @@ impl TypeChecker {
                             ))
                         };
 
+                        // TODO: check privacy
                         let (args, ret) = self.check_fn_args(
                             None,
                             &mut GenericFunc::new(*st.1, ty.generics),
