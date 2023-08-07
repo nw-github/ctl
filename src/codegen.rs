@@ -57,20 +57,61 @@ impl std::hash::Hash for State {
     }
 }
 
-#[derive(Default)]
 struct TypeGen {
-    structs: HashSet<GenericUserType>,
+    structs: Option<HashSet<GenericUserType>>,
     ints: HashSet<(bool, u32)>,
 }
 
 impl TypeGen {
-    fn finish(
-        self,
-        buffer: &mut Buffer,
-        scopes: &Scopes,
-        prototypes: String,
-    ) -> Result<(), Error> {
+    fn finish(&mut self, buffer: &mut Buffer, scopes: &Scopes) -> Result<(), Error> {
         let mut structs = HashMap::new();
+        for ut in self.structs.take().unwrap() {
+            Self::get_depencencies(scopes, ut, &mut structs);
+        }
+
+        let mut definitions = Buffer::default();
+        for ut in Self::get_struct_order(scopes, &structs)? {
+            let union = scopes.get_user_type(ut.id).data.as_union();
+            let unsafe_union = union.as_ref().map_or(false, |union| union.is_unsafe);
+            if unsafe_union {
+                buffer.emit("typedef union ");
+                definitions.emit("union ");
+            } else {
+                buffer.emit("typedef struct ");
+                definitions.emit("struct ");
+            }
+
+            buffer.emit_type_name(scopes, ut);
+            buffer.emit(" ");
+            buffer.emit_type_name(scopes, ut);
+            buffer.emit(";");
+
+            definitions.emit_type_name(scopes, ut);
+            definitions.emit("{");
+
+            let members = scopes.get_user_type(ut.id).members().unwrap();
+            if let Some(union) = union.filter(|_| !unsafe_union) {
+                definitions.emit_type(scopes, &union.tag_type(), self);
+                definitions.emit(format!(" {UNION_TAG_NAME};"));
+
+                for member in members.iter().filter(|m| m.shared) {
+                    self.emit_member(scopes, ut, member, &mut definitions);
+                }
+
+                definitions.emit(" union {");
+                for member in members.iter().filter(|m| !m.shared) {
+                    self.emit_member(scopes, ut, member, &mut definitions);
+                }
+                definitions.emit("};");
+            } else {
+                for member in members {
+                    self.emit_member(scopes, ut, member, &mut definitions);
+                }
+            }
+
+            definitions.emit("};");
+        }
+
         for &(signed, bits) in self.ints.iter() {
             if signed {
                 buffer.emit(format!("typedef SINT({bits}) i{bits};"));
@@ -79,53 +120,7 @@ impl TypeGen {
             }
         }
 
-        for ut in self.structs {
-            Self::get_depencencies(buffer, scopes, ut, &mut structs);
-        }
-
-        buffer.emit(prototypes);
-        for ut in Self::get_struct_order(scopes, &structs)? {
-            let Some(members) = scopes.get_user_type(ut.id).members() else { continue; };
-            if let Some(union) = scopes.get_user_type(ut.id).data.as_union() {
-                if union.is_unsafe {
-                    buffer.emit("union ");
-                    buffer.emit_type_name(scopes, ut);
-                    buffer.emit("{");
-
-                    for member in members {
-                        buffer.emit_member(scopes, ut, member);
-                    }
-                } else {
-                    buffer.emit("struct ");
-                    buffer.emit_type_name(scopes, ut);
-                    buffer.emit("{");
-
-                    buffer.emit_type(scopes, &union.tag_type(), None);
-                    buffer.emit(format!(" {UNION_TAG_NAME};"));
-
-                    for member in members.iter().filter(|m| m.shared) {
-                        buffer.emit_member(scopes, ut, member);
-                    }
-
-                    buffer.emit(" union {");
-                    for member in members.iter().filter(|m| !m.shared) {
-                        buffer.emit_member(scopes, ut, member);
-                    }
-                    buffer.emit("};");
-                }
-            } else {
-                buffer.emit("struct ");
-                buffer.emit_type_name(scopes, ut);
-                buffer.emit("{");
-
-                for member in members {
-                    buffer.emit_member(scopes, ut, member);
-                }
-            }
-
-            buffer.emit("};");
-        }
-
+        buffer.emit(definitions.0);
         Ok(())
     }
 
@@ -177,7 +172,6 @@ impl TypeGen {
     }
 
     fn get_depencencies(
-        buffer: &mut Buffer,
         scopes: &Scopes,
         ut: GenericUserType,
         result: &mut HashMap<GenericUserType, Vec<GenericUserType>>,
@@ -185,21 +179,6 @@ impl TypeGen {
         if result.contains_key(&ut) {
             return;
         }
-
-        if scopes
-            .get_user_type(ut.id)
-            .data
-            .as_union()
-            .map_or(false, |u| u.is_unsafe)
-        {
-            buffer.emit("typedef union ");
-        } else {
-            buffer.emit("typedef struct ");
-        }
-        buffer.emit_type_name(scopes, &ut);
-        buffer.emit(" ");
-        buffer.emit_type_name(scopes, &ut);
-        buffer.emit(";");
 
         let mut deps = Vec::new();
         for member in scopes.get_user_type(ut.id).members().unwrap().iter() {
@@ -212,7 +191,7 @@ impl TypeGen {
 
             if let TypeId::UserType(data) = ty {
                 if !data.generics.is_empty() {
-                    Self::get_depencencies(buffer, scopes, (*data).clone(), result);
+                    Self::get_depencencies(scopes, (*data).clone(), result);
                 }
 
                 deps.push(*data);
@@ -220,6 +199,31 @@ impl TypeGen {
         }
 
         result.insert(ut, deps);
+    }
+
+    fn emit_member(
+        &mut self,
+        scopes: &Scopes,
+        ut: &GenericUserType,
+        member: &Member,
+        buffer: &mut Buffer,
+    ) {
+        let mut ty = member.ty.clone();
+        ty.fill_type_generics(scopes, ut);
+        if !ty.is_void_like() {
+            buffer.emit_type(scopes, &ty, self);
+            buffer.emit(format!(" {}", member.name));
+            buffer.emit(";");
+        }
+    }
+}
+
+impl Default for TypeGen {
+    fn default() -> Self {
+        Self {
+            structs: Some(HashSet::new()),
+            ints: HashSet::new(),
+        }
     }
 }
 
@@ -231,14 +235,12 @@ impl Buffer {
         self.0.push_str(source.as_ref());
     }
 
-    fn emit_type(&mut self, scopes: &Scopes, id: &TypeId, mut tg: Option<&mut TypeGen>) {
+    fn emit_type(&mut self, scopes: &Scopes, id: &TypeId, tg: &mut TypeGen) {
         match id {
             TypeId::Void | TypeId::Never | TypeId::CVoid => self.emit("void"),
             TypeId::Int(bits) | TypeId::Uint(bits) => {
                 let signed = matches!(id, TypeId::Int(_));
-                if let Some(tg) = &mut tg {
-                    tg.ints.insert((signed, *bits));
-                }
+                tg.ints.insert((signed, *bits));
                 self.emit(format!("{}{bits}", if signed { "i" } else { "u" }));
             }
             TypeId::CInt(ty) | TypeId::CUint(ty) => {
@@ -277,10 +279,9 @@ impl Buffer {
                     if is_opt_ptr(scopes, id) {
                         self.emit_type(scopes, &ut.generics[0], tg);
                     } else {
-                        if let Some(tg) = &mut tg {
-                            tg.structs.insert((**ut).clone());
+                        if let Some(structs) = tg.structs.as_mut() {
+                            structs.insert((**ut).clone());
                         }
-
                         self.emit_type_name(scopes, ut);
                     }
                 }
@@ -408,7 +409,7 @@ impl Buffer {
             self.emit("_Noreturn ");
         }
 
-        self.emit_type(scopes, &ret, is_prototype.then_some(tg));
+        self.emit_type(scopes, &ret, tg);
         self.emit(" ");
         self.emit_fn_name(scopes, state);
         self.emit("(");
@@ -424,7 +425,7 @@ impl Buffer {
             }
 
             if f.is_extern || is_prototype {
-                self.emit_type(scopes, &ty, is_prototype.then_some(tg));
+                self.emit_type(scopes, &ty, tg);
                 if !param.mutable {
                     self.emit(" const");
                 }
@@ -500,7 +501,7 @@ impl Buffer {
                 self.emit("static ");
             }
 
-            self.emit_type(scopes, &ty, Some(tg));
+            self.emit_type(scopes, &ty, tg);
             if !var.mutable && !var.is_static {
                 self.emit(" const");
             }
@@ -509,16 +510,6 @@ impl Buffer {
             Ok(ty)
         } else {
             Err(ty)
-        }
-    }
-
-    fn emit_member(&mut self, scopes: &Scopes, ut: &GenericUserType, member: &Member) {
-        let mut ty = member.ty.clone();
-        ty.fill_type_generics(scopes, ut);
-        if !ty.is_void_like() {
-            self.emit_type(scopes, &ty, None);
-            self.emit(format!(" {}", member.name));
-            self.emit(";");
         }
     }
 }
@@ -657,7 +648,8 @@ impl Codegen {
         let statics = std::mem::take(&mut this.buffer);
 
         this.buffer.emit(include_str!("../ctl/ctl.h"));
-        std::mem::take(&mut this.type_gen).finish(&mut this.buffer, scopes, prototypes.0)?;
+        this.type_gen.finish(&mut this.buffer, scopes)?;
+        this.buffer.emit(prototypes.0);
         this.buffer.emit(statics.0);
         this.buffer.emit(functions.0);
         this.buffer.emit("int main(int argc, char **argv) {");
@@ -1448,7 +1440,7 @@ impl Codegen {
     }
 
     fn emit_type(&mut self, scopes: &Scopes, id: &TypeId) {
-        self.buffer.emit_type(scopes, id, Some(&mut self.type_gen));
+        self.buffer.emit_type(scopes, id, &mut self.type_gen);
     }
 
     fn emit_cast(&mut self, scopes: &Scopes, id: &TypeId) {
