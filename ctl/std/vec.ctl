@@ -2,6 +2,7 @@ use core::ptr::Raw;
 use core::ptr::RawMut;
 use core::mem;
 use core::iter::Iterator;
+use core::span::*;
 
 [lang(vec)]
 pub struct Vec<T> {
@@ -43,18 +44,18 @@ pub struct Vec<T> {
     }
 
     pub fn as_span(this) [T..] {
-        return core::span::Span::new(this.ptr.as_mut_ptr(), this.len);
+        return Span::new(this.ptr.as_mut_ptr(), this.len);
     }
 
     pub fn as_span_mut(this) [mut T..] {
-        return core::span::SpanMut::new(this.ptr.as_mut_ptr(), this.len);
+        return SpanMut::new(this.ptr.as_mut_ptr(), this.len);
     }
 
-    pub fn iter(this) core::span::Iter<T> {
+    pub fn iter(this) Iter<T> {
         return this.as_span().iter();
     }
 
-    pub fn iter_mut(this) core::span::IterMut<T> {
+    pub fn iter_mut(this) IterMut<T> {
         return this.as_span_mut().iter_mut();
     }
 
