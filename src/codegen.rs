@@ -549,13 +549,13 @@ macro_rules! enter_block {
 
 macro_rules! stmt {
     ($self: expr, $body: expr) => {
-        let old = std::mem::take(&mut $self.temporaries);
-        let buffer = std::mem::take(&mut $self.buffer);
+        let old_tmp = std::mem::take(&mut $self.temporaries);
+        let old_buf = std::mem::take(&mut $self.buffer);
         $body;
-        let written = std::mem::replace(&mut $self.buffer, buffer).0;
+        let written = std::mem::replace(&mut $self.buffer, old_buf).0;
         $self
             .buffer
-            .emit(std::mem::replace(&mut $self.temporaries, old).0);
+            .emit(std::mem::replace(&mut $self.temporaries, old_tmp).0);
         $self.buffer.emit(written);
     };
 }
@@ -1306,6 +1306,8 @@ impl Codegen {
                             self.buffer.emit("; }");
                         });
                     }
+
+                    self.buffer.emit("else { UNREACHABLE(); }");
                 })
             }
             CheckedExprData::As(inner, _) => {
