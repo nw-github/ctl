@@ -725,7 +725,7 @@ pub struct Union {
 
 impl Union {
     pub fn tag_type(&self) -> TypeId {
-        TypeId::Uint(8)
+        discriminant_type(self.variants.len())
     }
 
     pub fn variant_tag(&self, name: &str) -> Option<usize> {
@@ -1538,7 +1538,8 @@ impl TypeChecker {
                     variants,
                     functions,
                 } => {
-                    let backing = TypeId::Uint(8);
+                    // TODO: should be the largest variant
+                    let backing = discriminant_type(variants.len());
                     let impls = impls
                         .iter()
                         .flat_map(|path| self.resolve_impl(scopes, path, true))
@@ -4340,4 +4341,8 @@ impl TypeChecker {
             span,
         ))
     }
+}
+
+fn discriminant_type(max: usize) -> TypeId {
+    TypeId::Uint((max as f64).log2().ceil() as u32)
 }
