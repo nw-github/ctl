@@ -18,6 +18,7 @@ pub enum Token<'a> {
     RangeInclusive,
     Ellipses,
     ScopeRes,
+    Arrow,
     FatArrow,
     Comma,
     Colon,
@@ -586,6 +587,8 @@ impl<'a> Lexer<'a> {
                     Token::SubAssign
                 } else if self.advance_if('-') {
                     Token::Decrement
+                } else if self.advance_if('>') {
+                    Token::Arrow
                 } else {
                     Token::Minus
                 }

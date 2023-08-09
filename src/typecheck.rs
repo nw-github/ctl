@@ -3915,6 +3915,7 @@ impl TypeChecker {
                 here,
             ),
             TypeHint::Tuple(_) => todo!(),
+            TypeHint::Fn { .. } => todo!(),
             TypeHint::Error => TypeId::Unknown(None),
         }
     }

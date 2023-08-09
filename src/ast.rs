@@ -313,6 +313,11 @@ pub enum TypeHint {
     Option(Box<TypeHint>),
     Ptr(Box<TypeHint>),
     MutPtr(Box<TypeHint>),
+    Fn {
+        is_extern: bool,
+        params: Vec<TypeHint>,
+        ret: Box<TypeHint>,
+    },
     Void,
     This,
     MutThis,

@@ -1099,6 +1099,26 @@ impl<'a> Parser<'a> {
             TypeHint::Void
         } else if let Some(this) = self.advance_if_kind(Token::ThisType) {
             TypeHint::Regular(L::new(Path::from(THIS_TYPE.to_owned()), this.span))
+        } else if self.advance_if_kind(Token::Fn).is_some() {
+            self.expect_kind(Token::LParen, "expected '('");
+            let params = self
+                .comma_separated(Token::RParen, "expected ')'", Self::parse_type)
+                .0;
+
+            if self.advance_if_kind(Token::Arrow).is_some() {
+                let ret = self.parse_type();
+                TypeHint::Fn {
+                    is_extern: false,
+                    params,
+                    ret: ret.into(),
+                }
+            } else {
+                TypeHint::Fn {
+                    is_extern: false,
+                    params,
+                    ret: TypeHint::Void.into(),
+                }
+            }
         } else {
             TypeHint::Regular(self.type_path())
         }
