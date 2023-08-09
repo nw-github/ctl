@@ -8,7 +8,7 @@ use crate::{
     lexer::Span,
     typecheck::{
         GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId, UserTypeData,
-        VariableId,
+        VariableId, FnPtr,
     },
     Error,
 };
@@ -60,6 +60,7 @@ impl std::hash::Hash for State {
 struct TypeGen {
     structs: Option<HashSet<GenericUserType>>,
     ints: HashSet<(bool, u32)>,
+    fnptrs: Option<HashSet<FnPtr>>,
 }
 
 impl TypeGen {
@@ -70,6 +71,23 @@ impl TypeGen {
         }
 
         let mut definitions = Buffer::default();
+        // FIXME: generating structs could cause more function pointers to need to be generated
+        for f in self.fnptrs.take().unwrap() {
+            definitions.emit("typedef ");
+            definitions.emit_type(scopes, &f.ret, self);
+            definitions.emit("(*");
+            definitions.emit_fnptr_name(scopes, &f);
+            definitions.emit(")(");
+            for (i, param) in f.params.iter().enumerate() {
+                if i > 0 {
+                    definitions.emit(", ");
+                }
+
+                definitions.emit_type(scopes, param, self);
+            }
+            definitions.emit(");");
+        }
+
         for ut in Self::get_struct_order(scopes, &structs)? {
             let union = scopes.get_user_type(ut.id).data.as_union();
             let unsafe_union = union.as_ref().map_or(false, |union| union.is_unsafe);
@@ -223,6 +241,7 @@ impl Default for TypeGen {
         Self {
             structs: Some(HashSet::new()),
             ints: HashSet::new(),
+            fnptrs: Some(HashSet::new()),
         }
     }
 }
@@ -273,7 +292,12 @@ impl Buffer {
                 self.emit_type(scopes, inner, tg);
                 self.emit(" *");
             }
-            TypeId::Func(_) => todo!(),
+            TypeId::FnPtr(f) => {
+                if let Some(fnptrs) = tg.fnptrs.as_mut() {
+                    fnptrs.insert((**f).clone());
+                }
+                self.emit_generic_mangled_name(scopes, id);
+            }
             TypeId::UserType(ut) => match &scopes.get_user_type(ut.id).data {
                 UserTypeData::Struct { .. } | UserTypeData::Union(_) => {
                     if is_opt_ptr(scopes, id) {
@@ -337,13 +361,24 @@ impl Buffer {
                 self.emit("mutptr_");
                 self.emit_generic_mangled_name(scopes, inner);
             }
-            TypeId::Func(_) => todo!(),
+            TypeId::FnPtr(f) => self.emit_fnptr_name(scopes, f),
             TypeId::UserType(ut) => {
                 self.emit_type_name(scopes, ut);
             }
             TypeId::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
             TypeId::Array(_) => todo!(),
             TypeId::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_generic_mangled_name"),
+        }
+    }
+
+    fn emit_fnptr_name(&mut self, scopes: &Scopes, f: &FnPtr) {
+        self.emit("fn");
+        self.emit_generic_mangled_name(scopes, &f.ret);
+        for (i, param) in f.params.iter().enumerate() {
+            if i > 0 {
+                self.emit("_");
+            }
+            self.emit_generic_mangled_name(scopes, param);
         }
     }
 
@@ -883,6 +918,19 @@ impl Codegen {
                 self.buffer.emit(")");
                 self.funcs.insert(next_state);
             }
+            CheckedExprData::CallFnPtr { expr, args } => {
+                self.buffer.emit("(");
+                self.gen_expr(scopes, *expr, state);
+                self.buffer.emit(")(");
+                for (i, arg) in args.into_iter().enumerate() {
+                    if i > 0 {
+                        self.buffer.emit(", ");
+                    }
+
+                    self.gen_expr(scopes, arg, state);
+                }
+                self.buffer.emit(")");
+            }
             CheckedExprData::Array(_) => todo!(),
             CheckedExprData::ArrayWithInit { .. } => todo!(),
             CheckedExprData::Vec(exprs) => {
@@ -1083,9 +1131,10 @@ impl Codegen {
             }
             CheckedExprData::Void => {}
             CheckedExprData::Symbol(symbol) => match symbol {
-                Symbol::Func => {
-                    let func = expr.ty.into_func().unwrap();
-                    self.buffer.emit_fn_name(scopes, &State::new(*func, None))
+                Symbol::Func(func) => {
+                    let state = State::new(func, None);
+                    self.buffer.emit_fn_name(scopes, &state);
+                    self.funcs.insert(state);
                 }
                 Symbol::Var(id) => {
                     if !scopes.get_var(id).ty.is_void_like() {

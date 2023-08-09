@@ -41,6 +41,10 @@ pub enum CheckedExprData {
         inst: Option<TypeId>,
         trait_fn: bool,
     },
+    CallFnPtr {
+        expr: Box<CheckedExpr>,
+        args: Vec<CheckedExpr>, 
+    },
     Instance {
         members: IndexMap<String, CheckedExpr>,
         variant: Option<String>,
@@ -128,7 +132,7 @@ impl CheckedExpr {
                 !matches!(op, UnaryOp::Deref) || matches!(expr.ty, TypeId::MutPtr(_))
             }
             CheckedExprData::Symbol(symbol) => match symbol {
-                Symbol::Func => false,
+                Symbol::Func(_) => false,
                 Symbol::Var(id) => scopes.get_var(*id).mutable,
             },
             CheckedExprData::Member { source, .. } => {
@@ -159,7 +163,9 @@ impl CheckedExpr {
                 let inner = scopes.as_option_inner(target).unwrap();
                 let expr = self.coerce_to(inner, scopes);
                 CheckedExpr::new(
-                    scopes.make_lang_type("option", vec![expr.ty.clone()]).unwrap(),
+                    scopes
+                        .make_lang_type("option", vec![expr.ty.clone()])
+                        .unwrap(),
                     CheckedExprData::Instance {
                         members: [("Some".into(), expr)].into(),
                         variant: Some("Some".into()),

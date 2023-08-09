@@ -146,6 +146,12 @@ impl IntStats {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FnPtr {
+    pub params: Vec<TypeId>,
+    pub ret: TypeId,
+}
+
 #[derive(Debug, Clone, EnumAsInner)]
 pub enum TypeId {
     Unknown(Option<Box<(TypeHint, ScopeId)>>),
@@ -164,7 +170,7 @@ pub enum TypeId {
     IntGeneric,
     FloatGeneric,
     Char,
-    Func(Box<GenericFunc>),
+    FnPtr(Box<FnPtr>),
     UserType(Box<GenericUserType>),
     Ptr(Box<TypeId>),
     MutPtr(Box<TypeId>),
@@ -186,11 +192,11 @@ impl PartialEq for TypeId {
             (Self::Uint(l0), Self::Uint(r0)) => l0 == r0,
             (Self::CInt(l0), Self::CInt(r0)) => l0 == r0,
             (Self::CUint(l0), Self::CUint(r0)) => l0 == r0,
-            (Self::Func(l0), Self::Func(r0)) => l0 == r0,
             (Self::UserType(l0), Self::UserType(r0)) => l0 == r0,
             (Self::Ptr(l0), Self::Ptr(r0)) => l0 == r0,
             (Self::MutPtr(l0), Self::MutPtr(r0)) => l0 == r0,
             (Self::Array(l0), Self::Array(r0)) => l0 == r0,
+            (Self::FnPtr(l0), Self::FnPtr(r0)) => l0 == r0,
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }
@@ -203,7 +209,7 @@ impl std::hash::Hash for TypeId {
             Self::Uint(l0) => l0.hash(state),
             Self::CInt(l0) => l0.hash(state),
             Self::CUint(l0) => l0.hash(state),
-            Self::Func(l0) => l0.hash(state),
+            Self::FnPtr(l0) => l0.hash(state),
             Self::UserType(l0) => l0.hash(state),
             Self::Ptr(l0) => l0.hash(state),
             Self::MutPtr(l0) => l0.hash(state),
@@ -313,6 +319,14 @@ impl TypeId {
 
                     break;
                 }
+                TypeId::FnPtr(f) => {
+                    for ty in f.params.iter_mut() {
+                        ty.fill_type_generics(scopes, inst);
+                    }
+
+                    f.ret.fill_type_generics(scopes, inst);
+                    break;
+                }
                 _ => break,
             }
         }
@@ -342,6 +356,14 @@ impl TypeId {
 
                     break;
                 }
+                TypeId::FnPtr(f) => {
+                    for ty in f.params.iter_mut() {
+                        ty.fill_func_generics(scopes, func);
+                    }
+
+                    f.ret.fill_func_generics(scopes, func);
+                    break;
+                }
                 _ => break,
             }
         }
@@ -362,6 +384,14 @@ impl TypeId {
                 }
                 TypeId::TraitSelf => {
                     *src = this.clone();
+                    break;
+                }
+                TypeId::FnPtr(f) => {
+                    for ty in f.params.iter_mut() {
+                        ty.fill_this(this);
+                    }
+
+                    f.ret.fill_this(this);
                     break;
                 }
                 _ => break,
@@ -386,32 +416,16 @@ impl TypeId {
             TypeId::Char => "char".into(),
             TypeId::Ptr(id) => format!("*{}", id.name(scopes)),
             TypeId::MutPtr(id) => format!("*mut {}", id.name(scopes)),
-            TypeId::Func(func) => {
-                let f = scopes.get_func(func.id);
-
-                let mut result = format!("fn {}", f.name);
-                if !func.generics.is_empty() {
-                    result.push('<');
-                    for (i, (param, concrete)) in
-                        f.type_params.iter().zip(func.generics.iter()).enumerate()
-                    {
-                        if i > 0 {
-                            result.push_str(", ");
-                        }
-                        result.push_str(&format!("{param} = {}", concrete.name(scopes)));
-                    }
-                    result.push('>');
-                }
-
-                result.push('(');
+            TypeId::FnPtr(f) => {
+                let mut result = "fn(".to_string();
                 for (i, param) in f.params.iter().enumerate() {
                     if i > 0 {
                         result.push_str(", ");
                     }
 
-                    result.push_str(&format!("{}: {}", param.name, param.ty.name(scopes)));
+                    result.push_str(&param.name(scopes));
                 }
-                format!("{result}) {}", f.ret.name(scopes))
+                format!("{result}) -> {}", f.ret.name(scopes))
             }
             TypeId::UserType(ty) => ty.name(scopes),
             TypeId::Array(inner) => format!("[{}; {}]", inner.0.name(scopes), inner.1),
@@ -567,6 +581,14 @@ impl TypeId {
                 }
                 TypeId::Unknown(Some(hint)) => {
                     *src = checker.resolve_type_from(scopes, &hint.0, hint.1, false);
+                    break;
+                }
+                TypeId::FnPtr(f) => {
+                    for ty in f.params.iter_mut() {
+                        ty.resolve(scopes, checker);
+                    }
+
+                    f.ret.resolve(scopes, checker);
                     break;
                 }
                 _ => break,
@@ -778,7 +800,7 @@ impl UserType {
 
 #[derive(Debug, Clone, EnumAsInner)]
 pub enum Symbol {
-    Func,
+    Func(GenericFunc),
     Var(VariableId),
 }
 
@@ -2482,23 +2504,30 @@ impl TypeChecker {
                     scopes.get_var(id).ty.clone(),
                     CheckedExprData::Symbol(Symbol::Var(id)),
                 ),
-                Some(ResolvedPath::Func(id)) => CheckedExpr::new(
-                    TypeId::Func(id.into()),
-                    CheckedExprData::Symbol(Symbol::Func),
-                ),
-                Some(ResolvedPath::UserType(ut)) => {
-                    let Some(st) = scopes.get_user_type(ut.id).data.as_struct() else {
-                        return self.error(Error::new("expected value", span));
-                    };
-
+                Some(ResolvedPath::Func(func)) => {
+                    let f = scopes.get_func(func.id);
                     CheckedExpr::new(
-                        TypeId::Func(GenericFunc::new(*st.1, ut.generics).into()),
-                        CheckedExprData::Symbol(Symbol::Func),
+                        TypeId::FnPtr(
+                            FnPtr {
+                                params: f.params.iter().map(|p| p.ty.clone()).collect(),
+                                ret: f.ret.clone(),
+                            }
+                            .into(),
+                        ),
+                        CheckedExprData::Symbol(Symbol::Func(func)),
                     )
                 }
-                Some(ResolvedPath::Module(_)) => {
-                    self.error(Error::new("expected value, found module", span))
-                }
+                Some(ResolvedPath::UserType(ut)) => self.error(Error::new(
+                    format!("expected expression, found type '{}'", ut.name(scopes)),
+                    span,
+                )),
+                Some(ResolvedPath::Module(id)) => self.error(Error::new(
+                    format!(
+                        "expected expression, found module '{}'",
+                        scopes[id].name.as_ref().unwrap()
+                    ),
+                    span,
+                )),
                 Some(ResolvedPath::None(err)) => self.error(err),
                 None => Default::default(),
             },
@@ -3000,7 +3029,7 @@ impl TypeChecker {
                 }
             }
             ExprData::Error => CheckedExpr::default(),
-            ExprData::Lambda { params, body } => {
+            ExprData::Lambda { .. } => {
                 todo!()
             }
         }
@@ -3415,13 +3444,13 @@ impl TypeChecker {
                     }
                 }
 
-                self.error(Error::new(
+                return self.error(Error::new(
                     format!("no method '{member}' found on type '{}'", id.name(scopes)),
                     span,
-                ))
+                ));
             }
-            ExprData::Path(path) => {
-                match self.resolve_path(scopes, &path, callee.span, false) {
+            ExprData::Path(ref path) => {
+                match self.resolve_path(scopes, path, callee.span, false) {
                     Some(ResolvedPath::UserType(ty)) => {
                         let ut = scopes.get_user_type(ty.id);
                         let Some(st) = ut.data.as_struct() else {
@@ -3442,13 +3471,13 @@ impl TypeChecker {
                             span,
                         );
 
-                        CheckedExpr::new(
+                        return CheckedExpr::new(
                             ret,
                             CheckedExprData::Instance {
                                 members: args,
                                 variant: None,
                             },
-                        )
+                        );
                     }
                     Some(ResolvedPath::Func(mut func)) => {
                         let f = scopes.get_func(func.id);
@@ -3457,7 +3486,7 @@ impl TypeChecker {
                         let (args, ret) =
                             self.check_fn_args(None, &mut func, None, args, target, scopes, span);
 
-                        CheckedExpr::new(
+                        return CheckedExpr::new(
                             ret,
                             if constructor {
                                 CheckedExprData::Instance {
@@ -3472,38 +3501,73 @@ impl TypeChecker {
                                     trait_fn: false,
                                 }
                             },
-                        )
+                        );
                     }
-                    Some(ResolvedPath::Var(id)) => {
-                        // closure, fn pointer
-                        self.error(Error::new(
+                    Some(ResolvedPath::Var(_)) => {}
+                    Some(ResolvedPath::Module(scope)) => {
+                        return self.error(Error::new(
                             format!(
-                                "cannot call value of type '{}'",
-                                &scopes.get_var(id).ty.name(scopes)
+                                "cannot call module '{}'",
+                                scopes[scope].name.as_ref().unwrap()
                             ),
                             span,
                         ))
                     }
-                    Some(ResolvedPath::Module(scope)) => self.error(Error::new(
-                        format!(
-                            "cannot call module '{}'",
-                            scopes[scope].name.as_ref().unwrap()
-                        ),
-                        span,
-                    )),
-                    Some(ResolvedPath::None(err)) => self.error(err),
-                    None => Default::default(),
+                    Some(ResolvedPath::None(err)) => return self.error(err),
+                    None => return Default::default(),
                 }
             }
-            _ => {
-                let expr = self.check_expr(scopes, callee, target);
-                // closure, fn pointer
-                self.error(Error::new(
-                    format!("cannot call value of type '{}'", &expr.ty.name(scopes)),
-                    span,
-                ))
+            _ => {}
+        }
+
+        let callee = self.check_expr(scopes, callee, None);
+        if callee.ty.is_fn_ptr() {
+            return self.call_fn_ptr(scopes, callee, args, span);
+        }
+
+        self.error(Error::new(
+            format!("expected callable item, got '{}'", &callee.ty.name(scopes)),
+            span,
+        ))
+    }
+
+    fn call_fn_ptr(
+        &mut self,
+        scopes: &mut Scopes,
+        callee: CheckedExpr,
+        args: Vec<(Option<String>, Expr)>,
+        span: Span,
+    ) -> CheckedExpr {
+        let f = callee.ty.as_fn_ptr().unwrap();
+
+        let mut result = vec![];
+        for (i, (name, arg)) in args.into_iter().enumerate() {
+            if let Some(param) = f.params.get(i) {
+                if name.is_some() {
+                    self.error(Error::new(
+                        "keyword parameters are not allowed here",
+                        arg.span,
+                    ))
+                }
+
+                result.push(self.type_check(scopes, arg, param));
+            } else {
+                self.error::<()>(Error::new("too many positional arguments", span));
+                break;
             }
         }
+
+        if result.len() < f.params.len() {
+            self.error(Error::new("too few positional arguments", span))
+        }
+
+        CheckedExpr::new(
+            f.ret.clone(),
+            CheckedExprData::CallFnPtr {
+                expr: callee.into(),
+                args: result,
+            },
+        )
     }
 
     fn check_arg(
@@ -3918,7 +3982,20 @@ impl TypeChecker {
                 here,
             ),
             TypeHint::Tuple(_) => todo!(),
-            TypeHint::Fn { .. } => todo!(),
+            TypeHint::Fn {
+                is_extern: _,
+                params,
+                ret,
+            } => TypeId::FnPtr(
+                FnPtr {
+                    params: params
+                        .iter()
+                        .map(|p| self.resolve_type(scopes, p, fwd))
+                        .collect(),
+                    ret: self.resolve_type(scopes, ret, fwd),
+                }
+                .into(),
+            ),
             TypeHint::Error => TypeId::Unknown(None),
         }
     }
