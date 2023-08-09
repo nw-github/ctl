@@ -781,6 +781,26 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+            Token::Or | Token::LogicalOr => {
+                let mut params = Vec::new();
+                if token.data == Token::Or {
+                    self.advance_until(Token::Or, token.span, |this| {
+                        let ident = this.expect_id("expected parameter name");
+                        let hint = if this.advance_if_kind(Token::Colon).is_some() {
+                            Some(this.parse_type())
+                        } else {
+                            None
+                        };
+                        params.push((ident, hint));
+                    });
+                }
+                let body = self.expression();
+                let bspan = body.span;
+                Expr::new(
+                    ExprData::Lambda { params, body: body.into() },
+                    Span::combine(token.span, bspan),
+                )
+            }
             _ => {
                 self.error(Error::new("unexpected token", token.span));
                 L::new(ExprData::Error, token.span)

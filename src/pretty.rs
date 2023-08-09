@@ -383,6 +383,20 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
             }
         }
         ExprData::Error => {}
+        ExprData::Lambda { params, body } => {
+            println!("{tabs}Lambda");
+            
+            if !params.is_empty() {
+                println!("{tabs}Params:");
+                let plus_1 = INDENT.repeat(indent + 1);
+                for (name, ty) in params {
+                    println!("{plus_1}{name}: {ty:?}");
+                }
+            }
+
+            println!("{tabs}Body: ");
+            print_expr(body, src, indent + 2);
+        }
     }
 }
 

@@ -130,6 +130,10 @@ pub enum ExprData {
         inclusive: bool,
     },
     Continue,
+    Lambda {
+        params: Vec<(String, Option<TypeHint>)>,
+        body: Box<Expr>,
+    },
     Error,
 }
 

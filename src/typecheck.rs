@@ -3000,6 +3000,9 @@ impl TypeChecker {
                 }
             }
             ExprData::Error => CheckedExpr::default(),
+            ExprData::Lambda { params, body } => {
+                todo!()
+            }
         }
     }
 
