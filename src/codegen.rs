@@ -7,8 +7,8 @@ use crate::{
     checked_ast::{CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt},
     lexer::Span,
     typecheck::{
-        GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId, UserTypeData,
-        VariableId, FnPtr,
+        FnPtr, GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId, UserTypeData,
+        VariableId,
     },
     Error,
 };
@@ -401,6 +401,13 @@ impl Buffer {
                 }
                 self.emit("$$");
             }
+        } else if let Some(attr) = f
+            .attrs
+            .iter()
+            .find(|attr| attr.name.data == "c_name" && !attr.props.is_empty())
+        {
+            // TODO: emit error when c_name is placed on a non-extern function
+            self.emit(&attr.props[0].name.data);
         } else {
             self.emit(&f.name);
         }
