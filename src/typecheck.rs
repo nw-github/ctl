@@ -40,6 +40,14 @@ impl GenericFunc {
                     src = &gi.0;
                     target = &ti.0;
                 }
+                (TypeId::FnPtr(src), TypeId::FnPtr(target)) => {
+                    for (src, target) in src.params.iter().zip(target.params.iter()) {
+                        self.infer_generics(src, target, scopes);
+                    }
+
+                    self.infer_generics(&src.ret, &target.ret, scopes);
+                    break;
+                }
                 (TypeId::UserType(src), target) => {
                     if let Some(t) = target.as_user_type() {
                         if src.id != t.id {
