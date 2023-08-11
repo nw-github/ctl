@@ -337,37 +337,7 @@ impl<'a> Parser<'a> {
     //
 
     fn expression(&mut self) -> Expr {
-        self.jump()
-    }
-
-    fn jump(&mut self) -> Expr {
-        if let Some(token) =
-            self.advance_if(|tk| matches!(tk, Token::Return | Token::Break | Token::Yield))
-        {
-            let (expr, span) = if !self
-                .matches(|tk| matches!(tk, Token::Semicolon | Token::Comma | Token::RBrace))
-            {
-                let expr = self.assignment();
-                let span = Span::combine(token.span, expr.span);
-                (expr.into(), span)
-            } else {
-                (L::new(ExprData::Void, token.span).into(), token.span)
-            };
-
-            L::new(
-                match token.data {
-                    Token::Return => ExprData::Return(expr),
-                    Token::Break => ExprData::Break(expr),
-                    Token::Yield => ExprData::Yield(expr),
-                    _ => unreachable!(),
-                },
-                span,
-            )
-        } else if let Some(token) = self.advance_if_kind(Token::Continue) {
-            L::new(ExprData::Continue, token.span)
-        } else {
-            self.assignment()
-        }
+        self.assignment()
     }
 
     fn assignment(&mut self) -> Expr {
@@ -797,10 +767,38 @@ impl<'a> Parser<'a> {
                 let body = self.expression();
                 let bspan = body.span;
                 Expr::new(
-                    ExprData::Lambda { params, body: body.into() },
+                    ExprData::Lambda {
+                        params,
+                        body: body.into(),
+                    },
                     Span::combine(token.span, bspan),
                 )
             }
+            Token::Return | Token::Break | Token::Yield => {
+                let (expr, span) = if !self.matches(|tk| {
+                    matches!(
+                        tk,
+                        Token::Semicolon | Token::Comma | Token::RBrace | Token::RParen
+                    )
+                }) {
+                    let expr = self.assignment();
+                    let span = Span::combine(token.span, expr.span);
+                    (expr.into(), span)
+                } else {
+                    (L::new(ExprData::Void, token.span).into(), token.span)
+                };
+    
+                L::new(
+                    match token.data {
+                        Token::Return => ExprData::Return(expr),
+                        Token::Break => ExprData::Break(expr),
+                        Token::Yield => ExprData::Yield(expr),
+                        _ => unreachable!(),
+                    },
+                    span,
+                )
+            }
+            Token::Continue => L::new(ExprData::Continue, token.span),
             _ => {
                 self.error(Error::new("unexpected token", token.span));
                 L::new(ExprData::Error, token.span)
