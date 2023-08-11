@@ -1000,7 +1000,11 @@ impl Scopes {
     }
 
     pub fn current_function(&self) -> Option<FunctionId> {
-        self.iter().find_map(|(_, scope)| {
+        self.function_of(self.current)
+    }
+
+    pub fn function_of(&self, scope: ScopeId) -> Option<FunctionId> {
+        self.iter_from(scope).find_map(|(_, scope)| {
             if let ScopeKind::Function(id) = &scope.kind {
                 Some(*id)
             } else {
@@ -2508,10 +2512,18 @@ impl TypeChecker {
                 CheckedExprData::Float(value),
             ),
             ExprData::Path(path) => match self.resolve_path(scopes, &path, span, false) {
-                Some(ResolvedPath::Var(id)) => CheckedExpr::new(
-                    scopes.get_var(id).ty.clone(),
-                    CheckedExprData::Symbol(Symbol::Var(id)),
-                ),
+                Some(ResolvedPath::Var(id)) => {
+                    let var = scopes.get_var(id);
+                    if !var.is_static && scopes.current_function() != scopes.function_of(var.scope)
+                    {
+                        self.error(Error::new(
+                            "cannot reference local variable of enclosing function",
+                            span,
+                        ))
+                    }
+
+                    CheckedExpr::new(var.ty.clone(), CheckedExprData::Symbol(Symbol::Var(id)))
+                }
                 Some(ResolvedPath::Func(func)) => {
                     let f = scopes.get_func(func.id);
                     CheckedExpr::new(
@@ -4051,6 +4063,13 @@ impl TypeChecker {
                 }
             }
             ResolvedPath::Var(id) => {
+                if !scopes.get_var(id).is_static && !fwd {
+                    return self.error(Error::new(
+                        format!("cannot import local variable '{}'", scopes.get_var(id).name),
+                        span,
+                    ));
+                }
+
                 if !all {
                     scopes.current().vars.insert(Vis { item: id, public });
                 } else if !fwd {
