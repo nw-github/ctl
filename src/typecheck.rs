@@ -730,6 +730,7 @@ pub struct Function {
     pub name: String,
     pub is_async: bool,
     pub is_extern: bool,
+    pub is_unsafe: bool,
     pub variadic: bool,
     pub type_params: Vec<String>,
     pub params: Vec<CheckedParam>,
@@ -1191,9 +1192,17 @@ pub struct Module {
     pub scope: ScopeId,
 }
 
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum Safety {
+    #[default]
+    Safe,
+    Unsafe,
+}
+
 pub struct TypeChecker {
     errors: Vec<Error>,
     universal: Vec<ScopeId>,
+    safety: Safety,
 }
 
 impl TypeChecker {
@@ -1205,6 +1214,7 @@ impl TypeChecker {
         let mut this = Self {
             errors: vec![],
             universal: Vec::new(),
+            safety: Safety::Safe,
         };
         let mut scopes = Scopes::new();
         let mut files: Vec<_> = module.iter().map(|file| file.path.clone()).collect();
@@ -1670,6 +1680,7 @@ impl TypeChecker {
                 name: f.name.data.clone(),
                 is_async: f.is_async,
                 is_extern: f.is_extern,
+                is_unsafe: f.is_unsafe,
                 variadic: f.variadic,
                 type_params: f.type_params.iter().map(|x| x.0.clone()).collect(),
                 params: Vec::new(),
@@ -1756,6 +1767,7 @@ impl TypeChecker {
             };
         }
 
+        // TODO: reset is_unsafe when checking user types when default values are fixed
         match stmt.data {
             StmtData::Module { name, body, .. } => {
                 return CheckedStmt::Module(scopes.find_enter(&name, |scopes| {
@@ -2141,11 +2153,13 @@ impl TypeChecker {
             }
 
             if let Some(body) = body {
+                let old_safety = std::mem::take(&mut self.safety);
                 scopes.get_func_mut(id).body = Some(
                     body.into_iter()
                         .map(|stmt| self.check_stmt(scopes, stmt))
                         .collect(),
                 );
+                self.safety = old_safety;
             }
         });
     }
@@ -2820,6 +2834,10 @@ impl TypeChecker {
                                     span,
                                 ));
                             }
+
+                            if self.safety != Safety::Unsafe {
+                                self.error(Error::new("this operation is unsafe", span))
+                            }
                         }
 
                         if !member.public && !scopes.can_access_privates(scopes.current, ty.scope) {
@@ -3006,12 +3024,18 @@ impl TypeChecker {
                         (TypeId::Char, TypeId::Uint(num)) if *num >= 32 => {}
                         (TypeId::Char, TypeId::Int(num)) if *num >= 33 => {}
                         (TypeId::F32, TypeId::F64) => {}
-                        // TODO: these should only be allowable with an unsafe pointer type, or
-                        // should be unsafe to do
-                        (TypeId::Usize, TypeId::Ptr(_) | TypeId::MutPtr(_)) => {}
-                        (TypeId::Ptr(_), TypeId::Ptr(_) | TypeId::Usize) => {}
-                        (TypeId::MutPtr(_), TypeId::Ptr(_) | TypeId::MutPtr(_) | TypeId::Usize) => {
+                        (TypeId::Ptr(_) | TypeId::MutPtr(_), TypeId::Usize) => {}
+
+                        (TypeId::Usize, TypeId::Ptr(_) | TypeId::MutPtr(_))
+                        | (
+                            TypeId::MutPtr(_) | TypeId::Ptr(_),
+                            TypeId::MutPtr(_) | TypeId::Ptr(_),
+                        ) => {
+                            if self.safety != Safety::Unsafe {
+                                self.error(Error::new("this operation is unsafe", span))
+                            }
                         }
+
                         (TypeId::CUint(a), TypeId::CUint(b)) if a <= b => {}
                         (
                             TypeId::Int(_)
@@ -3051,6 +3075,12 @@ impl TypeChecker {
             ExprData::Error => CheckedExpr::default(),
             ExprData::Lambda { .. } => {
                 todo!()
+            }
+            ExprData::Unsafe(expr) => {
+                let old_safety = std::mem::replace(&mut self.safety, Safety::Unsafe);
+                let expr = self.check_expr(scopes, *expr, target);
+                self.safety = old_safety;
+                expr
             }
         }
     }
@@ -3767,6 +3797,10 @@ impl TypeChecker {
 
         if let Some(inst) = inst {
             ret.fill_type_generics(scopes, inst);
+        }
+
+        if scopes.get_func(func.id).is_unsafe && self.safety != Safety::Unsafe {
+            self.error(Error::new("this operation is unsafe", span))
         }
 
         (result, ret)

@@ -395,7 +395,11 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
             }
 
             println!("{tabs}Body: ");
-            print_expr(body, src, indent + 2);
+            print_expr(body, src, indent + 1);
+        }
+        ExprData::Unsafe(expr) => {
+            println!("{tabs}Unsafe");
+            print_expr(expr, src, indent + 1);
         }
     }
 }

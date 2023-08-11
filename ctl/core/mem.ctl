@@ -6,22 +6,22 @@ pub fn size_of_val<T>(_: *T) usize {
 }
 
 /// Copies `num` T's from `src` to `dst` without destroying the contents in `dst`.
-pub fn copy<T>(kw dst: *mut T, kw src: *T, kw num: usize) {
+pub unsafe fn copy<T>(kw dst: *mut T, kw src: *T, kw num: usize) {
     [c_macro]
     [c_name(__builtin_memcpy)]
     extern fn memcpy(dst: *mut c_void, src: *c_void, len: usize) *mut c_void;
 
-    memcpy(dst as *mut c_void, src as *c_void, num * size_of::<T>());
+    unsafe memcpy(dst as *mut c_void, src as *c_void, num * size_of::<T>());
 }
 
 /// Copies `num` T's from `src` to `dst` without destroying the contents in `dst`. Behaves as if
 /// `src` is first copied to a temporary buffer, then copied to dst.
-pub fn move<T>(kw dst: *mut T, kw src: *T, kw num: usize) {
+pub unsafe fn move<T>(kw dst: *mut T, kw src: *T, kw num: usize) {
     [c_macro]
     [c_name(__builtin_memmove)]
     extern fn memmove(dst: *mut c_void, src: *c_void, len: usize) *mut c_void;
 
-    memmove(dst as *mut c_void, src as *c_void, num * size_of::<T>());
+    unsafe memmove(dst as *mut c_void, src as *c_void, num * size_of::<T>());
 }
 
 pub fn compare<T>(lhs: *T, rhs: *T, num: usize) bool {
@@ -29,7 +29,7 @@ pub fn compare<T>(lhs: *T, rhs: *T, num: usize) bool {
     [c_name(__builtin_memcmp)]
     extern fn memcmp(dst: *c_void, src: *c_void, len: usize) c_int;
 
-    return memcmp(lhs as *c_void, rhs as *c_void, num * size_of::<T>()) == 0;
+    return unsafe memcmp(lhs as *c_void, rhs as *c_void, num * size_of::<T>()) == 0;
 }
 
 pub fn swap<T>(lhs: *mut T, rhs: *mut T) {
@@ -54,12 +54,12 @@ pub unsafe fn transmute<In, Out>(i: In) Out {
     //     u: U,
     // }
     // static_assert(size_of::<In>() == size_of::<Out>());
-    // return unsafe { Trasmuter::<_, Out>(t: i).u };
+    // return unsafe Trasmuter::<_, Out>(t: i).u;
 
     unsafe union Transmuter<T, U> {
         In(T),
         Out(U),
     }
 
-    return Transmuter::In::<In, Out>(i).Out;
+    return unsafe Transmuter::In::<In, Out>(i).Out;
 }

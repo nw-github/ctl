@@ -10,12 +10,12 @@ pub fn print(s: str) {
 }
 
 pub fn eprintln(s: str) {
-    write(2, s.as_ptr() as *c_void, s.len());
-    write(2, &b'\n' as *c_void, 1);
+    eprint(s);
+    unsafe write(2, &b'\n' as *c_void, 1);
 }
 
 pub fn eprint(s: str) {
-    write(2, s.as_ptr() as *c_void, s.len());
+    unsafe write(2, s.as_ptr() as *c_void, s.len());
 }
 
 fn convert_argv(argc: c_int, argv: **c_char) [str..] {
@@ -23,7 +23,7 @@ fn convert_argv(argc: c_int, argv: **c_char) [str..] {
     mut args: [str] = std::vec::Vec::with_capacity(argc);
     mut i = 0usize;
     while i < argc {
-        args.push(str::from_c_str(*core::ptr::offset(argv, i++)));
+        args.push(str::from_c_str(*unsafe core::ptr::offset(argv, i++)));
     }
     return args.as_span();
 }

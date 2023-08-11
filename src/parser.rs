@@ -42,6 +42,7 @@ pub struct Parser<'a> {
     needs_sync: bool,
     errors: Vec<Error>,
     attrs: Vec<Attribute>,
+    is_unsafe: Option<L<Token<'a>>>,
 }
 
 impl<'a> Parser<'a> {
@@ -51,6 +52,7 @@ impl<'a> Parser<'a> {
             needs_sync: false,
             errors: Vec::new(),
             attrs: Vec::new(),
+            is_unsafe: None,
         }
     }
 
@@ -262,6 +264,12 @@ impl<'a> Parser<'a> {
                 attrs: std::mem::take(&mut self.attrs),
             })
         } else {
+            if let Some(public) = public.or(is_extern) {
+                self.errors.push(Error::new("expected item", public.span));
+            } else {
+                self.is_unsafe = is_unsafe;
+            }
+
             None
         }
     }
@@ -270,6 +278,7 @@ impl<'a> Parser<'a> {
         self.try_item().unwrap_or_else(|| {
             let span = self.advance().span;
             self.error(Error::new("expected item", span));
+            self.is_unsafe = None;
             Stmt {
                 data: StmtData::Error,
                 attrs: std::mem::take(&mut self.attrs),
@@ -282,9 +291,11 @@ impl<'a> Parser<'a> {
         let stmt = if let Some(item) = self.try_item() {
             item
         } else if let Some(token) = self.advance_if(|t| matches!(t, Token::Let | Token::Mut)) {
-            let mutable = matches!(token.data, Token::Mut);
-            let (name, ty) = self.parse_var_name();
+            if let Some(is_unsafe) = self.is_unsafe.take() {
+                self.errors.push(Error::new("unsafe is not valid here", is_unsafe.span));
+            }
 
+            let (name, ty) = self.parse_var_name();
             let value = if self.advance_if_kind(Token::Assign).is_some() {
                 Some(self.expression())
             } else {
@@ -295,14 +306,15 @@ impl<'a> Parser<'a> {
                 data: StmtData::Let {
                     name,
                     ty,
-                    mutable,
+                    mutable: matches!(token.data, Token::Mut),
                     value,
                 },
                 span: Span::combine(token.span, semi.span),
                 attrs: std::mem::take(&mut self.attrs),
             }
         } else {
-            let expr = if let Some(token) = self.advance_if_kind(Token::If) {
+            let is_unsafe = self.is_unsafe.take();
+            let mut expr = if let Some(token) = self.advance_if_kind(Token::If) {
                 self.if_expr(token.span)
             } else if let Some(token) = self.advance_if_kind(Token::While) {
                 self.while_expr(token.span)
@@ -319,6 +331,11 @@ impl<'a> Parser<'a> {
                 self.expect_kind(Token::Semicolon, "expected ';'");
                 expr
             };
+
+            if let Some(is_unsafe) = is_unsafe {
+                let span = Span::combine(is_unsafe.span, expr.span);
+                expr = Expr::new(ExprData::Unsafe(expr.into()), span);
+            }
 
             Stmt {
                 span: expr.span,
@@ -781,13 +798,13 @@ impl<'a> Parser<'a> {
                         Token::Semicolon | Token::Comma | Token::RBrace | Token::RParen
                     )
                 }) {
-                    let expr = self.assignment();
+                    let expr = self.expression();
                     let span = Span::combine(token.span, expr.span);
                     (expr.into(), span)
                 } else {
                     (L::new(ExprData::Void, token.span).into(), token.span)
                 };
-    
+
                 L::new(
                     match token.data {
                         Token::Return => ExprData::Return(expr),
@@ -797,6 +814,11 @@ impl<'a> Parser<'a> {
                     },
                     span,
                 )
+            }
+            Token::Unsafe => {
+                let expr = self.expression();
+                let span = Span::combine(token.span, expr.span);
+                L::new(ExprData::Unsafe(expr.into()), span)
             }
             Token::Continue => L::new(ExprData::Continue, token.span),
             _ => {

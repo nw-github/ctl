@@ -124,6 +124,7 @@ pub enum ExprData {
     Return(Box<Expr>),
     Yield(Box<Expr>),
     Break(Box<Expr>),
+    Unsafe(Box<Expr>),
     Range {
         start: Option<Box<Expr>>,
         end: Option<Box<Expr>>,

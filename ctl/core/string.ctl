@@ -12,7 +12,7 @@ pub struct str: Hash + Eq<str> {
     pub fn from_c_str(ptr: *c_char) str {
         extern fn strlen(ptr: *c_char) usize;
         // TODO: validate UTF-8
-        return str(span: Span::new(ptr as *u8, strlen(ptr)));
+        return str(span: unsafe { yield Span::new(ptr as *u8, strlen(ptr)); });
     }
 
     pub fn len(this) usize {
@@ -24,11 +24,11 @@ pub struct str: Hash + Eq<str> {
     }
 
     pub fn as_ptr(this) *u8 {
-        return this.span.as_raw().as_ptr();
+        return unsafe this.span.as_raw().as_ptr();
     }
 
     pub fn as_c_str(this) *c_char {
-        return this.span.as_raw().as_ptr() as *c_char;
+        return unsafe this.span.as_raw().as_ptr() as *c_char;
     }
 
     pub fn as_bytes(this) [u8..] {
@@ -72,7 +72,7 @@ pub struct Chars: Iterator<char> {
 
     pub fn next(mut this) ?char {
         return match this.s.get(0) {
-            ?cp => {
+            ?cp => unsafe {
                 mut cp = *cp as u32 & 0xff;
                 if cp < 0x80 {
                     this.s = this.s.subspan(1usize..);
@@ -99,7 +99,7 @@ pub struct Chars: Iterator<char> {
                 }
 
                 yield cp as! char;
-            }
+            },
             null => null,
         };
     }

@@ -23,12 +23,12 @@ pub struct Span<T> {
 
     pub fn get(this, idx: usize) ?*T {
         return if idx < this.len {
-            yield this.get_unchecked(idx);
+            yield unsafe this.get_unchecked(idx);
         };
     }
 
     pub unsafe fn get_unchecked(this, idx: usize) *T {
-        return core::ptr::offset(this.ptr, idx);
+        return unsafe core::ptr::offset(this.ptr, idx);
     }
 
     pub fn as_raw(this) Raw<T> {
@@ -38,7 +38,7 @@ pub struct Span<T> {
     pub fn iter(this) Iter<T> {
         return Iter(
             ptr: this.ptr,
-            end: core::ptr::offset(this.ptr, this.len)
+            end: unsafe core::ptr::offset(this.ptr, this.len)
         );
     }
 
@@ -60,7 +60,7 @@ pub struct Span<T> {
         }
 
         return Span(
-            ptr: (this.ptr as usize + start * core::mem::size_of::<T>()) as *T,
+            ptr: unsafe core::ptr::offset(this.ptr, start),
             len: end - start
         );
     }
@@ -85,22 +85,22 @@ pub struct SpanMut<T> {
 
     pub fn get(this, idx: usize) ?*T {
         return if idx < this.len {
-            yield this.get_unchecked(idx);
+            yield unsafe this.get_unchecked(idx);
         };
     }
 
     pub fn get_mut(this, idx: usize) ?*mut T {
         return if idx < this.len {
-            yield this.get_mut_unchecked(idx);
+            yield unsafe this.get_mut_unchecked(idx);
         };
     }
 
     pub unsafe fn get_unchecked(this, idx: usize) *T {
-        return core::ptr::offset(this.ptr, idx);
+        return unsafe core::ptr::offset(this.ptr, idx);
     }
 
     pub unsafe fn get_mut_unchecked(this, idx: usize) *mut T {
-        return core::ptr::offset_mut(this.ptr, idx);
+        return unsafe core::ptr::offset_mut(this.ptr, idx);
     }
 
     pub fn as_raw(this) Raw<T> {
@@ -114,14 +114,14 @@ pub struct SpanMut<T> {
     pub fn iter(this) Iter<T> {
         return Iter(
             ptr: this.ptr,
-            end: core::ptr::offset(this.ptr, this.len)
+            end: unsafe core::ptr::offset(this.ptr, this.len)
         );
     }
 
     pub fn iter_mut(this) IterMut<T> {
         return IterMut(
             ptr: this.ptr,
-            end: core::ptr::offset_mut(this.ptr, this.len)
+            end: unsafe core::ptr::offset_mut(this.ptr, this.len)
         );
     }
 
@@ -143,7 +143,7 @@ pub struct SpanMut<T> {
         }
 
         return SpanMut(
-            ptr: (this.ptr as usize + start * core::mem::size_of::<T>()) as *mut T,
+            ptr: unsafe core::ptr::offset_mut(this.ptr, start),
             len: end - start
         );
     }
@@ -155,7 +155,7 @@ pub struct Iter<T>: Iterator<*T> {
 
     pub fn next(mut this) ?*T {
         return if !core::ptr::eq(this.ptr, this.end) {
-            yield core::mem::replace(&mut this.ptr, core::ptr::offset(this.ptr, 1));
+            yield core::mem::replace(&mut this.ptr, unsafe core::ptr::offset(this.ptr, 1));
         };
     }
 }
@@ -166,7 +166,7 @@ pub struct IterMut<T>: Iterator<*mut T> {
 
     pub fn next(mut this) ?*mut T {
         return if !core::ptr::eq(this.ptr, this.end) {
-            yield core::mem::replace(&mut this.ptr, core::ptr::offset_mut(this.ptr, 1));
+            yield core::mem::replace(&mut this.ptr, unsafe core::ptr::offset_mut(this.ptr, 1));
         };
     }
 }
