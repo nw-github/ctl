@@ -125,10 +125,7 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
             println!();
 
             let tabs = INDENT.repeat(indent + 1);
-            if let Some(ty) = ty {
-                println!("{tabs}Type: {ty:?}");
-            }
-
+            println!("{tabs}Type: {ty:?}");
             print_expr(value, src, indent + 1);
         }
         StmtData::Module { name, body, public } => {

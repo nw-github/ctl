@@ -28,7 +28,7 @@ pub enum StmtData {
     Static {
         public: bool,
         name: String,
-        ty: Option<TypeHint>,
+        ty: TypeHint,
         value: Expr,
     },
     Module {

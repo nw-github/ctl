@@ -118,8 +118,7 @@ impl<'a> Parser<'a> {
                     attrs,
                 })
             } else {
-                let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
-                let (body, span) = self.parse_block(lcurly.span);
+                let (body, span) = self.parse_block();
                 proto.body = Some(body);
                 Some(Stmt {
                     data: StmtData::Fn(proto),
@@ -254,7 +253,9 @@ impl<'a> Parser<'a> {
                     .push(Error::new("extern is not valid here", token.span));
             }
 
-            let (name, ty) = self.parse_var_name();
+            let name = self.expect_id("expected name");
+            self.expect_kind(Token::Colon, "expected ':'");
+            let ty = self.parse_type();
             self.expect_kind(
                 Token::Assign,
                 "expected '=': static variables must be initialized",
@@ -305,7 +306,10 @@ impl<'a> Parser<'a> {
                     .push(Error::new("unsafe is not valid here", is_unsafe.span));
             }
 
-            let (name, ty) = self.parse_var_name();
+            let name = self.expect_id("expected name");
+            let ty = self
+                .advance_if_kind(Token::Colon)
+                .map(|_| self.parse_type());
             let value = if self.advance_if_kind(Token::Assign).is_some() {
                 Some(self.expression())
             } else {
@@ -804,11 +808,11 @@ impl<'a> Parser<'a> {
 
     fn if_expr(&mut self, token: Span) -> Expr {
         let cond = self.expression();
-        let lcurly = self.expect_kind(Token::LCurly, "expected block");
+        let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
         let if_branch = self.block_expr(lcurly.span);
         let else_branch = self.advance_if_kind(Token::Else).map(|_| {
             if !self.matches_kind(Token::If) {
-                let lcurly = self.expect_kind(Token::LCurly, "expected block");
+                let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
                 self.block_expr(lcurly.span)
             } else {
                 self.expression()
@@ -826,9 +830,7 @@ impl<'a> Parser<'a> {
 
     fn while_expr(&mut self, token: Span) -> Expr {
         let cond = self.expression();
-        let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
-        let (body, span) = self.parse_block(lcurly.span);
-
+        let (body, span) = self.parse_block();
         Expr::new(
             token.extended_to(span),
             ExprData::Loop {
@@ -839,20 +841,19 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn loop_expr(&mut self, mut span: Span) -> Expr {
-        let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
-        let body = self.parse_block(lcurly.span).0;
+    fn loop_expr(&mut self, mut token: Span) -> Expr {
+        let body = self.parse_block().0;
         let (cond, do_while) = self
             .advance_if_kind(Token::While)
             .map(|_| {
                 let cond = self.expression();
-                span.extend_to(cond.span);
+                token.extend_to(cond.span);
                 (Some(cond.into()), true)
             })
             .unwrap_or_default();
 
         Expr::new(
-            span,
+            token,
             ExprData::Loop {
                 cond,
                 body,
@@ -867,8 +868,7 @@ impl<'a> Parser<'a> {
         self.expect_kind(Token::In, "expected 'in'");
         // TODO: parse for foo in 0.. {} as |0..| |{}| instead of |0..{}|
         let iter = self.expression();
-        let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
-        let (body, span) = self.parse_block(lcurly.span);
+        let (body, span) = self.parse_block();
         Expr::new(
             token.extended_to(span),
             ExprData::For {
@@ -907,8 +907,11 @@ impl<'a> Parser<'a> {
     }
 
     fn block_expr(&mut self, token: Span) -> Expr {
-        let (expr, span) = self.parse_block(token);
-        Expr::new(span, ExprData::Block(expr))
+        let mut stmts = Vec::new();
+        let span = self.advance_until(Token::RCurly, token, |this| {
+            stmts.push(this.statement());
+        });
+        Expr::new(span, ExprData::Block(stmts))
     }
 
     //
@@ -1146,17 +1149,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_var_name(&mut self) -> (String, Option<TypeHint>) {
-        (
-            self.expect_id("expected name"),
-            self.advance_if_kind(Token::Colon)
-                .map(|_| self.parse_type()),
-        )
-    }
-
-    fn parse_block(&mut self, span: Span) -> (Vec<Stmt>, Span) {
+    fn parse_block(&mut self) -> (Vec<Stmt>, Span) {
         let mut stmts = Vec::new();
-        let span = self.advance_until(Token::RCurly, span, |this| {
+        let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
+        let span = self.advance_until(Token::RCurly, lcurly.span, |this| {
             stmts.push(this.statement());
         });
         (stmts, span)
@@ -1182,13 +1178,11 @@ impl<'a> Parser<'a> {
             };
             if config.is_unsafe {
                 if let Ok((mut func, _)) = this.expect_prototype(config) {
-                    let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
-                    func.body = Some(this.parse_block(lcurly.span).0);
+                    func.body = Some(this.parse_block().0);
                     functions.push(func);
                 }
             } else if let Some((mut func, _)) = this.try_prototype(config) {
-                let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
-                func.body = Some(this.parse_block(lcurly.span).0);
+                func.body = Some(this.parse_block().0);
                 functions.push(func);
             } else {
                 let name = this.expect_id("expected name");
@@ -1246,13 +1240,11 @@ impl<'a> Parser<'a> {
             };
             if config.is_public || config.is_unsafe {
                 if let Ok((mut func, _)) = this.expect_prototype(config) {
-                    let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
-                    func.body = Some(this.parse_block(lcurly.span).0);
+                    func.body = Some(this.parse_block().0);
                     functions.push(func);
                 }
             } else if let Some((mut func, _)) = this.try_prototype(config) {
-                let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
-                func.body = Some(this.parse_block(lcurly.span).0);
+                func.body = Some(this.parse_block().0);
                 functions.push(func);
             } else if this.advance_if_kind(Token::Shared).is_some() {
                 // warn if pub was specified that it is useless
@@ -1368,13 +1360,11 @@ impl<'a> Parser<'a> {
             };
             if config.is_unsafe {
                 if let Ok((mut func, _)) = this.expect_prototype(config) {
-                    let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
-                    func.body = Some(this.parse_block(lcurly.span).0);
+                    func.body = Some(this.parse_block().0);
                     functions.push(func);
                 }
             } else if let Some((mut func, _)) = this.try_prototype(config) {
-                let lcurly = this.expect_kind(Token::LCurly, "expected '{'");
-                func.body = Some(this.parse_block(lcurly.span).0);
+                func.body = Some(this.parse_block().0);
                 functions.push(func);
             } else {
                 variants.push((

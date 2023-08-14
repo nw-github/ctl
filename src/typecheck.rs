@@ -1640,10 +1640,7 @@ impl TypeChecker {
                 scopes.insert_var(
                     Variable {
                         name: name.clone(),
-                        ty: ty
-                            .as_ref()
-                            .map(|ty| self.resolve_type(scopes, ty, true))
-                            .unwrap_or(TypeId::Unknown(None)),
+                        ty: self.resolve_type(scopes, ty, true),
                         is_static: true,
                         mutable: false,
                         value: None,
@@ -1930,15 +1927,8 @@ impl TypeChecker {
             } => {
                 // FIXME: detect cycles like static X: usize = X;
                 // FIXME: non-const statics should be disallowed
-                let (value, ty) = if let Some(ty) = ty {
-                    let ty = self.resolve_type(scopes, &ty, false);
-                    (self.type_check(scopes, value, &ty), ty)
-                } else {
-                    let value = self.check_expr(scopes, value, None);
-                    let ty = value.ty.clone();
-                    (value, ty)
-                };
-
+                let ty = self.resolve_type(scopes, &ty, false);
+                let value = self.type_check(scopes, value, &ty);
                 let var = scopes.get_var_mut(*scopes.find_var(&name).unwrap());
                 var.ty = ty;
                 var.value = Some(value);
