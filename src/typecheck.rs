@@ -699,12 +699,18 @@ pub enum ScopeKind {
 }
 
 #[derive(Debug, Clone)]
+enum DefaultExpr {
+    Unchecked(ScopeId, Expr),
+    Checked(CheckedExpr),
+}
+
+#[derive(Debug, Clone)]
 pub struct CheckedParam {
     pub mutable: bool,
     pub keyword: bool,
     pub name: String,
     pub ty: TypeId,
-    //pub default: Option<CheckedExpr>,
+    default: Option<DefaultExpr>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -1478,7 +1484,7 @@ impl TypeChecker {
                                         keyword: false,
                                         name: member.name.clone(),
                                         ty: member.ty.clone(),
-                                        default: None,
+                                        default: member.default.clone(),
                                     });
                                 }
 
@@ -1700,27 +1706,25 @@ impl TypeChecker {
             ScopeKind::Function(id),
             false,
             |scopes| {
-                if !f.type_params.is_empty() {
-                    for (i, (name, impls)) in f.type_params.iter().enumerate() {
-                        let id = scopes.insert_user_type(
-                            UserType {
-                                name: name.clone(),
-                                body_scope: scopes.current_id(),
-                                data: UserTypeData::FuncGeneric(i),
-                                type_params: 0,
-                                impls: Vec::new(),
-                            },
-                            false,
-                        );
+                scopes.get_func_mut(id).body_scope = scopes.current_id();
+                for (i, (name, impls)) in f.type_params.iter().enumerate() {
+                    let id = scopes.insert_user_type(
+                        UserType {
+                            name: name.clone(),
+                            body_scope: scopes.current_id(),
+                            data: UserTypeData::FuncGeneric(i),
+                            type_params: 0,
+                            impls: Vec::new(),
+                        },
+                        false,
+                    );
 
-                        scopes.get_user_type_mut(id).impls = impls
-                            .iter()
-                            .flat_map(|path| self.resolve_impl(scopes, path, true))
-                            .collect();
-                    }
+                    scopes.get_user_type_mut(id).impls = impls
+                        .iter()
+                        .flat_map(|path| self.resolve_impl(scopes, path, true))
+                        .collect();
                 }
 
-                scopes.get_func_mut(id).body_scope = scopes.current_id();
                 scopes.get_func_mut(id).params = f
                     .params
                     .iter()
@@ -1729,6 +1733,10 @@ impl TypeChecker {
                         keyword: param.keyword,
                         name: param.name.clone(),
                         ty: self.resolve_type(scopes, &param.ty, true),
+                        default: param
+                            .default
+                            .clone()
+                            .map(|expr| DefaultExpr::Unchecked(scopes.current, expr)),
                     })
                     .collect();
                 scopes.get_func_mut(id).ret = self.resolve_type(scopes, &f.ret, true);
@@ -2101,18 +2109,7 @@ impl TypeChecker {
     fn check_fn(&mut self, scopes: &mut Scopes, id: FunctionId, body: Option<Vec<Stmt>>) {
         // TODO: disallow private type in public interface
         scopes.enter_id(scopes.get_func(id).body_scope, |scopes| {
-            for i in 0..scopes.get_func(id).params.len() {
-                resolve_type!(self, scopes, scopes.get_func_mut(id).params[i].ty);
-            }
-
-            resolve_type!(self, scopes, scopes.get_func_mut(id).ret);
-            for i in 0..scopes.get_func(id).type_params.len() {
-                let id = scopes
-                    .find_user_type(&scopes.get_func(id).type_params[i])
-                    .unwrap();
-                self.resolve_impls(scopes, *id);
-            }
-
+            self.resolve_proto(scopes, id);
             for param in scopes
                 .get_func(id)
                 .params
@@ -2812,7 +2809,7 @@ impl TypeChecker {
                                 ));
                             }
 
-                            if self.safety != Safety::Unsafe {
+                            if union.is_unsafe && self.safety != Safety::Unsafe {
                                 self.error(Error::new("this operation is unsafe", span))
                             }
                         }
@@ -3639,11 +3636,7 @@ impl TypeChecker {
         scopes: &mut Scopes,
         span: Span,
     ) -> (IndexMap<String, CheckedExpr>, TypeId) {
-        for i in 0..scopes.get_func(func.id).params.len() {
-            resolve_type!(self, scopes, scopes.get_func_mut(func.id).params[i].ty);
-        }
-
-        resolve_type!(self, scopes, scopes.get_func_mut(func.id).ret);
+        self.resolve_proto(scopes, func.id);
 
         if let Some(target) = target {
             func.infer_generics(&scopes.get_func(func.id).ret, target, scopes);
@@ -3705,15 +3698,17 @@ impl TypeChecker {
             }
         }
 
-        // for param in params
-        //     .iter()
-        //     .filter(|p| !result.contains_key(&p.name))
-        //     .collect::<Vec<_>>()
-        // {
-        //     if let Some(default) = &param.default {
-        //         result.insert(param.name.clone(), default.clone());
-        //     }
-        // }
+        for param in scopes
+            .get_func(func.id)
+            .params
+            .iter()
+            .filter(|p| !result.contains_key(&p.name))
+            .collect::<Vec<_>>()
+        {
+            if let Some(DefaultExpr::Checked(expr)) = &param.default {
+                result.insert(param.name.clone(), expr.clone());
+            }
+        }
 
         if scopes.get_func(func.id).params.len() > result.len() {
             let mut missing = String::new();
@@ -3765,7 +3760,6 @@ impl TypeChecker {
                     let param = *scopes
                         .find_user_type_in(&f.type_params[i], f.body_scope)
                         .unwrap();
-                    self.resolve_impls(scopes, param);
                     self.check_bounds(
                         scopes,
                         Some(func),
@@ -4157,6 +4151,34 @@ impl TypeChecker {
 
         for i in removals.into_iter().rev() {
             scopes.get_user_type_mut(id).impls.remove(i);
+        }
+    }
+
+    fn resolve_proto(&mut self, scopes: &mut Scopes, id: FunctionId) {
+        for i in 0..scopes.get_func(id).params.len() {
+            resolve_type!(self, scopes, scopes.get_func_mut(id).params[i].ty);
+            match std::mem::take(&mut scopes.get_func_mut(id).params[i].default) {
+                Some(DefaultExpr::Unchecked(scope, expr)) => {
+                    scopes.enter_id(scope, |scopes| {
+                        let target = scopes.get_func(id).params[i].ty.clone();
+                        scopes.get_func_mut(id).params[i].default =
+                            Some(DefaultExpr::Checked(self.type_check(scopes, expr, &target)));
+                    });
+                }
+                other => scopes.get_func_mut(id).params[i].default = other,
+            }
+        }
+
+        resolve_type!(self, scopes, scopes.get_func_mut(id).ret);
+
+        for i in 0..scopes.get_func(id).type_params.len() {
+            let id = scopes
+                .find_user_type_in(
+                    &scopes.get_func(id).type_params[i],
+                    scopes.get_func(id).body_scope,
+                )
+                .unwrap();
+            self.resolve_impls(scopes, *id);
         }
     }
 
