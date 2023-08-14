@@ -1500,7 +1500,7 @@ impl TypeChecker {
                                     true,
                                     &Fn {
                                         public: base.public,
-                                        name: Located::new(member.name.clone(), Span::default()),
+                                        name: Located::new(Span::default(), member.name.clone()),
                                         is_async: false,
                                         is_extern: false,
                                         variadic: false,
@@ -2172,13 +2172,13 @@ impl TypeChecker {
     ) -> CheckedExpr {
         macro_rules! lbox {
             ($e: expr) => {
-                Located::new($e, Span::default()).into()
+                Located::new(Span::default(), $e).into()
             };
         }
 
         macro_rules! l {
             ($e: expr) => {
-                Located::new($e, Span::default())
+                Located::new(Span::default(), $e)
             };
         }
 
@@ -2424,7 +2424,7 @@ impl TypeChecker {
                         CheckedExprData::Instance {
                             members: [(
                                 "None".into(),
-                                self.check_expr(scopes, Located::new(ExprData::Void, span), target),
+                                self.check_expr(scopes, Located::new(span, ExprData::Void), target),
                             )]
                             .into(),
                             variant: Some("None".into()),
@@ -2650,7 +2650,7 @@ impl TypeChecker {
 
                         Some(self.check_expr(
                             scopes,
-                            Located::new(ExprData::None, span),
+                            Located::new(span, ExprData::None),
                             Some(&out_type),
                         ))
                     } else {
@@ -3025,6 +3025,15 @@ impl TypeChecker {
                         (TypeId::Char, TypeId::Int(num)) if *num >= 33 => {}
                         (TypeId::F32, TypeId::F64) => {}
                         (TypeId::Ptr(_) | TypeId::MutPtr(_), TypeId::Usize) => {}
+                        (
+                            TypeId::Bool,
+                            TypeId::Int(_)
+                            | TypeId::Uint(_)
+                            | TypeId::CInt(_)
+                            | TypeId::CUint(_)
+                            | TypeId::Usize
+                            | TypeId::Isize,
+                        ) => {}
 
                         (TypeId::Usize, TypeId::Ptr(_) | TypeId::MutPtr(_))
                         | (
@@ -4473,14 +4482,14 @@ impl TypeChecker {
 
     fn typehint_for_struct(base: &Struct, span: Span) -> TypeHint {
         TypeHint::Regular(Located::new(
+            span,
             Path::Normal(vec![(
                 base.name.data.clone(),
                 base.type_params
                     .iter()
-                    .map(|(n, _)| TypeHint::Regular(Located::new(Path::from(n.clone()), span)))
+                    .map(|(n, _)| TypeHint::Regular(Located::new(span, Path::from(n.clone()))))
                     .collect(),
             )]),
-            span,
         ))
     }
 }

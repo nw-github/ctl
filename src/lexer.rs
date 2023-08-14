@@ -207,8 +207,8 @@ impl Span {
 
 #[derive(Debug, Clone, derive_more::Constructor)]
 pub struct Located<T> {
-    pub data: T,
     pub span: Span,
+    pub data: T,
 }
 
 pub struct Lexer<'a> {
@@ -295,12 +295,12 @@ impl<'a> Lexer<'a> {
             Some('t') => '\t',
             _ => {
                 return Err(Located::new(
-                    Error::InvalidEscape,
                     Span {
                         loc: self.loc,
                         len: 1,
                         file: self.file,
                     },
+                    Error::InvalidEscape,
                 ));
             }
         })
@@ -320,12 +320,12 @@ impl<'a> Lexer<'a> {
                 },
                 None => {
                     return Err(Located::new(
-                        Error::UnterminatedStr,
                         Span {
                             loc: self.loc,
                             len: 0,
                             file: self.file,
                         },
+                        Error::UnterminatedStr,
                     ));
                 }
             }
@@ -337,23 +337,23 @@ impl<'a> Lexer<'a> {
             Some('\\') => self.escape_char()?,
             Some('\'') => {
                 return Err(Located::new(
-                    Error::EmptyChar,
                     Span {
                         loc: self.loc,
                         len: 0,
                         file: self.file,
                     },
+                    Error::EmptyChar,
                 ))
             }
             Some(any) => any,
             None => {
                 return Err(Located::new(
-                    Error::UnterminatedChar,
                     Span {
                         loc: self.loc,
                         len: 0,
                         file: self.file,
                     },
+                    Error::UnterminatedChar,
                 ))
             }
         };
@@ -362,12 +362,12 @@ impl<'a> Lexer<'a> {
             self.advance_while(|c| c != '\'');
             self.advance();
             Err(Located::new(
-                Error::CharTooLong,
                 Span {
                     loc: self.loc,
                     len: 0,
                     file: self.file,
                 },
+                Error::CharTooLong,
             ))
         } else {
             Ok(Token::Char(ch))
@@ -481,26 +481,32 @@ impl<'a> Lexer<'a> {
                 let Token::Char(c) = self.char_literal()? else { unreachable!() };
                 match c.try_into() {
                     Ok(c) => Ok(Token::ByteChar(c)),
-                    Err(_) => Err(Located::new(Error::BadByteChar, Span {
-                        loc: self.loc,
-                        len: 0,
-                        file: self.file,
-                    }))
+                    Err(_) => Err(Located::new(
+                        Span {
+                            loc: self.loc,
+                            len: 0,
+                            file: self.file,
+                        },
+                        Error::BadByteChar,
+                    )),
                 }
-            },
+            }
             Some('"') => {
                 self.advance();
                 let Token::String(s) = self.string_literal(start)? else { unreachable!() };
                 if s.chars().any(|c| !c.is_ascii()) {
-                    Err(Located::new(Error::BadByteStr, Span {
-                        loc: self.loc,
-                        len: 0,
-                        file: self.file,
-                    }))
+                    Err(Located::new(
+                        Span {
+                            loc: self.loc,
+                            len: 0,
+                            file: self.file,
+                        },
+                        Error::BadByteStr,
+                    ))
                 } else {
                     Ok(Token::ByteString(s))
                 }
-            },
+            }
             _ => Ok(self.identifier(start)),
         }
     }
@@ -527,12 +533,12 @@ impl<'a> Lexer<'a> {
                         count += 1;
                     } else if self.loc.pos >= self.src.len() {
                         return Some(Err(Located::new(
-                            Error::UnterminatedComment,
                             Span {
                                 loc: self.loc,
                                 len: 0,
                                 file: self.file,
                             },
+                            Error::UnterminatedComment,
                         )));
                     } else {
                         self.advance();
@@ -708,23 +714,23 @@ impl<'a> Lexer<'a> {
             ch if Self::is_identifier_first_char(ch) => self.identifier(start.pos),
             _ => {
                 return Some(Err(Located::new(
-                    Error::UnrecognizedChar,
                     Span {
                         loc: self.loc,
                         len: 0,
                         file: self.file,
                     },
+                    Error::UnrecognizedChar,
                 )))
             }
         };
 
         Some(Ok(Located::new(
-            token,
             Span {
                 loc: start,
                 len: self.loc.pos - start.pos,
                 file: self.file,
             },
+            token,
         )))
     }
 }
@@ -733,10 +739,13 @@ impl<'a> Iterator for Lexer<'a> {
     type Item = Result<Located<Token<'a>>, Located<Error>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        Some(self.next_internal().unwrap_or(Ok(Located::new(Token::Eof, Span {
-            loc: self.loc,
-            len: 0,
-            file: self.file,
-        }))))
+        Some(self.next_internal().unwrap_or(Ok(Located::new(
+            Span {
+                loc: self.loc,
+                len: 0,
+                file: self.file,
+            },
+            Token::Eof,
+        ))))
     }
 }
