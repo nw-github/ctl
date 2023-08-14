@@ -292,7 +292,8 @@ impl<'a> Parser<'a> {
             item
         } else if let Some(token) = self.advance_if(|t| matches!(t, Token::Let | Token::Mut)) {
             if let Some(is_unsafe) = self.is_unsafe.take() {
-                self.errors.push(Error::new("unsafe is not valid here", is_unsafe.span));
+                self.errors
+                    .push(Error::new("unsafe is not valid here", is_unsafe.span));
             }
 
             let (name, ty) = self.parse_var_name();
@@ -768,24 +769,30 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            Token::Or | Token::LogicalOr => {
-                let mut params = Vec::new();
-                if token.data == Token::Or {
-                    self.advance_until(Token::Or, token.span, |this| {
-                        let ident = this.expect_id("expected parameter name");
-                        let hint = if this.advance_if_kind(Token::Colon).is_some() {
-                            Some(this.parse_type())
-                        } else {
-                            None
-                        };
-                        params.push((ident, hint));
-                    });
-                }
+            Token::Fn => {
+                self.expect_kind(Token::LParen, "expected '('");
+                let params = self.advance_if_kind(Token::RParen).map_or_else(
+                    || {
+                        self.comma_separated(Token::RParen, "expected ')'", |this| {
+                            (
+                                this.expect_id("expected parameter name"),
+                                this.advance_if_kind(Token::Colon)
+                                    .map(|_| this.parse_type()),
+                            )
+                        })
+                        .0
+                    },
+                    |_| vec![],
+                );
+                let ret = (!self.matches_kind(Token::Arrow)).then(|| self.parse_type());
+                self.expect_kind(Token::Arrow, "expected '->'");
+
                 let body = self.expression();
                 let bspan = body.span;
                 Expr::new(
                     ExprData::Lambda {
                         params,
+                        ret,
                         body: body.into(),
                     },
                     Span::combine(token.span, bspan),

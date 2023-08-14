@@ -133,6 +133,7 @@ pub enum ExprData {
     Continue,
     Lambda {
         params: Vec<(String, Option<TypeHint>)>,
+        ret: Option<TypeHint>,
         body: Box<Expr>,
     },
     Error,

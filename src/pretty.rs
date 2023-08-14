@@ -383,9 +383,9 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
             }
         }
         ExprData::Error => {}
-        ExprData::Lambda { params, body } => {
+        ExprData::Lambda { params, ret, body } => {
             println!("{tabs}Lambda");
-            
+            println!("{tabs}Return: {ret:?}");
             if !params.is_empty() {
                 println!("{tabs}Params:");
                 let plus_1 = INDENT.repeat(indent + 1);
