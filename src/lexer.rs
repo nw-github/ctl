@@ -182,15 +182,11 @@ pub struct Span {
 }
 
 impl Span {
-    pub fn combine(a: impl Into<Span>, b: impl Into<Span>) -> Self {
-        a.into().extended_to(b)
-    }
-
     pub fn extend_to(&mut self, b: impl Into<Span>) {
         *self = self.extended_to(b);
     }
 
-    pub fn extended_to(&mut self, b: impl Into<Span>) -> Self {
+    pub fn extended_to(&self, b: impl Into<Span>) -> Self {
         let b: Span = b.into();
         assert!(b.loc.pos >= self.loc.pos);
         Self {

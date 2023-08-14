@@ -16,7 +16,7 @@ macro_rules! binary {
             while let Some(op) = self.advance_if(|kind| matches!(kind, $patt)) {
                 let right = self.$next();
                 expr = Expr::new(
-                    Span::combine(expr.span, right.span),
+                    expr.span.extended_to(right.span),
                     ExprData::Binary {
                         op: op.data.try_into().unwrap(),
                         left: expr.into(),
@@ -114,7 +114,7 @@ impl<'a> Parser<'a> {
                 let semi = self.expect_kind(Token::Semicolon, "expected ';'");
                 Some(Stmt {
                     data: StmtData::Fn(proto),
-                    span: Span::combine(public.map_or(span, |p| p.span), semi.span),
+                    span: public.map_or(span, |p| p.span).extended_to(semi.span),
                     attrs,
                 })
             } else {
@@ -123,7 +123,7 @@ impl<'a> Parser<'a> {
                 proto.body = Some(body);
                 Some(Stmt {
                     data: StmtData::Fn(proto),
-                    span: Span::combine(public.map_or(span, |p| p.span), span),
+                    span: public.map_or(span, |p| p.span).extended_to(span),
                     attrs,
                 })
             }
@@ -240,7 +240,7 @@ impl<'a> Parser<'a> {
                     },
                     all,
                 },
-                span: Span::combine(token.span, semi.span),
+                span: token.span.extended_to(semi.span),
                 attrs: std::mem::take(&mut self.attrs),
             })
         } else if let Some(token) = self.advance_if_kind(Token::Static) {
@@ -269,7 +269,7 @@ impl<'a> Parser<'a> {
                     ty,
                     value,
                 },
-                span: Span::combine(token.span, semi.span),
+                span: token.span.extended_to(semi.span),
                 attrs: std::mem::take(&mut self.attrs),
             })
         } else {
@@ -319,7 +319,7 @@ impl<'a> Parser<'a> {
                     mutable: matches!(token.data, Token::Mut),
                     value,
                 },
-                span: Span::combine(token.span, semi.span),
+                span: token.span.extended_to(semi.span),
                 attrs: std::mem::take(&mut self.attrs),
             }
         } else {
@@ -344,7 +344,7 @@ impl<'a> Parser<'a> {
 
             if let Some(is_unsafe) = is_unsafe {
                 expr = Expr::new(
-                    Span::combine(is_unsafe.span, expr.span),
+                    is_unsafe.span.extended_to(expr.span),
                     ExprData::Unsafe(expr.into()),
                 );
             }
@@ -374,7 +374,7 @@ impl<'a> Parser<'a> {
         if let Some(assign) = self.advance_if(|k| k.is_assignment()) {
             let value = self.expression();
             return Expr::new(
-                Span::combine(expr.span, value.span),
+                expr.span.extended_to(value.span),
                 ExprData::Assign {
                     target: expr.into(),
                     binary: assign.data.try_into().ok(),
@@ -393,7 +393,7 @@ impl<'a> Parser<'a> {
             let inclusive = op.data == Token::RangeInclusive;
             if self.is_range_end() {
                 expr = Expr::new(
-                    Span::combine(expr.span, op.span),
+                    expr.span.extended_to(op.span),
                     ExprData::Range {
                         start: Some(expr.into()),
                         end: None,
@@ -403,7 +403,7 @@ impl<'a> Parser<'a> {
             } else {
                 let right = self.logical_or();
                 expr = Expr::new(
-                    Span::combine(expr.span, right.span),
+                    expr.span.extended_to(right.span),
                     ExprData::Range {
                         start: Some(expr.into()),
                         end: Some(right.into()),
@@ -435,7 +435,7 @@ impl<'a> Parser<'a> {
         }) {
             if op.data == Token::Is {
                 let pattern = self.pattern();
-                //let span = Span::combine(expr.span, pattern.span);
+                //let span = expr.span.extended_to(pattern.span);
                 expr = Expr::new(
                     expr.span,
                     ExprData::Is {
@@ -446,7 +446,7 @@ impl<'a> Parser<'a> {
             } else {
                 let right = self.coalesce();
                 expr = Expr::new(
-                    Span::combine(expr.span, right.span),
+                    expr.span.extended_to(right.span),
                     ExprData::Binary {
                         op: op.data.try_into().unwrap(),
                         left: expr.into(),
@@ -504,7 +504,7 @@ impl<'a> Parser<'a> {
 
             let expr = self.unary();
             return Expr::new(
-                Span::combine(t.span, expr.span),
+                t.span.extended_to(expr.span),
                 ExprData::Unary {
                     op,
                     expr: expr.into(),
@@ -549,7 +549,7 @@ impl<'a> Parser<'a> {
                     self.expect_kind(Token::LAngle, "expected '<'");
                     self.csv_one(Token::RAngle, expr.span, Self::parse_type)
                 } else {
-                    (Vec::new(), Span::combine(expr.span, member.span))
+                    (Vec::new(), expr.span.extended_to(member.span))
                 };
 
                 expr = Expr::new(
@@ -571,7 +571,7 @@ impl<'a> Parser<'a> {
                 );
             } else if let Some(inc) = self.advance_if_kind(Token::Increment) {
                 expr = Expr::new(
-                    Span::combine(expr.span, inc.span),
+                    expr.span.extended_to(inc.span),
                     ExprData::Unary {
                         op: UnaryOp::PostIncrement,
                         expr: expr.into(),
@@ -579,7 +579,7 @@ impl<'a> Parser<'a> {
                 );
             } else if let Some(dec) = self.advance_if_kind(Token::Decrement) {
                 expr = Expr::new(
-                    Span::combine(expr.span, dec.span),
+                    expr.span.extended_to(dec.span),
                     ExprData::Unary {
                         op: UnaryOp::PostDecrement,
                         expr: expr.into(),
@@ -587,7 +587,7 @@ impl<'a> Parser<'a> {
                 );
             } else if let Some(dec) = self.advance_if_kind(Token::Exclamation) {
                 expr = Expr::new(
-                    Span::combine(expr.span, dec.span),
+                    expr.span.extended_to(dec.span),
                     ExprData::Unary {
                         op: UnaryOp::Unwrap,
                         expr: expr.into(),
@@ -595,7 +595,7 @@ impl<'a> Parser<'a> {
                 );
             } else if let Some(dec) = self.advance_if_kind(Token::Question) {
                 expr = Expr::new(
-                    Span::combine(expr.span, dec.span),
+                    expr.span.extended_to(dec.span),
                     ExprData::Unary {
                         op: UnaryOp::Try,
                         expr: expr.into(),
@@ -666,7 +666,7 @@ impl<'a> Parser<'a> {
                 } else {
                     let end = self.expression();
                     Expr::new(
-                        Span::combine(token.span, end.span),
+                        token.span.extended_to(end.span),
                         ExprData::Range {
                             start: None,
                             end: Some(end.into()),
@@ -678,7 +678,7 @@ impl<'a> Parser<'a> {
             Token::RangeInclusive => {
                 let end = self.expression();
                 Expr::new(
-                    Span::combine(token.span, end.span),
+                    token.span.extended_to(end.span),
                     ExprData::Range {
                         start: None,
                         end: Some(end.into()),
@@ -695,15 +695,14 @@ impl<'a> Parser<'a> {
             Token::LBrace => {
                 if let Some(rbrace) = self.advance_if_kind(Token::RBrace) {
                     Expr::new(
-                        Span::combine(token.span, rbrace.span),
+                        token.span.extended_to(rbrace.span),
                         ExprData::Array(Vec::new()),
                     )
                 } else if self.advance_if_kind(Token::Colon).is_some() {
                     Expr::new(
-                        Span::combine(
-                            token.span,
-                            self.expect_kind(Token::RBrace, "expected ']'").span,
-                        ),
+                        token
+                            .span
+                            .extended_to(self.expect_kind(Token::RBrace, "expected ']'").span),
                         ExprData::Map(Vec::new()),
                     )
                 } else {
@@ -723,7 +722,7 @@ impl<'a> Parser<'a> {
                         let count = self.expression();
                         let rbrace = self.expect_kind(Token::RBrace, "expected ']'");
                         Expr::new(
-                            Span::combine(token.span, rbrace.span),
+                            token.span.extended_to(rbrace.span),
                             ExprData::ArrayWithInit {
                                 init: expr.into(),
                                 count: count.into(),
@@ -731,7 +730,7 @@ impl<'a> Parser<'a> {
                         )
                     } else if let Some(rbrace) = self.advance_if_kind(Token::RBrace) {
                         Expr::new(
-                            Span::combine(token.span, rbrace.span),
+                            token.span.extended_to(rbrace.span),
                             ExprData::Array(vec![expr]),
                         )
                     } else {
@@ -755,7 +754,7 @@ impl<'a> Parser<'a> {
 
                 let body = self.expression();
                 Expr::new(
-                    Span::combine(token.span, body.span),
+                    token.span.extended_to(body.span),
                     ExprData::Lambda {
                         params,
                         ret,
@@ -771,7 +770,7 @@ impl<'a> Parser<'a> {
                     )
                 }) {
                     let expr = self.expression();
-                    (Span::combine(token.span, expr.span), expr.into())
+                    (token.span.extended_to(expr.span), expr.into())
                 } else {
                     (token.span, Expr::new(token.span, ExprData::Void).into())
                 };
@@ -789,7 +788,7 @@ impl<'a> Parser<'a> {
             Token::Unsafe => {
                 let expr = self.expression();
                 Expr::new(
-                    Span::combine(token.span, expr.span),
+                    token.span.extended_to(expr.span),
                     ExprData::Unsafe(expr.into()),
                 )
             }
@@ -816,10 +815,7 @@ impl<'a> Parser<'a> {
             }
         });
         Expr::new(
-            Span::combine(
-                token,
-                else_branch.as_ref().map_or(if_branch.span, |e| e.span),
-            ),
+            token.extended_to(else_branch.as_ref().map_or(if_branch.span, |e| e.span)),
             ExprData::If {
                 cond: cond.into(),
                 if_branch: if_branch.into(),
@@ -834,7 +830,7 @@ impl<'a> Parser<'a> {
         let (body, span) = self.parse_block(lcurly.span);
 
         Expr::new(
-            Span::combine(token, span),
+            token.extended_to(span),
             ExprData::Loop {
                 cond: Some(cond.into()),
                 body,
@@ -874,7 +870,7 @@ impl<'a> Parser<'a> {
         let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
         let (body, span) = self.parse_block(lcurly.span);
         Expr::new(
-            Span::combine(token, span),
+            token.extended_to(span),
             ExprData::For {
                 var,
                 mutable: mutable.is_some(),
