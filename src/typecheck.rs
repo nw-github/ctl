@@ -574,7 +574,7 @@ impl TypeId {
         }
     }
 
-    fn resolve(&mut self, scopes: &Scopes, checker: &mut TypeChecker) {
+    fn resolve(&mut self, scopes: &mut Scopes, checker: &mut TypeChecker) {
         let mut src = self;
         loop {
             match src {
@@ -588,7 +588,7 @@ impl TypeId {
                     break;
                 }
                 TypeId::Unknown(Some(hint)) => {
-                    *src = checker.resolve_type_from(scopes, &hint.0, hint.1, false);
+                    *src = scopes.enter_id(hint.1, |s| checker.resolve_type(s, &hint.0, false));
                     break;
                 }
                 TypeId::FnPtr(f) => {
@@ -623,9 +623,10 @@ macro_rules! id {
                 }
             });
 
-            concat_idents!(fn_name = find_, $suffix, _from {
-                pub fn fn_name(&self, name: &str, scope: ScopeId) -> Option<Vis<$name>> {
-                    for (id, scope) in self.iter_from(scope) {
+            concat_idents!(fn_name = find_, $suffix {
+                #[allow(dead_code)]
+                pub fn fn_name(&self, name: &str) -> Option<Vis<$name>> {
+                    for (id, scope) in self.iter() {
                         concat_idents!(fn_name = find_, $suffix, _in {
                             if let Some(item) = self.fn_name(name, id) {
                                 return Some(item);
@@ -638,15 +639,6 @@ macro_rules! id {
                     }
 
                     None
-                }
-            });
-
-            concat_idents!(fn_name = find_, $suffix {
-                #[allow(dead_code)]
-                pub fn fn_name(&self, name: &str) -> Option<Vis<$name>> {
-                    concat_idents!(fn_name = find_, $suffix, _from {
-                        self.fn_name(name, self.current)
-                    })
                 }
             });
 
@@ -934,7 +926,6 @@ impl Scopes {
         f: impl FnOnce(&mut Self) -> T,
     ) -> T {
         let id = ScopeId(self.scopes.len());
-        // blocks are the only unnamed scopes
         self.current().children.insert(
             name.clone().unwrap_or(String::new()),
             Vis { item: id, public },
@@ -1036,8 +1027,8 @@ impl Scopes {
             .copied()
     }
 
-    pub fn find_module_from(&self, name: &str, scope: ScopeId) -> Option<Vis<ScopeId>> {
-        for (id, scope) in self.iter_from(scope) {
+    pub fn find_module(&self, name: &str) -> Option<Vis<ScopeId>> {
+        for (id, scope) in self.iter() {
             if let Some(item) = self.find_module_in(name, id) {
                 return Some(item);
             }
@@ -1050,13 +1041,9 @@ impl Scopes {
         None
     }
 
-    pub fn find_module(&self, name: &str) -> Option<Vis<ScopeId>> {
-        self.find_module_from(name, self.current)
-    }
-
-    pub fn find_free_fn_from(&self, name: &str, scope: ScopeId) -> Option<Vis<FunctionId>> {
+    pub fn find_free_fn(&self, name: &str) -> Option<Vis<FunctionId>> {
         for (id, scope) in self
-            .iter_from(scope)
+            .iter()
             .filter(|(_, s)| !matches!(s.kind, ScopeKind::UserType(_)))
         {
             if let Some(item) = self.find_func_in(name, id) {
@@ -1093,11 +1080,11 @@ impl Scopes {
         self.intrinsics.get(&id).map(|s| s.as_str())
     }
 
-    fn can_access_privates(&self, here: ScopeId, scope: ScopeId) -> bool {
+    fn can_access_privates(&self, scope: ScopeId) -> bool {
         let target = self
             .module_of(scope)
             .expect("root scope passed to can_access_privates()");
-        self.iter_from(here).any(|(id, _)| id == target)
+        self.iter().any(|(id, _)| id == target)
     }
 
     fn get_member_fn(
@@ -2830,7 +2817,7 @@ impl TypeChecker {
                             }
                         }
 
-                        if !member.public && !scopes.can_access_privates(scopes.current, ty.scope) {
+                        if !member.public && !scopes.can_access_privates(ty.scope) {
                             self.error(Error::new(
                                 format!(
                                     "cannot access private member '{}' of type '{}'",
@@ -3266,7 +3253,6 @@ impl TypeChecker {
                         .body_scope,
                     binding.span,
                     false,
-                    scopes.current,
                 ),
                 Some((mutable, binding.data)),
             ),
@@ -3280,7 +3266,6 @@ impl TypeChecker {
                         .body_scope,
                     span,
                     false,
-                    scopes.current,
                 ),
                 None,
             ),
@@ -3402,7 +3387,7 @@ impl TypeChecker {
                 let ty = scopes.get_user_type(ut.id);
                 if let Some((tr, func)) = scopes.get_member_fn(&member, ty) {
                     let f = scopes.get_func(*func);
-                    if !func.public && !scopes.can_access_privates(scopes.current, ty.scope) {
+                    if !func.public && !scopes.can_access_privates(ty.scope) {
                         return self.error(Error::new(
                             format!(
                                 "cannot access private method '{member}' of type '{}'",
@@ -3462,13 +3447,12 @@ impl TypeChecker {
 
                         let mut func = GenericFunc::new(
                             *func,
-                            self.resolve_generics_from(
+                            self.resolve_generics(
                                 scopes,
                                 f.type_params.len(),
                                 &generics,
                                 span,
                                 false,
-                                scopes.current_id(),
                             ),
                         );
                         let (args, ret) = self.check_fn_args(
@@ -3886,25 +3870,23 @@ impl TypeChecker {
         name: &str,
         generics: &[TypeHint],
         fwd: Option<&TypeHint>,
-        here: ScopeId,
     ) -> TypeId {
         if let Some(ty) = scopes.lang_types.get(name).copied() {
             TypeId::UserType(
                 GenericUserType::new(
                     ty,
-                    self.resolve_generics_from(
+                    self.resolve_generics(
                         scopes,
                         generics.len(),
                         generics,
                         Span::default(),
                         fwd.is_some(),
-                        here,
                     ),
                 )
                 .into(),
             )
         } else if let Some(hint) = fwd {
-            TypeId::Unknown(Some((hint.clone(), here).into()))
+            TypeId::Unknown(Some((hint.clone(), scopes.current).into()))
         } else {
             self.error(Error::new(
                 format!("missing language item: '{name}'"),
@@ -3913,38 +3895,28 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_type(&mut self, scopes: &Scopes, ty: &TypeHint, fwd: bool) -> TypeId {
-        self.resolve_type_from(scopes, ty, scopes.current, fwd)
-    }
-
-    fn resolve_type_from(
-        &mut self,
-        scopes: &Scopes,
-        hint: &TypeHint,
-        here: ScopeId,
-        fwd: bool,
-    ) -> TypeId {
+    fn resolve_type(&mut self, scopes: &Scopes, hint: &TypeHint, fwd: bool) -> TypeId {
         match hint {
             TypeHint::Regular(path) => {
-                return match self.resolve_path_from(scopes, &path.data, path.span, here, fwd) {
+                return match self.resolve_path(scopes, &path.data, path.span, fwd) {
                     Some(ResolvedPath::UserType(ut)) => TypeId::UserType(ut.into()),
                     Some(ResolvedPath::Func(_)) => {
                         if fwd {
-                            TypeId::Unknown(Some((hint.clone(), here).into()))
+                            TypeId::Unknown(Some((hint.clone(), scopes.current).into()))
                         } else {
                             self.error(Error::new("expected type, got function", path.span))
                         }
                     }
                     Some(ResolvedPath::Var(_)) => {
                         if fwd {
-                            TypeId::Unknown(Some((hint.clone(), here).into()))
+                            TypeId::Unknown(Some((hint.clone(), scopes.current).into()))
                         } else {
                             self.error(Error::new("expected type, got variable", path.span))
                         }
                     }
                     Some(ResolvedPath::Module(_)) => {
                         if fwd {
-                            TypeId::Unknown(Some((hint.clone(), here).into()))
+                            TypeId::Unknown(Some((hint.clone(), scopes.current).into()))
                         } else {
                             self.error(Error::new("expected type, got module", path.span))
                         }
@@ -3974,7 +3946,9 @@ impl TypeChecker {
 
                         match res {
                             Some(res) => res,
-                            None if fwd => TypeId::Unknown(Some((hint.clone(), here).into())),
+                            None if fwd => {
+                                TypeId::Unknown(Some((hint.clone(), scopes.current).into()))
+                            }
                             None => self.error(err),
                         }
                     }
@@ -3982,10 +3956,8 @@ impl TypeChecker {
                 };
             }
             TypeHint::Void => TypeId::Void,
-            TypeHint::Ptr(ty) => TypeId::Ptr(self.resolve_type_from(scopes, ty, here, fwd).into()),
-            TypeHint::MutPtr(ty) => {
-                TypeId::MutPtr(self.resolve_type_from(scopes, ty, here, fwd).into())
-            }
+            TypeHint::Ptr(ty) => TypeId::Ptr(self.resolve_type(scopes, ty, fwd).into()),
+            TypeHint::MutPtr(ty) => TypeId::MutPtr(self.resolve_type(scopes, ty, fwd).into()),
             TypeHint::This => {
                 // the parser ensures methods can only appear in structs/enums/etc
                 scopes
@@ -4002,38 +3974,29 @@ impl TypeChecker {
                     Ok(n) => n,
                     Err(err) => return self.error(err),
                 };
-                TypeId::Array((self.resolve_type_from(scopes, ty, here, fwd), n).into())
+                TypeId::Array((self.resolve_type(scopes, ty, fwd), n).into())
             }
-            TypeHint::Option(ty) => self.resolve_lang_type(
-                scopes,
-                "option",
-                &[(**ty).clone()],
-                fwd.then_some(hint),
-                here,
-            ),
+            TypeHint::Option(ty) => {
+                self.resolve_lang_type(scopes, "option", &[(**ty).clone()], fwd.then_some(hint))
+            }
             TypeHint::Vec(ty) => {
-                self.resolve_lang_type(scopes, "vec", &[(**ty).clone()], fwd.then_some(hint), here)
+                self.resolve_lang_type(scopes, "vec", &[(**ty).clone()], fwd.then_some(hint))
             }
             TypeHint::Map(key, value) => self.resolve_lang_type(
                 scopes,
                 "map",
                 &[(**key).clone(), (**value).clone()],
                 fwd.then_some(hint),
-                here,
             ),
             TypeHint::Set(ty) => {
-                self.resolve_lang_type(scopes, "set", &[(**ty).clone()], fwd.then_some(hint), here)
+                self.resolve_lang_type(scopes, "set", &[(**ty).clone()], fwd.then_some(hint))
             }
             TypeHint::Slice(ty) => {
-                self.resolve_lang_type(scopes, "span", &[(**ty).clone()], fwd.then_some(hint), here)
+                self.resolve_lang_type(scopes, "span", &[(**ty).clone()], fwd.then_some(hint))
             }
-            TypeHint::SliceMut(ty) => self.resolve_lang_type(
-                scopes,
-                "span_mut",
-                &[(**ty).clone()],
-                fwd.then_some(hint),
-                here,
-            ),
+            TypeHint::SliceMut(ty) => {
+                self.resolve_lang_type(scopes, "span_mut", &[(**ty).clone()], fwd.then_some(hint))
+            }
             TypeHint::Tuple(_) => todo!(),
             TypeHint::Fn {
                 is_extern: _,
@@ -4204,26 +4167,15 @@ impl TypeChecker {
         span: Span,
         fwd: bool,
     ) -> Option<ResolvedPath> {
-        self.resolve_path_from(scopes, path, span, scopes.current, fwd)
-    }
-
-    fn resolve_path_from(
-        &mut self,
-        scopes: &Scopes,
-        path: &Path,
-        span: Span,
-        here: ScopeId,
-        fwd: bool,
-    ) -> Option<ResolvedPath> {
         match path {
-            Path::Root(data) => self.resolve_path_in(scopes, data, ScopeId(0), span, fwd, here),
+            Path::Root(data) => self.resolve_path_in(scopes, data, ScopeId(0), span, fwd),
             Path::Super(data) => {
                 if let Some(module) = scopes.module_of(
                     scopes[scopes.module_of(scopes.current_id()).unwrap()]
                         .parent
                         .unwrap(),
                 ) {
-                    self.resolve_path_in(scopes, data, module, span, fwd, here)
+                    self.resolve_path_in(scopes, data, module, span, fwd)
                 } else {
                     self.error(Error::new("cannot use super here", span))
                 }
@@ -4231,7 +4183,7 @@ impl TypeChecker {
             Path::Normal(data) => {
                 let (name, generics) = data.first().unwrap();
                 let is_end = data.len() == 1;
-                if let Some(id) = scopes.find_var_from(name, here) {
+                if let Some(id) = scopes.find_var(name) {
                     if is_end {
                         return Some(ResolvedPath::Var(*id));
                     }
@@ -4244,17 +4196,16 @@ impl TypeChecker {
                     }
 
                     self.error(Error::new(format!("'{name}' is a variable"), span))
-                } else if let Some(id) = scopes.find_user_type_from(name, here) {
+                } else if let Some(id) = scopes.find_user_type(name) {
                     if is_end {
                         let ut = GenericUserType::new(
                             *id,
-                            self.resolve_generics_from(
+                            self.resolve_generics(
                                 scopes,
                                 scopes.get_user_type(*id).type_params,
                                 generics,
                                 span,
                                 fwd,
-                                here,
                             ),
                         );
                         //self.resolve_impls(scopes, id);
@@ -4268,26 +4219,18 @@ impl TypeChecker {
                         scopes.get_user_type(*id).body_scope,
                         span,
                         fwd,
-                        here,
                     )
-                } else if let Some(id) = scopes.find_free_fn_from(name, here) {
+                } else if let Some(id) = scopes.find_free_fn(name) {
                     if is_end {
                         let f = scopes.get_func(*id);
                         return Some(ResolvedPath::Func(GenericFunc::new(
                             *id,
-                            self.resolve_generics_from(
-                                scopes,
-                                f.type_params.len(),
-                                generics,
-                                span,
-                                fwd,
-                                here,
-                            ),
+                            self.resolve_generics(scopes, f.type_params.len(), generics, span, fwd),
                         )));
                     }
 
                     self.error(Error::new(format!("'{name}' is a function"), span))
-                } else if let Some(id) = scopes.find_module_from(name, here) {
+                } else if let Some(id) = scopes.find_module(name) {
                     if is_end {
                         return Some(ResolvedPath::Module(*id));
                     }
@@ -4299,9 +4242,9 @@ impl TypeChecker {
                         ));
                     }
 
-                    self.resolve_path_in(scopes, &data[1..], *id, span, fwd, here)
+                    self.resolve_path_in(scopes, &data[1..], *id, span, fwd)
                 } else {
-                    self.resolve_path_in(scopes, data, ScopeId(0), span, fwd, here)
+                    self.resolve_path_in(scopes, data, ScopeId(0), span, fwd)
                 }
             }
         }
@@ -4314,12 +4257,11 @@ impl TypeChecker {
         mut scope: ScopeId,
         span: Span,
         fwd: bool,
-        here: ScopeId,
     ) -> Option<ResolvedPath> {
         for (i, (name, generics)) in data.iter().enumerate() {
             let is_end = i + 1 == data.len();
             if let Some(id) = scopes.find_var_in(name, scope) {
-                if !id.public && !scopes.can_access_privates(here, scope) {
+                if !id.public && !scopes.can_access_privates(scope) {
                     self.error(Error::new(format!("variable '{name}' is private"), span))
                 }
 
@@ -4336,7 +4278,7 @@ impl TypeChecker {
 
                 return self.error(Error::new(format!("'{name}' is a variable"), span));
             } else if let Some(id) = scopes.find_user_type_in(name, scope) {
-                if !id.public && !scopes.can_access_privates(here, scope) {
+                if !id.public && !scopes.can_access_privates(scope) {
                     self.error(Error::new(format!("type '{name}' is private"), span))
                 }
 
@@ -4344,40 +4286,32 @@ impl TypeChecker {
                 if is_end {
                     return Some(ResolvedPath::UserType(GenericUserType::new(
                         *id,
-                        self.resolve_generics_from(
-                            scopes,
-                            ty.type_params,
-                            generics,
-                            span,
-                            fwd,
-                            here,
-                        ),
+                        self.resolve_generics(scopes, ty.type_params, generics, span, fwd),
                     )));
                 }
 
                 scope = ty.body_scope;
             } else if let Some(id) = scopes.find_func_in(name, scope) {
-                if !id.public && !scopes.can_access_privates(here, scope) {
+                if !id.public && !scopes.can_access_privates(scope) {
                     self.error(Error::new(format!("function '{name}' is private"), span))
                 }
 
                 if is_end {
                     return Some(ResolvedPath::Func(GenericFunc::new(
                         *id,
-                        self.resolve_generics_from(
+                        self.resolve_generics(
                             scopes,
                             scopes.get_func(*id).type_params.len(),
                             generics,
                             span,
                             fwd,
-                            here,
                         ),
                     )));
                 }
 
                 return self.error(Error::new(format!("'{name}' is a function"), span));
             } else if let Some(id) = scopes.find_module_in(name, scope) {
-                if !id.public && !scopes.can_access_privates(here, *id) {
+                if !id.public && !scopes.can_access_privates(*id) {
                     self.error(Error::new(format!("module '{name}' is private"), span))
                 }
 
@@ -4404,14 +4338,13 @@ impl TypeChecker {
         unreachable!()
     }
 
-    fn resolve_generics_from(
+    fn resolve_generics(
         &mut self,
         scopes: &Scopes,
         params: usize,
         args: &[TypeHint],
         span: Span,
         fwd: bool,
-        here: ScopeId,
     ) -> Vec<TypeId> {
         if args.is_empty() {
             vec![TypeId::Unknown(None); params]
@@ -4426,7 +4359,7 @@ impl TypeChecker {
             ))
         } else {
             args.iter()
-                .map(|ty| self.resolve_type_from(scopes, ty, here, fwd))
+                .map(|ty| self.resolve_type(scopes, ty, fwd))
                 .collect()
         }
     }
