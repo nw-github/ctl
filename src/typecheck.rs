@@ -1755,11 +1755,10 @@ impl TypeChecker {
     fn check_stmt(&mut self, scopes: &mut Scopes, stmt: Stmt) -> CheckedStmt {
         macro_rules! fn_by_name {
             ($scopes: expr, $name: expr) => {
-                *$scopes.find_func_in($name, $scopes.current).unwrap()
+                *$scopes.find_func($name).unwrap()
             };
         }
 
-        // TODO: reset is_unsafe when checking user types when default values are fixed
         match stmt.data {
             StmtData::Module { name, body, .. } => {
                 return CheckedStmt::Module(scopes.find_enter(&name, |scopes| {
@@ -2802,14 +2801,13 @@ impl TypeChecker {
                     if let Some(member) = members.iter().find(|m| m.name == name) {
                         if let Some(union) = ty.data.as_union() {
                             if !member.shared && !union.is_unsafe {
-                                // TODO: access to unsafe union members should be unsafe
                                 return self.error(Error::new(
                                     "cannot access union variant with '.' (only shared members)",
                                     span,
                                 ));
                             }
 
-                            if union.is_unsafe && self.safety != Safety::Unsafe {
+                            if !member.shared && union.is_unsafe && self.safety != Safety::Unsafe {
                                 self.error(Error::new("this operation is unsafe", span))
                             }
                         }
