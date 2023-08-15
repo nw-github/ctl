@@ -748,7 +748,7 @@ impl<'a> Parser<'a> {
                 self.expect_kind(Token::LParen, "expected '('");
                 let (params, _) = self.csv(Vec::new(), Token::RParen, token.span, |this| {
                     (
-                        this.expect_id("expected parameter name"),
+                        this.expect_located_id("expected parameter name"),
                         this.advance_if_kind(Token::Colon)
                             .map(|_| this.parse_type()),
                     )

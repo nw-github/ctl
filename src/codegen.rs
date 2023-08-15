@@ -1373,6 +1373,7 @@ impl Codegen {
                 self.buffer.emit(")");
             }
             CheckedExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
+            CheckedExprData::Lambda(_) => todo!(),
         }
     }
 

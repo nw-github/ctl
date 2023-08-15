@@ -387,7 +387,7 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
                 println!("{tabs}Params:");
                 let plus_1 = INDENT.repeat(indent + 1);
                 for (name, ty) in params {
-                    println!("{plus_1}{name}: {ty:?}");
+                    println!("{plus_1}{}: {ty:?}", name.data);
                 }
             }
 

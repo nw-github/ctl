@@ -691,6 +691,7 @@ id!(VariableId => Variable, vars, name, var);
 pub enum ScopeKind {
     Block(Option<TypeId>, bool),
     Loop(Option<TypeId>, bool),
+    Lambda(Option<TypeId>, bool),
     Function(FunctionId),
     UserType(UserTypeId),
     Module,
@@ -2576,9 +2577,7 @@ impl TypeChecker {
             ExprData::Block(body) => {
                 let block =
                     self.create_block(scopes, body, ScopeKind::Block(target.cloned(), false));
-                let ScopeKind::Block(target, yields) = &scopes[block.scope].kind else {
-                    panic!("ICE: target of block changed from block to something else");
-                };
+                let (target, yields) = scopes[block.scope].kind.as_block().unwrap();
                 CheckedExpr::new(
                     yields
                         .then(|| target.clone())
@@ -2875,14 +2874,34 @@ impl TypeChecker {
                 }
             }
             ExprData::Return(expr) => {
-                let target = scopes
-                    .current_function()
-                    .map(|id| scopes.get_func(id).ret.clone())
-                    .expect("return should only be possible inside functions");
-                CheckedExpr::new(
-                    TypeId::Never,
-                    CheckedExprData::Return(self.type_check(scopes, *expr, &target).into()),
-                )
+                let lambda = scopes.iter().find_map(|(id, scope)| {
+                    matches!(scope.kind, ScopeKind::Lambda(_, _)).then_some(id)
+                });
+                if let Some(scope) = lambda {
+                    let ScopeKind::Lambda(target, _) = scopes[scope].kind.clone() else {
+                        unreachable!()
+                    };
+
+                    let span = expr.span;
+                    let mut expr = self.check_expr(scopes, *expr, target.as_ref());
+                    if let Some(target) = &target {
+                        expr = self.type_check_checked(scopes, expr, target, span);
+                        scopes[scope].kind = ScopeKind::Lambda(Some(target.clone()), true);
+                    } else {
+                        scopes[scope].kind = ScopeKind::Lambda(Some(expr.ty.clone()), true);
+                    }
+
+                    CheckedExpr::new(TypeId::Never, CheckedExprData::Return(expr.into()))
+                } else {
+                    let target = scopes
+                        .current_function()
+                        .map(|id| scopes.get_func(id).ret.clone())
+                        .expect("return should only be possible inside functions");
+                    CheckedExpr::new(
+                        TypeId::Never,
+                        CheckedExprData::Return(self.type_check(scopes, *expr, &target).into()),
+                    )
+                }
             }
             ExprData::Yield(expr) => {
                 let ScopeKind::Block(target, _) = scopes.current().kind.clone() else {
@@ -3054,8 +3073,91 @@ impl TypeChecker {
                 }
             }
             ExprData::Error => CheckedExpr::default(),
-            ExprData::Lambda { .. } => {
-                todo!()
+            ExprData::Lambda { params, ret, body } => {
+                let ty_is_generic = |scopes: &Scopes, ty: &TypeId| {
+                    !ty.as_user_type().map_or(false, |ut| {
+                        scopes.get_user_type(ut.id).data.is_func_generic()
+                            || scopes.get_user_type(ut.id).data.is_struct_generic()
+                    })
+                };
+
+                let mut lparams = Vec::new();
+                let ret = ret
+                    .map(|ret| self.resolve_type(scopes, &ret, false))
+                    .or_else(|| {
+                        target
+                            .as_ref()
+                            .and_then(|ty| ty.as_fn_ptr())
+                            .map(|f| &f.ret)
+                            .filter(|ty| ty_is_generic(scopes, ty))
+                            .cloned()
+                    });
+                let (id, body) =
+                    scopes.enter(None, ScopeKind::Lambda(ret, false), false, |scopes| {
+                        for (i, param) in params.into_iter().enumerate() {
+                            let ty = param
+                                .1
+                                .map(|ty| self.resolve_type(scopes, &ty, false))
+                                .or_else(|| {
+                                    target
+                                        .as_ref()
+                                        .and_then(|ty| ty.as_fn_ptr())
+                                        .and_then(|f| f.params.get(i))
+                                        .filter(|ty| ty_is_generic(scopes, ty))
+                                        .cloned()
+                                })
+                                .unwrap_or_else(|| {
+                                    self.error(Error::new(
+                                        format!(
+                                            "cannot infer type of parameter '{}'",
+                                            param.0.data
+                                        ),
+                                        param.0.span,
+                                    ))
+                                });
+
+                            lparams.push(ty.clone());
+                            scopes.insert_var(
+                                Variable {
+                                    name: param.0.data,
+                                    ty,
+                                    is_static: false,
+                                    mutable: false,
+                                    value: None,
+                                },
+                                false,
+                            );
+                        }
+
+                        // yield shouldn't work inside lambdas
+                        let body = if let ExprData::Block(body) = body.data {
+                            body.into_iter()
+                                .map(|stmt| self.check_stmt(scopes, stmt))
+                                .collect()
+                        } else {
+                            vec![CheckedStmt::Expr(self.check_expr(
+                                scopes,
+                                Expr::new(body.span, ExprData::Return(body)),
+                                None,
+                            ))]
+                        };
+
+                        (scopes.current_id(), body)
+                    });
+                let (target, yields) = scopes[id].kind.as_lambda().unwrap();
+                CheckedExpr::new(
+                    TypeId::FnPtr(
+                        FnPtr {
+                            params: lparams,
+                            ret: yields
+                                .then(|| target.clone())
+                                .flatten()
+                                .unwrap_or(TypeId::Void),
+                        }
+                        .into(),
+                    ),
+                    CheckedExprData::Lambda(body),
+                )
             }
             ExprData::Unsafe(expr) => {
                 let old_safety = std::mem::replace(&mut self.safety, Safety::Unsafe);

@@ -103,6 +103,7 @@ pub enum CheckedExprData {
     Return(Box<CheckedExpr>),
     Yield(Box<CheckedExpr>),
     Break(Box<CheckedExpr>),
+    Lambda(Vec<CheckedStmt>),
     Continue,
     #[default]
     Error,
