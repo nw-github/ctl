@@ -1,12 +1,12 @@
-extern fn printf(fmt: *c_char, ...) c_int;
 extern fn write(fd: c_int, buf: *c_void, count: usize) isize;
 
 pub fn println(s: str) {
-    printf("%.*s\n".as_c_str(), s.len() as! c_int, s.as_c_str());
+    print(s);
+    unsafe write(1, &b'\n' as *c_void, 1);
 }
 
 pub fn print(s: str) {
-    printf("%.*s".as_c_str(), s.len() as! c_int, s.as_c_str());
+    unsafe write(1, s.as_ptr() as *c_void, s.len());
 }
 
 pub fn eprintln(s: str) {
