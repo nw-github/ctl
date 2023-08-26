@@ -9,8 +9,8 @@ use num_traits::Num;
 
 use crate::{
     ast::{
-        Attribute, BinaryOp, Expr, ExprData, Fn, Param, ParsedUserType, Path, Pattern, Stmt,
-        StmtData, Struct, TypeHint, UnaryOp,
+        Attribute, BinaryOp, Expr, ExprData, Fn, ImplBlock, Param, ParsedUserType, Path, Pattern,
+        Stmt, StmtData, Struct, TypeHint, UnaryOp,
     },
     checked_ast::{Block, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt},
     lexer::{Located, Span},
@@ -806,12 +806,6 @@ impl UserType {
     }
 }
 
-pub struct TraitImpl {
-    pub ty: GenericUserType,
-    pub body_scope: ScopeId,
-    pub fns: Vec<FunctionId>,
-}
-
 #[derive(Debug, Clone, EnumAsInner)]
 pub enum Symbol {
     Func(GenericFunc),
@@ -1224,11 +1218,8 @@ impl TypeChecker {
             this.check_one(&mut scopes, &parsed.path, parsed.state.0, &mut files);
         }
 
-        let scope = this.check_one(&mut scopes, path, module, &mut vec![]);
-        this.check_trait_impls(&scopes);
-
         Ok(Module {
-            scope,
+            scope: this.check_one(&mut scopes, path, module, &mut vec![]),
             scopes,
             errors: this.errors,
             files,
@@ -1389,8 +1380,8 @@ impl TypeChecker {
                                 );
                             }
 
-                            for path in base.impls.iter() {
-                                if let Some(ty) = self.resolve_impl(scopes, path, true) {
+                            for block in base.impls.iter() {
+                                if let Some(ty) = self.resolve_impl(scopes, &block.path, true) {
                                     scopes.get_user_type_mut(id).impls.push(ty);
                                 }
                             }
@@ -1477,8 +1468,8 @@ impl TypeChecker {
                                 );
                             }
 
-                            for path in base.impls.iter() {
-                                if let Some(ty) = self.resolve_impl(scopes, path, true) {
+                            for block in base.impls.iter() {
+                                if let Some(ty) = self.resolve_impl(scopes, &block.path, true) {
                                     scopes.get_user_type_mut(id).impls.push(ty);
                                 }
                             }
@@ -1579,7 +1570,6 @@ impl TypeChecker {
                     public,
                     name,
                     impls,
-                    new_impls,
                     variants,
                     functions,
                 } => {
@@ -1587,7 +1577,7 @@ impl TypeChecker {
                     let backing = discriminant_type(variants.len());
                     let impls = impls
                         .iter()
-                        .flat_map(|path| self.resolve_impl(scopes, path, true))
+                        .flat_map(|block| self.resolve_impl(scopes, &block.path, true))
                         .collect();
                     let id = self.insert_type(
                         scopes,
@@ -1790,7 +1780,7 @@ impl TypeChecker {
                             self.resolve_impls(scopes, *scopes.find_user_type(name).unwrap());
                         }
 
-                        self.resolve_impls(scopes, id);
+                        self.check_impl_blocks(scopes, id, base.impls);
                         for i in 0..base.members.len() {
                             resolve_type!(
                                 self,
@@ -1811,7 +1801,7 @@ impl TypeChecker {
                             self.resolve_impls(scopes, *scopes.find_user_type(name).unwrap());
                         }
 
-                        self.resolve_impls(scopes, id);
+                        self.check_impl_blocks(scopes, id, base.impls);
                         for i in 0..base.members.len() {
                             resolve_type!(
                                 self,
@@ -1855,11 +1845,12 @@ impl TypeChecker {
                     name,
                     variants,
                     functions,
+                    impls,
                     ..
                 } => {
                     let id = *scopes.find_user_type(&name.data).unwrap();
                     scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
-                        self.resolve_impls(scopes, id);
+                        self.check_impl_blocks(scopes, id, impls);
 
                         for (name, expr) in variants {
                             if let Some(expr) = expr {
@@ -1944,50 +1935,6 @@ impl TypeChecker {
         }
 
         CheckedStmt::None
-    }
-
-    fn check_trait_impls(&mut self, scopes: &Scopes) {
-        for tr_id in scopes
-            .types
-            .iter()
-            .enumerate()
-            .filter(|(_, ut)| ut.data.is_trait())
-            .map(|(i, _)| UserTypeId(i))
-        {
-            for (i, ut) in
-                scopes.types.iter().enumerate().filter(|(_, ut)| {
-                    ut.data.is_struct() || ut.data.is_enum() || ut.data.is_union()
-                })
-            {
-                if let Some(im) = ut
-                    .impls
-                    .iter()
-                    .find(|im| im.as_user_type().unwrap().id == tr_id)
-                {
-                    self.check_impl(
-                        scopes,
-                        &TypeId::UserType(
-                            GenericUserType::new(
-                                UserTypeId(i),
-                                scopes[ut.body_scope]
-                                    .types
-                                    .iter()
-                                    .filter(|&&id| {
-                                        scopes.get_user_type(*id).data.is_struct_generic()
-                                    })
-                                    .map(|&id| {
-                                        TypeId::UserType(GenericUserType::new(*id, vec![]).into())
-                                    })
-                                    .collect(),
-                            )
-                            .into(),
-                        ),
-                        im.as_user_type().unwrap(),
-                        Span::default(),
-                    );
-                }
-            }
-        }
     }
 
     fn signatures_match(
@@ -2143,6 +2090,22 @@ impl TypeChecker {
                 self.safety = old_safety;
             }
         });
+    }
+
+    fn check_impl_blocks(&mut self, scopes: &mut Scopes, id: UserTypeId, impls: Vec<ImplBlock>) {
+        self.resolve_impls(scopes, id);
+        for block in impls {
+            // TODO: 
+            // - check signatures
+            // - check that all functions are implemented
+            // - give each impl block its own scope
+            // - impl type params (impl<T> Trait<T>)
+            // - implement the same trait more than once
+            for f in block.functions {
+                let id = self.forward_declare_fn(scopes, false, &f, &[]);
+                self.check_fn(scopes, id, f.body);
+            }
+        }
     }
 
     fn check_expr(

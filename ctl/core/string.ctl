@@ -6,7 +6,7 @@ use core::range::RangeBounds;
 use core::iter::Iterator;
 
 [lang(string)]
-pub struct str: Hash + Eq<str> {
+pub struct str {
     span: [u8..],
 
     pub fn from_c_str(ptr: *c_char) str {
@@ -35,18 +35,6 @@ pub struct str: Hash + Eq<str> {
         return this.span;
     }
 
-    pub fn hash<H: Hasher>(this, h: *mut H) {
-        h.hash(this.span);
-    }
-
-    pub fn eq(this, rhs: *str) bool {
-        if this.len() != rhs.len() {
-            return false;
-        }
-
-        return core::mem::compare(this.as_ptr(), rhs.as_ptr(), this.len());
-    }
-
     pub fn chars(this) Chars {
         return Chars(s: this.as_bytes());
     }
@@ -65,43 +53,61 @@ pub struct str: Hash + Eq<str> {
         }
         return str(span:);
     }
+
+    impl Hash {
+        fn hash<H: Hasher>(this, h: *mut H) {
+            h.hash(this.span);
+        }
+    }
+
+    impl Eq<str> {
+        fn eq(this, rhs: *str) bool {
+            if this.len() != rhs.len() {
+                return false;
+            }
+
+            return core::mem::compare(this.as_ptr(), rhs.as_ptr(), this.len());
+        }
+    }
 }
 
-pub struct Chars: Iterator<char> {
+pub struct Chars {
     s: [u8..],
 
-    pub fn next(mut this) ?char {
-        return match this.s.get(0) {
-            ?cp => unsafe {
-                mut cp = *cp as u32 & 0xff;
-                if cp < 0x80 {
-                    this.s = this.s.subspan(1usize..);
-                } else if cp >> 5 == 0x6 {
-                    cp = ((cp << 6) & 0x7ff) + (*this.s.get_unchecked(1) as u32 & 0x3f);
-                    this.s = this.s.subspan(2usize..);
-                } else if cp >> 4 == 0xe {
-                    cp = (
-                        (cp << 12) & 0xffff) + 
-                        (((*this.s.get_unchecked(1) as u32 & 0xff) << 6) & 0xfff
-                    );
-                    cp += *this.s.get_unchecked(2) as u32 & 0x3f;
-                    this.s = this.s.subspan(3usize..);
-                } else if cp >> 4 == 0x1e {
-                    cp = (
-                        (cp << 18) & 0x1fffff) + 
-                        (((*this.s.get_unchecked(1) as u32 & 0xff) << 12) & 0x3ffff
-                    );
-                    cp += ((*this.s.get_unchecked(2) as u32 & 0xff) << 6) & 0xfff;
-                    cp += *this.s.get_unchecked(3) as u32 & 0x3f;
-                    this.s = this.s.subspan(4usize..);
-                } else {
-                    unreachable();
-                }
+    impl Iterator<char> {
+        fn next(mut this) ?char {
+            return match this.s.get(0) {
+                ?cp => unsafe {
+                    mut cp = *cp as u32 & 0xff;
+                    if cp < 0x80 {
+                        this.s = this.s.subspan(1usize..);
+                    } else if cp >> 5 == 0x6 {
+                        cp = ((cp << 6) & 0x7ff) + (*this.s.get_unchecked(1) as u32 & 0x3f);
+                        this.s = this.s.subspan(2usize..);
+                    } else if cp >> 4 == 0xe {
+                        cp = (
+                            (cp << 12) & 0xffff) + 
+                            (((*this.s.get_unchecked(1) as u32 & 0xff) << 6) & 0xfff
+                        );
+                        cp += *this.s.get_unchecked(2) as u32 & 0x3f;
+                        this.s = this.s.subspan(3usize..);
+                    } else if cp >> 4 == 0x1e {
+                        cp = (
+                            (cp << 18) & 0x1fffff) + 
+                            (((*this.s.get_unchecked(1) as u32 & 0xff) << 12) & 0x3ffff
+                        );
+                        cp += ((*this.s.get_unchecked(2) as u32 & 0xff) << 6) & 0xfff;
+                        cp += *this.s.get_unchecked(3) as u32 & 0x3f;
+                        this.s = this.s.subspan(4usize..);
+                    } else {
+                        unreachable();
+                    }
 
-                yield cp as! char;
-            },
-            null => null,
-        };
+                    yield cp as! char;
+                },
+                null => null,
+            };
+        }
     }
 }
 

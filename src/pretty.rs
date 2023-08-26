@@ -84,7 +84,6 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
             ParsedUserType::Enum {
                 name,
                 impls,
-                new_impls,
                 variants,
                 functions,
                 public,
@@ -93,16 +92,9 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
                 print_bool!(public);
                 println!();
 
-                print_impls(indent, src, new_impls);
+                print_impls(indent, src, impls);
 
                 let plus_1 = INDENT.repeat(indent + 1);
-                if !impls.is_empty() {
-                    println!("{tabs}Impls: ");
-                    for i in impls {
-                        println!("{plus_1}{i:?}");
-                    }
-                }
-
                 println!("{tabs}Variants:");
                 for (name, expr) in variants {
                     println!("{plus_1}{name}");
@@ -464,7 +456,6 @@ fn print_struct(
         type_params,
         members,
         impls,
-        new_impls,
         functions,
         public,
     }: &Struct,
@@ -476,20 +467,13 @@ fn print_struct(
     print_bool!(public);
     println!();
 
-    print_impls(indent, src, new_impls);
+    print_impls(indent, src, impls);
 
     let plus_1 = INDENT.repeat(indent + 1);
     if !type_params.is_empty() {
         println!("{tabs}Type Params:");
         for (name, impls) in type_params {
             println!("{plus_1}{name}: {impls:?}");
-        }
-    }
-
-    if !impls.is_empty() {
-        println!("{tabs}Impls: ");
-        for i in impls {
-            println!("{plus_1}{i:?}");
         }
     }
 
@@ -519,7 +503,7 @@ fn print_impls(indent: usize, src: &str, impls: &[ImplBlock]) {
                 }
             }
 
-            println!("{plus_1}{:?}", imp.tr.data);
+            println!("{plus_1}{:?}", imp.path.data);
             for f in imp.functions.iter() {
                 print_fn(f, src, indent + 2)
             }

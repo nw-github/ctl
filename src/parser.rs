@@ -1162,13 +1162,12 @@ impl<'a> Parser<'a> {
         let attrs = std::mem::take(&mut self.attrs);
         let name = self.expect_located_id("expected name");
         let type_params = self.parse_generic_params();
-        let impls = self.parse_trait_impl();
 
         self.expect_kind(Token::LCurly, "expected '{'");
 
         let mut functions = Vec::new();
         let mut members = Vec::new();
-        let mut new_impls = Vec::new();
+        let mut impls = Vec::new();
         let span = self.advance_until(Token::RCurly, span, |this| {
             let config = ProtoConfig {
                 allow_method: true,
@@ -1186,7 +1185,7 @@ impl<'a> Parser<'a> {
                 func.body = Some(this.parse_block().0);
                 functions.push(func);
             } else if let Some(token) = this.advance_if_kind(Token::Impl) {
-                new_impls.push(this.parse_impl_block(token.span));
+                impls.push(this.parse_impl_block(token.span));
             } else {
                 let name = this.expect_id("expected name");
                 this.expect_kind(Token::Colon, "expected type");
@@ -1214,7 +1213,6 @@ impl<'a> Parser<'a> {
                 members,
                 impls,
                 functions,
-                new_impls,
             })),
             attrs,
         }
@@ -1229,10 +1227,9 @@ impl<'a> Parser<'a> {
         });
         let name = self.expect_located_id("expected name");
         let type_params = self.parse_generic_params();
-        let impls = self.parse_trait_impl();
         let mut functions = Vec::new();
         let mut members = Vec::new();
-        let mut new_impls = Vec::new();
+        let mut impls = Vec::new();
 
         self.expect_kind(Token::LCurly, "expected '{'");
         let span = self.advance_until(Token::RCurly, span, |this| {
@@ -1269,7 +1266,7 @@ impl<'a> Parser<'a> {
                     default: value,
                 });
             } else if let Some(token) = this.advance_if_kind(Token::Impl) {
-                new_impls.push(this.parse_impl_block(token.span));
+                impls.push(this.parse_impl_block(token.span));
             } else {
                 let name = this.expect_id("expected variant name");
                 let (ty, value) = if this.advance_if_kind(Token::LParen).is_some() {
@@ -1304,9 +1301,8 @@ impl<'a> Parser<'a> {
                     name,
                     type_params,
                     members,
-                    impls,
                     functions,
-                    new_impls,
+                    impls,
                 },
                 is_unsafe,
             }),
@@ -1353,12 +1349,11 @@ impl<'a> Parser<'a> {
     fn parse_enum(&mut self, public: bool, span: Span) -> Stmt {
         let attrs = std::mem::take(&mut self.attrs);
         let name = self.expect_located_id("expected name");
-        let impls = self.parse_trait_impl();
         self.expect_kind(Token::LCurly, "expected '{'");
 
         let mut functions = Vec::new();
         let mut variants = Vec::new();
-        let mut new_impls = Vec::new();
+        let mut impls = Vec::new();
         let span = self.advance_until(Token::RCurly, span, |this| {
             let config = ProtoConfig {
                 allow_method: true,
@@ -1376,7 +1371,7 @@ impl<'a> Parser<'a> {
                 func.body = Some(this.parse_block().0);
                 functions.push(func);
             } else if let Some(token) = this.advance_if_kind(Token::Impl) {
-                new_impls.push(this.parse_impl_block(token.span));
+                impls.push(this.parse_impl_block(token.span));
             } else {
                 variants.push((
                     this.expect_id("expected variant name"),
@@ -1399,7 +1394,6 @@ impl<'a> Parser<'a> {
                 impls,
                 variants,
                 functions,
-                new_impls,
             }),
             attrs,
         }
@@ -1407,11 +1401,15 @@ impl<'a> Parser<'a> {
 
     fn parse_impl_block(&mut self, span: Span) -> ImplBlock {
         let type_params = self.parse_generic_params();
-        let tr = self.type_path();
+        let path = self.type_path();
         self.expect_kind(Token::LCurly, "expected '{'");
 
         let mut functions = Vec::new();
         self.advance_until(Token::RCurly, span, |this| {
+            if let Some(token) = this.advance_if_kind(Token::Pub) {
+                this.errors.push(Error::new("'pub' is not valid here", token.span));
+            }
+
             let is_unsafe = this.advance_if_kind(Token::Unsafe).is_some();
             if let Ok((mut func, _)) = this.expect_prototype(ProtoConfig {
                 allow_method: true,
@@ -1427,7 +1425,7 @@ impl<'a> Parser<'a> {
 
         ImplBlock {
             type_params,
-            tr,
+            path,
             functions,
         }
     }

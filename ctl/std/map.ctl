@@ -164,23 +164,25 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     }
 }
 
-struct Fnv1a: core::hash::Hasher {
-    val: u64,
+struct Fnv1a {
+    val: u64 = 0,
 
     pub fn new() Fnv1a {
-        return Fnv1a(val: 0);
+        return Fnv1a();
     }
 
-    pub fn hash(mut this, data: [u8..]) {
-        for byte in data.iter() {
-            this.val *= 0x100000001b3;
-            this.val += (this.val << 1) + (this.val << 4) + (this.val << 5) +
-		                (this.val << 7) + (this.val << 8) + (this.val << 40);
-            this.val ^= *byte as u64;
+    impl core::hash::Hasher {
+        fn hash(mut this, data: [u8..]) {
+            for byte in data.iter() {
+                this.val *= 0x100000001b3;
+                this.val += (this.val << 1) + (this.val << 4) + (this.val << 5) +
+                            (this.val << 7) + (this.val << 8) + (this.val << 40);
+                this.val ^= *byte as u64;
+            }
         }
-    }
 
-    pub fn finish(this) u64 {
-        return this.val;
+        fn finish(this) u64 {
+            return this.val;
+        }
     }
 }

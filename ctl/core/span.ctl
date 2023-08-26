@@ -149,24 +149,28 @@ pub struct SpanMut<T> {
     }
 }
 
-pub struct Iter<T>: Iterator<*T> {
+pub struct Iter<T> {
     ptr: *T,
     end: *T,
 
-    pub fn next(mut this) ?*T {
-        return if !core::ptr::eq(this.ptr, this.end) {
-            yield core::mem::replace(&mut this.ptr, unsafe core::ptr::offset(this.ptr, 1));
-        };
+    impl Iterator<*T> {
+        fn next(mut this) ?*T {
+            return if !core::ptr::eq(this.ptr, this.end) {
+                yield core::mem::replace(&mut this.ptr, unsafe core::ptr::offset(this.ptr, 1));
+            };
+        }
     }
 }
 
-pub struct IterMut<T>: Iterator<*mut T> {
+pub struct IterMut<T> {
     ptr: *mut T,
     end: *mut T,
 
-    pub fn next(mut this) ?*mut T {
-        return if !core::ptr::eq(this.ptr, this.end) {
-            yield core::mem::replace(&mut this.ptr, unsafe core::ptr::offset_mut(this.ptr, 1));
-        };
+    impl Iterator<*mut T> {
+        fn next(mut this) ?*mut T {
+            return if !core::ptr::eq(this.ptr, this.end) {
+                yield core::mem::replace(&mut this.ptr, unsafe core::ptr::offset_mut(this.ptr, 1));
+            };
+        }
     }
 }

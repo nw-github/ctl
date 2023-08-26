@@ -11,84 +11,96 @@ pub union Bound<T> {
 
 // ..bar
 [lang(range_to)]
-pub struct RangeTo<T>: RangeBounds<T> {
+pub struct RangeTo<T> {
     pub end: T,
 
-    pub fn begin(this) Bound<T> {
-        return Bound::Unbounded();
-    }
+    impl RangeBounds<T> {
+        fn begin(this) Bound<T> {
+            return Bound::Unbounded();
+        }
 
-    pub fn end(this) Bound<T> {
-        return Bound::Exclusive(this.end);
+        fn end(this) Bound<T> {
+            return Bound::Exclusive(this.end);
+        }
     }
 }
 
 // ..=bar
 [lang(range_to_inclusive)]
-pub struct RangeToInclusive<T>: RangeBounds<T> {
+pub struct RangeToInclusive<T> {
     pub end: T,
 
-    pub fn begin(this) Bound<T> {
-        return Bound::Unbounded();
-    }
+    impl RangeBounds<T> {
+        fn begin(this) Bound<T> {
+            return Bound::Unbounded();
+        }
 
-    pub fn end(this) Bound<T> {
-        return Bound::Inclusive(this.end);
+        fn end(this) Bound<T> {
+            return Bound::Inclusive(this.end);
+        }
     }
 }
 
 // foo..
 [lang(range_from)]
-pub struct RangeFrom<T>: RangeBounds<T> {
+pub struct RangeFrom<T> {
     pub start: T,
 
-    pub fn begin(this) Bound<T> {
-        return Bound::Inclusive(this.start);
-    }
+    impl RangeBounds<T> {
+        fn begin(this) Bound<T> {
+            return Bound::Inclusive(this.start);
+        }
 
-    pub fn end(this) Bound<T> {
-        return Bound::Unbounded();
+        fn end(this) Bound<T> {
+            return Bound::Unbounded();
+        }
     }
 }
 
 // foo..bar
 [lang(range)]
-pub struct Range<T>: RangeBounds<T> {
+pub struct Range<T> {
     pub start: T,
     pub end: T,
 
-    pub fn begin(this) Bound<T> {
-        return Bound::Inclusive(this.start);
-    }
+    impl RangeBounds<T> {
+        fn begin(this) Bound<T> {
+            return Bound::Inclusive(this.start);
+        }
 
-    pub fn end(this) Bound<T> {
-        return Bound::Exclusive(this.end);
+        fn end(this) Bound<T> {
+            return Bound::Exclusive(this.end);
+        }
     }
 }
 
 // foo..=bar
 [lang(range_inclusive)]
-pub struct RangeInclusive<T>: RangeBounds<T> {
+pub struct RangeInclusive<T> {
     pub start: T,
     pub end: T,
 
-    pub fn begin(this) Bound<T> {
-        return Bound::Inclusive(this.start);
-    }
+    impl RangeBounds<T> {
+        fn begin(this) Bound<T> {
+            return Bound::Inclusive(this.start);
+        }
 
-    pub fn end(this) Bound<T> {
-        return Bound::Inclusive(this.end);
+        fn end(this) Bound<T> {
+            return Bound::Inclusive(this.end);
+        }
     }
 }
 
 // ..
 [lang(range_full)]
-pub struct RangeFull<T>: RangeBounds<T> {
-    pub fn begin(this) Bound<T> {
-        return Bound::Unbounded();
-    }
+pub struct RangeFull<T> {
+    impl RangeBounds<T> {
+        fn begin(this) Bound<T> {
+            return Bound::Unbounded();
+        }
 
-    pub fn end(this) Bound<T> {
-        return Bound::Unbounded();
+        fn end(this) Bound<T> {
+            return Bound::Unbounded();
+        }
     }
 }
