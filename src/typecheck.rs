@@ -806,6 +806,12 @@ impl UserType {
     }
 }
 
+pub struct TraitImpl {
+    pub ty: GenericUserType,
+    pub body_scope: ScopeId,
+    pub fns: Vec<FunctionId>,
+}
+
 #[derive(Debug, Clone, EnumAsInner)]
 pub enum Symbol {
     Func(GenericFunc),
@@ -1573,6 +1579,7 @@ impl TypeChecker {
                     public,
                     name,
                     impls,
+                    new_impls,
                     variants,
                     functions,
                 } => {

@@ -2,8 +2,8 @@ use std::{iter::Peekable, path::PathBuf};
 
 use crate::{
     ast::{
-        Attribute, Expr, ExprData, Fn, MemVar, Param, ParsedUserType, Path, Pattern, Stmt,
-        StmtData, Struct, TypeHint, UnaryOp,
+        Attribute, Expr, ExprData, Fn, ImplBlock, MemVar, Param, ParsedUserType, Path, Pattern,
+        Stmt, StmtData, Struct, TypeHint, UnaryOp,
     },
     lexer::{FileIndex, Lexer, Located, Span, Token},
     Error, THIS_PARAM, THIS_TYPE,
@@ -1168,6 +1168,7 @@ impl<'a> Parser<'a> {
 
         let mut functions = Vec::new();
         let mut members = Vec::new();
+        let mut new_impls = Vec::new();
         let span = self.advance_until(Token::RCurly, span, |this| {
             let config = ProtoConfig {
                 allow_method: true,
@@ -1184,6 +1185,8 @@ impl<'a> Parser<'a> {
             } else if let Some((mut func, _)) = this.try_prototype(config) {
                 func.body = Some(this.parse_block().0);
                 functions.push(func);
+            } else if let Some(token) = this.advance_if_kind(Token::Impl) {
+                new_impls.push(this.parse_impl_block(token.span));
             } else {
                 let name = this.expect_id("expected name");
                 this.expect_kind(Token::Colon, "expected type");
@@ -1211,6 +1214,7 @@ impl<'a> Parser<'a> {
                 members,
                 impls,
                 functions,
+                new_impls,
             })),
             attrs,
         }
@@ -1228,6 +1232,7 @@ impl<'a> Parser<'a> {
         let impls = self.parse_trait_impl();
         let mut functions = Vec::new();
         let mut members = Vec::new();
+        let mut new_impls = Vec::new();
 
         self.expect_kind(Token::LCurly, "expected '{'");
         let span = self.advance_until(Token::RCurly, span, |this| {
@@ -1263,6 +1268,8 @@ impl<'a> Parser<'a> {
                     ty,
                     default: value,
                 });
+            } else if let Some(token) = this.advance_if_kind(Token::Impl) {
+                new_impls.push(this.parse_impl_block(token.span));
             } else {
                 let name = this.expect_id("expected variant name");
                 let (ty, value) = if this.advance_if_kind(Token::LParen).is_some() {
@@ -1299,6 +1306,7 @@ impl<'a> Parser<'a> {
                     members,
                     impls,
                     functions,
+                    new_impls,
                 },
                 is_unsafe,
             }),
@@ -1350,6 +1358,7 @@ impl<'a> Parser<'a> {
 
         let mut functions = Vec::new();
         let mut variants = Vec::new();
+        let mut new_impls = Vec::new();
         let span = self.advance_until(Token::RCurly, span, |this| {
             let config = ProtoConfig {
                 allow_method: true,
@@ -1366,6 +1375,8 @@ impl<'a> Parser<'a> {
             } else if let Some((mut func, _)) = this.try_prototype(config) {
                 func.body = Some(this.parse_block().0);
                 functions.push(func);
+            } else if let Some(token) = this.advance_if_kind(Token::Impl) {
+                new_impls.push(this.parse_impl_block(token.span));
             } else {
                 variants.push((
                     this.expect_id("expected variant name"),
@@ -1388,8 +1399,36 @@ impl<'a> Parser<'a> {
                 impls,
                 variants,
                 functions,
+                new_impls,
             }),
             attrs,
+        }
+    }
+
+    fn parse_impl_block(&mut self, span: Span) -> ImplBlock {
+        let type_params = self.parse_generic_params();
+        let tr = self.type_path();
+        self.expect_kind(Token::LCurly, "expected '{'");
+
+        let mut functions = Vec::new();
+        self.advance_until(Token::RCurly, span, |this| {
+            let is_unsafe = this.advance_if_kind(Token::Unsafe).is_some();
+            if let Ok((mut func, _)) = this.expect_prototype(ProtoConfig {
+                allow_method: true,
+                is_public: true,
+                is_async: false,
+                is_extern: false,
+                is_unsafe,
+            }) {
+                func.body = Some(this.parse_block().0);
+                functions.push(func);
+            }
+        });
+
+        ImplBlock {
+            type_params,
+            tr,
+            functions,
         }
     }
 

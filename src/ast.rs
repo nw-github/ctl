@@ -369,6 +369,7 @@ pub struct Struct {
     pub type_params: Vec<(String, Vec<Located<Path>>)>,
     pub members: Vec<MemVar>,
     pub impls: Vec<Located<Path>>,
+    pub new_impls: Vec<ImplBlock>,
     pub functions: Vec<Fn>,
 }
 
@@ -392,7 +393,15 @@ pub enum ParsedUserType {
         public: bool,
         name: Located<String>,
         impls: Vec<Located<Path>>,
+        new_impls: Vec<ImplBlock>,
         variants: Vec<(String, Option<Expr>)>,
         functions: Vec<Fn>,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct ImplBlock {
+    pub type_params: Vec<(String, Vec<Located<Path>>)>,
+    pub tr: Located<Path>,
+    pub functions: Vec<Fn>,
 }

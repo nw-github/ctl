@@ -1,4 +1,4 @@
-use crate::ast::{Expr, ExprData, Fn, ParsedUserType, Stmt, StmtData, Struct};
+use crate::ast::{Expr, ExprData, Fn, ImplBlock, ParsedUserType, Stmt, StmtData, Struct};
 
 const INDENT: &str = "  ";
 
@@ -84,6 +84,7 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
             ParsedUserType::Enum {
                 name,
                 impls,
+                new_impls,
                 variants,
                 functions,
                 public,
@@ -91,6 +92,8 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
                 print!("{tabs}Enum[{}]", name.data);
                 print_bool!(public);
                 println!();
+
+                print_impls(indent, src, new_impls);
 
                 let plus_1 = INDENT.repeat(indent + 1);
                 if !impls.is_empty() {
@@ -461,6 +464,7 @@ fn print_struct(
         type_params,
         members,
         impls,
+        new_impls,
         functions,
         public,
     }: &Struct,
@@ -471,6 +475,8 @@ fn print_struct(
     println!("{tabs}{type_name}[{}]", name.data);
     print_bool!(public);
     println!();
+
+    print_impls(indent, src, new_impls);
 
     let plus_1 = INDENT.repeat(indent + 1);
     if !type_params.is_empty() {
@@ -497,5 +503,26 @@ fn print_struct(
     println!("{tabs}Functions:");
     for f in functions {
         print_fn(f, src, indent + 1);
+    }
+}
+
+fn print_impls(indent: usize, src: &str, impls: &[ImplBlock]) {
+    let tabs = INDENT.repeat(indent);
+    let plus_1 = INDENT.repeat(indent + 1);
+    if !impls.is_empty() {
+        println!("{tabs}New Impls:");
+        for imp in impls {
+            if !imp.type_params.is_empty() {
+                println!("{tabs}Type Params:");
+                for (name, impls) in imp.type_params.iter() {
+                    println!("{plus_1}{name}: {impls:?}");
+                }
+            }
+
+            println!("{plus_1}{:?}", imp.tr.data);
+            for f in imp.functions.iter() {
+                print_fn(f, src, indent + 2)
+            }
+        }
     }
 }
