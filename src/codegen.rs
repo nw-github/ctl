@@ -834,7 +834,7 @@ impl Codegen {
                     // TODO: addr of void
                     self.buffer.emit("&");
                     match inner.data {
-                        CheckedExprData::Unary { op, .. } if op == UnaryOp::Deref => {
+                        CheckedExprData::Unary { op: UnaryOp::Deref, .. } => {
                             self.gen_expr(scopes, *inner, state);
                         }
                         CheckedExprData::Symbol(_)

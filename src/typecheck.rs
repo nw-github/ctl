@@ -934,7 +934,7 @@ impl Scopes {
     ) -> T {
         let id = ScopeId(self.scopes.len());
         self.current().children.insert(
-            name.clone().unwrap_or(String::new()),
+            name.clone().unwrap_or_default(),
             Vis { item: id, public },
         );
         let parent = Some(self.current);

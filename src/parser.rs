@@ -1711,7 +1711,7 @@ impl<'a> Parser<'a> {
             },
             msg,
         )
-        .unwrap_or(String::new())
+        .unwrap_or_default()
     }
 
     fn expect_located_id(&mut self, msg: &str) -> Located<String> {
