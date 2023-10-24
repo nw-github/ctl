@@ -18,7 +18,7 @@ pub struct Span<T> {
     }
 
     pub fn is_empty(this) bool {
-        return this.len != 0;
+        return this.len == 0;
     }
 
     pub fn get(this, idx: usize) ?*T {
@@ -31,7 +31,7 @@ pub struct Span<T> {
         return unsafe core::ptr::offset(this.ptr, idx);
     }
 
-    pub fn as_raw(this) Raw<T> {
+    pub fn as_raw(this) core::ptr::Raw<T> {
         return Raw::from_ptr(this.ptr);
     }
 
@@ -80,7 +80,7 @@ pub struct SpanMut<T> {
     }
 
     pub fn is_empty(this) bool {
-        return this.len != 0;
+        return this.len == 0;
     }
 
     pub fn get(this, idx: usize) ?*T {
