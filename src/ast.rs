@@ -289,19 +289,27 @@ pub enum UnaryOp {
     Try,
 }
 
-impl TryFrom<Token<'_>> for UnaryOp {
-    type Error = ();
-
-    fn try_from(value: Token<'_>) -> Result<Self, Self::Error> {
+impl UnaryOp {
+    pub fn try_from_postfix(value: Token<'_>) -> Option<Self> {
         match value {
-            Token::Plus => Ok(UnaryOp::Plus),
-            Token::Minus => Ok(UnaryOp::Neg),
-            Token::Asterisk => Ok(UnaryOp::Deref),
-            Token::Ampersand => Ok(UnaryOp::Addr),
-            Token::Increment => Ok(UnaryOp::PreIncrement),
-            Token::Decrement => Ok(UnaryOp::PreDecrement),
-            Token::Exclamation => Ok(UnaryOp::Not),
-            _ => Err(()),
+            Token::Increment => Some(UnaryOp::PostIncrement),
+            Token::Decrement => Some(UnaryOp::PostDecrement),
+            Token::Exclamation => Some(UnaryOp::Unwrap),
+            Token::Question => Some(UnaryOp::Try),
+            _ => None,
+        }
+    }
+
+    pub fn try_from_prefix(value: Token<'_>) -> Option<Self> {
+        match value {
+            Token::Plus => Some(UnaryOp::Plus),
+            Token::Minus => Some(UnaryOp::Neg),
+            Token::Asterisk => Some(UnaryOp::Deref),
+            Token::Ampersand => Some(UnaryOp::Addr),
+            Token::Increment => Some(UnaryOp::PreIncrement),
+            Token::Decrement => Some(UnaryOp::PreDecrement),
+            Token::Exclamation => Some(UnaryOp::Not),
+            _ => None,
         }
     }
 }
