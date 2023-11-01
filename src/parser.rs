@@ -359,40 +359,40 @@ impl<'a> Parser<'a> {
     }
 
     fn prefix(&mut self) -> Expr {
-        let mut token = self.advance();
-        match token.data {
+        let Located { mut span, data } = self.advance();
+        match data {
             // Literals
-            Token::Void => Expr::new(token.span, ExprData::Void),
-            Token::False => Expr::new(token.span, ExprData::Bool(false)),
-            Token::True => Expr::new(token.span, ExprData::Bool(true)),
-            Token::None => Expr::new(token.span, ExprData::None),
+            Token::Void => Expr::new(span, ExprData::Void),
+            Token::False => Expr::new(span, ExprData::Bool(false)),
+            Token::True => Expr::new(span, ExprData::Bool(true)),
+            Token::None => Expr::new(span, ExprData::None),
             Token::Int { base, value, width } => Expr::new(
-                token.span,
+                span,
                 ExprData::Integer {
                     base,
                     value: value.into(),
                     width: width.map(|w| w.into()),
                 },
             ),
-            Token::Float(value) => Expr::new(token.span, ExprData::Float(value.into())),
-            Token::String(value) => Expr::new(token.span, ExprData::String(value.into())),
-            Token::Char(value) => Expr::new(token.span, ExprData::Char(value)),
-            Token::ByteString(value) => Expr::new(token.span, ExprData::ByteString(value.into())),
-            Token::ByteChar(value) => Expr::new(token.span, ExprData::ByteChar(value)),
+            Token::Float(value) => Expr::new(span, ExprData::Float(value.into())),
+            Token::String(value) => Expr::new(span, ExprData::String(value.into())),
+            Token::Char(value) => Expr::new(span, ExprData::Char(value)),
+            Token::ByteString(value) => Expr::new(span, ExprData::ByteString(value.into())),
+            Token::ByteChar(value) => Expr::new(span, ExprData::ByteChar(value)),
             Token::Ident(ident) => {
-                let data = self.path_components(Some(ident), &mut token.span);
-                Expr::new(token.span, ExprData::Path(Path::Normal(data)))
+                let data = self.path_components(Some(ident), &mut span);
+                Expr::new(span, ExprData::Path(Path::Normal(data)))
             }
-            Token::This => Expr::new(token.span, ExprData::Path(THIS_PARAM.to_owned().into())),
-            Token::ThisType => Expr::new(token.span, ExprData::Path(THIS_TYPE.to_owned().into())),
+            Token::This => Expr::new(span, ExprData::Path(THIS_PARAM.to_owned().into())),
+            Token::ThisType => Expr::new(span, ExprData::Path(THIS_TYPE.to_owned().into())),
             Token::ScopeRes => {
                 let ident = self.expect_id("expected name");
-                let data = self.path_components(Some(&ident), &mut token.span);
-                Expr::new(token.span, ExprData::Path(Path::Root(data)))
+                let data = self.path_components(Some(&ident), &mut span);
+                Expr::new(span, ExprData::Path(Path::Root(data)))
             }
             Token::Super => {
-                let data = self.path_components(None, &mut token.span);
-                Expr::new(token.span, ExprData::Path(Path::Super(data)))
+                let data = self.path_components(None, &mut span);
+                Expr::new(span, ExprData::Path(Path::Super(data)))
             }
             // prefix operators
             Token::Plus
@@ -402,17 +402,15 @@ impl<'a> Parser<'a> {
             | Token::Increment
             | Token::Decrement
             | Token::Exclamation => {
-                let op = if token.data == Token::Ampersand
-                    && self.advance_if_kind(Token::Mut).is_some()
-                {
+                let op = if data == Token::Ampersand && self.advance_if_kind(Token::Mut).is_some() {
                     UnaryOp::AddrMut
                 } else {
-                    UnaryOp::try_from_prefix(token.data).unwrap()
+                    UnaryOp::try_from_prefix(data).unwrap()
                 };
 
                 let expr = self.precedence(Precedence::Prefix);
                 Expr::new(
-                    token.span.extended_to(expr.span),
+                    span.extended_to(expr.span),
                     ExprData::Unary {
                         op,
                         expr: expr.into(),
@@ -423,18 +421,17 @@ impl<'a> Parser<'a> {
             Token::LParen => {
                 let expr = self.expression();
                 if self.matches_kind(Token::Comma) {
-                    let (exprs, span) =
-                        self.csv(vec![expr], Token::RParen, token.span, Self::expression);
+                    let (exprs, span) = self.csv(vec![expr], Token::RParen, span, Self::expression);
                     Expr::new(span, ExprData::Tuple(exprs))
                 } else {
                     let end = self.expect_kind(Token::RParen, "expected ')'");
-                    Expr::new(token.span.extended_to(end.span), expr.data)
+                    Expr::new(span.extended_to(end.span), expr.data)
                 }
             }
             Token::Range => {
                 if self.is_range_end() {
                     Expr::new(
-                        token.span,
+                        span,
                         ExprData::Range {
                             start: None,
                             end: None,
@@ -442,9 +439,9 @@ impl<'a> Parser<'a> {
                         },
                     )
                 } else {
-                    let end = self.precedence(token.data.precedence());
+                    let end = self.precedence(data.precedence());
                     Expr::new(
-                        token.span.extended_to(end.span),
+                        span.extended_to(end.span),
                         ExprData::Range {
                             start: None,
                             end: Some(end.into()),
@@ -454,9 +451,9 @@ impl<'a> Parser<'a> {
                 }
             }
             Token::RangeInclusive => {
-                let end = self.precedence(token.data.precedence());
+                let end = self.precedence(data.precedence());
                 Expr::new(
-                    token.span.extended_to(end.span),
+                    span.extended_to(end.span),
                     ExprData::Range {
                         start: None,
                         end: Some(end.into()),
@@ -464,23 +461,18 @@ impl<'a> Parser<'a> {
                     },
                 )
             }
-            Token::LCurly => self.block_expr(token.span),
-            Token::If => self.if_expr(token.span),
-            Token::While => self.while_expr(token.span),
-            Token::Loop => self.loop_expr(token.span),
-            Token::For => self.for_expr(token.span),
-            Token::Match => self.match_expr(token.span),
+            Token::LCurly => self.block_expr(span),
+            Token::If => self.if_expr(span),
+            Token::While => self.while_expr(span),
+            Token::Loop => self.loop_expr(span),
+            Token::For => self.for_expr(span),
+            Token::Match => self.match_expr(span),
             Token::LBrace => {
                 if let Some(rbrace) = self.advance_if_kind(Token::RBrace) {
-                    Expr::new(
-                        token.span.extended_to(rbrace.span),
-                        ExprData::Array(Vec::new()),
-                    )
+                    Expr::new(span.extended_to(rbrace.span), ExprData::Array(Vec::new()))
                 } else if self.advance_if_kind(Token::Colon).is_some() {
                     Expr::new(
-                        token
-                            .span
-                            .extended_to(self.expect_kind(Token::RBrace, "expected ']'").span),
+                        span.extended_to(self.expect_kind(Token::RBrace, "expected ']'").span),
                         ExprData::Map(Vec::new()),
                     )
                 } else {
@@ -488,7 +480,7 @@ impl<'a> Parser<'a> {
                     if self.advance_if_kind(Token::Colon).is_some() {
                         let value = self.expression();
                         let (exprs, span) =
-                            self.csv(vec![(expr, value)], Token::RBrace, token.span, |this| {
+                            self.csv(vec![(expr, value)], Token::RBrace, span, |this| {
                                 let key = this.expression();
                                 this.expect_kind(Token::Colon, "expected ':'");
                                 (key, this.expression())
@@ -499,27 +491,24 @@ impl<'a> Parser<'a> {
                         let count = self.expression();
                         let rbrace = self.expect_kind(Token::RBrace, "expected ']'");
                         Expr::new(
-                            token.span.extended_to(rbrace.span),
+                            span.extended_to(rbrace.span),
                             ExprData::ArrayWithInit {
                                 init: expr.into(),
                                 count: count.into(),
                             },
                         )
                     } else if let Some(rbrace) = self.advance_if_kind(Token::RBrace) {
-                        Expr::new(
-                            token.span.extended_to(rbrace.span),
-                            ExprData::Array(vec![expr]),
-                        )
+                        Expr::new(span.extended_to(rbrace.span), ExprData::Array(vec![expr]))
                     } else {
                         let (exprs, span) =
-                            self.csv(vec![expr], Token::RBrace, token.span, Self::expression);
+                            self.csv(vec![expr], Token::RBrace, span, Self::expression);
                         Expr::new(span, ExprData::Array(exprs))
                     }
                 }
             }
             Token::Fn => {
                 self.expect_kind(Token::LParen, "expected '('");
-                let (params, _) = self.csv(Vec::new(), Token::RParen, token.span, |this| {
+                let (params, _) = self.csv(Vec::new(), Token::RParen, span, |this| {
                     (
                         this.expect_located_id("expected parameter name"),
                         this.advance_if_kind(Token::Colon)
@@ -531,7 +520,7 @@ impl<'a> Parser<'a> {
 
                 let body = self.expression();
                 Expr::new(
-                    token.span.extended_to(body.span),
+                    span.extended_to(body.span),
                     ExprData::Lambda {
                         params,
                         ret,
@@ -542,14 +531,14 @@ impl<'a> Parser<'a> {
             Token::Return | Token::Break | Token::Yield => {
                 let (span, expr) = if !self.is_range_end() {
                     let expr = self.expression();
-                    (token.span.extended_to(expr.span), expr.into())
+                    (span.extended_to(expr.span), expr.into())
                 } else {
-                    (token.span, Expr::new(token.span, ExprData::Void).into())
+                    (span, Expr::new(span, ExprData::Void).into())
                 };
 
                 Expr::new(
                     span,
-                    match token.data {
+                    match data {
                         Token::Return => ExprData::Return(expr),
                         Token::Break => ExprData::Break(expr),
                         Token::Yield => ExprData::Yield(expr),
@@ -559,15 +548,12 @@ impl<'a> Parser<'a> {
             }
             Token::Unsafe => {
                 let expr = self.expression();
-                Expr::new(
-                    token.span.extended_to(expr.span),
-                    ExprData::Unsafe(expr.into()),
-                )
+                Expr::new(span.extended_to(expr.span), ExprData::Unsafe(expr.into()))
             }
-            Token::Continue => Expr::new(token.span, ExprData::Continue),
+            Token::Continue => Expr::new(span, ExprData::Continue),
             _ => {
-                self.error(Error::new("unexpected token", token.span));
-                Expr::new(token.span, ExprData::Error)
+                self.error(Error::new("unexpected token", span));
+                Expr::new(span, ExprData::Error)
             }
         }
     }
