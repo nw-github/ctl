@@ -289,11 +289,9 @@ impl<'a> Parser<'a> {
             let ty = self
                 .advance_if_kind(Token::Colon)
                 .map(|_| self.parse_type());
-            let value = if self.advance_if_kind(Token::Assign).is_some() {
-                Some(self.expression())
-            } else {
-                None
-            };
+            let value = self
+                .advance_if_kind(Token::Assign)
+                .map(|_| self.expression());
             let semi = self.expect_kind(Token::Semicolon, "expected ';'");
             Stmt {
                 data: StmtData::Let {
@@ -392,6 +390,10 @@ impl<'a> Parser<'a> {
                 let data = self.path_components(Some(&ident), &mut token.span);
                 Expr::new(token.span, ExprData::Path(Path::Root(data)))
             }
+            Token::Super => {
+                let data = self.path_components(None, &mut token.span);
+                Expr::new(token.span, ExprData::Path(Path::Super(data)))
+            }
             // prefix operators
             Token::Plus
             | Token::Minus
@@ -418,10 +420,6 @@ impl<'a> Parser<'a> {
                 )
             }
             // complex expressions
-            Token::Super => {
-                let data = self.path_components(None, &mut token.span);
-                Expr::new(token.span, ExprData::Path(Path::Super(data)))
-            }
             Token::LParen => {
                 let expr = self.expression();
                 if self.matches_kind(Token::Comma) {
@@ -542,12 +540,7 @@ impl<'a> Parser<'a> {
                 )
             }
             Token::Return | Token::Break | Token::Yield => {
-                let (span, expr) = if !self.matches(|tk| {
-                    matches!(
-                        tk,
-                        Token::Semicolon | Token::Comma | Token::RBrace | Token::RParen
-                    )
-                }) {
+                let (span, expr) = if !self.is_range_end() {
                     let expr = self.expression();
                     (token.span.extended_to(expr.span), expr.into())
                 } else {
@@ -1074,19 +1067,16 @@ impl<'a> Parser<'a> {
             self.expect_kind(Token::LParen, "expected '('");
             let (params, _) =
                 self.csv(Vec::new(), Token::RParen, Span::default(), Self::parse_type);
-            if self.advance_if_kind(Token::Arrow).is_some() {
-                let ret = self.parse_type();
-                TypeHint::Fn {
-                    is_extern: false,
-                    params,
-                    ret: ret.into(),
-                }
+            let ret = if self.advance_if_kind(Token::Arrow).is_some() {
+                self.parse_type()
             } else {
-                TypeHint::Fn {
-                    is_extern: false,
-                    params,
-                    ret: TypeHint::Void.into(),
-                }
+                TypeHint::Void
+            };
+
+            TypeHint::Fn {
+                is_extern: false,
+                params,
+                ret: ret.into(),
             }
         } else {
             TypeHint::Regular(self.type_path())
