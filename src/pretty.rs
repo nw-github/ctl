@@ -186,8 +186,8 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
                 }
             }
         }
-        ExprData::Array(elements) => {
-            println!("{tabs}Array");
+        ExprData::Array(elements) | ExprData::Vector(elements) | ExprData::Set(elements) => {
+            println!("{tabs}Array|Vector|Set"); // FIXME: correct this name
             for el in elements {
                 print_expr(el, src, indent + 1);
             }

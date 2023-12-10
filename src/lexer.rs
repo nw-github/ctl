@@ -23,6 +23,8 @@ pub enum Token<'a> {
     Comma,
     Colon,
     Semicolon,
+    Hash,
+    At,
 
     Plus,
     AddAssign,
@@ -591,6 +593,8 @@ impl<'a> Lexer<'a> {
             ')' => Token::RParen,
             ',' => Token::Comma,
             ';' => Token::Semicolon,
+            '#' => Token::Hash,
+            '@' => Token::At,
             '.' => {
                 if self.advance_if('.') {
                     if self.advance_if('.') {

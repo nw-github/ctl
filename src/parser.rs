@@ -506,6 +506,18 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+            Token::At | Token::Hash => {
+                self.expect_kind(Token::LBrace, "expected '['");
+                let (params, span) = self.csv(Vec::new(), Token::RBrace, span, Self::expression);
+                Expr::new(
+                    span,
+                    if data == Token::At {
+                        ExprData::Vector(params)
+                    } else {
+                        ExprData::Set(params)
+                    },
+                )
+            }
             Token::Fn => {
                 self.expect_kind(Token::LParen, "expected '('");
                 let (params, _) = self.csv(Vec::new(), Token::RParen, span, |this| {

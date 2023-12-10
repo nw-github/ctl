@@ -66,6 +66,8 @@ pub enum ExprData {
         args: Vec<(Option<String>, Expr)>,
     },
     Array(Vec<Expr>),
+    Set(Vec<Expr>),
+    Vector(Vec<Expr>),
     ArrayWithInit {
         init: Box<Expr>,
         count: Box<Expr>,

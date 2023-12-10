@@ -547,13 +547,9 @@ impl TypeId {
 
     fn from_int_name(name: &str) -> Option<TypeId> {
         let mut chars = name.chars();
-        let mut i = false;
-        let result = match chars.next()? {
-            'i' => {
-                i = true;
-                TypeId::Int
-            }
-            'u' => TypeId::Uint,
+        let (i, result): (_, fn(u32) -> TypeId) = match chars.next()? {
+            'i' => (true, TypeId::Int),
+            'u' => (false, TypeId::Uint),
             _ => return None,
         };
 
@@ -933,10 +929,9 @@ impl Scopes {
         f: impl FnOnce(&mut Self) -> T,
     ) -> T {
         let id = ScopeId(self.scopes.len());
-        self.current().children.insert(
-            name.clone().unwrap_or_default(),
-            Vis { item: id, public },
-        );
+        self.current()
+            .children
+            .insert(name.clone().unwrap_or_default(), Vis { item: id, public });
         let parent = Some(self.current);
         self.enter_id(id, |this| {
             this.scopes.push(Scope {
@@ -2095,7 +2090,7 @@ impl TypeChecker {
     fn check_impl_blocks(&mut self, scopes: &mut Scopes, id: UserTypeId, impls: Vec<ImplBlock>) {
         self.resolve_impls(scopes, id);
         for block in impls {
-            // TODO: 
+            // TODO:
             // - check signatures
             // - check that all functions are implemented
             // - give each impl block its own scope
@@ -2167,56 +2162,79 @@ impl TypeChecker {
             ExprData::Array(elements) => {
                 let mut checked = Vec::with_capacity(elements.len());
                 let mut elements = elements.into_iter();
-                let (ut, ty) = if let Some(TypeId::Array(inner)) = target {
-                    (None, inner.0.clone())
+                let ty = if let Some(TypeId::Array(inner)) = target {
+                    inner.0.clone()
+                } else if let Some(expr) = elements.next() {
+                    let expr = self.check_expr(scopes, expr, None);
+                    let ty = expr.ty.clone();
+                    checked.push(expr);
+                    ty
                 } else {
-                    let Some(vec) = scopes.lang_types.get("vec").copied() else {
-                        return self.error(Error::new("missing language item: Vec", expr.span));
-                    };
-
-                    let Some(set) = scopes.lang_types.get("set").copied() else {
-                        return self.error(Error::new("missing language item: Set", expr.span));
-                    };
-
-                    if let Some(ty) = target
-                        .and_then(|target| target.as_user_type())
-                        .filter(|ut| ut.id == vec)
-                        .map(|ut| ut.generics[0].clone())
-                    {
-                        (Some(vec), ty)
-                    } else if let Some(ty) = target
-                        .and_then(|target| target.as_user_type())
-                        .filter(|ut| ut.id == set)
-                        .map(|ut| ut.generics[0].clone())
-                    {
-                        (Some(set), ty)
-                    } else if let Some(expr) = elements.next() {
-                        let expr = self.check_expr(scopes, expr, None);
-                        let ty = expr.ty.clone();
-                        checked.push(expr);
-                        (Some(vec), ty)
-                    } else {
-                        return self
-                            .error(Error::new("cannot infer type of array literal", expr.span));
-                    }
+                    return self.error(Error::new("cannot infer type of array literal", expr.span));
                 };
 
                 checked.extend(elements.map(|e| self.type_check(scopes, e, &ty)));
-                if let Some(ut) = ut {
-                    CheckedExpr::new(
-                        TypeId::UserType(GenericUserType::new(ut, vec![ty]).into()),
-                        if Some(&ut) == scopes.lang_types.get("set") {
-                            CheckedExprData::Set(checked)
-                        } else {
-                            CheckedExprData::Vec(checked)
-                        },
-                    )
+                CheckedExpr::new(
+                    TypeId::Array(Box::new((ty, checked.len()))),
+                    CheckedExprData::Array(checked),
+                )
+            }
+            ExprData::Vector(elements) => {
+                let mut checked = Vec::with_capacity(elements.len());
+                let mut elements = elements.into_iter();
+                let Some(vec) = scopes.lang_types.get("vec").copied() else {
+                    return self.error(Error::new("missing language item: Vec", expr.span));
+                };
+
+                let ut = if let Some(ty) = target
+                    .and_then(|target| target.as_user_type())
+                    .filter(|ut| ut.id == vec)
+                    .map(|ut| ut.generics[0].clone())
+                {
+                    ty
+                } else if let Some(expr) = elements.next() {
+                    let expr = self.check_expr(scopes, expr, None);
+                    let ty = expr.ty.clone();
+                    checked.push(expr);
+                    ty
                 } else {
-                    CheckedExpr::new(
-                        TypeId::Array(Box::new((ty, checked.len()))),
-                        CheckedExprData::Array(checked),
-                    )
-                }
+                    return self
+                        .error(Error::new("cannot infer type of vector literal", expr.span));
+                };
+
+                checked.extend(elements.map(|e| self.type_check(scopes, e, &ut)));
+                CheckedExpr::new(
+                    TypeId::UserType(GenericUserType::new(vec, vec![ut]).into()),
+                    CheckedExprData::Vec(checked),
+                )
+            }
+            ExprData::Set(elements) => {
+                let mut checked = Vec::with_capacity(elements.len());
+                let mut elements = elements.into_iter();
+                let Some(set) = scopes.lang_types.get("set").copied() else {
+                    return self.error(Error::new("missing language item: Set", expr.span));
+                };
+
+                let ut = if let Some(ty) = target
+                    .and_then(|target| target.as_user_type())
+                    .filter(|ut| ut.id == set)
+                    .map(|ut| ut.generics[0].clone())
+                {
+                    ty
+                } else if let Some(expr) = elements.next() {
+                    let expr = self.check_expr(scopes, expr, None);
+                    let ty = expr.ty.clone();
+                    checked.push(expr);
+                    ty
+                } else {
+                    return self.error(Error::new("cannot infer type of set literal", expr.span));
+                };
+
+                checked.extend(elements.map(|e| self.type_check(scopes, e, &ut)));
+                CheckedExpr::new(
+                    TypeId::UserType(GenericUserType::new(set, vec![ut]).into()),
+                    CheckedExprData::Vec(checked),
+                )
             }
             ExprData::ArrayWithInit { init, count } => {
                 if let Some(TypeId::Array(inner)) = target {
@@ -2233,7 +2251,10 @@ impl TypeChecker {
                     }
                 } else {
                     let Some(vec) = scopes.lang_types.get("vec").copied() else {
-                        return self.error(Error::new("no symbol 'Vec' found in this module", expr.span));
+                        return self.error(Error::new(
+                            "no symbol 'Vec' found in this module",
+                            expr.span,
+                        ));
                     };
 
                     let (init, ty) = if let Some(ty) = target
@@ -2261,7 +2282,10 @@ impl TypeChecker {
             ExprData::Map(elements) => {
                 // TODO: make sure the key type respects the trait bounds
                 let Some(std_map) = scopes.lang_types.get("map").copied() else {
-                    return self.error(Error::new("no symbol 'Map' found in this module", expr.span));
+                    return self.error(Error::new(
+                        "no symbol 'Map' found in this module",
+                        expr.span,
+                    ));
                 };
 
                 let mut result = Vec::with_capacity(elements.len());
@@ -2727,7 +2751,9 @@ impl TypeChecker {
                     Some(&TypeId::Void),
                 );
 
-                let CheckedExprData::Loop { iter, .. } = &mut body.data else { unreachable!() };
+                let CheckedExprData::Loop { iter, .. } = &mut body.data else {
+                    unreachable!()
+                };
                 *iter = Some(id);
                 body
             }
@@ -3350,13 +3376,20 @@ impl TypeChecker {
             }
         };
 
-        let Some(path) = path else { return Default::default(); };
+        let Some(path) = path else {
+            return Default::default();
+        };
 
-        let Some(ut) = scrutinee.ty
+        let Some(ut) = scrutinee
+            .ty
             .strip_references()
             .as_user_type()
-            .filter(|ut| scopes.get_user_type(ut.id).data.is_union()) else {
-            return self.error(Error::new("match scrutinee must be union or pointer to union", span));
+            .filter(|ut| scopes.get_user_type(ut.id).data.is_union())
+        else {
+            return self.error(Error::new(
+                "match scrutinee must be union or pointer to union",
+                span,
+            ));
         };
 
         for i in 0..scopes.get_user_type_mut(ut.id).members_mut().unwrap().len() {
@@ -3377,7 +3410,8 @@ impl TypeChecker {
                 f.ret.as_user_type()
             })
             .filter(|ty| ty.id == ut.id)
-            .and_then(|ty| scopes.get_user_type(ty.id).data.as_union()) else {
+            .and_then(|ty| scopes.get_user_type(ty.id).data.as_union())
+        else {
             return self.error(Error::new("pattern does not match the scrutinee", span));
         };
 
@@ -3557,7 +3591,7 @@ impl TypeChecker {
                             return self.error(Error::new(
                                 format!("cannot construct type '{}'", ut.name),
                                 span,
-                            ))
+                            ));
                         };
 
                         // TODO: check privacy
@@ -3907,11 +3941,7 @@ impl TypeChecker {
     fn type_check(&mut self, scopes: &mut Scopes, expr: Expr, target: &TypeId) -> CheckedExpr {
         let span = expr.span;
         let source = self.check_expr(scopes, expr, Some(target));
-        if !source.ty.coerces_to(scopes, target) {
-            self.error(type_mismatch!(scopes, target, source.ty, span))
-        }
-
-        source.coerce_to(target, scopes)
+        self.type_check_checked(scopes, source, target, span)
     }
 
     fn type_check_checked(
