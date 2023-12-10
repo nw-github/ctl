@@ -38,7 +38,7 @@ pub struct Vec<T> {
     }
 
     pub fn is_empty(this) bool {
-        return this.len != 0;
+        return this.len == 0;
     }
 
     pub fn capacity(this) usize {
