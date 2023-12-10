@@ -186,13 +186,13 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
                 }
             }
         }
-        ExprData::Array(elements) | ExprData::Vector(elements) | ExprData::Set(elements) => {
+        ExprData::Array(elements) | ExprData::Vec(elements) | ExprData::Set(elements) => {
             println!("{tabs}Array|Vector|Set"); // FIXME: correct this name
             for el in elements {
                 print_expr(el, src, indent + 1);
             }
         }
-        ExprData::ArrayWithInit { init, count } => {
+        ExprData::ArrayWithInit { init, count } | ExprData::VecWithInit { init, count } => {
             println!("{tabs}ArrayWithInit");
 
             let tabs = INDENT.repeat(indent + 1);

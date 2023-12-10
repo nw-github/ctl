@@ -506,13 +506,36 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            Token::At | Token::Hash => {
+            Token::At => {
+                self.expect_kind(Token::LBrace, "expected '['");
+                if let Some(rbrace) = self.advance_if_kind(Token::RBrace) {
+                    Expr::new(span.extended_to(rbrace.span), ExprData::Vec(Vec::new()))
+                } else {
+                    let expr = self.expression();
+                    if self.advance_if_kind(Token::Semicolon).is_some() {
+                        let count = self.expression();
+                        let rbrace = self.expect_kind(Token::RBrace, "expected ']'");
+                        Expr::new(
+                            span.extended_to(rbrace.span),
+                            ExprData::VecWithInit {
+                                init: expr.into(),
+                                count: count.into(),
+                            },
+                        )
+                    } else {
+                        let (exprs, span) =
+                            self.csv(vec![expr], Token::RBrace, span, Self::expression);
+                        Expr::new(span, ExprData::Vec(exprs))
+                    }
+                }
+            }
+            Token::Hash => {
                 self.expect_kind(Token::LBrace, "expected '['");
                 let (params, span) = self.csv(Vec::new(), Token::RBrace, span, Self::expression);
                 Expr::new(
                     span,
                     if data == Token::At {
-                        ExprData::Vector(params)
+                        ExprData::Vec(params)
                     } else {
                         ExprData::Set(params)
                     },

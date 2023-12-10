@@ -2179,7 +2179,7 @@ impl TypeChecker {
                     CheckedExprData::Array(checked),
                 )
             }
-            ExprData::Vector(elements) => {
+            ExprData::Vec(elements) => {
                 let mut checked = Vec::with_capacity(elements.len());
                 let mut elements = elements.into_iter();
                 let Some(vec) = scopes.lang_types.get("vec").copied() else {
@@ -2233,7 +2233,7 @@ impl TypeChecker {
                 checked.extend(elements.map(|e| self.type_check(scopes, e, &ut)));
                 CheckedExpr::new(
                     TypeId::UserType(GenericUserType::new(set, vec![ut]).into()),
-                    CheckedExprData::Vec(checked),
+                    CheckedExprData::Set(checked),
                 )
             }
             ExprData::ArrayWithInit { init, count } => {
@@ -2250,33 +2250,46 @@ impl TypeChecker {
                         Err(err) => self.error(err),
                     }
                 } else {
-                    let Some(vec) = scopes.lang_types.get("vec").copied() else {
-                        return self.error(Error::new(
-                            "no symbol 'Vec' found in this module",
-                            expr.span,
-                        ));
-                    };
-
-                    let (init, ty) = if let Some(ty) = target
-                        .and_then(|target| target.as_user_type())
-                        .filter(|ut| ut.id == vec)
-                        .map(|ut| ut.generics[0].clone())
-                    {
-                        (self.type_check(scopes, *init, &ty), ty)
-                    } else {
-                        let expr = self.check_expr(scopes, *init, None);
-                        let ty = expr.ty.clone();
-                        (expr, ty)
-                    };
-
-                    CheckedExpr::new(
-                        TypeId::UserType(GenericUserType::new(vec, vec![ty]).into()),
-                        CheckedExprData::VecWithInit {
-                            init: init.into(),
-                            count: self.type_check(scopes, *count, &TypeId::Usize).into(),
-                        },
-                    )
+                    let init = self.check_expr(scopes, *init, target);
+                    match Self::consteval(scopes, &count, Some(&TypeId::Usize)) {
+                        Ok(count) => CheckedExpr::new(
+                            TypeId::Array(Box::new((init.ty.clone(), count))),
+                            CheckedExprData::ArrayWithInit {
+                                init: init.into(),
+                                count,
+                            },
+                        ),
+                        Err(err) => self.error(err),
+                    }
                 }
+            }
+            ExprData::VecWithInit { init, count } => {
+                let Some(vec) = scopes.lang_types.get("vec").copied() else {
+                    return self.error(Error::new(
+                        "no symbol 'Vec' found in this module",
+                        expr.span,
+                    ));
+                };
+
+                let (init, ty) = if let Some(ty) = target
+                    .and_then(|target| target.as_user_type())
+                    .filter(|ut| ut.id == vec)
+                    .map(|ut| ut.generics[0].clone())
+                {
+                    (self.type_check(scopes, *init, &ty), ty)
+                } else {
+                    let expr = self.check_expr(scopes, *init, None);
+                    let ty = expr.ty.clone();
+                    (expr, ty)
+                };
+
+                CheckedExpr::new(
+                    TypeId::UserType(GenericUserType::new(vec, vec![ty]).into()),
+                    CheckedExprData::VecWithInit {
+                        init: init.into(),
+                        count: self.type_check(scopes, *count, &TypeId::Usize).into(),
+                    },
+                )
             }
             ExprData::Tuple(_) => todo!(),
             ExprData::Map(elements) => {
