@@ -12,31 +12,31 @@ pub struct str {
     pub fn from_c_str(ptr: *c_char) str {
         extern fn strlen(ptr: *c_char) usize;
         // TODO: validate UTF-8
-        return str(span: unsafe { yield Span::new(ptr as *u8, strlen(ptr)); });
+        str(span: unsafe { yield Span::new(ptr as *u8, strlen(ptr)); })
     }
 
     pub fn len(this) usize {
-        return this.span.len();
+        this.span.len()
     }
 
     pub fn is_empty(this) bool {
-        return this.span.is_empty();
+        this.span.is_empty()
     }
 
     pub fn as_ptr(this) *u8 {
-        return unsafe this.span.as_raw().as_ptr();
+        unsafe this.span.as_raw().as_ptr()
     }
 
     pub fn as_c_str(this) *c_char {
-        return unsafe this.span.as_raw().as_ptr() as *c_char;
+        unsafe this.span.as_raw().as_ptr() as *c_char
     }
 
     pub fn as_bytes(this) [u8..] {
-        return this.span;
+        this.span
     }
 
     pub fn chars(this) Chars {
-        return Chars(s: this.as_bytes());
+        Chars(s: this.as_bytes())
     }
 
     pub fn substr<R: RangeBounds<usize> >(this, range: R) str {
@@ -51,7 +51,7 @@ pub struct str {
                 panic("str::substr(): range does not end at char boundary");
             }
         }
-        return str(span:);
+        str(span:)
     }
 
     impl Hash {
@@ -63,10 +63,10 @@ pub struct str {
     impl Eq<str> {
         fn eq(this, rhs: *str) bool {
             if this.len() != rhs.len() {
-                return false;
+                false
+            } else {
+                core::mem::compare(this.as_ptr(), rhs.as_ptr(), this.len())
             }
-
-            return core::mem::compare(this.as_ptr(), rhs.as_ptr(), this.len());
         }
     }
 }
@@ -76,7 +76,7 @@ pub struct Chars {
 
     impl Iterator<char> {
         fn next(mut this) ?char {
-            return match this.s.get(0) {
+            match this.s.get(0) {
                 ?cp => unsafe {
                     mut cp = *cp as u32 & 0xff;
                     if cp < 0x80 {
@@ -103,10 +103,10 @@ pub struct Chars {
                         unreachable();
                     }
 
-                    yield cp as! char;
+                    cp as! char
                 },
                 null => null,
-            };
+            }
         }
     }
 }
@@ -114,5 +114,5 @@ pub struct Chars {
 fn is_char_boundary(b: u8) bool {
     // From the Rust standard library:
     // This is bit magic equivalent to: b < 128 || b >= 192
-    return b as! i8 >= -0x40;
+    b as! i8 >= -0x40
 }

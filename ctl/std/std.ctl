@@ -25,7 +25,7 @@ fn convert_argv(argc: c_int, argv: **c_char) [str..] {
     while i < argc {
         args.push(str::from_c_str(*unsafe core::ptr::offset(argv, i++)));
     }
-    return args.as_span();
+    args.as_span()
 }
 
 [autouse]

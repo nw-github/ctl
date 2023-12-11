@@ -327,6 +327,10 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
             println!("{tabs}Yield");
             print_expr(expr, src, indent + 1);
         }
+        ExprData::YieldOrReturn(expr) => {
+            println!("{tabs}YieldOrReturn");
+            print_expr(expr, src, indent + 1);
+        }
         ExprData::Break(expr) => {
             println!("{tabs}Break");
             print_expr(expr, src, indent + 1);

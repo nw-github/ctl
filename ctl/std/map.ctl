@@ -14,9 +14,7 @@ union Bucket<K, V> {
 
     pub fn unwrap(this) SomeBucket<K, V> {
         match *this {
-            Bucket::Some(e) => {
-                return e;
-            },
+            Bucket::Some(e) => e,
             _ => {
                 panic("Bucket::unwrap(): value is not Bucket::Some!");
             },
@@ -30,30 +28,30 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     len:     usize,
 
     pub fn new<_K: Hash + Eq<_K>, _V>() Map<_K, _V> {
-        return Map::<_K, _V>(
+        Map::<_K, _V>(
             buckets: Vec::with_capacity(20),
             len: 0,
-        );
+        )
     }
 
     pub fn with_capacity<_K: Hash + Eq<_K>, _V>(cap: usize) Map<_K, _V> {
         mut self: [_K: _V] = Map::new();
         self.adjust_cap(cap);
-        return self;
+        self
     }
 
     pub fn get(this, key: *K) ?*V {
-        return match this.buckets.get(this.entry_pos(key))! {
+        match this.buckets.get(this.entry_pos(key))! {
             Bucket::Some(entry) => &entry.val,
             _ => null,
-        };
+        }
     }
 
     pub fn get_mut(mut this, key: *K) ?*mut V {
-        return match this.buckets.get_mut(this.entry_pos(key))! {
+        match this.buckets.get_mut(this.entry_pos(key))! {
             Bucket::Some(entry) => &mut entry.val,
             _ => null,
-        };
+        }
     }
 
     pub fn insert(mut this, key: K, val: V) ?V {
@@ -61,7 +59,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
             this.adjust_cap(this.buckets.len() * 2);
         }
 
-        return match this.buckets.get_mut(this.entry_pos(&key))! {
+        match this.buckets.get_mut(this.entry_pos(&key))! {
             Bucket::Some(entry) => core::mem::replace(&mut entry.val, val),
             entry => {
                 if !(entry is Bucket::Tombstone) {
@@ -71,18 +69,18 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
                 *entry = Bucket::Some(SomeBucket(key:, val:));
                 yield null;
             }
-        };
+        }
     }
 
     pub fn remove(mut this, key: *K) ?V {
-        return match this.buckets.get_mut(this.entry_pos(key))! {
+        match this.buckets.get_mut(this.entry_pos(key))! {
             Bucket::None => null,
             Bucket::Tombstone => null,
             entry => {
                 this.len--;
                 yield core::mem::replace(entry, Bucket::Tombstone()).unwrap().val;
             }
-        };
+        }
     }
 
     pub fn clear(mut this) {
@@ -98,11 +96,11 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     }
 
     pub fn contains(this, key: *K) bool {
-        return this.buckets.get(this.entry_pos(key))! is Bucket::Some(_);
+        this.buckets.get(this.entry_pos(key))! is Bucket::Some(_)
     }
 
     pub fn len(this) usize {
-        return this.len;
+        this.len
     }
 
     fn entry_pos(this, key: *K) usize {
@@ -113,7 +111,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         } % this.buckets.len();
 
         mut tombstone: ?usize = null;
-        return loop {
+        loop {
             match this.buckets.get(idx)! {
                 Bucket::Some(entry) => if key.eq(&entry.key) {
                     break idx;
@@ -126,7 +124,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
             }
 
             idx = (idx + 1) % this.buckets.len();
-        };
+        }
     }
 
     fn adjust_cap(mut this, cap: usize) {
@@ -168,7 +166,7 @@ struct Fnv1a {
     val: u64 = 0,
 
     pub fn new() Fnv1a {
-        return Fnv1a();
+        Fnv1a()
     }
 
     impl core::hash::Hasher {
@@ -182,7 +180,7 @@ struct Fnv1a {
         }
 
         fn finish(this) u64 {
-            return this.val;
+            this.val
         }
     }
 }

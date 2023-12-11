@@ -8,7 +8,7 @@ pub fn panic(s: string::str) never {
         write(2, s.as_ptr() as *c_void, s.len());
         write(2, &b'\n' as *c_void, 1);
 
-        abort();
+        abort()
     }
 }
 

@@ -11,13 +11,13 @@ pub struct Vec<T> {
     cap: usize,
 
     pub fn new<U>() Vec<U> {
-        return Vec::<U>(ptr: RawMut::dangling(), len: 0, cap: 0);
+        Vec::<U>(ptr: RawMut::dangling(), len: 0, cap: 0)
     }
 
     pub fn with_capacity<U>(cap: usize) Vec<U> {
         mut self: Vec<U> = Vec::new();
         self.reserve(cap);
-        return self;
+        self
     }
 
     pub fn from_span<U>(span: [U..]) Vec<U> {
@@ -30,35 +30,35 @@ pub struct Vec<T> {
             );
             self.set_len(span.len());
         }
-        return self;
+        self
     }
 
     pub fn len(this) usize {
-        return this.len;
+        this.len
     }
 
     pub fn is_empty(this) bool {
-        return this.len == 0;
+        this.len == 0
     }
 
     pub fn capacity(this) usize {
-        return this.cap;
+        this.cap
     }
 
     pub fn as_span(this) [T..] {
-        return unsafe Span::new(this.ptr.as_mut_ptr(), this.len);
+        unsafe Span::new(this.ptr.as_mut_ptr(), this.len)
     }
 
     pub fn as_span_mut(this) [mut T..] {
-        return unsafe SpanMut::new(this.ptr.as_mut_ptr(), this.len);
+        unsafe SpanMut::new(this.ptr.as_mut_ptr(), this.len)
     }
 
     pub fn iter(this) Iter<T> {
-        return this.as_span().iter();
+        this.as_span().iter()
     }
 
     pub fn iter_mut(this) IterMut<T> {
-        return this.as_span_mut().iter_mut();
+        this.as_span_mut().iter_mut()
     }
 
     pub fn push(mut this, t: T) {
@@ -72,16 +72,16 @@ pub struct Vec<T> {
     pub fn push_within_capacity(mut this, t: T) ?T {
         if this.can_insert(1) {
             unsafe this.ptr.add(this.len++).write(t);
-            return null;
+            null
         } else {
-            return t;
+            t
         }
     }
 
     pub fn pop(mut this) ?T {
-        return if this.len > 0 {
-            yield unsafe this.ptr.add(--this.len).read();
-        };
+        if this.len > 0 {
+            unsafe this.ptr.add(--this.len).read()
+        }
     }
 
     pub fn append(mut this, rhs: *mut Vec<T>) {
@@ -147,7 +147,7 @@ pub struct Vec<T> {
             }
 
             this.len--;
-            return t;
+            t
         }
     }
 
@@ -159,11 +159,11 @@ pub struct Vec<T> {
         this.len--;
 
         let ptr = this.ptr.add(idx);
-        return unsafe if idx < this.len {
-            yield mem::replace(ptr.as_mut_ptr(), this.ptr.add(this.len).read());
+        if idx < this.len {
+            unsafe mem::replace(ptr.as_mut_ptr(), this.ptr.add(this.len).read())
         } else {
-            yield ptr.read();
-        };
+            unsafe ptr.read()
+        }
     }
 
     pub fn truncate(mut this, len: usize) {
@@ -177,23 +177,23 @@ pub struct Vec<T> {
     }
 
     pub fn get(this, idx: usize) ?*T {
-        return if idx < this.len {
-            yield unsafe this.ptr.add(idx).as_ptr();
-        };
+        if idx < this.len {
+            unsafe this.ptr.add(idx).as_ptr()
+        }
     }
 
     pub fn get_mut(mut this, idx: usize) ?*mut T {
-        return if idx < this.len {
-            yield unsafe this.ptr.add(idx).as_mut_ptr();
-        };
+        if idx < this.len {
+            unsafe this.ptr.add(idx).as_mut_ptr()
+        }
     }
 
     pub fn as_raw(this) Raw<T> {
-        return Raw::from_mut(this.ptr);
+        Raw::from_mut(this.ptr)
     }
 
     pub fn as_raw_mut(mut this) RawMut<T> {
-        return this.ptr;
+        this.ptr
     }
 
     pub unsafe fn set_len(mut this, len: usize) {
@@ -209,7 +209,7 @@ pub struct Vec<T> {
     }
 
     fn can_insert(this, count: usize) bool {
-        return this.len + count <= this.cap;
+        this.len + count <= this.cap
     }
 
     fn _reserve(mut this, cap: usize) {

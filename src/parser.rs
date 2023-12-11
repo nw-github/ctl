@@ -305,6 +305,7 @@ impl<'a> Parser<'a> {
             }
         } else {
             let is_unsafe = self.is_unsafe.take();
+            let mut needs_semicolon = false;
             let mut expr = if let Some(token) = self.advance_if_kind(Token::If) {
                 self.if_expr(token.span)
             } else if let Some(token) = self.advance_if_kind(Token::While) {
@@ -318,10 +319,17 @@ impl<'a> Parser<'a> {
             } else if let Some(token) = self.advance_if_kind(Token::LCurly) {
                 self.block_expr(token.span)
             } else {
-                let expr = self.expression();
-                self.expect_kind(Token::Semicolon, "expected ';'");
-                expr
+                needs_semicolon = true;
+                self.expression()
             };
+
+            if self.matches_kind(Token::RCurly) {
+                expr = Expr::new(expr.span, ExprData::YieldOrReturn(expr.into()));
+            } else if needs_semicolon {
+                self.expect_kind(Token::Semicolon, "expected ';'");
+            } else {
+                self.advance_if_kind(Token::Semicolon);
+            }
 
             if let Some(is_unsafe) = is_unsafe {
                 expr = Expr::new(

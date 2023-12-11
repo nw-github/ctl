@@ -2,7 +2,7 @@
 pub extern fn size_of<T>() usize;
 
 pub fn size_of_val<T>(_: *T) usize {
-    return size_of::<T>();
+    size_of::<T>()
 }
 
 /// Copies `num` T's from `src` to `dst` without destroying the contents in `dst`.
@@ -29,7 +29,7 @@ pub fn compare<T>(lhs: *T, rhs: *T, num: usize) bool {
     [c_name(__builtin_memcmp)]
     extern fn memcmp(dst: *c_void, src: *c_void, len: usize) c_int;
 
-    return unsafe memcmp(lhs as *c_void, rhs as *c_void, num * size_of::<T>()) == 0;
+    unsafe memcmp(lhs as *c_void, rhs as *c_void, num * size_of::<T>()) == 0
 }
 
 pub fn swap<T>(lhs: *mut T, rhs: *mut T) {
@@ -41,7 +41,7 @@ pub fn swap<T>(lhs: *mut T, rhs: *mut T) {
 pub fn replace<T>(ptr: *mut T, val: T) T {
     let old = *ptr;
     *ptr = val;
-    return old;
+    old
 }
 
 pub unsafe fn transmute<In, Out>(i: In) Out {
@@ -61,5 +61,5 @@ pub unsafe fn transmute<In, Out>(i: In) Out {
         Out(U),
     }
 
-    return unsafe Transmuter::In::<In, Out>(i).Out;
+    unsafe Transmuter::In::<In, Out>(i).Out
 }

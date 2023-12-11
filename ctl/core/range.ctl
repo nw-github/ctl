@@ -16,11 +16,11 @@ pub struct RangeTo<T> {
 
     impl RangeBounds<T> {
         fn begin(this) Bound<T> {
-            return Bound::Unbounded();
+            Bound::Unbounded()
         }
 
         fn end(this) Bound<T> {
-            return Bound::Exclusive(this.end);
+            Bound::Exclusive(this.end)
         }
     }
 }
@@ -32,11 +32,11 @@ pub struct RangeToInclusive<T> {
 
     impl RangeBounds<T> {
         fn begin(this) Bound<T> {
-            return Bound::Unbounded();
+            Bound::Unbounded()
         }
 
         fn end(this) Bound<T> {
-            return Bound::Inclusive(this.end);
+            Bound::Inclusive(this.end)
         }
     }
 }
@@ -48,11 +48,11 @@ pub struct RangeFrom<T> {
 
     impl RangeBounds<T> {
         fn begin(this) Bound<T> {
-            return Bound::Inclusive(this.start);
+            Bound::Inclusive(this.start)
         }
 
         fn end(this) Bound<T> {
-            return Bound::Unbounded();
+            Bound::Unbounded()
         }
     }
 }
@@ -65,11 +65,11 @@ pub struct Range<T> {
 
     impl RangeBounds<T> {
         fn begin(this) Bound<T> {
-            return Bound::Inclusive(this.start);
+            Bound::Inclusive(this.start)
         }
 
         fn end(this) Bound<T> {
-            return Bound::Exclusive(this.end);
+            Bound::Exclusive(this.end)
         }
     }
 }
@@ -82,11 +82,11 @@ pub struct RangeInclusive<T> {
 
     impl RangeBounds<T> {
         fn begin(this) Bound<T> {
-            return Bound::Inclusive(this.start);
+            Bound::Inclusive(this.start)
         }
 
         fn end(this) Bound<T> {
-            return Bound::Inclusive(this.end);
+            Bound::Inclusive(this.end)
         }
     }
 }
@@ -96,11 +96,11 @@ pub struct RangeInclusive<T> {
 pub struct RangeFull<T> {
     impl RangeBounds<T> {
         fn begin(this) Bound<T> {
-            return Bound::Unbounded();
+            Bound::Unbounded()
         }
 
         fn end(this) Bound<T> {
-            return Bound::Unbounded();
+            Bound::Unbounded()
         }
     }
 }
