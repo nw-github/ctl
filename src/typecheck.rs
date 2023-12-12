@@ -1860,7 +1860,11 @@ impl TypeChecker {
                     });
                 }
             },
-            StmtData::Expr(expr) => return CheckedStmt::Expr(self.check_expr(scopes, expr, None)),
+            StmtData::Expr(expr) => {
+                let value = self.check_expr(scopes, expr, None);
+                self.make_current_block_never(scopes, &value.ty);
+                return CheckedStmt::Expr(value);
+            },
             StmtData::Let {
                 name,
                 ty,
@@ -1895,6 +1899,7 @@ impl TypeChecker {
                     }
                 } else if let Some(value) = value {
                     let value = self.check_expr(scopes, value, None);
+                    self.make_current_block_never(scopes, &value.ty);
                     return CheckedStmt::Let(scopes.insert_var(
                         Variable {
                             name,
@@ -3982,6 +3987,8 @@ impl TypeChecker {
         target: &TypeId,
         span: Span,
     ) -> CheckedExpr {
+        self.make_current_block_never(scopes, &source.ty);
+
         if !source.ty.coerces_to(scopes, target) {
             self.error(type_mismatch!(scopes, target, source.ty, span))
         }
@@ -4537,10 +4544,8 @@ impl TypeChecker {
                     .as_ref()
                     .and_then(|width| TypeId::from_int_name(width))
                 {
-                    if let Some(target) = target {
-                        if target != &width {
-                            return Err(type_mismatch!(scopes, target, &width, expr.span));
-                        }
+                    if let Some(target) = target.filter(|&target| target != &width) {
+                        return Err(type_mismatch!(scopes, target, &width, expr.span));
                     }
                 }
 
@@ -4567,6 +4572,15 @@ impl TypeChecker {
                     .collect(),
             )]),
         ))
+    }
+
+    fn make_current_block_never(&mut self, scopes: &mut Scopes, ty: &TypeId) {
+        if ty.is_never() {
+            if let ScopeKind::Block(target, yields @ false) = &mut scopes.current().kind {
+                *target = Some(TypeId::Never);
+                *yields = true;
+            }
+        }
     }
 }
 
