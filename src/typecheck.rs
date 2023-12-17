@@ -694,7 +694,7 @@ macro_rules! id {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct ScopeId(pub usize);
 
-id!(FunctionId => Function, fns, name, func);
+id!(FunctionId => Function, fns, name.data, func);
 id!(UserTypeId => UserType, types, name, user_type);
 id!(VariableId => Variable, vars, name, var);
 
@@ -745,7 +745,7 @@ pub struct Variable {
 #[derive(Debug)]
 pub struct Function {
     pub attrs: Vec<Attribute>,
-    pub name: String,
+    pub name: Located<String>,
     pub is_async: bool,
     pub is_extern: bool,
     pub is_unsafe: bool,
@@ -756,6 +756,7 @@ pub struct Function {
     pub body: Option<Vec<CheckedStmt>>,
     pub constructor: bool,
     pub body_scope: ScopeId,
+    pub returns: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1711,7 +1712,7 @@ impl TypeChecker {
         let id = scopes.insert_func(
             Function {
                 attrs: attrs.to_vec(),
-                name: f.name.data.clone(),
+                name: f.name.clone(),
                 is_async: f.is_async,
                 is_extern: f.is_extern,
                 is_unsafe: f.is_unsafe,
@@ -1721,6 +1722,7 @@ impl TypeChecker {
                 ret: TypeId::Unknown(None),
                 body: None,
                 body_scope: ScopeId(0),
+                returns: false,
                 constructor,
             },
             f.public,
@@ -2086,20 +2088,24 @@ impl TypeChecker {
 
         for &rhs in scopes[tr.body_scope].fns.iter() {
             let rhs_func = scopes.get_func(*rhs);
-            if let Some(lhs) = scopes.find_func_in(&rhs_func.name, ut.body_scope) {
+            if let Some(lhs) = scopes.find_func_in(&rhs_func.name.data, ut.body_scope) {
                 if let Err(err) = Self::signatures_match(scopes, this, *lhs, *rhs, gtr) {
                     self.error::<()>(Error::new(
                         format!(
                             "must implement '{}::{}': {err}",
                             gtr.name(scopes),
-                            rhs_func.name
+                            rhs_func.name.data
                         ),
                         span,
                     ));
                 }
             } else {
                 self.error::<()>(Error::new(
-                    format!("must implement '{}::{}'", gtr.name(scopes), rhs_func.name),
+                    format!(
+                        "must implement '{}::{}'",
+                        gtr.name(scopes),
+                        rhs_func.name.data
+                    ),
                     span,
                 ));
             }
@@ -2128,11 +2134,22 @@ impl TypeChecker {
 
             if let Some(body) = body {
                 let old_safety = std::mem::take(&mut self.safety);
-                scopes.get_func_mut(id).body = Some(
-                    body.into_iter()
-                        .map(|stmt| self.check_stmt(scopes, stmt))
-                        .collect(),
-                );
+                let body = body
+                    .into_iter()
+                    .map(|stmt| self.check_stmt(scopes, stmt))
+                    .collect();
+                let func = scopes.get_func_mut(id);
+                func.body = Some(body);
+                if !func.returns && !func.ret.is_void() {
+                    let span = func.name.span;
+                    let name = func.name.data.clone();
+                    let ret = func.ret.clone().name(scopes);
+                    self.error(Error::new(
+                        format!("function '{name}' must return a value of type {ret}"),
+                        span,
+                    ))
+                }
+
                 self.safety = old_safety;
             }
         });
@@ -3133,6 +3150,7 @@ impl TypeChecker {
                             .filter(|ty| ty_is_generic(scopes, ty))
                             .cloned()
                     });
+                // TODO: lambdas should have a unique type
                 let (id, body) =
                     scopes.enter(None, ScopeKind::Lambda(ret, false), false, |scopes| {
                         for (i, param) in params.into_iter().enumerate() {
@@ -3217,9 +3235,16 @@ impl TypeChecker {
     ) -> CheckedExpr {
         let expr = self.check_expr_inner(scopes, expr, target);
         if expr.ty.is_never() && !matches!(expr.data, CheckedExprData::Yield(_)) {
-            if let ScopeKind::Block(target, yields @ false) = &mut scopes.current().kind {
-                *target = Some(TypeId::Never);
-                *yields = true;
+            // TODO: lambdas
+            match &mut scopes.current().kind {
+                ScopeKind::Block(target, yields @ false) => {
+                    *target = Some(TypeId::Never);
+                    *yields = true;
+                }
+                &mut ScopeKind::Function(id) => {
+                    scopes.get_func_mut(id).returns = true;
+                }
+                _ => {}
             }
         }
         expr
@@ -3516,7 +3541,7 @@ impl TypeChecker {
             .map(|f| scopes.get_func(f.id))
             .filter(|f| f.constructor)
             .and_then(|f| {
-                variant = f.name.clone();
+                variant = f.name.data.clone();
                 f.ret.as_user_type()
             })
             .filter(|ty| ty.id == ut.id)
@@ -3726,7 +3751,7 @@ impl TypeChecker {
                     Some(ResolvedPath::Func(mut func)) => {
                         let f = scopes.get_func(func.id);
                         let constructor = f.constructor;
-                        let variant = constructor.then(|| f.name.clone());
+                        let variant = constructor.then(|| f.name.data.clone());
                         let (args, ret) =
                             self.check_fn_args(None, &mut func, None, args, target, scopes, span);
 
@@ -4256,7 +4281,7 @@ impl TypeChecker {
                     self.error(Error::new(
                         format!(
                             "cannot import all items of function '{}'",
-                            scopes.get_func(func.id).name
+                            scopes.get_func(func.id).name.data
                         ),
                         span,
                     ))

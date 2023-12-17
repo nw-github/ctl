@@ -388,9 +388,9 @@ impl Buffer {
             if let Some(inst) = state.inst.as_ref() {
                 self.emit_generic_mangled_name(scopes, inst);
                 self.emit("_");
-                self.emit(&f.name);
+                self.emit(&f.name.data);
             } else {
-                self.emit(scopes.full_name(f.scope, &f.name));
+                self.emit(scopes.full_name(f.scope, &f.name.data));
             }
 
             if !state.func.generics.is_empty() {
@@ -409,7 +409,7 @@ impl Buffer {
             // TODO: emit error when c_name is placed on a non-extern function
             self.emit(&attr.props[0].name.data);
         } else {
-            self.emit(&f.name);
+            self.emit(&f.name.data);
         }
     }
 
@@ -866,7 +866,7 @@ impl Codegen {
                     let f = scopes.get_func(func.id);
                     if let Some(ut) = inst.as_ref().and_then(|i| i.as_user_type()) {
                         func.id = *scopes
-                            .find_func_in(&f.name, scopes.get_user_type(ut.id).body_scope)
+                            .find_func_in(&f.name.data, scopes.get_user_type(ut.id).body_scope)
                             .unwrap();
                     } else {
                         todo!("trait implementations for non-struct types");
