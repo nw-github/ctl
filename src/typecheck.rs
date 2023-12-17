@@ -584,7 +584,22 @@ impl TypeId {
                     break;
                 }
                 TypeId::Unknown(Some(hint)) => {
-                    *src = scopes.enter_id(hint.1, |s| checker.resolve_type(s, &hint.0, false));
+                    *src = scopes.enter_id(hint.1, |scopes| {
+                        for UnresolvedUse {
+                            public,
+                            path,
+                            all,
+                            span,
+                        } in
+                            std::mem::take(scopes.unresolved_use_stmts(scopes.current).unwrap())
+                        {
+                            if let Some(path) = checker.resolve_path(scopes, &path, span, false) {
+                                checker.resolve_use(scopes, public, all, path, span, false);
+                            }
+                        }
+
+                        checker.resolve_type(scopes, &hint.0, false)
+                    });
                     break;
                 }
                 TypeId::FnPtr(f) => {
@@ -629,7 +644,7 @@ macro_rules! id {
                             }
                         });
 
-                        if matches!(scope.kind, ScopeKind::Module) {
+                        if matches!(scope.kind, ScopeKind::Module(_)) {
                             break;
                         }
                     }
@@ -683,14 +698,22 @@ id!(FunctionId => Function, fns, name, func);
 id!(UserTypeId => UserType, types, name, user_type);
 id!(VariableId => Variable, vars, name, var);
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, EnumAsInner)]
+#[derive(Debug, Clone)]
+pub struct UnresolvedUse {
+    public: bool,
+    path: Path,
+    all: bool,
+    span: Span,
+}
+
+#[derive(Default, Debug, Clone, EnumAsInner)]
 pub enum ScopeKind {
     Block(Option<TypeId>, bool),
     Loop(Option<TypeId>, bool),
     Lambda(Option<TypeId>, bool),
     Function(FunctionId),
     UserType(UserTypeId),
-    Module,
+    Module(Vec<UnresolvedUse>),
     #[default]
     None,
 }
@@ -1009,12 +1032,17 @@ impl Scopes {
 
     pub fn module_of(&self, id: ScopeId) -> Option<ScopeId> {
         for (id, current) in self.iter_from(id) {
-            if matches!(current.kind, ScopeKind::Module) {
+            if matches!(current.kind, ScopeKind::Module(_)) {
                 return Some(id);
             }
         }
 
         None
+    }
+
+    pub fn unresolved_use_stmts(&mut self, id: ScopeId) -> Option<&mut Vec<UnresolvedUse>> {
+        self.module_of(id)
+            .and_then(|id| self[id].kind.as_module_mut())
     }
 
     pub fn scopes(&self) -> &[Scope] {
@@ -1035,7 +1063,7 @@ impl Scopes {
                 return Some(item);
             }
 
-            if matches!(scope.kind, ScopeKind::Module) {
+            if matches!(scope.kind, ScopeKind::Module(_)) {
                 break;
             }
         }
@@ -1052,7 +1080,7 @@ impl Scopes {
                 return Some(item);
             }
 
-            if matches!(scope.kind, ScopeKind::Module) {
+            if matches!(scope.kind, ScopeKind::Module(_)) {
                 break;
             }
         }
@@ -1229,39 +1257,44 @@ impl TypeChecker {
         paths: &mut Vec<PathBuf>,
     ) -> ScopeId {
         let project = crate::derive_module_name(path);
-        scopes.enter(Some(project.clone()), ScopeKind::Module, true, |scopes| {
-            for file in module.iter() {
-                match &file.ast.data {
-                    StmtData::Module { name, body, .. } if name == &project => {
-                        self.include_universal(scopes);
-                        for stmt in body {
-                            self.forward_declare(stmt, scopes);
+        scopes.enter(
+            Some(project.clone()),
+            ScopeKind::Module(Vec::new()),
+            true,
+            |scopes| {
+                for file in module.iter() {
+                    match &file.ast.data {
+                        StmtData::Module { name, body, .. } if name == &project => {
+                            self.include_universal(scopes);
+                            for stmt in body {
+                                self.forward_declare(stmt, scopes);
+                            }
                         }
-                    }
-                    _ => self.forward_declare(&file.ast, scopes),
-                }
-            }
-
-            paths.reserve(module.len());
-            for file in module {
-                self.errors.extend(file.errors);
-                paths.push(file.path);
-
-                match file.ast.data {
-                    StmtData::Module { name, body, .. } if name == project => {
-                        self.include_universal(scopes);
-                        for stmt in body {
-                            self.check_stmt(scopes, stmt);
-                        }
-                    }
-                    _ => {
-                        self.check_stmt(scopes, file.ast);
+                        _ => self.forward_declare(&file.ast, scopes),
                     }
                 }
-            }
 
-            scopes.current_id()
-        })
+                paths.reserve(module.len());
+                for file in module {
+                    self.errors.extend(file.errors);
+                    paths.push(file.path);
+
+                    match file.ast.data {
+                        StmtData::Module { name, body, .. } if name == project => {
+                            self.include_universal(scopes);
+                            for stmt in body {
+                                self.check_stmt(scopes, stmt);
+                            }
+                        }
+                        _ => {
+                            self.check_stmt(scopes, file.ast);
+                        }
+                    }
+                }
+
+                scopes.current_id()
+            },
+        )
     }
 
     fn insert_type(
@@ -1287,16 +1320,21 @@ impl TypeChecker {
     fn forward_declare(&mut self, stmt: &Stmt, scopes: &mut Scopes) {
         match &stmt.data {
             StmtData::Module { public, name, body } => {
-                scopes.enter(Some(name.clone()), ScopeKind::Module, *public, |scopes| {
-                    // FIXME: only allow core and std to define these
-                    if stmt.attrs.iter().any(|attr| attr.name.data == "autouse") {
-                        self.universal.push(scopes.current);
-                    }
+                scopes.enter(
+                    Some(name.clone()),
+                    ScopeKind::Module(Vec::new()),
+                    *public,
+                    |scopes| {
+                        // FIXME: only allow core and std to define these
+                        if stmt.attrs.iter().any(|attr| attr.name.data == "autouse") {
+                            self.universal.push(scopes.current);
+                        }
 
-                    for stmt in body {
-                        self.forward_declare(stmt, scopes);
-                    }
-                });
+                        for stmt in body {
+                            self.forward_declare(stmt, scopes);
+                        }
+                    },
+                );
             }
             StmtData::UserType(data) => match data {
                 ParsedUserType::Struct(base) => {
@@ -1635,8 +1673,21 @@ impl TypeChecker {
                 );
             }
             StmtData::Use { path, public, all } => {
-                if let Some(path) = self.resolve_path(scopes, path, stmt.span, true) {
-                    self.resolve_use(scopes, *public, *all, path, stmt.span, true);
+                if let Some(resolved) = self.resolve_path(scopes, path, stmt.span, true) {
+                    if resolved.is_none()
+                        && scopes.module_of(scopes.current) == Some(scopes.current)
+                    {
+                        scopes
+                            .unresolved_use_stmts(scopes.current_id())
+                            .unwrap()
+                            .push(UnresolvedUse {
+                                path: path.clone(),
+                                public: *public,
+                                all: *public,
+                                span: stmt.span,
+                            });
+                    }
+                    self.resolve_use(scopes, *public, *all, resolved, stmt.span, true);
                 }
             }
             _ => {}
@@ -1864,7 +1915,7 @@ impl TypeChecker {
                 let value = self.check_expr(scopes, expr, None);
                 self.make_current_block_never(scopes, &value.ty);
                 return CheckedStmt::Expr(value);
-            },
+            }
             StmtData::Let {
                 name,
                 ty,

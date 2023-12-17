@@ -158,7 +158,7 @@ impl ExprData {
     }
 }
 
-#[derive(Debug, Clone, enum_as_inner::EnumAsInner)]
+#[derive(Clone, enum_as_inner::EnumAsInner)]
 pub enum Path {
     Root(Vec<(String, Vec<TypeHint>)>),
     Super(Vec<(String, Vec<TypeHint>)>),
@@ -176,6 +176,43 @@ impl Path {
         self.as_normal().and_then(|comps| {
             (comps.len() == 1 && comps[0].1.is_empty()).then_some(comps[0].0.as_str())
         })
+    }
+}
+
+impl std::fmt::Debug for Path {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let res = match self {
+            Path::Root(r) => {
+                write!(f, "::")?;
+                r
+            }
+            Path::Super(r) => {
+                write!(f, "super::")?;
+                r
+            }
+            Path::Normal(r) => r,
+        };
+
+        for (i, (name, generics)) in res.iter().enumerate() {
+            if i > 0 {
+                write!(f, "::")?;
+            }
+            write!(f, "{name}")?;
+            if generics.is_empty() {
+                continue;
+            }
+
+            write!(f, "::<")?;
+            for (i, generic) in generics.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{generic:?}")?;
+            }
+            write!(f, ">")?;
+        }
+
+        Ok(())
     }
 }
 
@@ -321,7 +358,7 @@ impl UnaryOp {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum TypeHint {
     Regular(Located<Path>),
     Array(Box<TypeHint>, Box<Expr>),
@@ -343,6 +380,51 @@ pub enum TypeHint {
     This,
     MutThis,
     Error,
+}
+
+impl std::fmt::Debug for TypeHint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeHint::Regular(path) => write!(f, "{:?}", path.data),
+            TypeHint::Array(inner, _) => write!(f, "[{inner:?}; <expr>]"),
+            TypeHint::Vec(inner) => write!(f, "[{inner:?}]"),
+            TypeHint::Slice(inner) => write!(f, "[{inner:?}..]"),
+            TypeHint::SliceMut(inner) => write!(f, "[mut {inner:?}..]"),
+            TypeHint::Tuple(vals) => {
+                write!(f, "(")?;
+                for (i, inner) in vals.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{inner:?}")?;
+                }
+                write!(f, ")")
+            }
+            TypeHint::Set(inner) => write!(f, "{{{inner:?}}}"),
+            TypeHint::Map(key, val) => write!(f, "[{key:?}: {val:?}]"),
+            TypeHint::Option(inner) => write!(f, "?{inner:?}"),
+            TypeHint::Ptr(inner) => write!(f, "*{inner:?}"),
+            TypeHint::MutPtr(inner) => write!(f, "*mut {inner:?}"),
+            TypeHint::Fn {
+                is_extern,
+                params,
+                ret,
+            } => {
+                write!(f, "{}fn (", if *is_extern { "extern " } else { "" })?;
+                for (i, inner) in params.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{inner:?}")?;
+                }
+                write!(f, ") {ret:?}")
+            }
+            TypeHint::Void => write!(f, "void"),
+            TypeHint::This => write!(f, "This"),
+            TypeHint::MutThis => write!(f, "mut This"),
+            TypeHint::Error => write!(f, "Error"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
