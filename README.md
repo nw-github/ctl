@@ -11,23 +11,27 @@ trait Animal {
     fn make_sound(this, kw loud: bool);
 }
 
-struct Cat: Animal {
+struct Cat {
     pub name: str,
 
-    fn make_sound(this, kw loud: bool) {
-        printf("%s said: purr...\n".as_c_str(), this.name.as_c_str());
+    impl Animal {
+        fn make_sound(this, kw loud: bool) {
+            printf("%s said: purr...\n".as_c_str(), this.name.as_c_str());
+        }
     }
 }
 
-struct Dog: Animal {
+struct Dog {
     pub name: str,
 
-    fn make_sound(this, kw loud: bool) {
-        printf(
-            "%s said: %s\n".as_c_str(), 
-            this.name.as_c_str(), 
-            if loud { yield "WOOF! WOOF!"; } else { yield "woof..."; }.as_c_str(),
-        );
+    impl Animal {
+        fn make_sound(this, kw loud: bool) {
+            printf(
+                "%s said: %s\n".as_c_str(), 
+                this.name.as_c_str(), 
+                if loud { "WOOF! WOOF!" } else { "woof..." }.as_c_str(),
+            );
+        }
     }
 }
 
@@ -43,7 +47,7 @@ fn main() c_int {
     animal_sound(&dog, loud: false);
     animal_sound(&dog, loud: true);
 
-    return 0;
+    0
 }
 
 ```
