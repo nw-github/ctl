@@ -1911,11 +1911,7 @@ impl TypeChecker {
                     });
                 }
             },
-            StmtData::Expr(expr) => {
-                let value = self.check_expr(scopes, expr, None);
-                self.make_current_block_never(scopes, &value.ty);
-                return CheckedStmt::Expr(value);
-            }
+            StmtData::Expr(expr) => return CheckedStmt::Expr(self.check_expr(scopes, expr, None)),
             StmtData::Let {
                 name,
                 ty,
@@ -1950,7 +1946,6 @@ impl TypeChecker {
                     }
                 } else if let Some(value) = value {
                     let value = self.check_expr(scopes, value, None);
-                    self.make_current_block_never(scopes, &value.ty);
                     return CheckedStmt::Let(scopes.insert_var(
                         Variable {
                             name,
@@ -2159,7 +2154,7 @@ impl TypeChecker {
         }
     }
 
-    fn check_expr(
+    fn check_expr_inner(
         &mut self,
         scopes: &mut Scopes,
         expr: Expr,
@@ -2665,14 +2660,22 @@ impl TypeChecker {
                 };
 
                 let if_span = if_branch.span;
-                let mut if_branch = self.check_expr(scopes, *if_branch, target);
+                let mut if_branch = self.check_expr_inner(scopes, *if_branch, target);
                 if let Some(target) = target {
                     if_branch = self.type_check_checked(scopes, if_branch, target, if_span);
                 }
 
                 let mut out_type = if_branch.ty.clone();
-                let else_branch = if let Some(e) = else_branch {
-                    Some(self.type_check(scopes, *e, &out_type))
+                let else_branch = if let Some(expr) = else_branch {
+                    if out_type.is_never() {
+                        let expr = self.check_expr_inner(scopes, *expr, None);
+                        out_type = expr.ty.clone();
+                        Some(expr)
+                    } else {
+                        let span = expr.span;
+                        let source = self.check_expr_inner(scopes, *expr, Some(&out_type));
+                        Some(self.type_check_checked(scopes, source, &out_type, span))
+                    }
                 } else {
                     // this separates these two cases:
                     //   let x /* void? */ = if whatever { yield void; };
@@ -2680,14 +2683,18 @@ impl TypeChecker {
                     if matches!(&if_branch.data, CheckedExprData::Block(b) if
                         matches!(scopes[b.scope].kind, ScopeKind::Block(_, yields) if yields))
                     {
-                        out_type = scopes.make_lang_type("option", vec![out_type]).unwrap();
-                        if_branch = if_branch.coerce_to(&out_type, scopes);
-
-                        Some(self.check_expr(
-                            scopes,
-                            Located::new(span, ExprData::None),
-                            Some(&out_type),
-                        ))
+                        if out_type.is_never() {
+                            out_type = TypeId::Void;
+                            Some(CheckedExpr::new(TypeId::Void, CheckedExprData::Void))
+                        } else {
+                            out_type = scopes.make_lang_type("option", vec![out_type]).unwrap();
+                            if_branch = if_branch.coerce_to(&out_type, scopes);
+                            Some(self.check_expr_inner(
+                                scopes,
+                                Located::new(span, ExprData::None),
+                                Some(&out_type),
+                            ))
+                        }
                     } else {
                         None
                     }
@@ -3200,6 +3207,22 @@ impl TypeChecker {
                 expr
             }
         }
+    }
+
+    fn check_expr(
+        &mut self,
+        scopes: &mut Scopes,
+        expr: Expr,
+        target: Option<&TypeId>,
+    ) -> CheckedExpr {
+        let expr = self.check_expr_inner(scopes, expr, target);
+        if expr.ty.is_never() && !matches!(expr.data, CheckedExprData::Yield(_)) {
+            if let ScopeKind::Block(target, yields @ false) = &mut scopes.current().kind {
+                *target = Some(TypeId::Never);
+                *yields = true;
+            }
+        }
+        expr
     }
 
     fn check_yield(
@@ -4038,8 +4061,6 @@ impl TypeChecker {
         target: &TypeId,
         span: Span,
     ) -> CheckedExpr {
-        self.make_current_block_never(scopes, &source.ty);
-
         if !source.ty.coerces_to(scopes, target) {
             self.error(type_mismatch!(scopes, target, source.ty, span))
         }
@@ -4623,15 +4644,6 @@ impl TypeChecker {
                     .collect(),
             )]),
         ))
-    }
-
-    fn make_current_block_never(&mut self, scopes: &mut Scopes, ty: &TypeId) {
-        if ty.is_never() {
-            if let ScopeKind::Block(target, yields @ false) = &mut scopes.current().kind {
-                *target = Some(TypeId::Never);
-                *yields = true;
-            }
-        }
     }
 }
 
