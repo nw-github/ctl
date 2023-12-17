@@ -31,7 +31,7 @@ pub union Option<T> {
             ?val => val,
             empty => {
                 *empty = or;
-                yield this.as_mut()!;
+                this.as_mut()!
             }
         }
     }

@@ -12,7 +12,7 @@ pub struct str {
     pub fn from_c_str(ptr: *c_char) str {
         extern fn strlen(ptr: *c_char) usize;
         // TODO: validate UTF-8
-        str(span: unsafe { yield Span::new(ptr as *u8, strlen(ptr)); })
+        str(span: unsafe Span::new(ptr as *u8, strlen(ptr)))
     }
 
     pub fn len(this) usize {

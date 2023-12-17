@@ -67,7 +67,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
                 }
 
                 *entry = Bucket::Some(SomeBucket(key:, val:));
-                yield null;
+                null
             }
         }
     }
@@ -78,7 +78,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
             Bucket::Tombstone => null,
             entry => {
                 this.len--;
-                yield core::mem::replace(entry, Bucket::Tombstone()).unwrap().val;
+                core::mem::replace(entry, Bucket::Tombstone()).unwrap().val
             }
         }
     }
@@ -107,7 +107,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         mut idx = {
             mut h = Fnv1a::new();
             key.hash(&mut h);
-            yield h.finish() as! usize;
+            h.finish() as! usize
         } % this.buckets.len();
 
         mut tombstone: ?usize = null;
@@ -128,7 +128,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     }
 
     fn adjust_cap(mut this, cap: usize) {
-        let cap = if cap > 8 { yield cap; } else { yield 8; };
+        let cap = if cap > 8 { cap } else { 8 };
         if cap <= this.buckets.len() {
             return;
         }
