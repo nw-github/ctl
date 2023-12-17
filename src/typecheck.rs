@@ -2963,20 +2963,13 @@ impl TypeChecker {
                 }
             }
             ExprData::Return(expr) => self.check_return(scopes, *expr),
-            ExprData::Yield(expr) => {
-                let ScopeKind::Block(target, _) = scopes.current().kind.clone() else {
-                    return self.error(Error::new("yield outside of block", span));
-                };
-
-                self.check_yield(scopes, *expr, target)
-            }
-            ExprData::YieldOrReturn(expr) => {
-                if let ScopeKind::Block(target, _) = scopes.current().kind.clone() {
-                    self.check_yield(scopes, *expr, target)
-                } else {
+            ExprData::Yield(expr) => self.check_yield(scopes, *expr),
+            ExprData::YieldOrReturn(expr) => match &scopes.current().kind {
+                ScopeKind::Function(_) | ScopeKind::Lambda(_, _) => {
                     self.check_return(scopes, *expr)
                 }
-            }
+                _ => self.check_yield(scopes, *expr),
+            },
             ExprData::Break(expr) => {
                 let Some(scope) = scopes.iter().find_map(|(id, scope)| {
                     matches!(scope.kind, ScopeKind::Loop(_, _)).then_some(id)
@@ -3250,12 +3243,12 @@ impl TypeChecker {
         expr
     }
 
-    fn check_yield(
-        &mut self,
-        scopes: &mut Scopes,
-        expr: Expr,
-        target: Option<TypeId>,
-    ) -> CheckedExpr {
+    fn check_yield(&mut self, scopes: &mut Scopes, expr: Expr) -> CheckedExpr {
+        let ScopeKind::Block(target, _) = &scopes.current().kind else {
+            return self.error(Error::new("yield outside of block", expr.span));
+        };
+
+        let target = target.clone();
         let span = expr.span;
         let mut expr = self.check_expr(scopes, expr, target.as_ref());
         if let Some(target) = &target {
@@ -3269,21 +3262,18 @@ impl TypeChecker {
     }
 
     fn check_return(&mut self, scopes: &mut Scopes, expr: Expr) -> CheckedExpr {
-        let lambda = scopes
-            .iter()
-            .find_map(|(id, scope)| matches!(scope.kind, ScopeKind::Lambda(_, _)).then_some(id));
-        if let Some(scope) = lambda {
-            let ScopeKind::Lambda(target, _) = scopes[scope].kind.clone() else {
-                unreachable!()
-            };
-
+        let lambda = scopes.iter().find_map(|(id, scope)| match &scope.kind {
+            ScopeKind::Lambda(target, _) => Some((id, target.clone())),
+            _ => None,
+        });
+        if let Some((id, target)) = lambda {
             let span = expr.span;
             let mut expr = self.check_expr(scopes, expr, target.as_ref());
             if let Some(target) = &target {
                 expr = self.type_check_checked(scopes, expr, target, span);
-                scopes[scope].kind = ScopeKind::Lambda(Some(target.clone()), true);
+                scopes[id].kind = ScopeKind::Lambda(Some(target.clone()), true);
             } else {
-                scopes[scope].kind = ScopeKind::Lambda(Some(expr.ty.clone()), true);
+                scopes[id].kind = ScopeKind::Lambda(Some(expr.ty.clone()), true);
             }
 
             CheckedExpr::new(TypeId::Never, CheckedExprData::Return(expr.into()))
