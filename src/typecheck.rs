@@ -2145,7 +2145,7 @@ impl TypeChecker {
                     let name = func.name.data.clone();
                     let ret = func.ret.clone().name(scopes);
                     self.error(Error::new(
-                        format!("function '{name}' must return a value of type {ret}"),
+                        format!("function '{name}' must return a value of type '{ret}'"),
                         span,
                     ))
                 }
@@ -2971,34 +2971,28 @@ impl TypeChecker {
                 _ => self.check_yield(scopes, *expr),
             },
             ExprData::Break(expr) => {
-                let Some(scope) = scopes.iter().find_map(|(id, scope)| {
-                    matches!(scope.kind, ScopeKind::Loop(_, _)).then_some(id)
+                let Some((id, target)) = scopes.iter().find_map(|(id, scope)| match &scope.kind {
+                    ScopeKind::Loop(target, _) => Some((id, target.clone())),
+                    _ => None,
                 }) else {
                     return self.error(Error::new("break outside of loop", span));
-                };
-
-                let ScopeKind::Loop(target, _) = scopes[scope].kind.clone() else {
-                    unreachable!()
                 };
 
                 let span = expr.span;
                 let mut expr = self.check_expr(scopes, *expr, target.as_ref());
                 if let Some(target) = &target {
                     expr = self.type_check_checked(scopes, expr, target, span);
-                    scopes[scope].kind = ScopeKind::Loop(Some(target.clone()), true);
+                    scopes[id].kind = ScopeKind::Loop(Some(target.clone()), true);
                 } else {
-                    scopes[scope].kind = ScopeKind::Loop(Some(expr.ty.clone()), true);
+                    scopes[id].kind = ScopeKind::Loop(Some(expr.ty.clone()), true);
                 }
 
                 CheckedExpr::new(TypeId::Never, CheckedExprData::Break(expr.into()))
             }
             ExprData::Continue => {
-                if scopes
+                if !scopes
                     .iter()
-                    .find_map(|(id, scope)| {
-                        matches!(scope.kind, ScopeKind::Loop(_, _)).then_some(id)
-                    })
-                    .is_none()
+                    .any(|(_, scope)| matches!(scope.kind, ScopeKind::Loop(_, _)))
                 {
                     return self.error(Error::new("continue outside of loop", span));
                 }
