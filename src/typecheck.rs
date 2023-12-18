@@ -1697,6 +1697,13 @@ impl TypeChecker {
             ))
         }
 
+        if scopes.find_func_in(&f.name.data, scopes.current).is_some() {
+            self.error(Error::new(
+                format!("redeclaration of function '{}'", f.name.data),
+                f.name.span,
+            ))
+        }
+
         let id = scopes.insert_func(
             Function {
                 attrs: attrs.to_vec(),
