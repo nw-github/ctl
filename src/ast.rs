@@ -24,7 +24,27 @@ pub enum StmtData {
         value: Option<Expr>,
     },
     Fn(Fn),
-    UserType(ParsedUserType),
+    Struct(Struct),
+    Union {
+        tag: Option<Located<Path>>,
+        base: Struct,
+        is_unsafe: bool,
+    },
+    Trait {
+        public: bool,
+        name: String,
+        is_unsafe: bool,
+        type_params: Vec<(String, Vec<Located<Path>>)>,
+        impls: Vec<Located<Path>>,
+        functions: Vec<Fn>,
+    },
+    Enum {
+        public: bool,
+        name: Located<String>,
+        impls: Vec<ImplBlock>,
+        variants: Vec<(String, Option<Expr>)>,
+        functions: Vec<Fn>,
+    },
     Static {
         public: bool,
         name: String,
@@ -467,31 +487,6 @@ pub struct Struct {
     pub members: Vec<MemVar>,
     pub impls: Vec<ImplBlock>,
     pub functions: Vec<Fn>,
-}
-
-#[derive(Debug, Clone)]
-pub enum ParsedUserType {
-    Struct(Struct),
-    Union {
-        tag: Option<Located<Path>>,
-        base: Struct,
-        is_unsafe: bool,
-    },
-    Trait {
-        public: bool,
-        name: String,
-        is_unsafe: bool,
-        type_params: Vec<(String, Vec<Located<Path>>)>,
-        impls: Vec<Located<Path>>,
-        functions: Vec<Fn>,
-    },
-    Enum {
-        public: bool,
-        name: Located<String>,
-        impls: Vec<ImplBlock>,
-        variants: Vec<(String, Option<Expr>)>,
-        functions: Vec<Fn>,
-    },
 }
 
 #[derive(Debug, Clone)]

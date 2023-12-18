@@ -1,4 +1,4 @@
-use crate::ast::{Expr, ExprData, Fn, ImplBlock, ParsedUserType, Stmt, StmtData, Struct};
+use crate::ast::{Expr, ExprData, Fn, ImplBlock, Stmt, StmtData, Struct};
 
 const INDENT: &str = "  ";
 
@@ -33,82 +33,79 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
             }
         }
         StmtData::Fn(f) => print_fn(f, src, indent),
-        StmtData::UserType(ty) => match ty {
-            ParsedUserType::Struct(base) => print_struct("Struct", base, src, indent),
-            ParsedUserType::Union {
-                tag,
-                base,
-                is_unsafe,
-            } => {
-                if let Some(tag) = tag {
-                    print_struct(&format!("Union({})", tag.span.text(src)), base, src, indent);
-                    print_bool!(is_unsafe);
-                } else {
-                    print_struct("Union", base, src, indent);
-                    print_bool!(is_unsafe);
-                }
-            }
-            ParsedUserType::Trait {
-                public,
-                name,
-                type_params,
-                impls,
-                functions,
-                is_unsafe,
-            } => {
-                eprint!("{tabs}Trait[{name}]");
-                print_bool!(public);
+        StmtData::Struct(base) => print_struct("Struct", base, src, indent),
+        StmtData::Union {
+            tag,
+            base,
+            is_unsafe,
+        } => {
+            if let Some(tag) = tag {
+                print_struct(&format!("Union({})", tag.span.text(src)), base, src, indent);
                 print_bool!(is_unsafe);
-                eprintln!();
+            } else {
+                print_struct("Union", base, src, indent);
+                print_bool!(is_unsafe);
+            }
+        }
+        StmtData::Trait {
+            public,
+            name,
+            type_params,
+            impls,
+            functions,
+            is_unsafe,
+        } => {
+            eprint!("{tabs}Trait[{name}]");
+            print_bool!(public);
+            print_bool!(is_unsafe);
+            eprintln!();
 
-                let plus_1 = INDENT.repeat(indent + 1);
-                if !type_params.is_empty() {
-                    eprintln!("{tabs}Type Params:");
-                    for (name, path) in type_params {
-                        eprintln!("{plus_1}{name}: {path:?}");
-                    }
-                }
-
-                if !impls.is_empty() {
-                    eprintln!("{tabs}Impls: ");
-                    for i in impls {
-                        eprintln!("{plus_1}{i:?}");
-                    }
-                }
-
-                eprintln!("{tabs}Functions:");
-                for f in functions {
-                    print_fn(f, src, indent + 1);
+            let plus_1 = INDENT.repeat(indent + 1);
+            if !type_params.is_empty() {
+                eprintln!("{tabs}Type Params:");
+                for (name, path) in type_params {
+                    eprintln!("{plus_1}{name}: {path:?}");
                 }
             }
-            ParsedUserType::Enum {
-                name,
-                impls,
-                variants,
-                functions,
-                public,
-            } => {
-                eprint!("{tabs}Enum[{}]", name.data);
-                print_bool!(public);
-                eprintln!();
 
-                print_impls(indent, src, impls);
-
-                let plus_1 = INDENT.repeat(indent + 1);
-                eprintln!("{tabs}Variants:");
-                for (name, expr) in variants {
-                    eprintln!("{plus_1}{name}");
-                    if let Some(expr) = expr {
-                        print_expr(expr, src, indent + 2);
-                    }
-                }
-
-                for f in functions {
-                    print_fn(f, src, indent + 1);
+            if !impls.is_empty() {
+                eprintln!("{tabs}Impls: ");
+                for i in impls {
+                    eprintln!("{plus_1}{i:?}");
                 }
             }
-        },
 
+            eprintln!("{tabs}Functions:");
+            for f in functions {
+                print_fn(f, src, indent + 1);
+            }
+        }
+        StmtData::Enum {
+            name,
+            impls,
+            variants,
+            functions,
+            public,
+        } => {
+            eprint!("{tabs}Enum[{}]", name.data);
+            print_bool!(public);
+            eprintln!();
+
+            print_impls(indent, src, impls);
+
+            let plus_1 = INDENT.repeat(indent + 1);
+            eprintln!("{tabs}Variants:");
+            for (name, expr) in variants {
+                eprintln!("{plus_1}{name}");
+                if let Some(expr) = expr {
+                    print_expr(expr, src, indent + 2);
+                }
+            }
+
+            for f in functions {
+                print_fn(f, src, indent + 1);
+            }
+        }
         StmtData::Static {
             name,
             ty,

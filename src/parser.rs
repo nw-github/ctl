@@ -2,8 +2,8 @@ use std::{iter::Peekable, path::PathBuf};
 
 use crate::{
     ast::{
-        Attribute, Expr, ExprData, Fn, ImplBlock, MemVar, Param, ParsedUserType, Path, Pattern,
-        Stmt, StmtData, Struct, TypeHint, UnaryOp,
+        Attribute, Expr, ExprData, Fn, ImplBlock, MemVar, Param, Path, Pattern, Stmt, StmtData,
+        Struct, TypeHint, UnaryOp,
     },
     lexer::{FileIndex, Lexer, Located, Precedence, Span, Token},
     Error, THIS_PARAM, THIS_TYPE,
@@ -1169,14 +1169,14 @@ impl<'a> Parser<'a> {
 
         Stmt {
             span,
-            data: StmtData::UserType(ParsedUserType::Struct(Struct {
+            data: StmtData::Struct(Struct {
                 public,
                 name,
                 type_params,
                 members,
                 impls,
                 functions,
-            })),
+            }),
             attrs,
         }
     }
@@ -1257,7 +1257,7 @@ impl<'a> Parser<'a> {
 
         Stmt {
             span,
-            data: StmtData::UserType(ParsedUserType::Union {
+            data: StmtData::Union {
                 tag,
                 base: Struct {
                     public,
@@ -1268,7 +1268,7 @@ impl<'a> Parser<'a> {
                     impls,
                 },
                 is_unsafe,
-            }),
+            },
             attrs,
         }
     }
@@ -1297,14 +1297,14 @@ impl<'a> Parser<'a> {
 
         Stmt {
             span,
-            data: StmtData::UserType(ParsedUserType::Trait {
+            data: StmtData::Trait {
                 public,
                 is_unsafe,
                 name,
                 type_params,
                 impls,
                 functions,
-            }),
+            },
             attrs,
         }
     }
@@ -1351,13 +1351,13 @@ impl<'a> Parser<'a> {
 
         Stmt {
             span,
-            data: StmtData::UserType(ParsedUserType::Enum {
+            data: StmtData::Enum {
                 public,
                 name,
                 impls,
                 variants,
                 functions,
-            }),
+            },
             attrs,
         }
     }
