@@ -763,27 +763,38 @@ impl Codegen {
                 });
             }
             CheckedStmt::LetWithDestructuring(vars, value) => {
-                let tmp = state.tmpvar();
-                let mut ty = value.ty.clone();
-                state.fill_generics(scopes, &mut ty);
+                stmt!(self, {
+                    let tmp = state.tmpvar();
+                    let mut ty = &mut value.ty.clone();
+                    state.fill_generics(scopes, ty);
 
-                self.emit_type(scopes, &ty);
-                self.buffer.emit(format!(" {tmp} = "));
-                self.gen_expr(scopes, value, state);
-                self.buffer.emit(";");
+                    self.emit_type(scopes, ty);
+                    self.buffer.emit(format!(" {tmp} = "));
+                    self.gen_expr(scopes, value, state);
+                    self.buffer.emit(";");
 
-                for id in vars {
-                    stmt!(self, {
+                    let mut count = 0;
+                    while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = ty {
+                        ty = inner;
+                        count += 1;
+                    }
+
+                    let tmp = format!("({}{tmp})", "*".repeat(count));
+                    for id in vars {
                         let var = scopes.get_var(id);
                         if self
                             .buffer
                             .emit_local_decl(scopes, id, state, &mut self.type_gen)
                             .is_ok()
                         {
-                            self.buffer.emit(format!(" = {tmp}.{};", var.name));
+                            self.buffer.emit(format!(
+                                " = {}{tmp}.{};",
+                                if count > 0 { "&" } else { "" },
+                                var.name
+                            ));
                         }
-                    });
-                }
+                    }
+                });
             }
             CheckedStmt::None => {}
             CheckedStmt::Error => {

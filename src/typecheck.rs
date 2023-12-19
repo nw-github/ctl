@@ -305,6 +305,23 @@ impl TypeId {
         id
     }
 
+    pub fn matched_inner_type(&self, ty: TypeId) -> TypeId {
+        if !(self.is_ptr() || self.is_mut_ptr()) {
+            return ty;
+        }
+
+        let mut id = self;
+        while let TypeId::MutPtr(inner) = id {
+            id = inner;
+        }
+
+        if matches!(id, TypeId::Ptr(_)) {
+            TypeId::Ptr(ty.into())
+        } else {
+            TypeId::MutPtr(ty.into())
+        }
+    }
+
     pub fn fill_type_generics(&mut self, scopes: &Scopes, inst: &GenericUserType) {
         if inst.generics.is_empty() {
             return;
@@ -2046,9 +2063,9 @@ impl TypeChecker {
                     ));
                 };
 
-                let Some((ut, members)) = ty.as_user_type().and_then(|ut| {
+                let Some((ut, (members, _))) = ty.strip_references().as_user_type().and_then(|ut| {
                     let ut = scopes.get_user_type(ut.id);
-                    Some(ut).zip(ut.members())
+                    Some(ut).zip(ut.data.as_struct())
                 }) else {
                     return self.error(Error::new(
                         format!(
@@ -2075,7 +2092,11 @@ impl TypeChecker {
                         continue;
                     }
 
-                    vars.push((name.data, mutable || p_mutable, member.ty.clone()));
+                    vars.push((
+                        name.data,
+                        mutable || p_mutable,
+                        ty.matched_inner_type(member.ty.clone()),
+                    ));
                 }
 
                 CheckedStmt::LetWithDestructuring(
@@ -3647,24 +3668,11 @@ impl TypeChecker {
         let ptr = scrutinee.ty.is_ptr() || scrutinee.ty.is_mut_ptr();
         let tag = union.variant_tag(&variant).unwrap();
         if let Some((mutable, binding)) = binding {
-            if ptr {
-                let mut s = &scrutinee.ty;
-                while let TypeId::MutPtr(inner) = s {
-                    s = inner;
-                }
-
-                if matches!(s, TypeId::Ptr(_)) {
-                    ty = TypeId::Ptr(ty.into());
-                } else {
-                    ty = TypeId::MutPtr(ty.into());
-                }
-            }
-
             CheckedPattern::UnionMember {
                 binding: Some(scopes.insert_var(
                     Variable {
                         name: binding,
-                        ty,
+                        ty: scrutinee.ty.matched_inner_type(ty),
                         is_static: false,
                         mutable,
                         value: None,
