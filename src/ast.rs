@@ -18,7 +18,7 @@ pub enum StmtData {
         all: bool,
     },
     Let {
-        name: String,
+        patt: Pattern,
         ty: Option<TypeHint>,
         mutable: bool,
         value: Option<Expr>,
@@ -238,14 +238,22 @@ impl std::fmt::Debug for Path {
 
 #[derive(Debug, Clone)]
 pub enum Pattern {
+    // x is ::core::opt::Option::Some(mut y)
     PathWithBindings {
         path: Located<Path>,
-        binding: (bool, String),
+        binding: (bool, String), // Box<Pattern>
     },
+    // x is ::core::opt::Option::None
+    // x is y
     Path(Located<Path>),
+    // x is mut y
     MutCatchAll(Located<String>),
+    // x is ?mut y
     Option(bool, Located<String>),
+    // x is null
     Null(Span),
+    // let {x, y} = z;
+    StructDestructure(Located<Vec<(bool, Located<String>)>>),
 }
 
 #[derive(Debug, Clone)]

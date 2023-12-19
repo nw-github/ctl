@@ -762,6 +762,29 @@ impl Codegen {
                     self.buffer.emit(";");
                 });
             }
+            CheckedStmt::LetWithDestructuring(vars, value) => {
+                let tmp = state.tmpvar();
+                let mut ty = value.ty.clone();
+                state.fill_generics(scopes, &mut ty);
+
+                self.emit_type(scopes, &ty);
+                self.buffer.emit(format!(" {tmp} = "));
+                self.gen_expr(scopes, value, state);
+                self.buffer.emit(";");
+
+                for id in vars {
+                    stmt!(self, {
+                        let var = scopes.get_var(id);
+                        if self
+                            .buffer
+                            .emit_local_decl(scopes, id, state, &mut self.type_gen)
+                            .is_ok()
+                        {
+                            self.buffer.emit(format!(" = {tmp}.{};", var.name));
+                        }
+                    });
+                }
+            }
             CheckedStmt::None => {}
             CheckedStmt::Error => {
                 panic!("ICE: CheckedStmt::Error in gen_stmt");
@@ -834,7 +857,9 @@ impl Codegen {
                     // TODO: addr of void
                     self.buffer.emit("&");
                     match inner.data {
-                        CheckedExprData::Unary { op: UnaryOp::Deref, .. } => {
+                        CheckedExprData::Unary {
+                            op: UnaryOp::Deref, ..
+                        } => {
                             self.gen_expr(scopes, *inner, state);
                         }
                         CheckedExprData::Symbol(_)

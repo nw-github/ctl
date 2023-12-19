@@ -215,6 +215,7 @@ impl CheckedExpr {
 pub enum CheckedStmt {
     Expr(CheckedExpr),
     Let(VariableId),
+    LetWithDestructuring(Vec<VariableId>, CheckedExpr),
     Module(Block),
     None,
     #[default]

@@ -285,7 +285,8 @@ impl<'a> Parser<'a> {
                     .push(Error::new("unsafe is not valid here", is_unsafe.span));
             }
 
-            let name = self.expect_id("expected name");
+            let mutable = matches!(token.data, Token::Mut);
+            let binding = self.pattern(!mutable);
             let ty = self
                 .advance_if_kind(Token::Colon)
                 .map(|_| self.parse_type());
@@ -295,10 +296,10 @@ impl<'a> Parser<'a> {
             let semi = self.expect_kind(Token::Semicolon, "expected ';'");
             Stmt {
                 data: StmtData::Let {
-                    name,
                     ty,
-                    mutable: matches!(token.data, Token::Mut),
                     value,
+                    mutable,
+                    patt: binding,
                 },
                 span: token.span.extended_to(semi.span),
                 attrs: std::mem::take(&mut self.attrs),
@@ -686,17 +687,13 @@ impl<'a> Parser<'a> {
                     )
                 }
             }
-            Token::Is => {
-                let pattern = self.pattern();
-                //let span = expr.span.extended_to(pattern.span);
-                Expr::new(
-                    left.span,
-                    ExprData::Is {
-                        expr: left.into(),
-                        pattern,
-                    },
-                )
-            }
+            Token::Is => Expr::new(
+                left.span,
+                ExprData::Is {
+                    expr: left.into(),
+                    pattern: self.pattern(true),
+                },
+            ),
             Token::As => {
                 let bang = self.advance_if_kind(Token::Exclamation);
                 let ty = self.parse_type();
@@ -851,7 +848,7 @@ impl<'a> Parser<'a> {
         self.expect_kind(Token::LCurly, "expected block");
         let mut body = Vec::new();
         let span = self.advance_until(Token::RCurly, token, |this| {
-            let pattern = this.pattern();
+            let pattern = this.pattern(true);
             this.expect_kind(Token::FatArrow, "expected '=>'");
             let expr = this.expression();
             if !expr.data.is_block_expr() {
@@ -949,7 +946,7 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn pattern(&mut self) -> Pattern {
+    fn pattern(&mut self, allow_mut: bool) -> Pattern {
         if self.advance_if_kind(Token::Question).is_some() {
             let mutable = self.advance_if_kind(Token::Mut);
             return Pattern::Option(mutable.is_some(), self.expect_located_id("expected name"));
@@ -959,7 +956,15 @@ impl<'a> Parser<'a> {
             return Pattern::Null(token.span);
         }
 
-        if self.advance_if_kind(Token::Mut).is_some() {
+        if let Some(token) = self.advance_if_kind(Token::LCurly) {
+            let patterns = self.csv_one(Token::RCurly, token.span, |this| {
+                let mutable = this.advance_if_kind(Token::Mut).is_some();
+                (mutable, this.expect_located_id("expected name"))
+            });
+            return Pattern::StructDestructure(Located::new(patterns.1, patterns.0));
+        }
+
+        if allow_mut && self.advance_if_kind(Token::Mut).is_some() {
             return Pattern::MutCatchAll(self.expect_located_id("expected name"));
         }
 

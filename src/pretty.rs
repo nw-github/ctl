@@ -18,12 +18,12 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
             print_expr(expr, src, indent + 1);
         }
         StmtData::Let {
-            name,
             ty,
-            mutable,
             value,
+            mutable,
+            patt,
         } => {
-            eprint!("{tabs}Let[{name}]");
+            eprint!("{tabs}Let[{patt:?}]");
             print_bool!(mutable);
             eprintln!();
 

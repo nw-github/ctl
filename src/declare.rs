@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Attribute, Expr, ImplBlock, Path, TypeHint},
+    ast::{Attribute, Expr, ImplBlock, Path, TypeHint, Pattern},
     lexer::Span,
     typecheck::{FunctionId, ScopeId, UserTypeId, VariableId},
 };
@@ -36,7 +36,7 @@ pub enum DeclaredStmtData {
         all: bool,
     },
     Let {
-        name: String,
+        patt: Pattern,
         ty: Option<TypeHint>,
         mutable: bool,
         value: Option<Expr>,

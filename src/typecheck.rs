@@ -1022,7 +1022,8 @@ impl Scopes {
     }
 
     pub fn function_of(&self, scope: ScopeId) -> Option<FunctionId> {
-        self.iter_from(scope).find_map(|(_, scope)| scope.kind.as_function().copied())
+        self.iter_from(scope)
+            .find_map(|(_, scope)| scope.kind.as_function().copied())
     }
 
     pub fn module_of(&self, id: ScopeId) -> Option<ScopeId> {
@@ -1176,6 +1177,19 @@ macro_rules! type_mismatch {
     };
 }
 
+macro_rules! private_member {
+    ($scopes: expr, $id: expr, $member: expr, $span: expr) => {
+        Error::new(
+            format!(
+                "cannot access private member '{}' of type '{}'",
+                $member.name,
+                $id.name($scopes)
+            ),
+            $span,
+        )
+    };
+}
+
 macro_rules! type_check_bail {
     ($self: expr, $scopes: expr, $source: expr, $target: expr) => {{
         let source = $source;
@@ -1308,12 +1322,16 @@ impl TypeChecker {
         id
     }
 
-    fn declare_stmt(&mut self, scopes: &mut Scopes, stmt: Stmt) -> DeclaredStmt {
-        let data = match stmt.data {
+    fn declare_stmt(
+        &mut self,
+        scopes: &mut Scopes,
+        Stmt { data, span, attrs }: Stmt,
+    ) -> DeclaredStmt {
+        let data = match data {
             StmtData::Module { public, name, body } => {
                 scopes.enter(ScopeKind::Module(name, Vec::new()), public, |scopes| {
                     // FIXME: only allow core and std to define these
-                    if stmt.attrs.iter().any(|attr| attr.name.data == "autouse") {
+                    if attrs.iter().any(|attr| attr.name.data == "autouse") {
                         self.universal.push(scopes.current);
                     }
 
@@ -1349,14 +1367,10 @@ impl TypeChecker {
                                 default: member.default.clone(),
                             })
                             .collect(),
-                        ret: Self::typehint_for_struct(
-                            &base.name.data,
-                            &base.type_params,
-                            stmt.span,
-                        ),
+                        ret: Self::typehint_for_struct(&base.name.data, &base.type_params, span),
                         body: None,
                     },
-                    &stmt.attrs,
+                    &attrs,
                 );
                 let id = self.insert_type(
                     scopes,
@@ -1371,7 +1385,7 @@ impl TypeChecker {
                         impls: Vec::new(),
                     },
                     base.public,
-                    &stmt.attrs,
+                    &attrs,
                 );
                 scopes.enter(ScopeKind::UserType(id), base.public, |scopes| {
                     scopes.get_user_type_mut(id).body_scope = scopes.current_id();
@@ -1415,7 +1429,7 @@ impl TypeChecker {
                 is_unsafe,
             } => {
                 let tp = base.type_params.clone();
-                let ret = Self::typehint_for_struct(&base.name.data, &tp, stmt.span);
+                let ret = Self::typehint_for_struct(&base.name.data, &tp, span);
                 let id = self.insert_type(
                     scopes,
                     UserType {
@@ -1429,7 +1443,7 @@ impl TypeChecker {
                         impls: Vec::new(),
                     },
                     base.public,
-                    &stmt.attrs,
+                    &attrs,
                 );
                 scopes.enter(ScopeKind::UserType(id), base.public, |scopes| {
                     scopes.get_user_type_mut(id).body_scope = scopes.current_id();
@@ -1447,10 +1461,10 @@ impl TypeChecker {
 
                         if member.shared && is_unsafe {
                             // FIXME: span should be related to the member
-                            self.error::<()>(Error::new(
+                            self.error(Error::new(
                                 "cannot have shared members in an unsafe union",
-                                stmt.span,
-                            ));
+                                span,
+                            ))
                         } else if member.shared {
                             params.push(Param {
                                 mutable: false,
@@ -1543,7 +1557,7 @@ impl TypeChecker {
                         impls: Vec::new(),
                     },
                     public,
-                    &stmt.attrs,
+                    &attrs,
                 );
                 scopes.enter(ScopeKind::UserType(id), public, |scopes| {
                     scopes.get_user_type_mut(id).body_scope = scopes.current_id();
@@ -1588,7 +1602,7 @@ impl TypeChecker {
                         impls: resolved_impls,
                     },
                     public,
-                    &stmt.attrs,
+                    &attrs,
                 );
 
                 scopes.enter(ScopeKind::UserType(id), public, |scopes| {
@@ -1621,7 +1635,7 @@ impl TypeChecker {
                     }
                 })
             }
-            StmtData::Fn(f) => DeclaredStmtData::Fn(self.declare_fn(scopes, false, f, &stmt.attrs)),
+            StmtData::Fn(f) => DeclaredStmtData::Fn(self.declare_fn(scopes, false, f, &attrs)),
             StmtData::Static {
                 public,
                 name,
@@ -1642,7 +1656,7 @@ impl TypeChecker {
                 DeclaredStmtData::Static { id, value }
             }
             StmtData::Use { path, public, all } => {
-                if let Some(resolved) = self.resolve_path(scopes, &path, stmt.span, true) {
+                if let Some(resolved) = self.resolve_path(scopes, &path, span, true) {
                     if resolved.is_none()
                         && scopes.module_of(scopes.current) == Some(scopes.current)
                     {
@@ -1653,34 +1667,30 @@ impl TypeChecker {
                                 path: path.clone(),
                                 public,
                                 all,
-                                span: stmt.span,
+                                span,
                             });
                     }
-                    self.resolve_use(scopes, public, all, resolved, stmt.span, true);
+                    self.resolve_use(scopes, public, all, resolved, span, true);
                 }
 
                 DeclaredStmtData::Use { public, path, all }
             }
             StmtData::Let {
-                name,
                 ty,
-                mutable,
                 value,
+                mutable,
+                patt,
             } => DeclaredStmtData::Let {
-                name,
                 ty,
                 mutable,
                 value,
+                patt,
             },
             StmtData::Expr(expr) => DeclaredStmtData::Expr(expr),
             StmtData::Error => DeclaredStmtData::Error,
         };
 
-        DeclaredStmt {
-            data,
-            span: stmt.span,
-            attrs: stmt.attrs,
-        }
+        DeclaredStmt { data, span, attrs }
     }
 
     fn declare_fn(
@@ -1940,49 +1950,28 @@ impl TypeChecker {
                 return CheckedStmt::Expr(self.check_expr(scopes, expr, None))
             }
             DeclaredStmtData::Let {
-                name,
                 ty,
                 mutable,
                 value,
+                patt,
             } => {
                 if let Some(ty) = ty {
                     let ty = self.resolve_type(scopes, &ty, false);
                     if let Some(value) = value {
                         let value = self.type_check(scopes, value, &ty);
-                        return CheckedStmt::Let(scopes.insert_var(
-                            Variable {
-                                name,
-                                ty,
-                                is_static: false,
-                                mutable,
-                                value: Some(value),
-                            },
-                            false,
-                        ));
+                        return self.declare_variable(scopes, ty, Some(value), mutable, patt);
                     } else {
-                        return CheckedStmt::Let(scopes.insert_var(
-                            Variable {
-                                name,
-                                ty,
-                                is_static: false,
-                                mutable,
-                                value: None,
-                            },
-                            false,
-                        ));
+                        return self.declare_variable(scopes, ty, None, mutable, patt);
                     }
                 } else if let Some(value) = value {
                     let value = self.check_expr(scopes, value, None);
-                    return CheckedStmt::Let(scopes.insert_var(
-                        Variable {
-                            name,
-                            ty: value.ty.clone(),
-                            is_static: false,
-                            mutable,
-                            value: Some(value),
-                        },
-                        false,
-                    ));
+                    return self.declare_variable(
+                        scopes,
+                        value.ty.clone(),
+                        Some(value),
+                        mutable,
+                        patt,
+                    );
                 } else {
                     return self.error(Error::new("cannot infer type", stmt.span));
                 }
@@ -2008,6 +1997,106 @@ impl TypeChecker {
         }
 
         CheckedStmt::None
+    }
+
+    fn declare_variable(
+        &mut self,
+        scopes: &mut Scopes,
+        ty: TypeId,
+        value: Option<CheckedExpr>,
+        mutable: bool,
+        patt: Pattern,
+    ) -> CheckedStmt {
+        match patt {
+            Pattern::PathWithBindings { .. } => todo!(),
+            Pattern::Path(path) => {
+                if let Some(name) = path.data.as_identifier() {
+                    CheckedStmt::Let(scopes.insert_var(
+                        Variable {
+                            name: name.into(),
+                            ty,
+                            is_static: false,
+                            mutable,
+                            value,
+                        },
+                        false,
+                    ))
+                } else {
+                    self.error(Error::new("variable name must be an identifier", path.span))
+                }
+            }
+            Pattern::MutCatchAll(name) => CheckedStmt::Let(scopes.insert_var(
+                Variable {
+                    name: name.data,
+                    ty,
+                    is_static: false,
+                    mutable: true,
+                    value,
+                },
+                false,
+            )),
+            Pattern::Option(_, Located { span, .. }) | Pattern::Null(span) => {
+                self.error(Error::new("refutable pattern in variable binding", span))
+            }
+            Pattern::StructDestructure(patterns) => {
+                let Some(value) = value else {
+                    return self.error(Error::new(
+                        "must provide a value with a destructuring assignment",
+                        patterns.span,
+                    ));
+                };
+
+                let Some((ut, members)) = ty.as_user_type().and_then(|ut| {
+                    let ut = scopes.get_user_type(ut.id);
+                    Some(ut).zip(ut.members())
+                }) else {
+                    return self.error(Error::new(
+                        format!(
+                            "cannot destructure value of non-struct type '{}'",
+                            ty.name(scopes)
+                        ),
+                        patterns.span,
+                    ));
+                };
+
+                let cap = scopes.can_access_privates(ut.scope);
+                let mut vars = Vec::new();
+                for (p_mutable, name) in patterns.data {
+                    let Some(member) = members.iter().find(|m| m.name == name.data) else {
+                        self.error::<()>(Error::new(
+                            format!("type '{}' has no member '{}'", ty.name(scopes), name.data),
+                            patterns.span,
+                        ));
+                        continue;
+                    };
+
+                    if !member.public && !cap {
+                        self.error::<()>(private_member!(scopes, ty, member, name.span));
+                        continue;
+                    }
+
+                    vars.push((name.data, mutable || p_mutable, member.ty.clone()));
+                }
+
+                CheckedStmt::LetWithDestructuring(
+                    vars.into_iter()
+                        .map(|(name, mutable, ty)| {
+                            scopes.insert_var(
+                                Variable {
+                                    name,
+                                    ty,
+                                    is_static: false,
+                                    mutable,
+                                    value: None,
+                                },
+                                false,
+                            )
+                        })
+                        .collect(),
+                    value,
+                )
+            }
+        }
     }
 
     fn signatures_match(
@@ -2926,14 +3015,7 @@ impl TypeChecker {
                         }
 
                         if !member.public && !scopes.can_access_privates(ty.scope) {
-                            self.error(Error::new(
-                                format!(
-                                    "cannot access private member '{}' of type '{}'",
-                                    member.name,
-                                    id.name(scopes)
-                                ),
-                                span,
-                            ))
+                            self.error(private_member!(scopes, id, member, span))
                         }
 
                         let mut ty = member.ty.clone();
@@ -3516,6 +3598,7 @@ impl TypeChecker {
                     false,
                 ));
             }
+            Pattern::StructDestructure(_) => todo!(),
         };
 
         let Some(path) = path else {
