@@ -16,6 +16,7 @@ struct ProtoConfig {
     is_async: bool,
     is_extern: bool,
     is_unsafe: bool,
+    body: bool,
 }
 
 pub struct ParsedFile {
@@ -81,12 +82,13 @@ impl<'a> Parser<'a> {
         let public = self.advance_if_kind(Token::Pub);
         let is_unsafe = self.advance_if_kind(Token::Unsafe);
         let is_extern = self.advance_if_kind(Token::Extern);
-        if let Some((mut proto, span)) = self.try_prototype(ProtoConfig {
+        if let Some(Located { span, data: mut proto }) = self.try_prototype(ProtoConfig {
             allow_method: false,
             is_public: public.is_some(),
             is_async: false,
             is_extern: is_extern.is_some(),
             is_unsafe: is_unsafe.is_some(),
+            body: false,
         }) {
             let attrs = std::mem::take(&mut self.attrs);
             if is_extern.is_some() {
@@ -97,8 +99,8 @@ impl<'a> Parser<'a> {
                     attrs,
                 })
             } else {
-                let (body, span) = self.parse_block();
-                proto.body = Some(body);
+                let Located { span, data } = self.parse_block();
+                proto.body = Some(data);
                 Some(Stmt {
                     data: StmtData::Fn(proto),
                     span: public.map_or(span, |p| p.span).extended_to(span),
@@ -430,8 +432,8 @@ impl<'a> Parser<'a> {
             Token::LParen => {
                 let expr = self.expression();
                 if self.matches_kind(Token::Comma) {
-                    let (exprs, span) = self.csv(vec![expr], Token::RParen, span, Self::expression);
-                    Expr::new(span, ExprData::Tuple(exprs))
+                    self.csv(vec![expr], Token::RParen, span, Self::expression)
+                        .map(ExprData::Tuple)
                 } else {
                     let end = self.expect_kind(Token::RParen, "expected ')'");
                     Expr::new(span.extended_to(end.span), expr.data)
@@ -488,14 +490,12 @@ impl<'a> Parser<'a> {
                     let expr = self.expression();
                     if self.advance_if_kind(Token::Colon).is_some() {
                         let value = self.expression();
-                        let (exprs, span) =
-                            self.csv(vec![(expr, value)], Token::RBrace, span, |this| {
-                                let key = this.expression();
-                                this.expect_kind(Token::Colon, "expected ':'");
-                                (key, this.expression())
-                            });
-
-                        Expr::new(span, ExprData::Map(exprs))
+                        self.csv(vec![(expr, value)], Token::RBrace, span, |this| {
+                            let key = this.expression();
+                            this.expect_kind(Token::Colon, "expected ':'");
+                            (key, this.expression())
+                        })
+                        .map(ExprData::Map)
                     } else if self.advance_if_kind(Token::Semicolon).is_some() {
                         let count = self.expression();
                         let rbrace = self.expect_kind(Token::RBrace, "expected ']'");
@@ -509,9 +509,8 @@ impl<'a> Parser<'a> {
                     } else if let Some(rbrace) = self.advance_if_kind(Token::RBrace) {
                         Expr::new(span.extended_to(rbrace.span), ExprData::Array(vec![expr]))
                     } else {
-                        let (exprs, span) =
-                            self.csv(vec![expr], Token::RBrace, span, Self::expression);
-                        Expr::new(span, ExprData::Array(exprs))
+                        self.csv(vec![expr], Token::RBrace, span, Self::expression)
+                            .map(ExprData::Array)
                     }
                 }
             }
@@ -532,33 +531,33 @@ impl<'a> Parser<'a> {
                             },
                         )
                     } else {
-                        let (exprs, span) =
-                            self.csv(vec![expr], Token::RBrace, span, Self::expression);
-                        Expr::new(span, ExprData::Vec(exprs))
+                        self.csv(vec![expr], Token::RBrace, span, Self::expression)
+                            .map(ExprData::Vec)
                     }
                 }
             }
             Token::Hash => {
                 self.expect_kind(Token::LBrace, "expected '['");
-                let (params, span) = self.csv(Vec::new(), Token::RBrace, span, Self::expression);
-                Expr::new(
-                    span,
-                    if data == Token::At {
-                        ExprData::Vec(params)
-                    } else {
-                        ExprData::Set(params)
-                    },
-                )
+                self.csv(Vec::new(), Token::RBrace, span, Self::expression)
+                    .map(|params| {
+                        if data == Token::At {
+                            ExprData::Vec(params)
+                        } else {
+                            ExprData::Set(params)
+                        }
+                    })
             }
             Token::Fn => {
                 self.expect_kind(Token::LParen, "expected '('");
-                let (params, _) = self.csv(Vec::new(), Token::RParen, span, |this| {
-                    (
-                        this.expect_located_id("expected parameter name"),
-                        this.advance_if_kind(Token::Colon)
-                            .map(|_| this.parse_type()),
-                    )
-                });
+                let params = self
+                    .csv(Vec::new(), Token::RParen, span, |this| {
+                        (
+                            this.expect_located_id("expected parameter name"),
+                            this.advance_if_kind(Token::Colon)
+                                .map(|_| this.parse_type()),
+                        )
+                    })
+                    .data;
                 let ret = (!self.matches_kind(Token::Arrow)).then(|| self.parse_type());
                 self.expect_kind(Token::Arrow, "expected '->'");
 
@@ -708,24 +707,21 @@ impl<'a> Parser<'a> {
             }
             Token::Dot => {
                 let member = self.expect_located_id("expected member name");
-                let (generics, span) = if self.advance_if_kind(Token::ScopeRes).is_some() {
+                let generics = if self.advance_if_kind(Token::ScopeRes).is_some() {
                     self.expect_kind(Token::LAngle, "expected '<'");
                     self.csv_one(Token::RAngle, left.span, Self::parse_type)
                 } else {
-                    (Vec::new(), left.span.extended_to(member.span))
+                    Located::new(left.span.extended_to(member.span), Vec::new())
                 };
 
-                Expr::new(
-                    span,
-                    ExprData::Member {
-                        source: left.into(),
-                        member: member.data,
-                        generics,
-                    },
-                )
+                generics.map(|generics| ExprData::Member {
+                    source: left.into(),
+                    member: member.data,
+                    generics,
+                })
             }
             Token::LParen => {
-                let (args, span) = self.csv(Vec::new(), Token::RParen, left.span, |this| {
+                let args = self.csv(Vec::new(), Token::RParen, left.span, |this| {
                     let mut expr = this.expression();
                     let mut name = None;
                     if let ExprData::Path(path) = &expr.data {
@@ -742,24 +738,17 @@ impl<'a> Parser<'a> {
                     (name, expr)
                 });
 
-                Expr::new(
-                    span,
-                    ExprData::Call {
-                        callee: left.into(),
-                        args,
-                    },
-                )
+                args.map(|args| ExprData::Call {
+                    callee: left.into(),
+                    args,
+                })
             }
-            Token::LBrace => {
-                let (args, span) = self.csv(Vec::new(), Token::RBrace, left.span, Self::expression);
-                Expr::new(
-                    span,
-                    ExprData::Subscript {
-                        callee: left.into(),
-                        args,
-                    },
-                )
-            }
+            Token::LBrace => self
+                .csv(Vec::new(), Token::RBrace, left.span, Self::expression)
+                .map(|args| ExprData::Subscript {
+                    callee: left.into(),
+                    args,
+                }),
             _ => {
                 self.error(Error::new("unexpected token", op.span));
                 Expr::new(op.span, ExprData::Error)
@@ -793,7 +782,7 @@ impl<'a> Parser<'a> {
 
     fn while_expr(&mut self, token: Span) -> Expr {
         let cond = self.expression();
-        let (body, span) = self.parse_block();
+        let Located { span, data: body } = self.parse_block();
         Expr::new(
             token.extended_to(span),
             ExprData::Loop {
@@ -805,7 +794,7 @@ impl<'a> Parser<'a> {
     }
 
     fn loop_expr(&mut self, mut token: Span) -> Expr {
-        let body = self.parse_block().0;
+        let body = self.parse_block().data;
         let (cond, do_while) = self
             .advance_if_kind(Token::While)
             .map(|_| {
@@ -831,7 +820,7 @@ impl<'a> Parser<'a> {
         self.expect_kind(Token::In, "expected 'in'");
         // TODO: parse for foo in 0.. {} as |0..| |{}| instead of |0..{}|
         let iter = self.expression();
-        let (body, span) = self.parse_block();
+        let Located { span, data: body } = self.parse_block();
         Expr::new(
             token.extended_to(span),
             ExprData::For {
@@ -889,9 +878,9 @@ impl<'a> Parser<'a> {
             .unwrap_or_default();
         while self.advance_if_kind(Token::ScopeRes).is_some() {
             if self.advance_if_kind(Token::LAngle).is_some() {
-                let (params, span) = self.csv_one(Token::RAngle, *outspan, Self::parse_type);
-                data.last_mut().unwrap().1 = params;
-                *outspan = span;
+                let params = self.csv_one(Token::RAngle, *outspan, Self::parse_type);
+                data.last_mut().unwrap().1 = params.data;
+                *outspan = params.span;
             } else {
                 let name = self.expect_located_id("expected name");
                 data.push((name.data.to_owned(), Vec::new()));
@@ -922,9 +911,9 @@ impl<'a> Parser<'a> {
                 span = Some(ident.span);
             }
             if self.advance_if_kind(Token::LAngle).is_some() {
-                let (params, pspan) = self.csv_one(Token::RAngle, span.unwrap(), Self::parse_type);
-                data.push((ident.data, params));
-                span = Some(pspan);
+                let params = self.csv_one(Token::RAngle, span.unwrap(), Self::parse_type);
+                data.push((ident.data, params.data));
+                span = Some(params.span);
             } else {
                 data.push((ident.data, Vec::new()));
             }
@@ -957,11 +946,10 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(token) = self.advance_if_kind(Token::LCurly) {
-            let patterns = self.csv_one(Token::RCurly, token.span, |this| {
+            return Pattern::StructDestructure(self.csv_one(Token::RCurly, token.span, |this| {
                 let mutable = this.advance_if_kind(Token::Mut).is_some();
                 (mutable, this.expect_located_id("expected name"))
-            });
-            return Pattern::StructDestructure(Located::new(patterns.1, patterns.0));
+            }));
         }
 
         if allow_mut && self.advance_if_kind(Token::Mut).is_some() {
@@ -990,7 +978,7 @@ impl<'a> Parser<'a> {
         end: Token,
         span: Span,
         mut f: impl FnMut(&mut Self) -> T,
-    ) -> (Vec<T>, Span) {
+    ) -> Located<Vec<T>> {
         if !res.is_empty() && !self.matches_kind(end.clone()) {
             self.expect_kind(Token::Comma, "expected ','");
         }
@@ -1003,7 +991,7 @@ impl<'a> Parser<'a> {
             }
         });
 
-        (res, span)
+        Located::new(span, res)
     }
 
     fn csv_one<T>(
@@ -1011,7 +999,7 @@ impl<'a> Parser<'a> {
         end: Token,
         span: Span,
         mut f: impl FnMut(&mut Self) -> T,
-    ) -> (Vec<T>, Span) {
+    ) -> Located<Vec<T>> {
         let first = f(self);
         self.csv(vec![first], end, span, f)
     }
@@ -1025,7 +1013,7 @@ impl<'a> Parser<'a> {
                         this.parse_trait_impl(),
                     )
                 })
-                .0
+                .data
             })
             .unwrap_or_default()
     }
@@ -1091,7 +1079,7 @@ impl<'a> Parser<'a> {
         } else if self.advance_if_kind(Token::LParen).is_some() {
             TypeHint::Tuple(
                 self.csv_one(Token::RParen, Span::default(), Self::parse_type)
-                    .0,
+                    .data,
             )
         } else if self.advance_if_kind(Token::Void).is_some() {
             TypeHint::Void
@@ -1099,8 +1087,8 @@ impl<'a> Parser<'a> {
             TypeHint::Regular(Located::new(this.span, Path::from(THIS_TYPE.to_owned())))
         } else if self.advance_if_kind(Token::Fn).is_some() {
             self.expect_kind(Token::LParen, "expected '('");
-            let (params, _) =
-                self.csv(Vec::new(), Token::RParen, Span::default(), Self::parse_type);
+            let params =
+                self.csv(Vec::new(), Token::RParen, Span::default(), Self::parse_type).data;
             let ret = if self.advance_if_kind(Token::Arrow).is_some() {
                 self.parse_type()
             } else {
@@ -1117,13 +1105,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_block(&mut self) -> (Vec<Stmt>, Span) {
+    fn parse_block(&mut self) -> Located<Vec<Stmt>> {
         let mut stmts = Vec::new();
         let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
         let span = self.advance_until(Token::RCurly, lcurly.span, |this| {
             stmts.push(this.statement());
         });
-        (stmts, span)
+        Located::new(span, stmts)
     }
 
     fn parse_struct(&mut self, public: bool, span: Span) -> Stmt {
@@ -1143,15 +1131,14 @@ impl<'a> Parser<'a> {
                 is_async: false,
                 is_extern: false,
                 is_unsafe: this.advance_if_kind(Token::Unsafe).is_some(),
+                body: true,
             };
             if config.is_unsafe {
-                if let Ok((mut func, _)) = this.expect_prototype(config) {
-                    func.body = Some(this.parse_block().0);
-                    functions.push(func);
+                if let Ok(func) = this.expect_prototype(config) {
+                    functions.push(func.data);
                 }
-            } else if let Some((mut func, _)) = this.try_prototype(config) {
-                func.body = Some(this.parse_block().0);
-                functions.push(func);
+            } else if let Some(func) = this.try_prototype(config) {
+                functions.push(func.data);
             } else if let Some(token) = this.advance_if_kind(Token::Impl) {
                 impls.push(this.parse_impl_block(token.span));
             } else {
@@ -1207,15 +1194,14 @@ impl<'a> Parser<'a> {
                 is_async: false,
                 is_extern: false,
                 is_unsafe: this.advance_if_kind(Token::Unsafe).is_some(),
+                body: true,
             };
             if config.is_public || config.is_unsafe {
-                if let Ok((mut func, _)) = this.expect_prototype(config) {
-                    func.body = Some(this.parse_block().0);
-                    functions.push(func);
+                if let Ok(func) = this.expect_prototype(config) {
+                    functions.push(func.data);
                 }
-            } else if let Some((mut func, _)) = this.try_prototype(config) {
-                func.body = Some(this.parse_block().0);
-                functions.push(func);
+            } else if let Some(func) = this.try_prototype(config) {
+                functions.push(func.data);
             } else if this.advance_if_kind(Token::Shared).is_some() {
                 // warn if pub was specified that it is useless
                 let name = this.expect_id("expected name");
@@ -1288,7 +1274,8 @@ impl<'a> Parser<'a> {
         let mut functions = Vec::new();
         let span = self.advance_until(Token::RCurly, span, |this| {
             let is_unsafe = this.advance_if_kind(Token::Unsafe).is_some();
-            if let Ok((proto, _)) = this.expect_prototype(ProtoConfig {
+            if let Ok(proto) = this.expect_prototype(ProtoConfig {
+                body: false,
                 allow_method: true,
                 is_public: true,
                 is_async: false,
@@ -1296,7 +1283,7 @@ impl<'a> Parser<'a> {
                 is_unsafe,
             }) {
                 this.expect_kind(Token::Semicolon, "expected ';'");
-                functions.push(proto);
+                functions.push(proto.data);
             }
         });
 
@@ -1328,16 +1315,15 @@ impl<'a> Parser<'a> {
                 is_public: this.advance_if_kind(Token::Pub).is_some(),
                 is_async: false,
                 is_extern: false,
+                body: true,
                 is_unsafe: this.advance_if_kind(Token::Unsafe).is_some(),
             };
             if config.is_unsafe {
-                if let Ok((mut func, _)) = this.expect_prototype(config) {
-                    func.body = Some(this.parse_block().0);
-                    functions.push(func);
+                if let Ok(func) = this.expect_prototype(config) {
+                    functions.push(func.data);
                 }
-            } else if let Some((mut func, _)) = this.try_prototype(config) {
-                func.body = Some(this.parse_block().0);
-                functions.push(func);
+            } else if let Some(func) = this.try_prototype(config) {
+                functions.push(func.data);
             } else if let Some(token) = this.advance_if_kind(Token::Impl) {
                 impls.push(this.parse_impl_block(token.span));
             } else {
@@ -1380,15 +1366,15 @@ impl<'a> Parser<'a> {
             }
 
             let is_unsafe = this.advance_if_kind(Token::Unsafe).is_some();
-            if let Ok((mut func, _)) = this.expect_prototype(ProtoConfig {
+            if let Ok(func) = this.expect_prototype(ProtoConfig {
                 allow_method: true,
                 is_public: true,
                 is_async: false,
                 is_extern: false,
+                body: true,
                 is_unsafe,
             }) {
-                func.body = Some(this.parse_block().0);
-                functions.push(func);
+                functions.push(func.data);
             }
         });
 
@@ -1407,6 +1393,7 @@ impl<'a> Parser<'a> {
             is_async,
             is_extern,
             is_unsafe,
+            body,
         }: ProtoConfig,
     ) -> Fn {
         let name = self.expect_located_id("expected name");
@@ -1488,34 +1475,34 @@ impl<'a> Parser<'a> {
             } else {
                 TypeHint::Void
             },
-            body: None,
+            body: body.then(|| self.parse_block().data),
         }
     }
 
-    fn try_prototype(&mut self, params: ProtoConfig) -> Option<(Fn, Span)> {
+    fn try_prototype(&mut self, params: ProtoConfig) -> Option<Located<Fn>> {
         if let Some(token) = self.advance_if_kind(Token::Fn) {
-            Some((
+            Some(Located::new(
+                token.span,
                 self.prototype(ProtoConfig {
                     is_async: false,
                     ..params
                 }),
-                token.span,
             ))
         } else if let Some(token) = self.advance_if_kind(Token::Async) {
             self.expect_kind(Token::Fn, "expected 'fn'");
-            Some((
+            Some(Located::new(
+                token.span,
                 self.prototype(ProtoConfig {
                     is_async: true,
                     ..params
                 }),
-                token.span,
             ))
         } else {
             None
         }
     }
 
-    fn expect_prototype(&mut self, params: ProtoConfig) -> Result<(Fn, Span), ()> {
+    fn expect_prototype(&mut self, params: ProtoConfig) -> Result<Located<Fn>, ()> {
         loop {
             if let Some(proto) = self.try_prototype(params) {
                 return Ok(proto);
@@ -1551,7 +1538,7 @@ impl<'a> Parser<'a> {
                 .advance_if_kind(Token::LParen)
                 .map(|_| {
                     self.csv_one(Token::RParen, Span::default(), Self::attribute)
-                        .0
+                        .data
                 })
                 .unwrap_or_default(),
         }

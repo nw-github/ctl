@@ -240,6 +240,12 @@ pub struct Located<T> {
     pub data: T,
 }
 
+impl<T> Located<T> {
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Located<U> {
+        Located::new(self.span, f(self.data))
+    } 
+}
+
 pub struct Lexer<'a> {
     src: &'a str,
     loc: Location,
