@@ -10,7 +10,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy)]
-struct ProtoConfig {
+struct FnConfig {
     allow_method: bool,
     is_public: bool,
     is_async: bool,
@@ -82,34 +82,20 @@ impl<'a> Parser<'a> {
         let public = self.advance_if_kind(Token::Pub);
         let is_unsafe = self.advance_if_kind(Token::Unsafe);
         let is_extern = self.advance_if_kind(Token::Extern);
-        if let Some(Located {
-            span,
-            data: mut proto,
-        }) = self.try_prototype(ProtoConfig {
+        if let Some(Located { span, data }) = self.try_parse_fn(FnConfig {
             allow_method: false,
             is_public: public.is_some(),
             is_async: false,
             is_extern: is_extern.is_some(),
             is_unsafe: is_unsafe.is_some(),
-            body: false,
+            body: is_extern.is_none(),
         }) {
             let attrs = std::mem::take(&mut self.attrs);
-            if is_extern.is_some() {
-                let semi = self.expect_kind(Token::Semicolon, "expected ';'");
-                Some(Stmt {
-                    data: StmtData::Fn(proto),
-                    span: public.map_or(span, |p| p.span).extended_to(semi.span),
-                    attrs,
-                })
-            } else {
-                let Located { span, data } = self.parse_block();
-                proto.body = Some(data);
-                Some(Stmt {
-                    data: StmtData::Fn(proto),
-                    span: public.map_or(span, |p| p.span).extended_to(span),
-                    attrs,
-                })
-            }
+            Some(Stmt {
+                data: StmtData::Fn(data),
+                span: public.map_or(span, |p| p.span).extended_to(span),
+                attrs,
+            })
         } else if let Some(token) = self.advance_if_kind(Token::Struct) {
             if let Some(token) = is_unsafe {
                 self.errors
@@ -291,7 +277,7 @@ impl<'a> Parser<'a> {
             }
 
             let mutable = matches!(token.data, Token::Mut);
-            let binding = self.pattern(!mutable);
+            let patt = self.pattern(!mutable);
             let ty = self
                 .advance_if_kind(Token::Colon)
                 .map(|_| self.parse_type());
@@ -304,7 +290,7 @@ impl<'a> Parser<'a> {
                     ty,
                     value,
                     mutable,
-                    patt: binding,
+                    patt,
                 },
                 span: token.span.extended_to(semi.span),
                 attrs: std::mem::take(&mut self.attrs),
@@ -1136,7 +1122,7 @@ impl<'a> Parser<'a> {
         let mut members = Vec::new();
         let mut impls = Vec::new();
         let span = self.advance_until(Token::RCurly, span, |this| {
-            let config = ProtoConfig {
+            let config = FnConfig {
                 allow_method: true,
                 is_public: this.advance_if_kind(Token::Pub).is_some(),
                 is_async: false,
@@ -1145,10 +1131,10 @@ impl<'a> Parser<'a> {
                 body: true,
             };
             if config.is_unsafe {
-                if let Ok(func) = this.expect_prototype(config) {
+                if let Ok(func) = this.expect_fn(config) {
                     functions.push(func.data);
                 }
-            } else if let Some(func) = this.try_prototype(config) {
+            } else if let Some(func) = this.try_parse_fn(config) {
                 functions.push(func.data);
             } else if let Some(token) = this.advance_if_kind(Token::Impl) {
                 impls.push(this.parse_impl_block(token.span));
@@ -1199,7 +1185,7 @@ impl<'a> Parser<'a> {
 
         self.expect_kind(Token::LCurly, "expected '{'");
         let span = self.advance_until(Token::RCurly, span, |this| {
-            let config = ProtoConfig {
+            let config = FnConfig {
                 allow_method: true,
                 is_public: this.advance_if_kind(Token::Pub).is_some(),
                 is_async: false,
@@ -1208,10 +1194,10 @@ impl<'a> Parser<'a> {
                 body: true,
             };
             if config.is_public || config.is_unsafe {
-                if let Ok(func) = this.expect_prototype(config) {
+                if let Ok(func) = this.expect_fn(config) {
                     functions.push(func.data);
                 }
-            } else if let Some(func) = this.try_prototype(config) {
+            } else if let Some(func) = this.try_parse_fn(config) {
                 functions.push(func.data);
             } else if this.advance_if_kind(Token::Shared).is_some() {
                 // warn if pub was specified that it is useless
@@ -1285,7 +1271,7 @@ impl<'a> Parser<'a> {
         let mut functions = Vec::new();
         let span = self.advance_until(Token::RCurly, span, |this| {
             let is_unsafe = this.advance_if_kind(Token::Unsafe).is_some();
-            if let Ok(proto) = this.expect_prototype(ProtoConfig {
+            if let Ok(proto) = this.expect_fn(FnConfig {
                 body: false,
                 allow_method: true,
                 is_public: true,
@@ -1293,7 +1279,6 @@ impl<'a> Parser<'a> {
                 is_extern: false,
                 is_unsafe,
             }) {
-                this.expect_kind(Token::Semicolon, "expected ';'");
                 functions.push(proto.data);
             }
         });
@@ -1321,7 +1306,7 @@ impl<'a> Parser<'a> {
         let mut variants = Vec::new();
         let mut impls = Vec::new();
         let span = self.advance_until(Token::RCurly, span, |this| {
-            let config = ProtoConfig {
+            let config = FnConfig {
                 allow_method: true,
                 is_public: this.advance_if_kind(Token::Pub).is_some(),
                 is_async: false,
@@ -1330,10 +1315,10 @@ impl<'a> Parser<'a> {
                 is_unsafe: this.advance_if_kind(Token::Unsafe).is_some(),
             };
             if config.is_unsafe {
-                if let Ok(func) = this.expect_prototype(config) {
+                if let Ok(func) = this.expect_fn(config) {
                     functions.push(func.data);
                 }
-            } else if let Some(func) = this.try_prototype(config) {
+            } else if let Some(func) = this.try_parse_fn(config) {
                 functions.push(func.data);
             } else if let Some(token) = this.advance_if_kind(Token::Impl) {
                 impls.push(this.parse_impl_block(token.span));
@@ -1377,7 +1362,7 @@ impl<'a> Parser<'a> {
             }
 
             let is_unsafe = this.advance_if_kind(Token::Unsafe).is_some();
-            if let Ok(func) = this.expect_prototype(ProtoConfig {
+            if let Ok(func) = this.expect_fn(FnConfig {
                 allow_method: true,
                 is_public: true,
                 is_async: false,
@@ -1396,16 +1381,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn prototype(
+    fn parse_fn(
         &mut self,
-        ProtoConfig {
+        FnConfig {
             allow_method,
             is_public,
             is_async,
             is_extern,
             is_unsafe,
             body,
-        }: ProtoConfig,
+        }: FnConfig,
     ) -> Fn {
         let name = self.expect_located_id("expected name");
         let mut variadic = false;
@@ -1472,6 +1457,19 @@ impl<'a> Parser<'a> {
             count += 1;
         }
 
+        let ret = if !self.matches(|kind| matches!(kind, Token::Semicolon | Token::LCurly)) {
+            self.parse_type()
+        } else {
+            TypeHint::Void
+        };
+
+        let body = if body {
+            Some(self.parse_block().data)
+        } else {
+            self.expect_kind(Token::Semicolon, "expected ';'");
+            None
+        };
+
         Fn {
             name,
             public: is_public,
@@ -1481,20 +1479,16 @@ impl<'a> Parser<'a> {
             variadic,
             type_params,
             params,
-            ret: if !self.matches(|kind| matches!(kind, Token::Semicolon | Token::LCurly)) {
-                self.parse_type()
-            } else {
-                TypeHint::Void
-            },
-            body: body.then(|| self.parse_block().data),
+            ret,
+            body,
         }
     }
 
-    fn try_prototype(&mut self, params: ProtoConfig) -> Option<Located<Fn>> {
+    fn try_parse_fn(&mut self, params: FnConfig) -> Option<Located<Fn>> {
         if let Some(token) = self.advance_if_kind(Token::Fn) {
             Some(Located::new(
                 token.span,
-                self.prototype(ProtoConfig {
+                self.parse_fn(FnConfig {
                     is_async: false,
                     ..params
                 }),
@@ -1503,7 +1497,7 @@ impl<'a> Parser<'a> {
             self.expect_kind(Token::Fn, "expected 'fn'");
             Some(Located::new(
                 token.span,
-                self.prototype(ProtoConfig {
+                self.parse_fn(FnConfig {
                     is_async: true,
                     ..params
                 }),
@@ -1513,9 +1507,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expect_prototype(&mut self, params: ProtoConfig) -> Result<Located<Fn>, ()> {
+    fn expect_fn(&mut self, params: FnConfig) -> Result<Located<Fn>, ()> {
         loop {
-            if let Some(proto) = self.try_prototype(params) {
+            if let Some(proto) = self.try_parse_fn(params) {
                 return Ok(proto);
             }
 
