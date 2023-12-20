@@ -237,6 +237,13 @@ impl std::fmt::Debug for Path {
 }
 
 #[derive(Debug, Clone)]
+pub struct Destructure {
+    pub name: Located<String>,
+    pub mutable: bool,
+    pub pattern: Option<Pattern>,
+}
+
+#[derive(Debug, Clone)]
 pub enum Pattern {
     // x is ::core::opt::Option::Some(mut y)
     PathWithBindings {
@@ -247,13 +254,26 @@ pub enum Pattern {
     // x is y
     Path(Located<Path>),
     // x is mut y
-    MutCatchAll(Located<String>),
+    MutBinding(Located<String>),
     // x is ?mut y
     Option(bool, Located<String>),
     // x is null
     Null(Span),
     // let {x, y} = z;
-    StructDestructure(Located<Vec<(bool, Located<String>)>>),
+    StructDestructure(Located<Vec<Destructure>>),
+}
+
+impl Pattern {
+    pub fn span(&self) -> &Span {
+        match self {
+            Pattern::PathWithBindings { path, .. } => &path.span,
+            Pattern::Path(path) => &path.span,
+            Pattern::MutBinding(ident) => &ident.span,
+            Pattern::Option(_, ident) => &ident.span,
+            Pattern::Null(span) => span,
+            Pattern::StructDestructure(stuff) => &stuff.span,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -2,8 +2,8 @@ use std::{iter::Peekable, path::PathBuf};
 
 use crate::{
     ast::{
-        Attribute, Expr, ExprData, Fn, ImplBlock, MemVar, Param, Path, Pattern, Stmt, StmtData,
-        Struct, TypeHint, UnaryOp,
+        Attribute, Destructure, Expr, ExprData, Fn, ImplBlock, MemVar, Param, Path, Pattern, Stmt,
+        StmtData, Struct, TypeHint, UnaryOp,
     },
     lexer::{FileIndex, Lexer, Located, Precedence, Span, Token},
     Error, THIS_PARAM, THIS_TYPE,
@@ -82,7 +82,10 @@ impl<'a> Parser<'a> {
         let public = self.advance_if_kind(Token::Pub);
         let is_unsafe = self.advance_if_kind(Token::Unsafe);
         let is_extern = self.advance_if_kind(Token::Extern);
-        if let Some(Located { span, data: mut proto }) = self.try_prototype(ProtoConfig {
+        if let Some(Located {
+            span,
+            data: mut proto,
+        }) = self.try_prototype(ProtoConfig {
             allow_method: false,
             is_public: public.is_some(),
             is_async: false,
@@ -948,12 +951,19 @@ impl<'a> Parser<'a> {
         if let Some(token) = self.advance_if_kind(Token::LCurly) {
             return Pattern::StructDestructure(self.csv_one(Token::RCurly, token.span, |this| {
                 let mutable = this.advance_if_kind(Token::Mut).is_some();
-                (mutable, this.expect_located_id("expected name"))
+                let name = this.expect_located_id("expected name");
+                Destructure {
+                    name,
+                    mutable,
+                    pattern: this
+                        .advance_if_kind(Token::Colon)
+                        .map(|_| this.pattern(true)),
+                }
             }));
         }
 
         if allow_mut && self.advance_if_kind(Token::Mut).is_some() {
-            return Pattern::MutCatchAll(self.expect_located_id("expected name"));
+            return Pattern::MutBinding(self.expect_located_id("expected name"));
         }
 
         let path = self.type_path();
@@ -1087,8 +1097,9 @@ impl<'a> Parser<'a> {
             TypeHint::Regular(Located::new(this.span, Path::from(THIS_TYPE.to_owned())))
         } else if self.advance_if_kind(Token::Fn).is_some() {
             self.expect_kind(Token::LParen, "expected '('");
-            let params =
-                self.csv(Vec::new(), Token::RParen, Span::default(), Self::parse_type).data;
+            let params = self
+                .csv(Vec::new(), Token::RParen, Span::default(), Self::parse_type)
+                .data;
             let ret = if self.advance_if_kind(Token::Arrow).is_some() {
                 self.parse_type()
             } else {
@@ -1533,7 +1544,7 @@ impl<'a> Parser<'a> {
 
     fn attribute(&mut self) -> Attribute {
         Attribute {
-            name: self.expect_located_id("expected ';'"),
+            name: self.expect_located_id("expected name"),
             props: self
                 .advance_if_kind(Token::LParen)
                 .map(|_| {

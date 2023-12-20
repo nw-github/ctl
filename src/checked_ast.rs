@@ -12,6 +12,12 @@ pub struct Block {
     pub scope: ScopeId,
 }
 
+#[derive(Debug, Clone)]
+pub enum IrrefutablePattern {
+    Variable(VariableId),
+    Destrucure(Vec<(String, IrrefutablePattern)>),
+}
+
 #[derive(Debug, Clone, Default)]
 pub enum CheckedPattern {
     UnionMember {
@@ -19,7 +25,18 @@ pub enum CheckedPattern {
         variant: (String, usize),
         ptr: bool,
     },
-    CatchAll(VariableId),
+    Irrefutable(IrrefutablePattern),
+    #[default]
+    Error,
+}
+
+#[derive(Debug, Default, Clone)]
+pub enum CheckedStmt {
+    Expr(CheckedExpr),
+    Let(VariableId),
+    LetPattern(IrrefutablePattern, CheckedExpr),
+    Module(Block),
+    None,
     #[default]
     Error,
 }
@@ -43,7 +60,7 @@ pub enum CheckedExprData {
     },
     CallFnPtr {
         expr: Box<CheckedExpr>,
-        args: Vec<CheckedExpr>, 
+        args: Vec<CheckedExpr>,
     },
     Instance {
         members: IndexMap<String, CheckedExpr>,
@@ -209,15 +226,4 @@ impl CheckedExpr {
 
         self
     }
-}
-
-#[derive(Debug, Default, Clone)]
-pub enum CheckedStmt {
-    Expr(CheckedExpr),
-    Let(VariableId),
-    LetWithDestructuring(Vec<VariableId>, CheckedExpr),
-    Module(Block),
-    None,
-    #[default]
-    Error,
 }

@@ -4,7 +4,7 @@ use indexmap::IndexMap;
 
 use crate::{
     ast::UnaryOp,
-    checked_ast::{CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt},
+    checked_ast::{CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, IrrefutablePattern},
     lexer::Span,
     typecheck::{
         FnPtr, GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId, UserTypeData,
@@ -762,10 +762,10 @@ impl Codegen {
                     self.buffer.emit(";");
                 });
             }
-            CheckedStmt::LetWithDestructuring(vars, value) => {
+            CheckedStmt::LetPattern(pattern, value) => {
                 stmt!(self, {
                     let tmp = state.tmpvar();
-                    let mut ty = &mut value.ty.clone();
+                    let ty = &mut value.ty.clone();
                     state.fill_generics(scopes, ty);
 
                     self.emit_type(scopes, ty);
@@ -773,27 +773,17 @@ impl Codegen {
                     self.gen_expr(scopes, value, state);
                     self.buffer.emit(";");
 
-                    let mut count = 0;
-                    while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = ty {
-                        ty = inner;
-                        count += 1;
-                    }
-
-                    let tmp = format!("({}{tmp})", "*".repeat(count));
-                    for id in vars {
-                        let var = scopes.get_var(id);
-                        if self
-                            .buffer
-                            .emit_local_decl(scopes, id, state, &mut self.type_gen)
-                            .is_ok()
-                        {
-                            self.buffer.emit(format!(
-                                " = {}{tmp}.{};",
-                                if count > 0 { "&" } else { "" },
-                                var.name
-                            ));
-                        }
-                    }
+                    let count = ty.indirection();
+                    self.gen_irrefutable_pattern(
+                        scopes,
+                        state,
+                        &pattern,
+                        &format!(
+                            "{}({}{tmp})",
+                            if count > 0 { "&" } else { "" },
+                            "*".repeat(count)
+                        ),
+                    );
                 });
             }
             CheckedStmt::None => {}
@@ -1454,7 +1444,7 @@ impl Codegen {
         state: &mut State,
         pattern: &CheckedPattern,
         tmp_name: &str,
-        mut scrutinee: &TypeId,
+        scrutinee: &TypeId,
     ) {
         match pattern {
             CheckedPattern::UnionMember {
@@ -1462,14 +1452,8 @@ impl Codegen {
                 variant,
                 ptr,
             } => {
-                let mut count = 0;
-                while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = scrutinee {
-                    scrutinee = inner;
-                    count += 1;
-                }
-
                 let opt_ptr = is_opt_ptr(scopes, scrutinee.strip_references());
-                let tmp_name = format!("({}{tmp_name})", "*".repeat(count));
+                let tmp_name = format!("({}{tmp_name})", "*".repeat(scrutinee.indirection()));
                 if opt_ptr && variant.0 == "Some" {
                     self.buffer.emit(format!("if ({tmp_name} != NULL) {{"));
                     if binding
@@ -1507,17 +1491,36 @@ impl Codegen {
                     }
                 }
             }
-            CheckedPattern::CatchAll(binding) => {
+            CheckedPattern::Irrefutable(pattern) => {
                 self.buffer.emit("if (1) {");
-                if self
-                    .buffer
-                    .emit_local_decl(scopes, *binding, state, &mut self.type_gen)
-                    .is_ok()
-                {
-                    self.buffer.emit(format!(" = {tmp_name};"));
-                }
+                self.gen_irrefutable_pattern(scopes, state, pattern, tmp_name);
             }
             CheckedPattern::Error => panic!("ICE: CheckedPattern::Error in gen_pattern"),
+        }
+    }
+
+    fn gen_irrefutable_pattern(
+        &mut self,
+        scopes: &Scopes,
+        state: &mut State,
+        pattern: &IrrefutablePattern,
+        src: &str,
+    ) {
+        match pattern {
+            &IrrefutablePattern::Variable(id) => {
+                if self
+                    .buffer
+                    .emit_local_decl(scopes, id, state, &mut self.type_gen)
+                    .is_ok()
+                {
+                    self.buffer.emit(format!(" = {src};"));
+                }
+            }
+            IrrefutablePattern::Destrucure(subpatterns) => {
+                for (member, patt) in subpatterns {
+                    self.gen_irrefutable_pattern(scopes, state, patt, &format!("{src}.{member}"));
+                }
+            }
         }
     }
 

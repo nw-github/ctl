@@ -9,10 +9,12 @@ use num_traits::Num;
 
 use crate::{
     ast::{
-        Attribute, BinaryOp, Expr, ExprData, Fn, ImplBlock, Param, Path, Pattern, Stmt, StmtData,
-        TypeHint, UnaryOp,
+        Attribute, BinaryOp, Destructure, Expr, ExprData, Fn, ImplBlock, Param, Path, Pattern,
+        Stmt, StmtData, TypeHint, UnaryOp,
     },
-    checked_ast::{Block, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt},
+    checked_ast::{
+        Block, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, IrrefutablePattern,
+    },
     declare::{DeclaredFn, DeclaredStmt, DeclaredStmtData, DeclaredStruct},
     lexer::{Located, Span},
     parser::ParsedFile,
@@ -550,6 +552,16 @@ impl TypeId {
             (ty, target) if ty.may_ptr_coerce(target) => true,
             (ty, target) => ty == target,
         }
+    }
+
+    pub fn indirection(&self) -> usize {
+        let mut count = 0;
+        let mut id = self;
+        while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = id {
+            id = inner;
+            count += 1;
+        }
+        count
     }
 
     fn may_ptr_coerce(&self, target: &TypeId) -> bool {
@@ -1976,13 +1988,13 @@ impl TypeChecker {
                     let ty = self.resolve_type(scopes, &ty, false);
                     if let Some(value) = value {
                         let value = self.type_check(scopes, value, &ty);
-                        return self.declare_variable(scopes, ty, Some(value), mutable, patt);
+                        return self.check_var_stmt(scopes, ty, Some(value), mutable, patt);
                     } else {
-                        return self.declare_variable(scopes, ty, None, mutable, patt);
+                        return self.check_var_stmt(scopes, ty, None, mutable, patt);
                     }
                 } else if let Some(value) = value {
                     let value = self.check_expr(scopes, value, None);
-                    return self.declare_variable(
+                    return self.check_var_stmt(
                         scopes,
                         value.ty.clone(),
                         Some(value),
@@ -2016,7 +2028,7 @@ impl TypeChecker {
         CheckedStmt::None
     }
 
-    fn declare_variable(
+    fn check_var_stmt(
         &mut self,
         scopes: &mut Scopes,
         ty: TypeId,
@@ -2024,49 +2036,71 @@ impl TypeChecker {
         mutable: bool,
         patt: Pattern,
     ) -> CheckedStmt {
+        let span = *patt.span();
+        match self.declare_variables(scopes, ty, mutable, patt) {
+            Some(IrrefutablePattern::Variable(id)) => {
+                scopes.get_var_mut(id).value = value;
+                CheckedStmt::Let(id)
+            }
+            Some(inner) => {
+                let Some(value) = value else {
+                    return self.error(Error::new(
+                        "must provide a value with a destructuring assignment",
+                        span,
+                    ));
+                };
+
+                CheckedStmt::LetPattern(inner, value)
+            }
+            None => Default::default(),
+        }
+    }
+
+    fn declare_variables(
+        &mut self,
+        scopes: &mut Scopes,
+        ty: TypeId,
+        mutable: bool,
+        patt: Pattern,
+    ) -> Option<IrrefutablePattern> {
         match patt {
-            Pattern::PathWithBindings { .. } => todo!(),
+            Pattern::PathWithBindings { .. } => unreachable!(),
             Pattern::Path(path) => {
                 if let Some(name) = path.data.as_identifier() {
-                    CheckedStmt::Let(scopes.insert_var(
+                    Some(IrrefutablePattern::Variable(scopes.insert_var(
                         Variable {
                             name: name.into(),
                             ty,
                             is_static: false,
                             mutable,
-                            value,
+                            value: None,
                         },
                         false,
-                    ))
+                    )))
                 } else {
                     self.error(Error::new("variable name must be an identifier", path.span))
                 }
             }
-            Pattern::MutCatchAll(name) => CheckedStmt::Let(scopes.insert_var(
+            Pattern::MutBinding(name) => Some(IrrefutablePattern::Variable(scopes.insert_var(
                 Variable {
                     name: name.data,
                     ty,
                     is_static: false,
                     mutable: true,
-                    value,
+                    value: None,
                 },
                 false,
-            )),
+            ))),
             Pattern::Option(_, Located { span, .. }) | Pattern::Null(span) => {
                 self.error(Error::new("refutable pattern in variable binding", span))
             }
             Pattern::StructDestructure(patterns) => {
-                let Some(value) = value else {
-                    return self.error(Error::new(
-                        "must provide a value with a destructuring assignment",
-                        patterns.span,
-                    ));
-                };
-
-                let Some((ut, (members, _))) = ty.strip_references().as_user_type().and_then(|ut| {
-                    let ut = scopes.get_user_type(ut.id);
-                    Some(ut).zip(ut.data.as_struct())
-                }) else {
+                let Some((ut, (members, _))) =
+                    ty.strip_references().as_user_type().and_then(|ut| {
+                        let ut = scopes.get_user_type(ut.id);
+                        Some(ut).zip(ut.data.as_struct())
+                    })
+                else {
                     return self.error(Error::new(
                         format!(
                             "cannot destructure value of non-struct type '{}'",
@@ -2078,7 +2112,12 @@ impl TypeChecker {
 
                 let cap = scopes.can_access_privates(ut.scope);
                 let mut vars = Vec::new();
-                for (p_mutable, name) in patterns.data {
+                for Destructure {
+                    name,
+                    mutable: p_mutable,
+                    pattern,
+                } in patterns.data
+                {
                     let Some(member) = members.iter().find(|m| m.name == name.data) else {
                         self.error::<()>(Error::new(
                             format!("type '{}' has no member '{}'", ty.name(scopes), name.data),
@@ -2092,17 +2131,23 @@ impl TypeChecker {
                         continue;
                     }
 
+                    // TODO: duplicates
                     vars.push((
                         name.data,
                         mutable || p_mutable,
                         ty.matched_inner_type(member.ty.clone()),
+                        pattern,
                     ));
                 }
 
-                CheckedStmt::LetWithDestructuring(
-                    vars.into_iter()
-                        .map(|(name, mutable, ty)| {
-                            scopes.insert_var(
+                let mut result = Vec::with_capacity(vars.len());
+                for (name, mutable, ty, patt) in vars {
+                    if let Some(patt) = patt {
+                        result.push((name, self.declare_variables(scopes, ty, mutable, patt)?));
+                    } else {
+                        result.push((
+                            name.clone(),
+                            IrrefutablePattern::Variable(scopes.insert_var(
                                 Variable {
                                     name,
                                     ty,
@@ -2111,11 +2156,12 @@ impl TypeChecker {
                                     value: None,
                                 },
                                 false,
-                            )
-                        })
-                        .collect(),
-                    value,
-                )
+                            )),
+                        ));
+                    }
+                }
+
+                Some(IrrefutablePattern::Destrucure(result))
             }
         }
     }
@@ -3565,15 +3611,17 @@ impl TypeChecker {
             Pattern::Path(path) => match self.resolve_path(scopes, &path.data, path.span, false) {
                 original @ Some(ResolvedPath::None(_)) => {
                     if let Some(ident) = path.data.as_identifier() {
-                        return CheckedPattern::CatchAll(scopes.insert_var(
-                            Variable {
-                                name: ident.into(),
-                                ty: scrutinee.ty.clone(),
-                                is_static: false,
-                                mutable: false,
-                                value: None,
-                            },
-                            false,
+                        return CheckedPattern::Irrefutable(IrrefutablePattern::Variable(
+                            scopes.insert_var(
+                                Variable {
+                                    name: ident.into(),
+                                    ty: scrutinee.ty.clone(),
+                                    is_static: false,
+                                    mutable: false,
+                                    value: None,
+                                },
+                                false,
+                            ),
                         ));
                     }
 
@@ -3607,16 +3655,18 @@ impl TypeChecker {
                 ),
                 None,
             ),
-            Pattern::MutCatchAll(name) => {
-                return CheckedPattern::CatchAll(scopes.insert_var(
-                    Variable {
-                        name: name.data,
-                        ty: scrutinee.ty.clone(),
-                        is_static: false,
-                        mutable: true,
-                        value: None,
-                    },
-                    false,
+            Pattern::MutBinding(name) => {
+                return CheckedPattern::Irrefutable(IrrefutablePattern::Variable(
+                    scopes.insert_var(
+                        Variable {
+                            name: name.data,
+                            ty: scrutinee.ty.clone(),
+                            is_static: false,
+                            mutable: true,
+                            value: None,
+                        },
+                        false,
+                    ),
                 ));
             }
             Pattern::StructDestructure(_) => todo!(),
