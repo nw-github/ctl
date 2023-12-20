@@ -9,13 +9,16 @@ use num_traits::Num;
 
 use crate::{
     ast::{
-        Attribute, BinaryOp, Destructure, Expr, ExprData, Fn, ImplBlock, Param, Path, Pattern,
-        Stmt, StmtData, TypeHint, UnaryOp,
+        checked::{
+            Block, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, IrrefutablePattern,
+        },
+        declared::{DeclaredFn, DeclaredStmt, DeclaredStmtData, DeclaredStruct},
+        parsed::{
+            Destructure, Expr, ExprData, Fn, ImplBlock, Param, Path, Pattern, Stmt, StmtData,
+            TypeHint,
+        },
+        Attribute, BinaryOp, UnaryOp,
     },
-    checked_ast::{
-        Block, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, IrrefutablePattern,
-    },
-    declare::{DeclaredFn, DeclaredStmt, DeclaredStmtData, DeclaredStruct},
     lexer::{Located, Span},
     parser::ParsedFile,
     Error, Pipeline, THIS_PARAM, THIS_TYPE,

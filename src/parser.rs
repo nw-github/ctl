@@ -2,8 +2,11 @@ use std::{iter::Peekable, path::PathBuf};
 
 use crate::{
     ast::{
-        Attribute, Destructure, Expr, ExprData, Fn, ImplBlock, MemVar, Param, Path, Pattern, Stmt,
-        StmtData, Struct, TypeHint, UnaryOp,
+        parsed::{
+            Destructure, Expr, ExprData, Fn, ImplBlock, MemVar, Param, Path, Pattern, Stmt,
+            StmtData, Struct, TypeHint,
+        },
+        Attribute, UnaryOp,
     },
     lexer::{FileIndex, Lexer, Located, Precedence, Span, Token},
     Error, THIS_PARAM, THIS_TYPE,

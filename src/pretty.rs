@@ -1,4 +1,4 @@
-use crate::ast::{Expr, ExprData, Fn, ImplBlock, Stmt, StmtData, Struct};
+use crate::ast::parsed::{Expr, ExprData, Fn, ImplBlock, Stmt, StmtData, Struct};
 
 const INDENT: &str = "  ";
 

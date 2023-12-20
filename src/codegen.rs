@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use indexmap::IndexMap;
 
 use crate::{
+    ast::checked::{CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, IrrefutablePattern},
     ast::UnaryOp,
-    checked_ast::{CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, IrrefutablePattern},
     lexer::Span,
     typecheck::{
         FnPtr, GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId, UserTypeData,

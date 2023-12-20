@@ -1,11 +1,9 @@
 mod ast;
-mod checked_ast;
 mod codegen;
 mod lexer;
 mod parser;
 mod pretty;
 mod typecheck;
-mod declare;
 
 use std::{
     ffi::OsStr,

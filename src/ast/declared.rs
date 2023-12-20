@@ -1,5 +1,6 @@
 use crate::{
-    ast::{Attribute, Expr, ImplBlock, Path, TypeHint, Pattern},
+    ast::Attribute,
+    ast::parsed::{Expr, ImplBlock, Path, TypeHint, Pattern},
     lexer::Span,
     typecheck::{FunctionId, ScopeId, UserTypeId, VariableId},
 };
