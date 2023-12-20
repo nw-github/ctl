@@ -303,7 +303,11 @@ impl<'a> Parser<'a> {
             } else if let Some(token) = self.advance_if_kind(Token::While) {
                 self.while_expr(token.span)
             } else if let Some(token) = self.advance_if_kind(Token::Loop) {
-                self.loop_expr(token.span)
+                let expr = self.loop_expr(token.span);
+                if matches!(&expr.data, ExprData::Loop { do_while: true, .. }) {
+                    needs_semicolon = true;
+                }
+                expr
             } else if let Some(token) = self.advance_if_kind(Token::For) {
                 self.for_expr(token.span)
             } else if let Some(token) = self.advance_if_kind(Token::Match) {
