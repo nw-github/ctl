@@ -1,6 +1,6 @@
 pub trait RangeBounds<T> {
-    fn begin(this) Bound<T>;
-    fn end(this) Bound<T>;
+    fn begin(this): Bound<T>;
+    fn end(this): Bound<T>;
 }
 
 pub union Bound<T> {
@@ -15,11 +15,11 @@ pub struct RangeTo<T> {
     pub end: T,
 
     impl RangeBounds<T> {
-        fn begin(this) Bound<T> {
+        fn begin(this): Bound<T> {
             Bound::Unbounded()
         }
 
-        fn end(this) Bound<T> {
+        fn end(this): Bound<T> {
             Bound::Exclusive(this.end)
         }
     }
@@ -31,11 +31,11 @@ pub struct RangeToInclusive<T> {
     pub end: T,
 
     impl RangeBounds<T> {
-        fn begin(this) Bound<T> {
+        fn begin(this): Bound<T> {
             Bound::Unbounded()
         }
 
-        fn end(this) Bound<T> {
+        fn end(this): Bound<T> {
             Bound::Inclusive(this.end)
         }
     }
@@ -47,11 +47,11 @@ pub struct RangeFrom<T> {
     pub start: T,
 
     impl RangeBounds<T> {
-        fn begin(this) Bound<T> {
+        fn begin(this): Bound<T> {
             Bound::Inclusive(this.start)
         }
 
-        fn end(this) Bound<T> {
+        fn end(this): Bound<T> {
             Bound::Unbounded()
         }
     }
@@ -64,11 +64,11 @@ pub struct Range<T> {
     pub end: T,
 
     impl RangeBounds<T> {
-        fn begin(this) Bound<T> {
+        fn begin(this): Bound<T> {
             Bound::Inclusive(this.start)
         }
 
-        fn end(this) Bound<T> {
+        fn end(this): Bound<T> {
             Bound::Exclusive(this.end)
         }
     }
@@ -81,11 +81,11 @@ pub struct RangeInclusive<T> {
     pub end: T,
 
     impl RangeBounds<T> {
-        fn begin(this) Bound<T> {
+        fn begin(this): Bound<T> {
             Bound::Inclusive(this.start)
         }
 
-        fn end(this) Bound<T> {
+        fn end(this): Bound<T> {
             Bound::Inclusive(this.end)
         }
     }
@@ -95,11 +95,11 @@ pub struct RangeInclusive<T> {
 [lang(range_full)]
 pub struct RangeFull<T> {
     impl RangeBounds<T> {
-        fn begin(this) Bound<T> {
+        fn begin(this): Bound<T> {
             Bound::Unbounded()
         }
 
-        fn end(this) Bound<T> {
+        fn end(this): Bound<T> {
             Bound::Unbounded()
         }
     }

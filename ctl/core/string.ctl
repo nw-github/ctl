@@ -9,37 +9,37 @@ use core::iter::Iterator;
 pub struct str {
     span: [u8..],
 
-    pub fn from_c_str(ptr: *c_char) str {
-        extern fn strlen(ptr: *c_char) usize;
+    pub fn from_c_str(ptr: *c_char): str {
+        extern fn strlen(ptr: *c_char): usize;
         // TODO: validate UTF-8
         str(span: unsafe Span::new(ptr as *u8, strlen(ptr)))
     }
 
-    pub fn len(this) usize {
+    pub fn len(this): usize {
         this.span.len()
     }
 
-    pub fn is_empty(this) bool {
+    pub fn is_empty(this): bool {
         this.span.is_empty()
     }
 
-    pub fn as_ptr(this) *u8 {
+    pub fn as_ptr(this): *u8 {
         unsafe this.span.as_raw().as_ptr()
     }
 
-    pub fn as_c_str(this) *c_char {
+    pub fn as_c_str(this): *c_char {
         unsafe this.span.as_raw().as_ptr() as *c_char
     }
 
-    pub fn as_bytes(this) [u8..] {
+    pub fn as_bytes(this): [u8..] {
         this.span
     }
 
-    pub fn chars(this) Chars {
+    pub fn chars(this): Chars {
         Chars(s: this.as_bytes())
     }
 
-    pub fn substr<R: RangeBounds<usize> >(this, range: R) str {
+    pub fn substr<R: RangeBounds<usize> >(this, range: R): str {
         let span = this.span.subspan(range);
         match span.get(0) {
             ?ch => if !is_char_boundary(*ch) {
@@ -61,7 +61,7 @@ pub struct str {
     }
 
     impl Eq<str> {
-        fn eq(this, rhs: *str) bool {
+        fn eq(this, rhs: *str): bool {
             if this.len() != rhs.len() {
                 false
             } else {
@@ -75,7 +75,7 @@ pub struct Chars {
     s: [u8..],
 
     impl Iterator<char> {
-        fn next(mut this) ?char {
+        fn next(mut this): ?char {
             match this.s.get(0) {
                 ?cp => unsafe {
                     mut cp = *cp as u32 & 0xff;
@@ -111,7 +111,7 @@ pub struct Chars {
     }
 }
 
-fn is_char_boundary(b: u8) bool {
+fn is_char_boundary(b: u8): bool {
     // From the Rust standard library:
     // This is bit magic equivalent to: b < 128 || b >= 192
     b as! i8 >= -0x40

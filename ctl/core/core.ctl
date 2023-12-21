@@ -1,6 +1,6 @@
-pub fn panic(s: string::str) never {
-    extern fn abort() never;
-    extern fn write(fd: c_int, buf: *c_void, count: usize) isize;
+pub fn panic(s: string::str): never {
+    extern fn abort(): never;
+    extern fn write(fd: c_int, buf: *c_void, count: usize): isize;
 
     unsafe {
         let prefix = "fatal error: ";
@@ -12,7 +12,7 @@ pub fn panic(s: string::str) never {
     }
 }
 
-pub fn unreachable() never {
+pub fn unreachable(): never {
     panic("entered unreachable code");
 }
 

@@ -12,7 +12,7 @@ union Bucket<K, V> {
     None,
     Tombstone,
 
-    pub fn unwrap(this) SomeBucket<K, V> {
+    pub fn unwrap(this): SomeBucket<K, V> {
         match *this {
             Bucket::Some(e) => e,
             _ => {
@@ -27,34 +27,34 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     buckets: [Bucket<K, V>],
     len:     usize,
 
-    pub fn new<_K: Hash + Eq<_K>, _V>() Map<_K, _V> {
+    pub fn new<_K: Hash + Eq<_K>, _V>(): Map<_K, _V> {
         Map::<_K, _V>(
             buckets: Vec::with_capacity(20),
             len: 0,
         )
     }
 
-    pub fn with_capacity<_K: Hash + Eq<_K>, _V>(cap: usize) Map<_K, _V> {
+    pub fn with_capacity<_K: Hash + Eq<_K>, _V>(cap: usize): Map<_K, _V> {
         mut self: [_K: _V] = Map::new();
         self.adjust_cap(cap);
         self
     }
 
-    pub fn get(this, key: *K) ?*V {
+    pub fn get(this, key: *K): ?*V {
         match this.buckets.get(this.entry_pos(key))! {
             Bucket::Some(entry) => &entry.val,
             _ => null,
         }
     }
 
-    pub fn get_mut(mut this, key: *K) ?*mut V {
+    pub fn get_mut(mut this, key: *K): ?*mut V {
         match this.buckets.get_mut(this.entry_pos(key))! {
             Bucket::Some(entry) => &mut entry.val,
             _ => null,
         }
     }
 
-    pub fn insert(mut this, key: K, val: V) ?V {
+    pub fn insert(mut this, key: K, val: V): ?V {
         if this.len + 1 > this.buckets.len() * 3 / 4 {
             this.adjust_cap(this.buckets.len() * 2);
         }
@@ -72,7 +72,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         }
     }
 
-    pub fn remove(mut this, key: *K) ?V {
+    pub fn remove(mut this, key: *K): ?V {
         match this.buckets.get_mut(this.entry_pos(key))! {
             Bucket::None => null,
             Bucket::Tombstone => null,
@@ -95,15 +95,15 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         }
     }
 
-    pub fn contains(this, key: *K) bool {
+    pub fn contains(this, key: *K): bool {
         this.buckets.get(this.entry_pos(key))! is Bucket::Some(_)
     }
 
-    pub fn len(this) usize {
+    pub fn len(this): usize {
         this.len
     }
 
-    fn entry_pos(this, key: *K) usize {
+    fn entry_pos(this, key: *K): usize {
         mut idx = {
             mut h = Fnv1a::new();
             key.hash(&mut h);
@@ -165,7 +165,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
 struct Fnv1a {
     val: u64 = 0,
 
-    pub fn new() Fnv1a {
+    pub fn new(): Fnv1a {
         Fnv1a()
     }
 
@@ -179,7 +179,7 @@ struct Fnv1a {
             }
         }
 
-        fn finish(this) u64 {
+        fn finish(this): u64 {
             this.val
         }
     }

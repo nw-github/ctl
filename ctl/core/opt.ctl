@@ -3,7 +3,7 @@ pub union Option<T> {
     Some(T),
     None,
 
-    pub fn unwrap(this) T {
+    pub fn unwrap(this): T {
         match *this {
             ?inner => inner,
             null => {
@@ -12,21 +12,21 @@ pub union Option<T> {
         }
     }
 
-    pub fn unwrap_or(this, or: T) T {
+    pub fn unwrap_or(this, or: T): T {
         match *this {
             ?val => val,
             null => or,
         }
     }
 
-    pub fn as_mut(mut this) ?*mut T {
+    pub fn as_mut(mut this): ?*mut T {
         match this {
             ?val => val,
             null => null,
         }
     }
 
-    pub fn get_or_insert(mut this, or: T) *mut T {
+    pub fn get_or_insert(mut this, or: T): *mut T {
         match this {
             ?val => val,
             empty => {

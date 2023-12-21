@@ -1464,7 +1464,7 @@ impl<'a> Parser<'a> {
             count += 1;
         }
 
-        let ret = if !self.matches(|kind| matches!(kind, Token::Semicolon | Token::LCurly)) {
+        let ret = if self.advance_if_kind(Token::Colon).is_some() {
             self.parse_type()
         } else {
             TypeHint::Void
