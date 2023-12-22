@@ -706,18 +706,32 @@ impl Codegen {
             this.buffer.emit(";");
         }
 
+        let returns = scopes.get_func(main.func.id).ret != TypeId::Void;
         if let Some(state) = conv_argv {
-            this.buffer.emit("return ");
+            if returns {
+                this.buffer.emit("return ");
+            }
             this.buffer.emit_fn_name(scopes, main);
             this.buffer.emit("(");
             this.buffer.emit_fn_name(scopes, &state);
-            this.buffer.emit("(argc, (const char **)argv)); }");
+            if returns {
+                this.buffer.emit("(argc, (const char **)argv)); }");
+            } else {
+                this.buffer
+                    .emit("(argc, (const char **)argv)); return 0; }");
+            }
         } else {
             this.buffer.emit("(void)argc;");
             this.buffer.emit("(void)argv;");
-            this.buffer.emit("return ");
+            if returns {
+                this.buffer.emit("return ");
+            }
             this.buffer.emit_fn_name(scopes, main);
-            this.buffer.emit("(); }");
+            if returns {
+                this.buffer.emit("(); }");
+            } else {
+                this.buffer.emit("(); return 0; }");
+            }
         }
 
         Ok(this.buffer.0)
