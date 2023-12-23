@@ -4228,20 +4228,18 @@ impl TypeChecker {
                     continue;
                 }
 
-                if let Some(ty) = ty.as_user_type() {
-                    let f = scopes.get_func(func.id);
-                    let param = *scopes
-                        .find_user_type_in(&f.type_params[i], f.body_scope)
-                        .unwrap();
-                    self.check_bounds(
-                        scopes,
-                        Some(func),
-                        ty,
-                        &scopes.get_user_type(param).impls,
-                        inst,
-                        span,
-                    );
-                }
+                let f = scopes.get_func(func.id);
+                let param = *scopes
+                    .find_user_type_in(&f.type_params[i], f.body_scope)
+                    .unwrap();
+                self.check_bounds(
+                    scopes,
+                    Some(func),
+                    ty,
+                    &scopes.get_user_type(param).impls,
+                    inst,
+                    span,
+                );
             }
         }
 
@@ -4260,7 +4258,7 @@ impl TypeChecker {
         &mut self,
         scopes: &Scopes,
         func: Option<&GenericFunc>,
-        ty: &GenericUserType,
+        ty: &TypeId,
         bounds: &[TypeId],
         inst: Option<&GenericUserType>,
         span: Span,
@@ -4279,16 +4277,20 @@ impl TypeChecker {
                 }
             }
 
-            if !ty.implements_trait(scopes, &bound) {
-                self.error::<()>(Error::new(
-                    format!(
-                        "type '{}' does not implement '{}'",
-                        ty.name(scopes),
-                        bound.name(scopes),
-                    ),
-                    span,
-                ));
+            if let Some(ty) = ty.as_user_type() {
+                if ty.implements_trait(scopes, &bound) {
+                    continue;
+                }
             }
+
+            self.error(Error::new(
+                format!(
+                    "type '{}' does not implement '{}'",
+                    ty.name(scopes),
+                    bound.name(scopes),
+                ),
+                span,
+            ))
         }
     }
 
