@@ -626,12 +626,12 @@ impl TypeId {
                         } in
                             std::mem::take(scopes.unresolved_use_stmts(scopes.current).unwrap())
                         {
-                            if let Some(path) = checker.resolve_path(scopes, &path, span, false) {
-                                checker.resolve_use(scopes, public, all, path, span, false);
+                            if let Some(path) = checker.resolve_path(scopes, &path, span) {
+                                checker.resolve_use(scopes, public, all, path, span);
                             }
                         }
 
-                        checker.resolve_type(scopes, &hint.0, false)
+                        checker.resolve_type(scopes, &hint.0)
                     });
                     break;
                 }
@@ -1268,6 +1268,7 @@ pub struct TypeChecker {
     errors: Vec<Error>,
     universal: Vec<ScopeId>,
     safety: Safety,
+    decl: bool,
 }
 
 impl TypeChecker {
@@ -1280,6 +1281,7 @@ impl TypeChecker {
             errors: vec![],
             universal: Vec::new(),
             safety: Safety::Safe,
+            decl: true,
         };
         let mut scopes = Scopes::new();
         let mut files: Vec<_> = module.iter().map(|file| file.path.clone()).collect();
@@ -1310,6 +1312,7 @@ impl TypeChecker {
             true,
             |scopes| {
                 paths.reserve(module.len());
+                self.decl = true;
                 let declared: Vec<_> = module
                     .into_iter()
                     .map(|file| {
@@ -1329,7 +1332,7 @@ impl TypeChecker {
                         ast
                     })
                     .collect();
-
+                self.decl = false;
                 for ast in declared {
                     for stmt in ast {
                         self.check_stmt(scopes, stmt);
@@ -1437,7 +1440,7 @@ impl TypeChecker {
                             public: member.public,
                             name: member.name,
                             shared: member.shared,
-                            ty: self.resolve_type(scopes, &member.ty, true),
+                            ty: self.resolve_type(scopes, &member.ty),
                         })
                         .collect();
 
@@ -1489,7 +1492,7 @@ impl TypeChecker {
                             public: member.public,
                             name: member.name.clone(),
                             shared: member.shared,
-                            ty: self.resolve_type(scopes, &member.ty, true),
+                            ty: self.resolve_type(scopes, &member.ty),
                         });
 
                         if member.shared && is_unsafe {
@@ -1592,7 +1595,7 @@ impl TypeChecker {
                     let type_params = self.declare_type_params(scopes, type_params);
 
                     for path in impls.iter() {
-                        if let Some(ty) = self.resolve_impl(scopes, path, true) {
+                        if let Some(ty) = self.resolve_impl(scopes, path) {
                             scopes.get_user_type_mut(id).impls.push(ty);
                         }
                     }
@@ -1669,7 +1672,7 @@ impl TypeChecker {
                 let id = scopes.insert_var(
                     Variable {
                         name,
-                        ty: self.resolve_type(scopes, &ty, true),
+                        ty: self.resolve_type(scopes, &ty),
                         is_static: true,
                         mutable: false,
                         value: None,
@@ -1680,7 +1683,7 @@ impl TypeChecker {
                 DeclaredStmtData::Static { id, value }
             }
             StmtData::Use { path, public, all } => {
-                if let Some(resolved) = self.resolve_path(scopes, &path, span, true) {
+                if let Some(resolved) = self.resolve_path(scopes, &path, span) {
                     if resolved.is_none()
                         && scopes.module_of(scopes.current) == Some(scopes.current)
                     {
@@ -1694,7 +1697,7 @@ impl TypeChecker {
                                 span,
                             });
                     }
-                    self.resolve_use(scopes, public, all, resolved, span, true);
+                    self.resolve_use(scopes, public, all, resolved, span);
                 }
 
                 DeclaredStmtData::Use { public, path, all }
@@ -1792,7 +1795,7 @@ impl TypeChecker {
 
                 scopes.get_user_type_mut(id).impls = impls
                     .iter()
-                    .flat_map(|path| self.resolve_impl(scopes, path, true))
+                    .flat_map(|path| self.resolve_impl(scopes, path))
                     .collect();
             }
 
@@ -1803,13 +1806,13 @@ impl TypeChecker {
                     mutable: param.mutable,
                     keyword: param.keyword,
                     name: param.name,
-                    ty: self.resolve_type(scopes, &param.ty, true),
+                    ty: self.resolve_type(scopes, &param.ty),
                     default: param
                         .default
                         .map(|expr| DefaultExpr::Unchecked(scopes.current, expr)),
                 })
                 .collect();
-            scopes.get_func_mut(id).ret = self.resolve_type(scopes, &f.ret, true);
+            scopes.get_func_mut(id).ret = self.resolve_type(scopes, &f.ret);
 
             DeclaredFn {
                 id,
@@ -1839,7 +1842,7 @@ impl TypeChecker {
                         type_params: 0,
                         impls: impls
                             .iter()
-                            .flat_map(|path| self.resolve_impl(scopes, path, true))
+                            .flat_map(|path| self.resolve_impl(scopes, path))
                             .collect(),
                     },
                     false,
@@ -1858,9 +1861,7 @@ impl TypeChecker {
             .into_iter()
             .map(|block| {
                 // TODO: type params
-                let ty = self
-                    .resolve_impl(scopes, &block.path, true)
-                    .unwrap_or_default();
+                let ty = self.resolve_impl(scopes, &block.path).unwrap_or_default();
                 let impl_index = scopes.get_user_type_mut(id).impls.len();
                 scopes.get_user_type_mut(id).impls.push(ty);
 
@@ -2010,7 +2011,7 @@ impl TypeChecker {
                 patt,
             } => {
                 if let Some(ty) = ty {
-                    let ty = self.resolve_type(scopes, &ty, false);
+                    let ty = self.resolve_type(scopes, &ty);
                     if let Some(value) = value {
                         let value = self.type_check(scopes, value, &ty);
                         return self.check_var_stmt(scopes, ty, Some(value), mutable, patt);
@@ -2043,8 +2044,8 @@ impl TypeChecker {
                 var.value = Some(value);
             }
             DeclaredStmtData::Use { public, path, all } => {
-                if let Some(path) = self.resolve_path(scopes, &path, stmt.span, false) {
-                    self.resolve_use(scopes, public, all, path, stmt.span, false);
+                if let Some(path) = self.resolve_path(scopes, &path, stmt.span) {
+                    self.resolve_use(scopes, public, all, path, stmt.span);
                 }
             }
             DeclaredStmtData::Error => return CheckedStmt::Error,
@@ -2841,7 +2842,7 @@ impl TypeChecker {
                     .unwrap_or(TypeId::F64),
                 CheckedExprData::Float(value),
             ),
-            ExprData::Path(path) => match self.resolve_path(scopes, &path, span, false) {
+            ExprData::Path(path) => match self.resolve_path(scopes, &path, span) {
                 Some(ResolvedPath::Var(id)) => {
                     let var = scopes.get_var(id);
                     if !var.is_static && scopes.current_function() != scopes.function_of(var.scope)
@@ -3308,7 +3309,7 @@ impl TypeChecker {
             }
             ExprData::As { expr, ty, throwing } => {
                 let mut expr = self.check_expr(scopes, *expr, None);
-                let ty = self.resolve_type(scopes, &ty, false);
+                let ty = self.resolve_type(scopes, &ty);
                 if !expr.ty.coerces_to(scopes, &ty) {
                     match (&expr.ty, &ty) {
                         (a, b) if a == b => {}
@@ -3386,22 +3387,20 @@ impl TypeChecker {
                 };
 
                 let mut lparams = Vec::new();
-                let ret = ret
-                    .map(|ret| self.resolve_type(scopes, &ret, false))
-                    .or_else(|| {
-                        target
-                            .as_ref()
-                            .and_then(|ty| ty.as_fn_ptr())
-                            .map(|f| &f.ret)
-                            .filter(|ty| ty_is_generic(scopes, ty))
-                            .cloned()
-                    });
+                let ret = ret.map(|ret| self.resolve_type(scopes, &ret)).or_else(|| {
+                    target
+                        .as_ref()
+                        .and_then(|ty| ty.as_fn_ptr())
+                        .map(|f| &f.ret)
+                        .filter(|ty| ty_is_generic(scopes, ty))
+                        .cloned()
+                });
                 // TODO: lambdas should have a unique type
                 let (id, body) = scopes.enter(ScopeKind::Lambda(ret, false), false, |scopes| {
                     for (i, param) in params.into_iter().enumerate() {
                         let ty = param
                             .1
-                            .map(|ty| self.resolve_type(scopes, &ty, false))
+                            .map(|ty| self.resolve_type(scopes, &ty))
                             .or_else(|| {
                                 target
                                     .as_ref()
@@ -3691,10 +3690,10 @@ impl TypeChecker {
         let (span, path, binding) = match pattern {
             Pattern::PathWithBindings { path, binding } => (
                 path.span,
-                self.resolve_path(scopes, &path.data, path.span, false),
+                self.resolve_path(scopes, &path.data, path.span),
                 Some(binding),
             ),
-            Pattern::Path(path) => match self.resolve_path(scopes, &path.data, path.span, false) {
+            Pattern::Path(path) => match self.resolve_path(scopes, &path.data, path.span) {
                 original @ Some(ResolvedPath::None(_)) => {
                     if let Some(ident) = path.data.as_identifier() {
                         return CheckedPattern::Irrefutable(IrrefutablePattern::Variable(
@@ -3724,7 +3723,6 @@ impl TypeChecker {
                         .get_user_type(scopes.get_option_id().unwrap())
                         .body_scope,
                     binding.span,
-                    false,
                 ),
                 Some((mutable, binding.data)),
             ),
@@ -3737,7 +3735,6 @@ impl TypeChecker {
                         .get_user_type(scopes.get_option_id().unwrap())
                         .body_scope,
                     span,
-                    false,
                 ),
                 None,
             ),
@@ -3917,13 +3914,7 @@ impl TypeChecker {
 
                         let mut func = GenericFunc::new(
                             *func,
-                            self.resolve_generics(
-                                scopes,
-                                f.type_params.len(),
-                                &generics,
-                                span,
-                                false,
-                            ),
+                            self.resolve_generics(scopes, f.type_params.len(), &generics, span),
                         );
                         let (args, ret) = self.check_fn_args(
                             tr.as_ref().or(Some(ut)),
@@ -3953,7 +3944,7 @@ impl TypeChecker {
                 ));
             }
             ExprData::Path(ref path) => {
-                match self.resolve_path(scopes, path, callee.span, false) {
+                match self.resolve_path(scopes, path, callee.span) {
                     Some(ResolvedPath::UserType(ty)) => {
                         let ut = scopes.get_user_type(ty.id);
                         let Some(st) = ut.data.as_struct() else {
@@ -4343,13 +4334,7 @@ impl TypeChecker {
             TypeId::UserType(
                 GenericUserType::new(
                     ty,
-                    self.resolve_generics(
-                        scopes,
-                        generics.len(),
-                        generics,
-                        Span::default(),
-                        fwd.is_some(),
-                    ),
+                    self.resolve_generics(scopes, generics.len(), generics, Span::default()),
                 )
                 .into(),
             )
@@ -4363,27 +4348,27 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_type(&mut self, scopes: &Scopes, hint: &TypeHint, fwd: bool) -> TypeId {
+    fn resolve_type(&mut self, scopes: &Scopes, hint: &TypeHint) -> TypeId {
         match hint {
             TypeHint::Regular(path) => {
-                return match self.resolve_path(scopes, &path.data, path.span, fwd) {
+                return match self.resolve_path(scopes, &path.data, path.span) {
                     Some(ResolvedPath::UserType(ut)) => TypeId::UserType(ut.into()),
                     Some(ResolvedPath::Func(_)) => {
-                        if fwd {
+                        if self.decl {
                             TypeId::Unknown(Some((hint.clone(), scopes.current).into()))
                         } else {
                             self.error(Error::new("expected type, got function", path.span))
                         }
                     }
                     Some(ResolvedPath::Var(_)) => {
-                        if fwd {
+                        if self.decl {
                             TypeId::Unknown(Some((hint.clone(), scopes.current).into()))
                         } else {
                             self.error(Error::new("expected type, got variable", path.span))
                         }
                     }
                     Some(ResolvedPath::Module(_)) => {
-                        if fwd {
+                        if self.decl {
                             TypeId::Unknown(Some((hint.clone(), scopes.current).into()))
                         } else {
                             self.error(Error::new("expected type, got module", path.span))
@@ -4414,7 +4399,7 @@ impl TypeChecker {
 
                         match res {
                             Some(res) => res,
-                            None if fwd => {
+                            None if self.decl => {
                                 TypeId::Unknown(Some((hint.clone(), scopes.current).into()))
                             }
                             None => self.error(err),
@@ -4424,8 +4409,8 @@ impl TypeChecker {
                 };
             }
             TypeHint::Void => TypeId::Void,
-            TypeHint::Ptr(ty) => TypeId::Ptr(self.resolve_type(scopes, ty, fwd).into()),
-            TypeHint::MutPtr(ty) => TypeId::MutPtr(self.resolve_type(scopes, ty, fwd).into()),
+            TypeHint::Ptr(ty) => TypeId::Ptr(self.resolve_type(scopes, ty).into()),
+            TypeHint::MutPtr(ty) => TypeId::MutPtr(self.resolve_type(scopes, ty).into()),
             TypeHint::This => {
                 // the parser ensures methods can only appear in structs/enums/etc
                 scopes
@@ -4442,29 +4427,35 @@ impl TypeChecker {
                     Ok(n) => n,
                     Err(err) => return self.error(err),
                 };
-                TypeId::Array((self.resolve_type(scopes, ty, fwd), n).into())
+                TypeId::Array((self.resolve_type(scopes, ty), n).into())
             }
-            TypeHint::Option(ty) => {
-                self.resolve_lang_type(scopes, "option", &[(**ty).clone()], fwd.then_some(hint))
-            }
+            TypeHint::Option(ty) => self.resolve_lang_type(
+                scopes,
+                "option",
+                &[(**ty).clone()],
+                self.decl.then_some(hint),
+            ),
             TypeHint::Vec(ty) => {
-                self.resolve_lang_type(scopes, "vec", &[(**ty).clone()], fwd.then_some(hint))
+                self.resolve_lang_type(scopes, "vec", &[(**ty).clone()], self.decl.then_some(hint))
             }
             TypeHint::Map(key, value) => self.resolve_lang_type(
                 scopes,
                 "map",
                 &[(**key).clone(), (**value).clone()],
-                fwd.then_some(hint),
+                self.decl.then_some(hint),
             ),
             TypeHint::Set(ty) => {
-                self.resolve_lang_type(scopes, "set", &[(**ty).clone()], fwd.then_some(hint))
+                self.resolve_lang_type(scopes, "set", &[(**ty).clone()], self.decl.then_some(hint))
             }
             TypeHint::Slice(ty) => {
-                self.resolve_lang_type(scopes, "span", &[(**ty).clone()], fwd.then_some(hint))
+                self.resolve_lang_type(scopes, "span", &[(**ty).clone()], self.decl.then_some(hint))
             }
-            TypeHint::SliceMut(ty) => {
-                self.resolve_lang_type(scopes, "span_mut", &[(**ty).clone()], fwd.then_some(hint))
-            }
+            TypeHint::SliceMut(ty) => self.resolve_lang_type(
+                scopes,
+                "span_mut",
+                &[(**ty).clone()],
+                self.decl.then_some(hint),
+            ),
             TypeHint::Tuple(_) => todo!(),
             TypeHint::Fn {
                 is_extern: _,
@@ -4474,9 +4465,9 @@ impl TypeChecker {
                 FnPtr {
                     params: params
                         .iter()
-                        .map(|p| self.resolve_type(scopes, p, fwd))
+                        .map(|p| self.resolve_type(scopes, p))
                         .collect(),
-                    ret: self.resolve_type(scopes, ret, fwd),
+                    ret: self.resolve_type(scopes, ret),
                 }
                 .into(),
             ),
@@ -4491,13 +4482,12 @@ impl TypeChecker {
         all: bool,
         path: ResolvedPath,
         span: Span,
-        fwd: bool,
     ) {
         match path {
             ResolvedPath::UserType(ut) => {
                 if !all {
                     scopes.current().types.insert(Vis { id: ut.id, public });
-                } else if !fwd {
+                } else if !self.decl {
                     self.error(Error::new(
                         format!(
                             "cannot import all items of type '{}'",
@@ -4513,7 +4503,7 @@ impl TypeChecker {
                         id: func.id,
                         public,
                     });
-                } else if !fwd {
+                } else if !self.decl {
                     self.error(Error::new(
                         format!(
                             "cannot import all items of function '{}'",
@@ -4524,7 +4514,7 @@ impl TypeChecker {
                 }
             }
             ResolvedPath::Var(id) => {
-                if !scopes.get_var(id).is_static && !fwd {
+                if !scopes.get_var(id).is_static && !self.decl {
                     return self.error(Error::new(
                         format!("cannot import local variable '{}'", scopes.get_var(id).name),
                         span,
@@ -4533,7 +4523,7 @@ impl TypeChecker {
 
                 if !all {
                     scopes.current().vars.insert(Vis { id, public });
-                } else if !fwd {
+                } else if !self.decl {
                     self.error(Error::new(
                         format!(
                             "cannot import all items of variable '{}'",
@@ -4568,19 +4558,19 @@ impl TypeChecker {
                 }
             }
             ResolvedPath::None(err) => {
-                if !fwd {
+                if !self.decl {
                     self.error(err)
                 }
             }
         }
     }
 
-    fn resolve_impl(&mut self, scopes: &Scopes, path: &Located<Path>, fwd: bool) -> Option<TypeId> {
-        match self.resolve_path(scopes, &path.data, path.span, fwd)? {
+    fn resolve_impl(&mut self, scopes: &Scopes, path: &Located<Path>) -> Option<TypeId> {
+        match self.resolve_path(scopes, &path.data, path.span)? {
             ResolvedPath::UserType(ty) if scopes.get_user_type(ty.id).data.is_trait() => {
                 Some(TypeId::UserType(ty.into()))
             }
-            ResolvedPath::None(err) if !fwd => self.error(err),
+            ResolvedPath::None(err) if !self.decl => self.error(err),
             ResolvedPath::None(_) => Some(TypeId::Unknown(Some(
                 (TypeHint::Regular(path.clone()), scopes.current).into(),
             ))),
@@ -4637,22 +4627,16 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_path(
-        &mut self,
-        scopes: &Scopes,
-        path: &Path,
-        span: Span,
-        fwd: bool,
-    ) -> Option<ResolvedPath> {
+    fn resolve_path(&mut self, scopes: &Scopes, path: &Path, span: Span) -> Option<ResolvedPath> {
         match path {
-            Path::Root(data) => self.resolve_path_in(scopes, data, ScopeId(0), span, fwd),
+            Path::Root(data) => self.resolve_path_in(scopes, data, ScopeId(0), span),
             Path::Super(data) => {
                 if let Some(module) = scopes.module_of(
                     scopes[scopes.module_of(scopes.current_id()).unwrap()]
                         .parent
                         .unwrap(),
                 ) {
-                    self.resolve_path_in(scopes, data, module, span, fwd)
+                    self.resolve_path_in(scopes, data, module, span)
                 } else {
                     self.error(Error::new("cannot use super here", span))
                 }
@@ -4682,7 +4666,6 @@ impl TypeChecker {
                                 scopes.get_user_type(*id).type_params,
                                 generics,
                                 span,
-                                fwd,
                             ),
                         );
                         //self.resolve_impls(scopes, id);
@@ -4695,14 +4678,13 @@ impl TypeChecker {
                         &data[1..],
                         scopes.get_user_type(*id).body_scope,
                         span,
-                        fwd,
                     )
                 } else if let Some(id) = scopes.find_free_fn(name) {
                     if is_end {
                         let f = scopes.get_func(*id);
                         return Some(ResolvedPath::Func(GenericFunc::new(
                             *id,
-                            self.resolve_generics(scopes, f.type_params.len(), generics, span, fwd),
+                            self.resolve_generics(scopes, f.type_params.len(), generics, span),
                         )));
                     }
 
@@ -4719,9 +4701,9 @@ impl TypeChecker {
                         ));
                     }
 
-                    self.resolve_path_in(scopes, &data[1..], *id, span, fwd)
+                    self.resolve_path_in(scopes, &data[1..], *id, span)
                 } else {
-                    self.resolve_path_in(scopes, data, ScopeId(0), span, fwd)
+                    self.resolve_path_in(scopes, data, ScopeId(0), span)
                 }
             }
         }
@@ -4733,7 +4715,6 @@ impl TypeChecker {
         data: &[(String, Vec<TypeHint>)],
         mut scope: ScopeId,
         span: Span,
-        fwd: bool,
     ) -> Option<ResolvedPath> {
         for (i, (name, generics)) in data.iter().enumerate() {
             let is_end = i + 1 == data.len();
@@ -4763,7 +4744,7 @@ impl TypeChecker {
                 if is_end {
                     return Some(ResolvedPath::UserType(GenericUserType::new(
                         *id,
-                        self.resolve_generics(scopes, ty.type_params, generics, span, fwd),
+                        self.resolve_generics(scopes, ty.type_params, generics, span),
                     )));
                 }
 
@@ -4781,7 +4762,6 @@ impl TypeChecker {
                             scopes.get_func(*id).type_params.len(),
                             generics,
                             span,
-                            fwd,
                         ),
                     )));
                 }
@@ -4821,7 +4801,6 @@ impl TypeChecker {
         params: usize,
         args: &[TypeHint],
         span: Span,
-        fwd: bool,
     ) -> Vec<TypeId> {
         if args.is_empty() {
             vec![TypeId::Unknown(None); params]
@@ -4836,7 +4815,7 @@ impl TypeChecker {
             ))
         } else {
             args.iter()
-                .map(|ty| self.resolve_type(scopes, ty, fwd))
+                .map(|ty| self.resolve_type(scopes, ty))
                 .collect()
         }
     }
@@ -4849,7 +4828,6 @@ impl TypeChecker {
                 true,
                 ResolvedPath::Module(scope),
                 Span::default(),
-                false,
             );
         }
     }
