@@ -12,7 +12,7 @@ use crate::{
         checked::{
             Block, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, IrrefutablePattern,
         },
-        declared::{DeclaredFn, DeclaredStmt, DeclaredStmtData, DeclaredStruct},
+        declared::{DeclaredFn, DeclaredImplBlock, DeclaredStmt, DeclaredStmtData, DeclaredStruct},
         parsed::{
             Destructure, Expr, ExprData, Fn, ImplBlock, Param, Path, Pattern, Stmt, StmtData,
             TypeHint,
@@ -744,6 +744,7 @@ pub enum ScopeKind {
     Function(FunctionId),
     UserType(UserTypeId),
     Module(String, Vec<UnresolvedUse>),
+    Impl(UserTypeId),
     #[default]
     None,
 }
@@ -1150,16 +1151,22 @@ impl Scopes {
         member: &str,
         ut: &UserType,
     ) -> Option<(Option<GenericUserType>, Vis<FunctionId>)> {
-        if let Some(func) = (ut.data.is_struct() || ut.data.is_union() || ut.data.is_enum())
-            .then(|| self.find_func_in(member, ut.body_scope))
-            .flatten()
-        {
-            return Some((None, func));
-        }
-
-        for ut in ut.impls.iter().map(|ut| ut.as_user_type().unwrap()) {
-            if let Some(func) = self.find_func_in(member, self.get_user_type(ut.id).body_scope) {
-                return Some((Some((**ut).clone()), func));
+        if ut.data.is_struct() || ut.data.is_union() || ut.data.is_enum() {
+            // TODO: trait implement overload ie.
+            // impl Eq<f32> { ... } impl Eq<i32> { ... }
+            for scope in std::iter::once(ut.body_scope)
+                .chain(self[ut.body_scope].children.iter().map(|s| s.id))
+            {
+                if let Some(func) = self.find_func_in(member, scope) {
+                    return Some((None, func));
+                }
+            }
+        } else {
+            for ut in ut.impls.iter().map(|ut| ut.as_user_type().unwrap()) {
+                if let Some(func) = self.find_func_in(member, self.get_user_type(ut.id).body_scope)
+                {
+                    return Some((Some((**ut).clone()), func));
+                }
             }
         }
 
@@ -1434,18 +1441,12 @@ impl TypeChecker {
                         })
                         .collect();
 
-                    for block in base.impls.iter() {
-                        if let Some(ty) = self.resolve_impl(scopes, &block.path, true) {
-                            scopes.get_user_type_mut(id).impls.push(ty);
-                        }
-                    }
-
                     DeclaredStmtData::Struct {
                         init,
                         base: DeclaredStruct {
                             id,
                             type_params,
-                            impls: base.impls,
+                            impls: self.declare_impl_blocks(scopes, id, base.impls),
                             functions: base
                                 .functions
                                 .into_iter()
@@ -1515,12 +1516,7 @@ impl TypeChecker {
                         .unwrap()
                         .variants = variants;
 
-                    for block in base.impls.iter() {
-                        if let Some(ty) = self.resolve_impl(scopes, &block.path, true) {
-                            scopes.get_user_type_mut(id).impls.push(ty);
-                        }
-                    }
-
+                    let impls = self.declare_impl_blocks(scopes, id, base.impls);
                     let member_cons = base
                         .members
                         .into_iter()
@@ -1561,7 +1557,7 @@ impl TypeChecker {
                         base: DeclaredStruct {
                             id,
                             type_params,
-                            impls: base.impls,
+                            impls,
                             functions: base
                                 .functions
                                 .into_iter()
@@ -1620,10 +1616,6 @@ impl TypeChecker {
             } => {
                 // TODO: should be the largest variant
                 let backing = discriminant_type(variants.len());
-                let resolved_impls = impls
-                    .iter()
-                    .flat_map(|block| self.resolve_impl(scopes, &block.path, true))
-                    .collect();
                 let id = self.insert_type(
                     scopes,
                     UserType {
@@ -1631,7 +1623,7 @@ impl TypeChecker {
                         body_scope: ScopeId(0),
                         data: UserTypeData::Enum(backing.clone()),
                         type_params: 0,
-                        impls: resolved_impls,
+                        impls: Vec::new(),
                     },
                     public,
                     &attrs,
@@ -1659,7 +1651,7 @@ impl TypeChecker {
                     DeclaredStmtData::Enum {
                         id,
                         variants,
-                        impls,
+                        impls: self.declare_impl_blocks(scopes, id, impls),
                         functions: functions
                             .into_iter()
                             .map(|f| self.declare_fn(scopes, false, f, &[]))
@@ -1852,6 +1844,35 @@ impl TypeChecker {
                     },
                     false,
                 )
+            })
+            .collect()
+    }
+
+    fn declare_impl_blocks(
+        &mut self,
+        scopes: &mut Scopes,
+        id: UserTypeId,
+        impls: Vec<ImplBlock>,
+    ) -> Vec<DeclaredImplBlock> {
+        impls
+            .into_iter()
+            .map(|block| {
+                // TODO: type params
+                let ty = self
+                    .resolve_impl(scopes, &block.path, true)
+                    .unwrap_or_default();
+                let impl_index = scopes.get_user_type_mut(id).impls.len();
+                scopes.get_user_type_mut(id).impls.push(ty);
+
+                scopes.enter(ScopeKind::None, false, |scopes| DeclaredImplBlock {
+                    impl_index,
+                    scope: scopes.current,
+                    functions: block
+                        .functions
+                        .into_iter()
+                        .map(|f| self.declare_fn(scopes, false, f, &[]))
+                        .collect(),
+                })
             })
             .collect()
     }
@@ -2339,19 +2360,28 @@ impl TypeChecker {
         });
     }
 
-    fn check_impl_blocks(&mut self, scopes: &mut Scopes, id: UserTypeId, impls: Vec<ImplBlock>) {
+    fn check_impl_blocks(
+        &mut self,
+        scopes: &mut Scopes,
+        id: UserTypeId,
+        impls: Vec<DeclaredImplBlock>,
+    ) {
         self.resolve_impls(scopes, id);
         for block in impls {
             // TODO:
             // - check signatures
             // - check that all functions are implemented
-            // - give each impl block its own scope
             // - impl type params (impl<T> Trait<T>)
             // - implement the same trait more than once
-            for f in block.functions {
-                let decl = self.declare_fn(scopes, false, f, &[]);
-                self.check_fn(scopes, decl);
-            }
+            scopes.enter_id(block.scope, |scopes| {
+                for f in block.functions {
+                    self.check_fn(scopes, f);
+                }
+
+                if let Some(tr) = scopes.get_user_type(id).impls[block.impl_index].as_user_type() {
+                    scopes.current().kind = ScopeKind::Impl(tr.id);
+                }
+            });
         }
     }
 
@@ -3581,7 +3611,7 @@ impl TypeChecker {
                                 ),
                             )]),
                             func: GenericFunc::new(*func.unwrap(), vec![]),
-                            trait_fn: false,
+                            trait_id: None,
                         },
                     );
                 }
@@ -3858,7 +3888,7 @@ impl TypeChecker {
                                 func,
                                 inst: Some(id),
                                 args,
-                                trait_fn: tr.is_some(),
+                                trait_id: tr.map(|ut| ut.id),
                             },
                         );
                     }
@@ -3918,7 +3948,7 @@ impl TypeChecker {
                                     func,
                                     args,
                                     inst: None,
-                                    trait_fn: false,
+                                    trait_id: None,
                                 }
                             },
                         );

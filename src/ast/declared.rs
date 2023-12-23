@@ -1,6 +1,6 @@
 use crate::{
+    ast::parsed::{Expr, Path, Pattern, TypeHint},
     ast::Attribute,
-    ast::parsed::{Expr, ImplBlock, Path, TypeHint, Pattern},
     lexer::Span,
     typecheck::{FunctionId, ScopeId, UserTypeId, VariableId},
 };
@@ -23,11 +23,11 @@ pub struct DeclaredStruct {
     pub type_params: Vec<UserTypeId>,
 }
 
-// pub struct DeclaredImplBlock {
-//     // ScopeId?
-//     pub functions: Vec<DeclaredFn>,
-// }
-pub type DeclaredImplBlock = ImplBlock;
+pub struct DeclaredImplBlock {
+    pub impl_index: usize,
+    pub scope: ScopeId,
+    pub functions: Vec<DeclaredFn>,
+}
 
 pub enum DeclaredStmtData {
     Expr(Expr),

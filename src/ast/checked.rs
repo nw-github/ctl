@@ -3,7 +3,7 @@ use num_bigint::{BigInt, BigUint};
 
 use crate::{
     ast::{BinaryOp, UnaryOp},
-    typecheck::{GenericFunc, ScopeId, Scopes, Symbol, TypeId, VariableId},
+    typecheck::{GenericFunc, ScopeId, Scopes, Symbol, TypeId, UserTypeId, VariableId},
 };
 
 #[derive(Debug, Clone)]
@@ -56,7 +56,7 @@ pub enum CheckedExprData {
         func: GenericFunc,
         args: IndexMap<String, CheckedExpr>,
         inst: Option<TypeId>,
-        trait_fn: bool,
+        trait_id: Option<UserTypeId>,
     },
     CallFnPtr {
         expr: Box<CheckedExpr>,

@@ -7,8 +7,8 @@ use crate::{
     ast::UnaryOp,
     lexer::Span,
     typecheck::{
-        FnPtr, GenericFunc, GenericUserType, Member, ScopeId, Scopes, Symbol, TypeId, UserTypeData,
-        VariableId,
+        FnPtr, GenericFunc, GenericUserType, Member, ScopeId, ScopeKind, Scopes, Symbol, TypeId,
+        UserTypeData, VariableId,
     },
     Error,
 };
@@ -895,19 +895,23 @@ impl Codegen {
                 mut func,
                 args,
                 mut inst,
-                trait_fn,
+                trait_id,
             } => {
                 if let Some(inst) = inst.as_mut() {
                     state.fill_generics(scopes, inst);
                 }
 
                 let original_id = func.id;
-                if trait_fn {
+                if let Some(trait_id) = trait_id {
                     let f = scopes.get_func(func.id);
                     if let Some(ut) = inst.as_ref().and_then(|i| i.as_user_type()) {
-                        func.id = *scopes
-                            .find_func_in(&f.name.data, scopes.get_user_type(ut.id).body_scope)
-                            .unwrap();
+                        let scope = scopes[scopes.get_user_type(ut.id).body_scope]
+                            .children
+                            .iter()
+                            .find(|scope| matches!(scopes[scope.id].kind, ScopeKind::Impl(id) if id == trait_id))
+                            .expect("trait_id corresponds to a trait implemented in the resolved type");
+
+                        func.id = *scopes.find_func_in(&f.name.data, scope.id).unwrap();
                     } else {
                         todo!("trait implementations for non-struct types");
                     }
