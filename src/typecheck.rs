@@ -1866,6 +1866,7 @@ impl TypeChecker {
 
                 scopes.enter(ScopeKind::None, false, |scopes| DeclaredImplBlock {
                     impl_index,
+                    span: block.path.span,
                     scope: scopes.current,
                     functions: block
                         .functions
@@ -2199,9 +2200,6 @@ impl TypeChecker {
     ) -> Result<(), String> {
         let lhs = scopes.get_func(lhs_id);
         let rhs = scopes.get_func(rhs_id);
-        if lhs.params.len() != rhs.params.len() || lhs.type_params.len() != rhs.type_params.len() {
-            return Err("type parameters are incorrect".into());
-        }
 
         let compare_types = |a: &TypeId, mut b: TypeId| {
             b.fill_func_generics(
@@ -2240,30 +2238,16 @@ impl TypeChecker {
             return Err(format!("return type is incorrect: {err}"));
         }
 
-        for (i, (s, t)) in lhs
-            .params
-            .iter()
-            .zip(rhs.params.iter().cloned())
-            .enumerate()
-        {
+        for (s, t) in lhs.params.iter().zip(rhs.params.iter().cloned()) {
             if let Err(err) = compare_types(&s.ty, t.ty) {
-                return Err(format!("parameter {} is incorrect: {err}", i + 1));
+                return Err(format!("parameter '{}' is incorrect: {err}", t.name));
             }
         }
 
-        for (i, (s, t)) in lhs
-            .type_params
-            .iter()
-            .zip(rhs.type_params.iter())
-            .enumerate()
-        {
+        for (s, t) in lhs.type_params.iter().zip(rhs.type_params.iter()) {
             let s = scopes.get_user_type(*scopes.find_user_type_in(s, lhs.body_scope).unwrap());
             let t = scopes.get_user_type(*scopes.find_user_type_in(t, rhs.body_scope).unwrap());
-
-            if s.impls.len() != t.impls.len() {
-                return Err(format!("generic parameter {} is incorrect", i + 1));
-            }
-
+            let name = &t.name;
             for (s, t) in s.impls.iter().zip(t.impls.iter()) {
                 for (s, t) in s
                     .as_user_type()
@@ -2273,47 +2257,102 @@ impl TypeChecker {
                     .zip(t.as_user_type().unwrap().generics.clone().into_iter())
                 {
                     if let Err(err) = compare_types(s, t) {
-                        return Err(format!("generic parameter {} is incorrect: {err}", i + 1));
+                        return Err(format!("generic parameter '{name}' is incorrect: {err}"));
                     }
                 }
             }
+
+            if s.impls.len() != t.impls.len() {
+                return Err(format!("generic parameter '{name}' is incorrect"));
+            }
+        }
+
+        if lhs.params.len() != rhs.params.len() {
+            return Err(format!(
+                "expected {} parameter(s), got {}",
+                rhs.params.len(),
+                lhs.params.len(),
+            ));
+        }
+
+        if lhs.type_params.len() != rhs.type_params.len() {
+            return Err(format!(
+                "expected {} type parameter(s), got {}",
+                rhs.type_params.len(),
+                lhs.type_params.len(),
+            ));
         }
 
         Ok(())
     }
 
-    fn check_impl(&mut self, scopes: &Scopes, this: &TypeId, gtr: &GenericUserType, span: Span) {
-        // TODO: detect and fail on circular trait dependencies
-        // TODO: default implementations
-        let ut = scopes.get_user_type(this.as_user_type().unwrap().id);
-        let tr = scopes.get_user_type(gtr.id);
-        for tr in tr.impls.iter() {
-            self.check_impl(scopes, this, tr.as_user_type().unwrap(), span);
+    fn check_impl_block(
+        &mut self,
+        scopes: &mut Scopes,
+        this: &TypeId,
+        tr_ut: &GenericUserType,
+        block: DeclaredImplBlock,
+    ) {
+        // TODO:
+        //  - detect and fail on circular trait dependencies
+        //  - default implementations
+        let this_ut = this.as_user_type().unwrap();
+        let tr = scopes.get_user_type(tr_ut.id);
+        for dep in tr.impls.iter().flat_map(|tr| tr.as_user_type()) {
+            if !this_ut.implements_trait(scopes, dep) {
+                self.error(Error::new(
+                    format!(
+                        "trait '{}' requires implementation of trait '{}'",
+                        tr_ut.name(scopes),
+                        dep.name(scopes)
+                    ),
+                    block.span,
+                ))
+            }
         }
 
-        for &rhs in scopes[tr.body_scope].fns.iter() {
-            let rhs_func = scopes.get_func(*rhs);
-            if let Some(lhs) = scopes.find_func_in(&rhs_func.name.data, ut.body_scope) {
-                if let Err(err) = Self::signatures_match(scopes, this, *lhs, *rhs, gtr) {
-                    self.error::<()>(Error::new(
-                        format!(
-                            "must implement '{}::{}': {err}",
-                            gtr.name(scopes),
-                            rhs_func.name.data
-                        ),
-                        span,
-                    ));
-                }
-            } else {
+        let mut functions: Vec<_> = scopes[tr.body_scope].fns.iter().map(|f| f.id).collect();
+        for f in block.functions {
+            let Located {
+                span: fn_span,
+                data: fn_name,
+            } = scopes.get_func(f.id).name.clone();
+            let f_id = f.id;
+
+            self.check_fn(scopes, f);
+            let Some(pos) = functions
+                .iter()
+                .position(|&id| scopes.get_func(id).name.data == fn_name)
+            else {
                 self.error::<()>(Error::new(
                     format!(
-                        "must implement '{}::{}'",
-                        gtr.name(scopes),
-                        rhs_func.name.data
+                        "no function '{fn_name}' found in trait '{}'",
+                        scopes.get_user_type(tr_ut.id).name
                     ),
-                    span,
+                    fn_span,
                 ));
+                continue;
+            };
+
+            let tr_fn_id = functions.swap_remove(pos);
+            self.resolve_proto(scopes, tr_fn_id);
+            if let Err(err) = Self::signatures_match(scopes, this, f_id, tr_fn_id, tr_ut) {
+                self.error(Error::new(
+                    format!("invalid implementation of function '{fn_name}': {err}"),
+                    fn_span,
+                ))
             }
+        }
+
+        for id in functions {
+            self.error(Error::new(
+                format!(
+                    "must implement '{}::{}'",
+                    tr_ut.name(scopes),
+                    scopes.get_func(id).name.data
+                ),
+                block.span,
+            ))
         }
     }
 
@@ -2369,17 +2408,31 @@ impl TypeChecker {
         self.resolve_impls(scopes, id);
         for block in impls {
             // TODO:
-            // - check signatures
-            // - check that all functions are implemented
             // - impl type params (impl<T> Trait<T>)
             // - implement the same trait more than once
             scopes.enter_id(block.scope, |scopes| {
-                for f in block.functions {
-                    self.check_fn(scopes, f);
-                }
-
-                if let Some(tr) = scopes.get_user_type(id).impls[block.impl_index].as_user_type() {
-                    scopes.current().kind = ScopeKind::Impl(tr.id);
+                if let Some(gtr) = scopes.get_user_type(id).impls[block.impl_index].as_user_type() {
+                    let this = TypeId::UserType(
+                        GenericUserType::new(
+                            id,
+                            scopes[scopes.get_user_type(id).body_scope]
+                                .types
+                                .iter()
+                                .filter(|&&id| scopes.get_user_type(*id).data.is_struct_generic())
+                                .map(|&id| {
+                                    TypeId::UserType(GenericUserType::new(*id, vec![]).into())
+                                })
+                                .collect(),
+                        )
+                        .into(),
+                    );
+                    let gtr = gtr.clone();
+                    self.check_impl_block(scopes, &this, &gtr, block);
+                    scopes.current().kind = ScopeKind::Impl(gtr.id);
+                } else {
+                    for f in block.functions {
+                        self.check_fn(scopes, f);
+                    }
                 }
             });
         }

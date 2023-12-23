@@ -25,6 +25,7 @@ pub struct DeclaredStruct {
 
 pub struct DeclaredImplBlock {
     pub impl_index: usize,
+    pub span: Span,
     pub scope: ScopeId,
     pub functions: Vec<DeclaredFn>,
 }
