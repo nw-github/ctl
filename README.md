@@ -5,7 +5,7 @@ A general-purpose programming language that compiles to C.
 ## Example
 
 ```rust
-extern fn printf(fmt: *c_char, ...) c_int;
+extern fn printf(fmt: *c_char, ...): c_int;
 
 trait Animal {
     fn make_sound(this, kw loud: bool);
@@ -39,7 +39,7 @@ fn animal_sound<T: Animal>(animal: *T, kw loud: bool = false) {
     animal.make_sound(loud:);
 }
 
-fn main() c_int {
+fn main(): c_int {
     let cat = Cat(name: "Milo");
     let dog = Dog(name: "Rex");
 
