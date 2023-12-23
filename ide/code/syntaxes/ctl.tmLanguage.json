@@ -69,25 +69,6 @@
       ]
     },
     {
-      "comment": "macro rules",
-      "name": "meta.macro.rules.ctl",
-      "match": "\\b(macro_rules!)\\s+(([a-z0-9_]+)|([A-Z][a-z0-9_]*))\\s+(\\{)",
-      "captures": {
-        "1": {
-          "name": "entity.name.function.macro.rules.ctl"
-        },
-        "3": {
-          "name": "entity.name.function.macro.ctl"
-        },
-        "4": {
-          "name": "entity.name.type.macro.ctl"
-        },
-        "5": {
-          "name": "punctuation.brackets.curly.ctl"
-        }
-      }
-    },
-    {
       "comment": "attributes",
       "name": "meta.attribute.ctl",
       "begin": "(#)(\\!?)(\\[)",
@@ -835,23 +816,6 @@
             },
             "3": {
               "name": "entity.name.type.lifetime.ctl"
-            }
-          }
-        }
-      ]
-    },
-    "macros": {
-      "patterns": [
-        {
-          "comment": "macros",
-          "name": "meta.macro.ctl",
-          "match": "(([a-z_][A-Za-z0-9_]*!)|([A-Z_][A-Za-z0-9_]*!))",
-          "captures": {
-            "2": {
-              "name": "entity.name.function.macro.ctl"
-            },
-            "3": {
-              "name": "entity.name.type.macro.ctl"
             }
           }
         }

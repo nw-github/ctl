@@ -1,15 +1,15 @@
 [intrinsic(size_of)]
-pub extern fn size_of<T>() usize;
+pub extern fn size_of<T>(): usize;
 
-pub fn size_of_val<T>(_: *T) usize {
-    return size_of::<T>();
+pub fn size_of_val<T>(_: *T): usize {
+    size_of::<T>()
 }
 
 /// Copies `num` T's from `src` to `dst` without destroying the contents in `dst`.
 pub unsafe fn copy<T>(kw dst: *mut T, kw src: *T, kw num: usize) {
     [c_macro]
     [c_name(__builtin_memcpy)]
-    extern fn memcpy(dst: *mut c_void, src: *c_void, len: usize) *mut c_void;
+    extern fn memcpy(dst: *mut c_void, src: *c_void, len: usize): *mut c_void;
 
     unsafe memcpy(dst as *mut c_void, src as *c_void, num * size_of::<T>());
 }
@@ -19,17 +19,17 @@ pub unsafe fn copy<T>(kw dst: *mut T, kw src: *T, kw num: usize) {
 pub unsafe fn move<T>(kw dst: *mut T, kw src: *T, kw num: usize) {
     [c_macro]
     [c_name(__builtin_memmove)]
-    extern fn memmove(dst: *mut c_void, src: *c_void, len: usize) *mut c_void;
+    extern fn memmove(dst: *mut c_void, src: *c_void, len: usize): *mut c_void;
 
     unsafe memmove(dst as *mut c_void, src as *c_void, num * size_of::<T>());
 }
 
-pub fn compare<T>(lhs: *T, rhs: *T, num: usize) bool {
+pub fn compare<T>(lhs: *T, rhs: *T, num: usize): bool {
     [c_macro]
     [c_name(__builtin_memcmp)]
-    extern fn memcmp(dst: *c_void, src: *c_void, len: usize) c_int;
+    extern fn memcmp(dst: *c_void, src: *c_void, len: usize): c_int;
 
-    return unsafe memcmp(lhs as *c_void, rhs as *c_void, num * size_of::<T>()) == 0;
+    unsafe memcmp(lhs as *c_void, rhs as *c_void, num * size_of::<T>()) == 0
 }
 
 pub fn swap<T>(lhs: *mut T, rhs: *mut T) {
@@ -38,13 +38,13 @@ pub fn swap<T>(lhs: *mut T, rhs: *mut T) {
     *rhs = tmp;
 }
 
-pub fn replace<T>(ptr: *mut T, val: T) T {
+pub fn replace<T>(ptr: *mut T, val: T): T {
     let old = *ptr;
     *ptr = val;
-    return old;
+    old
 }
 
-pub unsafe fn transmute<In, Out>(i: In) Out {
+pub unsafe fn transmute<In, Out>(i: In): Out {
     // TODO: this is fine since we transpile to c, but whenever a spec gets written this usage of 
     // unions in CTL code should be considered UB
 
@@ -61,5 +61,5 @@ pub unsafe fn transmute<In, Out>(i: In) Out {
         Out(U),
     }
 
-    return unsafe Transmuter::In::<In, Out>(i).Out;
+    unsafe Transmuter::In::<In, Out>(i).Out
 }

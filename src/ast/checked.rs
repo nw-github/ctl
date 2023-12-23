@@ -3,13 +3,19 @@ use num_bigint::{BigInt, BigUint};
 
 use crate::{
     ast::{BinaryOp, UnaryOp},
-    typecheck::{GenericFunc, ScopeId, Scopes, Symbol, TypeId, VariableId},
+    typecheck::{GenericFunc, ScopeId, Scopes, Symbol, TypeId, UserTypeId, VariableId},
 };
 
 #[derive(Debug, Clone)]
 pub struct Block {
     pub body: Vec<CheckedStmt>,
     pub scope: ScopeId,
+}
+
+#[derive(Debug, Clone)]
+pub enum IrrefutablePattern {
+    Variable(VariableId),
+    Destrucure(Vec<(String, IrrefutablePattern)>),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -19,7 +25,18 @@ pub enum CheckedPattern {
         variant: (String, usize),
         ptr: bool,
     },
-    CatchAll(VariableId),
+    Irrefutable(IrrefutablePattern),
+    #[default]
+    Error,
+}
+
+#[derive(Debug, Default, Clone)]
+pub enum CheckedStmt {
+    Expr(CheckedExpr),
+    Let(VariableId),
+    LetPattern(IrrefutablePattern, CheckedExpr),
+    Module(Block),
+    None,
     #[default]
     Error,
 }
@@ -39,11 +56,11 @@ pub enum CheckedExprData {
         func: GenericFunc,
         args: IndexMap<String, CheckedExpr>,
         inst: Option<TypeId>,
-        trait_fn: bool,
+        trait_id: Option<UserTypeId>,
     },
     CallFnPtr {
         expr: Box<CheckedExpr>,
-        args: Vec<CheckedExpr>, 
+        args: Vec<CheckedExpr>,
     },
     Instance {
         members: IndexMap<String, CheckedExpr>,
@@ -209,14 +226,4 @@ impl CheckedExpr {
 
         self
     }
-}
-
-#[derive(Debug, Default, Clone)]
-pub enum CheckedStmt {
-    Expr(CheckedExpr),
-    Let(VariableId),
-    Module(Block),
-    None,
-    #[default]
-    Error,
 }

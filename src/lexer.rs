@@ -23,6 +23,8 @@ pub enum Token<'a> {
     Comma,
     Colon,
     Semicolon,
+    Hash,
+    At,
 
     Plus,
     AddAssign,
@@ -71,6 +73,7 @@ pub enum Token<'a> {
     Type,
     This,
     ThisType,
+    Impl,
     If,
     Else,
     Loop,
@@ -115,24 +118,54 @@ pub enum Token<'a> {
     Eof,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Precedence {
+    Min,
+    Assignment,   // =
+    Range,        // .. ..=
+    LogicalOr,    // ||
+    LogicalAnd,   // &&
+    Eq,           // != ==
+    Comparison,   // < > <= >= is
+    NoneCoalesce, // ??
+    Or,           // |
+    And,          // &
+    Xor,          // ^
+    Shift,        // << >>
+    Term,         // + -
+    Factor,       // * / %
+    Cast,         // as as!
+    Prefix,       // !x ++x --x +x -x
+    Postfix,      // x++ x-- ! ?
+    Call,         // x() x[] x.
+}
+
 impl Token<'_> {
-    pub fn is_assignment(&self) -> bool {
+    pub fn precedence(&self) -> Precedence {
         use Token::*;
-        matches!(
-            self,
-            Assign
-                | AddAssign
-                | SubAssign
-                | MulAssign
-                | DivAssign
-                | RemAssign
-                | AndAssign
-                | OrAssign
-                | XorAssign
-                | ShlAssign
-                | ShrAssign
-                | NoneCoalesceAssign
-        )
+
+        match self {
+            LBrace | LParen | Dot => Precedence::Call,
+            Range | RangeInclusive => Precedence::Range,
+            Plus | Minus => Precedence::Term,
+            Asterisk | Div | Rem => Precedence::Factor,
+            Assign | AddAssign | SubAssign | MulAssign | DivAssign | RemAssign | AndAssign
+            | OrAssign | XorAssign | NoneCoalesceAssign | ShrAssign | ShlAssign => {
+                Precedence::Assignment
+            }
+            Increment | Decrement | Exclamation | Question => Precedence::Postfix,
+            Ampersand => Precedence::And,
+            Or => Precedence::Or,
+            Caret => Precedence::Xor,
+            Shr | Shl => Precedence::Shift,
+            LogicalAnd => Precedence::LogicalAnd,
+            LogicalOr => Precedence::LogicalOr,
+            Equal | NotEqual => Precedence::Eq,
+            LAngle | RAngle | GtEqual | LtEqual | Is => Precedence::Comparison,
+            NoneCoalesce => Precedence::NoneCoalesce,
+            As => Precedence::Cast,
+            _ => Precedence::Min,
+        }
     }
 }
 
@@ -205,6 +238,12 @@ impl Span {
 pub struct Located<T> {
     pub span: Span,
     pub data: T,
+}
+
+impl<T> Located<T> {
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Located<U> {
+        Located::new(self.span, f(self.data))
+    } 
 }
 
 pub struct Lexer<'a> {
@@ -438,6 +477,7 @@ impl<'a> Lexer<'a> {
             "fn" => Token::Fn,
             "for" => Token::For,
             "if" => Token::If,
+            "impl" => Token::Impl,
             "in" => Token::In,
             "is" => Token::Is,
             "kw" => Token::Keyword,
@@ -474,7 +514,9 @@ impl<'a> Lexer<'a> {
         match self.peek() {
             Some('\'') => {
                 self.advance();
-                let Token::Char(c) = self.char_literal()? else { unreachable!() };
+                let Token::Char(c) = self.char_literal()? else {
+                    unreachable!()
+                };
                 match c.try_into() {
                     Ok(c) => Ok(Token::ByteChar(c)),
                     Err(_) => Err(Located::new(
@@ -489,7 +531,9 @@ impl<'a> Lexer<'a> {
             }
             Some('"') => {
                 self.advance();
-                let Token::String(s) = self.string_literal(start)? else { unreachable!() };
+                let Token::String(s) = self.string_literal(start)? else {
+                    unreachable!()
+                };
                 if s.chars().any(|c| !c.is_ascii()) {
                     Err(Located::new(
                         Span {
@@ -555,6 +599,8 @@ impl<'a> Lexer<'a> {
             ')' => Token::RParen,
             ',' => Token::Comma,
             ';' => Token::Semicolon,
+            '#' => Token::Hash,
+            '@' => Token::At,
             '.' => {
                 if self.advance_if('.') {
                     if self.advance_if('.') {

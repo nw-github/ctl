@@ -1,6 +1,6 @@
-use derive_more::Display;
+use crate::lexer::{Located, Span};
 
-use crate::lexer::{Located, Span, Token};
+use super::{Attribute, BinaryOp, UnaryOp};
 
 #[derive(Debug, Clone)]
 pub struct Stmt {
@@ -18,13 +18,33 @@ pub enum StmtData {
         all: bool,
     },
     Let {
-        name: String,
+        patt: Pattern,
         ty: Option<TypeHint>,
         mutable: bool,
         value: Option<Expr>,
     },
     Fn(Fn),
-    UserType(ParsedUserType),
+    Struct(Struct),
+    Union {
+        tag: Option<Located<Path>>,
+        base: Struct,
+        is_unsafe: bool,
+    },
+    Trait {
+        public: bool,
+        name: String,
+        is_unsafe: bool,
+        type_params: Vec<(String, Vec<Located<Path>>)>,
+        impls: Vec<Located<Path>>,
+        functions: Vec<Fn>,
+    },
+    Enum {
+        public: bool,
+        name: Located<String>,
+        impls: Vec<ImplBlock>,
+        variants: Vec<(String, Option<Expr>)>,
+        functions: Vec<Fn>,
+    },
     Static {
         public: bool,
         name: String,
@@ -66,7 +86,13 @@ pub enum ExprData {
         args: Vec<(Option<String>, Expr)>,
     },
     Array(Vec<Expr>),
+    Set(Vec<Expr>),
+    Vec(Vec<Expr>),
     ArrayWithInit {
+        init: Box<Expr>,
+        count: Box<Expr>,
+    },
+    VecWithInit {
         init: Box<Expr>,
         count: Box<Expr>,
     },
@@ -123,6 +149,7 @@ pub enum ExprData {
     },
     Return(Box<Expr>),
     Yield(Box<Expr>),
+    YieldOrReturn(Box<Expr>),
     Break(Box<Expr>),
     Unsafe(Box<Expr>),
     Range {
@@ -151,7 +178,7 @@ impl ExprData {
     }
 }
 
-#[derive(Debug, Clone, enum_as_inner::EnumAsInner)]
+#[derive(Clone, enum_as_inner::EnumAsInner)]
 pub enum Path {
     Root(Vec<(String, Vec<TypeHint>)>),
     Super(Vec<(String, Vec<TypeHint>)>),
@@ -172,141 +199,84 @@ impl Path {
     }
 }
 
+impl std::fmt::Debug for Path {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let res = match self {
+            Path::Root(r) => {
+                write!(f, "::")?;
+                r
+            }
+            Path::Super(r) => {
+                write!(f, "super::")?;
+                r
+            }
+            Path::Normal(r) => r,
+        };
+
+        for (i, (name, generics)) in res.iter().enumerate() {
+            if i > 0 {
+                write!(f, "::")?;
+            }
+            write!(f, "{name}")?;
+            if generics.is_empty() {
+                continue;
+            }
+
+            write!(f, "::<")?;
+            for (i, generic) in generics.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{generic:?}")?;
+            }
+            write!(f, ">")?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Destructure {
+    pub name: Located<String>,
+    pub mutable: bool,
+    pub pattern: Option<Pattern>,
+}
+
 #[derive(Debug, Clone)]
 pub enum Pattern {
+    // x is ::core::opt::Option::Some(mut y)
     PathWithBindings {
         path: Located<Path>,
-        binding: (bool, String),
+        binding: (bool, String), // Box<Pattern>
     },
+    // x is ::core::opt::Option::None
+    // x is y
     Path(Located<Path>),
-    MutCatchAll(Located<String>),
+    // x is mut y
+    MutBinding(Located<String>),
+    // x is ?mut y
     Option(bool, Located<String>),
+    // x is null
     Null(Span),
+    // let {x, y} = z;
+    StructDestructure(Located<Vec<Destructure>>),
 }
 
-#[derive(Debug, Clone)]
-pub struct Attribute {
-    pub name: Located<String>,
-    pub props: Vec<Attribute>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
-pub enum BinaryOp {
-    #[display(fmt = "+")]
-    Add,
-    #[display(fmt = "-")]
-    Sub,
-    #[display(fmt = "*")]
-    Mul,
-    #[display(fmt = "/")]
-    Div,
-    #[display(fmt = "%")]
-    Rem,
-    #[display(fmt = "&")]
-    And,
-    #[display(fmt = "^")]
-    Xor,
-    #[display(fmt = "|")]
-    Or,
-    #[display(fmt = "<<")]
-    Shl,
-    #[display(fmt = ">>")]
-    Shr,
-    #[display(fmt = "??")]
-    NoneCoalesce,
-    #[display(fmt = ">")]
-    Gt,
-    #[display(fmt = ">=")]
-    GtEqual,
-    #[display(fmt = "<")]
-    Lt,
-    #[display(fmt = "<=")]
-    LtEqual,
-    #[display(fmt = "==")]
-    Equal,
-    #[display(fmt = "!=")]
-    NotEqual,
-    #[display(fmt = "||")]
-    LogicalOr,
-    #[display(fmt = "&&")]
-    LogicalAnd,
-}
-
-impl TryFrom<Token<'_>> for BinaryOp {
-    type Error = ();
-
-    fn try_from(value: Token<'_>) -> Result<Self, Self::Error> {
-        match value {
-            Token::Plus | Token::AddAssign => Ok(BinaryOp::Add),
-            Token::Minus | Token::SubAssign => Ok(BinaryOp::Sub),
-            Token::Asterisk | Token::MulAssign => Ok(BinaryOp::Mul),
-            Token::Div | Token::DivAssign => Ok(BinaryOp::Div),
-            Token::Rem | Token::RemAssign => Ok(BinaryOp::Rem),
-            Token::Ampersand | Token::AndAssign => Ok(BinaryOp::And),
-            Token::Caret | Token::XorAssign => Ok(BinaryOp::Xor),
-            Token::Or | Token::OrAssign => Ok(BinaryOp::Or),
-            Token::NoneCoalesce | Token::NoneCoalesceAssign => Ok(BinaryOp::NoneCoalesce),
-            Token::RAngle => Ok(BinaryOp::Gt),
-            Token::GtEqual => Ok(BinaryOp::GtEqual),
-            Token::LAngle => Ok(BinaryOp::Lt),
-            Token::Shl | Token::ShlAssign => Ok(BinaryOp::Shl),
-            Token::Shr | Token::ShrAssign => Ok(BinaryOp::Shr),
-            Token::LtEqual => Ok(BinaryOp::LtEqual),
-            Token::Equal => Ok(BinaryOp::Equal),
-            Token::NotEqual => Ok(BinaryOp::NotEqual),
-            Token::LogicalAnd => Ok(BinaryOp::LogicalAnd),
-            Token::LogicalOr => Ok(BinaryOp::LogicalOr),
-            _ => Err(()),
+impl Pattern {
+    pub fn span(&self) -> &Span {
+        match self {
+            Pattern::PathWithBindings { path, .. } => &path.span,
+            Pattern::Path(path) => &path.span,
+            Pattern::MutBinding(ident) => &ident.span,
+            Pattern::Option(_, ident) => &ident.span,
+            Pattern::Null(span) => span,
+            Pattern::StructDestructure(stuff) => &stuff.span,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
-pub enum UnaryOp {
-    #[display(fmt = "+")]
-    Plus,
-    #[display(fmt = "-")]
-    Neg,
-    #[display(fmt = "++")]
-    PostIncrement,
-    #[display(fmt = "--")]
-    PostDecrement,
-    #[display(fmt = "++")]
-    PreIncrement,
-    #[display(fmt = "--")]
-    PreDecrement,
-    #[display(fmt = "!")]
-    Not,
-    #[display(fmt = "*")]
-    Deref,
-    #[display(fmt = "&")]
-    Addr,
-    #[display(fmt = "&mut")]
-    AddrMut,
-    #[display(fmt = "!")]
-    Unwrap,
-    #[display(fmt = "?")]
-    Try,
-}
-
-impl TryFrom<Token<'_>> for UnaryOp {
-    type Error = ();
-
-    fn try_from(value: Token<'_>) -> Result<Self, Self::Error> {
-        match value {
-            Token::Plus => Ok(UnaryOp::Plus),
-            Token::Minus => Ok(UnaryOp::Neg),
-            Token::Asterisk => Ok(UnaryOp::Deref),
-            Token::Ampersand => Ok(UnaryOp::Addr),
-            Token::Increment => Ok(UnaryOp::PreIncrement),
-            Token::Decrement => Ok(UnaryOp::PreDecrement),
-            Token::Exclamation => Ok(UnaryOp::Not),
-            _ => Err(()),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum TypeHint {
     Regular(Located<Path>),
     Array(Box<TypeHint>, Box<Expr>),
@@ -328,6 +298,51 @@ pub enum TypeHint {
     This,
     MutThis,
     Error,
+}
+
+impl std::fmt::Debug for TypeHint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeHint::Regular(path) => write!(f, "{:?}", path.data),
+            TypeHint::Array(inner, _) => write!(f, "[{inner:?}; <expr>]"),
+            TypeHint::Vec(inner) => write!(f, "[{inner:?}]"),
+            TypeHint::Slice(inner) => write!(f, "[{inner:?}..]"),
+            TypeHint::SliceMut(inner) => write!(f, "[mut {inner:?}..]"),
+            TypeHint::Tuple(vals) => {
+                write!(f, "(")?;
+                for (i, inner) in vals.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{inner:?}")?;
+                }
+                write!(f, ")")
+            }
+            TypeHint::Set(inner) => write!(f, "{{{inner:?}}}"),
+            TypeHint::Map(key, val) => write!(f, "[{key:?}: {val:?}]"),
+            TypeHint::Option(inner) => write!(f, "?{inner:?}"),
+            TypeHint::Ptr(inner) => write!(f, "*{inner:?}"),
+            TypeHint::MutPtr(inner) => write!(f, "*mut {inner:?}"),
+            TypeHint::Fn {
+                is_extern,
+                params,
+                ret,
+            } => {
+                write!(f, "{}fn (", if *is_extern { "extern " } else { "" })?;
+                for (i, inner) in params.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{inner:?}")?;
+                }
+                write!(f, ") {ret:?}")
+            }
+            TypeHint::Void => write!(f, "void"),
+            TypeHint::This => write!(f, "This"),
+            TypeHint::MutThis => write!(f, "mut This"),
+            TypeHint::Error => write!(f, "Error"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -368,31 +383,13 @@ pub struct Struct {
     pub name: Located<String>,
     pub type_params: Vec<(String, Vec<Located<Path>>)>,
     pub members: Vec<MemVar>,
-    pub impls: Vec<Located<Path>>,
+    pub impls: Vec<ImplBlock>,
     pub functions: Vec<Fn>,
 }
 
 #[derive(Debug, Clone)]
-pub enum ParsedUserType {
-    Struct(Struct),
-    Union {
-        tag: Option<Located<Path>>,
-        base: Struct,
-        is_unsafe: bool,
-    },
-    Trait {
-        public: bool,
-        name: String,
-        is_unsafe: bool,
-        type_params: Vec<(String, Vec<Located<Path>>)>,
-        impls: Vec<Located<Path>>,
-        functions: Vec<Fn>,
-    },
-    Enum {
-        public: bool,
-        name: Located<String>,
-        impls: Vec<Located<Path>>,
-        variants: Vec<(String, Option<Expr>)>,
-        functions: Vec<Fn>,
-    },
+pub struct ImplBlock {
+    pub type_params: Vec<(String, Vec<Located<Path>>)>,
+    pub path: Located<Path>,
+    pub functions: Vec<Fn>,
 }

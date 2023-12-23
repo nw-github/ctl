@@ -1,4 +1,4 @@
-extern fn write(fd: c_int, buf: *c_void, count: usize) isize;
+extern fn write(fd: c_int, buf: *c_void, count: usize): isize;
 
 pub fn println(s: str) {
     print(s);
@@ -18,14 +18,14 @@ pub fn eprint(s: str) {
     unsafe write(2, s.as_ptr() as *c_void, s.len());
 }
 
-fn convert_argv(argc: c_int, argv: **c_char) [str..] {
+fn convert_argv(argc: c_int, argv: **c_char): [str..] {
     let argc = argc as! usize;
     mut args: [str] = std::vec::Vec::with_capacity(argc);
     mut i = 0usize;
     while i < argc {
         args.push(str::from_c_str(*unsafe core::ptr::offset(argv, i++)));
     }
-    return args.as_span();
+    args.as_span()
 }
 
 [autouse]
