@@ -16,13 +16,6 @@ pub struct DeclaredFn {
     pub body: Option<Vec<DeclaredStmt>>,
 }
 
-pub struct DeclaredStruct {
-    pub id: UserTypeId,
-    pub impls: Vec<DeclaredImplBlock>,
-    pub functions: Vec<DeclaredFn>,
-    pub type_params: Vec<UserTypeId>,
-}
-
 pub struct DeclaredImplBlock {
     pub impl_index: usize,
     pub span: Span,
@@ -45,17 +38,20 @@ pub enum DeclaredStmtData {
     },
     Fn(DeclaredFn),
     Struct {
+        id: UserTypeId,
+        impls: Vec<DeclaredImplBlock>,
+        functions: Vec<DeclaredFn>,
         init: DeclaredFn,
-        base: DeclaredStruct,
     },
     Union {
+        id: UserTypeId,
+        impls: Vec<DeclaredImplBlock>,
+        functions: Vec<DeclaredFn>,
         member_cons: Vec<DeclaredFn>,
-        base: DeclaredStruct,
     },
     Trait {
         id: UserTypeId,
         functions: Vec<DeclaredFn>,
-        type_params: Vec<UserTypeId>,
     },
     Enum {
         id: UserTypeId,
