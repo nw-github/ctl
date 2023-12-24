@@ -89,7 +89,7 @@ impl TypeGen {
         }
 
         for ut in Self::get_struct_order(scopes, &structs)? {
-            let union = scopes.get_user_type(ut.id).data.as_union();
+            let union = scopes.get(ut.id).data.as_union();
             let unsafe_union = union.as_ref().map_or(false, |union| union.is_unsafe);
             if unsafe_union {
                 buffer.emit("typedef union ");
@@ -107,7 +107,7 @@ impl TypeGen {
             definitions.emit_type_name(scopes, ut);
             definitions.emit("{");
 
-            let members = scopes.get_user_type(ut.id).members().unwrap();
+            let members = scopes.get(ut.id).members().unwrap();
             if let Some(union) = union.filter(|_| !unsafe_union) {
                 definitions.emit_type(scopes, &union.tag_type(), self);
                 definitions.emit(format!(" {UNION_TAG_NAME};"));
@@ -199,7 +199,7 @@ impl TypeGen {
         }
 
         let mut deps = Vec::new();
-        for member in scopes.get_user_type(ut.id).members().unwrap().iter() {
+        for member in scopes.get(ut.id).members().unwrap().iter() {
             let mut ty = member.ty.clone();
             ty.fill_struct_templates(scopes, &ut);
 
@@ -295,7 +295,7 @@ impl Buffer {
                 }
                 self.emit_generic_mangled_name(scopes, id);
             }
-            TypeId::UserType(ut) => match &scopes.get_user_type(ut.id).data {
+            TypeId::UserType(ut) => match &scopes.get(ut.id).data {
                 UserTypeData::Struct { .. } | UserTypeData::Union(_) => {
                     if is_opt_ptr(scopes, id) {
                         self.emit_type(scopes, &ut.ty_args[0], tg);
@@ -377,7 +377,7 @@ impl Buffer {
     }
 
     fn emit_fn_name(&mut self, scopes: &Scopes, state: &State) {
-        let f = scopes.get_func(state.func.id);
+        let f = scopes.get(state.func.id);
         if !f.is_extern {
             if let Some(inst) = state.inst.as_ref() {
                 self.emit_generic_mangled_name(scopes, inst);
@@ -408,7 +408,7 @@ impl Buffer {
     }
 
     fn emit_type_name(&mut self, scopes: &Scopes, ut: &GenericUserType) {
-        let ty = scopes.get_user_type(ut.id);
+        let ty = scopes.get(ut.id);
         if ty.data.is_template() {
             panic!("ICE: Template type in emit_type_name");
         }
@@ -431,7 +431,7 @@ impl Buffer {
         is_prototype: bool,
         tg: &mut TypeGen,
     ) {
-        let f = scopes.get_func(state.func.id);
+        let f = scopes.get(state.func.id);
         let mut ret = f.ret.clone();
         state.fill_generics(scopes, &mut ret);
 
@@ -471,7 +471,7 @@ impl Buffer {
                     **scopes[f.body_scope]
                         .vars
                         .iter()
-                        .find(|&&v| scopes.get_var(*v).name == param.name)
+                        .find(|&&v| scopes.get(*v).name == param.name)
                         .unwrap(),
                     state,
                     tg,
@@ -495,7 +495,7 @@ impl Buffer {
     fn emit_var_name(&mut self, scopes: &Scopes, id: VariableId, state: &mut State) {
         use std::collections::hash_map::*;
 
-        let var = scopes.get_var(id);
+        let var = scopes.get(id);
         if var.is_static {
             self.emit(scopes.full_name(var.scope, &var.name));
         } else {
@@ -529,7 +529,7 @@ impl Buffer {
         state: &mut State,
         tg: &mut TypeGen,
     ) -> Result<TypeId, TypeId> {
-        let var = scopes.get_var(id);
+        let var = scopes.get(id);
         let mut ty = var.ty.clone();
         state.fill_generics(scopes, &mut ty);
         if !ty.is_void_like() {
@@ -612,7 +612,7 @@ impl Codegen {
         let main = &mut State::new(
             GenericFunc::new(
                 *scopes
-                    .find_func_in("main", scope)
+                    .find_in("main", scope)
                     .ok_or(Error::new("no main function found", Span::default()))?,
                 Vec::new(),
             ),
@@ -623,9 +623,9 @@ impl Codegen {
             ..Self::default()
         };
 
-        let conv_argv = (scopes.get_func(main.func.id).params.len() == 1).then(|| {
+        let conv_argv = (scopes.get(main.func.id).params.len() == 1).then(|| {
             let id = scopes
-                .find_func_in("convert_argv", *scopes.find_module("std").unwrap())
+                .find_in("convert_argv", *scopes.find_module("std").unwrap())
                 .unwrap();
 
             let state = State::new(GenericFunc::new(*id, vec![]), None);
@@ -642,7 +642,7 @@ impl Codegen {
             for mut state in diff {
                 // TODO: emit an error if a function has the c_macro attribute and a body
                 if scopes
-                    .get_func(state.func.id)
+                    .get(state.func.id)
                     .attrs
                     .iter()
                     .any(|attr| attr.name.data == "c_macro")
@@ -653,7 +653,7 @@ impl Codegen {
                 prototypes.emit_prototype(scopes, &mut state, true, &mut this.type_gen);
                 prototypes.emit(";");
 
-                if let Some(body) = scopes.get_func(state.func.id).body.clone() {
+                if let Some(body) = scopes.get(state.func.id).body.clone() {
                     this.buffer
                         .emit_prototype(scopes, &mut state, false, &mut this.type_gen);
                     this.emit_block(scopes, body, &mut state);
@@ -668,7 +668,7 @@ impl Codegen {
             .scopes()
             .iter()
             .flat_map(|s| s.vars.iter())
-            .filter(|&&v| scopes.get_var(*v).is_static)
+            .filter(|&&v| scopes.get(*v).is_static)
         {
             if this
                 .buffer
@@ -696,11 +696,11 @@ impl Codegen {
                 this.buffer.emit_var_name(scopes, id, main);
                 this.buffer.emit(" = ");
             }
-            this.gen_expr(scopes, scopes.get_var(id).value.clone().unwrap(), main);
+            this.gen_expr(scopes, scopes.get(id).value.clone().unwrap(), main);
             this.buffer.emit(";");
         }
 
-        let returns = scopes.get_func(main.func.id).ret != TypeId::Void;
+        let returns = scopes.get(main.func.id).ret != TypeId::Void;
         if let Some(state) = conv_argv {
             if returns {
                 this.buffer.emit("return ");
@@ -747,7 +747,7 @@ impl Codegen {
             }
             CheckedStmt::Let(id) => {
                 stmt!(self, {
-                    let var = scopes.get_var(id);
+                    let var = scopes.get(id);
                     match self
                         .buffer
                         .emit_local_decl(scopes, id, state, &mut self.type_gen)
@@ -897,15 +897,15 @@ impl Codegen {
 
                 let original_id = func.id;
                 if let Some(trait_id) = trait_id {
-                    let f = scopes.get_func(func.id);
+                    let f = scopes.get(func.id);
                     if let Some(ut) = inst.as_ref().and_then(|i| i.as_user_type()) {
-                        let scope = scopes[scopes.get_user_type(ut.id).body_scope]
+                        let scope = scopes[scopes.get(ut.id).body_scope]
                             .children
                             .iter()
                             .find(|scope| matches!(scopes[scope.id].kind, ScopeKind::Impl(id) if id == trait_id))
                             .expect("trait_id corresponds to a trait implemented in the resolved type");
 
-                        func.id = *scopes.find_func_in(&f.name.data, scope.id).unwrap();
+                        func.id = *scopes.find_in(&f.name.data, scope.id).unwrap();
                     } else {
                         todo!("trait implementations for non-struct types");
                     }
@@ -954,7 +954,7 @@ impl Codegen {
                 self.buffer.emit_fn_name(scopes, &next_state);
                 self.buffer.emit("(");
                 scopes
-                    .get_func(original_id)
+                    .get(original_id)
                     .params
                     .iter()
                     .flat_map(|param| args.shift_remove(&param.name))
@@ -996,10 +996,7 @@ impl Codegen {
                     let next_state = State::new(
                         GenericFunc::new(
                             *scopes
-                                .find_func_in(
-                                    "with_capacity",
-                                    scopes.get_user_type(ut.id).body_scope,
-                                )
+                                .find_in("with_capacity", scopes.get(ut.id).body_scope)
                                 .unwrap(),
                             vec![inner.clone()],
                         ),
@@ -1039,10 +1036,7 @@ impl Codegen {
                     let next_state = State::new(
                         GenericFunc::new(
                             *scopes
-                                .find_func_in(
-                                    "with_capacity",
-                                    scopes.get_user_type(ut.id).body_scope,
-                                )
+                                .find_in("with_capacity", scopes.get(ut.id).body_scope)
                                 .unwrap(),
                             vec![inner.clone()],
                         ),
@@ -1067,10 +1061,10 @@ impl Codegen {
             CheckedExprData::Set(exprs) => {
                 let tmp = tmpbuf!(self, state, |tmp| {
                     let ut = (**expr.ty.as_user_type().unwrap()).clone();
-                    let body = scopes.get_user_type(ut.id).body_scope;
+                    let body = scopes.get(ut.id).body_scope;
                     let with_capacity = State::new(
                         GenericFunc::new(
-                            *scopes.find_func_in("with_capacity", body).unwrap(),
+                            *scopes.find_in("with_capacity", body).unwrap(),
                             vec![ut.ty_args[0].clone()],
                         ),
                         state.inst.clone(),
@@ -1081,7 +1075,7 @@ impl Codegen {
                     self.buffer.emit_fn_name(scopes, &with_capacity);
                     self.buffer.emit(format!("({});", exprs.len()));
                     let insert = State::new(
-                        GenericFunc::new(*scopes.find_func_in("insert", body).unwrap(), vec![]),
+                        GenericFunc::new(*scopes.find_in("insert", body).unwrap(), vec![]),
                         Some(expr.ty.clone()),
                     );
 
@@ -1100,17 +1094,17 @@ impl Codegen {
             CheckedExprData::Map(exprs) => {
                 let tmp = tmpbuf!(self, state, |tmp| {
                     let ut = (**expr.ty.as_user_type().unwrap()).clone();
-                    let body = scopes.get_user_type(ut.id).body_scope;
+                    let body = scopes.get(ut.id).body_scope;
                     let with_capacity = State::new(
                         GenericFunc::new(
-                            *scopes.find_func_in("with_capacity", body).unwrap(),
+                            *scopes.find_in("with_capacity", body).unwrap(),
                             vec![ut.ty_args[0].clone(), ut.ty_args[1].clone()],
                         ),
                         state.inst.clone(),
                     );
 
                     let insert = State::new(
-                        GenericFunc::new(*scopes.find_func_in("insert", body).unwrap(), vec![]),
+                        GenericFunc::new(*scopes.find_in("insert", body).unwrap(), vec![]),
                         Some(expr.ty.clone()),
                     );
 
@@ -1182,7 +1176,7 @@ impl Codegen {
                     self.funcs.insert(state);
                 }
                 Symbol::Var(id) => {
-                    if !scopes.get_var(id).ty.is_void_like() {
+                    if !scopes.get(id).ty.is_void_like() {
                         self.buffer.emit_var_name(scopes, id, state);
                     }
                 }
@@ -1203,7 +1197,7 @@ impl Codegen {
                     if let Some((name, union)) = variant.zip(
                         expr.ty
                             .as_user_type()
-                            .and_then(|ut| scopes.get_user_type(ut.id).data.as_union()),
+                            .and_then(|ut| scopes.get(ut.id).data.as_union()),
                     ) {
                         if !union.is_unsafe
                             && union.variants.iter().any(|m| m.name == name && !m.shared)
@@ -1303,7 +1297,7 @@ impl Codegen {
                     }
 
                     if let Some(iter) = iter {
-                        let mut expr = scopes.get_var(iter).value.clone().unwrap();
+                        let mut expr = scopes.get(iter).value.clone().unwrap();
                         let (Ok(ty) | Err(ty)) =
                             self.buffer
                                 .emit_local_decl(scopes, iter, state, &mut self.type_gen);

@@ -151,7 +151,7 @@ impl CheckedExpr {
             }
             CheckedExprData::Symbol(symbol) => match symbol {
                 Symbol::Func(_) => false,
-                Symbol::Var(id) => scopes.get_var(*id).mutable,
+                Symbol::Var(var) => scopes.get(*var).mutable,
             },
             CheckedExprData::Member { source, .. } => {
                 matches!(source.ty, TypeId::MutPtr(_)) || source.can_addrmut(scopes)
