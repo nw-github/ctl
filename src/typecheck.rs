@@ -781,7 +781,7 @@ pub struct Function {
     pub is_extern: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
-    pub type_params: Vec<String>,
+    pub type_params: Vec<UserTypeId>,
     pub params: Vec<CheckedParam>,
     pub ret: TypeId,
     pub body: Option<Vec<CheckedStmt>>,
@@ -1735,7 +1735,7 @@ impl TypeChecker {
                 is_extern: f.is_extern,
                 is_unsafe: f.is_unsafe,
                 variadic: f.variadic,
-                type_params: f.type_params.iter().map(|x| x.0.clone()).collect(),
+                type_params: Vec::new(),
                 params: Vec::new(),
                 ret: TypeId::Unknown(None),
                 body: None,
@@ -1767,24 +1767,30 @@ impl TypeChecker {
 
         scopes.enter(ScopeKind::Function(id), false, |scopes| {
             scopes.get_func_mut(id).body_scope = scopes.current_id();
-            for (i, (name, impls)) in f.type_params.into_iter().enumerate() {
-                let id = scopes.insert_user_type(
-                    UserType {
-                        name,
-                        body_scope: scopes.current_id(),
-                        data: UserTypeData::FuncGeneric(i),
-                        type_params: 0,
-                        impls: Vec::new(),
-                    },
-                    false,
-                );
+            scopes.get_func_mut(id).type_params = f
+                .type_params
+                .into_iter()
+                .enumerate()
+                .map(|(i, (name, impls))| {
+                    let id = scopes.insert_user_type(
+                        UserType {
+                            name,
+                            body_scope: scopes.current_id(),
+                            data: UserTypeData::FuncGeneric(i),
+                            type_params: 0,
+                            impls: Vec::new(),
+                        },
+                        false,
+                    );
 
-                scopes.get_user_type_mut(id).impls = impls
-                    .iter()
-                    .flat_map(|path| self.resolve_impl(scopes, path))
-                    .collect();
-            }
+                    scopes.get_user_type_mut(id).impls = impls
+                        .iter()
+                        .flat_map(|path| self.resolve_impl(scopes, path))
+                        .collect();
 
+                    id
+                })
+                .collect();
             scopes.get_func_mut(id).params = f
                 .params
                 .into_iter()
@@ -2187,7 +2193,6 @@ impl TypeChecker {
     ) -> Result<(), String> {
         let lhs = scopes.get_func(lhs_id);
         let rhs = scopes.get_func(rhs_id);
-
         let compare_types = |a: &TypeId, mut b: TypeId| {
             b.fill_func_generics(
                 scopes,
@@ -2195,15 +2200,7 @@ impl TypeChecker {
                     lhs_id,
                     lhs.type_params
                         .iter()
-                        .map(|name| {
-                            TypeId::UserType(
-                                GenericUserType::new(
-                                    *scopes.find_user_type_in(name, lhs.body_scope).unwrap(),
-                                    vec![],
-                                )
-                                .into(),
-                            )
-                        })
+                        .map(|&id| TypeId::UserType(GenericUserType::new(id, vec![]).into()))
                         .collect(),
                 ),
             );
@@ -2231,9 +2228,9 @@ impl TypeChecker {
             }
         }
 
-        for (s, t) in lhs.type_params.iter().zip(rhs.type_params.iter()) {
-            let s = scopes.get_user_type(*scopes.find_user_type_in(s, lhs.body_scope).unwrap());
-            let t = scopes.get_user_type(*scopes.find_user_type_in(t, rhs.body_scope).unwrap());
+        for (&s, &t) in lhs.type_params.iter().zip(rhs.type_params.iter()) {
+            let s = scopes.get_user_type(s);
+            let t = scopes.get_user_type(t);
             let name = &t.name;
             for (s, t) in s.impls.iter().zip(t.impls.iter()) {
                 for (s, t) in s
@@ -4207,7 +4204,7 @@ impl TypeChecker {
                     self.error::<()>(Error::new(
                         format!(
                             "cannot infer type of generic parameter '{}'",
-                            scopes.get_func(func.id).type_params[i]
+                            scopes.get_user_type(scopes.get_func(func.id).type_params[i]).name
                         ),
                         span,
                     ));
@@ -4216,14 +4213,11 @@ impl TypeChecker {
                 }
 
                 let f = scopes.get_func(func.id);
-                let param = *scopes
-                    .find_user_type_in(&f.type_params[i], f.body_scope)
-                    .unwrap();
                 self.check_bounds(
                     scopes,
                     Some(func),
                     ty,
-                    &scopes.get_user_type(param).impls,
+                    &scopes.get_user_type(f.type_params[i]).impls,
                     inst,
                     span,
                 );
@@ -4613,13 +4607,7 @@ impl TypeChecker {
         resolve_type!(self, scopes, scopes.get_func_mut(id).ret);
 
         for i in 0..scopes.get_func(id).type_params.len() {
-            let id = scopes
-                .find_user_type_in(
-                    &scopes.get_func(id).type_params[i],
-                    scopes.get_func(id).body_scope,
-                )
-                .unwrap();
-            self.resolve_impls(scopes, *id);
+            self.resolve_impls(scopes, scopes.get_func(id).type_params[i]);
         }
     }
 
