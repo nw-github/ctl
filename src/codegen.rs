@@ -36,10 +36,10 @@ impl State {
     }
 
     pub fn fill_generics(&self, scopes: &Scopes, ty: &mut TypeId) {
-        ty.fill_func_generics(scopes, &self.func);
+        ty.fill_func_template(scopes, &self.func);
 
         if let Some(inst) = self.inst.as_ref().and_then(|inst| inst.as_user_type()) {
-            ty.fill_type_generics(scopes, inst);
+            ty.fill_struct_templates(scopes, inst);
         }
     }
 
@@ -201,14 +201,14 @@ impl TypeGen {
         let mut deps = Vec::new();
         for member in scopes.get_user_type(ut.id).members().unwrap().iter() {
             let mut ty = member.ty.clone();
-            ty.fill_type_generics(scopes, &ut);
+            ty.fill_struct_templates(scopes, &ut);
 
             while let TypeId::Array(inner) = ty {
                 ty = inner.0;
             }
 
             if let TypeId::UserType(data) = ty {
-                if !data.generics.is_empty() {
+                if !data.ty_args.is_empty() {
                     Self::get_depencencies(scopes, (*data).clone(), result);
                 }
 
@@ -227,7 +227,7 @@ impl TypeGen {
         buffer: &mut Buffer,
     ) {
         let mut ty = member.ty.clone();
-        ty.fill_type_generics(scopes, ut);
+        ty.fill_struct_templates(scopes, ut);
         if !ty.is_void_like() {
             buffer.emit_type(scopes, &ty, self);
             buffer.emit(format!(" {}", member.name));
@@ -298,7 +298,7 @@ impl Buffer {
             TypeId::UserType(ut) => match &scopes.get_user_type(ut.id).data {
                 UserTypeData::Struct { .. } | UserTypeData::Union(_) => {
                     if is_opt_ptr(scopes, id) {
-                        self.emit_type(scopes, &ut.generics[0], tg);
+                        self.emit_type(scopes, &ut.ty_args[0], tg);
                     } else {
                         if let Some(structs) = tg.structs.as_mut() {
                             structs.insert((**ut).clone());
@@ -309,7 +309,7 @@ impl Buffer {
                 UserTypeData::Enum(backing) => {
                     self.emit_type(scopes, backing, tg);
                 }
-                UserTypeData::FuncGeneric(_) | UserTypeData::StructGeneric(_) => {
+                UserTypeData::Template(_, _) => {
                     panic!("ICE: Template type in emit_type");
                 }
                 UserTypeData::Trait => {
@@ -387,9 +387,9 @@ impl Buffer {
                 self.emit(scopes.full_name(f.scope, &f.name.data));
             }
 
-            if !state.func.generics.is_empty() {
+            if !state.func.ty_args.is_empty() {
                 self.emit("$");
-                for ty in state.func.generics.iter() {
+                for ty in state.func.ty_args.iter() {
                     self.emit("$");
                     self.emit_generic_mangled_name(scopes, ty);
                 }
@@ -409,14 +409,14 @@ impl Buffer {
 
     fn emit_type_name(&mut self, scopes: &Scopes, ut: &GenericUserType) {
         let ty = scopes.get_user_type(ut.id);
-        if ty.data.is_func_generic() || ty.data.is_struct_generic() {
+        if ty.data.is_template() {
             panic!("ICE: Template type in emit_type_name");
         }
 
         self.emit(scopes.full_name(ty.scope, &ty.name));
-        if !ut.generics.is_empty() {
+        if !ut.ty_args.is_empty() {
             self.emit("$");
-            for ty in ut.generics.iter() {
+            for ty in ut.ty_args.iter() {
                 self.emit("$");
                 self.emit_generic_mangled_name(scopes, ty);
             }
@@ -911,7 +911,7 @@ impl Codegen {
                     }
                 }
 
-                for ty in func.generics.iter_mut() {
+                for ty in func.ty_args.iter_mut() {
                     state.fill_generics(scopes, ty);
                 }
 
@@ -983,7 +983,7 @@ impl Codegen {
                     let arr = state.tmpvar();
                     let len = exprs.len();
                     let ut = (**expr.ty.as_user_type().unwrap()).clone();
-                    let inner = &ut.generics[0];
+                    let inner = &ut.ty_args[0];
 
                     self.emit_type(scopes, inner);
                     self.buffer.emit(format!(" {arr}[{len}] = {{"));
@@ -1029,7 +1029,7 @@ impl Codegen {
             CheckedExprData::VecWithInit { init, count } => {
                 let tmp = tmpbuf!(self, state, |tmp| {
                     let ut = (**expr.ty.as_user_type().unwrap()).clone();
-                    let inner = &ut.generics[0];
+                    let inner = &ut.ty_args[0];
                     let len = state.tmpvar();
                     self.emit_type(scopes, &count.ty);
                     self.buffer.emit(format!(" {len} = "));
@@ -1071,7 +1071,7 @@ impl Codegen {
                     let with_capacity = State::new(
                         GenericFunc::new(
                             *scopes.find_func_in("with_capacity", body).unwrap(),
-                            vec![ut.generics[0].clone()],
+                            vec![ut.ty_args[0].clone()],
                         ),
                         state.inst.clone(),
                     );
@@ -1104,7 +1104,7 @@ impl Codegen {
                     let with_capacity = State::new(
                         GenericFunc::new(
                             *scopes.find_func_in("with_capacity", body).unwrap(),
-                            vec![ut.generics[0].clone(), ut.generics[1].clone()],
+                            vec![ut.ty_args[0].clone(), ut.ty_args[1].clone()],
                         ),
                         state.inst.clone(),
                     );
@@ -1419,7 +1419,7 @@ impl Codegen {
         match name {
             "size_of" => {
                 self.buffer.emit("(usize)sizeof");
-                self.emit_cast(scopes, &func.generics[0]);
+                self.emit_cast(scopes, &func.ty_args[0]);
             }
             _ => unreachable!(),
         }
