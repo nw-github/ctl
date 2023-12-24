@@ -114,21 +114,6 @@ impl GenericUserType {
 
         result
     }
-
-    fn implements_trait(&self, scopes: &Scopes, bound: &GenericUserType) -> bool {
-        for tr in scopes.get_user_type(self.id).impls.iter() {
-            let mut tr = tr.as_user_type().unwrap().clone();
-            for ut in tr.ty_args.iter_mut() {
-                ut.fill_struct_templates(scopes, self);
-            }
-
-            if &*tr == bound {
-                return true;
-            }
-        }
-
-        false
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
@@ -632,6 +617,57 @@ impl TypeId {
             }
         }
     }
+
+    fn implements_trait(&self, scopes: &Scopes, bound: &GenericUserType) -> bool {
+        let Some(this) = self.as_user_type() else {
+            return false;
+        };
+
+        for tr in scopes.get_user_type(this.id).impls.iter() {
+            let mut tr = tr.as_user_type().unwrap().clone();
+            for ut in tr.ty_args.iter_mut() {
+                ut.fill_struct_templates(scopes, this);
+            }
+
+            if &*tr == bound {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn get_member_fn(
+        &self,
+        scopes: &Scopes,
+        member: &str,
+    ) -> Option<(Option<GenericUserType>, Vis<FunctionId>)> {
+        let Some(ut) = self.as_user_type().map(|ut| scopes.get_user_type(ut.id)) else {
+            return None;
+        };
+
+        if ut.data.is_struct() || ut.data.is_union() || ut.data.is_enum() {
+            // TODO: trait implement overload ie.
+            // impl Eq<f32> { ... } impl Eq<i32> { ... }
+            for scope in std::iter::once(ut.body_scope)
+                .chain(scopes[ut.body_scope].children.iter().map(|s| s.id))
+            {
+                if let Some(func) = scopes.find_func_in(member, scope) {
+                    return Some((None, func));
+                }
+            }
+        } else {
+            for ut in ut.impls.iter().map(|ut| ut.as_user_type().unwrap()) {
+                if let Some(func) =
+                    scopes.find_func_in(member, scopes.get_user_type(ut.id).body_scope)
+                {
+                    return Some((Some((**ut).clone()), func));
+                }
+            }
+        }
+
+        None
+    }
 }
 
 macro_rules! id {
@@ -685,7 +721,7 @@ macro_rules! id {
                 #[allow(dead_code)]
                 pub fn fn_name(&mut self, item: $output, public: bool) -> $name {
                     concat_idents!(fn_name = insert_, $suffix, _in {
-                        self.fn_name(item, public, self.current_id())
+                        self.fn_name(item, public, self.current)
                     })
                 }
             });
@@ -996,10 +1032,6 @@ impl Scopes {
         &mut self[i]
     }
 
-    pub fn current_id(&self) -> ScopeId {
-        self.current
-    }
-
     pub fn enter<T>(&mut self, kind: ScopeKind, public: bool, f: impl FnOnce(&mut Self) -> T) -> T {
         let id = ScopeId(self.scopes.len());
         self.current().children.insert(Vis { id, public });
@@ -1147,33 +1179,6 @@ impl Scopes {
             .module_of(scope)
             .expect("root scope passed to can_access_privates()");
         self.iter().any(|(id, _)| id == target)
-    }
-
-    fn get_member_fn(
-        &self,
-        member: &str,
-        ut: &UserType,
-    ) -> Option<(Option<GenericUserType>, Vis<FunctionId>)> {
-        if ut.data.is_struct() || ut.data.is_union() || ut.data.is_enum() {
-            // TODO: trait implement overload ie.
-            // impl Eq<f32> { ... } impl Eq<i32> { ... }
-            for scope in std::iter::once(ut.body_scope)
-                .chain(self[ut.body_scope].children.iter().map(|s| s.id))
-            {
-                if let Some(func) = self.find_func_in(member, scope) {
-                    return Some((None, func));
-                }
-            }
-        } else {
-            for ut in ut.impls.iter().map(|ut| ut.as_user_type().unwrap()) {
-                if let Some(func) = self.find_func_in(member, self.get_user_type(ut.id).body_scope)
-                {
-                    return Some((Some((**ut).clone()), func));
-                }
-            }
-        }
-
-        None
     }
 }
 
@@ -1342,7 +1347,7 @@ impl TypeChecker {
                     }
                 }
 
-                scopes.current_id()
+                scopes.current
             },
         )
     }
@@ -1433,7 +1438,7 @@ impl TypeChecker {
                     &attrs,
                 );
                 scopes.enter(ScopeKind::UserType(id), base.public, |scopes| {
-                    scopes.get_user_type_mut(id).body_scope = scopes.current_id();
+                    scopes.get_user_type_mut(id).body_scope = scopes.current;
                     scopes.get_user_type_mut(id).type_params =
                         self.declare_type_params(scopes, TT::Struct, base.type_params);
                     *scopes.get_user_type_mut(id).data.as_struct_mut().unwrap().0 = base
@@ -1482,7 +1487,7 @@ impl TypeChecker {
                     &attrs,
                 );
                 scopes.enter(ScopeKind::UserType(id), base.public, |scopes| {
-                    scopes.get_user_type_mut(id).body_scope = scopes.current_id();
+                    scopes.get_user_type_mut(id).body_scope = scopes.current;
                     scopes.get_user_type_mut(id).type_params =
                         self.declare_type_params(scopes, TT::Struct, base.type_params);
 
@@ -1589,7 +1594,7 @@ impl TypeChecker {
                     &attrs,
                 );
                 scopes.enter(ScopeKind::UserType(id), public, |scopes| {
-                    scopes.get_user_type_mut(id).body_scope = scopes.current_id();
+                    scopes.get_user_type_mut(id).body_scope = scopes.current;
                     scopes.get_user_type_mut(id).type_params =
                         self.declare_type_params(scopes, TT::Struct, type_params);
 
@@ -1631,7 +1636,7 @@ impl TypeChecker {
                 );
 
                 scopes.enter(ScopeKind::UserType(id), public, |scopes| {
-                    scopes.get_user_type_mut(id).body_scope = scopes.current_id();
+                    scopes.get_user_type_mut(id).body_scope = scopes.current;
 
                     for (i, (name, _)) in variants.iter().enumerate() {
                         scopes.insert_var(
@@ -1686,7 +1691,7 @@ impl TypeChecker {
                         && scopes.module_of(scopes.current) == Some(scopes.current)
                     {
                         scopes
-                            .unresolved_use_stmts(scopes.current_id())
+                            .unresolved_use_stmts(scopes.current)
                             .unwrap()
                             .push(UnresolvedUse {
                                 path: path.clone(),
@@ -1778,7 +1783,7 @@ impl TypeChecker {
         }
 
         scopes.enter(ScopeKind::Function(id), false, |scopes| {
-            scopes.get_func_mut(id).body_scope = scopes.current_id();
+            scopes.get_func_mut(id).body_scope = scopes.current;
             scopes.get_func_mut(id).type_params =
                 self.declare_type_params(scopes, TT::Func, f.type_params);
             scopes.get_func_mut(id).params = f
@@ -1820,7 +1825,7 @@ impl TypeChecker {
                 scopes.insert_user_type(
                     UserType {
                         name,
-                        body_scope: scopes.current_id(),
+                        body_scope: scopes.current,
                         data: UserTypeData::Template(tt, i),
                         type_params: Vec::new(),
                         impls: impls
@@ -1872,7 +1877,7 @@ impl TypeChecker {
                             .into_iter()
                             .map(|stmt| self.check_stmt(scopes, stmt))
                             .collect(),
-                        scope: scopes.current_id(),
+                        scope: scopes.current,
                     }
                 }))
             }
@@ -2255,10 +2260,9 @@ impl TypeChecker {
         // TODO:
         //  - detect and fail on circular trait dependencies
         //  - default implementations
-        let this_ut = this.as_user_type().unwrap();
         let tr = scopes.get_user_type(tr_ut.id);
         for dep in tr.impls.iter().flat_map(|tr| tr.as_user_type()) {
-            if !this_ut.implements_trait(scopes, dep) {
+            if !this.implements_trait(scopes, dep) {
                 self.error(Error::new(
                     format!(
                         "trait '{}' requires implementation of trait '{}'",
@@ -3397,7 +3401,7 @@ impl TypeChecker {
                         ))]
                     };
 
-                    (scopes.current_id(), body)
+                    (scopes.current, body)
                 });
                 let (target, yields) = scopes[id].kind.as_lambda().unwrap();
                 CheckedExpr::new(
@@ -3797,15 +3801,22 @@ impl TypeChecker {
             } => {
                 let this = self.check_expr(scopes, *source, None);
                 let id = this.ty.strip_references().clone();
-                let Some(ut) = id.as_user_type() else {
+                let Some((tr, func)) = id.get_member_fn(scopes, &member) else {
                     return self.error(Error::new(
-                        format!("cannot get member of type '{}'", id.name(scopes)),
+                        format!("no method '{member}' found on type '{}'", id.name(scopes)),
                         span,
                     ));
                 };
-                let ty = scopes.get_user_type(ut.id);
-                if let Some((tr, func)) = scopes.get_member_fn(&member, ty) {
-                    let f = scopes.get_func(*func);
+                let f = scopes.get_func(*func);
+                let Some(this_param) = f.params.get(0).filter(|p| p.name == THIS_PARAM) else {
+                    return self.error(Error::new(
+                        format!("associated function '{member}' cannot be used as a method"),
+                        span,
+                    ));
+                };
+
+                if let Some(ty) = id.as_user_type().map(|ut| scopes.get_user_type(ut.id)) {
+                    // TODO: extension method privacy
                     if !func.public && !scopes.can_access_privates(ty.scope) {
                         return self.error(Error::new(
                             format!(
@@ -3815,85 +3826,76 @@ impl TypeChecker {
                             span,
                         ));
                     }
+                }
 
-                    if let Some(this_param) = f.params.get(0).filter(|p| p.name == THIS_PARAM) {
-                        if this_param.ty.is_mut_ptr() {
-                            let mut ty = &this.ty;
-                            if !ty.is_ptr() && !ty.is_mut_ptr() && !this.can_addrmut(scopes) {
-                                return self.error(Error::new(
-                                    format!(
-                                        "cannot call method '{member}' with immutable receiver"
-                                    ),
-                                    span,
-                                ));
-                            } else {
-                                while let TypeId::MutPtr(inner) = ty {
-                                    ty = inner;
-                                }
-
-                                if matches!(ty, TypeId::Ptr(_)) {
-                                    return self.error(Error::new(
-                                        format!(
-                                            "cannot call method '{member}' through an immutable pointer"
-                                        ),
-                                        span,
-                                    ));
-                                }
-                            }
+                if this_param.ty.is_mut_ptr() {
+                    let mut ty = &this.ty;
+                    if !ty.is_ptr() && !ty.is_mut_ptr() && !this.can_addrmut(scopes) {
+                        return self.error(Error::new(
+                            format!("cannot call method '{member}' with immutable receiver"),
+                            span,
+                        ));
+                    } else {
+                        while let TypeId::MutPtr(inner) = ty {
+                            ty = inner;
                         }
 
-                        let this = if !matches!(this.ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
-                            if matches!(this_param.ty, TypeId::Ptr(_)) {
-                                CheckedExpr::new(
-                                    TypeId::Ptr(this.ty.clone().into()),
-                                    CheckedExprData::Unary {
-                                        op: UnaryOp::Addr,
-                                        expr: this.into(),
-                                    },
-                                )
-                            } else {
-                                CheckedExpr::new(
-                                    TypeId::MutPtr(this.ty.clone().into()),
-                                    CheckedExprData::Unary {
-                                        op: UnaryOp::AddrMut,
-                                        expr: this.into(),
-                                    },
-                                )
-                            }
-                        } else {
-                            this.auto_deref(&this_param.ty)
-                        };
-
-                        let mut func = GenericFunc::new(
-                            *func,
-                            self.resolve_type_args(scopes, f.type_params.len(), &generics, span),
-                        );
-                        let (args, ret) = self.check_fn_args(
-                            tr.as_ref().or(Some(ut)),
-                            &mut func,
-                            Some(this),
-                            args,
-                            target,
-                            scopes,
-                            span,
-                        );
-
-                        return CheckedExpr::new(
-                            ret,
-                            CheckedExprData::Call {
-                                func,
-                                inst: Some(id),
-                                args,
-                                trait_id: tr.map(|ut| ut.id),
-                            },
-                        );
+                        if matches!(ty, TypeId::Ptr(_)) {
+                            return self.error(Error::new(
+                                format!(
+                                    "cannot call method '{member}' through an immutable pointer"
+                                ),
+                                span,
+                            ));
+                        }
                     }
                 }
 
-                return self.error(Error::new(
-                    format!("no method '{member}' found on type '{}'", id.name(scopes)),
+                let this = if !matches!(this.ty, TypeId::Ptr(_) | TypeId::MutPtr(_)) {
+                    if matches!(this_param.ty, TypeId::Ptr(_)) {
+                        CheckedExpr::new(
+                            TypeId::Ptr(this.ty.clone().into()),
+                            CheckedExprData::Unary {
+                                op: UnaryOp::Addr,
+                                expr: this.into(),
+                            },
+                        )
+                    } else {
+                        CheckedExpr::new(
+                            TypeId::MutPtr(this.ty.clone().into()),
+                            CheckedExprData::Unary {
+                                op: UnaryOp::AddrMut,
+                                expr: this.into(),
+                            },
+                        )
+                    }
+                } else {
+                    this.auto_deref(&this_param.ty)
+                };
+
+                let mut func = GenericFunc::new(
+                    *func,
+                    self.resolve_type_args(scopes, f.type_params.len(), &generics, span),
+                );
+                let (args, ret) = self.check_fn_args(
+                    tr.as_ref().or(id.as_user_type().map(|ut| &**ut)),
+                    &mut func,
+                    Some(this),
+                    args,
+                    target,
+                    scopes,
                     span,
-                ));
+                );
+
+                return CheckedExpr::new(
+                    ret,
+                    CheckedExprData::Call {
+                        func,
+                        inst: Some(id),
+                        args,
+                        trait_id: tr.map(|ut| ut.id),
+                    },
+                );
             }
             ExprData::Path(ref path) => {
                 match self.resolve_path(scopes, path, callee.span) {
@@ -4219,10 +4221,8 @@ impl TypeChecker {
                 }
             }
 
-            if let Some(ty) = ty.as_user_type() {
-                if ty.implements_trait(scopes, &bound) {
-                    continue;
-                }
+            if ty.implements_trait(scopes, &bound) {
+                continue;
             }
 
             self.error(Error::new(
@@ -4245,7 +4245,7 @@ impl TypeChecker {
                     self.check_stmt(scopes, stmt)
                 })
                 .collect(),
-            scope: scopes.current_id(),
+            scope: scopes.current,
         })
     }
 
@@ -4577,7 +4577,7 @@ impl TypeChecker {
             Path::Root(data) => self.resolve_path_in(scopes, data, ScopeId(0), span),
             Path::Super(data) => {
                 if let Some(module) = scopes.module_of(
-                    scopes[scopes.module_of(scopes.current_id()).unwrap()]
+                    scopes[scopes.module_of(scopes.current).unwrap()]
                         .parent
                         .unwrap(),
                 ) {
