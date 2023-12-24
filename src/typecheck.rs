@@ -637,25 +637,44 @@ impl TypeId {
         &self,
         scopes: &Scopes,
         member: &str,
-    ) -> Option<(Option<GenericUserType>, Vis<FunctionId>)> {
-        let Some(ut) = self.as_user_type().map(|ut| scopes.get(ut.id)) else {
-            return None;
-        };
-
-        if ut.data.is_struct() || ut.data.is_union() || ut.data.is_enum() {
+    ) -> Option<(Option<GenericUserType>, Vis<FunctionId>, ScopeId)> {
+        let search = |src_scope: ScopeId, scope: ScopeId| {
             // TODO: trait implement overload ie.
             // impl Eq<f32> { ... } impl Eq<i32> { ... }
-            for scope in std::iter::once(ut.body_scope)
-                .chain(scopes[ut.body_scope].children.iter().map(|s| s.id))
-            {
+            for scope in std::iter::once(scope).chain(scopes[scope].children.iter().map(|s| s.id)) {
                 if let Some(func) = scopes.find_in(member, scope) {
-                    return Some((None, func));
+                    return Some((None, func, src_scope));
                 }
             }
-        } else {
-            for ut in ut.impls.iter().map(|ut| ut.as_user_type().unwrap()) {
-                if let Some(func) = scopes.find_in(member, scopes.get(ut.id).body_scope) {
-                    return Some((Some((**ut).clone()), func));
+
+            None
+        };
+
+        if let Some(ut) = self.as_user_type().map(|ut| scopes.get(ut.id)) {
+            let src_scope = ut.scope;
+            if ut.data.is_template() {
+                for ut in ut.impls.iter().map(|ut| ut.as_user_type().unwrap()) {
+                    if let Some(func) = scopes.find_in(member, scopes.get(ut.id).body_scope) {
+                        return Some((Some((**ut).clone()), func, src_scope));
+                    }
+                }
+
+                return None;
+            }
+
+            if let Some(result) = search(src_scope, ut.body_scope) {
+                return Some(result);
+            }
+        }
+
+        for (_, scope) in scopes.iter() {
+            for ext in scope.exts.iter().map(|ext| scopes.get(ext.id)) {
+                if !ext.matches_type(self) {
+                    continue;
+                }
+
+                if let Some(result) = search(ext.scope, ext.body_scope) {
+                    return Some(result);
                 }
             }
         }
@@ -941,6 +960,13 @@ pub struct Extension {
     pub impls: Vec<TypeId>,
     pub type_params: Vec<UserTypeId>,
     pub body_scope: ScopeId,
+}
+
+impl Extension {
+    pub fn matches_type(&self, ty: &TypeId) -> bool {
+        // TODO: templates
+        &self.ty == ty
+    }
 }
 
 #[derive(Deref, DerefMut, Constructor)]
@@ -1238,10 +1264,6 @@ impl Scopes {
         T::insert(self, value, public)
     }
 
-    // pub fn insert_in<T: ItemId>(&mut self, value: T::Value, public: bool, scope: ScopeId) -> T {
-    //     T::insert_in(self, value, public, scope)
-    // }
-
     fn can_access_privates(&self, scope: ScopeId) -> bool {
         let target = self
             .module_of(scope)
@@ -1256,6 +1278,7 @@ pub enum ResolvedPath {
     Func(GenericFunc),
     Var(VariableId),
     Module(ScopeId),
+    Extension(ExtensionId),
     None(Error),
 }
 
@@ -2952,6 +2975,13 @@ impl TypeChecker {
                     format!("expected expression, found type '{}'", ut.name(scopes)),
                     span,
                 )),
+                Some(ResolvedPath::Extension(id)) => self.error(Error::new(
+                    format!(
+                        "expected expression, found extension '{}'",
+                        scopes.get(id).name
+                    ),
+                    span,
+                )),
                 Some(ResolvedPath::Module(id)) => self.error(Error::new(
                     format!(
                         "expected expression, found module '{}'",
@@ -3915,7 +3945,7 @@ impl TypeChecker {
             } => {
                 let this = self.check_expr(scopes, *source, None);
                 let id = this.ty.strip_references().clone();
-                let Some((tr, func)) = id.get_member_fn(scopes, &member) else {
+                let Some((tr, func, ty_scope)) = id.get_member_fn(scopes, &member) else {
                     return self.error(Error::new(
                         format!("no method '{member}' found on type '{}'", id.name(scopes)),
                         span,
@@ -3929,17 +3959,14 @@ impl TypeChecker {
                     ));
                 };
 
-                if let Some(ty) = id.as_user_type().map(|ut| scopes.get(ut.id)) {
-                    // TODO: extension method privacy
-                    if !func.public && !scopes.can_access_privates(ty.scope) {
-                        return self.error(Error::new(
-                            format!(
-                                "cannot access private method '{member}' of type '{}'",
-                                id.name(scopes)
-                            ),
-                            span,
-                        ));
-                    }
+                if !func.public && !scopes.can_access_privates(ty_scope) {
+                    return self.error(Error::new(
+                        format!(
+                            "cannot access private method '{member}' of type '{}'",
+                            id.name(scopes)
+                        ),
+                        span,
+                    ));
                 }
 
                 if this_param.ty.is_mut_ptr() {
@@ -4066,10 +4093,19 @@ impl TypeChecker {
                         );
                     }
                     Some(ResolvedPath::Var(_)) => {}
+                    Some(ResolvedPath::Extension(id)) => {
+                        return self.error(Error::new(
+                            format!(
+                                "expected callable, found extension '{}'",
+                                scopes.get(id).name
+                            ),
+                            span,
+                        ))
+                    }
                     Some(ResolvedPath::Module(scope)) => {
                         return self.error(Error::new(
                             format!(
-                                "cannot call module '{}'",
+                                "expected callable, found module '{}'",
                                 scopes[scope].kind.name(scopes).unwrap()
                             ),
                             span,
@@ -4427,6 +4463,13 @@ impl TypeChecker {
                             self.error(Error::new("expected type, got variable", path.span))
                         }
                     }
+                    Some(ResolvedPath::Extension(_)) => {
+                        if self.decl {
+                            TypeId::Unknown(Some((hint.clone(), scopes.current).into()))
+                        } else {
+                            self.error(Error::new("expected type, got extension", path.span))
+                        }
+                    }
                     Some(ResolvedPath::Module(_)) => {
                         if self.decl {
                             TypeId::Unknown(Some((hint.clone(), scopes.current).into()))
@@ -4549,10 +4592,7 @@ impl TypeChecker {
                     scopes.current().types.insert(Vis { id: ut.id, public });
                 } else if !self.decl {
                     self.error(Error::new(
-                        format!(
-                            "cannot import all items of type '{}'",
-                            scopes.get(ut.id).name
-                        ),
+                        "wildcard import is only valid with modules",
                         span,
                     ))
                 }
@@ -4565,10 +4605,7 @@ impl TypeChecker {
                     });
                 } else if !self.decl {
                     self.error(Error::new(
-                        format!(
-                            "cannot import all items of function '{}'",
-                            scopes.get(func.id).name.data
-                        ),
+                        "wildcard import is only valid with modules",
                         span,
                     ))
                 }
@@ -4585,10 +4622,17 @@ impl TypeChecker {
                     scopes.current().vars.insert(Vis { id, public });
                 } else if !self.decl {
                     self.error(Error::new(
-                        format!(
-                            "cannot import all items of variable '{}'",
-                            scopes.get(id).name
-                        ),
+                        "wildcard import is only valid with modules",
+                        span,
+                    ))
+                }
+            }
+            ResolvedPath::Extension(id) => {
+                if !all {
+                    scopes.current().exts.insert(Vis { id, public });
+                } else if !self.decl {
+                    self.error(Error::new(
+                        "wildcard import is only valid with modules",
                         span,
                     ))
                 }
@@ -4743,6 +4787,15 @@ impl TypeChecker {
                     }
 
                     self.error(Error::new(format!("'{name}' is a function"), span))
+                } else if let Some(id) = scopes.find(name) {
+                    if is_end {
+                        return Some(ResolvedPath::Extension(*id));
+                    }
+
+                    self.error(Error::new(
+                        format!("no symbol '{name}' found in this module"),
+                        span,
+                    ))
                 } else if let Some(id) = scopes.find_module(name) {
                     if is_end {
                         return Some(ResolvedPath::Module(*id));
@@ -4821,6 +4874,19 @@ impl TypeChecker {
                 }
 
                 return self.error(Error::new(format!("'{name}' is a function"), span));
+            } else if let Some(id) = scopes.find_in(name, scope) {
+                if !id.public && !scopes.can_access_privates(scope) {
+                    self.error(Error::new(format!("extension '{name}' is private"), span))
+                }
+
+                if is_end {
+                    return Some(ResolvedPath::Extension(*id));
+                }
+
+                return Some(ResolvedPath::None(Error::new(
+                    format!("no symbol '{name}' found in this module"),
+                    span,
+                )));
             } else if let Some(id) = scopes.find_module_in(name, scope) {
                 if !id.public && !scopes.can_access_privates(*id) {
                     self.error(Error::new(format!("module '{name}' is private"), span))
