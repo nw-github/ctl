@@ -1671,8 +1671,8 @@ impl TypeChecker {
                                     mutable: false,
                                     keyword: false,
                                     name: member.name.clone(),
-                                    ty: member.ty.clone(),
-                                    default: member.default.clone(),
+                                    ty: member.ty,
+                                    default: member.default,
                                 });
                             }
 
@@ -1773,21 +1773,30 @@ impl TypeChecker {
                 scopes.enter(ScopeKind::UserType(id), public, |scopes| {
                     scopes.get_mut(id).body_scope = scopes.current;
 
-                    for (i, (name, _)) in variants.iter().enumerate() {
-                        scopes.insert::<VariableId>(
-                            Variable {
-                                name: name.clone(),
-                                ty: TypeId::UserType(GenericUserType::new(id, vec![]).into()),
-                                is_static: true,
-                                mutable: false,
-                                value: Some(CheckedExpr::new(
-                                    backing.clone(),
-                                    CheckedExprData::Unsigned(BigUint::from(i)),
-                                )),
-                            },
-                            true,
-                        );
-                    }
+                    let variants = variants
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, (name, expr))| {
+                            (
+                                scopes.insert(
+                                    Variable {
+                                        name: name.clone(),
+                                        ty: TypeId::UserType(
+                                            GenericUserType::new(id, vec![]).into(),
+                                        ),
+                                        is_static: true,
+                                        mutable: false,
+                                        value: Some(CheckedExpr::new(
+                                            backing.clone(),
+                                            CheckedExprData::Unsigned(BigUint::from(i)),
+                                        )),
+                                    },
+                                    true,
+                                ),
+                                expr,
+                            )
+                        })
+                        .collect();
 
                     let (impls, impl_blocks) = self.declare_impl_blocks(scopes, impls);
                     scopes.get_mut(id).impls = impls;
@@ -2124,9 +2133,9 @@ impl TypeChecker {
                     self.resolve_impls(scopes, id);
                     self.check_impl_blocks(scopes, id, impl_blocks);
 
-                    for (name, expr) in variants {
+                    for (var, expr) in variants {
+                        // TODO: these should be constant expressions only
                         if let Some(expr) = expr {
-                            let var: VariableId = *scopes.find(&name).unwrap();
                             scopes.get_mut(var).value =
                                 Some(self.check_expr(scopes, expr, Some(&TypeId::Usize)));
                         }

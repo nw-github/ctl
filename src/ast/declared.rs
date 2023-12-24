@@ -56,7 +56,7 @@ pub enum DeclaredStmtData {
     Enum {
         id: UserTypeId,
         impl_blocks: Vec<DeclaredImplBlock>,
-        variants: Vec<(String, Option<Expr>)>,
+        variants: Vec<(VariableId, Option<Expr>)>,
         functions: Vec<DeclaredFn>,
     },
     Extension {
