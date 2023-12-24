@@ -181,8 +181,6 @@ pub enum TypeId {
     F32,
     F64,
     Bool,
-    IntGeneric,
-    FloatGeneric,
     Char,
     FnPtr(Box<FnPtr>),
     UserType(Box<GenericUserType>),
@@ -442,8 +440,6 @@ impl TypeId {
             TypeId::F32 => "f32".into(),
             TypeId::F64 => "f64".into(),
             TypeId::Bool => "bool".into(),
-            TypeId::IntGeneric => "{integer}".into(),
-            TypeId::FloatGeneric => "{float}".into(),
             TypeId::Char => "char".into(),
             TypeId::Ptr(id) => format!("*{}", id.name(scopes)),
             TypeId::MutPtr(id) => format!("*mut {}", id.name(scopes)),
@@ -534,16 +530,6 @@ impl TypeId {
 
     pub fn coerces_to(&self, scopes: &Scopes, target: &TypeId) -> bool {
         match (self, target) {
-            (
-                TypeId::IntGeneric,
-                TypeId::Int(_)
-                | TypeId::Uint(_)
-                | TypeId::Isize
-                | TypeId::Usize
-                | TypeId::CInt(_)
-                | TypeId::CUint(_),
-            ) => true,
-            (TypeId::FloatGeneric, TypeId::F32 | TypeId::F64) => true,
             (ty, target)
                 if scopes
                     .as_option_inner(target)
@@ -2773,7 +2759,17 @@ impl TypeChecker {
                             }
                             target
                         })
-                        .filter(|target| TypeId::IntGeneric.coerces_to(scopes, target))
+                        .filter(|target| {
+                            matches!(
+                                target,
+                                TypeId::Int(_)
+                                    | TypeId::Uint(_)
+                                    | TypeId::Isize
+                                    | TypeId::Usize
+                                    | TypeId::CInt(_)
+                                    | TypeId::CUint(_),
+                            )
+                        })
                         .cloned()
                         .unwrap_or(TypeId::Int(32))
                 };
@@ -2837,7 +2833,7 @@ impl TypeChecker {
                         }
                         target
                     })
-                    .filter(|target| TypeId::FloatGeneric.coerces_to(scopes, target))
+                    .filter(|target| matches!(target, TypeId::F32 | TypeId::F64))
                     .cloned()
                     .unwrap_or(TypeId::F64),
                 CheckedExprData::Float(value),

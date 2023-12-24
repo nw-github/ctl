@@ -281,9 +281,6 @@ impl Buffer {
             TypeId::F64 => self.emit("f64"),
             TypeId::Bool => self.emit("CTL_bool"),
             TypeId::Char => self.emit("CTL_char"),
-            TypeId::IntGeneric | TypeId::FloatGeneric => {
-                panic!("ICE: Int/FloatGeneric in emit_type");
-            }
             TypeId::Ptr(inner) => {
                 self.emit_type(scopes, inner, tg);
                 self.emit(" const*");
@@ -350,9 +347,6 @@ impl Buffer {
             TypeId::F64 => self.emit("f64"),
             TypeId::Bool => self.emit("bool"),
             TypeId::Char => self.emit("char"),
-            TypeId::IntGeneric | TypeId::FloatGeneric => {
-                panic!("ICE: Int/FloatGeneric in emit_generic_mangled_name");
-            }
             TypeId::Ptr(inner) => {
                 self.emit("ptr_");
                 self.emit_generic_mangled_name(scopes, inner);

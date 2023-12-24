@@ -163,13 +163,6 @@ impl CheckedExpr {
 
     pub fn coerce_to(self, target: &TypeId, scopes: &Scopes) -> CheckedExpr {
         match (&self.ty, target) {
-            (
-                TypeId::IntGeneric,
-                TypeId::Int(_) | TypeId::Uint(_) | TypeId::Isize | TypeId::Usize,
-            ) => CheckedExpr::new(target.clone(), self.data),
-            (TypeId::FloatGeneric, TypeId::F32 | TypeId::F64) => {
-                CheckedExpr::new(target.clone(), self.data)
-            }
             (TypeId::MutPtr(lhs), TypeId::Ptr(rhs)) if lhs == rhs => {
                 CheckedExpr::new(target.clone(), self.data)
             }
