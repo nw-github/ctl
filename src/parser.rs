@@ -1021,7 +1021,7 @@ impl<'a> Parser<'a> {
         self.csv(vec![first], end, span, f)
     }
 
-    fn parse_generic_params(&mut self) -> Vec<(String, Vec<Located<Path>>)> {
+    fn parse_type_params(&mut self) -> Vec<(String, Vec<Located<Path>>)> {
         self.advance_if_kind(Token::LAngle)
             .map(|_| {
                 self.csv_one(Token::RAngle, Span::default(), |this| {
@@ -1135,7 +1135,7 @@ impl<'a> Parser<'a> {
     fn parse_struct(&mut self, public: bool, span: Span) -> Stmt {
         let attrs = std::mem::take(&mut self.attrs);
         let name = self.expect_located_id("expected name");
-        let type_params = self.parse_generic_params();
+        let type_params = self.parse_type_params();
 
         self.expect_kind(Token::LCurly, "expected '{'");
 
@@ -1199,7 +1199,7 @@ impl<'a> Parser<'a> {
             tag
         });
         let name = self.expect_located_id("expected name");
-        let type_params = self.parse_generic_params();
+        let type_params = self.parse_type_params();
         let mut functions = Vec::new();
         let mut members = Vec::new();
         let mut impls = Vec::new();
@@ -1285,7 +1285,7 @@ impl<'a> Parser<'a> {
     fn parse_trait(&mut self, public: bool, span: Span, is_unsafe: bool) -> Stmt {
         let attrs = std::mem::take(&mut self.attrs);
         let name = self.expect_id("expected name");
-        let type_params = self.parse_generic_params();
+        let type_params = self.parse_type_params();
         let impls = self.parse_trait_impl();
         self.expect_kind(Token::LCurly, "expected '{'");
 
@@ -1372,7 +1372,7 @@ impl<'a> Parser<'a> {
 
     fn parse_extension(&mut self, public: bool, span: Span) -> Stmt {
         let attrs = std::mem::take(&mut self.attrs);
-        let type_params = self.parse_generic_params();
+        let type_params = self.parse_type_params();
         let name = self.expect_id("expected name");
 
         self.expect_kind(Token::For, "expected 'for'");
@@ -1384,18 +1384,18 @@ impl<'a> Parser<'a> {
         let span = self.advance_until(Token::RCurly, span, |this| {
             if let Some(token) = this.advance_if_kind(Token::Impl) {
                 impls.push(this.parse_impl_block(token.span));
-            }
-
-            let config = FnConfig {
-                allow_method: true,
-                is_public: this.advance_if_kind(Token::Pub).is_some(),
-                is_async: false,
-                is_extern: false,
-                is_unsafe: this.advance_if_kind(Token::Unsafe).is_some(),
-                body: true,
-            };
-            if let Ok(func) = this.expect_fn(config) {
-                functions.push(func.data);
+            } else {
+                let config = FnConfig {
+                    allow_method: true,
+                    is_public: this.advance_if_kind(Token::Pub).is_some(),
+                    is_async: false,
+                    is_extern: false,
+                    is_unsafe: this.advance_if_kind(Token::Unsafe).is_some(),
+                    body: true,
+                };
+                if let Ok(func) = this.expect_fn(config) {
+                    functions.push(func.data);
+                }
             }
         });
 
@@ -1414,7 +1414,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_impl_block(&mut self, span: Span) -> ImplBlock {
-        let type_params = self.parse_generic_params();
+        let type_params = self.parse_type_params();
         let path = self.type_path();
         self.expect_kind(Token::LCurly, "expected '{'");
 
@@ -1458,7 +1458,7 @@ impl<'a> Parser<'a> {
     ) -> Fn {
         let name = self.expect_located_id("expected name");
         let mut variadic = false;
-        let type_params = self.parse_generic_params();
+        let type_params = self.parse_type_params();
         let mut params = Vec::new();
         let mut count = 0;
         let mut has_default = false;

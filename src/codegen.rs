@@ -7,8 +7,8 @@ use crate::{
     ast::UnaryOp,
     lexer::Span,
     typecheck::{
-        FnPtr, GenericFunc, GenericUserType, Member, ScopeId, ScopeKind, Scopes, Symbol, TypeId,
-        UserTypeData, VariableId,
+        FnPtr, FunctionId, GenericFunc, GenericUserType, Member, ScopeId, ScopeKind, Scopes,
+        Symbol, TypeId, UserTypeData, UserTypeId, VariableId,
     },
     Error,
 };
@@ -898,17 +898,13 @@ impl Codegen {
                 let original_id = func.id;
                 if let Some(trait_id) = trait_id {
                     let f = scopes.get(func.id);
-                    if let Some(ut) = inst.as_ref().and_then(|i| i.as_user_type()) {
-                        let scope = scopes[scopes.get(ut.id).body_scope]
-                            .children
-                            .iter()
-                            .find(|scope| matches!(scopes[scope.id].kind, ScopeKind::Impl(id) if id == trait_id))
-                            .expect("trait_id corresponds to a trait implemented in the resolved type");
-
-                        func.id = *scopes.find_in(&f.name.data, scope.id).unwrap();
-                    } else {
-                        todo!("trait implementations for non-struct types");
-                    }
+                    let inst = inst
+                        .as_ref()
+                        .expect("generating trait function with no instance");
+                    func.id = Self::find_implementation(inst, scopes, trait_id, &f.name.data)
+                        .expect(
+                            "generating trait fn with no corresponding implementation in instance",
+                        );
                 }
 
                 for ty in func.ty_args.iter_mut() {
@@ -1569,6 +1565,33 @@ impl Codegen {
             CheckedExprData::Subscript { .. } => todo!(),
             _ => false,
         }
+    }
+
+    fn find_implementation(
+        ty: &TypeId,
+        scopes: &Scopes,
+        trait_id: UserTypeId,
+        fn_name: &str,
+    ) -> Option<FunctionId> {
+        let search = |scope: ScopeId| {
+            scopes[scope]
+                .children
+                .iter()
+                .find(|s| matches!(scopes[s.id].kind, ScopeKind::Impl(id) if id == trait_id))
+                .and_then(|scope| scopes.find_in(fn_name, scope.id))
+                .map(|f| f.id)
+        };
+
+        if let Some(f) = ty.as_user_type().and_then(|ut| search(scopes.get(ut.id).body_scope)) {
+            return Some(f);
+        }
+
+        // FIXME: this sucks
+        scopes
+            .extensions()
+            .iter()
+            .filter(|ext| ext.matches_type(ty))
+            .find_map(|ext| search(ext.body_scope))
     }
 }
 

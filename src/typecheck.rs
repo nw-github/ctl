@@ -615,17 +615,49 @@ impl TypeId {
     }
 
     fn implements_trait(&self, scopes: &Scopes, bound: &GenericUserType) -> bool {
-        let Some(this) = self.as_user_type() else {
-            return false;
-        };
+        let search = |this: Option<&GenericUserType>, impls: &[TypeId]| {
+            for tr in impls.iter() {
+                let mut tr = tr.as_user_type().unwrap().clone();
+                if let Some(this) = this {
+                    for ut in tr.ty_args.iter_mut() {
+                        ut.fill_struct_templates(scopes, this);
+                    }
+                }
 
-        for tr in scopes.get(this.id).impls.iter() {
-            let mut tr = tr.as_user_type().unwrap().clone();
-            for ut in tr.ty_args.iter_mut() {
-                ut.fill_struct_templates(scopes, this);
+                if &*tr == bound {
+                    return true;
+                }
             }
 
-            if &*tr == bound {
+            false
+        };
+
+        if let Some(this) = self.as_user_type() {
+            if search(Some(this), &scopes.get(this.id).impls) {
+                return true;
+            }
+        }
+
+        for ext in scopes.extensions_in_scope_for(self) {
+            if search(self.as_user_type().map(|ty| &**ty), &ext.impls) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn implements_trait_id(&self, scopes: &Scopes, id: UserTypeId) -> bool {
+        let search = |impls: &[TypeId]| impls.iter().any(|i| i.as_user_type().unwrap().id == id);
+
+        if let Some(ut) = self.as_user_type() {
+            if search(&scopes.get(ut.id).impls) {
+                return true;
+            }
+        }
+
+        for ext in scopes.extensions_in_scope_for(self) {
+            if search(&ext.impls) {
                 return true;
             }
         }
@@ -667,15 +699,9 @@ impl TypeId {
             }
         }
 
-        for (_, scope) in scopes.iter() {
-            for ext in scope.exts.iter().map(|ext| scopes.get(ext.id)) {
-                if !ext.matches_type(self) {
-                    continue;
-                }
-
-                if let Some(result) = search(ext.scope, ext.body_scope) {
-                    return Some(result);
-                }
+        for ext in scopes.extensions_in_scope_for(self) {
+            if let Some(result) = search(ext.scope, ext.body_scope) {
+                return Some(result);
             }
         }
 
@@ -1183,6 +1209,10 @@ impl Scopes {
         &self.scopes
     }
 
+    pub fn extensions(&self) -> &[Scoped<Extension>] {
+        &self.exts
+    }
+
     pub fn find_module_in(&self, name: &str, scope: ScopeId) -> Option<Vis<ScopeId>> {
         self[scope]
             .children
@@ -1262,6 +1292,22 @@ impl Scopes {
 
     pub fn insert<T: ItemId>(&mut self, value: T::Value, public: bool) -> T {
         T::insert(self, value, public)
+    }
+
+    pub fn extensions_in_scope_for<'a, 'b>(
+        &'a self,
+        ty: &'b TypeId,
+    ) -> impl Iterator<Item = &Scoped<Extension>> + 'b
+    where
+        'a: 'b,
+    {
+        self.iter().flat_map(|(_, scope)| {
+            scope
+                .exts
+                .iter()
+                .map(|ext| self.get(ext.id))
+                .filter(|ext| ext.matches_type(ty))
+        })
     }
 
     fn can_access_privates(&self, scope: ScopeId) -> bool {
@@ -3163,18 +3209,7 @@ impl TypeChecker {
                 let span = iter.span;
                 let iter = self.check_expr(scopes, *iter, None);
                 let iter_id = scopes.lang_types.get("iter").copied().unwrap();
-                if iter
-                    .ty
-                    .as_user_type()
-                    .and_then(|ut| {
-                        scopes
-                            .get(ut.id)
-                            .impls
-                            .iter()
-                            .find(|i| i.as_user_type().unwrap().id == iter_id)
-                    })
-                    .is_none()
-                {
+                if !iter.ty.implements_trait_id(scopes, iter_id) {
                     self.error(Error::new(
                         format!("type '{}' does not implement 'Iter'", iter.ty.name(scopes)),
                         span,

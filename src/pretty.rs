@@ -522,7 +522,7 @@ fn print_impls(indent: usize, src: &str, impls: &[ImplBlock]) {
     let tabs = INDENT.repeat(indent);
     let plus_1 = INDENT.repeat(indent + 1);
     if !impls.is_empty() {
-        eprintln!("{tabs}New Impls:");
+        eprintln!("{tabs}Impls:");
         for imp in impls {
             if !imp.type_params.is_empty() {
                 eprintln!("{tabs}Type Params:");

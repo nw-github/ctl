@@ -235,7 +235,7 @@ impl Span {
     }
 }
 
-#[derive(Debug, Clone, derive_more::Constructor)]
+#[derive(Clone, derive_more::Constructor)]
 pub struct Located<T> {
     pub span: Span,
     pub data: T,
@@ -245,6 +245,12 @@ impl<T> Located<T> {
     pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Located<U> {
         Located::new(self.span, f(self.data))
     } 
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for Located<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.data.fmt(f)
+    }
 }
 
 pub struct Lexer<'a> {
