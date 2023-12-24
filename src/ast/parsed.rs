@@ -45,6 +45,14 @@ pub enum StmtData {
         variants: Vec<(String, Option<Expr>)>,
         functions: Vec<Fn>,
     },
+    Extension {
+        public: bool,
+        name: String,
+        ty: TypeHint,
+        type_params: Vec<(String, Vec<Located<Path>>)>,
+        impls: Vec<ImplBlock>,
+        functions: Vec<Fn>,
+    },
     Static {
         public: bool,
         name: String,

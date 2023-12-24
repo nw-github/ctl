@@ -748,6 +748,7 @@ pub struct ScopeId(pub usize);
 id!(FunctionId => Function, fns, name.data, func);
 id!(UserTypeId => UserType, types, name, user_type);
 id!(VariableId => Variable, vars, name, var);
+id!(ExtensionId => Extension, exts, name, ext);
 
 #[derive(Debug, Clone)]
 pub struct UnresolvedUse {
@@ -921,6 +922,15 @@ pub enum Symbol {
     Var(VariableId),
 }
 
+#[derive(Debug)]
+pub struct Extension {
+    pub ty: TypeId,
+    pub name: String,
+    pub impls: Vec<TypeId>,
+    pub type_params: Vec<UserTypeId>,
+    pub body_scope: ScopeId,
+}
+
 #[derive(Deref, DerefMut, Constructor)]
 pub struct Scoped<T> {
     #[deref]
@@ -958,6 +968,7 @@ pub struct Scope {
     pub fns: IndexSet<Vis<FunctionId>>,
     pub types: IndexSet<Vis<UserTypeId>>,
     pub vars: IndexSet<Vis<VariableId>>,
+    pub exts: IndexSet<Vis<ExtensionId>>,
     pub children: IndexSet<Vis<ScopeId>>,
 }
 
@@ -967,6 +978,7 @@ pub struct Scopes {
     fns: Vec<Scoped<Function>>,
     types: Vec<Scoped<UserType>>,
     vars: Vec<Scoped<Variable>>,
+    exts: Vec<Scoped<Extension>>,
     lang_types: HashMap<String, UserTypeId>,
     intrinsics: HashMap<FunctionId, String>,
 }
@@ -979,6 +991,7 @@ impl Scopes {
             fns: Vec::new(),
             types: Vec::new(),
             vars: Vec::new(),
+            exts: Vec::new(),
             lang_types: HashMap::new(),
             intrinsics: HashMap::new(),
         }
@@ -1451,11 +1464,13 @@ impl TypeChecker {
                             ty: self.resolve_type(scopes, &member.ty),
                         })
                         .collect();
+                    let (impls, impl_blocks) = self.declare_impl_blocks(scopes, base.impls);
+                    scopes.get_user_type_mut(id).impls = impls;
 
                     DeclaredStmtData::Struct {
                         init,
                         id,
-                        impls: self.declare_impl_blocks(scopes, id, base.impls),
+                        impl_blocks,
                         functions: base
                             .functions
                             .into_iter()
@@ -1525,7 +1540,8 @@ impl TypeChecker {
                         .unwrap()
                         .variants = variants;
 
-                    let impls = self.declare_impl_blocks(scopes, id, base.impls);
+                    let (impls, impl_blocks) = self.declare_impl_blocks(scopes, base.impls);
+                    scopes.get_user_type_mut(id).impls = impls;
                     let member_cons = base
                         .members
                         .into_iter()
@@ -1564,7 +1580,7 @@ impl TypeChecker {
                     DeclaredStmtData::Union {
                         member_cons,
                         id,
-                        impls,
+                        impl_blocks,
                         functions: base
                             .functions
                             .into_iter()
@@ -1654,10 +1670,48 @@ impl TypeChecker {
                         );
                     }
 
+                    let (impls, impl_blocks) = self.declare_impl_blocks(scopes, impls);
+                    scopes.get_user_type_mut(id).impls = impls;
                     DeclaredStmtData::Enum {
                         id,
                         variants,
-                        impls: self.declare_impl_blocks(scopes, id, impls),
+                        impl_blocks,
+                        functions: functions
+                            .into_iter()
+                            .map(|f| self.declare_fn(scopes, false, f, &[]))
+                            .collect(),
+                    }
+                })
+            }
+            StmtData::Extension {
+                public,
+                name,
+                ty,
+                type_params,
+                impls,
+                functions,
+            } => {
+                let id = scopes.insert_ext(
+                    Extension {
+                        name,
+                        ty: self.resolve_type(scopes, &ty),
+                        impls: Vec::new(),
+                        type_params: Vec::new(),
+                        body_scope: ScopeId(0),
+                    },
+                    public,
+                );
+                scopes.enter(ScopeKind::None, false, |scopes| {
+                    scopes.get_ext_mut(id).body_scope = scopes.current;
+                    scopes.get_ext_mut(id).type_params =
+                        self.declare_type_params(scopes, TT::Struct, type_params);
+
+                    let (impls, impl_blocks) = self.declare_impl_blocks(scopes, impls);
+                    scopes.get_ext_mut(id).impls = impls;
+
+                    DeclaredStmtData::Extension {
+                        id,
+                        impl_blocks,
                         functions: functions
                             .into_iter()
                             .map(|f| self.declare_fn(scopes, false, f, &[]))
@@ -1842,18 +1896,17 @@ impl TypeChecker {
     fn declare_impl_blocks(
         &mut self,
         scopes: &mut Scopes,
-        id: UserTypeId,
-        impls: Vec<ImplBlock>,
-    ) -> Vec<DeclaredImplBlock> {
-        impls
-            .into_iter()
-            .map(|block| {
-                // TODO: type params
-                let ty = self.resolve_impl(scopes, &block.path).unwrap_or_default();
-                let impl_index = scopes.get_user_type_mut(id).impls.len();
-                scopes.get_user_type_mut(id).impls.push(ty);
+        blocks: Vec<ImplBlock>,
+    ) -> (Vec<TypeId>, Vec<DeclaredImplBlock>) {
+        let mut impls = Vec::new();
+        let mut declared_blocks = Vec::new();
+        for block in blocks {
+            let ty = self.resolve_impl(scopes, &block.path).unwrap_or_default();
+            let impl_index = impls.len();
+            impls.push(ty);
 
-                scopes.enter(ScopeKind::None, false, |scopes| DeclaredImplBlock {
+            declared_blocks.push(scopes.enter(ScopeKind::None, false, |scopes| {
+                DeclaredImplBlock {
                     impl_index,
                     span: block.path.span,
                     scope: scopes.current,
@@ -1862,9 +1915,11 @@ impl TypeChecker {
                         .into_iter()
                         .map(|f| self.declare_fn(scopes, false, f, &[]))
                         .collect(),
-                })
-            })
-            .collect()
+                }
+            }));
+        }
+
+        (impls, declared_blocks)
     }
 
     fn check_stmt(&mut self, scopes: &mut Scopes, stmt: DeclaredStmt) -> CheckedStmt {
@@ -1884,16 +1939,13 @@ impl TypeChecker {
             DeclaredStmtData::Struct {
                 init,
                 id,
-                impls,
+                impl_blocks,
                 functions,
             } => {
                 self.check_fn(scopes, init);
                 scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
-                    for i in 0..scopes.get_user_type(id).type_params.len() {
-                        self.resolve_impls(scopes, scopes.get_user_type(id).type_params[i]);
-                    }
-
-                    self.check_impl_blocks(scopes, id, impls);
+                    self.resolve_impls(scopes, id);
+                    self.check_impl_blocks(scopes, id, impl_blocks);
                     for i in 0..scopes.get_user_type(id).data.as_struct().unwrap().0.len() {
                         resolve_type!(
                             self,
@@ -1910,15 +1962,12 @@ impl TypeChecker {
             DeclaredStmtData::Union {
                 member_cons,
                 id,
-                impls,
+                impl_blocks,
                 functions,
             } => {
                 scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
-                    for i in 0..scopes.get_user_type(id).type_params.len() {
-                        self.resolve_impls(scopes, scopes.get_user_type(id).type_params[i]);
-                    }
-
-                    self.check_impl_blocks(scopes, id, impls);
+                    self.resolve_impls(scopes, id);
+                    self.check_impl_blocks(scopes, id, impl_blocks);
                     for (i, f) in member_cons.into_iter().enumerate() {
                         resolve_type!(
                             self,
@@ -1942,10 +1991,6 @@ impl TypeChecker {
             }
             DeclaredStmtData::Trait { id, functions } => {
                 scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
-                    for i in 0..scopes.get_user_type(id).type_params.len() {
-                        self.resolve_impls(scopes, scopes.get_user_type(id).type_params[i]);
-                    }
-
                     self.resolve_impls(scopes, id);
                     for f in functions {
                         self.check_fn(scopes, f);
@@ -1956,10 +2001,11 @@ impl TypeChecker {
                 id,
                 variants,
                 functions,
-                impls,
+                impl_blocks,
             } => {
                 scopes.enter_id(scopes.get_user_type(id).body_scope, |scopes| {
-                    self.check_impl_blocks(scopes, id, impls);
+                    self.resolve_impls(scopes, id);
+                    self.check_impl_blocks(scopes, id, impl_blocks);
 
                     for (name, expr) in variants {
                         if let Some(expr) = expr {
@@ -1972,6 +2018,13 @@ impl TypeChecker {
                         self.check_fn(scopes, f);
                     }
                 });
+            }
+            DeclaredStmtData::Extension {
+                id,
+                impl_blocks,
+                functions,
+            } => {
+                todo!()
             }
             DeclaredStmtData::Expr(expr) => {
                 return CheckedStmt::Expr(self.check_expr(scopes, expr, None))
@@ -2368,7 +2421,6 @@ impl TypeChecker {
         id: UserTypeId,
         impls: Vec<DeclaredImplBlock>,
     ) {
-        self.resolve_impls(scopes, id);
         for block in impls {
             // TODO:
             // - impl type params (impl<T> Trait<T>)
@@ -4530,6 +4582,10 @@ impl TypeChecker {
     }
 
     fn resolve_impls(&mut self, scopes: &mut Scopes, id: UserTypeId) {
+        for i in 0..scopes.get_user_type(id).type_params.len() {
+            self.resolve_impls(scopes, scopes.get_user_type(id).type_params[i]);
+        }
+
         let mut removals = Vec::new();
         for i in 0..scopes.get_user_type(id).impls.len() {
             resolve_type!(self, scopes, scopes.get_user_type_mut(id).impls[i]);

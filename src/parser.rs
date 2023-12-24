@@ -137,6 +137,18 @@ impl<'a> Parser<'a> {
             }
 
             Some(self.parse_enum(public.is_some(), token.span))
+        } else if let Some(token) = self.advance_if_kind(Token::Extension) {
+            if let Some(token) = is_unsafe {
+                self.errors
+                    .push(Error::new("unsafe is not valid here", token.span));
+            }
+
+            if let Some(token) = is_extern {
+                self.errors
+                    .push(Error::new("extern is not valid here", token.span));
+            }
+
+            Some(self.parse_extension(public.is_some(), token.span))
         } else if let Some(token) = self.advance_if_kind(Token::Mod) {
             let attrs = std::mem::take(&mut self.attrs);
             if let Some(token) = is_unsafe {
@@ -554,8 +566,10 @@ impl<'a> Parser<'a> {
                         )
                     })
                     .data;
-                let ret = (!self.matches_kind(Token::Arrow)).then(|| self.parse_type());
-                self.expect_kind(Token::Arrow, "expected '->'");
+                let ret = self
+                    .advance_if_kind(Token::Colon)
+                    .map(|_| self.parse_type());
+                self.expect_kind(Token::FatArrow, "expected '=>'");
 
                 let body = self.expression();
                 Expr::new(
@@ -1093,7 +1107,7 @@ impl<'a> Parser<'a> {
             let params = self
                 .csv(Vec::new(), Token::RParen, Span::default(), Self::parse_type)
                 .data;
-            let ret = if self.advance_if_kind(Token::Arrow).is_some() {
+            let ret = if self.advance_if_kind(Token::FatArrow).is_some() {
                 self.parse_type()
             } else {
                 TypeHint::Void
@@ -1350,6 +1364,49 @@ impl<'a> Parser<'a> {
                 name,
                 impls,
                 variants,
+                functions,
+            },
+            attrs,
+        }
+    }
+
+    fn parse_extension(&mut self, public: bool, span: Span) -> Stmt {
+        let attrs = std::mem::take(&mut self.attrs);
+        let type_params = self.parse_generic_params();
+        let name = self.expect_id("expected name");
+
+        self.expect_kind(Token::For, "expected 'for'");
+        let ty = self.parse_type();
+        self.expect_kind(Token::LCurly, "expected '{'");
+
+        let mut functions = Vec::new();
+        let mut impls = Vec::new();
+        let span = self.advance_until(Token::RCurly, span, |this| {
+            if let Some(token) = this.advance_if_kind(Token::Impl) {
+                impls.push(this.parse_impl_block(token.span));
+            }
+
+            let config = FnConfig {
+                allow_method: true,
+                is_public: this.advance_if_kind(Token::Pub).is_some(),
+                is_async: false,
+                is_extern: false,
+                is_unsafe: this.advance_if_kind(Token::Unsafe).is_some(),
+                body: true,
+            };
+            if let Ok(func) = this.expect_fn(config) {
+                functions.push(func.data);
+            }
+        });
+
+        Stmt {
+            span,
+            data: StmtData::Extension {
+                public,
+                name,
+                ty,
+                type_params,
+                impls,
                 functions,
             },
             attrs,

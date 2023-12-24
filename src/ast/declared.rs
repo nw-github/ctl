@@ -2,7 +2,7 @@ use crate::{
     ast::parsed::{Expr, Path, Pattern, TypeHint},
     ast::Attribute,
     lexer::Span,
-    typecheck::{FunctionId, ScopeId, UserTypeId, VariableId},
+    typecheck::{FunctionId, ScopeId, UserTypeId, VariableId, ExtensionId},
 };
 
 pub struct DeclaredStmt {
@@ -39,13 +39,13 @@ pub enum DeclaredStmtData {
     Fn(DeclaredFn),
     Struct {
         id: UserTypeId,
-        impls: Vec<DeclaredImplBlock>,
+        impl_blocks: Vec<DeclaredImplBlock>,
         functions: Vec<DeclaredFn>,
         init: DeclaredFn,
     },
     Union {
         id: UserTypeId,
-        impls: Vec<DeclaredImplBlock>,
+        impl_blocks: Vec<DeclaredImplBlock>,
         functions: Vec<DeclaredFn>,
         member_cons: Vec<DeclaredFn>,
     },
@@ -55,8 +55,13 @@ pub enum DeclaredStmtData {
     },
     Enum {
         id: UserTypeId,
-        impls: Vec<DeclaredImplBlock>,
+        impl_blocks: Vec<DeclaredImplBlock>,
         variants: Vec<(String, Option<Expr>)>,
+        functions: Vec<DeclaredFn>,
+    },
+    Extension {
+        id: ExtensionId,
+        impl_blocks: Vec<DeclaredImplBlock>,
         functions: Vec<DeclaredFn>,
     },
     Static {

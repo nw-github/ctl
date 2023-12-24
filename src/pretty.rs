@@ -106,6 +106,33 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
                 print_fn(f, src, indent + 1);
             }
         }
+        StmtData::Extension {
+            public,
+            name,
+            ty,
+            type_params,
+            impls,
+            functions,
+        } => {
+            eprint!("{tabs}Extension[{name}, for={ty:?}]");
+            print_bool!(public);
+            eprintln!();
+
+            let plus_1 = INDENT.repeat(indent + 1);
+            if !type_params.is_empty() {
+                eprintln!("{tabs}Type Params:");
+                for (name, path) in type_params {
+                    eprintln!("{plus_1}{name}: {path:?}");
+                }
+            }
+
+            print_impls(indent, src, impls);
+
+            eprintln!("{tabs}Functions:");
+            for f in functions {
+                print_fn(f, src, indent + 1);
+            }
+        }
         StmtData::Static {
             name,
             ty,
