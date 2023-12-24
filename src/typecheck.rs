@@ -1767,7 +1767,7 @@ impl TypeChecker {
                 let id = scopes.insert(
                     Extension {
                         name,
-                        ty: self.resolve_type(scopes, &ty),
+                        ty: TypeId::Unknown(None),
                         impls: Vec::new(),
                         type_params: Vec::new(),
                         body_scope: ScopeId(0),
@@ -1778,6 +1778,7 @@ impl TypeChecker {
                     scopes.get_mut(id).body_scope = scopes.current;
                     scopes.get_mut(id).type_params =
                         self.declare_type_params(scopes, TT::Struct, type_params);
+                    scopes.get_mut(id).ty = self.resolve_type(scopes, &ty);
 
                     let (impls, impl_blocks) = self.declare_impl_blocks(scopes, impls);
                     scopes.get_mut(id).impls = impls;
