@@ -744,6 +744,7 @@ pub enum ScopeKind {
     UserType(UserTypeId),
     Module(String, Vec<UnresolvedUse>),
     Impl(UserTypeId),
+    Extension(ExtensionId),
     #[default]
     None,
 }
@@ -890,6 +891,40 @@ impl UserType {
             UserTypeData::Union(union) => Some(&mut union.variants),
             _ => None,
         }
+    }
+}
+
+pub trait HasImplsAndTypeParams {
+    fn get_type_params(&self) -> &[UserTypeId];
+    fn get_impls(&self) -> &Vec<TypeId>;
+    fn get_impls_mut(&mut self) -> &mut Vec<TypeId>;
+}
+
+impl HasImplsAndTypeParams for UserType {
+    fn get_type_params(&self) -> &[UserTypeId] {
+        &self.type_params
+    }
+
+    fn get_impls(&self) -> &Vec<TypeId> {
+        &self.impls
+    }
+
+    fn get_impls_mut(&mut self) -> &mut Vec<TypeId> {
+        &mut self.impls
+    }
+}
+
+impl HasImplsAndTypeParams for Extension {
+    fn get_type_params(&self) -> &[UserTypeId] {
+        &self.type_params
+    }
+
+    fn get_impls(&self) -> &Vec<TypeId> {
+        &self.impls
+    }
+
+    fn get_impls_mut(&mut self) -> &mut Vec<TypeId> {
+        &mut self.impls
     }
 }
 
@@ -1074,15 +1109,21 @@ impl Scopes {
 
     pub fn current_this_type(&self) -> Option<TypeId> {
         self.iter().find_map(|(_, scope)| {
-            if let ScopeKind::UserType(id) = scope.kind {
-                let ty = self.get(id);
-                if !ty.data.is_template() {
-                    if ty.data.is_trait() {
-                        return Some(TypeId::TraitSelf);
-                    }
+            match scope.kind {
+                ScopeKind::UserType(id) => {
+                    let ty = self.get(id);
+                    if !ty.data.is_template() {
+                        if ty.data.is_trait() {
+                            return Some(TypeId::TraitSelf);
+                        }
 
-                    return Some(self.this_type_of(id));
+                        return Some(self.this_type_of(id));
+                    }
                 }
+                ScopeKind::Extension(id) => {
+                    return Some(self.get(id).ty.clone());
+                }
+                _ => {}
             }
             None
         })
@@ -1700,7 +1741,7 @@ impl TypeChecker {
                 impls,
                 functions,
             } => {
-                let id: ExtensionId = scopes.insert(
+                let id = scopes.insert(
                     Extension {
                         name,
                         ty: self.resolve_type(scopes, &ty),
@@ -1710,7 +1751,7 @@ impl TypeChecker {
                     },
                     public,
                 );
-                scopes.enter(ScopeKind::None, false, |scopes| {
+                scopes.enter(ScopeKind::Extension(id), false, |scopes| {
                     scopes.get_mut(id).body_scope = scopes.current;
                     scopes.get_mut(id).type_params =
                         self.declare_type_params(scopes, TT::Struct, type_params);
@@ -2031,7 +2072,17 @@ impl TypeChecker {
                 impl_blocks,
                 functions,
             } => {
-                todo!()
+                scopes.enter_id(scopes.get(id).body_scope, |scopes| {
+                    self.resolve_impls(scopes, id);
+                    resolve_type!(self, scopes, scopes.get_mut(id).ty);
+
+                    let this = scopes.get_mut(id).ty.clone();
+                    self.check_impl_blocks_inner(scopes, this, id, impl_blocks);
+
+                    for f in functions {
+                        self.check_fn(scopes, f);
+                    }
+                });
             }
             DeclaredStmtData::Expr(expr) => {
                 return CheckedStmt::Expr(self.check_expr(scopes, expr, None))
@@ -2428,14 +2479,26 @@ impl TypeChecker {
         id: UserTypeId,
         impls: Vec<DeclaredImplBlock>,
     ) {
+        self.check_impl_blocks_inner(scopes, scopes.this_type_of(id), id, impls)
+    }
+
+    fn check_impl_blocks_inner<T: ItemId + Copy>(
+        &mut self,
+        scopes: &mut Scopes,
+        this: TypeId,
+        id: T,
+        impls: Vec<DeclaredImplBlock>,
+    ) where
+        T::Value: HasImplsAndTypeParams,
+    {
         for block in impls {
             // TODO:
             // - impl type params (impl<T> Trait<T>)
             // - implement the same trait more than once
             scopes.enter_id(block.scope, |scopes| {
-                if let Some(gtr) = scopes.get(id).impls[block.impl_index].as_user_type() {
+                if let Some(gtr) = scopes.get(id).get_impls()[block.impl_index].as_user_type() {
                     let gtr = gtr.clone();
-                    self.check_impl_block(scopes, &scopes.this_type_of(id), &gtr, block);
+                    self.check_impl_block(scopes, &this, &gtr, block);
                     scopes.current().kind = ScopeKind::Impl(gtr.id);
                 } else {
                     for f in block.functions {
@@ -4575,15 +4638,18 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_impls(&mut self, scopes: &mut Scopes, id: UserTypeId) {
-        for i in 0..scopes.get(id).type_params.len() {
-            self.resolve_impls(scopes, scopes.get(id).type_params[i]);
+    fn resolve_impls<T: ItemId + Copy>(&mut self, scopes: &mut Scopes, id: T)
+    where
+        T::Value: HasImplsAndTypeParams,
+    {
+        for i in 0..scopes.get(id).get_type_params().len() {
+            self.resolve_impls(scopes, scopes.get(id).get_type_params()[i]);
         }
 
         let mut removals = Vec::new();
-        for i in 0..scopes.get(id).impls.len() {
-            resolve_type!(self, scopes, scopes.get_mut(id).impls[i]);
-            let imp = &scopes.get(id).impls[i];
+        for i in 0..scopes.get(id).get_impls().len() {
+            resolve_type!(self, scopes, scopes.get_mut(id).get_impls_mut()[i]);
+            let imp = &scopes.get(id).get_impls()[i];
             if !imp
                 .as_user_type()
                 .map_or(false, |t| scopes.get(t.id).data.is_trait())
@@ -4596,7 +4662,7 @@ impl TypeChecker {
         }
 
         for i in removals.into_iter().rev() {
-            scopes.get_mut(id).impls.remove(i);
+            scopes.get_mut(id).get_impls_mut().remove(i);
         }
     }
 
