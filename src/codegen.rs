@@ -59,8 +59,8 @@ impl std::hash::Hash for State {
 
 struct TypeGen {
     structs: Option<HashSet<GenericUserType>>,
-    ints: HashSet<(bool, u32)>,
     fnptrs: Option<HashSet<FnPtr>>,
+    arrays: HashMap<TypeId, usize>,
 }
 
 impl TypeGen {
@@ -88,6 +88,7 @@ impl TypeGen {
             definitions.emit(");");
         }
 
+        let mut arrays = std::mem::take(&mut self.arrays);
         for ut in Self::get_struct_order(scopes, &structs)? {
             let union = scopes.get(ut.id).data.as_union();
             let unsafe_union = union.as_ref().map_or(false, |union| union.is_unsafe);
@@ -128,14 +129,15 @@ impl TypeGen {
             }
 
             definitions.emit("};");
+
+            let ty = &TypeId::UserType(ut.clone().into());
+            if let Some(size) = arrays.remove(ty) {
+                self.emit_array(scopes, buffer, &mut definitions, ty, size);
+            }
         }
 
-        for &(signed, bits) in self.ints.iter() {
-            if signed {
-                buffer.emit(format!("typedef SINT({bits}) i{bits};"));
-            } else {
-                buffer.emit(format!("typedef UINT({bits}) u{bits};"));
-            }
+        for (ty, size) in arrays {
+            self.emit_array(scopes, buffer, &mut definitions, &ty, size);
         }
 
         buffer.emit(definitions.0);
@@ -234,14 +236,35 @@ impl TypeGen {
             buffer.emit(";");
         }
     }
+
+    fn emit_array(
+        &mut self,
+        scopes: &Scopes,
+        buf: &mut Buffer,
+        defs: &mut Buffer,
+        ty: &TypeId,
+        size: usize,
+    ) {
+        defs.emit("struct ");
+        defs.emit_array_struct_name(scopes, ty, size);
+        defs.emit(" { ");
+        defs.emit_type(scopes, ty, self);
+        defs.emit(format!(" data[{size}]; }};"));
+
+        buf.emit("typedef struct ");
+        buf.emit_array_struct_name(scopes, ty, size);
+        buf.emit(" ");
+        buf.emit_array_struct_name(scopes, ty, size);
+        buf.emit(";");
+    }
 }
 
 impl Default for TypeGen {
     fn default() -> Self {
         Self {
             structs: Some(HashSet::new()),
-            ints: HashSet::new(),
             fnptrs: Some(HashSet::new()),
+            arrays: HashMap::new(),
         }
     }
 }
@@ -259,8 +282,7 @@ impl Buffer {
             TypeId::Void | TypeId::Never | TypeId::CVoid => self.emit("void"),
             TypeId::Int(bits) | TypeId::Uint(bits) => {
                 let signed = matches!(id, TypeId::Int(_));
-                tg.ints.insert((signed, *bits));
-                self.emit(format!("{}{bits}", if signed { "i" } else { "u" }));
+                self.emit(format!("{}INT({bits})", if signed { "S" } else { "U" }));
             }
             TypeId::CInt(ty) | TypeId::CUint(ty) => {
                 if matches!(id, TypeId::CUint(_)) {
@@ -316,8 +338,11 @@ impl Buffer {
                     panic!("ICE: Trait type in emit_type");
                 }
             },
+            TypeId::Array(data) => {
+                self.emit_generic_mangled_name(scopes, id);
+                tg.arrays.insert(data.0.clone(), data.1);
+            }
             TypeId::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_type"),
-            TypeId::Array(_) => todo!(),
             TypeId::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_type"),
         }
     }
@@ -360,7 +385,7 @@ impl Buffer {
                 self.emit_type_name(scopes, ut);
             }
             TypeId::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
-            TypeId::Array(_) => todo!(),
+            TypeId::Array(data) => self.emit_array_struct_name(scopes, &data.0, data.1),
             TypeId::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_generic_mangled_name"),
         }
     }
@@ -547,6 +572,12 @@ impl Buffer {
         } else {
             Err(ty)
         }
+    }
+
+    fn emit_array_struct_name(&mut self, scopes: &Scopes, ty: &TypeId, size: usize) {
+        self.emit("Array_");
+        self.emit_generic_mangled_name(scopes, ty);
+        self.emit(format!("_{}", size));
     }
 }
 
@@ -978,8 +1009,26 @@ impl Codegen {
                 }
                 self.buffer.emit(")");
             }
-            CheckedExprData::Array(_) => todo!(),
-            CheckedExprData::ArrayWithInit { .. } => todo!(),
+            CheckedExprData::Array(exprs) => {
+                self.buffer.emit("(");
+                self.emit_type(scopes, &expr.ty);
+                self.buffer.emit("){.data={");
+                for expr in exprs {
+                    self.gen_expr(scopes, expr, state);
+                    self.buffer.emit(",");
+                }
+                self.buffer.emit("}}");
+            }
+            CheckedExprData::ArrayWithInit { init, count } => {
+                self.buffer.emit("(");
+                self.emit_type(scopes, &expr.ty);
+                self.buffer.emit("){.data={");
+                for _ in 0..count {
+                    self.gen_expr(scopes, (*init).clone(), state);
+                    self.buffer.emit(",");
+                }
+                self.buffer.emit("}}");
+            }
             CheckedExprData::Vec(exprs) => {
                 let tmp = tmpbuf!(self, state, |tmp| {
                     let arr = state.tmpvar();
@@ -1342,7 +1391,15 @@ impl Codegen {
                     self.buffer.emit(tmp);
                 }
             }
-            CheckedExprData::Subscript { .. } => todo!(),
+            CheckedExprData::Subscript { callee, args } => {
+                // TODO: bounds check
+                self.gen_expr(scopes, *callee, state);
+                self.buffer.emit(".data[");
+                for arg in args {
+                    self.gen_expr(scopes, arg, state);
+                }
+                self.buffer.emit("]");
+            }
             CheckedExprData::Return(expr) => {
                 // TODO: when return is used as anything except a StmtExpr, we will have to change
                 // the generated code to accomodate it
@@ -1568,7 +1625,7 @@ impl Codegen {
             CheckedExprData::Array(_) => todo!(),
             CheckedExprData::ArrayWithInit { .. } => todo!(),
             CheckedExprData::Assign { .. } => true,
-            CheckedExprData::Subscript { .. } => todo!(),
+            CheckedExprData::Subscript { .. } => false,
             _ => false,
         }
     }
@@ -1588,7 +1645,10 @@ impl Codegen {
                 .map(|f| f.id)
         };
 
-        if let Some(f) = ty.as_user_type().and_then(|ut| search(scopes.get(ut.id).body_scope)) {
+        if let Some(f) = ty
+            .as_user_type()
+            .and_then(|ut| search(scopes.get(ut.id).body_scope))
+        {
             return Some(f);
         }
 
