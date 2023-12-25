@@ -864,7 +864,14 @@ impl Codegen {
                 }
                 UnaryOp::Addr | UnaryOp::AddrMut => {
                     // TODO: addr of void
-                    self.buffer.emit("&");
+                    state.fill_generics(scopes, &mut inner.ty);
+                    if inner.ty.is_void_like() {
+                        self.emit_cast(scopes, &expr.ty);
+                        self.buffer.emit("(0xdeadbeef);");
+                    } else {
+                        self.buffer.emit("&");
+                    }
+
                     match inner.data {
                         CheckedExprData::Unary {
                             op: UnaryOp::Deref, ..
@@ -877,7 +884,6 @@ impl Codegen {
                             self.gen_expr(scopes, *inner, state);
                         }
                         _ => {
-                            state.fill_generics(scopes, &mut inner.ty);
                             self.gen_to_tmp(scopes, *inner, state);
                         }
                     }
@@ -1391,7 +1397,7 @@ impl Codegen {
                         });
                     }
 
-                    self.buffer.emit("else { UNREACHABLE(); }");
+                    // self.buffer.emit("else { UNREACHABLE(); }");
                 })
             }
             CheckedExprData::As(inner, _) => {
