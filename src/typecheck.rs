@@ -3380,10 +3380,11 @@ impl TypeChecker {
             }
             ExprData::Return(expr) => self.check_return(scopes, *expr),
             ExprData::Yield(expr) => self.check_yield(scopes, *expr),
-            ExprData::YieldOrReturn(expr) => match &scopes.current().kind {
+            ExprData::Tail(expr) => match &scopes.current().kind {
                 ScopeKind::Function(_) | ScopeKind::Lambda(_, _) => {
                     self.check_return(scopes, *expr)
                 }
+                ScopeKind::Loop(_, _) => self.type_check(scopes, *expr, &TypeId::Void),
                 _ => self.check_yield(scopes, *expr),
             },
             ExprData::Break(expr) => {

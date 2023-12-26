@@ -157,7 +157,7 @@ pub enum ExprData {
     },
     Return(Box<Expr>),
     Yield(Box<Expr>),
-    YieldOrReturn(Box<Expr>),
+    Tail(Box<Expr>),
     Break(Box<Expr>),
     Unsafe(Box<Expr>),
     Range {

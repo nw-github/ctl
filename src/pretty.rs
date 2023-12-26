@@ -351,8 +351,8 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
             eprintln!("{tabs}Yield");
             print_expr(expr, src, indent + 1);
         }
-        ExprData::YieldOrReturn(expr) => {
-            eprintln!("{tabs}YieldOrReturn");
+        ExprData::Tail(expr) => {
+            eprintln!("{tabs}Tail");
             print_expr(expr, src, indent + 1);
         }
         ExprData::Break(expr) => {

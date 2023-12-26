@@ -335,7 +335,7 @@ impl<'a> Parser<'a> {
             };
 
             if self.matches_kind(Token::RCurly) {
-                expr = Expr::new(expr.span, ExprData::YieldOrReturn(expr.into()));
+                expr = Expr::new(expr.span, ExprData::Tail(expr.into()));
             } else if needs_semicolon {
                 self.expect_kind(Token::Semicolon, "expected ';'");
             } else {
