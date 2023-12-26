@@ -88,7 +88,7 @@ impl TypeGen {
             definitions.emit(");");
         }
 
-        let mut arrays = std::mem::take(&mut self.arrays);
+        let mut emitted = HashSet::new();
         for ut in Self::get_struct_order(scopes, &structs)? {
             let union = scopes.get(ut.id).data.as_union();
             let unsafe_union = union.as_ref().map_or(false, |union| union.is_unsafe);
@@ -130,14 +130,18 @@ impl TypeGen {
 
             definitions.emit("};");
 
-            let ty = &TypeId::UserType(ut.clone().into());
-            if let Some(size) = arrays.remove(ty) {
-                self.emit_array(scopes, buffer, &mut definitions, ty, size);
+            let ty = TypeId::UserType(ut.clone().into());
+            if let Some(size) = self.arrays.remove(&ty) {
+                self.emit_array(scopes, buffer, Some(&mut definitions), &ty, size);
+                emitted.insert(ty);
             }
         }
 
-        for (ty, size) in arrays {
-            self.emit_array(scopes, buffer, &mut definitions, &ty, size);
+        for (ty, size) in std::mem::take(&mut self.arrays)
+            .into_iter()
+            .filter(|(ty, _)| !emitted.contains(ty))
+        {
+            self.emit_array(scopes, buffer, None, &ty, size);
         }
 
         buffer.emit(definitions.0);
@@ -240,22 +244,23 @@ impl TypeGen {
     fn emit_array(
         &mut self,
         scopes: &Scopes,
-        buf: &mut Buffer,
-        defs: &mut Buffer,
+        typedef: &mut Buffer,
+        defs: Option<&mut Buffer>,
         ty: &TypeId,
         size: usize,
     ) {
+        typedef.emit("typedef struct ");
+        typedef.emit_array_struct_name(scopes, ty, size);
+        typedef.emit(" ");
+        typedef.emit_array_struct_name(scopes, ty, size);
+        typedef.emit(";");
+
+        let defs = defs.unwrap_or(typedef);
         defs.emit("struct ");
         defs.emit_array_struct_name(scopes, ty, size);
         defs.emit(" { ");
         defs.emit_type(scopes, ty, self);
         defs.emit(format!(" data[{size}]; }};"));
-
-        buf.emit("typedef struct ");
-        buf.emit_array_struct_name(scopes, ty, size);
-        buf.emit(" ");
-        buf.emit_array_struct_name(scopes, ty, size);
-        buf.emit(";");
     }
 }
 
