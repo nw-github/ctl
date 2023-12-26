@@ -517,7 +517,7 @@ impl TypeId {
             {
                 true
             }
-            (TypeId::Never, _) => true,
+            (TypeId::Never | TypeId::Unknown(_), _) => true,
             (ty, target) if ty.may_ptr_coerce(target) => true,
             (ty, target) => ty == target,
         }
@@ -615,6 +615,10 @@ impl TypeId {
     }
 
     fn implements_trait(&self, scopes: &Scopes, bound: &GenericUserType) -> bool {
+        if self.is_unknown() {
+            return true;
+        }
+
         let search = |this: Option<&GenericUserType>, impls: &[TypeId]| {
             for tr in impls.iter() {
                 let mut tr = tr.as_user_type().unwrap().clone();
@@ -648,6 +652,10 @@ impl TypeId {
     }
 
     fn implements_trait_id(&self, scopes: &Scopes, id: UserTypeId) -> bool {
+        if self.is_unknown() {
+            return true;
+        }
+
         let search = |impls: &[TypeId]| impls.iter().any(|i| i.as_user_type().unwrap().id == id);
 
         if let Some(ut) = self.as_user_type() {
@@ -3991,6 +3999,10 @@ impl TypeChecker {
             } => {
                 let this = self.check_expr(scopes, *source, None);
                 let id = this.ty.strip_references().clone();
+                if id.is_unknown() {
+                    return Default::default();
+                }
+
                 let Some((tr, func, ty_scope)) = id.get_member_fn(scopes, &member) else {
                     return self.error(Error::new(
                         format!("no method '{member}' found on type '{}'", id.name(scopes)),
@@ -4165,6 +4177,10 @@ impl TypeChecker {
         }
 
         let callee = self.check_expr(scopes, callee, None);
+        if callee.ty.is_unknown() {
+            return Default::default();
+        }
+
         if callee.ty.is_fn_ptr() {
             return self.call_fn_ptr(scopes, callee, args, span);
         }
