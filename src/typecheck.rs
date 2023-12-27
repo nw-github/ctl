@@ -545,17 +545,7 @@ impl TypeChecker {
 
                 DeclaredStmtData::Use { public, path, all }
             }
-            StmtData::Let {
-                ty,
-                value,
-                mutable,
-                patt,
-            } => DeclaredStmtData::Let {
-                ty,
-                mutable,
-                value,
-                patt,
-            },
+            StmtData::Let { ty, value, patt } => DeclaredStmtData::Let { ty, value, patt },
             StmtData::Expr(expr) => DeclaredStmtData::Expr(expr),
             StmtData::Error => DeclaredStmtData::Error,
         };
@@ -823,19 +813,14 @@ impl TypeChecker {
             DeclaredStmtData::Expr(expr) => {
                 return CheckedStmt::Expr(self.check_expr(scopes, expr, None))
             }
-            DeclaredStmtData::Let {
-                ty,
-                mutable,
-                value,
-                patt,
-            } => {
+            DeclaredStmtData::Let { ty, value, patt } => {
                 if let Some(ty) = ty {
                     let ty = self.resolve_typehint(scopes, &ty);
                     if let Some(value) = value {
                         let value = self.type_check(scopes, value, &ty);
-                        return self.check_var_stmt(scopes, ty, Some(value), mutable, patt);
+                        return self.check_var_stmt(scopes, ty, Some(value), patt);
                     } else {
-                        return self.check_var_stmt(scopes, ty, None, mutable, patt);
+                        return self.check_var_stmt(scopes, ty, None, patt);
                     }
                 } else if let Some(value) = value {
                     let value = self.check_expr(scopes, value, None);
@@ -843,7 +828,6 @@ impl TypeChecker {
                         scopes,
                         value.ty.clone(),
                         Some(value),
-                        mutable,
                         patt,
                     );
                 } else {
@@ -878,11 +862,10 @@ impl TypeChecker {
         scopes: &mut Scopes,
         ty: Type,
         value: Option<CheckedExpr>,
-        mutable: bool,
         patt: Pattern,
     ) -> CheckedStmt {
         let span = *patt.span();
-        match self.check_pattern(scopes, true, &ty, mutable, patt) {
+        match self.check_pattern(scopes, true, &ty, false, patt) {
             CheckedPattern::Irrefutable(IrrefutablePattern::Variable(id)) => {
                 scopes.get_mut(id).value = value;
                 CheckedStmt::Let(id)

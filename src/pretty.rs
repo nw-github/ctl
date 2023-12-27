@@ -20,11 +20,9 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
         StmtData::Let {
             ty,
             value,
-            mutable,
             patt,
         } => {
             eprint!("{tabs}Let[{patt:?}]");
-            print_bool!(mutable);
             eprintln!();
 
             eprintln!("{tabs}Type: {ty:?}");

@@ -33,7 +33,6 @@ pub enum DeclaredStmtData {
     Let {
         patt: Pattern,
         ty: Option<TypeHint>,
-        mutable: bool,
         value: Option<Expr>,
     },
     Fn(DeclaredFn),

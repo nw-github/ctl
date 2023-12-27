@@ -291,8 +291,7 @@ impl<'a> Parser<'a> {
                     .push(Error::new("unsafe is not valid here", is_unsafe.span));
             }
 
-            let mutable = matches!(token.data, Token::Mut);
-            let patt = self.pattern(!mutable);
+            let patt = self.pattern(matches!(token.data, Token::Mut));
             let ty = self
                 .advance_if_kind(Token::Colon)
                 .map(|_| self.parse_type());
@@ -304,7 +303,6 @@ impl<'a> Parser<'a> {
                 data: StmtData::Let {
                     ty,
                     value,
-                    mutable,
                     patt,
                 },
                 span: token.span.extended_to(semi.span),
@@ -700,7 +698,7 @@ impl<'a> Parser<'a> {
                 left.span,
                 ExprData::Is {
                     expr: left.into(),
-                    pattern: self.pattern(true),
+                    pattern: self.pattern(false),
                 },
             ),
             Token::As => {
@@ -847,7 +845,7 @@ impl<'a> Parser<'a> {
         self.expect_kind(Token::LCurly, "expected block");
         let mut body = Vec::new();
         let span = self.advance_until(Token::RCurly, token, |this| {
-            let pattern = this.pattern(true);
+            let pattern = this.pattern(false);
             this.expect_kind(Token::FatArrow, "expected '=>'");
             let expr = this.expression();
             if !expr.data.is_block_expr() {
@@ -945,9 +943,9 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn pattern(&mut self, allow_mut: bool) -> Pattern {
+    fn pattern(&mut self, mut_var: bool) -> Pattern {
         if self.advance_if_kind(Token::Question).is_some() {
-            return Pattern::Option(self.pattern(true).into());
+            return Pattern::Option(self.pattern(false).into());
         }
 
         if let Some(token) = self.advance_if_kind(Token::None) {
@@ -957,10 +955,11 @@ impl<'a> Parser<'a> {
         if let Some(token) = self.advance_if_kind(Token::LCurly) {
             return Pattern::StructDestructure(self.csv_one(Token::RCurly, token.span, |this| {
                 let mutable = this.advance_if_kind(Token::Mut).is_some();
+                // if mut_var, this mutable is redundant
                 let name = this.expect_located_id("expected name");
                 Destructure {
                     name,
-                    mutable,
+                    mutable: mutable || mut_var,
                     pattern: this
                         .advance_if_kind(Token::Colon)
                         .map(|_| this.pattern(true)),
@@ -968,7 +967,7 @@ impl<'a> Parser<'a> {
             }));
         }
 
-        if allow_mut && self.advance_if_kind(Token::Mut).is_some() {
+        if mut_var || self.advance_if_kind(Token::Mut).is_some() {
             return Pattern::MutBinding(self.expect_located_id("expected name"));
         }
 
@@ -978,7 +977,7 @@ impl<'a> Parser<'a> {
                 path,
                 subpatterns: self
                     .csv(Vec::new(), Token::RParen, token.span, |this| {
-                        this.pattern(true)
+                        this.pattern(false)
                     })
                     .data,
             }
