@@ -1,6 +1,6 @@
 use enum_as_inner::EnumAsInner;
 use indexmap::IndexMap;
-use num_bigint::{BigInt, BigUint};
+use num_bigint::BigInt;
 
 use crate::{
     ast::{BinaryOp, UnaryOp},
@@ -29,6 +29,7 @@ pub enum CheckedPattern {
     },
     Irrefutable(IrrefutablePattern),
     Destrucure(Vec<(String, CheckedPattern)>),
+    Integer(BigInt),
     #[default]
     Error,
 }
@@ -88,8 +89,7 @@ pub enum CheckedExprData {
     Set(Vec<CheckedExpr>),
     Map(Vec<(CheckedExpr, CheckedExpr)>),
     Bool(bool),
-    Signed(BigInt),
-    Unsigned(BigUint),
+    Integer(BigInt),
     Float(String),
     String(String),
     ByteString(String),

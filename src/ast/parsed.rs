@@ -18,7 +18,7 @@ pub enum StmtData {
         all: bool,
     },
     Let {
-        patt: Pattern,
+        patt: Located<Pattern>,
         ty: Option<TypeHint>,
         value: Option<Expr>,
     },
@@ -77,7 +77,7 @@ pub enum ExprData {
     },
     Is {
         expr: Box<Expr>,
-        pattern: Pattern,
+        pattern: Located<Pattern>,
     },
     As {
         expr: Box<Expr>,
@@ -143,7 +143,7 @@ pub enum ExprData {
     },
     Match {
         expr: Box<Expr>,
-        body: Vec<(Pattern, Expr)>,
+        body: Vec<(Located<Pattern>, Expr)>,
     },
     Member {
         source: Box<Expr>,
@@ -247,7 +247,15 @@ impl std::fmt::Debug for Path {
 pub struct Destructure {
     pub name: Located<String>,
     pub mutable: bool,
-    pub pattern: Option<Pattern>,
+    pub pattern: Option<Located<Pattern>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct IntPattern {
+    pub negative: bool,
+    pub base: u8,
+    pub value: String,
+    pub width: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -255,32 +263,27 @@ pub enum Pattern {
     // x is ::core::opt::Option::Some(mut y)
     TupleLike {
         path: Located<Path>,
-        subpatterns: Vec<Pattern>,
+        subpatterns: Vec<Located<Pattern>>,
     },
     // x is ::core::opt::Option::None
     // x is y
-    Path(Located<Path>),
+    Path(Path),
     // x is mut y
-    MutBinding(Located<String>),
+    MutBinding(String),
     // x is ?mut y
     Option(Box<Pattern>),
     // x is null
-    Null(Span),
+    Null,
     // let {x, y} = z;
-    StructDestructure(Located<Vec<Destructure>>),
-}
-
-impl Pattern {
-    pub fn span(&self) -> &Span {
-        match self {
-            Pattern::TupleLike { path, .. } => &path.span,
-            Pattern::Path(path) => &path.span,
-            Pattern::MutBinding(ident) => &ident.span,
-            Pattern::Option(patt) => patt.span(),
-            Pattern::Null(span) => span,
-            Pattern::StructDestructure(stuff) => &stuff.span,
-        }
-    }
+    StructDestructure(Vec<Destructure>),
+    // 0
+    IntLiteral(IntPattern),
+    IntRange {
+        inclusive: bool,
+        start: IntPattern,
+        end: IntPattern,
+    },
+    Error
 }
 
 #[derive(Clone)]

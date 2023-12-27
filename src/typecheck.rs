@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use indexmap::{map::Entry, IndexMap};
-use num_bigint::{BigInt, BigUint};
+use num_bigint::BigInt;
 use num_traits::Num;
 
 use crate::{
@@ -12,8 +12,8 @@ use crate::{
         },
         declared::{DeclaredFn, DeclaredImplBlock, DeclaredStmt, DeclaredStmtData},
         parsed::{
-            Destructure, Expr, ExprData, Fn, ImplBlock, Param, Path, Pattern, Stmt, StmtData,
-            TypeHint,
+            Destructure, Expr, ExprData, Fn, ImplBlock, IntPattern, Param, Path, Pattern, Stmt,
+            StmtData, TypeHint,
         },
         Attribute, BinaryOp, UnaryOp,
     },
@@ -445,7 +445,7 @@ impl TypeChecker {
                                         mutable: false,
                                         value: Some(CheckedExpr::new(
                                             backing.clone(),
-                                            CheckedExprData::Unsigned(BigUint::from(i)),
+                                            CheckedExprData::Integer(BigInt::from(i)),
                                         )),
                                     },
                                     true,
@@ -824,12 +824,7 @@ impl TypeChecker {
                     }
                 } else if let Some(value) = value {
                     let value = self.check_expr(scopes, value, None);
-                    return self.check_var_stmt(
-                        scopes,
-                        value.ty.clone(),
-                        Some(value),
-                        patt,
-                    );
+                    return self.check_var_stmt(scopes, value.ty.clone(), Some(value), patt);
                 } else {
                     return self.error(Error::new("cannot infer type", stmt.span));
                 }
@@ -862,9 +857,9 @@ impl TypeChecker {
         scopes: &mut Scopes,
         ty: Type,
         value: Option<CheckedExpr>,
-        patt: Pattern,
+        patt: Located<Pattern>,
     ) -> CheckedStmt {
-        let span = *patt.span();
+        let span = patt.span;
         match self.check_pattern(scopes, true, &ty, false, patt) {
             CheckedPattern::Irrefutable(IrrefutablePattern::Variable(id)) => {
                 scopes.get_mut(id).value = value;
@@ -1406,7 +1401,7 @@ impl TypeChecker {
             ),
             ExprData::Char(s) => CheckedExpr::new(Type::Char, CheckedExprData::Char(s)),
             ExprData::ByteChar(c) => {
-                CheckedExpr::new(Type::Uint(8), CheckedExprData::Unsigned(BigUint::from(c)))
+                CheckedExpr::new(Type::Uint(8), CheckedExprData::Integer(BigInt::from(c)))
             }
             ExprData::None => {
                 if let Some(inner) = target.and_then(|target| scopes.as_option_inner(target)) {
@@ -1433,87 +1428,9 @@ impl TypeChecker {
                 data: CheckedExprData::Bool(value),
             },
             ExprData::Integer { base, value, width } => {
-                let ty = if let Some(width) = width {
-                    Type::from_int_name(&width).unwrap_or_else(|| {
-                        self.error(Error::new(
-                            format!("invalid integer literal type: {width}"),
-                            span,
-                        ))
-                    })
-                } else {
-                    // FIXME: attempt to promote the literal if its too large for i32
-                    target
-                        .map(|mut target| {
-                            while let Some(inner) = scopes.as_option_inner(target) {
-                                target = inner;
-                            }
-                            target
-                        })
-                        .filter(|target| {
-                            matches!(
-                                target,
-                                Type::Int(_)
-                                    | Type::Uint(_)
-                                    | Type::Isize
-                                    | Type::Usize
-                                    | Type::CInt(_)
-                                    | Type::CUint(_),
-                            )
-                        })
-                        .cloned()
-                        .unwrap_or(Type::Int(32))
-                };
-
-                let stats = ty.integer_stats().unwrap();
-                if stats.signed {
-                    let result = match BigInt::from_str_radix(&value, base as u32) {
-                        Ok(result) => result,
-                        Err(e) => {
-                            return self.error(Error::new(
-                                format!("integer literal '{value}' could not be parsed: {e}"),
-                                expr.span,
-                            ));
-                        }
-                    };
-
-                    let max = stats.max_signed();
-                    if result > max {
-                        return self.error(Error::new(
-                            format!("integer literal is larger than its type allows ({max})"),
-                            expr.span,
-                        ));
-                    }
-
-                    let min = stats.min_signed();
-                    if result < min {
-                        return self.error(Error::new(
-                            format!("integer literal is smaller than its type allows ({min})"),
-                            expr.span,
-                        ));
-                    }
-
-                    CheckedExpr::new(ty, CheckedExprData::Signed(result))
-                } else {
-                    let result = match BigUint::from_str_radix(&value, base as u32) {
-                        Ok(result) => result,
-                        Err(e) => {
-                            return self.error(Error::new(
-                                format!("integer literal '{value}' could not be parsed: {e}"),
-                                expr.span,
-                            ));
-                        }
-                    };
-
-                    let max = stats.max_unsigned();
-                    if result >= max {
-                        return self.error(Error::new(
-                            format!("integer literal is larger than its type allows ({max})"),
-                            expr.span,
-                        ));
-                    }
-
-                    CheckedExpr::new(ty, CheckedExprData::Unsigned(result))
-                }
+                let (ty, value) =
+                    self.get_int_type_and_val(scopes, target, base, width, value, span);
+                CheckedExpr::new(ty, CheckedExprData::Integer(value))
             }
             ExprData::Float(value) => CheckedExpr::new(
                 target
@@ -1765,9 +1682,9 @@ impl TypeChecker {
                 );
                 let pat = Pattern::Option(
                     if mutable {
-                        Pattern::MutBinding(l!(var))
+                        Pattern::MutBinding(var)
                     } else {
-                        Pattern::Path(l!(Path::Normal(vec![(var, vec![])])))
+                        Pattern::Path(Path::Normal(vec![(var, vec![])]))
                     }
                     .into(),
                 );
@@ -1789,9 +1706,9 @@ impl TypeChecker {
                                     args: vec![],
                                 }),
                                 body: vec![
-                                    (pat, l!(ExprData::Block(body))),
+                                    (l!(pat), l!(ExprData::Block(body))),
                                     (
-                                        Pattern::Null(Span::default()),
+                                        l!(Pattern::Null),
                                         l!(ExprData::Break(lbox!(ExprData::Void)))
                                     )
                                 ],
@@ -1953,7 +1870,7 @@ impl TypeChecker {
                     body: vec![
                         (pattern, l!(ExprData::Bool(true))),
                         (
-                            Pattern::Path(l!(Path::from("_".to_string()))),
+                            l!(Pattern::Path(Path::from("_".to_string()))),
                             l!(ExprData::Bool(false))
                         )
                     ],
@@ -2367,7 +2284,7 @@ impl TypeChecker {
         scopes: &mut Scopes,
         scrutinee: &Type,
         path: ResolvedPath,
-        subpatterns: Vec<Pattern>,
+        subpatterns: Vec<Located<Pattern>>,
         span: Span,
     ) -> CheckedPattern {
         let Some(ut) = scrutinee
@@ -2412,7 +2329,7 @@ impl TypeChecker {
         let ptr = scrutinee.is_ptr() || scrutinee.is_mut_ptr();
         let tag = union.variant_tag(&variant).unwrap();
         if let Some(pattern) = subpatterns.into_iter().next() {
-            let span = *pattern.span();
+            let span = pattern.span;
             let CheckedPattern::Irrefutable(pattern) = self.check_pattern(
                 scopes,
                 true,
@@ -2448,21 +2365,20 @@ impl TypeChecker {
         binding: bool,
         scrutinee: &Type,
         mutable: bool,
-        pattern: Pattern,
+        pattern: Located<Pattern>,
     ) -> CheckedPattern {
-        match pattern {
+        match pattern.data {
             Pattern::TupleLike { path, subpatterns } => {
-                let span = path.span;
                 if let Some(path) = self.resolve_path(scopes, &path.data, path.span) {
-                    self.check_union_pattern(scopes, scrutinee, path, subpatterns, span)
+                    self.check_union_pattern(scopes, scrutinee, path, subpatterns, pattern.span)
                 } else {
                     Default::default()
                 }
             }
             Pattern::Path(path) => {
-                let p = self.resolve_path(scopes, &path.data, path.span);
+                let p = self.resolve_path(scopes, &path, pattern.span);
                 if binding || matches!(p, Some(ResolvedPath::None(_))) {
-                    if let Some(ident) = path.data.as_identifier() {
+                    if let Some(ident) = path.as_identifier() {
                         return CheckedPattern::Irrefutable(IrrefutablePattern::Variable(
                             scopes.insert(
                                 Variable {
@@ -2479,35 +2395,40 @@ impl TypeChecker {
                 }
 
                 if let Some(p) = p {
-                    self.check_union_pattern(scopes, scrutinee, p, vec![], path.span)
+                    self.check_union_pattern(scopes, scrutinee, p, vec![], pattern.span)
                 } else {
                     Default::default()
                 }
             }
             Pattern::Option(patt) => {
-                let span = *patt.span();
                 let path = self.resolve_path_in(
                     scopes,
                     &[("Some".into(), vec![])],
                     scopes.get(scopes.get_option_id().unwrap()).body_scope,
-                    span,
+                    pattern.span,
                 );
 
                 if let Some(path) = path {
-                    self.check_union_pattern(scopes, scrutinee, path, vec![*patt], span)
+                    self.check_union_pattern(
+                        scopes,
+                        scrutinee,
+                        path,
+                        vec![Located::new(pattern.span, *patt)],
+                        pattern.span,
+                    )
                 } else {
                     Default::default()
                 }
             }
-            Pattern::Null(span) => {
+            Pattern::Null => {
                 let path = self.resolve_path_in(
                     scopes,
                     &[("None".into(), vec![])],
                     scopes.get(scopes.get_option_id().unwrap()).body_scope,
-                    span,
+                    pattern.span,
                 );
                 if let Some(path) = path {
-                    self.check_union_pattern(scopes, scrutinee, path, vec![], span)
+                    self.check_union_pattern(scopes, scrutinee, path, vec![], pattern.span)
                 } else {
                     Default::default()
                 }
@@ -2515,7 +2436,7 @@ impl TypeChecker {
             Pattern::MutBinding(name) => {
                 CheckedPattern::Irrefutable(IrrefutablePattern::Variable(scopes.insert(
                     Variable {
-                        name: name.data,
+                        name,
                         ty: scrutinee.clone(),
                         is_static: false,
                         mutable: true,
@@ -2524,7 +2445,7 @@ impl TypeChecker {
                     false,
                 )))
             }
-            Pattern::StructDestructure(pattern) => {
+            Pattern::StructDestructure(destructures) => {
                 let Some((ut, (members, _))) = scrutinee
                     .strip_references()
                     .as_user_type()
@@ -2543,15 +2464,15 @@ impl TypeChecker {
                 let mut vars = Vec::new();
                 for Destructure {
                     name,
-                    mutable: p_mutable,
-                    pattern: p_pattern,
-                } in pattern.data
+                    mutable: pm,
+                    pattern,
+                } in destructures
                 {
                     let Some(member) = members.iter().find(|m| m.name == name.data) else {
                         self.error::<()>(Error::no_member(
                             &scrutinee.name(scopes),
                             &name.data,
-                            pattern.span,
+                            name.span,
                         ));
                         continue;
                     };
@@ -2568,7 +2489,7 @@ impl TypeChecker {
                     // TODO: duplicates
                     let mut ty = scrutinee.matched_inner_type(member.ty.clone());
                     ty.fill_struct_templates(scopes, ut);
-                    vars.push((name.data, mutable || p_mutable, ty, p_pattern));
+                    vars.push((name.data, mutable || pm, ty, pattern));
                 }
 
                 let mut had_refutable = false;
@@ -2611,6 +2532,52 @@ impl TypeChecker {
                     ))
                 }
             }
+            Pattern::IntLiteral(IntPattern {
+                negative,
+                base,
+                value,
+                width,
+            }) => {
+                let inner = scrutinee.strip_references();
+                let Some(stats) = inner.integer_stats() else {
+                    return self.error(Error::new(
+                        format!(
+                            "cannot match a value of type '{}' with an integer pattern",
+                            scrutinee.name(scopes)
+                        ),
+                        pattern.span,
+                    ));
+                };
+
+                let (ty, value) = self.get_int_type_and_val(
+                    scopes,
+                    Some(inner),
+                    base,
+                    width,
+                    value,
+                    pattern.span,
+                );
+                if &ty != inner {
+                    return self.error(Error::type_mismatch(
+                        &inner.name(scopes),
+                        &ty.name(scopes),
+                        pattern.span,
+                    ));
+                }
+
+                if !stats.signed && negative {
+                    return self.error(Error::new(
+                        format!("cannot negate signed integer type '{}'", ty.name(scopes)),
+                        pattern.span,
+                    ));
+                }
+
+                CheckedPattern::Integer(if negative { -value } else { value })
+            }
+            Pattern::IntRange { .. } => {
+                todo!()
+            }
+            Pattern::Error => Default::default(),
         }
     }
 
@@ -3682,6 +3649,98 @@ impl TypeChecker {
                 ResolvedPath::Module(scope),
                 Span::default(),
             );
+        }
+    }
+
+    fn get_int_type_and_val(
+        &mut self,
+        scopes: &Scopes,
+        target: Option<&Type>,
+        base: u8,
+        width: Option<String>,
+        value: String,
+        span: Span,
+    ) -> (Type, BigInt) {
+        let ty = if let Some(width) = width {
+            Type::from_int_name(&width).unwrap_or_else(|| {
+                self.error(Error::new(
+                    format!("invalid integer literal type: {width}"),
+                    span,
+                ))
+            })
+        } else {
+            // FIXME: attempt to promote the literal if its too large for i32
+            target
+                .map(|mut target| {
+                    while let Some(inner) = scopes.as_option_inner(target) {
+                        target = inner;
+                    }
+                    target
+                })
+                .filter(|target| {
+                    matches!(
+                        target,
+                        Type::Int(_)
+                            | Type::Uint(_)
+                            | Type::Isize
+                            | Type::Usize
+                            | Type::CInt(_)
+                            | Type::CUint(_),
+                    )
+                })
+                .cloned()
+                .unwrap_or(Type::Int(32))
+        };
+
+        let stats = ty.integer_stats().unwrap();
+        if stats.signed {
+            let result = match BigInt::from_str_radix(&value, base as u32) {
+                Ok(result) => result,
+                Err(e) => {
+                    return self.error(Error::new(
+                        format!("integer literal '{value}' could not be parsed: {e}"),
+                        span,
+                    ));
+                }
+            };
+
+            let max = stats.max_signed();
+            if result > max {
+                return self.error(Error::new(
+                    format!("integer literal is larger than its type allows ({max})"),
+                    span,
+                ));
+            }
+
+            let min = stats.min_signed();
+            if result < min {
+                return self.error(Error::new(
+                    format!("integer literal is smaller than its type allows ({min})"),
+                    span,
+                ));
+            }
+
+            (ty, result)
+        } else {
+            let result = match BigInt::from_str_radix(&value, base as u32) {
+                Ok(result) => result,
+                Err(e) => {
+                    return self.error(Error::new(
+                        format!("integer literal '{value}' could not be parsed: {e}"),
+                        span,
+                    ));
+                }
+            };
+
+            let max = stats.max_unsigned();
+            if result >= max {
+                return self.error(Error::new(
+                    format!("integer literal is larger than its type allows ({max})"),
+                    span,
+                ));
+            }
+
+            (ty, result)
         }
     }
 

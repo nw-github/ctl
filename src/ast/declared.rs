@@ -1,7 +1,7 @@
 use crate::{
     ast::parsed::{Expr, Path, Pattern, TypeHint},
     ast::Attribute,
-    lexer::Span,
+    lexer::{Span, Located},
     sym::{FunctionId, ScopeId, UserTypeId, VariableId, ExtensionId},
 };
 
@@ -31,7 +31,7 @@ pub enum DeclaredStmtData {
         all: bool,
     },
     Let {
-        patt: Pattern,
+        patt: Located<Pattern>,
         ty: Option<TypeHint>,
         value: Option<Expr>,
     },

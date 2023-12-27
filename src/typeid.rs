@@ -4,7 +4,7 @@ use crate::{
 };
 use derive_more::Constructor;
 use enum_as_inner::EnumAsInner;
-use num_bigint::{BigInt, BigUint};
+use num_bigint::BigInt;
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, Constructor)]
 pub struct GenericFunc {
@@ -121,8 +121,8 @@ impl IntStats {
         (BigInt::from(1) << (self.bits - 1)) - 1
     }
 
-    pub fn max_unsigned(&self) -> BigUint {
-        (BigUint::from(1u8) << self.bits) - 1u8
+    pub fn max_unsigned(&self) -> BigInt {
+        (BigInt::from(1u8) << self.bits) - 1u8
     }
 }
 

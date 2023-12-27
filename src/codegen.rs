@@ -1185,11 +1185,7 @@ impl Codegen {
                 self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(if value { "1" } else { "0" })
             }
-            CheckedExprData::Signed(value) => {
-                self.emit_cast(scopes, &expr.ty);
-                self.buffer.emit(format!("{value}"));
-            }
-            CheckedExprData::Unsigned(value) => {
+            CheckedExprData::Integer(value) => {
                 self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(format!("{value}"));
             }
@@ -1553,6 +1549,17 @@ impl Codegen {
             CheckedPattern::Irrefutable(pattern) => {
                 self.buffer.emit("if (1) {");
                 self.gen_irrefutable_pattern(scopes, state, pattern, tmp_name);
+            }
+            CheckedPattern::Integer(value) => {
+                // TODO: emit a switch statement if possible
+                self.buffer.emit(format!(
+                    "if (({}{}) == ",
+                    "*".repeat(scrutinee.indirection()),
+                    tmp_name,
+                ));
+
+                self.emit_cast(scopes, scrutinee.strip_references());
+                self.buffer.emit(format!("{value}) {{"));
             }
             CheckedPattern::Destrucure(_) => todo!(),
             CheckedPattern::Error => panic!("ICE: CheckedPattern::Error in gen_pattern"),
