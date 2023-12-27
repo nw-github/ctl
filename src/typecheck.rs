@@ -24,39 +24,17 @@ use crate::{
     Error, Pipeline, THIS_PARAM, THIS_TYPE,
 };
 
-macro_rules! type_mismatch {
-    ($scopes: expr, $expected: expr, $actual: expr, $span: expr) => {
-        Error::new(
-            format!(
-                "type mismatch: expected type '{}', got '{}'",
-                $expected.name($scopes),
-                $actual.name($scopes),
-            ),
-            $span,
-        )
-    };
-}
-
-macro_rules! private_member {
-    ($scopes: expr, $id: expr, $member: expr, $span: expr) => {
-        Error::new(
-            format!(
-                "cannot access private member '{}' of type '{}'",
-                $member.name,
-                $id.name($scopes)
-            ),
-            $span,
-        )
-    };
-}
-
 macro_rules! type_check_bail {
     ($self: expr, $scopes: expr, $source: expr, $target: expr) => {{
         let source = $source;
         let span = source.span;
         let source = $self.check_expr($scopes, source, Some($target));
         if !source.ty.coerces_to($scopes, $target) {
-            return $self.error(type_mismatch!($scopes, $target, source.ty, span));
+            return $self.error(Error::type_mismatch(
+                &$target.name($scopes),
+                &source.ty.name($scopes),
+                span,
+            ));
         }
 
         source.coerce_to($target, $scopes)
@@ -163,6 +141,11 @@ impl TypeChecker {
                 scopes.current
             },
         )
+    }
+
+    fn error<T: Default>(&mut self, error: Error) -> T {
+        self.errors.push(error);
+        T::default()
     }
 
     fn insert_type(
@@ -981,15 +964,20 @@ impl TypeChecker {
                 } in patterns.data
                 {
                     let Some(member) = members.iter().find(|m| m.name == name.data) else {
-                        self.error::<()>(Error::new(
-                            format!("type '{}' has no member '{}'", ty.name(scopes), name.data),
+                        self.error::<()>(Error::no_member(
+                            &ty.name(scopes),
+                            &name.data,
                             patterns.span,
                         ));
                         continue;
                     };
 
                     if !member.public && !cap {
-                        self.error::<()>(private_member!(scopes, ty, member, name.span));
+                        self.error::<()>(Error::private_member(
+                            &ty.name(scopes),
+                            &member.name,
+                            name.span,
+                        ));
                         continue;
                     }
 
@@ -1342,7 +1330,7 @@ impl TypeChecker {
                 let mut checked = Vec::with_capacity(elements.len());
                 let mut elements = elements.into_iter();
                 let Some(vec) = scopes.lang_types.get("vec").copied() else {
-                    return self.error(Error::new("missing language item: Vec", expr.span));
+                    return self.error(Error::no_lang_item("vec", expr.span));
                 };
 
                 let ut = if let Some(ty) = target
@@ -1371,7 +1359,7 @@ impl TypeChecker {
                 let mut checked = Vec::with_capacity(elements.len());
                 let mut elements = elements.into_iter();
                 let Some(set) = scopes.lang_types.get("set").copied() else {
-                    return self.error(Error::new("missing language item: Set", expr.span));
+                    return self.error(Error::no_lang_item("set", expr.span));
                 };
 
                 let ut = if let Some(ty) = target
@@ -1424,10 +1412,7 @@ impl TypeChecker {
             }
             ExprData::VecWithInit { init, count } => {
                 let Some(vec) = scopes.lang_types.get("vec").copied() else {
-                    return self.error(Error::new(
-                        "no symbol 'Vec' found in this module",
-                        expr.span,
-                    ));
+                    return self.error(Error::no_lang_item("vec", expr.span));
                 };
 
                 let (init, ty) = if let Some(ty) = target
@@ -1454,10 +1439,7 @@ impl TypeChecker {
             ExprData::Map(elements) => {
                 // TODO: make sure the key type respects the trait bounds
                 let Some(std_map) = scopes.lang_types.get("map").copied() else {
-                    return self.error(Error::new(
-                        "no symbol 'Map' found in this module",
-                        expr.span,
-                    ));
+                    return self.error(Error::no_lang_item("map", expr.span));
                 };
 
                 let mut result = Vec::with_capacity(elements.len());
@@ -1893,8 +1875,9 @@ impl TypeChecker {
                 let iter = self.check_expr(scopes, *iter, None);
                 let iter_id = scopes.lang_types.get("iter").copied().unwrap();
                 if !iter.ty.implements_trait_id(scopes, iter_id) {
-                    self.error(Error::new(
-                        format!("type '{}' does not implement 'Iter'", iter.ty.name(scopes)),
+                    self.error(Error::doesnt_implement(
+                        &iter.ty.name(scopes),
+                        "Iterator",
                         span,
                     ))
                 }
@@ -1993,12 +1976,12 @@ impl TypeChecker {
                             }
 
                             if !member.shared && union.is_unsafe && self.safety != Safety::Unsafe {
-                                self.error(Error::new("this operation is unsafe", span))
+                                self.error(Error::is_unsafe(span))
                             }
                         }
 
                         if !member.public && !scopes.can_access_privates(ty.scope) {
-                            self.error(private_member!(scopes, id, member, span))
+                            self.error(Error::private_member(&id.name(scopes), &member.name, span))
                         }
 
                         let mut ty = member.ty.clone();
@@ -2017,10 +2000,7 @@ impl TypeChecker {
                     }
                 }
 
-                self.error(Error::new(
-                    format!("type {} has no member '{name}'", &source.ty.name(scopes)),
-                    span,
-                ))
+                self.error(Error::no_member(&source.ty.name(scopes), &name, span))
             }
             ExprData::Subscript { callee, args } => {
                 if args.len() > 1 {
@@ -2160,7 +2140,7 @@ impl TypeChecker {
                         (Type::Usize, Type::Ptr(_) | Type::MutPtr(_))
                         | (Type::MutPtr(_) | Type::Ptr(_), Type::MutPtr(_) | Type::Ptr(_)) => {
                             if self.safety != Safety::Unsafe {
-                                self.error(Error::new("this operation is unsafe", span))
+                                self.error(Error::is_unsafe(span))
                             }
                         }
 
@@ -3060,7 +3040,7 @@ impl TypeChecker {
         }
 
         if scopes.get(func.id).is_unsafe && self.safety != Safety::Unsafe {
-            self.error(Error::new("this operation is unsafe", span))
+            self.error(Error::is_unsafe(span))
         }
 
         (result, ret)
@@ -3093,12 +3073,9 @@ impl TypeChecker {
                 continue;
             }
 
-            self.error(Error::new(
-                format!(
-                    "type '{}' does not implement '{}'",
-                    ty.name(scopes),
-                    bound.name(scopes),
-                ),
+            self.error(Error::doesnt_implement(
+                &ty.name(scopes),
+                &bound.name(scopes),
                 span,
             ))
         }
@@ -3117,11 +3094,6 @@ impl TypeChecker {
         })
     }
 
-    fn error<T: Default>(&mut self, error: Error) -> T {
-        self.errors.push(error);
-        T::default()
-    }
-
     fn type_check(&mut self, scopes: &mut Scopes, expr: Expr, target: &Type) -> CheckedExpr {
         let span = expr.span;
         let source = self.check_expr(scopes, expr, Some(target));
@@ -3136,7 +3108,11 @@ impl TypeChecker {
         span: Span,
     ) -> CheckedExpr {
         if !source.ty.coerces_to(scopes, target) {
-            self.error(type_mismatch!(scopes, target, source.ty, span))
+            self.error(Error::type_mismatch(
+                &target.name(scopes),
+                &source.ty.name(scopes),
+                span,
+            ))
         }
 
         source.coerce_to(target, scopes)
@@ -3724,7 +3700,11 @@ impl TypeChecker {
             ExprData::Integer { base, value, width } => {
                 if let Some(width) = width.as_ref().and_then(|width| Type::from_int_name(width)) {
                     if let Some(target) = target.filter(|&target| target != &width) {
-                        return Err(type_mismatch!(scopes, target, &width, expr.span));
+                        return Err(Error::type_mismatch(
+                            &target.name(scopes),
+                            &width.name(scopes),
+                            expr.span,
+                        ));
                     }
                 }
 
