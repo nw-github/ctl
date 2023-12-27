@@ -75,6 +75,9 @@ fn main() {
 
         std::println("option_struct_pattern()...");
         patterns::option_struct_pattern();
+
+        std::println("integer_pattern()...");
+        patterns::integer_pattern();
     }
 
     std::println("\nmisc: ");

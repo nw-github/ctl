@@ -1561,6 +1561,24 @@ impl Codegen {
                 self.emit_cast(scopes, scrutinee.strip_references());
                 self.buffer.emit(format!("{value}) {{"));
             }
+            CheckedPattern::IntRange {
+                inclusive,
+                start,
+                end,
+            } => {
+                // TODO: emit a switch statement if possible
+                let tmp_name = format!("({}{tmp_name})", "*".repeat(scrutinee.indirection()));
+                let base = scrutinee.strip_references();
+
+                self.buffer.emit(format!("if ({tmp_name} >= "));
+                self.emit_cast(scopes, base);
+                self.buffer.emit(format!(
+                    "{start} && {tmp_name} {} ",
+                    if *inclusive { "<=" } else { "<" }
+                ));
+                self.emit_cast(scopes, base);
+                self.buffer.emit(format!("{end}) {{"));
+            }
             CheckedPattern::Destrucure(_) => todo!(),
             CheckedPattern::Error => panic!("ICE: CheckedPattern::Error in gen_pattern"),
         }

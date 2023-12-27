@@ -2359,6 +2359,48 @@ impl TypeChecker {
         }
     }
 
+    fn check_int_pattern(
+        &mut self,
+        scopes: &mut Scopes,
+        scrutinee: &Type,
+        IntPattern {
+            negative,
+            base,
+            value,
+            width,
+        }: IntPattern,
+        span: Span,
+    ) -> Option<BigInt> {
+        let inner = scrutinee.strip_references();
+        let Some(stats) = inner.integer_stats() else {
+            return self.error(Error::new(
+                format!(
+                    "cannot match a value of type '{}' with an integer pattern",
+                    scrutinee.name(scopes)
+                ),
+                span,
+            ));
+        };
+
+        let (ty, value) = self.get_int_type_and_val(scopes, Some(inner), base, width, value, span);
+        if &ty != inner {
+            return self.error(Error::type_mismatch(
+                &inner.name(scopes),
+                &ty.name(scopes),
+                span,
+            ));
+        }
+
+        if !stats.signed && negative {
+            return self.error(Error::new(
+                format!("cannot negate signed integer type '{}'", ty.name(scopes)),
+                span,
+            ));
+        }
+
+        Some(if negative { -value } else { value })
+    }
+
     fn check_pattern(
         &mut self,
         scopes: &mut Scopes,
@@ -2367,16 +2409,17 @@ impl TypeChecker {
         mutable: bool,
         pattern: Located<Pattern>,
     ) -> CheckedPattern {
+        let span = pattern.span;
         match pattern.data {
             Pattern::TupleLike { path, subpatterns } => {
                 if let Some(path) = self.resolve_path(scopes, &path.data, path.span) {
-                    self.check_union_pattern(scopes, scrutinee, path, subpatterns, pattern.span)
+                    self.check_union_pattern(scopes, scrutinee, path, subpatterns, span)
                 } else {
                     Default::default()
                 }
             }
             Pattern::Path(path) => {
-                let p = self.resolve_path(scopes, &path, pattern.span);
+                let p = self.resolve_path(scopes, &path, span);
                 if binding || matches!(p, Some(ResolvedPath::None(_))) {
                     if let Some(ident) = path.as_identifier() {
                         return CheckedPattern::Irrefutable(IrrefutablePattern::Variable(
@@ -2395,7 +2438,7 @@ impl TypeChecker {
                 }
 
                 if let Some(p) = p {
-                    self.check_union_pattern(scopes, scrutinee, p, vec![], pattern.span)
+                    self.check_union_pattern(scopes, scrutinee, p, vec![], span)
                 } else {
                     Default::default()
                 }
@@ -2532,50 +2575,34 @@ impl TypeChecker {
                     ))
                 }
             }
-            Pattern::IntLiteral(IntPattern {
-                negative,
-                base,
-                value,
-                width,
-            }) => {
-                let inner = scrutinee.strip_references();
-                let Some(stats) = inner.integer_stats() else {
-                    return self.error(Error::new(
-                        format!(
-                            "cannot match a value of type '{}' with an integer pattern",
-                            scrutinee.name(scopes)
-                        ),
-                        pattern.span,
-                    ));
+            Pattern::IntLiteral(patt) => self
+                .check_int_pattern(scopes, scrutinee, patt, span)
+                .map(CheckedPattern::Integer)
+                .unwrap_or_default(),
+            Pattern::IntRange {
+                inclusive,
+                start,
+                end,
+            } => {
+                let Some(start) = self.check_int_pattern(scopes, scrutinee, start, span) else {
+                    return Default::default();
+                };
+                let Some(end) = self.check_int_pattern(scopes, scrutinee, end, span) else {
+                    return Default::default();
                 };
 
-                let (ty, value) = self.get_int_type_and_val(
-                    scopes,
-                    Some(inner),
-                    base,
-                    width,
-                    value,
-                    pattern.span,
-                );
-                if &ty != inner {
-                    return self.error(Error::type_mismatch(
-                        &inner.name(scopes),
-                        &ty.name(scopes),
-                        pattern.span,
-                    ));
-                }
-
-                if !stats.signed && negative {
+                if start > end {
                     return self.error(Error::new(
-                        format!("cannot negate signed integer type '{}'", ty.name(scopes)),
-                        pattern.span,
+                        "range start must be less than or equal to its end",
+                        span,
                     ));
                 }
 
-                CheckedPattern::Integer(if negative { -value } else { value })
-            }
-            Pattern::IntRange { .. } => {
-                todo!()
+                CheckedPattern::IntRange {
+                    inclusive,
+                    start,
+                    end,
+                }
             }
             Pattern::Error => Default::default(),
         }
@@ -3065,8 +3092,6 @@ impl TypeChecker {
         span: Span,
     ) -> CheckedExpr {
         if !source.ty.coerces_to(scopes, target) {
-            dbg!(&target);
-            dbg!(&source.ty);
             self.error(Error::type_mismatch(
                 &target.name(scopes),
                 &source.ty.name(scopes),

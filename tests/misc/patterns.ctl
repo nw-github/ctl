@@ -64,3 +64,36 @@ pub fn option_struct_pattern() {
         },
     }
 }
+
+pub fn integer_pattern() {
+    let x = 5;
+
+    match x {
+        0 => assert(false, "0 matched x = 5"),
+        1 => assert(false, "1 matched x = 5"),
+        5 => {},
+        _ => assert(false, "5 didnt match x = 5"),
+    }
+
+    match -x {
+        0 => assert(false, "0 matched x = -5"),
+        1 => assert(false, "1 matched x = -5"),
+        -5 => {},
+        _ => assert(false, "-5 didnt match x = -5"),
+    }
+
+    match x {
+        0..5 => assert(false, "0..5 matches x = 5"),
+        _ => {}
+    }
+
+    match x {
+        0..=5 => {},
+        _ => assert(false, "0..=5 didn't match x = 5"),
+    }
+
+    match -x {
+        -10..=5 => {},
+        _ => assert(false, "-10..=5 didn't match x = -5"),
+    }
+}

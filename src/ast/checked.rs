@@ -30,6 +30,11 @@ pub enum CheckedPattern {
     Irrefutable(IrrefutablePattern),
     Destrucure(Vec<(String, CheckedPattern)>),
     Integer(BigInt),
+    IntRange {
+        inclusive: bool,
+        start: BigInt,
+        end: BigInt,
+    },
     #[default]
     Error,
 }
