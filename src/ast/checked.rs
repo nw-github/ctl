@@ -20,7 +20,7 @@ pub enum IrrefutablePattern {
     Destrucure(Vec<(String, IrrefutablePattern)>),
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, EnumAsInner)]
 pub enum CheckedPattern {
     UnionMember {
         binding: Option<VariableId>,
@@ -28,6 +28,7 @@ pub enum CheckedPattern {
         ptr: bool,
     },
     Irrefutable(IrrefutablePattern),
+    Destrucure(Vec<(String, CheckedPattern)>),
     #[default]
     Error,
 }

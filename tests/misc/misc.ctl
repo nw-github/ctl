@@ -62,6 +62,15 @@ fn main() {
         ordering::keyword_call();
     }
 
+    std::println("\npatterns: ");
+    {
+        std::println("struct_pattern()...");
+        patterns::struct_pattern();
+
+        std::println("union_pattern()...");
+        patterns::union_pattern();
+    }
+
     std::println("\nmisc: ");
     {
         std::println("booleans()...");

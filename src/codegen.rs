@@ -1563,6 +1563,7 @@ impl Codegen {
                 self.buffer.emit("if (1) {");
                 self.gen_irrefutable_pattern(scopes, state, pattern, tmp_name);
             }
+            CheckedPattern::Destrucure(_) => todo!(),
             CheckedPattern::Error => panic!("ICE: CheckedPattern::Error in gen_pattern"),
         }
     }

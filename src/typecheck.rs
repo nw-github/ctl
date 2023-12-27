@@ -882,12 +882,12 @@ impl TypeChecker {
         patt: Pattern,
     ) -> CheckedStmt {
         let span = *patt.span();
-        match self.declare_variables(scopes, ty, mutable, patt) {
-            Some(IrrefutablePattern::Variable(id)) => {
+        match self.check_pattern(scopes, true, &ty, mutable, patt) {
+            CheckedPattern::Irrefutable(IrrefutablePattern::Variable(id)) => {
                 scopes.get_mut(id).value = value;
                 CheckedStmt::Let(id)
             }
-            Some(inner) => {
+            CheckedPattern::Irrefutable(pattern) => {
                 let Some(value) = value else {
                     return self.error(Error::new(
                         "must provide a value with a destructuring assignment",
@@ -895,124 +895,9 @@ impl TypeChecker {
                     ));
                 };
 
-                CheckedStmt::LetPattern(inner, value)
+                CheckedStmt::LetPattern(pattern, value)
             }
-            None => Default::default(),
-        }
-    }
-
-    fn declare_variables(
-        &mut self,
-        scopes: &mut Scopes,
-        ty: Type,
-        mutable: bool,
-        patt: Pattern,
-    ) -> Option<IrrefutablePattern> {
-        match patt {
-            Pattern::PathWithBindings { .. } => unreachable!(),
-            Pattern::Path(path) => {
-                if let Some(name) = path.data.as_identifier() {
-                    Some(IrrefutablePattern::Variable(scopes.insert(
-                        Variable {
-                            name: name.into(),
-                            ty,
-                            is_static: false,
-                            mutable,
-                            value: None,
-                        },
-                        false,
-                    )))
-                } else {
-                    self.error(Error::new("variable name must be an identifier", path.span))
-                }
-            }
-            Pattern::MutBinding(name) => Some(IrrefutablePattern::Variable(scopes.insert(
-                Variable {
-                    name: name.data,
-                    ty,
-                    is_static: false,
-                    mutable: true,
-                    value: None,
-                },
-                false,
-            ))),
-            Pattern::Option(_, Located { span, .. }) | Pattern::Null(span) => {
-                self.error(Error::new("refutable pattern in variable binding", span))
-            }
-            Pattern::StructDestructure(patterns) => {
-                let Some((ut, (members, _))) =
-                    ty.strip_references().as_user_type().and_then(|ut| {
-                        let ut = scopes.get(ut.id);
-                        Some(ut).zip(ut.data.as_struct())
-                    })
-                else {
-                    return self.error(Error::new(
-                        format!(
-                            "cannot destructure value of non-struct type '{}'",
-                            ty.name(scopes)
-                        ),
-                        patterns.span,
-                    ));
-                };
-
-                let cap = scopes.can_access_privates(ut.scope);
-                let mut vars = Vec::new();
-                for Destructure {
-                    name,
-                    mutable: p_mutable,
-                    pattern,
-                } in patterns.data
-                {
-                    let Some(member) = members.iter().find(|m| m.name == name.data) else {
-                        self.error::<()>(Error::no_member(
-                            &ty.name(scopes),
-                            &name.data,
-                            patterns.span,
-                        ));
-                        continue;
-                    };
-
-                    if !member.public && !cap {
-                        self.error::<()>(Error::private_member(
-                            &ty.name(scopes),
-                            &member.name,
-                            name.span,
-                        ));
-                        continue;
-                    }
-
-                    // TODO: duplicates
-                    vars.push((
-                        name.data,
-                        mutable || p_mutable,
-                        ty.matched_inner_type(member.ty.clone()),
-                        pattern,
-                    ));
-                }
-
-                let mut result = Vec::with_capacity(vars.len());
-                for (name, mutable, ty, patt) in vars {
-                    if let Some(patt) = patt {
-                        result.push((name, self.declare_variables(scopes, ty, mutable, patt)?));
-                    } else {
-                        result.push((
-                            name.clone(),
-                            IrrefutablePattern::Variable(scopes.insert(
-                                Variable {
-                                    name,
-                                    ty,
-                                    is_static: false,
-                                    mutable,
-                                    value: None,
-                                },
-                                false,
-                            )),
-                        ));
-                    }
-                }
-
-                Some(IrrefutablePattern::Destrucure(result))
-            }
+            _ => self.error(Error::new("variable binding pattern must be irrefutable", span)),
         }
     }
 
@@ -2088,7 +1973,7 @@ impl TypeChecker {
                     let span = expr.span;
                     let (pattern, mut expr) = scopes.enter(ScopeKind::None, false, |scopes| {
                         (
-                            self.check_pattern(scopes, &scrutinee, pattern),
+                            self.check_pattern(scopes, false, &scrutinee.ty, false, pattern),
                             self.check_expr(scopes, expr, target.as_ref()),
                         )
                     });
@@ -2482,80 +2367,15 @@ impl TypeChecker {
         )
     }
 
-    fn check_pattern(
+    fn check_union_pattern(
         &mut self,
         scopes: &mut Scopes,
-        scrutinee: &CheckedExpr,
-        pattern: Pattern,
+        scrutinee: &Type,
+        path: ResolvedPath,
+        binding: Option<(bool, String)>,
+        span: Span,
     ) -> CheckedPattern {
-        let (span, path, binding) = match pattern {
-            Pattern::PathWithBindings { path, binding } => (
-                path.span,
-                self.resolve_path(scopes, &path.data, path.span),
-                Some(binding),
-            ),
-            Pattern::Path(path) => match self.resolve_path(scopes, &path.data, path.span) {
-                original @ Some(ResolvedPath::None(_)) => {
-                    if let Some(ident) = path.data.as_identifier() {
-                        return CheckedPattern::Irrefutable(IrrefutablePattern::Variable(
-                            scopes.insert(
-                                Variable {
-                                    name: ident.into(),
-                                    ty: scrutinee.ty.clone(),
-                                    is_static: false,
-                                    mutable: false,
-                                    value: None,
-                                },
-                                false,
-                            ),
-                        ));
-                    }
-
-                    (path.span, original, None)
-                }
-                p => (path.span, p, None),
-            },
-            Pattern::Option(mutable, binding) => (
-                binding.span,
-                self.resolve_path_in(
-                    scopes,
-                    &[("Some".into(), vec![])],
-                    scopes.get(scopes.get_option_id().unwrap()).body_scope,
-                    binding.span,
-                ),
-                Some((mutable, binding.data)),
-            ),
-            Pattern::Null(span) => (
-                span,
-                self.resolve_path_in(
-                    scopes,
-                    &[("None".into(), vec![])],
-                    scopes.get(scopes.get_option_id().unwrap()).body_scope,
-                    span,
-                ),
-                None,
-            ),
-            Pattern::MutBinding(name) => {
-                return CheckedPattern::Irrefutable(IrrefutablePattern::Variable(scopes.insert(
-                    Variable {
-                        name: name.data,
-                        ty: scrutinee.ty.clone(),
-                        is_static: false,
-                        mutable: true,
-                        value: None,
-                    },
-                    false,
-                )));
-            }
-            Pattern::StructDestructure(_) => todo!(),
-        };
-
-        let Some(path) = path else {
-            return Default::default();
-        };
-
         let Some(ut) = scrutinee
-            .ty
             .strip_references()
             .as_user_type()
             .filter(|ut| scopes.get(ut.id).data.is_union())
@@ -2593,14 +2413,14 @@ impl TypeChecker {
 
         let mut ty = member.ty.clone();
         ty.fill_struct_templates(scopes, ut);
-        let ptr = scrutinee.ty.is_ptr() || scrutinee.ty.is_mut_ptr();
+        let ptr = scrutinee.is_ptr() || scrutinee.is_mut_ptr();
         let tag = union.variant_tag(&variant).unwrap();
         if let Some((mutable, binding)) = binding {
             CheckedPattern::UnionMember {
                 binding: Some(scopes.insert(
                     Variable {
                         name: binding,
-                        ty: scrutinee.ty.matched_inner_type(ty),
+                        ty: scrutinee.matched_inner_type(ty),
                         is_static: false,
                         mutable,
                         value: None,
@@ -2621,6 +2441,187 @@ impl TypeChecker {
                 format!("union variant '{variant}' has data that must be bound"),
                 span,
             ))
+        }
+    }
+
+    fn check_pattern(
+        &mut self,
+        scopes: &mut Scopes,
+        binding: bool,
+        scrutinee: &Type,
+        mutable: bool,
+        pattern: Pattern,
+    ) -> CheckedPattern {
+        match pattern {
+            Pattern::PathWithBindings { path, binding } => {
+                let span = path.span;
+                if let Some(path) = self.resolve_path(scopes, &path.data, path.span) {
+                    self.check_union_pattern(scopes, scrutinee, path, Some(binding), span)
+                } else {
+                    Default::default()
+                }
+            }
+            Pattern::Path(path) => {
+                let p = self.resolve_path(scopes, &path.data, path.span);
+                if binding || matches!(p, Some(ResolvedPath::None(_))) {
+                    if let Some(ident) = path.data.as_identifier() {
+                        return CheckedPattern::Irrefutable(IrrefutablePattern::Variable(
+                            scopes.insert(
+                                Variable {
+                                    name: ident.into(),
+                                    ty: scrutinee.clone(),
+                                    is_static: false,
+                                    mutable,
+                                    value: None,
+                                },
+                                false,
+                            ),
+                        ));
+                    }
+                }
+
+                if let Some(p) = p {
+                    self.check_union_pattern(scopes, scrutinee, p, None, path.span)
+                } else {
+                    Default::default()
+                }
+            }
+            Pattern::Option(mutable, binding) => {
+                let path = self.resolve_path_in(
+                    scopes,
+                    &[("Some".into(), vec![])],
+                    scopes.get(scopes.get_option_id().unwrap()).body_scope,
+                    binding.span,
+                );
+
+                if let Some(path) = path {
+                    self.check_union_pattern(
+                        scopes,
+                        scrutinee,
+                        path,
+                        Some((mutable, binding.data)),
+                        binding.span,
+                    )
+                } else {
+                    Default::default()
+                }
+            }
+            Pattern::Null(span) => {
+                let path = self.resolve_path_in(
+                    scopes,
+                    &[("None".into(), vec![])],
+                    scopes.get(scopes.get_option_id().unwrap()).body_scope,
+                    span,
+                );
+                if let Some(path) = path {
+                    self.check_union_pattern(scopes, scrutinee, path, None, span)
+                } else {
+                    Default::default()
+                }
+            }
+            Pattern::MutBinding(name) => {
+                CheckedPattern::Irrefutable(IrrefutablePattern::Variable(scopes.insert(
+                    Variable {
+                        name: name.data,
+                        ty: scrutinee.clone(),
+                        is_static: false,
+                        mutable: true,
+                        value: None,
+                    },
+                    false,
+                )))
+            }
+            Pattern::StructDestructure(pattern) => {
+                let Some((ut, (members, _))) =
+                    scrutinee.strip_references().as_user_type().and_then(|ut| {
+                        let ut = scopes.get(ut.id);
+                        Some(ut).zip(ut.data.as_struct())
+                    })
+                else {
+                    return self.error(Error::new(
+                        format!(
+                            "cannot destructure value of non-struct type '{}'",
+                            scrutinee.name(scopes)
+                        ),
+                        pattern.span,
+                    ));
+                };
+
+                let cap = scopes.can_access_privates(ut.scope);
+                let mut vars = Vec::new();
+                for Destructure {
+                    name,
+                    mutable: p_mutable,
+                    pattern: p_pattern,
+                } in pattern.data
+                {
+                    let Some(member) = members.iter().find(|m| m.name == name.data) else {
+                        self.error::<()>(Error::no_member(
+                            &scrutinee.name(scopes),
+                            &name.data,
+                            pattern.span,
+                        ));
+                        continue;
+                    };
+
+                    if !member.public && !cap {
+                        self.error::<()>(Error::private_member(
+                            &scrutinee.name(scopes),
+                            &member.name,
+                            name.span,
+                        ));
+                        continue;
+                    }
+
+                    // TODO: duplicates
+                    vars.push((
+                        name.data,
+                        mutable || p_mutable,
+                        scrutinee.matched_inner_type(member.ty.clone()),
+                        p_pattern,
+                    ));
+                }
+
+                let mut had_refutable = false;
+                let checked: Vec<_> = vars
+                    .into_iter()
+                    .map(|(name, mutable, ty, patt)| {
+                        if let Some(patt) = patt {
+                            let patt = self.check_pattern(scopes, true, &ty, mutable, patt);
+                            if !matches!(patt, CheckedPattern::Irrefutable(_)) {
+                                had_refutable = true;
+                            }
+                            (name, patt)
+                        } else {
+                            (
+                                name.clone(),
+                                CheckedPattern::Irrefutable(IrrefutablePattern::Variable(
+                                    scopes.insert(
+                                        Variable {
+                                            name,
+                                            ty,
+                                            is_static: false,
+                                            mutable,
+                                            value: None,
+                                        },
+                                        false,
+                                    ),
+                                )),
+                            )
+                        }
+                    })
+                    .collect();
+                if had_refutable {
+                    CheckedPattern::Destrucure(checked)
+                } else {
+                    CheckedPattern::Irrefutable(IrrefutablePattern::Destrucure(
+                        checked
+                            .into_iter()
+                            .map(|(name, patt)| (name, patt.into_irrefutable().unwrap()))
+                            .collect(),
+                    ))
+                }
+            }
         }
     }
 
@@ -3145,71 +3146,69 @@ impl TypeChecker {
 
     fn resolve_typehint(&mut self, scopes: &Scopes, hint: &TypeHint) -> Type {
         match hint {
-            TypeHint::Regular(path) => {
-                return match self.resolve_path(scopes, &path.data, path.span) {
-                    Some(ResolvedPath::UserType(ut)) => Type::UserType(ut.into()),
-                    Some(ResolvedPath::Func(_)) => {
-                        if self.decl {
-                            Type::Unknown(Some((hint.clone(), scopes.current).into()))
-                        } else {
-                            self.error(Error::new("expected type, got function", path.span))
-                        }
+            TypeHint::Regular(path) => match self.resolve_path(scopes, &path.data, path.span) {
+                Some(ResolvedPath::UserType(ut)) => Type::UserType(ut.into()),
+                Some(ResolvedPath::Func(_)) => {
+                    if self.decl {
+                        Type::Unknown(Some((hint.clone(), scopes.current).into()))
+                    } else {
+                        self.error(Error::new("expected type, got function", path.span))
                     }
-                    Some(ResolvedPath::Var(_)) => {
-                        if self.decl {
-                            Type::Unknown(Some((hint.clone(), scopes.current).into()))
-                        } else {
-                            self.error(Error::new("expected type, got variable", path.span))
-                        }
+                }
+                Some(ResolvedPath::Var(_)) => {
+                    if self.decl {
+                        Type::Unknown(Some((hint.clone(), scopes.current).into()))
+                    } else {
+                        self.error(Error::new("expected type, got variable", path.span))
                     }
-                    Some(ResolvedPath::Extension(_)) => {
-                        if self.decl {
-                            Type::Unknown(Some((hint.clone(), scopes.current).into()))
-                        } else {
-                            self.error(Error::new("expected type, got extension", path.span))
-                        }
+                }
+                Some(ResolvedPath::Extension(_)) => {
+                    if self.decl {
+                        Type::Unknown(Some((hint.clone(), scopes.current).into()))
+                    } else {
+                        self.error(Error::new("expected type, got extension", path.span))
                     }
-                    Some(ResolvedPath::Module(_)) => {
-                        if self.decl {
-                            Type::Unknown(Some((hint.clone(), scopes.current).into()))
-                        } else {
-                            self.error(Error::new("expected type, got module", path.span))
-                        }
+                }
+                Some(ResolvedPath::Module(_)) => {
+                    if self.decl {
+                        Type::Unknown(Some((hint.clone(), scopes.current).into()))
+                    } else {
+                        self.error(Error::new("expected type, got module", path.span))
                     }
-                    Some(ResolvedPath::None(err)) => {
-                        let res = path.data.as_identifier().and_then(|symbol| match symbol {
-                            symbol if symbol == THIS_TYPE => scopes.current_this_type(),
-                            "void" => Some(Type::Void),
-                            "never" => Some(Type::Never),
-                            "f32" => Some(Type::F32),
-                            "f64" => Some(Type::F64),
-                            "bool" => Some(Type::Bool),
-                            "char" => Some(Type::Char),
-                            "c_void" => Some(Type::CVoid),
-                            "c_char" => Some(Type::CInt(CInt::Char)),
-                            "c_short" => Some(Type::CInt(CInt::Short)),
-                            "c_int" => Some(Type::CInt(CInt::Int)),
-                            "c_long" => Some(Type::CInt(CInt::Long)),
-                            "c_longlong" => Some(Type::CInt(CInt::LongLong)),
-                            "c_uchar" => Some(Type::CUint(CInt::Char)),
-                            "c_ushort" => Some(Type::CUint(CInt::Short)),
-                            "c_uint" => Some(Type::CUint(CInt::Int)),
-                            "c_ulong" => Some(Type::CUint(CInt::Long)),
-                            "c_ulonglong" => Some(Type::CUint(CInt::LongLong)),
-                            _ => Type::from_int_name(symbol),
-                        });
+                }
+                Some(ResolvedPath::None(err)) => {
+                    let res = path.data.as_identifier().and_then(|symbol| match symbol {
+                        symbol if symbol == THIS_TYPE => scopes.current_this_type(),
+                        "void" => Some(Type::Void),
+                        "never" => Some(Type::Never),
+                        "f32" => Some(Type::F32),
+                        "f64" => Some(Type::F64),
+                        "bool" => Some(Type::Bool),
+                        "char" => Some(Type::Char),
+                        "c_void" => Some(Type::CVoid),
+                        "c_char" => Some(Type::CInt(CInt::Char)),
+                        "c_short" => Some(Type::CInt(CInt::Short)),
+                        "c_int" => Some(Type::CInt(CInt::Int)),
+                        "c_long" => Some(Type::CInt(CInt::Long)),
+                        "c_longlong" => Some(Type::CInt(CInt::LongLong)),
+                        "c_uchar" => Some(Type::CUint(CInt::Char)),
+                        "c_ushort" => Some(Type::CUint(CInt::Short)),
+                        "c_uint" => Some(Type::CUint(CInt::Int)),
+                        "c_ulong" => Some(Type::CUint(CInt::Long)),
+                        "c_ulonglong" => Some(Type::CUint(CInt::LongLong)),
+                        _ => Type::from_int_name(symbol),
+                    });
 
-                        match res {
-                            Some(res) => res,
-                            None if self.decl => {
-                                Type::Unknown(Some((hint.clone(), scopes.current).into()))
-                            }
-                            None => self.error(err),
+                    match res {
+                        Some(res) => res,
+                        None if self.decl => {
+                            Type::Unknown(Some((hint.clone(), scopes.current).into()))
                         }
+                        None => self.error(err),
                     }
-                    None => Type::Unknown(None),
-                };
-            }
+                }
+                None => Type::Unknown(None),
+            },
             TypeHint::Void => Type::Void,
             TypeHint::Ptr(ty) => Type::Ptr(self.resolve_typehint(scopes, ty).into()),
             TypeHint::MutPtr(ty) => Type::MutPtr(self.resolve_typehint(scopes, ty).into()),
