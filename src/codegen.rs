@@ -1516,7 +1516,7 @@ impl Codegen {
     ) {
         match pattern {
             CheckedPattern::UnionMember {
-                binding,
+                pattern,
                 variant,
                 ptr,
             } => {
@@ -1524,16 +1524,13 @@ impl Codegen {
                 let tmp_name = format!("({}{tmp_name})", "*".repeat(scrutinee.indirection()));
                 if opt_ptr && variant.0 == "Some" {
                     self.buffer.emit(format!("if ({tmp_name} != NULL) {{"));
-                    if binding
-                        .filter(|&id| {
-                            self.buffer
-                                .emit_local_decl(scopes, id, state, &mut self.type_gen)
-                                .is_ok()
-                        })
-                        .is_some()
-                    {
-                        self.buffer
-                            .emit(format!(" = {}{tmp_name};", if *ptr { "&" } else { "" }));
+                    if let Some(pattern) = pattern {
+                        let tmp_name = if *ptr {
+                            format!("&{tmp_name}")
+                        } else {
+                            tmp_name
+                        };
+                        self.gen_irrefutable_pattern(scopes, state, pattern, &tmp_name);
                     }
                 } else if opt_ptr && variant.0 == "None" {
                     self.buffer.emit(format!("if ({tmp_name} == NULL) {{",));
@@ -1543,19 +1540,13 @@ impl Codegen {
                         variant.1
                     ));
 
-                    if binding
-                        .filter(|&id| {
-                            self.buffer
-                                .emit_local_decl(scopes, id, state, &mut self.type_gen)
-                                .is_ok()
-                        })
-                        .is_some()
-                    {
-                        self.buffer.emit(format!(
-                            " = {}{tmp_name}.{};",
-                            if *ptr { "&" } else { "" },
-                            variant.0,
-                        ));
+                    if let Some(pattern) = pattern {
+                        let tmp_name = if *ptr {
+                            format!("&{tmp_name}.{}", variant.0)
+                        } else {
+                            format!("{tmp_name}.{}", variant.0)
+                        };
+                        self.gen_irrefutable_pattern(scopes, state, pattern, &tmp_name);
                     }
                 }
             }

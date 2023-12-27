@@ -254,9 +254,9 @@ pub struct Destructure {
 #[derive(Debug, Clone)]
 pub enum Pattern {
     // x is ::core::opt::Option::Some(mut y)
-    PathWithBindings {
+    TupleLike {
         path: Located<Path>,
-        binding: (bool, String), // Box<Pattern>
+        subpatterns: Vec<Pattern>,
     },
     // x is ::core::opt::Option::None
     // x is y
@@ -264,7 +264,7 @@ pub enum Pattern {
     // x is mut y
     MutBinding(Located<String>),
     // x is ?mut y
-    Option(bool, Located<String>),
+    Option(Box<Pattern>),
     // x is null
     Null(Span),
     // let {x, y} = z;
@@ -274,10 +274,10 @@ pub enum Pattern {
 impl Pattern {
     pub fn span(&self) -> &Span {
         match self {
-            Pattern::PathWithBindings { path, .. } => &path.span,
+            Pattern::TupleLike { path, .. } => &path.span,
             Pattern::Path(path) => &path.span,
             Pattern::MutBinding(ident) => &ident.span,
-            Pattern::Option(_, ident) => &ident.span,
+            Pattern::Option(patt) => patt.span(),
             Pattern::Null(span) => span,
             Pattern::StructDestructure(stuff) => &stuff.span,
         }

@@ -947,8 +947,7 @@ impl<'a> Parser<'a> {
 
     fn pattern(&mut self, allow_mut: bool) -> Pattern {
         if self.advance_if_kind(Token::Question).is_some() {
-            let mutable = self.advance_if_kind(Token::Mut);
-            return Pattern::Option(mutable.is_some(), self.expect_located_id("expected name"));
+            return Pattern::Option(self.pattern(true).into());
         }
 
         if let Some(token) = self.advance_if_kind(Token::None) {
@@ -974,15 +973,14 @@ impl<'a> Parser<'a> {
         }
 
         let path = self.type_path();
-        if self.advance_if_kind(Token::LParen).is_some() {
-            // TODO: make this a pattern
-            let mutable = self.advance_if_kind(Token::Mut);
-            let id = self.expect_id("expected identifier");
-            self.expect_kind(Token::RParen, "expected ')'");
-
-            Pattern::PathWithBindings {
+        if let Some(token) = self.advance_if_kind(Token::LParen) {
+            Pattern::TupleLike {
                 path,
-                binding: (mutable.is_some(), id),
+                subpatterns: self
+                    .csv(Vec::new(), Token::RParen, token.span, |this| {
+                        this.pattern(true)
+                    })
+                    .data,
             }
         } else {
             Pattern::Path(path)

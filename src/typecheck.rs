@@ -897,7 +897,10 @@ impl TypeChecker {
 
                 CheckedStmt::LetPattern(pattern, value)
             }
-            _ => self.error(Error::new("variable binding pattern must be irrefutable", span)),
+            _ => self.error(Error::new(
+                "variable binding pattern must be irrefutable",
+                span,
+            )),
         }
     }
 
@@ -1777,6 +1780,15 @@ impl TypeChecker {
                     },
                     false,
                 );
+                let pat = Pattern::Option(
+                    if mutable {
+                        Pattern::MutBinding(l!(var))
+                    } else {
+                        Pattern::Path(l!(Path::Normal(vec![(var, vec![])])))
+                    }
+                    .into(),
+                );
+
                 let mut body = self.check_expr(
                     scopes,
                     l!(ExprData::Loop {
@@ -1794,7 +1806,7 @@ impl TypeChecker {
                                     args: vec![],
                                 }),
                                 body: vec![
-                                    (Pattern::Option(mutable, l!(var)), l!(ExprData::Block(body))),
+                                    (pat, l!(ExprData::Block(body))),
                                     (
                                         Pattern::Null(Span::default()),
                                         l!(ExprData::Break(lbox!(ExprData::Void)))
@@ -2372,7 +2384,7 @@ impl TypeChecker {
         scopes: &mut Scopes,
         scrutinee: &Type,
         path: ResolvedPath,
-        binding: Option<(bool, String)>,
+        subpatterns: Vec<Pattern>,
         span: Span,
     ) -> CheckedPattern {
         let Some(ut) = scrutinee
@@ -2413,26 +2425,29 @@ impl TypeChecker {
 
         let mut ty = member.ty.clone();
         ty.fill_struct_templates(scopes, ut);
+
         let ptr = scrutinee.is_ptr() || scrutinee.is_mut_ptr();
         let tag = union.variant_tag(&variant).unwrap();
-        if let Some((mutable, binding)) = binding {
+        if let Some(pattern) = subpatterns.into_iter().next() {
+            let span = *pattern.span();
+            let CheckedPattern::Irrefutable(pattern) = self.check_pattern(
+                scopes,
+                true,
+                &scrutinee.matched_inner_type(ty),
+                false,
+                pattern,
+            ) else {
+                return self.error(Error::new("union subpatterns must be irrefutable", span));
+            };
+
             CheckedPattern::UnionMember {
-                binding: Some(scopes.insert(
-                    Variable {
-                        name: binding,
-                        ty: scrutinee.matched_inner_type(ty),
-                        is_static: false,
-                        mutable,
-                        value: None,
-                    },
-                    false,
-                )),
+                pattern: Some(pattern.into()),
                 variant: (variant, tag),
                 ptr,
             }
         } else if ty.is_void() {
             CheckedPattern::UnionMember {
-                binding: None,
+                pattern: None,
                 variant: (variant, tag),
                 ptr,
             }
@@ -2453,10 +2468,10 @@ impl TypeChecker {
         pattern: Pattern,
     ) -> CheckedPattern {
         match pattern {
-            Pattern::PathWithBindings { path, binding } => {
+            Pattern::TupleLike { path, subpatterns } => {
                 let span = path.span;
                 if let Some(path) = self.resolve_path(scopes, &path.data, path.span) {
-                    self.check_union_pattern(scopes, scrutinee, path, Some(binding), span)
+                    self.check_union_pattern(scopes, scrutinee, path, subpatterns, span)
                 } else {
                     Default::default()
                 }
@@ -2481,27 +2496,22 @@ impl TypeChecker {
                 }
 
                 if let Some(p) = p {
-                    self.check_union_pattern(scopes, scrutinee, p, None, path.span)
+                    self.check_union_pattern(scopes, scrutinee, p, vec![], path.span)
                 } else {
                     Default::default()
                 }
             }
-            Pattern::Option(mutable, binding) => {
+            Pattern::Option(patt) => {
+                let span = *patt.span();
                 let path = self.resolve_path_in(
                     scopes,
                     &[("Some".into(), vec![])],
                     scopes.get(scopes.get_option_id().unwrap()).body_scope,
-                    binding.span,
+                    span,
                 );
 
                 if let Some(path) = path {
-                    self.check_union_pattern(
-                        scopes,
-                        scrutinee,
-                        path,
-                        Some((mutable, binding.data)),
-                        binding.span,
-                    )
+                    self.check_union_pattern(scopes, scrutinee, path, vec![*patt], span)
                 } else {
                     Default::default()
                 }
@@ -2514,7 +2524,7 @@ impl TypeChecker {
                     span,
                 );
                 if let Some(path) = path {
-                    self.check_union_pattern(scopes, scrutinee, path, None, span)
+                    self.check_union_pattern(scopes, scrutinee, path, vec![], span)
                 } else {
                     Default::default()
                 }
@@ -2532,11 +2542,10 @@ impl TypeChecker {
                 )))
             }
             Pattern::StructDestructure(pattern) => {
-                let Some((ut, (members, _))) =
-                    scrutinee.strip_references().as_user_type().and_then(|ut| {
-                        let ut = scopes.get(ut.id);
-                        Some(ut).zip(ut.data.as_struct())
-                    })
+                let Some((ut, (members, _))) = scrutinee
+                    .strip_references()
+                    .as_user_type()
+                    .and_then(|ut| Some(ut).zip(scopes.get(ut.id).data.as_struct()))
                 else {
                     return self.error(Error::new(
                         format!(
@@ -2547,7 +2556,7 @@ impl TypeChecker {
                     ));
                 };
 
-                let cap = scopes.can_access_privates(ut.scope);
+                let cap = scopes.can_access_privates(scopes.get(ut.id).scope);
                 let mut vars = Vec::new();
                 for Destructure {
                     name,
@@ -2574,12 +2583,9 @@ impl TypeChecker {
                     }
 
                     // TODO: duplicates
-                    vars.push((
-                        name.data,
-                        mutable || p_mutable,
-                        scrutinee.matched_inner_type(member.ty.clone()),
-                        p_pattern,
-                    ));
+                    let mut ty = scrutinee.matched_inner_type(member.ty.clone());
+                    ty.fill_struct_templates(scopes, ut);
+                    vars.push((name.data, mutable || p_mutable, ty, p_pattern));
                 }
 
                 let mut had_refutable = false;
@@ -3109,6 +3115,8 @@ impl TypeChecker {
         span: Span,
     ) -> CheckedExpr {
         if !source.ty.coerces_to(scopes, target) {
+            dbg!(&target);
+            dbg!(&source.ty);
             self.error(Error::type_mismatch(
                 &target.name(scopes),
                 &source.ty.name(scopes),

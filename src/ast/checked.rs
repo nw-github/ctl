@@ -23,7 +23,7 @@ pub enum IrrefutablePattern {
 #[derive(Debug, Clone, Default, EnumAsInner)]
 pub enum CheckedPattern {
     UnionMember {
-        binding: Option<VariableId>,
+        pattern: Option<Box<IrrefutablePattern>>,
         variant: (String, usize),
         ptr: bool,
     },

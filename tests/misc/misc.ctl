@@ -69,6 +69,12 @@ fn main() {
 
         std::println("union_pattern()...");
         patterns::union_pattern();
+
+        std::println("union_struct_pattern()...");
+        patterns::union_struct_pattern();
+
+        std::println("option_struct_pattern()...");
+        patterns::option_struct_pattern();
     }
 
     std::println("\nmisc: ");
