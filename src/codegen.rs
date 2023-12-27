@@ -7,9 +7,10 @@ use crate::{
     ast::UnaryOp,
     lexer::Span,
     typecheck::{
-        FnPtr, FunctionId, GenericFunc, GenericUserType, Member, ScopeId, ScopeKind, Scopes,
-        Symbol, TypeId, UserTypeData, UserTypeId, VariableId,
+        FunctionId, Member, ScopeId, ScopeKind, Scopes, Symbol, UserTypeData, UserTypeId,
+        VariableId,
     },
+    typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type},
     Error,
 };
 
@@ -18,14 +19,14 @@ const UNION_TAG_NAME: &str = "$tag";
 #[derive(PartialEq, Eq, Clone)]
 struct State {
     func: GenericFunc,
-    inst: Option<TypeId>,
+    inst: Option<Type>,
     tmpvar: usize,
     emitted_names: HashMap<String, VariableId>,
     renames: HashMap<VariableId, String>,
 }
 
 impl State {
-    pub fn new(func: GenericFunc, inst: Option<TypeId>) -> Self {
+    pub fn new(func: GenericFunc, inst: Option<Type>) -> Self {
         Self {
             func,
             inst,
@@ -35,7 +36,7 @@ impl State {
         }
     }
 
-    pub fn fill_generics(&self, scopes: &Scopes, ty: &mut TypeId) {
+    pub fn fill_generics(&self, scopes: &Scopes, ty: &mut Type) {
         ty.fill_func_template(scopes, &self.func);
 
         if let Some(inst) = self.inst.as_ref().and_then(|inst| inst.as_user_type()) {
@@ -60,7 +61,7 @@ impl std::hash::Hash for State {
 struct TypeGen {
     structs: Option<HashSet<GenericUserType>>,
     fnptrs: Option<HashSet<FnPtr>>,
-    arrays: HashMap<TypeId, usize>,
+    arrays: HashMap<Type, usize>,
 }
 
 impl TypeGen {
@@ -130,7 +131,7 @@ impl TypeGen {
 
             definitions.emit("};");
 
-            let ty = TypeId::UserType(ut.clone().into());
+            let ty = Type::UserType(ut.clone().into());
             if let Some(size) = self.arrays.remove(&ty) {
                 self.emit_array(scopes, buffer, Some(&mut definitions), &ty, size);
                 emitted.insert(ty);
@@ -209,11 +210,11 @@ impl TypeGen {
             let mut ty = member.ty.clone();
             ty.fill_struct_templates(scopes, &ut);
 
-            while let TypeId::Array(inner) = ty {
+            while let Type::Array(inner) = ty {
                 ty = inner.0;
             }
 
-            if let TypeId::UserType(data) = ty {
+            if let Type::UserType(data) = ty {
                 if !data.ty_args.is_empty() {
                     Self::get_depencencies(scopes, (*data).clone(), result);
                 }
@@ -246,7 +247,7 @@ impl TypeGen {
         scopes: &Scopes,
         typedef: &mut Buffer,
         defs: Option<&mut Buffer>,
-        ty: &TypeId,
+        ty: &Type,
         size: usize,
     ) {
         typedef.emit("typedef struct ");
@@ -282,47 +283,47 @@ impl Buffer {
         self.0.push_str(source.as_ref());
     }
 
-    fn emit_type(&mut self, scopes: &Scopes, id: &TypeId, tg: &mut TypeGen) {
+    fn emit_type(&mut self, scopes: &Scopes, id: &Type, tg: &mut TypeGen) {
         match id {
-            TypeId::Void | TypeId::Never | TypeId::CVoid => self.emit("void"),
-            TypeId::Int(bits) | TypeId::Uint(bits) => {
-                let signed = matches!(id, TypeId::Int(_));
+            Type::Void | Type::Never | Type::CVoid => self.emit("void"),
+            Type::Int(bits) | Type::Uint(bits) => {
+                let signed = matches!(id, Type::Int(_));
                 self.emit(format!("{}INT({bits})", if signed { "S" } else { "U" }));
             }
-            TypeId::CInt(ty) | TypeId::CUint(ty) => {
-                if matches!(id, TypeId::CUint(_)) {
+            Type::CInt(ty) | Type::CUint(ty) => {
+                if matches!(id, Type::CUint(_)) {
                     self.emit("unsigned ");
                 }
 
                 match ty {
-                    crate::typecheck::CInt::Char => self.emit("char"),
-                    crate::typecheck::CInt::Short => self.emit("short"),
-                    crate::typecheck::CInt::Int => self.emit("int"),
-                    crate::typecheck::CInt::Long => self.emit("long"),
-                    crate::typecheck::CInt::LongLong => self.emit("long long"),
+                    CInt::Char => self.emit("char"),
+                    CInt::Short => self.emit("short"),
+                    CInt::Int => self.emit("int"),
+                    CInt::Long => self.emit("long"),
+                    CInt::LongLong => self.emit("long long"),
                 }
             }
-            TypeId::Isize => self.emit("isize"),
-            TypeId::Usize => self.emit("usize"),
-            TypeId::F32 => self.emit("f32"),
-            TypeId::F64 => self.emit("f64"),
-            TypeId::Bool => self.emit("CTL_bool"),
-            TypeId::Char => self.emit("CTL_char"),
-            TypeId::Ptr(inner) => {
+            Type::Isize => self.emit("isize"),
+            Type::Usize => self.emit("usize"),
+            Type::F32 => self.emit("f32"),
+            Type::F64 => self.emit("f64"),
+            Type::Bool => self.emit("CTL_bool"),
+            Type::Char => self.emit("CTL_char"),
+            Type::Ptr(inner) => {
                 self.emit_type(scopes, inner, tg);
                 self.emit(" const*");
             }
-            TypeId::MutPtr(inner) => {
+            Type::MutPtr(inner) => {
                 self.emit_type(scopes, inner, tg);
                 self.emit(" *");
             }
-            TypeId::FnPtr(f) => {
+            Type::FnPtr(f) => {
                 if let Some(fnptrs) = tg.fnptrs.as_mut() {
                     fnptrs.insert((**f).clone());
                 }
                 self.emit_generic_mangled_name(scopes, id);
             }
-            TypeId::UserType(ut) => match &scopes.get(ut.id).data {
+            Type::UserType(ut) => match &scopes.get(ut.id).data {
                 UserTypeData::Struct { .. } | UserTypeData::Union(_) => {
                     if is_opt_ptr(scopes, id) {
                         self.emit_type(scopes, &ut.ty_args[0], tg);
@@ -343,55 +344,55 @@ impl Buffer {
                     panic!("ICE: Trait type in emit_type");
                 }
             },
-            TypeId::Array(data) => {
+            Type::Array(data) => {
                 self.emit_generic_mangled_name(scopes, id);
                 tg.arrays.insert(data.0.clone(), data.1);
             }
-            TypeId::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_type"),
-            TypeId::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_type"),
+            Type::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_type"),
+            Type::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_type"),
         }
     }
 
-    fn emit_generic_mangled_name(&mut self, scopes: &Scopes, id: &TypeId) {
+    fn emit_generic_mangled_name(&mut self, scopes: &Scopes, id: &Type) {
         match id {
-            TypeId::Void => self.emit("void"),
-            TypeId::CVoid => self.emit("c_void"),
-            TypeId::Never => self.emit("never"),
-            TypeId::Int(bits) => self.emit(format!("i{bits}")),
-            TypeId::Uint(bits) => self.emit(format!("u{bits}")),
-            TypeId::CInt(ty) | TypeId::CUint(ty) => {
-                if matches!(id, TypeId::CUint(_)) {
+            Type::Void => self.emit("void"),
+            Type::CVoid => self.emit("c_void"),
+            Type::Never => self.emit("never"),
+            Type::Int(bits) => self.emit(format!("i{bits}")),
+            Type::Uint(bits) => self.emit(format!("u{bits}")),
+            Type::CInt(ty) | Type::CUint(ty) => {
+                if matches!(id, Type::CUint(_)) {
                     self.emit("u");
                 }
                 match ty {
-                    crate::typecheck::CInt::Char => self.emit("char"),
-                    crate::typecheck::CInt::Short => self.emit("short"),
-                    crate::typecheck::CInt::Int => self.emit("int"),
-                    crate::typecheck::CInt::Long => self.emit("long"),
-                    crate::typecheck::CInt::LongLong => self.emit("longlong"),
+                    CInt::Char => self.emit("char"),
+                    CInt::Short => self.emit("short"),
+                    CInt::Int => self.emit("int"),
+                    CInt::Long => self.emit("long"),
+                    CInt::LongLong => self.emit("longlong"),
                 }
             }
-            TypeId::Isize => self.emit("isize"),
-            TypeId::Usize => self.emit("usize"),
-            TypeId::F32 => self.emit("f32"),
-            TypeId::F64 => self.emit("f64"),
-            TypeId::Bool => self.emit("bool"),
-            TypeId::Char => self.emit("char"),
-            TypeId::Ptr(inner) => {
+            Type::Isize => self.emit("isize"),
+            Type::Usize => self.emit("usize"),
+            Type::F32 => self.emit("f32"),
+            Type::F64 => self.emit("f64"),
+            Type::Bool => self.emit("bool"),
+            Type::Char => self.emit("char"),
+            Type::Ptr(inner) => {
                 self.emit("ptr_");
                 self.emit_generic_mangled_name(scopes, inner);
             }
-            TypeId::MutPtr(inner) => {
+            Type::MutPtr(inner) => {
                 self.emit("mutptr_");
                 self.emit_generic_mangled_name(scopes, inner);
             }
-            TypeId::FnPtr(f) => self.emit_fnptr_name(scopes, f),
-            TypeId::UserType(ut) => {
+            Type::FnPtr(f) => self.emit_fnptr_name(scopes, f),
+            Type::UserType(ut) => {
                 self.emit_type_name(scopes, ut);
             }
-            TypeId::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
-            TypeId::Array(data) => self.emit_array_struct_name(scopes, &data.0, data.1),
-            TypeId::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_generic_mangled_name"),
+            Type::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
+            Type::Array(data) => self.emit_array_struct_name(scopes, &data.0, data.1),
+            Type::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_generic_mangled_name"),
         }
     }
 
@@ -558,7 +559,7 @@ impl Buffer {
         id: VariableId,
         state: &mut State,
         tg: &mut TypeGen,
-    ) -> Result<TypeId, TypeId> {
+    ) -> Result<Type, Type> {
         let var = scopes.get(id);
         let mut ty = var.ty.clone();
         state.fill_generics(scopes, &mut ty);
@@ -579,7 +580,7 @@ impl Buffer {
         }
     }
 
-    fn emit_array_struct_name(&mut self, scopes: &Scopes, ty: &TypeId, size: usize) {
+    fn emit_array_struct_name(&mut self, scopes: &Scopes, ty: &Type, size: usize) {
         self.emit("Array_");
         self.emit_generic_mangled_name(scopes, ty);
         self.emit(format!("_{}", size));
@@ -736,7 +737,7 @@ impl Codegen {
             this.buffer.emit(";");
         }
 
-        let returns = scopes.get(main.func.id).ret != TypeId::Void;
+        let returns = scopes.get(main.func.id).ret != Type::Void;
         if let Some(state) = conv_argv {
             if returns {
                 this.buffer.emit("return ");
@@ -840,7 +841,7 @@ impl Codegen {
     fn gen_expr_inner(&mut self, scopes: &Scopes, expr: CheckedExpr, state: &mut State) {
         match expr.data {
             CheckedExprData::Binary { op, left, right } => {
-                if expr.ty == TypeId::Bool {
+                if expr.ty == Type::Bool {
                     self.emit_cast(scopes, &expr.ty);
                     self.buffer.emit("(");
                 }
@@ -850,7 +851,7 @@ impl Codegen {
                 self.gen_expr(scopes, *right, state);
                 self.buffer.emit(")");
 
-                if expr.ty == TypeId::Bool {
+                if expr.ty == Type::Bool {
                     self.buffer.emit(" ? 1 : 0)");
                 }
             }
@@ -883,7 +884,7 @@ impl Codegen {
                     self.gen_expr(scopes, *inner, state);
                 }
                 UnaryOp::Not => {
-                    if inner.ty == TypeId::Bool {
+                    if inner.ty == Type::Bool {
                         self.emit_cast(scopes, &expr.ty);
                         self.buffer.emit("(");
                         self.gen_expr(scopes, *inner, state);
@@ -1202,7 +1203,7 @@ impl Codegen {
             CheckedExprData::String(value) => {
                 self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit("{ .span = { .ptr = (");
-                self.emit_type(scopes, &TypeId::Ptr(TypeId::Uint(8).into()));
+                self.emit_type(scopes, &Type::Ptr(Type::Uint(8).into()));
                 self.buffer.emit(")\"");
 
                 for byte in value.as_bytes() {
@@ -1213,7 +1214,7 @@ impl Codegen {
             }
             CheckedExprData::ByteString(value) => {
                 self.buffer.emit("(");
-                self.emit_type(scopes, &TypeId::Ptr(TypeId::Uint(8).into()));
+                self.emit_type(scopes, &Type::Ptr(Type::Uint(8).into()));
                 self.buffer.emit(")\"");
                 for byte in value.as_bytes() {
                     self.buffer.emit(format!("\\x{byte:x}"));
@@ -1514,7 +1515,7 @@ impl Codegen {
         state: &mut State,
         pattern: &CheckedPattern,
         tmp_name: &str,
-        scrutinee: &TypeId,
+        scrutinee: &Type,
     ) {
         match pattern {
             CheckedPattern::UnionMember {
@@ -1607,11 +1608,11 @@ impl Codegen {
         self.yielded = old;
     }
 
-    fn emit_type(&mut self, scopes: &Scopes, id: &TypeId) {
+    fn emit_type(&mut self, scopes: &Scopes, id: &Type) {
         self.buffer.emit_type(scopes, id, &mut self.type_gen);
     }
 
-    fn emit_cast(&mut self, scopes: &Scopes, id: &TypeId) {
+    fn emit_cast(&mut self, scopes: &Scopes, id: &Type) {
         self.buffer.emit("(");
         self.emit_type(scopes, id);
         self.buffer.emit(")");
@@ -1636,7 +1637,7 @@ impl Codegen {
     }
 
     fn find_implementation(
-        ty: &TypeId,
+        ty: &Type,
         scopes: &Scopes,
         trait_id: UserTypeId,
         fn_name: &str,
@@ -1666,7 +1667,7 @@ impl Codegen {
     }
 }
 
-fn is_opt_ptr(scopes: &Scopes, ty: &TypeId) -> bool {
+fn is_opt_ptr(scopes: &Scopes, ty: &Type) -> bool {
     scopes
         .as_option_inner(ty)
         .map(|inner| inner.is_ptr() || inner.is_mut_ptr())

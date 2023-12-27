@@ -3,7 +3,8 @@ use num_bigint::{BigInt, BigUint};
 
 use crate::{
     ast::{BinaryOp, UnaryOp},
-    typecheck::{GenericFunc, ScopeId, Scopes, Symbol, TypeId, UserTypeId, VariableId},
+    typecheck::{ScopeId, Scopes, Symbol, UserTypeId, VariableId},
+    typeid::{GenericFunc, Type},
 };
 
 #[derive(Debug, Clone)]
@@ -55,7 +56,7 @@ pub enum CheckedExprData {
     Call {
         func: GenericFunc,
         args: IndexMap<String, CheckedExpr>,
-        inst: Option<TypeId>,
+        inst: Option<Type>,
         trait_id: Option<UserTypeId>,
     },
     CallFnPtr {
@@ -128,7 +129,7 @@ pub enum CheckedExprData {
 
 #[derive(Debug, Default, Clone, derive_more::Constructor)]
 pub struct CheckedExpr {
-    pub ty: TypeId,
+    pub ty: Type,
     pub data: CheckedExprData,
 }
 
@@ -136,7 +137,7 @@ impl CheckedExpr {
     pub fn is_assignable(&self, scopes: &Scopes) -> bool {
         match &self.data {
             CheckedExprData::Unary { op, expr } => {
-                matches!(op, UnaryOp::Deref) && matches!(expr.ty, TypeId::MutPtr(_))
+                matches!(op, UnaryOp::Deref) && matches!(expr.ty, Type::MutPtr(_))
             }
             CheckedExprData::Symbol(_) | CheckedExprData::Member { .. } => self.can_addrmut(scopes),
             CheckedExprData::Subscript { callee, .. } => callee.is_assignable(scopes),
@@ -147,23 +148,23 @@ impl CheckedExpr {
     pub fn can_addrmut(&self, scopes: &Scopes) -> bool {
         match &self.data {
             CheckedExprData::Unary { op, expr } => {
-                !matches!(op, UnaryOp::Deref) || matches!(expr.ty, TypeId::MutPtr(_))
+                !matches!(op, UnaryOp::Deref) || matches!(expr.ty, Type::MutPtr(_))
             }
             CheckedExprData::Symbol(symbol) => match symbol {
                 Symbol::Func(_) => false,
                 Symbol::Var(var) => scopes.get(*var).mutable,
             },
             CheckedExprData::Member { source, .. } => {
-                matches!(source.ty, TypeId::MutPtr(_)) || source.can_addrmut(scopes)
+                matches!(source.ty, Type::MutPtr(_)) || source.can_addrmut(scopes)
             }
             CheckedExprData::Subscript { callee, .. } => callee.can_addrmut(scopes),
             _ => true,
         }
     }
 
-    pub fn coerce_to(self, target: &TypeId, scopes: &Scopes) -> CheckedExpr {
+    pub fn coerce_to(self, target: &Type, scopes: &Scopes) -> CheckedExpr {
         match (&self.ty, target) {
-            (TypeId::MutPtr(lhs), TypeId::Ptr(rhs)) if lhs == rhs => {
+            (Type::MutPtr(lhs), Type::Ptr(rhs)) if lhs == rhs => {
                 CheckedExpr::new(target.clone(), self.data)
             }
             (ty, target)
@@ -184,28 +185,28 @@ impl CheckedExpr {
                 )
                 .coerce_to(target, scopes)
             }
-            (TypeId::Never, _) => CheckedExpr::new(target.clone(), self.data),
+            (Type::Never, _) => CheckedExpr::new(target.clone(), self.data),
             _ => self,
         }
     }
 
-    pub fn auto_deref(mut self, mut target: &TypeId) -> CheckedExpr {
+    pub fn auto_deref(mut self, mut target: &Type) -> CheckedExpr {
         let mut indirection = 0;
-        while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = target {
+        while let Type::Ptr(inner) | Type::MutPtr(inner) = target {
             target = inner;
             indirection += 1;
         }
 
         let mut ty = &self.ty;
         let mut my_indirection = 0;
-        while let TypeId::Ptr(inner) | TypeId::MutPtr(inner) = ty {
+        while let Type::Ptr(inner) | Type::MutPtr(inner) = ty {
             ty = inner;
             my_indirection += 1;
         }
 
         while my_indirection > indirection {
             my_indirection -= 1;
-            let (TypeId::Ptr(inner) | TypeId::MutPtr(inner)) = self.ty.clone() else {
+            let (Type::Ptr(inner) | Type::MutPtr(inner)) = self.ty.clone() else {
                 unreachable!()
             };
             self = CheckedExpr::new(
