@@ -5,6 +5,7 @@ mod parser;
 mod pretty;
 mod typecheck;
 mod typeid;
+mod sym;
 
 use std::{
     ffi::OsStr,

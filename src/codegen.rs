@@ -4,12 +4,9 @@ use indexmap::IndexMap;
 
 use crate::{
     ast::checked::{CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, IrrefutablePattern},
-    ast::UnaryOp,
+    ast::{checked::Symbol, UnaryOp},
     lexer::Span,
-    typecheck::{
-        FunctionId, Member, ScopeId, ScopeKind, Scopes, Symbol, UserTypeData, UserTypeId,
-        VariableId,
-    },
+    sym::{FunctionId, Member, ScopeId, ScopeKind, Scopes, UserTypeData, UserTypeId, VariableId},
     typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type},
     Error,
 };

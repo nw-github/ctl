@@ -2,7 +2,7 @@ use crate::{
     ast::parsed::{Expr, Path, Pattern, TypeHint},
     ast::Attribute,
     lexer::Span,
-    typecheck::{FunctionId, ScopeId, UserTypeId, VariableId, ExtensionId},
+    sym::{FunctionId, ScopeId, UserTypeId, VariableId, ExtensionId},
 };
 
 pub struct DeclaredStmt {

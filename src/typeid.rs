@@ -1,6 +1,6 @@
 use crate::{
     ast::{parsed::TypeHint, BinaryOp},
-    typecheck::{FunctionId, ScopeId, Scopes, UserTypeId, Vis},
+    sym::{FunctionId, ScopeId, Scopes, UserTypeId, Vis},
 };
 use derive_more::Constructor;
 use enum_as_inner::EnumAsInner;

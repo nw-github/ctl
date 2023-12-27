@@ -1,9 +1,10 @@
+use enum_as_inner::EnumAsInner;
 use indexmap::IndexMap;
 use num_bigint::{BigInt, BigUint};
 
 use crate::{
     ast::{BinaryOp, UnaryOp},
-    typecheck::{ScopeId, Scopes, Symbol, UserTypeId, VariableId},
+    sym::{ScopeId, Scopes, UserTypeId, VariableId},
     typeid::{GenericFunc, Type},
 };
 
@@ -29,6 +30,12 @@ pub enum CheckedPattern {
     Irrefutable(IrrefutablePattern),
     #[default]
     Error,
+}
+
+#[derive(Debug, Clone, EnumAsInner)]
+pub enum Symbol {
+    Func(GenericFunc),
+    Var(VariableId),
 }
 
 #[derive(Debug, Default, Clone)]
