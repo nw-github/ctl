@@ -97,3 +97,13 @@ pub fn integer_pattern() {
         _ => assert(false, "-10..=5 didn't match x = -5"),
     }
 }
+
+pub fn string_pattern() {
+    match "hello" {
+        "goodbye" => assert(false, "hello matched 'goodbye'"),
+        "oi" => assert(false, "hello matched 'oi'"),
+        "bonjour" => assert(false, "hello matched 'bonjour'"),
+        "hello" => {},
+        _ => assert(false, "hello didn't match 'hello'"),
+    }
+}

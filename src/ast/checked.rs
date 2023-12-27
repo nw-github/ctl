@@ -35,6 +35,7 @@ pub enum CheckedPattern {
         start: BigInt,
         end: BigInt,
     },
+    String(String),
     #[default]
     Error,
 }

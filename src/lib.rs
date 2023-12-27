@@ -86,6 +86,13 @@ impl Error {
         )
     }
 
+    pub fn bad_pattern(ty: &str, pattern: &str, span: Span) -> Self {
+        Self::new(
+            format!("cannot match a value of type '{ty}' with {pattern} pattern",),
+            span,
+        )
+    }
+
     pub fn is_unsafe(span: Span) -> Self {
         Self::new("this operation is unsafe", span)
     }

@@ -276,13 +276,13 @@ pub enum Pattern {
     Null,
     // let {x, y} = z;
     StructDestructure(Vec<Destructure>),
-    // 0
     IntLiteral(IntPattern),
     IntRange {
         inclusive: bool,
         start: IntPattern,
         end: IntPattern,
     },
+    String(String),
     Error
 }
 

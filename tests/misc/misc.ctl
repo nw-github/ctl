@@ -78,6 +78,9 @@ fn main() {
 
         std::println("integer_pattern()...");
         patterns::integer_pattern();
+
+        std::println("string_pattern()...");
+        patterns::string_pattern();
     }
 
     std::println("\nmisc: ");

@@ -2373,11 +2373,9 @@ impl TypeChecker {
     ) -> Option<BigInt> {
         let inner = scrutinee.strip_references();
         let Some(stats) = inner.integer_stats() else {
-            return self.error(Error::new(
-                format!(
-                    "cannot match a value of type '{}' with an integer pattern",
-                    scrutinee.name(scopes)
-                ),
+            return self.error(Error::bad_pattern(
+                &scrutinee.name(scopes),
+                "an integer",
                 span,
             ));
         };
@@ -2603,6 +2601,18 @@ impl TypeChecker {
                     start,
                     end,
                 }
+            }
+            Pattern::String(value) => {
+                let string = scopes.make_lang_type("string", vec![]).unwrap();
+                if scrutinee.strip_references() != &string {
+                    return self.error(Error::bad_pattern(
+                        &scrutinee.name(scopes),
+                        "a string",
+                        span,
+                    ));
+                }
+
+                CheckedPattern::String(value)
             }
             Pattern::Error => Default::default(),
         }

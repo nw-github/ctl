@@ -1579,6 +1579,17 @@ impl Codegen {
                 self.emit_cast(scopes, base);
                 self.buffer.emit(format!("{end}) {{"));
             }
+            CheckedPattern::String(value) => {
+                let tmp_name = format!("({}{tmp_name})", "*".repeat(scrutinee.indirection()));
+                self.buffer.emit(format!(
+                    "if ({tmp_name}.span.len == {} && __builtin_memcmp({tmp_name}.span.ptr, \"",
+                    value.len()
+                ));
+                for byte in value.as_bytes() {
+                    self.buffer.emit(format!("\\x{byte:x}"));
+                }
+                self.buffer.emit(format!("\", {}) == 0) {{", value.len()));
+            }
             CheckedPattern::Destrucure(_) => todo!(),
             CheckedPattern::Error => panic!("ICE: CheckedPattern::Error in gen_pattern"),
         }

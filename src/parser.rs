@@ -1041,6 +1041,18 @@ impl<'a> Parser<'a> {
             if let Some(pattern) = pattern {
                 return self.maybe_range_pattern(pattern);
             }
+
+            let pattern = self.advance_if_map(|t| {
+                if let Token::String(value) = &t.data {
+                    Some(Located::new(t.span, value.to_string()))
+                } else {
+                    None
+                }
+            });
+
+            if let Some(pattern) = pattern {
+                return pattern.map(Pattern::String);
+            }
         }
 
         let path = self.type_path();
