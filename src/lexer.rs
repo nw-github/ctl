@@ -1,8 +1,10 @@
 use std::borrow::Cow;
 
+use enum_as_inner::EnumAsInner;
+
 use crate::{THIS_PARAM, THIS_TYPE};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, EnumAsInner)]
 pub enum Token<'a> {
     LCurly,
     RCurly,

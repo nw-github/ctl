@@ -8,6 +8,8 @@ use crate::{
     typeid::{GenericFunc, Type},
 };
 
+use super::parsed::RangePattern;
+
 #[derive(Debug, Clone)]
 pub struct Block {
     pub body: Vec<CheckedStmt>,
@@ -29,19 +31,9 @@ pub enum CheckedPattern {
     },
     Irrefutable(IrrefutablePattern),
     Destrucure(Vec<(String, CheckedPattern)>),
-    Integer(BigInt),
-    IntRange {
-        inclusive: bool,
-        start: BigInt,
-        end: BigInt,
-    },
+    Int(BigInt),
+    IntRange(RangePattern<BigInt>),
     String(String),
-    Char(char),
-    CharRange {
-        inclusive: bool,
-        start: char,
-        end: char,
-    },
     #[default]
     Error,
 }

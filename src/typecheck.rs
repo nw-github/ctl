@@ -12,8 +12,8 @@ use crate::{
         },
         declared::{DeclaredFn, DeclaredImplBlock, DeclaredStmt, DeclaredStmtData},
         parsed::{
-            Destructure, Expr, ExprData, Fn, ImplBlock, IntPattern, Param, Path, Pattern, Stmt,
-            StmtData, TypeHint,
+            Destructure, Expr, ExprData, Fn, ImplBlock, IntPattern, Param, Path, Pattern,
+            RangePattern, Stmt, StmtData, TypeHint,
         },
         Attribute, BinaryOp, UnaryOp,
     },
@@ -2362,7 +2362,7 @@ impl TypeChecker {
     fn check_int_pattern(
         &mut self,
         scopes: &mut Scopes,
-        scrutinee: &Type,
+        target: &Type,
         IntPattern {
             negative,
             base,
@@ -2371,11 +2371,16 @@ impl TypeChecker {
         }: IntPattern,
         span: Span,
     ) -> Option<BigInt> {
-        let inner = scrutinee.strip_references();
+        let inner = target.strip_references();
         let Some(stats) = inner.integer_stats() else {
-            return self.error(Error::bad_pattern(
-                &scrutinee.name(scopes),
-                "an integer",
+            let (ty, _) = self.get_int_type_and_val(scopes, None, base, width, value, span);
+            if ty.is_unknown() {
+                return None;
+            }
+
+            return self.error(Error::type_mismatch(
+                &target.name(scopes),
+                &ty.name(scopes),
                 span,
             ));
         };
@@ -2391,7 +2396,7 @@ impl TypeChecker {
 
         if !stats.signed && negative {
             return self.error(Error::new(
-                format!("cannot negate signed integer type '{}'", ty.name(scopes)),
+                format!("cannot negate unsigned integer type '{}'", ty.name(scopes)),
                 span,
             ));
         }
@@ -2573,15 +2578,27 @@ impl TypeChecker {
                     ))
                 }
             }
-            Pattern::IntLiteral(patt) => self
+            Pattern::String(value) => {
+                let string = scopes.make_lang_type("string", vec![]).unwrap();
+                if scrutinee.strip_references() != &string {
+                    return self.error(Error::type_mismatch(
+                        &scrutinee.name(scopes),
+                        &string.name(scopes),
+                        span,
+                    ));
+                }
+
+                CheckedPattern::String(value)
+            }
+            Pattern::Int(patt) => self
                 .check_int_pattern(scopes, scrutinee, patt, span)
-                .map(CheckedPattern::Integer)
+                .map(CheckedPattern::Int)
                 .unwrap_or_default(),
-            Pattern::IntRange {
+            Pattern::IntRange(RangePattern {
                 inclusive,
                 start,
                 end,
-            } => {
+            }) => {
                 let Some(start) = self.check_int_pattern(scopes, scrutinee, start, span) else {
                     return Default::default();
                 };
@@ -2596,52 +2613,48 @@ impl TypeChecker {
                     ));
                 }
 
-                CheckedPattern::IntRange {
+                CheckedPattern::IntRange(RangePattern {
                     inclusive,
                     start,
                     end,
-                }
+                })
             }
-            Pattern::String(value) => {
-                let string = scopes.make_lang_type("string", vec![]).unwrap();
-                if scrutinee.strip_references() != &string {
-                    return self.error(Error::bad_pattern(
+            Pattern::Char(ch) => {
+                if scrutinee.strip_references() != &Type::Char {
+                    return self.error(Error::type_mismatch(
                         &scrutinee.name(scopes),
-                        "a string",
+                        &Type::Char.name(scopes),
                         span,
                     ));
                 }
 
-                CheckedPattern::String(value)
+                CheckedPattern::Int(BigInt::from(ch as u32))
             }
-            Pattern::Char(ch) => {
-                if scrutinee.strip_references() != &Type::Char {
-                    return self.error(Error::bad_pattern(&scrutinee.name(scopes), "a char", span));
-                }
-
-                CheckedPattern::Char(ch)
-            }
-            Pattern::CharRange {
+            Pattern::CharRange(RangePattern {
                 inclusive,
                 start,
                 end,
-            } => {
+            }) => {
                 if scrutinee.strip_references() != &Type::Char {
-                    return self.error(Error::bad_pattern(&scrutinee.name(scopes), "a char", span));
+                    return self.error(Error::type_mismatch(
+                        &scrutinee.name(scopes),
+                        &Type::Char.name(scopes),
+                        span,
+                    ));
                 }
 
                 if start > end {
                     return self.error(Error::new(
-                        "range start must be less than or equal to its end",
+                        "range pattern end cannot be greater than its start",
                         span,
                     ));
                 }
 
-                CheckedPattern::CharRange {
+                CheckedPattern::IntRange(RangePattern {
                     inclusive,
-                    start,
-                    end,
-                }
+                    start: BigInt::from(start as u32),
+                    end: BigInt::from(end as u32),
+                })
             }
             Pattern::Error => Default::default(),
         }

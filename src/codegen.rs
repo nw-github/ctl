@@ -6,8 +6,11 @@ use std::{
 use indexmap::IndexMap;
 
 use crate::{
-    ast::checked::{CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, IrrefutablePattern},
     ast::{checked::Symbol, UnaryOp},
+    ast::{
+        checked::{CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, IrrefutablePattern},
+        parsed::RangePattern,
+    },
     lexer::Span,
     sym::{FunctionId, Member, ScopeId, ScopeKind, Scopes, UserTypeData, UserTypeId, VariableId},
     typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type},
@@ -1553,12 +1556,8 @@ impl Codegen {
                 self.buffer.emit("if (1) {");
                 self.gen_irrefutable_pattern(scopes, state, pattern, tmp_name);
             }
-            CheckedPattern::Integer(value) => self.gen_literal_pattern(scopes, tmp_name, ty, value),
-            CheckedPattern::IntRange {
-                inclusive,
-                start,
-                end,
-            } => self.gen_range_pattern(scopes, tmp_name, ty, *inclusive, start, end),
+            CheckedPattern::Int(value) => self.gen_literal_pattern(scopes, tmp_name, ty, value),
+            CheckedPattern::IntRange(range) => self.gen_range_pattern(scopes, tmp_name, ty, range),
             CheckedPattern::String(value) => {
                 let tmp_name = format!("({}{tmp_name})", "*".repeat(ty.indirection()));
                 self.buffer.emit(format!(
@@ -1569,16 +1568,6 @@ impl Codegen {
                     self.buffer.emit(format!("\\x{byte:x}"));
                 }
                 self.buffer.emit(format!("\", {}) == 0) {{", value.len()));
-            }
-            CheckedPattern::Char(value) => {
-                self.gen_literal_pattern(scopes, tmp_name, ty, *value as u32)
-            }
-            CheckedPattern::CharRange {
-                inclusive,
-                start,
-                end,
-            } => {
-                self.gen_range_pattern(scopes, tmp_name, ty, *inclusive, *start as u32, *end as u32)
             }
             CheckedPattern::Destrucure(_) => todo!(),
             CheckedPattern::Error => panic!("ICE: CheckedPattern::Error in gen_pattern"),
@@ -1597,9 +1586,11 @@ impl Codegen {
         scopes: &Scopes,
         src: &str,
         ty: &Type,
-        inclusive: bool,
-        start: T,
-        end: T,
+        RangePattern {
+            inclusive,
+            start,
+            end,
+        }: &RangePattern<T>,
     ) {
         let src = format!("({}{src})", "*".repeat(ty.indirection()));
         let base = ty.strip_references();
@@ -1608,7 +1599,7 @@ impl Codegen {
         self.emit_cast(scopes, base);
         self.buffer.emit(format!(
             "{start} && {src} {} ",
-            if inclusive { "<=" } else { "<" }
+            if *inclusive { "<=" } else { "<" }
         ));
         self.emit_cast(scopes, base);
         self.buffer.emit(format!("{end}) {{"));

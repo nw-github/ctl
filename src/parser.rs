@@ -4,7 +4,7 @@ use crate::{
     ast::{
         parsed::{
             Destructure, Expr, ExprData, Fn, ImplBlock, IntPattern, MemVar, Param, Path, Pattern,
-            Stmt, StmtData, Struct, TypeHint,
+            RangePattern, Stmt, StmtData, Struct, TypeHint,
         },
         Attribute, UnaryOp,
     },
@@ -940,37 +940,37 @@ impl<'a> Parser<'a> {
     }
 
     fn int_pattern(negative: Option<Span>, t: &Located<Token>) -> Option<Located<IntPattern>> {
-        if let Token::Int { base, value, width } = t.data {
-            if let Some(negative) = negative {
-                Some(Located::new(
-                    negative.extended_to(t.span),
-                    IntPattern {
-                        negative: true,
-                        base,
-                        value: value.into(),
-                        width: width.map(|w| w.into()),
-                    },
-                ))
-            } else {
-                Some(Located::new(
-                    t.span,
-                    IntPattern {
-                        negative: false,
-                        base,
-                        value: value.into(),
-                        width: width.map(|w| w.into()),
-                    },
-                ))
-            }
-        } else {
-            None
+        match t.data {
+            Token::Int { base, value, width } => Some(Located::new(
+                negative
+                    .map(|span| span.extended_to(t.span))
+                    .unwrap_or(t.span),
+                IntPattern {
+                    negative: negative.is_some(),
+                    base,
+                    value: value.into(),
+                    width: width.map(|w| w.into()),
+                },
+            )),
+            Token::ByteChar(value) => Some(Located::new(
+                negative
+                    .map(|span| span.extended_to(t.span))
+                    .unwrap_or(t.span),
+                IntPattern {
+                    negative: negative.is_some(),
+                    base: 10,
+                    value: value.to_string(),
+                    width: Some("u8".into()),
+                },
+            )),
+            _ => None,
         }
     }
 
     fn maybe_range_pattern(&mut self, start: Located<IntPattern>) -> Located<Pattern> {
         let Some(range) = self.advance_if(|t| matches!(t, Token::Range | Token::RangeInclusive))
         else {
-            return start.map(Pattern::IntLiteral);
+            return start.map(Pattern::Int);
         };
 
         let negative = self.advance_if_kind(Token::Minus);
@@ -983,12 +983,71 @@ impl<'a> Parser<'a> {
 
         Located::new(
             start.span.extended_to(end.span),
-            Pattern::IntRange {
+            Pattern::IntRange(RangePattern {
                 inclusive: matches!(range.data, Token::RangeInclusive),
                 start: start.data,
                 end: end.data,
-            },
+            }),
         )
+    }
+
+    fn literal_pattern(&mut self) -> Option<Located<Pattern>> {
+        let string = self.advance_if_map(|t| {
+            t.data
+                .as_string()
+                .map(|value| Located::new(t.span, value.to_string()))
+        });
+
+        if let Some(string) = string {
+            return Some(string.map(Pattern::String));
+        }
+
+        if let Some(token) = self.advance_if_kind(Token::Minus) {
+            let Ok(start) = self.expect(
+                |t| Self::int_pattern(Some(token.span), &t).ok_or(t),
+                "expected number",
+            ) else {
+                return Some(Located::new(token.span, Pattern::Error));
+            };
+
+            return Some(self.maybe_range_pattern(start));
+        }
+
+        let int = self.advance_if_map(|t| Self::int_pattern(None, t));
+        if let Some(int) = int {
+            return Some(self.maybe_range_pattern(int));
+        }
+
+        let char = self.advance_if_map(|t| t.data.as_char().map(|&ch| Located::new(t.span, ch)));
+        if let Some(char) = char {
+            let Some(range) =
+                self.advance_if(|t| matches!(t, Token::Range | Token::RangeInclusive))
+            else {
+                return Some(char.map(Pattern::Char));
+            };
+
+            let Ok(end) = self.expect(
+                |t| {
+                    t.data
+                        .as_char()
+                        .map(|&ch| Located::new(t.span, ch))
+                        .ok_or(t)
+                },
+                "expected char",
+            ) else {
+                return Some(Located::new(char.span, Pattern::Error));
+            };
+            return Some(Located::new(
+                char.span.extended_to(end.span),
+                Pattern::CharRange(RangePattern {
+                    inclusive: matches!(range.data, Token::RangeInclusive),
+                    start: char.data,
+                    end: end.data,
+                }),
+            ));
+        }
+
+        None
     }
 
     fn pattern(&mut self, mut_var: bool) -> Located<Pattern> {
@@ -1026,69 +1085,8 @@ impl<'a> Parser<'a> {
         }
 
         if !mut_var {
-            if let Some(token) = self.advance_if_kind(Token::Minus) {
-                let Ok(start) = self.expect(
-                    |t| Self::int_pattern(Some(token.span), &t).ok_or(t),
-                    "expected number",
-                ) else {
-                    return Located::new(token.span, Pattern::Error);
-                };
-
-                return self.maybe_range_pattern(start);
-            }
-
-            let pattern = self.advance_if_map(|t| Self::int_pattern(None, t));
-            if let Some(pattern) = pattern {
-                return self.maybe_range_pattern(pattern);
-            }
-
-            let pattern = self.advance_if_map(|t| {
-                if let Token::String(value) = &t.data {
-                    Some(Located::new(t.span, value.to_string()))
-                } else {
-                    None
-                }
-            });
-
-            if let Some(pattern) = pattern {
-                return pattern.map(Pattern::String);
-            }
-
-            let pattern = self.advance_if_map(|t| {
-                if let Token::Char(ch) = t.data {
-                    Some(Located::new(t.span, ch))
-                } else {
-                    None
-                }
-            });
-
-            if let Some(pattern) = pattern {
-                let Some(range) =
-                    self.advance_if(|t| matches!(t, Token::Range | Token::RangeInclusive))
-                else {
-                    return pattern.map(Pattern::Char);
-                };
-
-                let Ok(end) = self.expect(
-                    |t| {
-                        if let Token::Char(ch) = t.data {
-                            Ok(Located::new(t.span, ch))
-                        } else {
-                            Err(t)
-                        }
-                    },
-                    "expected char",
-                ) else {
-                    return Located::new(pattern.span, Pattern::Error);
-                };
-                return Located::new(
-                    pattern.span.extended_to(end.span),
-                    Pattern::CharRange {
-                        inclusive: matches!(range.data, Token::RangeInclusive),
-                        start: pattern.data,
-                        end: end.data,
-                    },
-                );
+            if let Some(pattern) = self.literal_pattern() {
+                return pattern;
             }
         }
 
@@ -1857,12 +1855,7 @@ impl<'a> Parser<'a> {
 
     fn expect_id(&mut self, msg: &str) -> String {
         self.expect(
-            |t| {
-                let Token::Ident(ident) = t.data else {
-                    return Err(t);
-                };
-                Some(ident.into()).ok_or(t)
-            },
+            |t| t.data.as_ident().map(|&ident| ident.into()).ok_or(t),
             msg,
         )
         .unwrap_or_default()
@@ -1871,10 +1864,10 @@ impl<'a> Parser<'a> {
     fn expect_located_id(&mut self, msg: &str) -> Located<String> {
         self.expect(
             |t| {
-                let Token::Ident(ident) = t.data else {
-                    return Err(t);
-                };
-                Some(Located::new(t.span, ident.into())).ok_or(t)
+                t.data
+                    .as_ident()
+                    .map(|&ident| Located::new(t.span, ident.into()))
+                    .ok_or(t)
             },
             msg,
         )

@@ -259,6 +259,13 @@ pub struct IntPattern {
 }
 
 #[derive(Debug, Clone)]
+pub struct RangePattern<T> {
+    pub inclusive: bool,
+    pub start: T,
+    pub end: T,
+}
+
+#[derive(Debug, Clone)]
 pub enum Pattern {
     // x is ::core::opt::Option::Some(mut y)
     TupleLike {
@@ -276,19 +283,11 @@ pub enum Pattern {
     Null,
     // let {x, y} = z;
     StructDestructure(Vec<Destructure>),
-    IntLiteral(IntPattern),
-    IntRange {
-        inclusive: bool,
-        start: IntPattern,
-        end: IntPattern,
-    },
+    Int(IntPattern),
+    IntRange(RangePattern<IntPattern>),
     String(String),
     Char(char),
-    CharRange {
-        inclusive: bool,
-        start: char,
-        end: char,
-    },
+    CharRange(RangePattern<char>),
     Error,
 }
 
