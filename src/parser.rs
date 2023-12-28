@@ -1053,6 +1053,43 @@ impl<'a> Parser<'a> {
             if let Some(pattern) = pattern {
                 return pattern.map(Pattern::String);
             }
+
+            let pattern = self.advance_if_map(|t| {
+                if let Token::Char(ch) = t.data {
+                    Some(Located::new(t.span, ch))
+                } else {
+                    None
+                }
+            });
+
+            if let Some(pattern) = pattern {
+                let Some(range) =
+                    self.advance_if(|t| matches!(t, Token::Range | Token::RangeInclusive))
+                else {
+                    return pattern.map(Pattern::Char);
+                };
+
+                let Ok(end) = self.expect(
+                    |t| {
+                        if let Token::Char(ch) = t.data {
+                            Ok(Located::new(t.span, ch))
+                        } else {
+                            Err(t)
+                        }
+                    },
+                    "expected char",
+                ) else {
+                    return Located::new(pattern.span, Pattern::Error);
+                };
+                return Located::new(
+                    pattern.span.extended_to(end.span),
+                    Pattern::CharRange {
+                        inclusive: matches!(range.data, Token::RangeInclusive),
+                        start: pattern.data,
+                        end: end.data,
+                    },
+                );
+            }
         }
 
         let path = self.type_path();

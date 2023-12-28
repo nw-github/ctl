@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Display,
+};
 
 use indexmap::IndexMap;
 
@@ -1508,7 +1511,7 @@ impl Codegen {
         state: &mut State,
         pattern: &CheckedPattern,
         tmp_name: &str,
-        scrutinee: &Type,
+        ty: &Type,
     ) {
         match pattern {
             CheckedPattern::UnionMember {
@@ -1516,8 +1519,8 @@ impl Codegen {
                 variant,
                 ptr,
             } => {
-                let opt_ptr = is_opt_ptr(scopes, scrutinee.strip_references());
-                let tmp_name = format!("({}{tmp_name})", "*".repeat(scrutinee.indirection()));
+                let opt_ptr = is_opt_ptr(scopes, ty.strip_references());
+                let tmp_name = format!("({}{tmp_name})", "*".repeat(ty.indirection()));
                 if opt_ptr && variant.0 == "Some" {
                     self.buffer.emit(format!("if ({tmp_name} != NULL) {{"));
                     if let Some(pattern) = pattern {
@@ -1550,37 +1553,14 @@ impl Codegen {
                 self.buffer.emit("if (1) {");
                 self.gen_irrefutable_pattern(scopes, state, pattern, tmp_name);
             }
-            CheckedPattern::Integer(value) => {
-                // TODO: emit a switch statement if possible
-                self.buffer.emit(format!(
-                    "if (({}{}) == ",
-                    "*".repeat(scrutinee.indirection()),
-                    tmp_name,
-                ));
-
-                self.emit_cast(scopes, scrutinee.strip_references());
-                self.buffer.emit(format!("{value}) {{"));
-            }
+            CheckedPattern::Integer(value) => self.gen_literal_pattern(scopes, tmp_name, ty, value),
             CheckedPattern::IntRange {
                 inclusive,
                 start,
                 end,
-            } => {
-                // TODO: emit a switch statement if possible
-                let tmp_name = format!("({}{tmp_name})", "*".repeat(scrutinee.indirection()));
-                let base = scrutinee.strip_references();
-
-                self.buffer.emit(format!("if ({tmp_name} >= "));
-                self.emit_cast(scopes, base);
-                self.buffer.emit(format!(
-                    "{start} && {tmp_name} {} ",
-                    if *inclusive { "<=" } else { "<" }
-                ));
-                self.emit_cast(scopes, base);
-                self.buffer.emit(format!("{end}) {{"));
-            }
+            } => self.gen_range_pattern(scopes, tmp_name, ty, *inclusive, start, end),
             CheckedPattern::String(value) => {
-                let tmp_name = format!("({}{tmp_name})", "*".repeat(scrutinee.indirection()));
+                let tmp_name = format!("({}{tmp_name})", "*".repeat(ty.indirection()));
                 self.buffer.emit(format!(
                     "if ({tmp_name}.span.len == {} && __builtin_memcmp({tmp_name}.span.ptr, \"",
                     value.len()
@@ -1590,9 +1570,48 @@ impl Codegen {
                 }
                 self.buffer.emit(format!("\", {}) == 0) {{", value.len()));
             }
+            CheckedPattern::Char(value) => {
+                self.gen_literal_pattern(scopes, tmp_name, ty, *value as u32)
+            }
+            CheckedPattern::CharRange {
+                inclusive,
+                start,
+                end,
+            } => {
+                self.gen_range_pattern(scopes, tmp_name, ty, *inclusive, *start as u32, *end as u32)
+            }
             CheckedPattern::Destrucure(_) => todo!(),
             CheckedPattern::Error => panic!("ICE: CheckedPattern::Error in gen_pattern"),
         }
+    }
+
+    fn gen_literal_pattern(&mut self, scopes: &Scopes, src: &str, ty: &Type, value: impl Display) {
+        self.buffer
+            .emit(format!("if (({}{src}) == ", "*".repeat(ty.indirection())));
+        self.emit_cast(scopes, ty.strip_references());
+        self.buffer.emit(format!("{value}) {{"));
+    }
+
+    fn gen_range_pattern<T: Display>(
+        &mut self,
+        scopes: &Scopes,
+        src: &str,
+        ty: &Type,
+        inclusive: bool,
+        start: T,
+        end: T,
+    ) {
+        let src = format!("({}{src})", "*".repeat(ty.indirection()));
+        let base = ty.strip_references();
+
+        self.buffer.emit(format!("if ({src} >= "));
+        self.emit_cast(scopes, base);
+        self.buffer.emit(format!(
+            "{start} && {src} {} ",
+            if inclusive { "<=" } else { "<" }
+        ));
+        self.emit_cast(scopes, base);
+        self.buffer.emit(format!("{end}) {{"));
     }
 
     fn gen_irrefutable_pattern(

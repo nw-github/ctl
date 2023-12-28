@@ -283,7 +283,13 @@ pub enum Pattern {
         end: IntPattern,
     },
     String(String),
-    Error
+    Char(char),
+    CharRange {
+        inclusive: bool,
+        start: char,
+        end: char,
+    },
+    Error,
 }
 
 #[derive(Clone)]

@@ -36,6 +36,12 @@ pub enum CheckedPattern {
         end: BigInt,
     },
     String(String),
+    Char(char),
+    CharRange {
+        inclusive: bool,
+        start: char,
+        end: char,
+    },
     #[default]
     Error,
 }

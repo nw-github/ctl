@@ -2614,6 +2614,35 @@ impl TypeChecker {
 
                 CheckedPattern::String(value)
             }
+            Pattern::Char(ch) => {
+                if scrutinee.strip_references() != &Type::Char {
+                    return self.error(Error::bad_pattern(&scrutinee.name(scopes), "a char", span));
+                }
+
+                CheckedPattern::Char(ch)
+            }
+            Pattern::CharRange {
+                inclusive,
+                start,
+                end,
+            } => {
+                if scrutinee.strip_references() != &Type::Char {
+                    return self.error(Error::bad_pattern(&scrutinee.name(scopes), "a char", span));
+                }
+
+                if start > end {
+                    return self.error(Error::new(
+                        "range start must be less than or equal to its end",
+                        span,
+                    ));
+                }
+
+                CheckedPattern::CharRange {
+                    inclusive,
+                    start,
+                    end,
+                }
+            }
             Pattern::Error => Default::default(),
         }
     }
