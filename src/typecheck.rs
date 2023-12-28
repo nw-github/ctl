@@ -2279,6 +2279,11 @@ impl TypeChecker {
         )
     }
 
+    /// Returns `Some(pattern)` if the path is a compatible union variant.
+    ///
+    /// Returns `Some(CheckedPattern::Error)` if the path is a union variant, but of the wrong type.
+    ///
+    /// Returns `None` if the path is not a union variant.
     fn check_union_pattern(
         &mut self,
         scopes: &mut Scopes,
@@ -2286,16 +2291,13 @@ impl TypeChecker {
         path: ResolvedPath,
         subpatterns: Vec<Located<Pattern>>,
         span: Span,
-    ) -> CheckedPattern {
+    ) -> Option<CheckedPattern> {
         let Some(ut) = scrutinee
             .strip_references()
             .as_user_type()
             .filter(|ut| scopes.get(ut.id).data.is_union())
         else {
-            return self.error(Error::new(
-                "match scrutinee must be union or pointer to union",
-                span,
-            ));
+            return None;
         };
 
         for i in 0..scopes.get_mut(ut.id).members_mut().unwrap().len() {
@@ -2307,7 +2309,7 @@ impl TypeChecker {
         }
 
         let mut variant = String::new();
-        let Some(union) = path
+        let Some((union, path_ut)) = path
             .as_func()
             .map(|f| scopes.get(f.id))
             .filter(|f| f.constructor)
@@ -2315,11 +2317,18 @@ impl TypeChecker {
                 variant = f.name.data.clone();
                 f.ret.as_user_type()
             })
-            .filter(|ty| ty.id == ut.id)
-            .and_then(|ty| scopes.get(ty.id).data.as_union())
+            .and_then(|ut| scopes.get(ut.id).data.as_union().zip(Some(ut)))
         else {
-            return self.error(Error::new("pattern does not match the scrutinee", span));
+            return None;
         };
+
+        if ut.id != path_ut.id {
+            return self.error(Error::type_mismatch(
+                &scrutinee.name(scopes),
+                &path_ut.name(scopes),
+                span,
+            ));
+        }
 
         let member = union.variants.iter().find(|m| m.name == variant).unwrap();
 
@@ -2337,25 +2346,25 @@ impl TypeChecker {
                 false,
                 pattern,
             ) else {
-                return self.error(Error::new("union subpatterns must be irrefutable", span));
+                return Some(self.error(Error::new("union subpatterns must be irrefutable", span)));
             };
 
-            CheckedPattern::UnionMember {
+            Some(CheckedPattern::UnionMember {
                 pattern: Some(pattern.into()),
                 variant: (variant, tag),
                 ptr,
-            }
+            })
         } else if ty.is_void() {
-            CheckedPattern::UnionMember {
+            Some(CheckedPattern::UnionMember {
                 pattern: None,
                 variant: (variant, tag),
                 ptr,
-            }
+            })
         } else {
-            self.error(Error::new(
+            Some(self.error(Error::new(
                 format!("union variant '{variant}' has data that must be bound"),
                 span,
-            ))
+            )))
         }
     }
 
@@ -2415,17 +2424,34 @@ impl TypeChecker {
         let span = pattern.span;
         match pattern.data {
             Pattern::TupleLike { path, subpatterns } => {
-                if let Some(path) = self.resolve_path(scopes, &path.data, path.span) {
-                    self.check_union_pattern(scopes, scrutinee, path, subpatterns, span)
-                } else {
-                    Default::default()
-                }
+                let Some(resolved) = self.resolve_path(scopes, &path.data, path.span) else {
+                    return Default::default();
+                };
+
+                let Some(result) =
+                    self.check_union_pattern(scopes, scrutinee, resolved, subpatterns, span)
+                else {
+                    return self.error(Error::new(
+                        format!("expected '{}'", scrutinee.name(scopes)),
+                        span,
+                    ));
+                };
+
+                result
             }
             Pattern::Path(path) => {
-                let p = self.resolve_path(scopes, &path, span);
-                if binding || matches!(p, Some(ResolvedPath::None(_))) {
-                    if let Some(ident) = path.as_identifier() {
-                        return CheckedPattern::Irrefutable(IrrefutablePattern::Variable(
+                let resolved = self.resolve_path(scopes, &path, span);
+                if let Some(ident) = path.as_identifier() {
+                    match resolved
+                        .and_then(|p| self.check_union_pattern(scopes, scrutinee, p, vec![], span))
+                    {
+                        Some(CheckedPattern::Error) => Default::default(),
+                        Some(_) if binding => self.error(Error::new(
+                            "cannot create binding that shadows union variant",
+                            span,
+                        )),
+                        Some(pattern) => pattern,
+                        None => CheckedPattern::Irrefutable(IrrefutablePattern::Variable(
                             scopes.insert(
                                 Variable {
                                     name: ident.into(),
@@ -2436,12 +2462,19 @@ impl TypeChecker {
                                 },
                                 false,
                             ),
-                        ));
+                        )),
                     }
-                }
-
-                if let Some(p) = p {
-                    self.check_union_pattern(scopes, scrutinee, p, vec![], span)
+                } else if let Some(resolved) = resolved {
+                    if let Some(pattern) =
+                        self.check_union_pattern(scopes, scrutinee, resolved, vec![], span)
+                    {
+                        pattern
+                    } else {
+                        self.error(Error::new(
+                            format!("expected '{}'", scrutinee.name(scopes)),
+                            span,
+                        ))
+                    }
                 } else {
                     Default::default()
                 }
@@ -2454,7 +2487,7 @@ impl TypeChecker {
                     pattern.span,
                 );
 
-                if let Some(path) = path {
+                path.and_then(|path| {
                     self.check_union_pattern(
                         scopes,
                         scrutinee,
@@ -2462,9 +2495,8 @@ impl TypeChecker {
                         vec![Located::new(pattern.span, *patt)],
                         pattern.span,
                     )
-                } else {
-                    Default::default()
-                }
+                })
+                .unwrap_or_default()
             }
             Pattern::Null => {
                 let path = self.resolve_path_in(
@@ -2473,11 +2505,11 @@ impl TypeChecker {
                     scopes.get(scopes.get_option_id().unwrap()).body_scope,
                     pattern.span,
                 );
-                if let Some(path) = path {
+
+                path.and_then(|path| {
                     self.check_union_pattern(scopes, scrutinee, path, vec![], pattern.span)
-                } else {
-                    Default::default()
-                }
+                })
+                .unwrap_or_default()
             }
             Pattern::MutBinding(name) => {
                 CheckedPattern::Irrefutable(IrrefutablePattern::Variable(scopes.insert(
