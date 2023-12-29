@@ -168,7 +168,13 @@ impl CheckedExpr {
                 matches!(op, UnaryOp::Deref) && matches!(expr.ty, Type::MutPtr(_))
             }
             CheckedExprData::Symbol(_) | CheckedExprData::Member { .. } => self.can_addrmut(scopes),
-            CheckedExprData::Subscript { callee, .. } => callee.is_assignable(scopes),
+            CheckedExprData::Subscript { callee, .. } => match &callee.data {
+                CheckedExprData::Symbol(Symbol::Var(id)) => {
+                    callee.ty.is_mut_ptr() || scopes.get(*id).mutable
+                }
+                CheckedExprData::Member { source, .. } => source.is_assignable(scopes),
+                _ => true,
+            },
             _ => false,
         }
     }
@@ -183,7 +189,7 @@ impl CheckedExpr {
                 Symbol::Var(var) => scopes.get(*var).mutable,
             },
             CheckedExprData::Member { source, .. } => {
-                matches!(source.ty, Type::MutPtr(_)) || source.can_addrmut(scopes)
+                source.ty.is_mut_ptr() || source.can_addrmut(scopes)
             }
             CheckedExprData::Subscript { callee, .. } => callee.can_addrmut(scopes),
             _ => true,

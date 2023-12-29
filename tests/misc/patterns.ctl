@@ -110,42 +110,42 @@ pub fn string_pattern() {
 
 mod val {
     pub fn subscript(a: [i32; 4], b: *mut [i32; 4]) {
-        (*b)[0] = a[0];
-        (*b)[1] = a[1];
-        (*b)[2] = a[2];
-        (*b)[3] = a[3];
+        b[0] = a[0];
+        b[1] = a[1];
+        b[2] = a[2];
+        b[3] = a[3];
     }
 
     pub fn destructure(a: [i32; 4], b: *mut [i32; 4]) {
         let [x, y, z, w] = a;
-        (*b)[0] = x;
-        (*b)[1] = y;
-        (*b)[2] = z;
-        (*b)[3] = w;
+        b[0] = x;
+        b[1] = y;
+        b[2] = z;
+        b[3] = w;
     }
 
     pub fn destructure_end(a: [i32; 4], b: *mut [i32; 4]) {
         let [x, y, ...end] = a;
-        (*b)[0] = x;
-        (*b)[1] = y;
-        (*b)[2] = end[0];
-        (*b)[3] = end[1];
+        b[0] = x;
+        b[1] = y;
+        b[2] = end[0];
+        b[3] = end[1];
     }
 
     pub fn destructure_start(a: [i32; 4], b: *mut [i32; 4]) {
         let [...start, x, y] = a;
-        (*b)[0] = start[0];
-        (*b)[1] = start[1];
-        (*b)[2] = x;
-        (*b)[3] = y;
+        b[0] = start[0];
+        b[1] = start[1];
+        b[2] = x;
+        b[3] = y;
     }
 
     pub fn destructure_mid(a: [i32; 4], b: *mut [i32; 4]) {
         let [x, ...mid, y] = a;
-        (*b)[0] = x;
-        (*b)[1] = mid[0];
-        (*b)[2] = mid[1];
-        (*b)[3] = y;
+        b[0] = x;
+        b[1] = mid[0];
+        b[2] = mid[1];
+        b[3] = y;
     }
 }
 
