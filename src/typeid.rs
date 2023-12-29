@@ -505,6 +505,7 @@ impl Type {
                 true
             }
             (Type::Never | Type::Unknown(_), _) => true,
+            (_, Type::Unknown(_)) => true,
             (ty, target) if ty.may_ptr_coerce(target) => true,
             (ty, target) => ty == target,
         }

@@ -1610,6 +1610,54 @@ impl Codegen {
                 }
                 self.buffer.emit(format!("\", {}) == 0) {{", value.len()));
             }
+            CheckedPattern::Span(patterns, rest) => {
+                let tmp_name = deref(tmp_name, ty, false);
+                self.buffer.emit(format!(
+                    "if ({tmp_name}.len {} {}) {{",
+                    if rest.is_some() { ">=" } else { "==" },
+                    patterns.len()
+                ));
+                if let Some(RestPattern { id, pos }) = *rest {
+                    if id
+                        .and_then(|id| {
+                            self.buffer
+                                .emit_local_decl(scopes, id, state, &mut self.type_gen)
+                                .ok()
+                        })
+                        .is_some()
+                    {
+                        self.buffer.emit(format!(
+                            " = {{ .ptr = {tmp_name}.ptr + {pos}, .len = {tmp_name}.len - {} }};",
+                            patterns.len()
+                        ));
+                    }
+
+                    for (i, patt) in patterns.iter().enumerate() {
+                        self.gen_irrefutable_pattern(
+                            scopes,
+                            state,
+                            patt,
+                            &if i < pos {
+                                format!("{tmp_name}.ptr + {i}")
+                            } else {
+                                format!(
+                                    "{tmp_name}.ptr + {tmp_name}.len - {} + {i}",
+                                    patterns.len()
+                                )
+                            },
+                        );
+                    }
+                } else {
+                    for (i, patt) in patterns.iter().enumerate() {
+                        self.gen_irrefutable_pattern(
+                            scopes,
+                            state,
+                            patt,
+                            &format!("{tmp_name}.ptr + {i}"),
+                        );
+                    }
+                }
+            }
             CheckedPattern::Destrucure(_) => todo!(),
             CheckedPattern::Array(_) => todo!(),
             CheckedPattern::Error => panic!("ICE: CheckedPattern::Error in gen_pattern"),

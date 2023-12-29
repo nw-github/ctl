@@ -50,6 +50,7 @@ pub enum CheckedPattern {
     IntRange(RangePattern<BigInt>),
     String(String),
     Array(ArrayPattern<CheckedPattern>),
+    Span(Vec<IrrefutablePattern>, Option<RestPattern>),
     #[default]
     Error,
 }

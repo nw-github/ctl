@@ -72,7 +72,7 @@ impl Error {
     }
 
     pub fn no_member(ty: &str, member: &str, span: Span) -> Self {
-        Self::new(format!("type '{ty}' has no member '{member}"), span)
+        Self::new(format!("type '{ty}' has no member '{member}'"), span)
     }
 
     pub fn no_lang_item(name: &str, span: Span) -> Self {

@@ -1138,6 +1138,10 @@ impl TypeChecker {
         match expr.data {
             ExprData::Binary { op, left, right } => {
                 let left = self.check_expr(scopes, *left, target);
+                if left.ty.is_unknown() {
+                    return Default::default();
+                }
+
                 let right = type_check_bail!(self, scopes, *right, &left.ty);
                 if !left.ty.supports_binop(scopes, op) {
                     self.error(Error::new(
@@ -1499,6 +1503,10 @@ impl TypeChecker {
             } => {
                 let lhs_span = lhs.span;
                 let lhs = self.check_expr(scopes, *lhs, None);
+                if lhs.ty.is_unknown() {
+                    return Default::default();
+                }
+
                 if !lhs.is_assignable(scopes) {
                     // TODO: report a better error here
                     return self.error(Error::new("expression is not assignable", lhs_span));
@@ -2152,13 +2160,17 @@ impl TypeChecker {
         let span = expr.span;
         macro_rules! invalid {
             ($ty: expr) => {
-                self.error(Error::new(
-                    format!(
-                        "operator '{op}' is invalid for value of type {}",
-                        $ty.name(scopes)
-                    ),
-                    span,
-                ))
+                if $ty.is_unknown() {
+                    Default::default()
+                } else {
+                    self.error(Error::new(
+                        format!(
+                            "operator '{op}' is invalid for value of type {}",
+                            $ty.name(scopes)
+                        ),
+                        span,
+                    ))
+                }
             };
         }
 
@@ -2413,6 +2425,60 @@ impl TypeChecker {
         Some(if negative { -value } else { value })
     }
 
+    fn check_slice_pattern(
+        &mut self,
+        scopes: &mut Scopes,
+        inner_ptr: Type,
+        span_inner: Type,
+        patterns: Vec<Located<Pattern>>,
+        span_id: UserTypeId,
+    ) -> CheckedPattern {
+        let mut rest = None;
+        let mut result = Vec::new();
+        for (i, pattern) in patterns.into_iter().enumerate() {
+            if let Pattern::Rest(var) = pattern.data {
+                let id = var.map(|(mutable, name)| {
+                    scopes.insert(
+                        Variable {
+                            name,
+                            ty: Type::Unknown(None),
+                            is_static: false,
+                            mutable,
+                            value: None,
+                        },
+                        false,
+                    )
+                });
+
+                if rest.is_some() {
+                    self.error(Error::new(
+                        "... can only be used once in an array pattern",
+                        pattern.span,
+                    ))
+                } else {
+                    rest = Some(RestPattern { id, pos: i });
+                }
+            } else {
+                let span = pattern.span;
+                let CheckedPattern::Irrefutable(pattern) =
+                    self.check_pattern(scopes, true, &inner_ptr, false, pattern)
+                else {
+                    self.error::<()>(Error::new("span subpatterns must be irrefutable", span));
+                    continue;
+                };
+
+                result.push(pattern);
+            }
+        }
+
+        if let Some(RestPattern { id: Some(id), .. }) = &mut rest {
+            scopes.get_mut(*id).item.ty =
+                Type::UserType(GenericUserType::new(span_id, vec![span_inner]).into());
+        }
+
+        CheckedPattern::Span(result, rest)
+    }
+
     fn check_array_pattern(
         &mut self,
         scopes: &mut Scopes,
@@ -2420,8 +2486,40 @@ impl TypeChecker {
         patterns: Vec<Located<Pattern>>,
         span: Span,
     ) -> CheckedPattern {
+        let span_id = scopes.lang_types.get("span").copied();
+        let span_mut_id = scopes.lang_types.get("span_mut").copied();
         let (real_inner, arr_len) = match target.strip_references() {
             Type::Array(inner) => (&inner.0, inner.1),
+            Type::UserType(ut) if Some(ut.id) == span_id => {
+                let inner = ut.ty_args[0].clone();
+                return self.check_slice_pattern(
+                    scopes,
+                    Type::Ptr(inner.clone().into()),
+                    inner,
+                    patterns,
+                    span_id.unwrap(),
+                );
+            }
+            Type::UserType(ut) if Some(ut.id) == span_mut_id => {
+                let inner = ut.ty_args[0].clone();
+                if target.is_ptr() || target.is_mut_ptr() {
+                    let ptr = target.matched_inner_type(inner.clone());
+                    let id = if ptr.is_ptr() {
+                        span_id.unwrap()
+                    } else {
+                        span_mut_id.unwrap()
+                    };
+                    return self.check_slice_pattern(scopes, ptr, inner, patterns, id);
+                } else {
+                    return self.check_slice_pattern(
+                        scopes,
+                        Type::MutPtr(inner.clone().into()),
+                        inner,
+                        patterns,
+                        span_mut_id.unwrap(),
+                    );
+                }
+            }
             _ => {
                 return self.error(Error::new(
                     format!(
