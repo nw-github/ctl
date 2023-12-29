@@ -173,18 +173,6 @@ pub enum ExprData {
     Error,
 }
 
-impl ExprData {
-    pub fn is_block_expr(&self) -> bool {
-        matches!(
-            self,
-            ExprData::If { .. }
-                | ExprData::For { .. }
-                | ExprData::Block(_)
-                | ExprData::Match { .. }
-        ) || matches!(self, ExprData::Loop { do_while, .. } if !do_while )
-    }
-}
-
 #[derive(Clone, enum_as_inner::EnumAsInner)]
 pub enum Path {
     Root(Vec<(String, Vec<TypeHint>)>),

@@ -306,28 +306,7 @@ impl<'a> Parser<'a> {
             }
         } else {
             let is_unsafe = self.is_unsafe.take();
-            let mut needs_semicolon = false;
-            let mut expr = if let Some(token) = self.advance_if_kind(Token::If) {
-                self.if_expr(token.span)
-            } else if let Some(token) = self.advance_if_kind(Token::While) {
-                self.while_expr(token.span)
-            } else if let Some(token) = self.advance_if_kind(Token::Loop) {
-                let expr = self.loop_expr(token.span);
-                if matches!(&expr.data, ExprData::Loop { do_while: true, .. }) {
-                    needs_semicolon = true;
-                }
-                expr
-            } else if let Some(token) = self.advance_if_kind(Token::For) {
-                self.for_expr(token.span)
-            } else if let Some(token) = self.advance_if_kind(Token::Match) {
-                self.match_expr(token.span)
-            } else if let Some(token) = self.advance_if_kind(Token::LCurly) {
-                self.block_expr(token.span)
-            } else {
-                needs_semicolon = true;
-                self.expression()
-            };
-
+            let (needs_semicolon, mut expr) = self.block_or_normal_expr();
             if self.matches_kind(Token::RCurly) {
                 expr = Expr::new(expr.span, ExprData::Tail(expr.into()));
             } else if needs_semicolon {
@@ -762,6 +741,25 @@ impl<'a> Parser<'a> {
 
     //
 
+    fn block_or_normal_expr(&mut self) -> (bool, Expr) {
+        if let Some(token) = self.advance_if_kind(Token::If) {
+            (false, self.if_expr(token.span))
+        } else if let Some(token) = self.advance_if_kind(Token::While) {
+            (false, self.while_expr(token.span))
+        } else if let Some(token) = self.advance_if_kind(Token::Loop) {
+            let expr = self.loop_expr(token.span);
+            (matches!(&expr.data, ExprData::Loop { do_while: true, .. }), expr)
+        } else if let Some(token) = self.advance_if_kind(Token::For) {
+            (false, self.for_expr(token.span))
+        } else if let Some(token) = self.advance_if_kind(Token::Match) {
+            (false, self.match_expr(token.span))
+        } else if let Some(token) = self.advance_if_kind(Token::LCurly) {
+            (false, self.block_expr(token.span))
+        } else {
+            (true, self.expression())
+        }
+    }
+
     fn if_expr(&mut self, token: Span) -> Expr {
         let cond = self.expression();
         let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
@@ -843,8 +841,8 @@ impl<'a> Parser<'a> {
         let span = self.advance_until(Token::RCurly, token, |this| {
             let pattern = this.pattern(false);
             this.expect_kind(Token::FatArrow, "expected '=>'");
-            let expr = this.expression();
-            if !expr.data.is_block_expr() {
+            let (needs_comma, expr) = this.block_or_normal_expr();
+            if needs_comma {
                 this.expect_kind(Token::Comma, "expected ','");
             } else {
                 this.advance_if_kind(Token::Comma);
@@ -1079,23 +1077,24 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(token) = self.advance_if_kind(Token::LBrace) {
-            let result = self.csv_one(Token::RBrace, token.span, |this| {
-                if let Some(token) = this.advance_if_kind(Token::Ellipses) {
-                    let pattern = if this.advance_if_kind(Token::Mut).is_some() {
-                        let ident = this.expect_id("expected name");
-                        Some((true, ident))
+            return self
+                .csv(Vec::new(), Token::RBrace, token.span, |this| {
+                    if let Some(token) = this.advance_if_kind(Token::Ellipses) {
+                        let pattern = if this.advance_if_kind(Token::Mut).is_some() {
+                            let ident = this.expect_id("expected name");
+                            Some((true, ident))
+                        } else {
+                            let ident =
+                                this.advance_if_map(|t| t.data.as_ident().map(|&i| i.into()));
+                            Some(false).zip(ident)
+                        };
+
+                        Located::new(token.span, Pattern::Rest(pattern))
                     } else {
-                        let ident = this.advance_if_map(|t| t.data.as_ident().map(|&i| i.into()));
-                        Some(false).zip(ident)
-                    };
-
-                    Located::new(token.span, Pattern::Rest(pattern))
-                } else {
-                    this.pattern(true)
-                }
-            });
-
-            return result.map(Pattern::Array);
+                        this.pattern(false)
+                    }
+                })
+                .map(Pattern::Array);
         }
 
         if mut_var || self.advance_if_kind(Token::Mut).is_some() {
