@@ -16,18 +16,25 @@ pub struct Block {
     pub scope: ScopeId,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RestPattern {
+    pub id: Option<VariableId>,
+    pub pos: usize,
+}
+
 #[derive(Debug, Clone)]
-pub enum RestPattern {
-    Start(Option<VariableId>),
-    Middle(usize, Option<VariableId>),
-    End(Option<VariableId>),
+pub struct ArrayPattern<T> {
+    pub patterns: Vec<T>,
+    pub rest: Option<RestPattern>,
+    pub arr_len: usize,
+    pub ptr: bool,
 }
 
 #[derive(Debug, Clone)]
 pub enum IrrefutablePattern {
     Variable(VariableId),
     Destrucure(Vec<(String, IrrefutablePattern)>),
-    Array(Option<RestPattern>, Vec<IrrefutablePattern>),
+    Array(ArrayPattern<IrrefutablePattern>),
 }
 
 #[derive(Debug, Clone, Default, EnumAsInner)]
@@ -42,7 +49,7 @@ pub enum CheckedPattern {
     Int(BigInt),
     IntRange(RangePattern<BigInt>),
     String(String),
-    Array(Option<RestPattern>, Vec<CheckedPattern>),
+    Array(ArrayPattern<CheckedPattern>),
     #[default]
     Error,
 }

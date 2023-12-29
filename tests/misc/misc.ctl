@@ -81,6 +81,12 @@ fn main() {
 
         std::println("string_pattern()...");
         patterns::string_pattern();
+
+        std::println("array_pattern()...");
+        patterns::array_pattern();
+
+        std::println("array_ptr_pattern()...");
+        patterns::array_ptr_pattern();
     }
 
     std::println("\nmisc: ");

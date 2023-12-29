@@ -1,15 +1,21 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap, HashSet},
     fmt::Display,
 };
 
 use indexmap::IndexMap;
 
 use crate::{
-    ast::{checked::Symbol, UnaryOp},
     ast::{
-        checked::{CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, IrrefutablePattern},
+        checked::{
+            ArrayPattern, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt,
+            IrrefutablePattern,
+        },
         parsed::RangePattern,
+    },
+    ast::{
+        checked::{RestPattern, Symbol},
+        UnaryOp,
     },
     lexer::Span,
     sym::{FunctionId, Member, ScopeId, ScopeKind, Scopes, UserTypeData, UserTypeId, VariableId},
@@ -18,6 +24,7 @@ use crate::{
 };
 
 const UNION_TAG_NAME: &str = "$tag";
+const ARRAY_DATA_NAME: &str = "$data";
 
 #[derive(PartialEq, Eq, Clone)]
 struct State {
@@ -64,7 +71,7 @@ impl std::hash::Hash for State {
 struct TypeGen {
     structs: Option<HashSet<GenericUserType>>,
     fnptrs: Option<HashSet<FnPtr>>,
-    arrays: HashMap<Type, usize>,
+    arrays: HashMap<Type, HashSet<usize>>,
 }
 
 impl TypeGen {
@@ -92,7 +99,7 @@ impl TypeGen {
             definitions.emit(");");
         }
 
-        let mut emitted = HashSet::new();
+        let mut emitted_arrays = HashSet::new();
         for ut in Self::get_struct_order(scopes, &structs)? {
             let union = scopes.get(ut.id).data.as_union();
             let unsafe_union = union.as_ref().map_or(false, |union| union.is_unsafe);
@@ -135,17 +142,21 @@ impl TypeGen {
             definitions.emit("};");
 
             let ty = Type::UserType(ut.clone().into());
-            if let Some(size) = self.arrays.remove(&ty) {
-                self.emit_array(scopes, buffer, Some(&mut definitions), &ty, size);
-                emitted.insert(ty);
+            if let Some(sizes) = self.arrays.remove(&ty) {
+                for size in sizes {
+                    self.emit_array(scopes, buffer, Some(&mut definitions), &ty, size);
+                }
+                emitted_arrays.insert(ty);
             }
         }
 
-        for (ty, size) in std::mem::take(&mut self.arrays)
+        for (ty, sizes) in std::mem::take(&mut self.arrays)
             .into_iter()
-            .filter(|(ty, _)| !emitted.contains(ty))
+            .filter(|(ty, _)| !emitted_arrays.contains(ty))
         {
-            self.emit_array(scopes, buffer, None, &ty, size);
+            for size in sizes {
+                self.emit_array(scopes, buffer, None, &ty, size);
+            }
         }
 
         buffer.emit(definitions.0);
@@ -264,7 +275,7 @@ impl TypeGen {
         defs.emit_array_struct_name(scopes, ty, size);
         defs.emit(" { ");
         defs.emit_type(scopes, ty, self);
-        defs.emit(format!(" data[{size}]; }};"));
+        defs.emit(format!(" {ARRAY_DATA_NAME}[{size}]; }};"));
     }
 }
 
@@ -312,13 +323,20 @@ impl Buffer {
             Type::F64 => self.emit("f64"),
             Type::Bool => self.emit("CTL_bool"),
             Type::Char => self.emit("CTL_char"),
-            Type::Ptr(inner) => {
-                self.emit_type(scopes, inner, tg);
-                self.emit(" const*");
-            }
-            Type::MutPtr(inner) => {
-                self.emit_type(scopes, inner, tg);
-                self.emit(" *");
+            Type::Ptr(inner) | Type::MutPtr(inner) => {
+                if let Type::Array(value) = &**inner {
+                    self.emit_type(scopes, &value.0, tg);
+                    self.emit("/*");
+                    self.emit_type(scopes, inner, tg);
+                    self.emit("*/");
+                } else {
+                    self.emit_type(scopes, inner, tg);
+                }
+                if id.is_ptr() {
+                    self.emit(" const*");
+                } else {
+                    self.emit(" *");
+                }
             }
             Type::FnPtr(f) => {
                 if let Some(fnptrs) = tg.fnptrs.as_mut() {
@@ -349,7 +367,14 @@ impl Buffer {
             },
             Type::Array(data) => {
                 self.emit_generic_mangled_name(scopes, id);
-                tg.arrays.insert(data.0.clone(), data.1);
+                match tg.arrays.entry(data.0.clone()) {
+                    Entry::Occupied(mut entry) => {
+                        entry.get_mut().insert(data.1);
+                    }
+                    Entry::Vacant(entry) => {
+                        entry.insert([data.1].into());
+                    }
+                }
             }
             Type::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_type"),
             Type::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_type"),
@@ -820,18 +845,7 @@ impl Codegen {
                     self.buffer.emit(format!(" {tmp} = "));
                     self.gen_expr(scopes, value, state);
                     self.buffer.emit(";");
-
-                    let count = ty.indirection();
-                    self.gen_irrefutable_pattern(
-                        scopes,
-                        state,
-                        &pattern,
-                        &format!(
-                            "{}({}{tmp})",
-                            if count > 0 { "&" } else { "" },
-                            "*".repeat(count)
-                        ),
-                    );
+                    self.gen_irrefutable_pattern(scopes, state, &pattern, &deref(&tmp, ty, true));
                 });
             }
             CheckedStmt::None => {}
@@ -905,10 +919,12 @@ impl Codegen {
                 UnaryOp::Addr | UnaryOp::AddrMut => {
                     // TODO: addr of void
                     state.fill_generics(scopes, &mut inner.ty);
+
+                    let array = inner.ty.is_array();
                     if inner.ty.is_void_like() {
                         self.emit_cast(scopes, &expr.ty);
                         self.buffer.emit("(0xdeadbeef);");
-                    } else {
+                    } else if !array {
                         self.buffer.emit("&");
                     }
 
@@ -926,6 +942,10 @@ impl Codegen {
                         _ => {
                             self.gen_to_tmp(scopes, *inner, state);
                         }
+                    }
+
+                    if array {
+                        self.buffer.emit(format!(".{ARRAY_DATA_NAME}"));
                     }
                 }
                 UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in gen_expr"),
@@ -1021,7 +1041,7 @@ impl Codegen {
             CheckedExprData::Array(exprs) => {
                 self.buffer.emit("(");
                 self.emit_type(scopes, &expr.ty);
-                self.buffer.emit("){.data={");
+                self.buffer.emit(format!("){{.{ARRAY_DATA_NAME}={{"));
                 for expr in exprs {
                     self.gen_expr(scopes, expr, state);
                     self.buffer.emit(",");
@@ -1031,7 +1051,7 @@ impl Codegen {
             CheckedExprData::ArrayWithInit { init, count } => {
                 self.buffer.emit("(");
                 self.emit_type(scopes, &expr.ty);
-                self.buffer.emit("){.data={");
+                self.buffer.emit(format!("){{.{ARRAY_DATA_NAME}={{"));
                 for _ in 0..count {
                     self.gen_expr(scopes, (*init).clone(), state);
                     self.buffer.emit(",");
@@ -1398,8 +1418,29 @@ impl Codegen {
             }
             CheckedExprData::Subscript { callee, args } => {
                 // TODO: bounds check
-                self.gen_expr(scopes, *callee, state);
-                self.buffer.emit(".data[");
+                if callee.ty.is_array() {
+                    match callee.data {
+                        CheckedExprData::Unary {
+                            op: UnaryOp::Deref,
+                            expr,
+                        } => {
+                            // we compile pointers to arrays as T *, not Array_T_N *, so in the case
+                            // there will be no data member
+                            self.gen_expr(scopes, *expr, state);
+                        }
+                        _ => {
+                            self.gen_expr(scopes, *callee, state);
+                            self.buffer.emit(format!(".{ARRAY_DATA_NAME}"));
+                        }
+                    }
+                } else {
+                    self.buffer
+                        .emit(format!("({}", "*".repeat(callee.ty.indirection() - 1)));
+                    self.gen_expr(scopes, *callee, state);
+                    self.buffer.emit(")");
+                }
+
+                self.buffer.emit("[");
                 for arg in args {
                     self.gen_expr(scopes, arg, state);
                 }
@@ -1523,7 +1564,7 @@ impl Codegen {
                 ptr,
             } => {
                 let opt_ptr = is_opt_ptr(scopes, ty.strip_references());
-                let tmp_name = format!("({}{tmp_name})", "*".repeat(ty.indirection()));
+                let tmp_name = deref(tmp_name, ty, false);
                 if opt_ptr && variant.0 == "Some" {
                     self.buffer.emit(format!("if ({tmp_name} != NULL) {{"));
                     if let Some(pattern) = pattern {
@@ -1559,7 +1600,7 @@ impl Codegen {
             CheckedPattern::Int(value) => self.gen_literal_pattern(scopes, tmp_name, ty, value),
             CheckedPattern::IntRange(range) => self.gen_range_pattern(scopes, tmp_name, ty, range),
             CheckedPattern::String(value) => {
-                let tmp_name = format!("({}{tmp_name})", "*".repeat(ty.indirection()));
+                let tmp_name = deref(tmp_name, ty, false);
                 self.buffer.emit(format!(
                     "if ({tmp_name}.span.len == {} && __builtin_memcmp({tmp_name}.span.ptr, \"",
                     value.len()
@@ -1570,14 +1611,14 @@ impl Codegen {
                 self.buffer.emit(format!("\", {}) == 0) {{", value.len()));
             }
             CheckedPattern::Destrucure(_) => todo!(),
-            CheckedPattern::Array(_, _) => todo!(),
+            CheckedPattern::Array(_) => todo!(),
             CheckedPattern::Error => panic!("ICE: CheckedPattern::Error in gen_pattern"),
         }
     }
 
     fn gen_literal_pattern(&mut self, scopes: &Scopes, src: &str, ty: &Type, value: impl Display) {
         self.buffer
-            .emit(format!("if (({}{src}) == ", "*".repeat(ty.indirection())));
+            .emit(format!("if ({} == ", deref(src, ty, false)));
         self.emit_cast(scopes, ty.strip_references());
         self.buffer.emit(format!("{value}) {{"));
     }
@@ -1593,7 +1634,7 @@ impl Codegen {
             end,
         }: &RangePattern<T>,
     ) {
-        let src = format!("({}{src})", "*".repeat(ty.indirection()));
+        let src = deref(src, ty, false);
         let base = ty.strip_references();
 
         self.buffer.emit(format!("if ({src} >= "));
@@ -1628,8 +1669,47 @@ impl Codegen {
                     self.gen_irrefutable_pattern(scopes, state, patt, &format!("{src}.{member}"));
                 }
             }
-            IrrefutablePattern::Array(rest, patterns) => {
-                todo!()
+            IrrefutablePattern::Array(ArrayPattern {
+                patterns,
+                rest,
+                arr_len,
+                ptr,
+            }) => {
+                let src = if *ptr {
+                    src.into()
+                } else {
+                    format!("{src}.{ARRAY_DATA_NAME}")
+                };
+                if let Some(RestPattern { id, pos }) = *rest {
+                    let rest_len = arr_len - patterns.len();
+                    if id
+                        .and_then(|id| {
+                            self.buffer
+                                .emit_local_decl(scopes, id, state, &mut self.type_gen)
+                                .ok()
+                        })
+                        .is_some()
+                    {
+                        if *ptr {
+                            self.buffer.emit(format!(" = (*{src}) + {pos};"));
+                        } else {
+                            self.buffer.emit(format!(" = {{ .{ARRAY_DATA_NAME} = {{"));
+                            for i in 0..rest_len {
+                                self.buffer.emit(format!("{src}[{}],", pos + i));
+                            }
+                            self.buffer.emit("}};");
+                        }
+                    }
+
+                    for (i, patt) in patterns.iter().enumerate() {
+                        let i = if i < pos { i } else { rest_len + i };
+                        self.gen_irrefutable_pattern(scopes, state, patt, &format!("{src}[{i}]"));
+                    }
+                } else {
+                    for (i, patt) in patterns.iter().enumerate() {
+                        self.gen_irrefutable_pattern(scopes, state, patt, &format!("{src}[{i}]"));
+                    }
+                }
             }
         }
     }
@@ -1711,4 +1791,16 @@ fn is_opt_ptr(scopes: &Scopes, ty: &Type) -> bool {
         .as_option_inner(ty)
         .map(|inner| inner.is_ptr() || inner.is_mut_ptr())
         .unwrap_or(false)
+}
+
+fn deref(src: &str, ty: &Type, make_ref: bool) -> String {
+    if ty.is_ptr() || ty.is_mut_ptr() {
+        format!(
+            "{}({}{src})",
+            if make_ref { "&" } else { "" },
+            "*".repeat(ty.indirection() - usize::from(ty.strip_references().is_array()))
+        )
+    } else {
+        src.into()
+    }
 }

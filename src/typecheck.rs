@@ -7,8 +7,8 @@ use num_traits::Num;
 use crate::{
     ast::{
         checked::{
-            Block, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, IrrefutablePattern,
-            RestPattern, Symbol,
+            ArrayPattern, Block, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt,
+            IrrefutablePattern, RestPattern, Symbol,
         },
         declared::{DeclaredFn, DeclaredImplBlock, DeclaredStmt, DeclaredStmtData},
         parsed::{
@@ -1810,7 +1810,7 @@ impl TypeChecker {
                 let callee = self.check_expr(scopes, *callee, None);
                 let arg =
                     type_check_bail!(self, scopes, args.into_iter().next().unwrap(), &Type::Isize);
-                if let Type::Array(target) = &callee.ty {
+                if let Type::Array(target) = callee.ty.strip_references() {
                     CheckedExpr::new(
                         target.0.clone(),
                         CheckedExprData::Subscript {
@@ -2438,7 +2438,6 @@ impl TypeChecker {
         let mut rest = None;
         let mut had_refutable = false;
         let mut result = Vec::new();
-        let len = patterns.len();
         for (i, pattern) in patterns.into_iter().enumerate() {
             if let Pattern::Rest(var) = pattern.data {
                 let id = var.map(|(mutable, name)| {
@@ -2460,11 +2459,7 @@ impl TypeChecker {
                         pattern.span,
                     ))
                 } else {
-                    rest = Some(match i {
-                        0 => RestPattern::Start(id),
-                        i if i == len - 1 => RestPattern::End(id),
-                        i => RestPattern::Middle(i, id),
-                    });
+                    rest = Some(RestPattern { id, pos: i });
                 }
             } else {
                 let patt = self.check_pattern(scopes, true, &inner, false, pattern);
@@ -2475,34 +2470,37 @@ impl TypeChecker {
             }
         }
 
-        if result.len() >= arr_len {
+        if result.len() > arr_len {
             self.error(Error::new(
                 format!("expected {} elements, got {}", arr_len, result.len()),
                 span,
             ))
         }
 
-        match &rest {
-            Some(RestPattern::Start(Some(id)))
-            | Some(RestPattern::Middle(_, Some(id)))
-            | Some(RestPattern::End(Some(id))) => {
-                let rest_len = arr_len.saturating_sub(result.len());
-                scopes.get_mut(*id).item.ty =
-                    target.matched_inner_type(Type::Array((real_inner.clone(), rest_len).into()));
-            }
-            _ => {}
+        if let Some(RestPattern { id: Some(id), .. }) = &mut rest {
+            scopes.get_mut(*id).item.ty = target.matched_inner_type(Type::Array(
+                (real_inner.clone(), arr_len - result.len()).into(),
+            ));
         }
 
+        let ptr = target.is_ptr() || target.is_mut_ptr();
         if had_refutable {
-            CheckedPattern::Array(rest, result)
-        } else {
-            CheckedPattern::Irrefutable(IrrefutablePattern::Array(
+            CheckedPattern::Array(ArrayPattern {
                 rest,
-                result
+                patterns: result,
+                arr_len,
+                ptr,
+            })
+        } else {
+            CheckedPattern::Irrefutable(IrrefutablePattern::Array(ArrayPattern {
+                rest,
+                patterns: result
                     .into_iter()
                     .map(|patt| patt.into_irrefutable().unwrap())
                     .collect(),
-            ))
+                arr_len,
+                ptr,
+            }))
         }
     }
 
