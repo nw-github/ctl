@@ -1747,10 +1747,7 @@ impl Codegen {
                     | UnaryOp::PreDecrement
             ),
             CheckedExprData::Call { .. } => true,
-            CheckedExprData::Array(_) => true,
-            CheckedExprData::ArrayWithInit { .. } => true,
             CheckedExprData::Assign { .. } => true,
-            CheckedExprData::Subscript { .. } => false,
             _ => false,
         }
     }
