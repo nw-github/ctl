@@ -17,9 +17,17 @@ pub struct Block {
 }
 
 #[derive(Debug, Clone)]
+pub enum RestPattern {
+    Start(Option<VariableId>),
+    Middle(usize, Option<VariableId>),
+    End(Option<VariableId>),
+}
+
+#[derive(Debug, Clone)]
 pub enum IrrefutablePattern {
     Variable(VariableId),
     Destrucure(Vec<(String, IrrefutablePattern)>),
+    Array(Option<RestPattern>, Vec<IrrefutablePattern>),
 }
 
 #[derive(Debug, Clone, Default, EnumAsInner)]
@@ -34,6 +42,7 @@ pub enum CheckedPattern {
     Int(BigInt),
     IntRange(RangePattern<BigInt>),
     String(String),
+    Array(Option<RestPattern>, Vec<CheckedPattern>),
     #[default]
     Error,
 }

@@ -1078,6 +1078,26 @@ impl<'a> Parser<'a> {
                 .map(Pattern::StructDestructure);
         }
 
+        if let Some(token) = self.advance_if_kind(Token::LBrace) {
+            let result = self.csv_one(Token::RBrace, token.span, |this| {
+                if let Some(token) = this.advance_if_kind(Token::Ellipses) {
+                    let pattern = if this.advance_if_kind(Token::Mut).is_some() {
+                        let ident = this.expect_id("expected name");
+                        Some((true, ident))
+                    } else {
+                        let ident = this.advance_if_map(|t| t.data.as_ident().map(|&i| i.into()));
+                        Some(false).zip(ident)
+                    };
+
+                    Located::new(token.span, Pattern::Rest(pattern))
+                } else {
+                    this.pattern(true)
+                }
+            });
+
+            return result.map(Pattern::Array);
+        }
+
         if mut_var || self.advance_if_kind(Token::Mut).is_some() {
             return self
                 .expect_located_id("expected name")

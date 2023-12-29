@@ -288,6 +288,8 @@ pub enum Pattern {
     String(String),
     Char(char),
     CharRange(RangePattern<char>),
+    Array(Vec<Located<Pattern>>),
+    Rest(Option<(bool, String)>),
     Error,
 }
 

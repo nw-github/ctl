@@ -8,7 +8,7 @@ use crate::{
     ast::{
         checked::{
             Block, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, IrrefutablePattern,
-            Symbol,
+            RestPattern, Symbol,
         },
         declared::{DeclaredFn, DeclaredImplBlock, DeclaredStmt, DeclaredStmtData},
         parsed::{
@@ -2413,6 +2413,99 @@ impl TypeChecker {
         Some(if negative { -value } else { value })
     }
 
+    fn check_array_pattern(
+        &mut self,
+        scopes: &mut Scopes,
+        target: &Type,
+        patterns: Vec<Located<Pattern>>,
+        span: Span,
+    ) -> CheckedPattern {
+        let (real_inner, arr_len) = match target.strip_references() {
+            Type::Array(inner) => (&inner.0, inner.1),
+            _ => {
+                return self.error(Error::new(
+                    format!(
+                        "array pattern cannot match value of type '{}'",
+                        target.name(scopes)
+                    ),
+                    span,
+                ))
+            }
+        };
+
+        let inner = target.matched_inner_type(real_inner.clone());
+
+        let mut rest = None;
+        let mut had_refutable = false;
+        let mut result = Vec::new();
+        let len = patterns.len();
+        for (i, pattern) in patterns.into_iter().enumerate() {
+            if let Pattern::Rest(var) = pattern.data {
+                let id = var.map(|(mutable, name)| {
+                    scopes.insert(
+                        Variable {
+                            name,
+                            ty: Type::Unknown(None),
+                            is_static: false,
+                            mutable,
+                            value: None,
+                        },
+                        false,
+                    )
+                });
+
+                if rest.is_some() {
+                    self.error(Error::new(
+                        "... can only be used once in an array pattern",
+                        pattern.span,
+                    ))
+                } else {
+                    rest = Some(match i {
+                        0 => RestPattern::Start(id),
+                        i if i == len - 1 => RestPattern::End(id),
+                        i => RestPattern::Middle(i, id),
+                    });
+                }
+            } else {
+                let patt = self.check_pattern(scopes, true, &inner, false, pattern);
+                if !matches!(patt, CheckedPattern::Irrefutable(_)) {
+                    had_refutable = true;
+                }
+                result.push(patt);
+            }
+        }
+
+        if result.len() >= arr_len {
+            self.error(Error::new(
+                format!("expected {} elements, got {}", arr_len, result.len()),
+                span,
+            ))
+        }
+
+        match &rest {
+            Some(RestPattern::Start(Some(id)))
+            | Some(RestPattern::Middle(_, Some(id)))
+            | Some(RestPattern::End(Some(id))) => {
+                let rest_len = arr_len.saturating_sub(result.len());
+                scopes.get_mut(*id).item.ty =
+                    target.matched_inner_type(Type::Array((real_inner.clone(), rest_len).into()));
+            }
+            _ => {}
+        }
+
+        if had_refutable {
+            CheckedPattern::Array(rest, result)
+        } else {
+            CheckedPattern::Irrefutable(IrrefutablePattern::Array(
+                rest,
+                result
+                    .into_iter()
+                    .map(|patt| patt.into_irrefutable().unwrap())
+                    .collect(),
+            ))
+        }
+    }
+
     fn check_pattern(
         &mut self,
         scopes: &mut Scopes,
@@ -2687,6 +2780,13 @@ impl TypeChecker {
                     start: BigInt::from(start as u32),
                     end: BigInt::from(end as u32),
                 })
+            }
+            Pattern::Rest { .. } => self.error(Error::new(
+                "rest patterns are only valid inside array or span patterns",
+                span,
+            )),
+            Pattern::Array(subpatterns) => {
+                self.check_array_pattern(scopes, scrutinee, subpatterns, span)
             }
             Pattern::Error => Default::default(),
         }

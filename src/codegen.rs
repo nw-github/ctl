@@ -1570,6 +1570,7 @@ impl Codegen {
                 self.buffer.emit(format!("\", {}) == 0) {{", value.len()));
             }
             CheckedPattern::Destrucure(_) => todo!(),
+            CheckedPattern::Array(_, _) => todo!(),
             CheckedPattern::Error => panic!("ICE: CheckedPattern::Error in gen_pattern"),
         }
     }
@@ -1626,6 +1627,9 @@ impl Codegen {
                 for (member, patt) in subpatterns {
                     self.gen_irrefutable_pattern(scopes, state, patt, &format!("{src}.{member}"));
                 }
+            }
+            IrrefutablePattern::Array(rest, patterns) => {
+                todo!()
             }
         }
     }
