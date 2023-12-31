@@ -3613,6 +3613,10 @@ impl TypeChecker {
                     for var in scopes[id].vars.clone() {
                         scopes.current().vars.insert(Vis { id: var.id, public });
                     }
+
+                    for ext in scopes[id].exts.clone() {
+                        scopes.current().exts.insert(Vis { id: ext.id, public });
+                    }
                 }
             }
             ResolvedPath::None(err) => {
@@ -3746,10 +3750,7 @@ impl TypeChecker {
                         return Some(ResolvedPath::Extension(*id));
                     }
 
-                    self.error(Error::new(
-                        format!("no symbol '{name}' found in this module"),
-                        span,
-                    ))
+                    self.error(Error::no_symbol(name, span))
                 } else if let Some(id) = scopes.find_module(name) {
                     if is_end {
                         return Some(ResolvedPath::Module(*id));
@@ -3837,10 +3838,7 @@ impl TypeChecker {
                     return Some(ResolvedPath::Extension(*id));
                 }
 
-                return Some(ResolvedPath::None(Error::new(
-                    format!("no symbol '{name}' found in this module"),
-                    span,
-                )));
+                return Some(ResolvedPath::None(Error::no_symbol(name, span)));
             } else if let Some(id) = scopes.find_module_in(name, scope) {
                 if !id.public && !scopes.can_access_privates(*id) {
                     self.error(Error::new(format!("module '{name}' is private"), span))
@@ -3859,10 +3857,7 @@ impl TypeChecker {
 
                 scope = *id;
             } else {
-                return Some(ResolvedPath::None(Error::new(
-                    format!("no symbol '{name}' found in this module"),
-                    span,
-                )));
+                return Some(ResolvedPath::None(Error::no_symbol(name, span)));
             }
         }
 

@@ -15,6 +15,10 @@ pub struct str {
         str(span: unsafe Span::new(ptr as *u8, strlen(ptr)))
     }
 
+    pub unsafe fn from_utf8_unchecked(span: [u8..]): str {
+        str(span:)
+    }
+
     pub fn len(this): usize {
         this.span.len()
     }
