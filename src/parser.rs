@@ -817,8 +817,7 @@ impl<'a> Parser<'a> {
     }
 
     fn for_expr(&mut self, token: Span) -> Expr {
-        let mutable = self.advance_if_kind(Token::Mut);
-        let var = self.expect_id("expected variable name");
+        let patt = self.pattern(false);
         self.expect_kind(Token::In, "expected 'in'");
         // TODO: parse for foo in 0.. {} as |0..| |{}| instead of |0..{}|
         let iter = self.expression();
@@ -826,8 +825,7 @@ impl<'a> Parser<'a> {
         Expr::new(
             token.extended_to(span),
             ExprData::For {
-                var,
-                mutable: mutable.is_some(),
+                patt,
                 iter: iter.into(),
                 body,
             },

@@ -40,8 +40,8 @@ pub enum IrrefutablePattern {
 #[derive(Debug, Clone, Default, EnumAsInner)]
 pub enum CheckedPattern {
     UnionMember {
-        pattern: Option<Box<IrrefutablePattern>>,
-        variant: (String, usize),
+        pattern: Option<IrrefutablePattern>,
+        variant: String,
         ptr: bool,
     },
     Irrefutable(IrrefutablePattern),
@@ -130,9 +130,13 @@ pub enum CheckedExprData {
     },
     Loop {
         cond: Option<Box<CheckedExpr>>,
-        iter: Option<VariableId>,
         body: Block,
         do_while: bool,
+    },
+    For {
+        iter: Box<CheckedExpr>,
+        patt: IrrefutablePattern,
+        body: Vec<CheckedStmt>,
     },
     Match {
         expr: Box<CheckedExpr>,

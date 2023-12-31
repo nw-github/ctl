@@ -563,7 +563,7 @@ impl Type {
         }
 
         let search = |this: Option<&GenericUserType>, impls: &[Type]| {
-            for tr in impls.iter() {
+            impls.iter().any(|tr| {
                 let mut tr = tr.as_user_type().unwrap().clone();
                 if let Some(this) = this {
                     for ut in tr.ty_args.iter_mut() {
@@ -571,49 +571,47 @@ impl Type {
                     }
                 }
 
-                if &*tr == bound {
-                    return true;
-                }
-            }
-
-            false
+                &*tr == bound
+            })
         };
 
-        if let Some(this) = self.as_user_type() {
-            if search(Some(this), &scopes.get(this.id).impls) {
-                return true;
-            }
-        }
-
-        for ext in scopes.extensions_in_scope_for(self) {
-            if search(self.as_user_type().map(|ty| &**ty), &ext.impls) {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    pub fn implements_trait_id(&self, scopes: &Scopes, id: UserTypeId) -> bool {
-        if self.is_unknown() {
+        if self
+            .as_user_type()
+            .map_or(false, |this| search(Some(this), &scopes.get(this.id).impls))
+        {
             return true;
         }
 
-        let search = |impls: &[Type]| impls.iter().any(|i| i.as_user_type().unwrap().id == id);
+        scopes
+            .extensions_in_scope_for(self)
+            .any(|ext| search(self.as_user_type().map(|ty| &**ty), &ext.impls))
+    }
 
-        if let Some(ut) = self.as_user_type() {
-            if search(&scopes.get(ut.id).impls) {
-                return true;
-            }
+    pub fn get_trait_impl<'a, 'b>(
+        &'b self,
+        scopes: &'a Scopes,
+        id: UserTypeId,
+    ) -> Option<&'b GenericUserType>
+    where
+        'a: 'b,
+    {
+        let search = |impls: &'a [Type]| {
+            impls
+                .iter()
+                .flat_map(|i| i.as_user_type().map(|ut| &**ut))
+                .find(|ut| ut.id == id)
+        };
+
+        if let Some(ty) = self
+            .as_user_type()
+            .and_then(|ut| search(&scopes.get(ut.id).impls))
+        {
+            return Some(ty);
         }
 
-        for ext in scopes.extensions_in_scope_for(self) {
-            if search(&ext.impls) {
-                return true;
-            }
-        }
-
-        false
+        scopes
+            .extensions_in_scope_for(self)
+            .find_map(|ext| search(&ext.impls))
     }
 
     pub fn get_member_fn(
@@ -624,13 +622,13 @@ impl Type {
         let search = |src_scope: ScopeId, scope: ScopeId| {
             // TODO: trait implement overload ie.
             // impl Eq<f32> { ... } impl Eq<i32> { ... }
-            for scope in std::iter::once(scope).chain(scopes[scope].children.iter().map(|s| s.id)) {
-                if let Some(func) = scopes.find_in(member, scope) {
-                    return Some((None, func, src_scope));
-                }
-            }
-
-            None
+            std::iter::once(scope)
+                .chain(scopes[scope].children.iter().map(|s| s.id))
+                .find_map(|scope| {
+                    scopes
+                        .find_in(member, scope)
+                        .map(|func| (None, func, src_scope))
+                })
         };
 
         if let Some(ut) = self.as_user_type().map(|ut| scopes.get(ut.id)) {
@@ -650,12 +648,8 @@ impl Type {
             }
         }
 
-        for ext in scopes.extensions_in_scope_for(self) {
-            if let Some(result) = search(ext.scope, ext.body_scope) {
-                return Some(result);
-            }
-        }
-
-        None
+        scopes
+            .extensions_in_scope_for(self)
+            .find_map(|ext| search(ext.scope, ext.body_scope))
     }
 }

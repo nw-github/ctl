@@ -136,8 +136,7 @@ pub enum ExprData {
         do_while: bool,
     },
     For {
-        var: String,
-        mutable: bool,
+        patt: Located<Pattern>,
         iter: Box<Expr>,
         body: Vec<Stmt>,
     },

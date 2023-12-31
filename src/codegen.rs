@@ -1359,7 +1359,6 @@ impl Codegen {
             }
             CheckedExprData::Loop {
                 cond,
-                iter,
                 body,
                 do_while,
             } => {
@@ -1370,18 +1369,6 @@ impl Codegen {
                         self.emit_type(scopes, &expr.ty);
                         self.buffer.emit(format!(" {};", self.cur_loop));
                         emit = true;
-                    }
-
-                    if let Some(iter) = iter {
-                        let mut expr = scopes.get(iter).value.clone().unwrap();
-                        let (Ok(ty) | Err(ty)) =
-                            self.buffer
-                                .emit_local_decl(scopes, iter, state, &mut self.type_gen);
-                        expr.ty = ty;
-
-                        self.buffer.emit(" = ");
-                        self.gen_expr_inner(scopes, expr, state);
-                        self.buffer.emit(";");
                     }
 
                     self.buffer.emit("for (;;) {");
@@ -1410,6 +1397,70 @@ impl Codegen {
                     }
 
                     self.buffer.emit("}");
+                    std::mem::replace(&mut self.cur_loop, old)
+                });
+                if emit {
+                    self.buffer.emit(tmp);
+                }
+            }
+            CheckedExprData::For { iter, patt, body } => {
+                let mut emit = false;
+                let tmp = tmpbuf!(self, state, |tmp| {
+                    let old = std::mem::replace(&mut self.cur_loop, tmp);
+                    if !expr.ty.is_void_like() {
+                        self.emit_type(scopes, &expr.ty);
+                        self.buffer.emit(format!(" {};", self.cur_loop));
+                        emit = true;
+                    }
+                    let mut iter_ty = iter.ty.clone();
+                    state.fill_generics(scopes, &mut iter_ty);
+
+                    let next = scopes
+                        .lang_types
+                        .get("iter")
+                        .copied()
+                        .and_then(|id| Self::find_implementation(&iter.ty, scopes, id, "next"))
+                        .expect("for iterator should actually implement Iterator");
+                    let next_state =
+                        State::new(GenericFunc::new(next, vec![]), Some(iter_ty.clone()));
+                    let mut next_ty = scopes.get(next).ret.clone();
+                    if let Some(ut) = iter_ty.as_user_type() {
+                        next_ty.fill_struct_templates(scopes, ut);
+                    }
+
+                    let iter_var = tmpbuf!(self, state, |tmp| {
+                        self.buffer.emit_type(scopes, &iter_ty, &mut self.type_gen);
+                        self.buffer.emit(format!(" {tmp} = "));
+                        self.gen_expr(scopes, *iter, state);
+                        self.buffer.emit(";");
+
+                        tmp
+                    });
+
+                    self.buffer.emit("for (;;) {");
+
+                    let item = state.tmpvar();
+                    self.emit_type(scopes, &next_ty);
+                    self.buffer.emit(format!(" {item} = "));
+                    self.buffer.emit_fn_name(scopes, &next_state);
+                    self.buffer.emit(format!("(&{iter_var});"));
+                    self.gen_pattern(
+                        scopes,
+                        state,
+                        &CheckedPattern::UnionMember {
+                            pattern: Some(patt),
+                            variant: "Some".into(),
+                            ptr: scopes
+                                .as_option_inner(&next_ty)
+                                .map_or(false, |ty| ty.is_ptr() || ty.is_mut_ptr()),
+                        },
+                        &item,
+                        &next_ty,
+                    );
+                    self.emit_block(scopes, body, state);
+                    self.buffer.emit("} else { break; } } ");
+
+                    self.funcs.insert(next_state);
                     std::mem::replace(&mut self.cur_loop, old)
                 });
                 if emit {
@@ -1563,31 +1614,35 @@ impl Codegen {
                 variant,
                 ptr,
             } => {
-                let opt_ptr = is_opt_ptr(scopes, ty.strip_references());
+                let ty_base = ty.strip_references();
+                let opt_ptr = is_opt_ptr(scopes, ty_base);
                 let tmp_name = deref(tmp_name, ty, false);
-                if opt_ptr && variant.0 == "Some" {
+                if opt_ptr && variant == "Some" {
                     self.buffer.emit(format!("if ({tmp_name} != NULL) {{"));
                     if let Some(pattern) = pattern {
                         let tmp_name = if *ptr {
-                            format!("&{tmp_name}")
+                            format!("&(*{tmp_name})")
                         } else {
                             tmp_name
                         };
                         self.gen_irrefutable_pattern(scopes, state, pattern, &tmp_name);
                     }
-                } else if opt_ptr && variant.0 == "None" {
+                } else if opt_ptr && variant == "None" {
                     self.buffer.emit(format!("if ({tmp_name} == NULL) {{",));
                 } else {
-                    self.buffer.emit(format!(
-                        "if ({tmp_name}.{UNION_TAG_NAME} == {}) {{",
-                        variant.1
-                    ));
+                    let tag = ty_base
+                        .as_user_type()
+                        .and_then(|ut| scopes.get(ut.id).data.as_union())
+                        .and_then(|union| union.variant_tag(variant))
+                        .unwrap();
+                    self.buffer
+                        .emit(format!("if ({tmp_name}.{UNION_TAG_NAME} == {tag}) {{"));
 
                     if let Some(pattern) = pattern {
                         let tmp_name = if *ptr {
-                            format!("&{tmp_name}.{}", variant.0)
+                            format!("&{tmp_name}.{variant}")
                         } else {
-                            format!("{tmp_name}.{}", variant.0)
+                            format!("{tmp_name}.{variant}")
                         };
                         self.gen_irrefutable_pattern(scopes, state, pattern, &tmp_name);
                     }

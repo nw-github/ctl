@@ -17,11 +17,7 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
             eprintln!("{tabs}StmtExpr");
             print_expr(expr, src, indent + 1);
         }
-        StmtData::Let {
-            ty,
-            value,
-            patt,
-        } => {
+        StmtData::Let { ty, value, patt } => {
             eprint!("{tabs}Let[{patt:?}]");
             eprintln!();
 
@@ -366,14 +362,8 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
         ExprData::None => {
             eprintln!("{tabs}None");
         }
-        ExprData::For {
-            var,
-            mutable,
-            iter,
-            body,
-        } => {
-            eprintln!("{tabs}For[{var}]");
-            print_bool!(mutable);
+        ExprData::For { patt, iter, body } => {
+            eprintln!("{tabs}For[{patt:?}]");
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}In: ");
             print_expr(iter, src, indent + 2);
