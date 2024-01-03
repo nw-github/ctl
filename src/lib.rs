@@ -76,15 +76,11 @@ impl Error {
     }
 
     pub fn no_symbol(symbol: &str, span: Span) -> Self {
-        if symbol == "StringExt" {
-            dbg!("");
-        }
-
         Self::new(format!("no symbol '{symbol}' found in this module"), span)
     }
 
     pub fn no_lang_item(name: &str, span: Span) -> Self {
-        Self::new(format!("missing language item: '{name}"), span)
+        Self::new(format!("missing language item: '{name}'"), span)
     }
 
     pub fn doesnt_implement(ty: &str, trait_name: &str, span: Span) -> Self {

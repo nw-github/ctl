@@ -278,6 +278,14 @@ impl Type {
         id
     }
 
+    pub fn strip_options(&self, scopes: &Scopes) -> &Type {
+        let mut id = self;
+        while let Some(inner) = scopes.as_option_inner(id) {
+            id = inner;
+        }
+        id
+    }
+
     pub fn matched_inner_type(&self, ty: Type) -> Type {
         if !(self.is_ptr() || self.is_mut_ptr()) {
             return ty;

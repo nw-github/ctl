@@ -157,7 +157,7 @@ impl TypeChecker {
     ) -> UserTypeId {
         let id = scopes.insert(ty, public);
         if let Some(attr) = attrs.iter().find(|attr| attr.name.data == "lang") {
-            let Some(name) = attr.props.get(0) else {
+            let Some(name) = attr.props.first() else {
                 self.error::<()>(Error::new("language item must have name", attr.name.span));
                 return id;
             };
@@ -597,7 +597,7 @@ impl TypeChecker {
         );
 
         if let Some(attr) = attrs.iter().find(|attr| attr.name.data == "intrinsic") {
-            if let Some(attr) = attr.props.get(0) {
+            if let Some(attr) = attr.props.first() {
                 match attr.name.data.as_str() {
                     "size_of" => {
                         scopes.intrinsics.insert(id, attr.name.data.clone());
@@ -1197,7 +1197,7 @@ impl TypeChecker {
                     return self.error(Error::no_lang_item("vec", expr.span));
                 };
 
-                let ut = if let Some(ty) = target
+                let ty = if let Some(ty) = target
                     .and_then(|target| target.as_user_type())
                     .filter(|ut| ut.id == vec)
                     .map(|ut| ut.ty_args[0].clone())
@@ -1209,13 +1209,12 @@ impl TypeChecker {
                     checked.push(expr);
                     ty
                 } else {
-                    return self
-                        .error(Error::new("cannot infer type of vector literal", expr.span));
+                    self.error(Error::new("cannot infer type of vector literal", expr.span))
                 };
 
-                checked.extend(elements.map(|e| self.type_check(scopes, e, &ut)));
+                checked.extend(elements.map(|e| self.type_check(scopes, e, &ty)));
                 CheckedExpr::new(
-                    Type::UserType(GenericUserType::new(vec, vec![ut]).into()),
+                    Type::UserType(self.make_lang_type(scopes, vec, vec![ty], span).into()),
                     CheckedExprData::Vec(checked),
                 )
             }
@@ -1223,10 +1222,10 @@ impl TypeChecker {
                 let mut checked = Vec::with_capacity(elements.len());
                 let mut elements = elements.into_iter();
                 let Some(set) = scopes.lang_types.get("set").copied() else {
-                    return self.error(Error::no_lang_item("set", expr.span));
+                    return self.error(Error::no_lang_item("set", span));
                 };
 
-                let ut = if let Some(ty) = target
+                let ty = if let Some(ty) = target
                     .and_then(|target| target.as_user_type())
                     .filter(|ut| ut.id == set)
                     .map(|ut| ut.ty_args[0].clone())
@@ -1238,12 +1237,12 @@ impl TypeChecker {
                     checked.push(expr);
                     ty
                 } else {
-                    return self.error(Error::new("cannot infer type of set literal", expr.span));
+                    self.error(Error::new("cannot infer type of set literal", span))
                 };
 
-                checked.extend(elements.map(|e| self.type_check(scopes, e, &ut)));
+                checked.extend(elements.map(|e| self.type_check(scopes, e, &ty)));
                 CheckedExpr::new(
-                    Type::UserType(GenericUserType::new(set, vec![ut]).into()),
+                    Type::UserType(self.make_lang_type(scopes, set, vec![ty], span).into()),
                     CheckedExprData::Set(checked),
                 )
             }
@@ -1276,7 +1275,7 @@ impl TypeChecker {
             }
             ExprData::VecWithInit { init, count } => {
                 let Some(vec) = scopes.lang_types.get("vec").copied() else {
-                    return self.error(Error::no_lang_item("vec", expr.span));
+                    return self.error(Error::no_lang_item("vec", span));
                 };
 
                 let (init, ty) = if let Some(ty) = target
@@ -1292,7 +1291,7 @@ impl TypeChecker {
                 };
 
                 CheckedExpr::new(
-                    Type::UserType(GenericUserType::new(vec, vec![ty]).into()),
+                    Type::UserType(self.make_lang_type(scopes, vec, vec![ty], span).into()),
                     CheckedExprData::VecWithInit {
                         init: init.into(),
                         count: self.type_check(scopes, *count, &Type::Usize).into(),
@@ -1301,16 +1300,15 @@ impl TypeChecker {
             }
             ExprData::Tuple(_) => todo!(),
             ExprData::Map(elements) => {
-                // TODO: make sure the key type respects the trait bounds
-                let Some(std_map) = scopes.lang_types.get("map").copied() else {
+                let Some(map) = scopes.lang_types.get("map").copied() else {
                     return self.error(Error::no_lang_item("map", expr.span));
                 };
 
                 let mut result = Vec::with_capacity(elements.len());
                 let mut elements = elements.into_iter();
-                let (key_ty, val_ty) = if let Some((k, v)) = target
+                let (k, v) = if let Some((k, v)) = target
                     .and_then(|target| target.as_user_type())
-                    .filter(|ut| ut.id == std_map)
+                    .filter(|ut| ut.id == map)
                     .map(|ut| (ut.ty_args[0].clone(), ut.ty_args[1].clone()))
                 {
                     (k, v)
@@ -1323,18 +1321,17 @@ impl TypeChecker {
                     result.push((key, val));
                     (k, v)
                 } else {
-                    return self.error(Error::new("cannot infer type of map literal", expr.span));
+                    self.error(Error::new("cannot infer type of map literal", expr.span))
                 };
 
                 result.extend(elements.map(|(key, val)| {
                     (
-                        self.type_check(scopes, key, &key_ty),
-                        self.type_check(scopes, val, &val_ty),
+                        self.type_check(scopes, key, &k),
+                        self.type_check(scopes, val, &v),
                     )
                 }));
-
                 CheckedExpr::new(
-                    Type::UserType(GenericUserType::new(std_map, vec![key_ty, val_ty]).into()),
+                    Type::UserType(self.make_lang_type(scopes, map, vec![k, v], span).into()),
                     CheckedExprData::Map(result),
                 )
             }
@@ -1432,12 +1429,7 @@ impl TypeChecker {
             }
             ExprData::Float(value) => CheckedExpr::new(
                 target
-                    .map(|mut target| {
-                        while let Type::MutPtr(ty) | Type::Ptr(ty) = target {
-                            target = ty;
-                        }
-                        target
-                    })
+                    .map(|target| target.strip_options(scopes))
                     .filter(|target| matches!(target, Type::F32 | Type::F64))
                     .cloned()
                     .unwrap_or(Type::F64),
@@ -2864,7 +2856,7 @@ impl TypeChecker {
                     ));
                 };
                 let f = scopes.get(*func);
-                let Some(this_param) = f.params.get(0).filter(|p| p.name == THIS_PARAM) else {
+                let Some(this_param) = f.params.first().filter(|p| p.name == THIS_PARAM) else {
                     return self.error(Error::new(
                         format!("associated function '{member}' cannot be used as a method"),
                         span,
@@ -3349,11 +3341,37 @@ impl TypeChecker {
         } else if let Some(hint) = fwd {
             Type::Unknown(Some((hint.clone(), scopes.current).into()))
         } else {
-            self.error(Error::new(
-                format!("missing language item: '{name}'"),
-                Span::default(),
-            ))
+            self.error(Error::no_lang_item(name, Span::default()))
         }
+    }
+
+    fn make_lang_type(
+        &mut self,
+        scopes: &mut Scopes,
+        id: UserTypeId,
+        ty_args: Vec<Type>,
+        span: Span,
+    ) -> GenericUserType {
+        let ty = GenericUserType::new(id, ty_args);
+        for (i, param) in ty.ty_args.iter().enumerate() {
+            for j in 0..scopes.get(scopes.get(id).type_params[i]).impls.len() {
+                resolve_type!(
+                    self,
+                    scopes,
+                    scopes.get_mut(scopes.get(id).type_params[i]).impls[j]
+                );
+            }
+
+            self.check_bounds(
+                scopes,
+                None,
+                param,
+                &scopes.get(scopes.get(id).type_params[i]).impls,
+                Some(&ty),
+                span,
+            );
+        }
+        ty
     }
 
     fn resolve_typehint(&mut self, scopes: &Scopes, hint: &TypeHint) -> Type {
@@ -3493,8 +3511,8 @@ impl TypeChecker {
             match ty {
                 Type::Array(t) => ty = &mut t.0,
                 Type::Ptr(t) | Type::MutPtr(t) => ty = t,
-                Type::UserType(ty) => {
-                    for ty in ty.ty_args.iter_mut() {
+                Type::UserType(ut) => {
+                    for ty in ut.ty_args.iter_mut() {
                         self.resolve_type(scopes, ty);
                     }
 
@@ -3920,12 +3938,7 @@ impl TypeChecker {
         } else {
             // FIXME: attempt to promote the literal if its too large for i32
             target
-                .map(|mut target| {
-                    while let Some(inner) = scopes.as_option_inner(target) {
-                        target = inner;
-                    }
-                    target
-                })
+                .map(|target| target.strip_options(scopes))
                 .filter(|target| {
                     matches!(
                         target,
