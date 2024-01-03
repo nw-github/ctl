@@ -1,8 +1,8 @@
 use crate::{
     ast::parsed::{Expr, Path, Pattern, TypeHint},
     ast::Attribute,
-    lexer::{Span, Located},
-    sym::{FunctionId, ScopeId, UserTypeId, VariableId, ExtensionId},
+    lexer::{Located, Span},
+    sym::{ExtensionId, FunctionId, ScopeId, UserTypeId, VariableId},
 };
 
 pub struct DeclaredStmt {

@@ -9,12 +9,9 @@ use crate::{
     ast::{
         checked::{
             ArrayPattern, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt,
-            IrrefutablePattern,
+            IrrefutablePattern, RestPattern, Symbol,
         },
         parsed::RangePattern,
-    },
-    ast::{
-        checked::{RestPattern, Symbol},
         UnaryOp,
     },
     lexer::Span,
@@ -49,7 +46,7 @@ impl State {
     pub fn fill_generics(&self, scopes: &Scopes, ty: &mut Type) {
         ty.fill_func_template(scopes, &self.func);
 
-        if let Some(inst) = self.inst.as_ref().and_then(|inst| inst.as_user_type()) {
+        if let Some(inst) = self.inst.as_ref().and_then(|inst| inst.as_user()) {
             ty.fill_struct_templates(scopes, inst);
         }
     }
@@ -141,7 +138,7 @@ impl TypeGen {
 
             definitions.emit("};");
 
-            let ty = Type::UserType(ut.clone().into());
+            let ty = Type::User(ut.clone().into());
             if let Some(sizes) = self.arrays.remove(&ty) {
                 for size in sizes {
                     self.emit_array(scopes, buffer, Some(&mut definitions), &ty, size);
@@ -228,7 +225,7 @@ impl TypeGen {
                 ty = inner.0;
             }
 
-            if let Type::UserType(data) = ty {
+            if let Type::User(data) = ty {
                 if !data.ty_args.is_empty() {
                     Self::get_depencencies(scopes, (*data).clone(), result);
                 }
@@ -344,7 +341,7 @@ impl Buffer {
                 }
                 self.emit_generic_mangled_name(scopes, id);
             }
-            Type::UserType(ut) => match &scopes.get(ut.id).data {
+            Type::User(ut) => match &scopes.get(ut.id).data {
                 UserTypeData::Struct { .. } | UserTypeData::Union(_) => {
                     if is_opt_ptr(scopes, id) {
                         self.emit_type(scopes, &ut.ty_args[0], tg);
@@ -415,7 +412,7 @@ impl Buffer {
                 self.emit_generic_mangled_name(scopes, inner);
             }
             Type::FnPtr(f) => self.emit_fnptr_name(scopes, f),
-            Type::UserType(ut) => {
+            Type::User(ut) => {
                 self.emit_type_name(scopes, ut);
             }
             Type::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
@@ -1062,7 +1059,7 @@ impl Codegen {
                 let tmp = tmpbuf!(self, state, |tmp| {
                     let arr = state.tmpvar();
                     let len = exprs.len();
-                    let ut = (**expr.ty.as_user_type().unwrap()).clone();
+                    let ut = (**expr.ty.as_user().unwrap()).clone();
                     let inner = &ut.ty_args[0];
 
                     self.emit_type(scopes, inner);
@@ -1105,7 +1102,7 @@ impl Codegen {
             }
             CheckedExprData::VecWithInit { init, count } => {
                 let tmp = tmpbuf!(self, state, |tmp| {
-                    let ut = (**expr.ty.as_user_type().unwrap()).clone();
+                    let ut = (**expr.ty.as_user().unwrap()).clone();
                     let inner = &ut.ty_args[0];
                     let len = state.tmpvar();
                     self.emit_type(scopes, &count.ty);
@@ -1140,7 +1137,7 @@ impl Codegen {
             }
             CheckedExprData::Set(exprs) => {
                 let tmp = tmpbuf!(self, state, |tmp| {
-                    let ut = (**expr.ty.as_user_type().unwrap()).clone();
+                    let ut = (**expr.ty.as_user().unwrap()).clone();
                     let body = scopes.get(ut.id).body_scope;
                     let with_capacity = State::new(
                         GenericFunc::new(
@@ -1173,7 +1170,7 @@ impl Codegen {
             }
             CheckedExprData::Map(exprs) => {
                 let tmp = tmpbuf!(self, state, |tmp| {
-                    let ut = (**expr.ty.as_user_type().unwrap()).clone();
+                    let ut = (**expr.ty.as_user().unwrap()).clone();
                     let body = scopes.get(ut.id).body_scope;
                     let with_capacity = State::new(
                         GenericFunc::new(
@@ -1272,7 +1269,7 @@ impl Codegen {
                     self.buffer.emit("{");
                     if let Some((name, union)) = variant.zip(
                         expr.ty
-                            .as_user_type()
+                            .as_user()
                             .and_then(|ut| scopes.get(ut.id).data.as_union()),
                     ) {
                         if !union.is_unsafe
@@ -1424,7 +1421,7 @@ impl Codegen {
                     let next_state =
                         State::new(GenericFunc::new(next, vec![]), Some(iter_ty.clone()));
                     let mut next_ty = scopes.get(next).ret.clone();
-                    if let Some(ut) = iter_ty.as_user_type() {
+                    if let Some(ut) = iter_ty.as_user() {
                         next_ty.fill_struct_templates(scopes, ut);
                     }
 
@@ -1631,7 +1628,7 @@ impl Codegen {
                     self.buffer.emit(format!("if ({tmp_name} == NULL) {{",));
                 } else {
                     let tag = ty_base
-                        .as_user_type()
+                        .as_user()
                         .and_then(|ut| scopes.get(ut.id).data.as_union())
                         .and_then(|union| union.variant_tag(variant))
                         .unwrap();
@@ -1871,7 +1868,7 @@ impl Codegen {
         };
 
         if let Some(f) = ty
-            .as_user_type()
+            .as_user()
             .and_then(|ut| search(scopes.get(ut.id).body_scope))
         {
             return Some(f);

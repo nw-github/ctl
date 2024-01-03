@@ -445,13 +445,13 @@ impl Scopes {
     }
 
     pub fn this_type_of(&self, id: UserTypeId) -> Type {
-        Type::UserType(
+        Type::User(
             GenericUserType::new(
                 id,
                 self.get(id)
                     .type_params
                     .iter()
-                    .map(|&id| Type::UserType(GenericUserType::new(id, vec![]).into()))
+                    .map(|&id| Type::User(GenericUserType::new(id, vec![]).into()))
                     .collect(),
             )
             .into(),
@@ -557,14 +557,14 @@ impl Scopes {
 
     pub fn as_option_inner<'a>(&self, ty: &'a Type) -> Option<&'a Type> {
         self.get_option_id().and_then(|opt| {
-            ty.as_user_type()
+            ty.as_user()
                 .filter(|ut| ut.id == opt)
                 .map(|ut| &ut.ty_args[0])
         })
     }
 
     pub fn make_lang_type(&self, name: &str, ty_args: Vec<Type>) -> Option<Type> {
-        Some(Type::UserType(
+        Some(Type::User(
             GenericUserType::new(self.lang_types.get(name).copied()?, ty_args).into(),
         ))
     }

@@ -748,7 +748,10 @@ impl<'a> Parser<'a> {
             (false, self.while_expr(token.span))
         } else if let Some(token) = self.advance_if_kind(Token::Loop) {
             let expr = self.loop_expr(token.span);
-            (matches!(&expr.data, ExprData::Loop { do_while: true, .. }), expr)
+            (
+                matches!(&expr.data, ExprData::Loop { do_while: true, .. }),
+                expr,
+            )
         } else if let Some(token) = self.advance_if_kind(Token::For) {
             (false, self.for_expr(token.span))
         } else if let Some(token) = self.advance_if_kind(Token::Match) {

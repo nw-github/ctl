@@ -36,12 +36,11 @@ impl GenericFunc {
                     self.infer_type_args(&src.ret, &target.ret, scopes);
                     break;
                 }
-                (Type::UserType(src), target) => {
-                    if let Some(t) = target.as_user_type() {
+                (Type::User(src), target) => {
+                    if let Some(t) = target.as_user() {
                         if src.id != t.id {
-                            if let Some(inner) = scopes
-                                .as_option_inner(target)
-                                .and_then(|i| i.as_user_type())
+                            if let Some(inner) =
+                                scopes.as_option_inner(target).and_then(|i| i.as_user())
                             {
                                 for (src, target) in src.ty_args.iter().zip(inner.ty_args.iter()) {
                                     self.infer_type_args(src, target, scopes);
@@ -149,7 +148,7 @@ pub enum Type {
     Bool,
     Char,
     FnPtr(Box<FnPtr>),
-    UserType(Box<GenericUserType>),
+    User(Box<GenericUserType>),
     Ptr(Box<Type>),
     MutPtr(Box<Type>),
     Array(Box<(Type, usize)>),
@@ -170,7 +169,7 @@ impl PartialEq for Type {
             (Self::Uint(l0), Self::Uint(r0)) => l0 == r0,
             (Self::CInt(l0), Self::CInt(r0)) => l0 == r0,
             (Self::CUint(l0), Self::CUint(r0)) => l0 == r0,
-            (Self::UserType(l0), Self::UserType(r0)) => l0 == r0,
+            (Self::User(l0), Self::User(r0)) => l0 == r0,
             (Self::Ptr(l0), Self::Ptr(r0)) => l0 == r0,
             (Self::MutPtr(l0), Self::MutPtr(r0)) => l0 == r0,
             (Self::Array(l0), Self::Array(r0)) => l0 == r0,
@@ -188,7 +187,7 @@ impl std::hash::Hash for Type {
             Self::CInt(l0) => l0.hash(state),
             Self::CUint(l0) => l0.hash(state),
             Self::FnPtr(l0) => l0.hash(state),
-            Self::UserType(l0) => l0.hash(state),
+            Self::User(l0) => l0.hash(state),
             Self::Ptr(l0) => l0.hash(state),
             Self::MutPtr(l0) => l0.hash(state),
             Self::Array(l0) => l0.hash(state),
@@ -261,7 +260,7 @@ impl Type {
                         | Type::CInt(_)
                         | Type::CUint(_)
                         | Type::Char
-                ) || matches!(self, Type::UserType(ut) if scopes.get(ut.id).data.is_enum())
+                ) || matches!(self, Type::User(ut) if scopes.get(ut.id).data.is_enum())
             }
             BinaryOp::LogicalOr | BinaryOp::LogicalAnd => {
                 matches!(self, Type::Bool)
@@ -313,7 +312,7 @@ impl Type {
             match src {
                 Type::Array(t) => src = &mut t.0,
                 Type::Ptr(t) | Type::MutPtr(t) => src = t,
-                Type::UserType(ty) => {
+                Type::User(ty) => {
                     if !ty.ty_args.is_empty() {
                         for ty in ty.ty_args.iter_mut() {
                             ty.fill_struct_templates(scopes, inst);
@@ -347,7 +346,7 @@ impl Type {
             match src {
                 Type::Array(t) => src = &mut t.0,
                 Type::Ptr(t) | Type::MutPtr(t) => src = t,
-                Type::UserType(ty) => {
+                Type::User(ty) => {
                     if !ty.ty_args.is_empty() {
                         for ty in ty.ty_args.iter_mut() {
                             ty.fill_func_template(scopes, func);
@@ -379,7 +378,7 @@ impl Type {
             match src {
                 Type::Array(t) => src = &mut t.0,
                 Type::Ptr(t) | Type::MutPtr(t) => src = t,
-                Type::UserType(ty) => {
+                Type::User(ty) => {
                     for ty in ty.ty_args.iter_mut() {
                         ty.fill_this(this);
                     }
@@ -429,7 +428,7 @@ impl Type {
                 }
                 format!("{result}) -> {}", f.ret.name(scopes))
             }
-            Type::UserType(ty) => ty.name(scopes),
+            Type::User(ty) => ty.name(scopes),
             Type::Array(inner) => format!("[{}; {}]", inner.0.name(scopes), inner.1),
             Type::Isize => "isize".into(),
             Type::Usize => "usize".into(),
@@ -572,7 +571,7 @@ impl Type {
 
         let search = |this: Option<&GenericUserType>, impls: &[Type]| {
             impls.iter().any(|tr| {
-                let mut tr = tr.as_user_type().unwrap().clone();
+                let mut tr = tr.as_user().unwrap().clone();
                 if let Some(this) = this {
                     for ut in tr.ty_args.iter_mut() {
                         ut.fill_struct_templates(scopes, this);
@@ -584,7 +583,7 @@ impl Type {
         };
 
         if self
-            .as_user_type()
+            .as_user()
             .map_or(false, |this| search(Some(this), &scopes.get(this.id).impls))
         {
             return true;
@@ -592,7 +591,7 @@ impl Type {
 
         scopes
             .extensions_in_scope_for(self)
-            .any(|ext| search(self.as_user_type().map(|ty| &**ty), &ext.impls))
+            .any(|ext| search(self.as_user().map(|ty| &**ty), &ext.impls))
     }
 
     pub fn get_trait_impl<'a, 'b>(
@@ -606,12 +605,12 @@ impl Type {
         let search = |impls: &'a [Type]| {
             impls
                 .iter()
-                .flat_map(|i| i.as_user_type().map(|ut| &**ut))
+                .flat_map(|i| i.as_user().map(|ut| &**ut))
                 .find(|ut| ut.id == id)
         };
 
         if let Some(ty) = self
-            .as_user_type()
+            .as_user()
             .and_then(|ut| search(&scopes.get(ut.id).impls))
         {
             return Some(ty);
@@ -639,10 +638,10 @@ impl Type {
                 })
         };
 
-        if let Some(ut) = self.as_user_type().map(|ut| scopes.get(ut.id)) {
+        if let Some(ut) = self.as_user().map(|ut| scopes.get(ut.id)) {
             let src_scope = ut.scope;
             if ut.data.is_template() {
-                for ut in ut.impls.iter().map(|ut| ut.as_user_type().unwrap()) {
+                for ut in ut.impls.iter().map(|ut| ut.as_user().unwrap()) {
                     if let Some(func) = scopes.find_in(member, scopes.get(ut.id).body_scope) {
                         return Some((Some((**ut).clone()), func, src_scope));
                     }
