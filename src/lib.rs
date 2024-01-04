@@ -90,6 +90,10 @@ impl Error {
         )
     }
 
+    pub fn wildcard_import(span: Span) -> Self {
+        Self::new("wildcard import is only valid with modules", span)
+    }
+
     pub fn is_unsafe(span: Span) -> Self {
         Self::new("this operation is unsafe", span)
     }

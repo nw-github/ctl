@@ -175,6 +175,13 @@ impl TypeChecker {
     ) -> DeclaredStmt {
         let data = match data {
             StmtData::Module { public, name, body } => {
+                if scopes.find_module_in(&name, scopes.current).is_some() {
+                    self.error(Error::new(
+                        format!("redeclaration of module '{name}'"),
+                        span,
+                    ))
+                }
+
                 scopes.enter(ScopeKind::Module(name, Vec::new()), public, |scopes| {
                     // FIXME: only allow core and std to define these
                     if attrs.iter().any(|attr| attr.name.data == "autouse") {
@@ -3563,10 +3570,7 @@ impl TypeChecker {
                 if !all {
                     scopes.current().types.insert(Vis { id: ut.id, public });
                 } else if !self.decl {
-                    self.error(Error::new(
-                        "wildcard import is only valid with modules",
-                        span,
-                    ))
+                    self.error(Error::wildcard_import(span))
                 }
             }
             ResolvedPath::Func(func) => {
@@ -3576,10 +3580,7 @@ impl TypeChecker {
                         public,
                     });
                 } else if !self.decl {
-                    self.error(Error::new(
-                        "wildcard import is only valid with modules",
-                        span,
-                    ))
+                    self.error(Error::wildcard_import(span))
                 }
             }
             ResolvedPath::Var(id) => {
@@ -3593,20 +3594,14 @@ impl TypeChecker {
                 if !all {
                     scopes.current().vars.insert(Vis { id, public });
                 } else if !self.decl {
-                    self.error(Error::new(
-                        "wildcard import is only valid with modules",
-                        span,
-                    ))
+                    self.error(Error::wildcard_import(span))
                 }
             }
             ResolvedPath::Extension(id) => {
                 if !all {
                     scopes.current().exts.insert(Vis { id, public });
                 } else if !self.decl {
-                    self.error(Error::new(
-                        "wildcard import is only valid with modules",
-                        span,
-                    ))
+                    self.error(Error::wildcard_import(span))
                 }
             }
             ResolvedPath::Module(id) => {
