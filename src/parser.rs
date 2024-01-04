@@ -636,7 +636,7 @@ impl<'a> Parser<'a> {
             | Token::ShlAssign
             | Token::ShrAssign
             | Token::NoneCoalesceAssign => {
-                let right = self.precedence(op.data.precedence());
+                let right = self.precedence(Precedence::Min);
                 Expr::new(
                     left.span.extended_to(right.span),
                     ExprData::Assign {
