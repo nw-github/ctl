@@ -17,14 +17,8 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
             eprintln!("{tabs}StmtExpr");
             print_expr(expr, src, indent + 1);
         }
-        StmtData::Let {
-            ty,
-            value,
-            mutable,
-            patt,
-        } => {
+        StmtData::Let { ty, value, patt } => {
             eprint!("{tabs}Let[{patt:?}]");
-            print_bool!(mutable);
             eprintln!();
 
             eprintln!("{tabs}Type: {ty:?}");
@@ -102,6 +96,33 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
                 }
             }
 
+            for f in functions {
+                print_fn(f, src, indent + 1);
+            }
+        }
+        StmtData::Extension {
+            public,
+            name,
+            ty,
+            type_params,
+            impls,
+            functions,
+        } => {
+            eprint!("{tabs}Extension[{name}, for={ty:?}]");
+            print_bool!(public);
+            eprintln!();
+
+            let plus_1 = INDENT.repeat(indent + 1);
+            if !type_params.is_empty() {
+                eprintln!("{tabs}Type Params:");
+                for (name, path) in type_params {
+                    eprintln!("{plus_1}{name}: {path:?}");
+                }
+            }
+
+            print_impls(indent, src, impls);
+
+            eprintln!("{tabs}Functions:");
             for f in functions {
                 print_fn(f, src, indent + 1);
             }
@@ -324,8 +345,8 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
             eprintln!("{tabs}Yield");
             print_expr(expr, src, indent + 1);
         }
-        ExprData::YieldOrReturn(expr) => {
-            eprintln!("{tabs}YieldOrReturn");
+        ExprData::Tail(expr) => {
+            eprintln!("{tabs}Tail");
             print_expr(expr, src, indent + 1);
         }
         ExprData::Break(expr) => {
@@ -341,14 +362,8 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
         ExprData::None => {
             eprintln!("{tabs}None");
         }
-        ExprData::For {
-            var,
-            mutable,
-            iter,
-            body,
-        } => {
-            eprintln!("{tabs}For[{var}]");
-            print_bool!(mutable);
+        ExprData::For { patt, iter, body } => {
+            eprintln!("{tabs}For[{patt:?}]");
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}In: ");
             print_expr(iter, src, indent + 2);
@@ -495,7 +510,7 @@ fn print_impls(indent: usize, src: &str, impls: &[ImplBlock]) {
     let tabs = INDENT.repeat(indent);
     let plus_1 = INDENT.repeat(indent + 1);
     if !impls.is_empty() {
-        eprintln!("{tabs}New Impls:");
+        eprintln!("{tabs}Impls:");
         for imp in impls {
             if !imp.type_params.is_empty() {
                 eprintln!("{tabs}Type Params:");

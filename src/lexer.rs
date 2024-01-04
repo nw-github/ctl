@@ -1,8 +1,10 @@
 use std::borrow::Cow;
 
+use enum_as_inner::EnumAsInner;
+
 use crate::{THIS_PARAM, THIS_TYPE};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, EnumAsInner)]
 pub enum Token<'a> {
     LCurly,
     RCurly,
@@ -83,6 +85,7 @@ pub enum Token<'a> {
     As,
     While,
     Match,
+    Extension,
     Extern,
     Mod,
     Async,
@@ -234,7 +237,7 @@ impl Span {
     }
 }
 
-#[derive(Debug, Clone, derive_more::Constructor)]
+#[derive(Clone, derive_more::Constructor)]
 pub struct Located<T> {
     pub span: Span,
     pub data: T,
@@ -243,7 +246,13 @@ pub struct Located<T> {
 impl<T> Located<T> {
     pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Located<U> {
         Located::new(self.span, f(self.data))
-    } 
+    }
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for Located<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.data.fmt(f)
+    }
 }
 
 pub struct Lexer<'a> {
@@ -472,6 +481,7 @@ impl<'a> Lexer<'a> {
             "dyn" => Token::Dyn,
             "else" => Token::Else,
             "enum" => Token::Enum,
+            "extension" => Token::Extension,
             "extern" => Token::Extern,
             "false" => Token::False,
             "fn" => Token::Fn,

@@ -26,7 +26,7 @@ pub struct Vec<T> {
             mem::copy(
                 dst: self.as_raw_mut().as_mut_ptr(),
                 src: span.as_raw().as_ptr(),
-                num: span.len()
+                num: span.len(),
             );
             self.set_len(span.len());
         }
@@ -92,7 +92,7 @@ pub struct Vec<T> {
         unsafe mem::copy(
             dst: this.ptr.add(this.len).as_mut_ptr(),
             src: rhs.ptr.as_ptr(),
-            num: rhs.len
+            num: rhs.len,
         );
 
         this.len += mem::replace(&mut rhs.len, 0);
@@ -122,7 +122,7 @@ pub struct Vec<T> {
             unsafe mem::move(
                 dst: this.ptr.add(idx + 1).as_mut_ptr(), 
                 src: src.as_ptr(), 
-                num: this.len - idx
+                num: this.len - idx,
             );
         }
 
@@ -142,7 +142,7 @@ pub struct Vec<T> {
                 mem::move(
                     dst: ptr.as_mut_ptr(),
                     src: ptr.add(1).as_ptr(),
-                    num: this.len - idx
+                    num: this.len - idx,
                 );
             }
 

@@ -352,6 +352,10 @@ repository:
         name: keyword.declaration.struct.ctl storage.type.ctl
         match: \b(struct)\b
       -
+        comment: extension keyword
+        name: keyword.declaration.extension.ctl storage.type.ctl
+        match: \b(extension)\b
+      -
         comment: storage modifiers
         name: storage.modifier.ctl
         match: \b(static|shared)\b

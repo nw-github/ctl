@@ -3,7 +3,9 @@ mod codegen;
 mod lexer;
 mod parser;
 mod pretty;
+mod sym;
 mod typecheck;
+mod typeid;
 
 use std::{
     ffi::OsStr,
@@ -53,6 +55,43 @@ impl Error {
             self.span.loc.col,
             self.diagnostic
         )
+    }
+
+    pub fn type_mismatch(expected: &str, received: &str, span: Span) -> Self {
+        Self::new(
+            format!("type mismatch: expected type '{expected}', got '{received}'"),
+            span,
+        )
+    }
+
+    pub fn private_member(ty: &str, member: &str, span: Span) -> Self {
+        Self::new(
+            format!("cannot access private member '{member}' of type '{ty}'"),
+            span,
+        )
+    }
+
+    pub fn no_member(ty: &str, member: &str, span: Span) -> Self {
+        Self::new(format!("type '{ty}' has no member '{member}'"), span)
+    }
+
+    pub fn no_symbol(symbol: &str, span: Span) -> Self {
+        Self::new(format!("no symbol '{symbol}' found in this module"), span)
+    }
+
+    pub fn no_lang_item(name: &str, span: Span) -> Self {
+        Self::new(format!("missing language item: '{name}'"), span)
+    }
+
+    pub fn doesnt_implement(ty: &str, trait_name: &str, span: Span) -> Self {
+        Self::new(
+            format!("type '{ty}' does not implement '{trait_name}'"),
+            span,
+        )
+    }
+
+    pub fn is_unsafe(span: Span) -> Self {
+        Self::new("this operation is unsafe", span)
     }
 }
 

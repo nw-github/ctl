@@ -1,8 +1,8 @@
 use crate::{
     ast::parsed::{Expr, Path, Pattern, TypeHint},
     ast::Attribute,
-    lexer::Span,
-    typecheck::{FunctionId, ScopeId, UserTypeId, VariableId},
+    lexer::{Located, Span},
+    sym::{ExtensionId, FunctionId, ScopeId, UserTypeId, VariableId},
 };
 
 pub struct DeclaredStmt {
@@ -31,21 +31,20 @@ pub enum DeclaredStmtData {
         all: bool,
     },
     Let {
-        patt: Pattern,
+        patt: Located<Pattern>,
         ty: Option<TypeHint>,
-        mutable: bool,
         value: Option<Expr>,
     },
     Fn(DeclaredFn),
     Struct {
         id: UserTypeId,
-        impls: Vec<DeclaredImplBlock>,
+        impl_blocks: Vec<DeclaredImplBlock>,
         functions: Vec<DeclaredFn>,
         init: DeclaredFn,
     },
     Union {
         id: UserTypeId,
-        impls: Vec<DeclaredImplBlock>,
+        impl_blocks: Vec<DeclaredImplBlock>,
         functions: Vec<DeclaredFn>,
         member_cons: Vec<DeclaredFn>,
     },
@@ -55,8 +54,13 @@ pub enum DeclaredStmtData {
     },
     Enum {
         id: UserTypeId,
-        impls: Vec<DeclaredImplBlock>,
-        variants: Vec<(String, Option<Expr>)>,
+        impl_blocks: Vec<DeclaredImplBlock>,
+        variants: Vec<(VariableId, Option<Expr>)>,
+        functions: Vec<DeclaredFn>,
+    },
+    Extension {
+        id: ExtensionId,
+        impl_blocks: Vec<DeclaredImplBlock>,
         functions: Vec<DeclaredFn>,
     },
     Static {

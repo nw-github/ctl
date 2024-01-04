@@ -1,7 +1,7 @@
 use core::mem;
 
-pub unsafe fn offset<U>(ptr: *U, count: usize): *U {
-    unsafe ((ptr as usize) + count * mem::size_of::<U>()) as *U
+pub unsafe fn offset<T>(ptr: *T, count: usize): *T {
+    unsafe ((ptr as usize) + count * mem::size_of::<T>()) as *T
 }
 
 pub unsafe fn offset_mut<T>(ptr: *mut T, count: usize): *mut T {
@@ -91,8 +91,6 @@ pub struct RawMut<T> {
 
     pub unsafe fn write(this, t: T) {
         unsafe mem::copy(dst: this.as_mut_ptr(), src: &t, num: 1);
-
-        // FIXME: when destructors are implemented, we will need a way to forget `t`
     }
 
     pub unsafe fn read(this): T {

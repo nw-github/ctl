@@ -18,9 +18,8 @@ pub enum StmtData {
         all: bool,
     },
     Let {
-        patt: Pattern,
+        patt: Located<Pattern>,
         ty: Option<TypeHint>,
-        mutable: bool,
         value: Option<Expr>,
     },
     Fn(Fn),
@@ -43,6 +42,14 @@ pub enum StmtData {
         name: Located<String>,
         impls: Vec<ImplBlock>,
         variants: Vec<(String, Option<Expr>)>,
+        functions: Vec<Fn>,
+    },
+    Extension {
+        public: bool,
+        name: String,
+        ty: TypeHint,
+        type_params: Vec<(String, Vec<Located<Path>>)>,
+        impls: Vec<ImplBlock>,
         functions: Vec<Fn>,
     },
     Static {
@@ -70,7 +77,7 @@ pub enum ExprData {
     },
     Is {
         expr: Box<Expr>,
-        pattern: Pattern,
+        pattern: Located<Pattern>,
     },
     As {
         expr: Box<Expr>,
@@ -129,14 +136,13 @@ pub enum ExprData {
         do_while: bool,
     },
     For {
-        var: String,
-        mutable: bool,
+        patt: Located<Pattern>,
         iter: Box<Expr>,
         body: Vec<Stmt>,
     },
     Match {
         expr: Box<Expr>,
-        body: Vec<(Pattern, Expr)>,
+        body: Vec<(Located<Pattern>, Expr)>,
     },
     Member {
         source: Box<Expr>,
@@ -149,7 +155,7 @@ pub enum ExprData {
     },
     Return(Box<Expr>),
     Yield(Box<Expr>),
-    YieldOrReturn(Box<Expr>),
+    Tail(Box<Expr>),
     Break(Box<Expr>),
     Unsafe(Box<Expr>),
     Range {
@@ -164,18 +170,6 @@ pub enum ExprData {
         body: Box<Expr>,
     },
     Error,
-}
-
-impl ExprData {
-    pub fn is_block_expr(&self) -> bool {
-        matches!(
-            self,
-            ExprData::If { .. }
-                | ExprData::For { .. }
-                | ExprData::Block(_)
-                | ExprData::Match { .. }
-        ) || matches!(self, ExprData::Loop { do_while, .. } if !do_while )
-    }
 }
 
 #[derive(Clone, enum_as_inner::EnumAsInner)]
@@ -240,40 +234,50 @@ impl std::fmt::Debug for Path {
 pub struct Destructure {
     pub name: Located<String>,
     pub mutable: bool,
-    pub pattern: Option<Pattern>,
+    pub pattern: Option<Located<Pattern>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct IntPattern {
+    pub negative: bool,
+    pub base: u8,
+    pub value: String,
+    pub width: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RangePattern<T> {
+    pub inclusive: bool,
+    pub start: T,
+    pub end: T,
 }
 
 #[derive(Debug, Clone)]
 pub enum Pattern {
     // x is ::core::opt::Option::Some(mut y)
-    PathWithBindings {
+    TupleLike {
         path: Located<Path>,
-        binding: (bool, String), // Box<Pattern>
+        subpatterns: Vec<Located<Pattern>>,
     },
     // x is ::core::opt::Option::None
     // x is y
-    Path(Located<Path>),
+    Path(Path),
     // x is mut y
-    MutBinding(Located<String>),
+    MutBinding(String),
     // x is ?mut y
-    Option(bool, Located<String>),
+    Option(Box<Pattern>),
     // x is null
-    Null(Span),
+    Null,
     // let {x, y} = z;
-    StructDestructure(Located<Vec<Destructure>>),
-}
-
-impl Pattern {
-    pub fn span(&self) -> &Span {
-        match self {
-            Pattern::PathWithBindings { path, .. } => &path.span,
-            Pattern::Path(path) => &path.span,
-            Pattern::MutBinding(ident) => &ident.span,
-            Pattern::Option(_, ident) => &ident.span,
-            Pattern::Null(span) => span,
-            Pattern::StructDestructure(stuff) => &stuff.span,
-        }
-    }
+    StructDestructure(Vec<Destructure>),
+    Int(IntPattern),
+    IntRange(RangePattern<IntPattern>),
+    String(String),
+    Char(char),
+    CharRange(RangePattern<char>),
+    Array(Vec<Located<Pattern>>),
+    Rest(Option<(bool, String)>),
+    Error,
 }
 
 #[derive(Clone)]

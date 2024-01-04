@@ -1,31 +1,39 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{hash_map::Entry, HashMap, HashSet},
+    fmt::Display,
+};
 
 use indexmap::IndexMap;
 
 use crate::{
-    ast::checked::{CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, IrrefutablePattern},
-    ast::UnaryOp,
-    lexer::Span,
-    typecheck::{
-        FnPtr, GenericFunc, GenericUserType, Member, ScopeId, ScopeKind, Scopes, Symbol, TypeId,
-        UserTypeData, VariableId,
+    ast::{
+        checked::{
+            ArrayPattern, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt,
+            IrrefutablePattern, RestPattern, Symbol,
+        },
+        parsed::RangePattern,
+        UnaryOp,
     },
+    lexer::Span,
+    sym::{FunctionId, Member, ScopeId, ScopeKind, Scopes, UserTypeData, UserTypeId, VariableId},
+    typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type},
     Error,
 };
 
 const UNION_TAG_NAME: &str = "$tag";
+const ARRAY_DATA_NAME: &str = "$data";
 
 #[derive(PartialEq, Eq, Clone)]
 struct State {
     func: GenericFunc,
-    inst: Option<TypeId>,
+    inst: Option<Type>,
     tmpvar: usize,
     emitted_names: HashMap<String, VariableId>,
     renames: HashMap<VariableId, String>,
 }
 
 impl State {
-    pub fn new(func: GenericFunc, inst: Option<TypeId>) -> Self {
+    pub fn new(func: GenericFunc, inst: Option<Type>) -> Self {
         Self {
             func,
             inst,
@@ -35,10 +43,10 @@ impl State {
         }
     }
 
-    pub fn fill_generics(&self, scopes: &Scopes, ty: &mut TypeId) {
+    pub fn fill_generics(&self, scopes: &Scopes, ty: &mut Type) {
         ty.fill_func_template(scopes, &self.func);
 
-        if let Some(inst) = self.inst.as_ref().and_then(|inst| inst.as_user_type()) {
+        if let Some(inst) = self.inst.as_ref().and_then(|inst| inst.as_user()) {
             ty.fill_struct_templates(scopes, inst);
         }
     }
@@ -59,8 +67,8 @@ impl std::hash::Hash for State {
 
 struct TypeGen {
     structs: Option<HashSet<GenericUserType>>,
-    ints: HashSet<(bool, u32)>,
     fnptrs: Option<HashSet<FnPtr>>,
+    arrays: HashMap<Type, HashSet<usize>>,
 }
 
 impl TypeGen {
@@ -88,8 +96,9 @@ impl TypeGen {
             definitions.emit(");");
         }
 
+        let mut emitted_arrays = HashSet::new();
         for ut in Self::get_struct_order(scopes, &structs)? {
-            let union = scopes.get_user_type(ut.id).data.as_union();
+            let union = scopes.get(ut.id).data.as_union();
             let unsafe_union = union.as_ref().map_or(false, |union| union.is_unsafe);
             if unsafe_union {
                 buffer.emit("typedef union ");
@@ -107,7 +116,7 @@ impl TypeGen {
             definitions.emit_type_name(scopes, ut);
             definitions.emit("{");
 
-            let members = scopes.get_user_type(ut.id).members().unwrap();
+            let members = scopes.get(ut.id).members().unwrap();
             if let Some(union) = union.filter(|_| !unsafe_union) {
                 definitions.emit_type(scopes, &union.tag_type(), self);
                 definitions.emit(format!(" {UNION_TAG_NAME};"));
@@ -128,13 +137,22 @@ impl TypeGen {
             }
 
             definitions.emit("};");
+
+            let ty = Type::User(ut.clone().into());
+            if let Some(sizes) = self.arrays.remove(&ty) {
+                for size in sizes {
+                    self.emit_array(scopes, buffer, Some(&mut definitions), &ty, size);
+                }
+                emitted_arrays.insert(ty);
+            }
         }
 
-        for &(signed, bits) in self.ints.iter() {
-            if signed {
-                buffer.emit(format!("typedef SINT({bits}) i{bits};"));
-            } else {
-                buffer.emit(format!("typedef UINT({bits}) u{bits};"));
+        for (ty, sizes) in std::mem::take(&mut self.arrays)
+            .into_iter()
+            .filter(|(ty, _)| !emitted_arrays.contains(ty))
+        {
+            for size in sizes {
+                self.emit_array(scopes, buffer, None, &ty, size);
             }
         }
 
@@ -199,15 +217,15 @@ impl TypeGen {
         }
 
         let mut deps = Vec::new();
-        for member in scopes.get_user_type(ut.id).members().unwrap().iter() {
+        for member in scopes.get(ut.id).members().unwrap().iter() {
             let mut ty = member.ty.clone();
             ty.fill_struct_templates(scopes, &ut);
 
-            while let TypeId::Array(inner) = ty {
+            while let Type::Array(inner) = ty {
                 ty = inner.0;
             }
 
-            if let TypeId::UserType(data) = ty {
+            if let Type::User(data) = ty {
                 if !data.ty_args.is_empty() {
                     Self::get_depencencies(scopes, (*data).clone(), result);
                 }
@@ -234,14 +252,36 @@ impl TypeGen {
             buffer.emit(";");
         }
     }
+
+    fn emit_array(
+        &mut self,
+        scopes: &Scopes,
+        typedef: &mut Buffer,
+        defs: Option<&mut Buffer>,
+        ty: &Type,
+        size: usize,
+    ) {
+        typedef.emit("typedef struct ");
+        typedef.emit_array_struct_name(scopes, ty, size);
+        typedef.emit(" ");
+        typedef.emit_array_struct_name(scopes, ty, size);
+        typedef.emit(";");
+
+        let defs = defs.unwrap_or(typedef);
+        defs.emit("struct ");
+        defs.emit_array_struct_name(scopes, ty, size);
+        defs.emit(" { ");
+        defs.emit_type(scopes, ty, self);
+        defs.emit(format!(" {ARRAY_DATA_NAME}[{size}]; }};"));
+    }
 }
 
 impl Default for TypeGen {
     fn default() -> Self {
         Self {
             structs: Some(HashSet::new()),
-            ints: HashSet::new(),
             fnptrs: Some(HashSet::new()),
+            arrays: HashMap::new(),
         }
     }
 }
@@ -254,48 +294,54 @@ impl Buffer {
         self.0.push_str(source.as_ref());
     }
 
-    fn emit_type(&mut self, scopes: &Scopes, id: &TypeId, tg: &mut TypeGen) {
+    fn emit_type(&mut self, scopes: &Scopes, id: &Type, tg: &mut TypeGen) {
         match id {
-            TypeId::Void | TypeId::Never | TypeId::CVoid => self.emit("void"),
-            TypeId::Int(bits) | TypeId::Uint(bits) => {
-                let signed = matches!(id, TypeId::Int(_));
-                tg.ints.insert((signed, *bits));
-                self.emit(format!("{}{bits}", if signed { "i" } else { "u" }));
+            Type::Void | Type::Never | Type::CVoid => self.emit("void"),
+            Type::Int(bits) | Type::Uint(bits) => {
+                let signed = matches!(id, Type::Int(_));
+                self.emit(format!("{}INT({bits})", if signed { "S" } else { "U" }));
             }
-            TypeId::CInt(ty) | TypeId::CUint(ty) => {
-                if matches!(id, TypeId::CUint(_)) {
+            Type::CInt(ty) | Type::CUint(ty) => {
+                if matches!(id, Type::CUint(_)) {
                     self.emit("unsigned ");
                 }
 
                 match ty {
-                    crate::typecheck::CInt::Char => self.emit("char"),
-                    crate::typecheck::CInt::Short => self.emit("short"),
-                    crate::typecheck::CInt::Int => self.emit("int"),
-                    crate::typecheck::CInt::Long => self.emit("long"),
-                    crate::typecheck::CInt::LongLong => self.emit("long long"),
+                    CInt::Char => self.emit("char"),
+                    CInt::Short => self.emit("short"),
+                    CInt::Int => self.emit("int"),
+                    CInt::Long => self.emit("long"),
+                    CInt::LongLong => self.emit("long long"),
                 }
             }
-            TypeId::Isize => self.emit("isize"),
-            TypeId::Usize => self.emit("usize"),
-            TypeId::F32 => self.emit("f32"),
-            TypeId::F64 => self.emit("f64"),
-            TypeId::Bool => self.emit("CTL_bool"),
-            TypeId::Char => self.emit("CTL_char"),
-            TypeId::Ptr(inner) => {
-                self.emit_type(scopes, inner, tg);
-                self.emit(" const*");
+            Type::Isize => self.emit("isize"),
+            Type::Usize => self.emit("usize"),
+            Type::F32 => self.emit("f32"),
+            Type::F64 => self.emit("f64"),
+            Type::Bool => self.emit("CTL_bool"),
+            Type::Char => self.emit("CTL_char"),
+            Type::Ptr(inner) | Type::MutPtr(inner) => {
+                if let Type::Array(value) = &**inner {
+                    self.emit_type(scopes, &value.0, tg);
+                    self.emit("/*");
+                    self.emit_type(scopes, inner, tg);
+                    self.emit("*/");
+                } else {
+                    self.emit_type(scopes, inner, tg);
+                }
+                if id.is_ptr() {
+                    self.emit(" const*");
+                } else {
+                    self.emit(" *");
+                }
             }
-            TypeId::MutPtr(inner) => {
-                self.emit_type(scopes, inner, tg);
-                self.emit(" *");
-            }
-            TypeId::FnPtr(f) => {
+            Type::FnPtr(f) => {
                 if let Some(fnptrs) = tg.fnptrs.as_mut() {
                     fnptrs.insert((**f).clone());
                 }
                 self.emit_generic_mangled_name(scopes, id);
             }
-            TypeId::UserType(ut) => match &scopes.get_user_type(ut.id).data {
+            Type::User(ut) => match &scopes.get(ut.id).data {
                 UserTypeData::Struct { .. } | UserTypeData::Union(_) => {
                     if is_opt_ptr(scopes, id) {
                         self.emit_type(scopes, &ut.ty_args[0], tg);
@@ -316,52 +362,62 @@ impl Buffer {
                     panic!("ICE: Trait type in emit_type");
                 }
             },
-            TypeId::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_type"),
-            TypeId::Array(_) => todo!(),
-            TypeId::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_type"),
+            Type::Array(data) => {
+                self.emit_generic_mangled_name(scopes, id);
+                match tg.arrays.entry(data.0.clone()) {
+                    Entry::Occupied(mut entry) => {
+                        entry.get_mut().insert(data.1);
+                    }
+                    Entry::Vacant(entry) => {
+                        entry.insert([data.1].into());
+                    }
+                }
+            }
+            Type::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_type"),
+            Type::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_type"),
         }
     }
 
-    fn emit_generic_mangled_name(&mut self, scopes: &Scopes, id: &TypeId) {
+    fn emit_generic_mangled_name(&mut self, scopes: &Scopes, id: &Type) {
         match id {
-            TypeId::Void => self.emit("void"),
-            TypeId::CVoid => self.emit("c_void"),
-            TypeId::Never => self.emit("never"),
-            TypeId::Int(bits) => self.emit(format!("i{bits}")),
-            TypeId::Uint(bits) => self.emit(format!("u{bits}")),
-            TypeId::CInt(ty) | TypeId::CUint(ty) => {
-                if matches!(id, TypeId::CUint(_)) {
+            Type::Void => self.emit("void"),
+            Type::CVoid => self.emit("c_void"),
+            Type::Never => self.emit("never"),
+            Type::Int(bits) => self.emit(format!("i{bits}")),
+            Type::Uint(bits) => self.emit(format!("u{bits}")),
+            Type::CInt(ty) | Type::CUint(ty) => {
+                if matches!(id, Type::CUint(_)) {
                     self.emit("u");
                 }
                 match ty {
-                    crate::typecheck::CInt::Char => self.emit("char"),
-                    crate::typecheck::CInt::Short => self.emit("short"),
-                    crate::typecheck::CInt::Int => self.emit("int"),
-                    crate::typecheck::CInt::Long => self.emit("long"),
-                    crate::typecheck::CInt::LongLong => self.emit("longlong"),
+                    CInt::Char => self.emit("char"),
+                    CInt::Short => self.emit("short"),
+                    CInt::Int => self.emit("int"),
+                    CInt::Long => self.emit("long"),
+                    CInt::LongLong => self.emit("longlong"),
                 }
             }
-            TypeId::Isize => self.emit("isize"),
-            TypeId::Usize => self.emit("usize"),
-            TypeId::F32 => self.emit("f32"),
-            TypeId::F64 => self.emit("f64"),
-            TypeId::Bool => self.emit("bool"),
-            TypeId::Char => self.emit("char"),
-            TypeId::Ptr(inner) => {
+            Type::Isize => self.emit("isize"),
+            Type::Usize => self.emit("usize"),
+            Type::F32 => self.emit("f32"),
+            Type::F64 => self.emit("f64"),
+            Type::Bool => self.emit("bool"),
+            Type::Char => self.emit("char"),
+            Type::Ptr(inner) => {
                 self.emit("ptr_");
                 self.emit_generic_mangled_name(scopes, inner);
             }
-            TypeId::MutPtr(inner) => {
+            Type::MutPtr(inner) => {
                 self.emit("mutptr_");
                 self.emit_generic_mangled_name(scopes, inner);
             }
-            TypeId::FnPtr(f) => self.emit_fnptr_name(scopes, f),
-            TypeId::UserType(ut) => {
+            Type::FnPtr(f) => self.emit_fnptr_name(scopes, f),
+            Type::User(ut) => {
                 self.emit_type_name(scopes, ut);
             }
-            TypeId::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
-            TypeId::Array(_) => todo!(),
-            TypeId::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_generic_mangled_name"),
+            Type::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
+            Type::Array(data) => self.emit_array_struct_name(scopes, &data.0, data.1),
+            Type::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_generic_mangled_name"),
         }
     }
 
@@ -377,7 +433,7 @@ impl Buffer {
     }
 
     fn emit_fn_name(&mut self, scopes: &Scopes, state: &State) {
-        let f = scopes.get_func(state.func.id);
+        let f = scopes.get(state.func.id);
         if !f.is_extern {
             if let Some(inst) = state.inst.as_ref() {
                 self.emit_generic_mangled_name(scopes, inst);
@@ -408,7 +464,7 @@ impl Buffer {
     }
 
     fn emit_type_name(&mut self, scopes: &Scopes, ut: &GenericUserType) {
-        let ty = scopes.get_user_type(ut.id);
+        let ty = scopes.get(ut.id);
         if ty.data.is_template() {
             panic!("ICE: Template type in emit_type_name");
         }
@@ -431,7 +487,7 @@ impl Buffer {
         is_prototype: bool,
         tg: &mut TypeGen,
     ) {
-        let f = scopes.get_func(state.func.id);
+        let f = scopes.get(state.func.id);
         let mut ret = f.ret.clone();
         state.fill_generics(scopes, &mut ret);
 
@@ -471,7 +527,7 @@ impl Buffer {
                     **scopes[f.body_scope]
                         .vars
                         .iter()
-                        .find(|&&v| scopes.get_var(*v).name == param.name)
+                        .find(|&&v| scopes.get(*v).name == param.name)
                         .unwrap(),
                     state,
                     tg,
@@ -495,7 +551,7 @@ impl Buffer {
     fn emit_var_name(&mut self, scopes: &Scopes, id: VariableId, state: &mut State) {
         use std::collections::hash_map::*;
 
-        let var = scopes.get_var(id);
+        let var = scopes.get(id);
         if var.is_static {
             self.emit(scopes.full_name(var.scope, &var.name));
         } else {
@@ -528,8 +584,8 @@ impl Buffer {
         id: VariableId,
         state: &mut State,
         tg: &mut TypeGen,
-    ) -> Result<TypeId, TypeId> {
-        let var = scopes.get_var(id);
+    ) -> Result<Type, Type> {
+        let var = scopes.get(id);
         let mut ty = var.ty.clone();
         state.fill_generics(scopes, &mut ty);
         if !ty.is_void_like() {
@@ -547,6 +603,12 @@ impl Buffer {
         } else {
             Err(ty)
         }
+    }
+
+    fn emit_array_struct_name(&mut self, scopes: &Scopes, ty: &Type, size: usize) {
+        self.emit("Array_");
+        self.emit_generic_mangled_name(scopes, ty);
+        self.emit(format!("_{}", size));
     }
 }
 
@@ -612,7 +674,7 @@ impl Codegen {
         let main = &mut State::new(
             GenericFunc::new(
                 *scopes
-                    .find_func_in("main", scope)
+                    .find_in("main", scope)
                     .ok_or(Error::new("no main function found", Span::default()))?,
                 Vec::new(),
             ),
@@ -623,9 +685,9 @@ impl Codegen {
             ..Self::default()
         };
 
-        let conv_argv = (scopes.get_func(main.func.id).params.len() == 1).then(|| {
+        let conv_argv = (scopes.get(main.func.id).params.len() == 1).then(|| {
             let id = scopes
-                .find_func_in("convert_argv", *scopes.find_module("std").unwrap())
+                .find_in("convert_argv", *scopes.find_module("std").unwrap())
                 .unwrap();
 
             let state = State::new(GenericFunc::new(*id, vec![]), None);
@@ -642,7 +704,7 @@ impl Codegen {
             for mut state in diff {
                 // TODO: emit an error if a function has the c_macro attribute and a body
                 if scopes
-                    .get_func(state.func.id)
+                    .get(state.func.id)
                     .attrs
                     .iter()
                     .any(|attr| attr.name.data == "c_macro")
@@ -653,7 +715,7 @@ impl Codegen {
                 prototypes.emit_prototype(scopes, &mut state, true, &mut this.type_gen);
                 prototypes.emit(";");
 
-                if let Some(body) = scopes.get_func(state.func.id).body.clone() {
+                if let Some(body) = scopes.get(state.func.id).body.clone() {
                     this.buffer
                         .emit_prototype(scopes, &mut state, false, &mut this.type_gen);
                     this.emit_block(scopes, body, &mut state);
@@ -668,7 +730,7 @@ impl Codegen {
             .scopes()
             .iter()
             .flat_map(|s| s.vars.iter())
-            .filter(|&&v| scopes.get_var(*v).is_static)
+            .filter(|&&v| scopes.get(*v).is_static)
         {
             if this
                 .buffer
@@ -696,11 +758,11 @@ impl Codegen {
                 this.buffer.emit_var_name(scopes, id, main);
                 this.buffer.emit(" = ");
             }
-            this.gen_expr(scopes, scopes.get_var(id).value.clone().unwrap(), main);
+            this.gen_expr(scopes, scopes.get(id).value.clone().unwrap(), main);
             this.buffer.emit(";");
         }
 
-        let returns = scopes.get_func(main.func.id).ret != TypeId::Void;
+        let returns = scopes.get(main.func.id).ret != Type::Void;
         if let Some(state) = conv_argv {
             if returns {
                 this.buffer.emit("return ");
@@ -747,7 +809,7 @@ impl Codegen {
             }
             CheckedStmt::Let(id) => {
                 stmt!(self, {
-                    let var = scopes.get_var(id);
+                    let var = scopes.get(id);
                     match self
                         .buffer
                         .emit_local_decl(scopes, id, state, &mut self.type_gen)
@@ -780,18 +842,7 @@ impl Codegen {
                     self.buffer.emit(format!(" {tmp} = "));
                     self.gen_expr(scopes, value, state);
                     self.buffer.emit(";");
-
-                    let count = ty.indirection();
-                    self.gen_irrefutable_pattern(
-                        scopes,
-                        state,
-                        &pattern,
-                        &format!(
-                            "{}({}{tmp})",
-                            if count > 0 { "&" } else { "" },
-                            "*".repeat(count)
-                        ),
-                    );
+                    self.gen_irrefutable_pattern(scopes, state, &pattern, &deref(&tmp, ty, true));
                 });
             }
             CheckedStmt::None => {}
@@ -804,7 +855,7 @@ impl Codegen {
     fn gen_expr_inner(&mut self, scopes: &Scopes, expr: CheckedExpr, state: &mut State) {
         match expr.data {
             CheckedExprData::Binary { op, left, right } => {
-                if expr.ty == TypeId::Bool {
+                if expr.ty == Type::Bool {
                     self.emit_cast(scopes, &expr.ty);
                     self.buffer.emit("(");
                 }
@@ -814,7 +865,7 @@ impl Codegen {
                 self.gen_expr(scopes, *right, state);
                 self.buffer.emit(")");
 
-                if expr.ty == TypeId::Bool {
+                if expr.ty == Type::Bool {
                     self.buffer.emit(" ? 1 : 0)");
                 }
             }
@@ -847,7 +898,7 @@ impl Codegen {
                     self.gen_expr(scopes, *inner, state);
                 }
                 UnaryOp::Not => {
-                    if inner.ty == TypeId::Bool {
+                    if inner.ty == Type::Bool {
                         self.emit_cast(scopes, &expr.ty);
                         self.buffer.emit("(");
                         self.gen_expr(scopes, *inner, state);
@@ -864,7 +915,16 @@ impl Codegen {
                 }
                 UnaryOp::Addr | UnaryOp::AddrMut => {
                     // TODO: addr of void
-                    self.buffer.emit("&");
+                    state.fill_generics(scopes, &mut inner.ty);
+
+                    let array = inner.ty.is_array();
+                    if inner.ty.is_void_like() {
+                        self.emit_cast(scopes, &expr.ty);
+                        self.buffer.emit("(0xdeadbeef);");
+                    } else if !array {
+                        self.buffer.emit("&");
+                    }
+
                     match inner.data {
                         CheckedExprData::Unary {
                             op: UnaryOp::Deref, ..
@@ -877,9 +937,12 @@ impl Codegen {
                             self.gen_expr(scopes, *inner, state);
                         }
                         _ => {
-                            state.fill_generics(scopes, &mut inner.ty);
                             self.gen_to_tmp(scopes, *inner, state);
                         }
+                    }
+
+                    if array {
+                        self.buffer.emit(format!(".{ARRAY_DATA_NAME}"));
                     }
                 }
                 UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in gen_expr"),
@@ -897,18 +960,14 @@ impl Codegen {
 
                 let original_id = func.id;
                 if let Some(trait_id) = trait_id {
-                    let f = scopes.get_func(func.id);
-                    if let Some(ut) = inst.as_ref().and_then(|i| i.as_user_type()) {
-                        let scope = scopes[scopes.get_user_type(ut.id).body_scope]
-                            .children
-                            .iter()
-                            .find(|scope| matches!(scopes[scope.id].kind, ScopeKind::Impl(id) if id == trait_id))
-                            .expect("trait_id corresponds to a trait implemented in the resolved type");
-
-                        func.id = *scopes.find_func_in(&f.name.data, scope.id).unwrap();
-                    } else {
-                        todo!("trait implementations for non-struct types");
-                    }
+                    let f = scopes.get(func.id);
+                    let inst = inst
+                        .as_ref()
+                        .expect("generating trait function with no instance");
+                    func.id = Self::find_implementation(inst, scopes, trait_id, &f.name.data)
+                        .expect(
+                            "generating trait fn with no corresponding implementation in instance",
+                        );
                 }
 
                 for ty in func.ty_args.iter_mut() {
@@ -954,7 +1013,7 @@ impl Codegen {
                 self.buffer.emit_fn_name(scopes, &next_state);
                 self.buffer.emit("(");
                 scopes
-                    .get_func(original_id)
+                    .get(original_id)
                     .params
                     .iter()
                     .flat_map(|param| args.shift_remove(&param.name))
@@ -976,13 +1035,31 @@ impl Codegen {
                 }
                 self.buffer.emit(")");
             }
-            CheckedExprData::Array(_) => todo!(),
-            CheckedExprData::ArrayWithInit { .. } => todo!(),
+            CheckedExprData::Array(exprs) => {
+                self.buffer.emit("(");
+                self.emit_type(scopes, &expr.ty);
+                self.buffer.emit(format!("){{.{ARRAY_DATA_NAME}={{"));
+                for expr in exprs {
+                    self.gen_expr(scopes, expr, state);
+                    self.buffer.emit(",");
+                }
+                self.buffer.emit("}}");
+            }
+            CheckedExprData::ArrayWithInit { init, count } => {
+                self.buffer.emit("(");
+                self.emit_type(scopes, &expr.ty);
+                self.buffer.emit(format!("){{.{ARRAY_DATA_NAME}={{"));
+                for _ in 0..count {
+                    self.gen_expr(scopes, (*init).clone(), state);
+                    self.buffer.emit(",");
+                }
+                self.buffer.emit("}}");
+            }
             CheckedExprData::Vec(exprs) => {
                 let tmp = tmpbuf!(self, state, |tmp| {
                     let arr = state.tmpvar();
                     let len = exprs.len();
-                    let ut = (**expr.ty.as_user_type().unwrap()).clone();
+                    let ut = (**expr.ty.as_user().unwrap()).clone();
                     let inner = &ut.ty_args[0];
 
                     self.emit_type(scopes, inner);
@@ -996,10 +1073,7 @@ impl Codegen {
                     let next_state = State::new(
                         GenericFunc::new(
                             *scopes
-                                .find_func_in(
-                                    "with_capacity",
-                                    scopes.get_user_type(ut.id).body_scope,
-                                )
+                                .find_in("with_capacity", scopes.get(ut.id).body_scope)
                                 .unwrap(),
                             vec![inner.clone()],
                         ),
@@ -1028,7 +1102,7 @@ impl Codegen {
             }
             CheckedExprData::VecWithInit { init, count } => {
                 let tmp = tmpbuf!(self, state, |tmp| {
-                    let ut = (**expr.ty.as_user_type().unwrap()).clone();
+                    let ut = (**expr.ty.as_user().unwrap()).clone();
                     let inner = &ut.ty_args[0];
                     let len = state.tmpvar();
                     self.emit_type(scopes, &count.ty);
@@ -1039,10 +1113,7 @@ impl Codegen {
                     let next_state = State::new(
                         GenericFunc::new(
                             *scopes
-                                .find_func_in(
-                                    "with_capacity",
-                                    scopes.get_user_type(ut.id).body_scope,
-                                )
+                                .find_in("with_capacity", scopes.get(ut.id).body_scope)
                                 .unwrap(),
                             vec![inner.clone()],
                         ),
@@ -1066,11 +1137,11 @@ impl Codegen {
             }
             CheckedExprData::Set(exprs) => {
                 let tmp = tmpbuf!(self, state, |tmp| {
-                    let ut = (**expr.ty.as_user_type().unwrap()).clone();
-                    let body = scopes.get_user_type(ut.id).body_scope;
+                    let ut = (**expr.ty.as_user().unwrap()).clone();
+                    let body = scopes.get(ut.id).body_scope;
                     let with_capacity = State::new(
                         GenericFunc::new(
-                            *scopes.find_func_in("with_capacity", body).unwrap(),
+                            *scopes.find_in("with_capacity", body).unwrap(),
                             vec![ut.ty_args[0].clone()],
                         ),
                         state.inst.clone(),
@@ -1081,7 +1152,7 @@ impl Codegen {
                     self.buffer.emit_fn_name(scopes, &with_capacity);
                     self.buffer.emit(format!("({});", exprs.len()));
                     let insert = State::new(
-                        GenericFunc::new(*scopes.find_func_in("insert", body).unwrap(), vec![]),
+                        GenericFunc::new(*scopes.find_in("insert", body).unwrap(), vec![]),
                         Some(expr.ty.clone()),
                     );
 
@@ -1099,18 +1170,18 @@ impl Codegen {
             }
             CheckedExprData::Map(exprs) => {
                 let tmp = tmpbuf!(self, state, |tmp| {
-                    let ut = (**expr.ty.as_user_type().unwrap()).clone();
-                    let body = scopes.get_user_type(ut.id).body_scope;
+                    let ut = (**expr.ty.as_user().unwrap()).clone();
+                    let body = scopes.get(ut.id).body_scope;
                     let with_capacity = State::new(
                         GenericFunc::new(
-                            *scopes.find_func_in("with_capacity", body).unwrap(),
+                            *scopes.find_in("with_capacity", body).unwrap(),
                             vec![ut.ty_args[0].clone(), ut.ty_args[1].clone()],
                         ),
                         state.inst.clone(),
                     );
 
                     let insert = State::new(
-                        GenericFunc::new(*scopes.find_func_in("insert", body).unwrap(), vec![]),
+                        GenericFunc::new(*scopes.find_in("insert", body).unwrap(), vec![]),
                         Some(expr.ty.clone()),
                     );
 
@@ -1137,11 +1208,7 @@ impl Codegen {
                 self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(if value { "1" } else { "0" })
             }
-            CheckedExprData::Signed(value) => {
-                self.emit_cast(scopes, &expr.ty);
-                self.buffer.emit(format!("{value}"));
-            }
-            CheckedExprData::Unsigned(value) => {
+            CheckedExprData::Integer(value) => {
                 self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit(format!("{value}"));
             }
@@ -1152,7 +1219,7 @@ impl Codegen {
             CheckedExprData::String(value) => {
                 self.emit_cast(scopes, &expr.ty);
                 self.buffer.emit("{ .span = { .ptr = (");
-                self.emit_type(scopes, &TypeId::Ptr(TypeId::Uint(8).into()));
+                self.emit_type(scopes, &Type::Ptr(Type::Uint(8).into()));
                 self.buffer.emit(")\"");
 
                 for byte in value.as_bytes() {
@@ -1163,7 +1230,7 @@ impl Codegen {
             }
             CheckedExprData::ByteString(value) => {
                 self.buffer.emit("(");
-                self.emit_type(scopes, &TypeId::Ptr(TypeId::Uint(8).into()));
+                self.emit_type(scopes, &Type::Ptr(Type::Uint(8).into()));
                 self.buffer.emit(")\"");
                 for byte in value.as_bytes() {
                     self.buffer.emit(format!("\\x{byte:x}"));
@@ -1182,7 +1249,7 @@ impl Codegen {
                     self.funcs.insert(state);
                 }
                 Symbol::Var(id) => {
-                    if !scopes.get_var(id).ty.is_void_like() {
+                    if !scopes.get(id).ty.is_void_like() {
                         self.buffer.emit_var_name(scopes, id, state);
                     }
                 }
@@ -1202,8 +1269,8 @@ impl Codegen {
                     self.buffer.emit("{");
                     if let Some((name, union)) = variant.zip(
                         expr.ty
-                            .as_user_type()
-                            .and_then(|ut| scopes.get_user_type(ut.id).data.as_union()),
+                            .as_user()
+                            .and_then(|ut| scopes.get(ut.id).data.as_union()),
                     ) {
                         if !union.is_unsafe
                             && union.variants.iter().any(|m| m.name == name && !m.shared)
@@ -1289,7 +1356,6 @@ impl Codegen {
             }
             CheckedExprData::Loop {
                 cond,
-                iter,
                 body,
                 do_while,
             } => {
@@ -1300,18 +1366,6 @@ impl Codegen {
                         self.emit_type(scopes, &expr.ty);
                         self.buffer.emit(format!(" {};", self.cur_loop));
                         emit = true;
-                    }
-
-                    if let Some(iter) = iter {
-                        let mut expr = scopes.get_var(iter).value.clone().unwrap();
-                        let (Ok(ty) | Err(ty)) =
-                            self.buffer
-                                .emit_local_decl(scopes, iter, state, &mut self.type_gen);
-                        expr.ty = ty;
-
-                        self.buffer.emit(" = ");
-                        self.gen_expr_inner(scopes, expr, state);
-                        self.buffer.emit(";");
                     }
 
                     self.buffer.emit("for (;;) {");
@@ -1346,7 +1400,100 @@ impl Codegen {
                     self.buffer.emit(tmp);
                 }
             }
-            CheckedExprData::Subscript { .. } => todo!(),
+            CheckedExprData::For { iter, patt, body } => {
+                let mut emit = false;
+                let tmp = tmpbuf!(self, state, |tmp| {
+                    let old = std::mem::replace(&mut self.cur_loop, tmp);
+                    if !expr.ty.is_void_like() {
+                        self.emit_type(scopes, &expr.ty);
+                        self.buffer.emit(format!(" {};", self.cur_loop));
+                        emit = true;
+                    }
+                    let mut iter_ty = iter.ty.clone();
+                    state.fill_generics(scopes, &mut iter_ty);
+
+                    let next = scopes
+                        .lang_types
+                        .get("iter")
+                        .copied()
+                        .and_then(|id| Self::find_implementation(&iter.ty, scopes, id, "next"))
+                        .expect("for iterator should actually implement Iterator");
+                    let next_state =
+                        State::new(GenericFunc::new(next, vec![]), Some(iter_ty.clone()));
+                    let mut next_ty = scopes.get(next).ret.clone();
+                    if let Some(ut) = iter_ty.as_user() {
+                        next_ty.fill_struct_templates(scopes, ut);
+                    }
+
+                    let iter_var = tmpbuf!(self, state, |tmp| {
+                        self.buffer.emit_type(scopes, &iter_ty, &mut self.type_gen);
+                        self.buffer.emit(format!(" {tmp} = "));
+                        self.gen_expr(scopes, *iter, state);
+                        self.buffer.emit(";");
+
+                        tmp
+                    });
+
+                    self.buffer.emit("for (;;) {");
+
+                    let item = state.tmpvar();
+                    self.emit_type(scopes, &next_ty);
+                    self.buffer.emit(format!(" {item} = "));
+                    self.buffer.emit_fn_name(scopes, &next_state);
+                    self.buffer.emit(format!("(&{iter_var});"));
+                    self.gen_pattern(
+                        scopes,
+                        state,
+                        &CheckedPattern::UnionMember {
+                            pattern: Some(patt),
+                            variant: "Some".into(),
+                            ptr: scopes
+                                .as_option_inner(&next_ty)
+                                .map_or(false, |ty| ty.is_ptr() || ty.is_mut_ptr()),
+                        },
+                        &item,
+                        &next_ty,
+                    );
+                    self.emit_block(scopes, body, state);
+                    self.buffer.emit("} else { break; } } ");
+
+                    self.funcs.insert(next_state);
+                    std::mem::replace(&mut self.cur_loop, old)
+                });
+                if emit {
+                    self.buffer.emit(tmp);
+                }
+            }
+            CheckedExprData::Subscript { callee, args } => {
+                // TODO: bounds check
+                if callee.ty.is_array() {
+                    match callee.data {
+                        CheckedExprData::Unary {
+                            op: UnaryOp::Deref,
+                            expr,
+                        } => {
+                            // we compile pointers to arrays as T *, not Array_T_N *, so in the case
+                            // there will be no data member
+                            self.gen_expr(scopes, *expr, state);
+                        }
+                        _ => {
+                            self.gen_expr(scopes, *callee, state);
+                            self.buffer.emit(format!(".{ARRAY_DATA_NAME}"));
+                        }
+                    }
+                } else {
+                    self.buffer
+                        .emit(format!("({}", "*".repeat(callee.ty.indirection() - 1)));
+                    self.gen_expr(scopes, *callee, state);
+                    self.buffer.emit(")");
+                }
+
+                self.buffer.emit("[");
+                for arg in args {
+                    self.gen_expr(scopes, arg, state);
+                }
+                self.buffer.emit("]");
+            }
             CheckedExprData::Return(expr) => {
                 // TODO: when return is used as anything except a StmtExpr, we will have to change
                 // the generated code to accomodate it
@@ -1401,7 +1548,7 @@ impl Codegen {
                         });
                     }
 
-                    self.buffer.emit("else { UNREACHABLE(); }");
+                    // self.buffer.emit("else { UNREACHABLE(); }");
                 })
             }
             CheckedExprData::As(inner, _) => {
@@ -1456,50 +1603,45 @@ impl Codegen {
         state: &mut State,
         pattern: &CheckedPattern,
         tmp_name: &str,
-        scrutinee: &TypeId,
+        ty: &Type,
     ) {
         match pattern {
             CheckedPattern::UnionMember {
-                binding,
+                pattern,
                 variant,
                 ptr,
             } => {
-                let opt_ptr = is_opt_ptr(scopes, scrutinee.strip_references());
-                let tmp_name = format!("({}{tmp_name})", "*".repeat(scrutinee.indirection()));
-                if opt_ptr && variant.0 == "Some" {
+                let ty_base = ty.strip_references();
+                let opt_ptr = is_opt_ptr(scopes, ty_base);
+                let tmp_name = deref(tmp_name, ty, false);
+                if opt_ptr && variant == "Some" {
                     self.buffer.emit(format!("if ({tmp_name} != NULL) {{"));
-                    if binding
-                        .filter(|&id| {
-                            self.buffer
-                                .emit_local_decl(scopes, id, state, &mut self.type_gen)
-                                .is_ok()
-                        })
-                        .is_some()
-                    {
-                        self.buffer
-                            .emit(format!(" = {}{tmp_name};", if *ptr { "&" } else { "" }));
+                    if let Some(pattern) = pattern {
+                        let tmp_name = if *ptr {
+                            format!("&(*{tmp_name})")
+                        } else {
+                            tmp_name
+                        };
+                        self.gen_irrefutable_pattern(scopes, state, pattern, &tmp_name);
                     }
-                } else if opt_ptr && variant.0 == "None" {
+                } else if opt_ptr && variant == "None" {
                     self.buffer.emit(format!("if ({tmp_name} == NULL) {{",));
                 } else {
-                    self.buffer.emit(format!(
-                        "if ({tmp_name}.{UNION_TAG_NAME} == {}) {{",
-                        variant.1
-                    ));
+                    let tag = ty_base
+                        .as_user()
+                        .and_then(|ut| scopes.get(ut.id).data.as_union())
+                        .and_then(|union| union.variant_tag(variant))
+                        .unwrap();
+                    self.buffer
+                        .emit(format!("if ({tmp_name}.{UNION_TAG_NAME} == {tag}) {{"));
 
-                    if binding
-                        .filter(|&id| {
-                            self.buffer
-                                .emit_local_decl(scopes, id, state, &mut self.type_gen)
-                                .is_ok()
-                        })
-                        .is_some()
-                    {
-                        self.buffer.emit(format!(
-                            " = {}{tmp_name}.{};",
-                            if *ptr { "&" } else { "" },
-                            variant.0,
-                        ));
+                    if let Some(pattern) = pattern {
+                        let tmp_name = if *ptr {
+                            format!("&{tmp_name}.{variant}")
+                        } else {
+                            format!("{tmp_name}.{variant}")
+                        };
+                        self.gen_irrefutable_pattern(scopes, state, pattern, &tmp_name);
                     }
                 }
             }
@@ -1507,8 +1649,102 @@ impl Codegen {
                 self.buffer.emit("if (1) {");
                 self.gen_irrefutable_pattern(scopes, state, pattern, tmp_name);
             }
+            CheckedPattern::Int(value) => self.gen_literal_pattern(scopes, tmp_name, ty, value),
+            CheckedPattern::IntRange(range) => self.gen_range_pattern(scopes, tmp_name, ty, range),
+            CheckedPattern::String(value) => {
+                let tmp_name = deref(tmp_name, ty, false);
+                self.buffer.emit(format!(
+                    "if ({tmp_name}.span.len == {} && __builtin_memcmp({tmp_name}.span.ptr, \"",
+                    value.len()
+                ));
+                for byte in value.as_bytes() {
+                    self.buffer.emit(format!("\\x{byte:x}"));
+                }
+                self.buffer.emit(format!("\", {}) == 0) {{", value.len()));
+            }
+            CheckedPattern::Span(patterns, rest) => {
+                let tmp_name = deref(tmp_name, ty, false);
+                self.buffer.emit(format!(
+                    "if ({tmp_name}.len {} {}) {{",
+                    if rest.is_some() { ">=" } else { "==" },
+                    patterns.len()
+                ));
+                if let Some(RestPattern { id, pos }) = *rest {
+                    if id
+                        .and_then(|id| {
+                            self.buffer
+                                .emit_local_decl(scopes, id, state, &mut self.type_gen)
+                                .ok()
+                        })
+                        .is_some()
+                    {
+                        self.buffer.emit(format!(
+                            " = {{ .ptr = {tmp_name}.ptr + {pos}, .len = {tmp_name}.len - {} }};",
+                            patterns.len()
+                        ));
+                    }
+
+                    for (i, patt) in patterns.iter().enumerate() {
+                        self.gen_irrefutable_pattern(
+                            scopes,
+                            state,
+                            patt,
+                            &if i < pos {
+                                format!("{tmp_name}.ptr + {i}")
+                            } else {
+                                format!(
+                                    "{tmp_name}.ptr + {tmp_name}.len - {} + {i}",
+                                    patterns.len()
+                                )
+                            },
+                        );
+                    }
+                } else {
+                    for (i, patt) in patterns.iter().enumerate() {
+                        self.gen_irrefutable_pattern(
+                            scopes,
+                            state,
+                            patt,
+                            &format!("{tmp_name}.ptr + {i}"),
+                        );
+                    }
+                }
+            }
+            CheckedPattern::Destrucure(_) => todo!(),
+            CheckedPattern::Array(_) => todo!(),
             CheckedPattern::Error => panic!("ICE: CheckedPattern::Error in gen_pattern"),
         }
+    }
+
+    fn gen_literal_pattern(&mut self, scopes: &Scopes, src: &str, ty: &Type, value: impl Display) {
+        self.buffer
+            .emit(format!("if ({} == ", deref(src, ty, false)));
+        self.emit_cast(scopes, ty.strip_references());
+        self.buffer.emit(format!("{value}) {{"));
+    }
+
+    fn gen_range_pattern<T: Display>(
+        &mut self,
+        scopes: &Scopes,
+        src: &str,
+        ty: &Type,
+        RangePattern {
+            inclusive,
+            start,
+            end,
+        }: &RangePattern<T>,
+    ) {
+        let src = deref(src, ty, false);
+        let base = ty.strip_references();
+
+        self.buffer.emit(format!("if ({src} >= "));
+        self.emit_cast(scopes, base);
+        self.buffer.emit(format!(
+            "{start} && {src} {} ",
+            if *inclusive { "<=" } else { "<" }
+        ));
+        self.emit_cast(scopes, base);
+        self.buffer.emit(format!("{end}) {{"));
     }
 
     fn gen_irrefutable_pattern(
@@ -1533,6 +1769,48 @@ impl Codegen {
                     self.gen_irrefutable_pattern(scopes, state, patt, &format!("{src}.{member}"));
                 }
             }
+            IrrefutablePattern::Array(ArrayPattern {
+                patterns,
+                rest,
+                arr_len,
+                ptr,
+            }) => {
+                let src = if *ptr {
+                    src.into()
+                } else {
+                    format!("{src}.{ARRAY_DATA_NAME}")
+                };
+                if let Some(RestPattern { id, pos }) = *rest {
+                    let rest_len = arr_len - patterns.len();
+                    if id
+                        .and_then(|id| {
+                            self.buffer
+                                .emit_local_decl(scopes, id, state, &mut self.type_gen)
+                                .ok()
+                        })
+                        .is_some()
+                    {
+                        if *ptr {
+                            self.buffer.emit(format!(" = (*{src}) + {pos};"));
+                        } else {
+                            self.buffer.emit(format!(" = {{ .{ARRAY_DATA_NAME} = {{"));
+                            for i in 0..rest_len {
+                                self.buffer.emit(format!("{src}[{}],", pos + i));
+                            }
+                            self.buffer.emit("}};");
+                        }
+                    }
+
+                    for (i, patt) in patterns.iter().enumerate() {
+                        let i = if i < pos { i } else { rest_len + i };
+                        self.gen_irrefutable_pattern(scopes, state, patt, &format!("{src}[{i}]"));
+                    }
+                } else {
+                    for (i, patt) in patterns.iter().enumerate() {
+                        self.gen_irrefutable_pattern(scopes, state, patt, &format!("{src}[{i}]"));
+                    }
+                }
+            }
         }
     }
 
@@ -1549,11 +1827,11 @@ impl Codegen {
         self.yielded = old;
     }
 
-    fn emit_type(&mut self, scopes: &Scopes, id: &TypeId) {
+    fn emit_type(&mut self, scopes: &Scopes, id: &Type) {
         self.buffer.emit_type(scopes, id, &mut self.type_gen);
     }
 
-    fn emit_cast(&mut self, scopes: &Scopes, id: &TypeId) {
+    fn emit_cast(&mut self, scopes: &Scopes, id: &Type) {
         self.buffer.emit("(");
         self.emit_type(scopes, id);
         self.buffer.emit(")");
@@ -1569,18 +1847,57 @@ impl Codegen {
                     | UnaryOp::PreDecrement
             ),
             CheckedExprData::Call { .. } => true,
-            CheckedExprData::Array(_) => todo!(),
-            CheckedExprData::ArrayWithInit { .. } => todo!(),
             CheckedExprData::Assign { .. } => true,
-            CheckedExprData::Subscript { .. } => todo!(),
             _ => false,
         }
     }
+
+    fn find_implementation(
+        ty: &Type,
+        scopes: &Scopes,
+        trait_id: UserTypeId,
+        fn_name: &str,
+    ) -> Option<FunctionId> {
+        let search = |scope: ScopeId| {
+            scopes[scope]
+                .children
+                .iter()
+                .find(|s| matches!(scopes[s.id].kind, ScopeKind::Impl(id) if id == trait_id))
+                .and_then(|scope| scopes.find_in(fn_name, scope.id))
+                .map(|f| f.id)
+        };
+
+        if let Some(f) = ty
+            .as_user()
+            .and_then(|ut| search(scopes.get(ut.id).body_scope))
+        {
+            return Some(f);
+        }
+
+        // FIXME: this sucks
+        scopes
+            .extensions()
+            .iter()
+            .filter(|ext| ext.matches_type(ty))
+            .find_map(|ext| search(ext.body_scope))
+    }
 }
 
-fn is_opt_ptr(scopes: &Scopes, ty: &TypeId) -> bool {
+fn is_opt_ptr(scopes: &Scopes, ty: &Type) -> bool {
     scopes
         .as_option_inner(ty)
         .map(|inner| inner.is_ptr() || inner.is_mut_ptr())
         .unwrap_or(false)
+}
+
+fn deref(src: &str, ty: &Type, make_ref: bool) -> String {
+    if ty.is_ptr() || ty.is_mut_ptr() {
+        format!(
+            "{}({}{src})",
+            if make_ref { "&" } else { "" },
+            "*".repeat(ty.indirection() - usize::from(ty.strip_references().is_array()))
+        )
+    } else {
+        src.into()
+    }
 }

@@ -38,7 +38,7 @@ pub struct Span<T> {
     pub fn iter(this): Iter<T> {
         Iter(
             ptr: this.ptr,
-            end: unsafe core::ptr::offset(this.ptr, this.len)
+            end: unsafe core::ptr::offset(this.ptr, this.len),
         )
     }
 
@@ -61,7 +61,7 @@ pub struct Span<T> {
 
         Span(
             ptr: unsafe core::ptr::offset(this.ptr, start),
-            len: end - start
+            len: end - start,
         )
     }
 }
@@ -114,14 +114,14 @@ pub struct SpanMut<T> {
     pub fn iter(this): Iter<T> {
         Iter(
             ptr: this.ptr,
-            end: unsafe core::ptr::offset(this.ptr, this.len)
+            end: unsafe core::ptr::offset(this.ptr, this.len),
         )
     }
 
     pub fn iter_mut(this): IterMut<T> {
         IterMut(
             ptr: this.ptr,
-            end: unsafe core::ptr::offset_mut(this.ptr, this.len)
+            end: unsafe core::ptr::offset_mut(this.ptr, this.len),
         )
     }
 
@@ -144,7 +144,7 @@ pub struct SpanMut<T> {
 
         SpanMut(
             ptr: unsafe core::ptr::offset_mut(this.ptr, start),
-            len: end - start
+            len: end - start,
         )
     }
 }
