@@ -3667,7 +3667,7 @@ impl TypeChecker {
                     scopes.current().children.insert(Vis { id, public });
                 } else {
                     for child in scopes[id].children.clone() {
-                        if scopes[child.id].kind.is_module() {
+                        if scopes[child.id].kind.is_module() && child.public {
                             scopes.current().children.insert(Vis {
                                 id: child.id,
                                 public,
@@ -3676,22 +3676,30 @@ impl TypeChecker {
                     }
 
                     for func in scopes[id].fns.clone() {
-                        scopes.current().fns.insert(Vis {
-                            id: func.id,
-                            public,
-                        });
+                        if func.public {
+                            scopes.current().fns.insert(Vis {
+                                id: func.id,
+                                public,
+                            });
+                        }
                     }
 
                     for ut in scopes[id].types.clone() {
-                        scopes.current().types.insert(Vis { id: ut.id, public });
+                        if ut.public {
+                            scopes.current().types.insert(Vis { id: ut.id, public });
+                        }
                     }
 
                     for var in scopes[id].vars.clone() {
-                        scopes.current().vars.insert(Vis { id: var.id, public });
+                        if var.public {
+                            scopes.current().vars.insert(Vis { id: var.id, public });
+                        }
                     }
 
                     for ext in scopes[id].exts.clone() {
-                        scopes.current().exts.insert(Vis { id: ext.id, public });
+                        if ext.public {
+                            scopes.current().exts.insert(Vis { id: ext.id, public });
+                        }
                     }
                 }
             }
