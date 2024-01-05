@@ -97,6 +97,10 @@ impl Error {
     pub fn is_unsafe(span: Span) -> Self {
         Self::new("this operation is unsafe", span)
     }
+
+    pub fn name_redef(name: &str, span: Span) -> Self {
+        Self::new(format!("redefinition of name {name}"), span)
+    }
 }
 
 pub struct Pipeline<S: CompileState> {

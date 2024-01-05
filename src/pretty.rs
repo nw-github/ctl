@@ -49,7 +49,7 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
             functions,
             is_unsafe,
         } => {
-            eprint!("{tabs}Trait[{name}]");
+            eprint!("{tabs}Trait[{}]", name.data);
             print_bool!(public);
             print_bool!(is_unsafe);
             eprintln!();

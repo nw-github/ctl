@@ -1416,7 +1416,7 @@ impl<'a> Parser<'a> {
 
     fn parse_trait(&mut self, public: bool, span: Span, is_unsafe: bool) -> Stmt {
         let attrs = std::mem::take(&mut self.attrs);
-        let name = self.expect_id("expected name");
+        let name = self.expect_located_id("expected name");
         let type_params = self.parse_type_params();
         let impls = self.parse_trait_impl();
         self.expect_kind(Token::LCurly, "expected '{'");

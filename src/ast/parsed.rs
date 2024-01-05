@@ -31,7 +31,7 @@ pub enum StmtData {
     },
     Trait {
         public: bool,
-        name: String,
+        name: Located<String>,
         is_unsafe: bool,
         type_params: Vec<(String, Vec<Located<Path>>)>,
         impls: Vec<Located<Path>>,

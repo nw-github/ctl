@@ -154,7 +154,12 @@ impl TypeChecker {
         ty: UserType,
         public: bool,
         attrs: &[Attribute],
+        span: Span,
     ) -> UserTypeId {
+        if scopes.find::<UserTypeId>(&ty.name).is_some() {
+            self.error(Error::name_redef(&ty.name, span))
+        }
+
         let id = scopes.insert(ty, public);
         if let Some(attr) = attrs.iter().find(|attr| attr.name.data == "lang") {
             let Some(name) = attr.props.first() else {
@@ -239,6 +244,7 @@ impl TypeChecker {
                     },
                     base.public,
                     &attrs,
+                    base.name.span,
                 );
                 scopes.enter(ScopeKind::UserType(id), base.public, |scopes| {
                     scopes.get_mut(id).body_scope = scopes.current;
@@ -290,6 +296,7 @@ impl TypeChecker {
                     },
                     base.public,
                     &attrs,
+                    base.name.span,
                 );
                 scopes.enter(ScopeKind::UserType(id), base.public, |scopes| {
                     scopes.get_mut(id).body_scope = scopes.current;
@@ -385,7 +392,7 @@ impl TypeChecker {
                 let id = self.insert_type(
                     scopes,
                     UserType {
-                        name,
+                        name: name.data,
                         body_scope: ScopeId(0),
                         data: UserTypeData::Trait,
                         impls: Vec::new(),
@@ -393,6 +400,7 @@ impl TypeChecker {
                     },
                     public,
                     &attrs,
+                    name.span,
                 );
                 scopes.enter(ScopeKind::UserType(id), public, |scopes| {
                     scopes.get_mut(id).body_scope = scopes.current;
@@ -434,6 +442,7 @@ impl TypeChecker {
                     },
                     public,
                     &attrs,
+                    name.span,
                 );
 
                 scopes.enter(ScopeKind::UserType(id), public, |scopes| {
