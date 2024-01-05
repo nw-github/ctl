@@ -10,8 +10,7 @@ use crate::{
         Attribute,
     },
     lexer::{Located, Span},
-    typeid::{GenericFunc, GenericUserType, Type},
-    Error,
+    typeid::{GenericFunc, GenericUserType, Type}, error::Error,
 };
 
 macro_rules! id {

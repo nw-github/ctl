@@ -17,11 +17,11 @@ use crate::{
         },
         Attribute, BinaryOp, UnaryOp,
     },
+    error::{Diagnostics, Error},
     lexer::{Located, Span},
-    parser::ParsedFile,
     sym::*,
     typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type},
-    Error, Pipeline, THIS_PARAM, THIS_TYPE,
+    Pipeline, THIS_PARAM, THIS_TYPE,
 };
 
 macro_rules! type_check_bail {
@@ -51,8 +51,6 @@ macro_rules! resolve_type {
 
 pub struct Module {
     pub scopes: Scopes,
-    pub errors: Vec<Error>,
-    pub files: Vec<PathBuf>,
     pub scope: ScopeId,
 }
 
@@ -64,71 +62,68 @@ pub enum Safety {
 }
 
 pub struct TypeChecker {
-    errors: Vec<Error>,
     universal: Vec<ScopeId>,
     safety: Safety,
     decl: bool,
+    diag: Diagnostics,
 }
 
 impl TypeChecker {
     pub fn check(
         path: &std::path::Path,
-        module: Vec<ParsedFile>,
+        module: Vec<Stmt>,
         libs: Vec<PathBuf>,
-    ) -> anyhow::Result<Module> {
+        diag: Diagnostics,
+    ) -> anyhow::Result<(Module, Diagnostics)> {
         let mut this = Self {
-            errors: vec![],
             universal: Vec::new(),
             safety: Safety::Safe,
             decl: true,
+            diag,
         };
         let mut scopes = Scopes::new();
-        let mut files: Vec<_> = module.iter().map(|file| file.path.clone()).collect();
 
         for lib in libs {
-            let parsed = Pipeline::new(lib, files.len()).parse()?;
-            this.check_one(&mut scopes, &parsed.path, parsed.state.0, &mut files);
+            let parsed = Pipeline::new(lib, this.diag).parse()?;
+            this.diag = parsed.diag;
+            this.check_one(&mut scopes, &parsed.path, parsed.state.0);
         }
 
-        Ok(Module {
-            scope: this.check_one(&mut scopes, path, module, &mut vec![]),
-            scopes,
-            errors: this.errors,
-            files,
-        })
+        Ok((
+            Module {
+                scope: this.check_one(&mut scopes, path, module),
+                scopes,
+            },
+            this.diag,
+        ))
     }
 
     fn check_one(
         &mut self,
         scopes: &mut Scopes,
         path: &std::path::Path,
-        module: Vec<ParsedFile>,
-        paths: &mut Vec<PathBuf>,
+        module: Vec<Stmt>,
     ) -> ScopeId {
         let project = crate::derive_module_name(path);
         scopes.enter(
             ScopeKind::Module(project.clone(), Vec::new()),
             true,
             |scopes| {
-                paths.reserve(module.len());
                 self.decl = true;
                 let declared: Vec<_> = module
                     .into_iter()
-                    .map(|file| {
-                        self.errors.extend(file.errors);
-                        paths.push(file.path);
-
-                        let mut ast = Vec::new();
-                        match file.ast.data {
+                    .map(|ast| {
+                        let mut declared = Vec::new();
+                        match ast.data {
                             StmtData::Module { name, body, .. } if name == project => {
                                 self.include_universal(scopes);
-                                ast.extend(
+                                declared.extend(
                                     body.into_iter().map(|stmt| self.declare_stmt(scopes, stmt)),
                                 );
                             }
-                            _ => ast.push(self.declare_stmt(scopes, file.ast)),
+                            _ => declared.push(self.declare_stmt(scopes, ast)),
                         }
-                        ast
+                        declared
                     })
                     .collect();
                 self.decl = false;
@@ -144,7 +139,7 @@ impl TypeChecker {
     }
 
     fn error<T: Default>(&mut self, error: Error) -> T {
-        self.errors.push(error);
+        self.diag.error(error);
         T::default()
     }
 

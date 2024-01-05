@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use enum_as_inner::EnumAsInner;
 
-use crate::{THIS_PARAM, THIS_TYPE};
+use crate::{error::FileId, THIS_PARAM, THIS_TYPE};
 
 #[derive(Debug, Clone, PartialEq, Eq, EnumAsInner)]
 pub enum Token<'a> {
@@ -201,8 +201,6 @@ impl Error {
     }
 }
 
-pub type FileIndex = usize;
-
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Location {
     pub row: usize,
@@ -214,7 +212,7 @@ pub struct Location {
 pub struct Span {
     pub loc: Location,
     pub len: usize,
-    pub file: FileIndex,
+    pub file: FileId,
 }
 
 impl Span {
@@ -258,11 +256,11 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Located<T> {
 pub struct Lexer<'a> {
     src: &'a str,
     loc: Location,
-    file: FileIndex,
+    file: FileId,
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(src: &'a str, file: FileIndex) -> Self {
+    pub fn new(src: &'a str, file: FileId) -> Self {
         Self {
             src,
             loc: Location {

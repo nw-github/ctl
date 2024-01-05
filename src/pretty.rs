@@ -10,12 +10,12 @@ macro_rules! print_bool {
     };
 }
 
-pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
+pub fn print_stmt(stmt: &Stmt, indent: usize) {
     let tabs = INDENT.repeat(indent);
     match &stmt.data {
         StmtData::Expr(expr) => {
             eprintln!("{tabs}StmtExpr");
-            print_expr(expr, src, indent + 1);
+            print_expr(expr, indent + 1);
         }
         StmtData::Let { ty, value, patt } => {
             eprint!("{tabs}Let[{patt:?}]");
@@ -23,21 +23,21 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
 
             eprintln!("{tabs}Type: {ty:?}");
             if let Some(value) = value {
-                print_expr(value, src, indent + 1);
+                print_expr(value, indent + 1);
             }
         }
-        StmtData::Fn(f) => print_fn(f, src, indent),
-        StmtData::Struct(base) => print_struct("Struct", base, src, indent),
+        StmtData::Fn(f) => print_fn(f, indent),
+        StmtData::Struct(base) => print_struct("Struct", base, indent),
         StmtData::Union {
             tag,
             base,
             is_unsafe,
         } => {
             if let Some(tag) = tag {
-                print_struct(&format!("Union({})", tag.span.text(src)), base, src, indent);
+                print_struct(&format!("Union({:?})", tag.data), base, indent);
                 print_bool!(is_unsafe);
             } else {
-                print_struct("Union", base, src, indent);
+                print_struct("Union", base, indent);
                 print_bool!(is_unsafe);
             }
         }
@@ -71,7 +71,7 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
 
             eprintln!("{tabs}Functions:");
             for f in functions {
-                print_fn(f, src, indent + 1);
+                print_fn(f, indent + 1);
             }
         }
         StmtData::Enum {
@@ -85,19 +85,19 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
             print_bool!(public);
             eprintln!();
 
-            print_impls(indent, src, impls);
+            print_impls(indent, impls);
 
             let plus_1 = INDENT.repeat(indent + 1);
             eprintln!("{tabs}Variants:");
             for (name, expr) in variants {
                 eprintln!("{plus_1}{name}");
                 if let Some(expr) = expr {
-                    print_expr(expr, src, indent + 2);
+                    print_expr(expr, indent + 2);
                 }
             }
 
             for f in functions {
-                print_fn(f, src, indent + 1);
+                print_fn(f, indent + 1);
             }
         }
         StmtData::Extension {
@@ -120,11 +120,11 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
                 }
             }
 
-            print_impls(indent, src, impls);
+            print_impls(indent, impls);
 
             eprintln!("{tabs}Functions:");
             for f in functions {
-                print_fn(f, src, indent + 1);
+                print_fn(f, indent + 1);
             }
         }
         StmtData::Static {
@@ -139,29 +139,31 @@ pub fn print_stmt(stmt: &Stmt, src: &str, indent: usize) {
 
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}Type: {ty:?}");
-            print_expr(value, src, indent + 1);
+            print_expr(value, indent + 1);
         }
         StmtData::Module { name, body, public } => {
             eprint!("{tabs}Module[{name}]");
             print_bool!(public);
             eprintln!();
 
-            print_stmts(body, src, indent + 1);
+            print_stmts(body, indent + 1);
         }
-        StmtData::Use { .. } => {
-            eprintln!("{tabs}Use[{}]", stmt.span.text(src));
+        StmtData::Use { public, path, all } => {
+            eprintln!("{tabs}Use[{path:?}]");
+            print_bool!(public);
+            print_bool!(all);
         }
         StmtData::Error => {}
     }
 }
 
-pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
+pub fn print_expr(expr: &Expr, indent: usize) {
     let tabs = INDENT.repeat(indent);
     match &expr.data {
         ExprData::Binary { op, left, right } => {
             eprintln!("{tabs}Binary({op:?})");
-            print_expr(left, src, indent + 1);
-            print_expr(right, src, indent + 1);
+            print_expr(left, indent + 1);
+            print_expr(right, indent + 1);
         }
         ExprData::Range {
             start,
@@ -175,31 +177,31 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
             let tabs = INDENT.repeat(indent + 1);
             if let Some(start) = start {
                 eprintln!("{tabs}From:");
-                print_expr(start, src, indent + 2);
+                print_expr(start, indent + 2);
             }
             if let Some(end) = end {
                 eprintln!("{tabs}To:");
-                print_expr(end, src, indent + 2);
+                print_expr(end, indent + 2);
             }
         }
         ExprData::Unary { op, expr } => {
             eprintln!("{tabs}Unary({op:?})");
-            print_expr(expr, src, indent + 1);
+            print_expr(expr, indent + 1);
         }
         ExprData::Call { callee, args } => {
             eprintln!("{tabs}Call");
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}Callee: ");
-            print_expr(callee, src, indent + 2);
+            print_expr(callee, indent + 2);
 
             if !args.is_empty() {
                 eprintln!("{tabs}Args: ");
                 for (name, expr) in args {
                     if let Some(name) = name {
                         eprintln!("{tabs}{INDENT}{name}:");
-                        print_expr(expr, src, indent + 3);
+                        print_expr(expr, indent + 3);
                     } else {
-                        print_expr(expr, src, indent + 2);
+                        print_expr(expr, indent + 2);
                     }
                 }
             }
@@ -207,7 +209,7 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
         ExprData::Array(elements) | ExprData::Vec(elements) | ExprData::Set(elements) => {
             eprintln!("{tabs}Array|Vector|Set"); // FIXME: correct this name
             for el in elements {
-                print_expr(el, src, indent + 1);
+                print_expr(el, indent + 1);
             }
         }
         ExprData::ArrayWithInit { init, count } | ExprData::VecWithInit { init, count } => {
@@ -215,14 +217,14 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
 
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}Init: ");
-            print_expr(init, src, indent + 2);
+            print_expr(init, indent + 2);
             eprintln!("{tabs}Count: ");
-            print_expr(count, src, indent + 2);
+            print_expr(count, indent + 2);
         }
         ExprData::Tuple(elements) => {
             eprintln!("{tabs}Tuple");
             for el in elements {
-                print_expr(el, src, indent + 1);
+                print_expr(el, indent + 1);
             }
         }
         ExprData::Map(expr) => {
@@ -230,9 +232,9 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
             let tabs = INDENT.repeat(indent + 1);
             for (key, value) in expr {
                 eprintln!("{tabs}Key: ");
-                print_expr(key, src, indent + 2);
+                print_expr(key, indent + 2);
                 eprintln!("{tabs}Value: ");
-                print_expr(value, src, indent + 2);
+                print_expr(value, indent + 2);
             }
         }
         ExprData::Integer { base, value, width } => {
@@ -253,8 +255,8 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
         ExprData::ByteChar(value) => {
             eprintln!("{tabs}ByteChar = \'{value}\'");
         }
-        ExprData::Path(_) => {
-            eprintln!("{tabs}Path[{}]", expr.span.text(src));
+        ExprData::Path(path) => {
+            eprintln!("{tabs}Path[{path:?}]");
         }
         ExprData::Assign {
             target,
@@ -264,13 +266,13 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
             eprintln!("{tabs}Assign({binary:?})");
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}Target: ");
-            print_expr(target, src, indent + 2);
+            print_expr(target, indent + 2);
             eprintln!("{tabs}Value: ");
-            print_expr(value, src, indent + 2);
+            print_expr(value, indent + 2);
         }
         ExprData::Block(expr) => {
             eprintln!("{tabs}Block");
-            print_stmts(expr, src, indent + 1);
+            print_stmts(expr, indent + 1);
         }
         ExprData::If {
             cond,
@@ -281,14 +283,14 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
 
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}Condition: ");
-            print_expr(cond, src, indent + 2);
+            print_expr(cond, indent + 2);
 
             eprintln!("{tabs}Body: ");
-            print_expr(if_branch, src, indent + 2);
+            print_expr(if_branch, indent + 2);
 
             if let Some(else_branch) = else_branch {
                 eprintln!("{tabs}Else: ");
-                print_expr(else_branch, src, indent + 2);
+                print_expr(else_branch, indent + 2);
             }
         }
         ExprData::Loop {
@@ -303,11 +305,11 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
             let tabs = INDENT.repeat(indent + 1);
             if let Some(cond) = cond {
                 eprintln!("{tabs}Condition: ");
-                print_expr(cond, src, indent + 2);
+                print_expr(cond, indent + 2);
             }
 
             eprintln!("{tabs}Body: ");
-            print_stmts(body, src, indent + 2);
+            print_stmts(body, indent + 2);
         }
         ExprData::Member {
             source,
@@ -322,36 +324,36 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
                     eprintln!("{tabs}{ty:?}")
                 }
             }
-            print_expr(source, src, indent + 1);
+            print_expr(source, indent + 1);
         }
         ExprData::Subscript { callee, args } => {
             eprintln!("{tabs}Subscript");
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}Callee: ");
-            print_expr(callee, src, indent + 2);
+            print_expr(callee, indent + 2);
 
             if !args.is_empty() {
                 eprintln!("{tabs}Args: ");
                 for expr in args {
-                    print_expr(expr, src, indent + 2);
+                    print_expr(expr, indent + 2);
                 }
             }
         }
         ExprData::Return(expr) => {
             eprintln!("{tabs}Return");
-            print_expr(expr, src, indent + 1);
+            print_expr(expr, indent + 1);
         }
         ExprData::Yield(expr) => {
             eprintln!("{tabs}Yield");
-            print_expr(expr, src, indent + 1);
+            print_expr(expr, indent + 1);
         }
         ExprData::Tail(expr) => {
             eprintln!("{tabs}Tail");
-            print_expr(expr, src, indent + 1);
+            print_expr(expr, indent + 1);
         }
         ExprData::Break(expr) => {
             eprintln!("{tabs}Break");
-            print_expr(expr, src, indent + 1);
+            print_expr(expr, indent + 1);
         }
         ExprData::Bool(value) => {
             eprintln!("{tabs}Bool = {value}");
@@ -366,28 +368,28 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
             eprintln!("{tabs}For[{patt:?}]");
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}In: ");
-            print_expr(iter, src, indent + 2);
+            print_expr(iter, indent + 2);
             eprintln!("{tabs}Body: ");
-            print_stmts(body, src, indent + 2);
+            print_stmts(body, indent + 2);
         }
         ExprData::Void => eprintln!("{tabs}Void"),
         ExprData::Is { expr, pattern } => {
             eprintln!("{tabs}Is ({pattern:?})");
-            print_expr(expr, src, indent + 1);
+            print_expr(expr, indent + 1);
         }
         ExprData::As { expr, ty, throwing } => {
             eprintln!("{tabs}As ({ty:?})");
             print_bool!(throwing);
-            print_expr(expr, src, indent + 1);
+            print_expr(expr, indent + 1);
         }
         ExprData::Match { expr, body } => {
             eprintln!("{tabs}Match");
-            print_expr(expr, src, indent + 1);
+            print_expr(expr, indent + 1);
 
             let tabs = INDENT.repeat(indent + 1);
             for (i, (patt, expr)) in body.iter().enumerate() {
                 eprintln!("{tabs}Case {i} ({patt:?}):");
-                print_expr(expr, src, indent + 2);
+                print_expr(expr, indent + 2);
             }
         }
         ExprData::Error => {}
@@ -403,18 +405,18 @@ pub fn print_expr(expr: &Expr, src: &str, indent: usize) {
             }
 
             eprintln!("{tabs}Body: ");
-            print_expr(body, src, indent + 1);
+            print_expr(body, indent + 1);
         }
         ExprData::Unsafe(expr) => {
             eprintln!("{tabs}Unsafe");
-            print_expr(expr, src, indent + 1);
+            print_expr(expr, indent + 1);
         }
     }
 }
 
-fn print_stmts(stmts: &[Stmt], src: &str, indent: usize) {
+fn print_stmts(stmts: &[Stmt], indent: usize) {
     for stmt in stmts {
-        print_stmt(stmt, src, indent);
+        print_stmt(stmt, indent);
     }
 }
 
@@ -431,7 +433,6 @@ fn print_fn(
         public,
         body,
     }: &Fn,
-    src: &str,
     indent: usize,
 ) {
     let tabs = INDENT.repeat(indent);
@@ -461,7 +462,7 @@ fn print_fn(
     eprintln!("{plus_1}Return Type: {ret:?}");
     if let Some(body) = body {
         eprintln!("{}Body: ", INDENT.repeat(indent));
-        print_stmts(body, src, indent + 1);
+        print_stmts(body, indent + 1);
     }
 }
 
@@ -475,7 +476,6 @@ fn print_struct(
         functions,
         public,
     }: &Struct,
-    src: &str,
     indent: usize,
 ) {
     let tabs = INDENT.repeat(indent);
@@ -483,7 +483,7 @@ fn print_struct(
     print_bool!(public);
     eprintln!();
 
-    print_impls(indent, src, impls);
+    print_impls(indent, impls);
 
     let plus_1 = INDENT.repeat(indent + 1);
     if !type_params.is_empty() {
@@ -502,11 +502,11 @@ fn print_struct(
 
     eprintln!("{tabs}Functions:");
     for f in functions {
-        print_fn(f, src, indent + 1);
+        print_fn(f, indent + 1);
     }
 }
 
-fn print_impls(indent: usize, src: &str, impls: &[ImplBlock]) {
+fn print_impls(indent: usize, impls: &[ImplBlock]) {
     let tabs = INDENT.repeat(indent);
     let plus_1 = INDENT.repeat(indent + 1);
     if !impls.is_empty() {
@@ -521,7 +521,7 @@ fn print_impls(indent: usize, src: &str, impls: &[ImplBlock]) {
 
             eprintln!("{plus_1}{:?}", imp.path.data);
             for f in imp.functions.iter() {
-                print_fn(f, src, indent + 2)
+                print_fn(f, indent + 2)
             }
         }
     }

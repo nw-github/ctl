@@ -16,8 +16,7 @@ use crate::{
     },
     lexer::Span,
     sym::{FunctionId, Member, ScopeId, ScopeKind, Scopes, UserTypeData, UserTypeId, VariableId},
-    typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type},
-    Error,
+    typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type}, error::Error,
 };
 
 const UNION_TAG_NAME: &str = "$tag";
