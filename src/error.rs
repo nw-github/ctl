@@ -60,6 +60,10 @@ impl Error {
         )
     }
 
+    pub fn not_valid_here(token: &str, span: Span) -> Self {
+        Self::new(format!("'{token}' is not valid here"), span)
+    }
+
     pub fn type_mismatch(expected: &str, received: &str, span: Span) -> Self {
         Self::new(
             format!("type mismatch: expected type '{expected}', got '{received}'"),

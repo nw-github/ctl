@@ -92,54 +92,54 @@ impl<'a, 'b> Parser<'a, 'b> {
             })
         } else if let Some(token) = self.advance_if_kind(Token::Struct) {
             if let Some(token) = is_unsafe {
-                self.error_unconditional(Error::new("unsafe is not valid here", token.span));
+                self.error_unconditional(Error::not_valid_here("unsafe", token.span));
             }
 
             if let Some(token) = is_extern {
-                self.error_unconditional(Error::new("extern is not valid here", token.span));
+                self.error_unconditional(Error::not_valid_here("extern", token.span));
             }
 
             Some(self.parse_struct(public.is_some(), token.span))
         } else if let Some(token) = self.advance_if_kind(Token::Union) {
             if let Some(token) = is_extern {
-                self.error(Error::new("extern is not valid here", token.span));
+                self.error(Error::not_valid_here("extern", token.span));
             }
 
             Some(self.parse_union(public.is_some(), token.span, is_unsafe.is_some()))
         } else if let Some(token) = self.advance_if_kind(Token::Trait) {
             if let Some(token) = is_extern {
-                self.error_unconditional(Error::new("extern is not valid here", token.span));
+                self.error_unconditional(Error::not_valid_here("extern", token.span));
             }
 
             Some(self.parse_trait(public.is_some(), token.span, is_unsafe.is_some()))
         } else if let Some(token) = self.advance_if_kind(Token::Enum) {
             if let Some(token) = is_unsafe {
-                self.error_unconditional(Error::new("unsafe is not valid here", token.span));
+                self.error_unconditional(Error::not_valid_here("unsafe", token.span));
             }
 
             if let Some(token) = is_extern {
-                self.error_unconditional(Error::new("extern is not valid here", token.span));
+                self.error_unconditional(Error::not_valid_here("extern", token.span));
             }
 
             Some(self.parse_enum(public.is_some(), token.span))
         } else if let Some(token) = self.advance_if_kind(Token::Extension) {
             if let Some(token) = is_unsafe {
-                self.error_unconditional(Error::new("unsafe is not valid here", token.span));
+                self.error_unconditional(Error::not_valid_here("unsafe", token.span));
             }
 
             if let Some(token) = is_extern {
-                self.error_unconditional(Error::new("extern is not valid here", token.span));
+                self.error_unconditional(Error::not_valid_here("extern", token.span));
             }
 
             Some(self.parse_extension(public.is_some(), token.span))
         } else if let Some(token) = self.advance_if_kind(Token::Mod) {
             let attrs = std::mem::take(&mut self.attrs);
             if let Some(token) = is_unsafe {
-                self.error_unconditional(Error::new("unsafe is not valid here", token.span));
+                self.error_unconditional(Error::not_valid_here("unsafe", token.span));
             }
 
             if let Some(token) = is_extern {
-                self.error_unconditional(Error::new("extern is not valid here", token.span));
+                self.error_unconditional(Error::not_valid_here("extern", token.span));
             }
 
             let name = self.expect_id("expected name");
@@ -157,11 +157,11 @@ impl<'a, 'b> Parser<'a, 'b> {
             })
         } else if let Some(token) = self.advance_if_kind(Token::Use) {
             if let Some(token) = is_unsafe {
-                self.error_unconditional(Error::new("unsafe is not valid here", token.span));
+                self.error_unconditional(Error::not_valid_here("unsafe", token.span));
             }
 
             if let Some(token) = is_extern {
-                self.error_unconditional(Error::new("extern is not valid here", token.span));
+                self.error_unconditional(Error::not_valid_here("extern", token.span));
             }
 
             let root = self.advance_if_kind(Token::ScopeRes);
@@ -208,11 +208,11 @@ impl<'a, 'b> Parser<'a, 'b> {
             })
         } else if let Some(token) = self.advance_if_kind(Token::Static) {
             if let Some(token) = is_unsafe {
-                self.error_unconditional(Error::new("unsafe is not valid here", token.span));
+                self.error_unconditional(Error::not_valid_here("unsafe", token.span));
             }
 
             if let Some(token) = is_extern {
-                self.error_unconditional(Error::new("extern is not valid here", token.span));
+                self.error_unconditional(Error::not_valid_here("extern", token.span));
             }
 
             let name = self.expect_id("expected name");
@@ -264,7 +264,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             item
         } else if let Some(token) = self.advance_if(|t| matches!(t, Token::Let | Token::Mut)) {
             if let Some(is_unsafe) = self.is_unsafe.take() {
-                self.error_unconditional(Error::new("unsafe is not valid here", is_unsafe.span));
+                self.error_unconditional(Error::not_valid_here("unsafe", is_unsafe.span));
             }
 
             let patt = self.pattern(matches!(token.data, Token::Mut));
@@ -1266,6 +1266,11 @@ impl<'a, 'b> Parser<'a, 'b> {
             } else if let Some(func) = this.try_parse_fn(config) {
                 functions.push(func.data);
             } else if let Some(token) = this.advance_if_kind(Token::Impl) {
+                if config.is_public {
+                    // TODO: use the span for `pub`
+                    this.error(Error::not_valid_here("pub", token.span));
+                }
+
                 impls.push(this.parse_impl_block(token.span));
             } else {
                 let name = this.expect_id("expected name");
@@ -1274,7 +1279,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let value = this
                     .advance_if_kind(Token::Assign)
                     .map(|_| this.expression());
-                this.expect_kind(Token::Comma, "expected ','");
+
+                if !this.matches_kind(Token::RCurly) {
+                    this.expect_kind(Token::Comma, "expected ','");
+                }
                 members.push(MemVar {
                     public: config.is_public,
                     ty,
@@ -1361,7 +1369,9 @@ impl<'a, 'b> Parser<'a, 'b> {
                     (TypeHint::Void, None)
                 };
 
-                this.expect_kind(Token::Comma, "expected ','");
+                if !this.matches_kind(Token::RCurly) {
+                    this.expect_kind(Token::Comma, "expected ','");
+                }
                 members.push(MemVar {
                     public: config.is_public,
                     name,
@@ -1443,7 +1453,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 body: true,
                 is_unsafe: this.advance_if_kind(Token::Unsafe).is_some(),
             };
-            if config.is_unsafe {
+            if config.is_public || config.is_unsafe {
                 if let Ok(func) = this.expect_fn(config) {
                     functions.push(func.data);
                 }
@@ -1461,7 +1471,9 @@ impl<'a, 'b> Parser<'a, 'b> {
                     },
                 ));
 
-                this.expect_kind(Token::Comma, "expected ','");
+                if !this.matches_kind(Token::RCurly) {
+                    this.expect_kind(Token::Comma, "expected ','");
+                }
             }
         });
 
@@ -1529,7 +1541,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut functions = Vec::new();
         self.advance_until(Token::RCurly, span, |this| {
             if let Some(token) = this.advance_if_kind(Token::Pub) {
-                this.error_unconditional(Error::new("'pub' is not valid here", token.span));
+                this.error_unconditional(Error::not_valid_here("pub", token.span));
             }
 
             let is_unsafe = this.advance_if_kind(Token::Unsafe).is_some();
