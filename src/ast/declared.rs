@@ -71,5 +71,5 @@ pub enum DeclaredStmtData {
         id: ScopeId,
         body: Vec<DeclaredStmt>,
     },
-    Error,
+    None,
 }

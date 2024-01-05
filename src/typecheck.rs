@@ -203,33 +203,39 @@ impl TypeChecker {
                 })
             }
             StmtData::Struct(base) => {
-                let init = self.declare_fn(
-                    scopes,
-                    true,
-                    Fn {
-                        public: base.public && !base.members.iter().any(|m| !m.public),
-                        name: base.name.clone(),
-                        is_async: false,
-                        is_extern: false,
-                        variadic: false,
-                        is_unsafe: false,
-                        type_params: base.type_params.clone(),
-                        params: base
-                            .members
-                            .iter()
-                            .map(|member| Param {
-                                mutable: false,
-                                keyword: true,
-                                name: member.name.clone(),
-                                ty: member.ty.clone(),
-                                default: member.default.clone(),
-                            })
-                            .collect(),
-                        ret: Self::typehint_for_struct(&base.name.data, &base.type_params, span),
-                        body: None,
-                    },
-                    &attrs,
-                );
+                let init = scopes.enter(ScopeKind::None, false, |scopes| {
+                    self.declare_fn(
+                        scopes,
+                        true,
+                        Fn {
+                            public: base.public && !base.members.iter().any(|m| !m.public),
+                            name: base.name.clone(),
+                            is_async: false,
+                            is_extern: false,
+                            variadic: false,
+                            is_unsafe: false,
+                            type_params: base.type_params.clone(),
+                            params: base
+                                .members
+                                .iter()
+                                .map(|member| Param {
+                                    mutable: false,
+                                    keyword: true,
+                                    name: member.name.clone(),
+                                    ty: member.ty.clone(),
+                                    default: member.default.clone(),
+                                })
+                                .collect(),
+                            ret: Self::typehint_for_struct(
+                                &base.name.data,
+                                &base.type_params,
+                                span,
+                            ),
+                            body: None,
+                        },
+                        &attrs,
+                    )
+                });
                 let id = self.insert_type(
                     scopes,
                     UserType {
@@ -556,14 +562,20 @@ impl TypeChecker {
                                 span,
                             });
                     }
-                    self.resolve_use(scopes, public, all, resolved, span);
+                    if self.resolve_use(scopes, public, all, resolved, span) {
+                        return DeclaredStmt {
+                            data: DeclaredStmtData::None,
+                            span,
+                            attrs,
+                        };
+                    }
                 }
 
                 DeclaredStmtData::Use { public, path, all }
             }
             StmtData::Let { ty, value, patt } => DeclaredStmtData::Let { ty, value, patt },
             StmtData::Expr(expr) => DeclaredStmtData::Expr(expr),
-            StmtData::Error => DeclaredStmtData::Error,
+            StmtData::Error => DeclaredStmtData::None,
         };
 
         DeclaredStmt { data, span, attrs }
@@ -862,7 +874,7 @@ impl TypeChecker {
                     self.resolve_use(scopes, public, all, path, stmt.span);
                 }
             }
-            DeclaredStmtData::Error => return CheckedStmt::Error,
+            DeclaredStmtData::None => return CheckedStmt::Error,
         }
 
         CheckedStmt::None
@@ -2962,7 +2974,7 @@ impl TypeChecker {
                 match self.resolve_path(scopes, path, callee.span) {
                     Some(ResolvedPath::UserType(ty)) => {
                         let ut = scopes.get(ty.id);
-                        let Some(st) = ut.data.as_struct() else {
+                        let Some((_, constructor)) = ut.data.as_struct() else {
                             return self.error(Error::new(
                                 format!("cannot construct type '{}'", ut.name),
                                 span,
@@ -2972,7 +2984,7 @@ impl TypeChecker {
                         // TODO: check privacy
                         let (args, ret) = self.check_fn_args(
                             None,
-                            &mut GenericFunc::new(*st.1, ty.ty_args),
+                            &mut GenericFunc::new(*constructor, ty.ty_args),
                             None,
                             args,
                             target,
@@ -3573,52 +3585,94 @@ impl TypeChecker {
         all: bool,
         path: ResolvedPath,
         span: Span,
-    ) {
+    ) -> bool {
         match path {
             ResolvedPath::UserType(ut) => {
-                if !all {
-                    scopes.current().types.insert(Vis { id: ut.id, public });
-                } else if !self.decl {
-                    self.error(Error::wildcard_import(span))
-                }
-            }
-            ResolvedPath::Func(func) => {
-                if !all {
-                    scopes.current().fns.insert(Vis {
-                        id: func.id,
-                        public,
-                    });
-                } else if !self.decl {
-                    self.error(Error::wildcard_import(span))
-                }
-            }
-            ResolvedPath::Var(id) => {
-                if !scopes.get(id).is_static && !self.decl {
-                    return self.error(Error::new(
-                        format!("cannot import local variable '{}'", scopes.get(id).name),
-                        span,
-                    ));
+                let name = &scopes.get(ut.id).name;
+                if scopes.find_in::<FunctionId>(name, scopes.current).is_some()
+                    || scopes.find_in::<UserTypeId>(name, scopes.current).is_some()
+                {
+                    self.error(Error::name_redef(name, span))
                 }
 
-                if !all {
-                    scopes.current().vars.insert(Vis { id, public });
-                } else if !self.decl {
+                if all {
                     self.error(Error::wildcard_import(span))
                 }
+
+                scopes.current().types.insert(Vis { id: ut.id, public });
+            }
+            ResolvedPath::Func(func) => {
+                let name = &scopes.get(func.id).name.data;
+                if scopes.find_in::<UserTypeId>(name, scopes.current).is_some()
+                    || scopes.find_in::<FunctionId>(name, scopes.current).is_some()
+                    || scopes.find_in::<VariableId>(name, scopes.current).is_some()
+                {
+                    self.error(Error::name_redef(name, span))
+                }
+                if all {
+                    self.error(Error::wildcard_import(span))
+                }
+
+                scopes.current().fns.insert(Vis {
+                    id: func.id,
+                    public,
+                });
+            }
+            ResolvedPath::Var(id) => {
+                let name = &scopes.get(id).name;
+                if !scopes.get(id).is_static {
+                    self.error(Error::new(
+                        format!("cannot import local variable '{}'", scopes.get(id).name),
+                        span,
+                    ))
+                }
+
+                if scopes.find_in::<FunctionId>(name, scopes.current).is_some()
+                    || scopes.find_in::<VariableId>(name, scopes.current).is_some()
+                {
+                    self.error(Error::name_redef(name, span))
+                }
+
+                if all {
+                    self.error(Error::wildcard_import(span))
+                }
+
+                scopes.current().vars.insert(Vis { id, public });
             }
             ResolvedPath::Extension(id) => {
-                if !all {
-                    scopes.current().exts.insert(Vis { id, public });
-                } else if !self.decl {
+                let name = &scopes.get(id).name;
+                if scopes
+                    .find_in::<ExtensionId>(name, scopes.current)
+                    .is_some()
+                {
+                    self.error(Error::new(
+                        format!("redefinition of extension {name}"),
+                        span,
+                    ))
+                }
+
+                if all {
                     self.error(Error::wildcard_import(span))
                 }
+
+                scopes.current().exts.insert(Vis { id, public });
             }
             ResolvedPath::Module(id) => {
                 if !all {
+                    let name = &scopes[id].kind.name(scopes).unwrap();
+                    if !self.decl && (scopes.find_module_in(name, scopes.current).is_some()) {
+                        self.error(Error::new(format!("redefinition of module {name}"), span))
+                    }
+
                     scopes.current().children.insert(Vis { id, public });
                 } else {
-                    for id in scopes[id].children.clone() {
-                        scopes.current().children.insert(Vis { id: id.id, public });
+                    for child in scopes[id].children.clone() {
+                        if scopes[child.id].kind.is_module() {
+                            scopes.current().children.insert(Vis {
+                                id: child.id,
+                                public,
+                            });
+                        }
                     }
 
                     for func in scopes[id].fns.clone() {
@@ -3628,8 +3682,8 @@ impl TypeChecker {
                         });
                     }
 
-                    for ty in scopes[id].types.clone() {
-                        scopes.current().types.insert(Vis { id: ty.id, public });
+                    for ut in scopes[id].types.clone() {
+                        scopes.current().types.insert(Vis { id: ut.id, public });
                     }
 
                     for var in scopes[id].vars.clone() {
@@ -3645,8 +3699,12 @@ impl TypeChecker {
                 if !self.decl {
                     self.error(err)
                 }
+
+                return false;
             }
         }
+
+        true
     }
 
     fn resolve_impl(&mut self, scopes: &Scopes, path: &Located<Path>) -> Option<Type> {
