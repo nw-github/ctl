@@ -28,7 +28,7 @@ fn convert_argv(argc: c_int, argv: **c_char): [str..] {
     args.as_span()
 }
 
-[autouse]
+#{autouse}
 mod prelude {
     pub use super::vec::Vec;
     pub use super::map::Map;

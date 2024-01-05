@@ -68,10 +68,9 @@ impl<'a, 'b> Parser<'a, 'b> {
     //
 
     fn try_item(&mut self) -> Option<Stmt> {
-        while self.advance_if_kind(Token::LBrace).is_some() {
-            let attr = self.attribute();
-            self.attrs.push(attr);
-            self.expect_kind(Token::RBrace, "expected ']'");
+        while let Some(token) = self.advance_if_kind(Token::HashLCurly) {
+            let attr = self.csv_one(Token::RCurly, token.span, Self::attribute);
+            self.attrs.extend(attr.data);
         }
 
         let public = self.advance_if_kind(Token::Pub);
@@ -1738,10 +1737,12 @@ impl<'a, 'b> Parser<'a, 'b> {
                         Pub | Struct
                             | Enum
                             | Union
+                            | Extension
                             | Trait
                             | Fn
                             | Let
                             | Static
+                            | Extern
                             | Loop
                             | If
                             | Match

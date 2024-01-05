@@ -5,7 +5,7 @@ use core::ops::Eq;
 use core::range::RangeBounds;
 use core::iter::Iterator;
 
-[lang(string)]
+#{lang(string)}
 pub struct str {
     span: [u8..],
 

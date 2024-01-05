@@ -16,7 +16,7 @@ pub fn unreachable(): never {
     panic("entered unreachable code");
 }
 
-[autouse]
+#{autouse}
 mod prelude {
     pub use super::panic;
     pub use super::unreachable;

@@ -26,6 +26,7 @@ pub enum Token<'a> {
     Colon,
     Semicolon,
     Hash,
+    HashLCurly,
     At,
 
     Plus,
@@ -607,8 +608,14 @@ impl<'a> Lexer<'a> {
             ')' => Token::RParen,
             ',' => Token::Comma,
             ';' => Token::Semicolon,
-            '#' => Token::Hash,
             '@' => Token::At,
+            '#' => {
+                if self.advance_if('{') {
+                    Token::HashLCurly
+                } else {
+                    Token::Hash
+                }
+            },
             '.' => {
                 if self.advance_if('.') {
                     if self.advance_if('.') {
