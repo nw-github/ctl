@@ -9,7 +9,7 @@ use crate::{
         Attribute, UnaryOp,
     },
     error::{Diagnostics, Error, FileId},
-    lexer::{Lexer, LexerResult, Located, Precedence, Span, Token},
+    lexer::{Lexer, Located, Precedence, Span, Token},
     THIS_PARAM, THIS_TYPE,
 };
 
@@ -25,7 +25,7 @@ struct FnConfig {
 
 pub struct Parser<'a, 'b> {
     lexer: Lexer<'a>,
-    peek: Option<LexerResult<'a>>,
+    peek: Option<Located<Token<'a>>>,
     needs_sync: bool,
     diag: &'b mut Diagnostics,
     attrs: Vec<Attribute>,
@@ -70,14 +70,14 @@ impl<'a, 'b> Parser<'a, 'b> {
     //
 
     fn try_item(&mut self) -> Option<Stmt> {
-        while let Some(token) = self.advance_if_kind(Token::HashLCurly) {
+        while let Some(token) = self.next_if_kind(Token::HashLCurly) {
             let attr = self.csv_one(Token::RCurly, token.span, Self::attribute);
             self.attrs.extend(attr.data);
         }
 
-        let public = self.advance_if_kind(Token::Pub);
-        let is_unsafe = self.advance_if_kind(Token::Unsafe);
-        let is_extern = self.advance_if_kind(Token::Extern);
+        let public = self.next_if_kind(Token::Pub);
+        let is_unsafe = self.next_if_kind(Token::Unsafe);
+        let is_extern = self.next_if_kind(Token::Extern);
         if let Some(Located { span, data }) = self.try_parse_fn(FnConfig {
             allow_method: false,
             is_public: public.is_some(),
@@ -92,7 +92,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 span: public.map_or(span, |p| p.span).extended_to(span),
                 attrs,
             })
-        } else if let Some(token) = self.advance_if_kind(Token::Struct) {
+        } else if let Some(token) = self.next_if_kind(Token::Struct) {
             if let Some(token) = is_unsafe {
                 self.error_unconditional(Error::not_valid_here("unsafe", token.span));
             }
@@ -102,19 +102,19 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
 
             Some(self.parse_struct(public.is_some(), token.span))
-        } else if let Some(token) = self.advance_if_kind(Token::Union) {
+        } else if let Some(token) = self.next_if_kind(Token::Union) {
             if let Some(token) = is_extern {
                 self.error(Error::not_valid_here("extern", token.span));
             }
 
             Some(self.parse_union(public.is_some(), token.span, is_unsafe.is_some()))
-        } else if let Some(token) = self.advance_if_kind(Token::Trait) {
+        } else if let Some(token) = self.next_if_kind(Token::Trait) {
             if let Some(token) = is_extern {
                 self.error_unconditional(Error::not_valid_here("extern", token.span));
             }
 
             Some(self.parse_trait(public.is_some(), token.span, is_unsafe.is_some()))
-        } else if let Some(token) = self.advance_if_kind(Token::Enum) {
+        } else if let Some(token) = self.next_if_kind(Token::Enum) {
             if let Some(token) = is_unsafe {
                 self.error_unconditional(Error::not_valid_here("unsafe", token.span));
             }
@@ -124,7 +124,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
 
             Some(self.parse_enum(public.is_some(), token.span))
-        } else if let Some(token) = self.advance_if_kind(Token::Extension) {
+        } else if let Some(token) = self.next_if_kind(Token::Extension) {
             if let Some(token) = is_unsafe {
                 self.error_unconditional(Error::not_valid_here("unsafe", token.span));
             }
@@ -134,7 +134,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
 
             Some(self.parse_extension(public.is_some(), token.span))
-        } else if let Some(token) = self.advance_if_kind(Token::Mod) {
+        } else if let Some(token) = self.next_if_kind(Token::Mod) {
             let attrs = std::mem::take(&mut self.attrs);
             if let Some(token) = is_unsafe {
                 self.error_unconditional(Error::not_valid_here("unsafe", token.span));
@@ -147,7 +147,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             let name = self.expect_id("expected name");
             let mut body = Vec::new();
             self.expect_kind(Token::LCurly, "expected '{'");
-            let span = self.advance_until(Token::RCurly, token.span, |this| body.push(this.item()));
+            let span = self.try_until(Token::RCurly, token.span, |this| body.push(this.item()));
             Some(Stmt {
                 data: StmtData::Module {
                     public: public.is_some(),
@@ -157,7 +157,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 span,
                 attrs,
             })
-        } else if let Some(token) = self.advance_if_kind(Token::Use) {
+        } else if let Some(token) = self.next_if_kind(Token::Use) {
             if let Some(token) = is_unsafe {
                 self.error_unconditional(Error::not_valid_here("unsafe", token.span));
             }
@@ -166,10 +166,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.error_unconditional(Error::not_valid_here("extern", token.span));
             }
 
-            let root = self.advance_if_kind(Token::ScopeRes);
+            let root = self.next_if_kind(Token::ScopeRes);
             let sup = root
                 .is_none()
-                .then(|| self.advance_if_kind(Token::Super))
+                .then(|| self.next_if_kind(Token::Super))
                 .flatten()
                 .is_some();
             if sup {
@@ -179,15 +179,13 @@ impl<'a, 'b> Parser<'a, 'b> {
             let mut components = Vec::new();
             let mut all = false;
             loop {
-                if (sup || !components.is_empty())
-                    && self.advance_if_kind(Token::Asterisk).is_some()
-                {
+                if (sup || !components.is_empty()) && self.next_if_kind(Token::Asterisk).is_some() {
                     all = true;
                     break;
                 }
 
                 components.push((self.expect_id("expected path component"), Vec::new()));
-                if self.advance_if_kind(Token::ScopeRes).is_none() {
+                if self.next_if_kind(Token::ScopeRes).is_none() {
                     break;
                 }
             }
@@ -208,7 +206,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 span: token.span.extended_to(semi.span),
                 attrs: std::mem::take(&mut self.attrs),
             })
-        } else if let Some(token) = self.advance_if_kind(Token::Static) {
+        } else if let Some(token) = self.next_if_kind(Token::Static) {
             if let Some(token) = is_unsafe {
                 self.error_unconditional(Error::not_valid_here("unsafe", token.span));
             }
@@ -250,7 +248,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn item(&mut self) -> Stmt {
         self.try_item().unwrap_or_else(|| {
-            let span = self.advance().span;
+            let span = self.next().span;
             self.error(Error::new("expected item", span));
             self.is_unsafe = None;
             Stmt {
@@ -264,18 +262,14 @@ impl<'a, 'b> Parser<'a, 'b> {
     fn statement(&mut self) -> Stmt {
         let stmt = if let Some(item) = self.try_item() {
             item
-        } else if let Some(token) = self.advance_if(|t| matches!(t, Token::Let | Token::Mut)) {
+        } else if let Some(token) = self.next_if(|t| matches!(t, Token::Let | Token::Mut)) {
             if let Some(is_unsafe) = self.is_unsafe.take() {
                 self.error_unconditional(Error::not_valid_here("unsafe", is_unsafe.span));
             }
 
             let patt = self.pattern(matches!(token.data, Token::Mut));
-            let ty = self
-                .advance_if_kind(Token::Colon)
-                .map(|_| self.parse_type());
-            let value = self
-                .advance_if_kind(Token::Assign)
-                .map(|_| self.expression());
+            let ty = self.next_if_kind(Token::Colon).map(|_| self.parse_type());
+            let value = self.next_if_kind(Token::Assign).map(|_| self.expression());
             let semi = self.expect_kind(Token::Semicolon, "expected ';'");
             Stmt {
                 data: StmtData::Let { ty, value, patt },
@@ -290,7 +284,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             } else if needs_semicolon {
                 self.expect_kind(Token::Semicolon, "expected ';'");
             } else {
-                self.advance_if_kind(Token::Semicolon);
+                self.next_if_kind(Token::Semicolon);
             }
 
             if let Some(is_unsafe) = is_unsafe {
@@ -322,14 +316,14 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn precedence(&mut self, prec: Precedence) -> Expr {
         let mut expr = self.prefix();
-        while let Some(token) = self.advance_if(|tk| prec < tk.precedence()) {
+        while let Some(token) = self.next_if(|tk| prec < tk.precedence()) {
             expr = self.infix(expr, token);
         }
         expr
     }
 
     fn prefix(&mut self) -> Expr {
-        let Located { mut span, data } = self.advance();
+        let Located { mut span, data } = self.next();
         match data {
             // Literals
             Token::Void => Expr::new(span, ExprData::Void),
@@ -372,7 +366,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             | Token::Increment
             | Token::Decrement
             | Token::Exclamation => {
-                let op = if data == Token::Ampersand && self.advance_if_kind(Token::Mut).is_some() {
+                let op = if data == Token::Ampersand && self.next_if_kind(Token::Mut).is_some() {
                     UnaryOp::AddrMut
                 } else {
                     UnaryOp::try_from_prefix(data).unwrap()
@@ -388,7 +382,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 )
             }
             Token::LogicalAnd => {
-                let op = if self.advance_if_kind(Token::Mut).is_some() {
+                let op = if self.next_if_kind(Token::Mut).is_some() {
                     UnaryOp::AddrMut
                 } else {
                     UnaryOp::Addr
@@ -460,16 +454,16 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::For => self.for_expr(span),
             Token::Match => self.match_expr(span),
             Token::LBrace => {
-                if let Some(rbrace) = self.advance_if_kind(Token::RBrace) {
+                if let Some(rbrace) = self.next_if_kind(Token::RBrace) {
                     Expr::new(span.extended_to(rbrace.span), ExprData::Array(Vec::new()))
-                } else if self.advance_if_kind(Token::Colon).is_some() {
+                } else if self.next_if_kind(Token::Colon).is_some() {
                     Expr::new(
                         span.extended_to(self.expect_kind(Token::RBrace, "expected ']'").span),
                         ExprData::Map(Vec::new()),
                     )
                 } else {
                     let expr = self.expression();
-                    if self.advance_if_kind(Token::Colon).is_some() {
+                    if self.next_if_kind(Token::Colon).is_some() {
                         let value = self.expression();
                         self.csv(vec![(expr, value)], Token::RBrace, span, |this| {
                             let key = this.expression();
@@ -477,7 +471,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                             (key, this.expression())
                         })
                         .map(ExprData::Map)
-                    } else if self.advance_if_kind(Token::Semicolon).is_some() {
+                    } else if self.next_if_kind(Token::Semicolon).is_some() {
                         let count = self.expression();
                         let rbrace = self.expect_kind(Token::RBrace, "expected ']'");
                         Expr::new(
@@ -487,7 +481,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                                 count: count.into(),
                             },
                         )
-                    } else if let Some(rbrace) = self.advance_if_kind(Token::RBrace) {
+                    } else if let Some(rbrace) = self.next_if_kind(Token::RBrace) {
                         Expr::new(span.extended_to(rbrace.span), ExprData::Array(vec![expr]))
                     } else {
                         self.csv(vec![expr], Token::RBrace, span, Self::expression)
@@ -497,11 +491,11 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
             Token::At => {
                 self.expect_kind(Token::LBrace, "expected '['");
-                if let Some(rbrace) = self.advance_if_kind(Token::RBrace) {
+                if let Some(rbrace) = self.next_if_kind(Token::RBrace) {
                     Expr::new(span.extended_to(rbrace.span), ExprData::Vec(Vec::new()))
                 } else {
                     let expr = self.expression();
-                    if self.advance_if_kind(Token::Semicolon).is_some() {
+                    if self.next_if_kind(Token::Semicolon).is_some() {
                         let count = self.expression();
                         let rbrace = self.expect_kind(Token::RBrace, "expected ']'");
                         Expr::new(
@@ -533,15 +527,12 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let params = self
                     .csv(Vec::new(), Token::RParen, span, |this| {
                         (
-                            this.expect_located_id("expected parameter name"),
-                            this.advance_if_kind(Token::Colon)
-                                .map(|_| this.parse_type()),
+                            this.expect_id_l("expected parameter name"),
+                            this.next_if_kind(Token::Colon).map(|_| this.parse_type()),
                         )
                     })
                     .data;
-                let ret = self
-                    .advance_if_kind(Token::Colon)
-                    .map(|_| self.parse_type());
+                let ret = self.next_if_kind(Token::Colon).map(|_| self.parse_type());
                 self.expect_kind(Token::FatArrow, "expected '=>'");
 
                 let body = self.expression();
@@ -677,7 +668,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 },
             ),
             Token::As => {
-                let bang = self.advance_if_kind(Token::Exclamation);
+                let bang = self.next_if_kind(Token::Exclamation);
                 let ty = self.parse_type();
                 Expr::new(
                     left.span,
@@ -689,8 +680,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 )
             }
             Token::Dot => {
-                let member = self.expect_located_id("expected member name");
-                let generics = if self.advance_if_kind(Token::ScopeRes).is_some() {
+                let member = self.expect_id_l("expected member name");
+                let generics = if self.next_if_kind(Token::ScopeRes).is_some() {
                     self.expect_kind(Token::LAngle, "expected '<'");
                     self.rangle_csv_one(left.span, Self::parse_type)
                 } else {
@@ -710,7 +701,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     if let ExprData::Path(path) = &expr.data {
                         if let Some(ident) = path
                             .as_identifier()
-                            .filter(|_| this.advance_if_kind(Token::Colon).is_some())
+                            .filter(|_| this.next_if_kind(Token::Colon).is_some())
                         {
                             name = Some(ident.to_string());
                             if !this.matches(|t| matches!(t, Token::Comma | Token::RParen)) {
@@ -742,21 +733,21 @@ impl<'a, 'b> Parser<'a, 'b> {
     //
 
     fn block_or_normal_expr(&mut self) -> (bool, Expr) {
-        if let Some(token) = self.advance_if_kind(Token::If) {
+        if let Some(token) = self.next_if_kind(Token::If) {
             (false, self.if_expr(token.span))
-        } else if let Some(token) = self.advance_if_kind(Token::While) {
+        } else if let Some(token) = self.next_if_kind(Token::While) {
             (false, self.while_expr(token.span))
-        } else if let Some(token) = self.advance_if_kind(Token::Loop) {
+        } else if let Some(token) = self.next_if_kind(Token::Loop) {
             let expr = self.loop_expr(token.span);
             (
                 matches!(&expr.data, ExprData::Loop { do_while: true, .. }),
                 expr,
             )
-        } else if let Some(token) = self.advance_if_kind(Token::For) {
+        } else if let Some(token) = self.next_if_kind(Token::For) {
             (false, self.for_expr(token.span))
-        } else if let Some(token) = self.advance_if_kind(Token::Match) {
+        } else if let Some(token) = self.next_if_kind(Token::Match) {
             (false, self.match_expr(token.span))
-        } else if let Some(token) = self.advance_if_kind(Token::LCurly) {
+        } else if let Some(token) = self.next_if_kind(Token::LCurly) {
             (false, self.block_expr(token.span))
         } else {
             (true, self.expression())
@@ -767,7 +758,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let cond = self.expression();
         let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
         let if_branch = self.block_expr(lcurly.span);
-        let else_branch = self.advance_if_kind(Token::Else).map(|_| {
+        let else_branch = self.next_if_kind(Token::Else).map(|_| {
             if !self.matches_kind(Token::If) {
                 let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
                 self.block_expr(lcurly.span)
@@ -801,7 +792,7 @@ impl<'a, 'b> Parser<'a, 'b> {
     fn loop_expr(&mut self, mut token: Span) -> Expr {
         let body = self.parse_block().data;
         let (cond, do_while) = self
-            .advance_if_kind(Token::While)
+            .next_if_kind(Token::While)
             .map(|_| {
                 let cond = self.expression();
                 token.extend_to(cond.span);
@@ -839,14 +830,14 @@ impl<'a, 'b> Parser<'a, 'b> {
         let expr = self.expression();
         self.expect_kind(Token::LCurly, "expected block");
         let mut body = Vec::new();
-        let span = self.advance_until(Token::RCurly, token, |this| {
+        let span = self.try_until(Token::RCurly, token, |this| {
             let pattern = this.pattern(false);
             this.expect_kind(Token::FatArrow, "expected '=>'");
             let (needs_comma, expr) = this.block_or_normal_expr();
             if needs_comma {
                 this.expect_kind(Token::Comma, "expected ','");
             } else {
-                this.advance_if_kind(Token::Comma);
+                this.next_if_kind(Token::Comma);
             }
 
             body.push((pattern, expr));
@@ -863,7 +854,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn block_expr(&mut self, token: Span) -> Expr {
         let mut stmts = Vec::new();
-        let span = self.advance_until(Token::RCurly, token, |this| {
+        let span = self.try_until(Token::RCurly, token, |this| {
             stmts.push(this.statement());
         });
         Expr::new(span, ExprData::Block(stmts))
@@ -879,13 +870,13 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut data = first
             .map(|s| vec![(s.into(), Vec::new())])
             .unwrap_or_default();
-        while self.advance_if_kind(Token::ScopeRes).is_some() {
-            if self.advance_if_kind(Token::LAngle).is_some() {
+        while self.next_if_kind(Token::ScopeRes).is_some() {
+            if self.next_if_kind(Token::LAngle).is_some() {
                 let params = self.rangle_csv_one(*outspan, Self::parse_type);
                 data.last_mut().unwrap().1 = params.data;
                 *outspan = params.span;
             } else {
-                let name = self.expect_located_id("expected name");
+                let name = self.expect_id_l("expected name");
                 data.push((name.data.to_owned(), Vec::new()));
                 outspan.extend_to(name.span);
             }
@@ -895,10 +886,10 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn type_path(&mut self) -> Located<Path> {
-        let root = self.advance_if_kind(Token::ScopeRes);
+        let root = self.next_if_kind(Token::ScopeRes);
         let sup = root
             .is_none()
-            .then(|| self.advance_if_kind(Token::Super))
+            .then(|| self.next_if_kind(Token::Super))
             .flatten();
         if sup.is_some() {
             self.expect_kind(Token::ScopeRes, "expected '::'");
@@ -907,13 +898,13 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut data = Vec::new();
         let mut span = root.as_ref().or(sup.as_ref()).map(|t| t.span);
         loop {
-            let ident = self.expect_located_id("expected type name");
+            let ident = self.expect_id_l("expected type name");
             if let Some(span) = &mut span {
                 span.extend_to(ident.span);
             } else {
                 span = Some(ident.span);
             }
-            if self.advance_if_kind(Token::LAngle).is_some() {
+            if self.next_if_kind(Token::LAngle).is_some() {
                 let params = self.rangle_csv_one(span.unwrap(), Self::parse_type);
                 data.push((ident.data, params.data));
                 span = Some(params.span);
@@ -921,7 +912,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 data.push((ident.data, Vec::new()));
             }
 
-            if self.advance_if_kind(Token::ScopeRes).is_none() {
+            if self.next_if_kind(Token::ScopeRes).is_none() {
                 break;
             }
         }
@@ -937,6 +928,8 @@ impl<'a, 'b> Parser<'a, 'b> {
             },
         )
     }
+
+    //
 
     fn int_pattern(negative: Option<Span>, t: &Located<Token>) -> Option<Located<IntPattern>> {
         match t.data {
@@ -967,12 +960,12 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn maybe_range_pattern(&mut self, start: Located<IntPattern>) -> Located<Pattern> {
-        let Some(range) = self.advance_if(|t| matches!(t, Token::Range | Token::RangeInclusive))
+        let Some(range) = self.next_if(|t| matches!(t, Token::Range | Token::RangeInclusive))
         else {
             return start.map(Pattern::Int);
         };
 
-        let negative = self.advance_if_kind(Token::Minus);
+        let negative = self.next_if_kind(Token::Minus);
         let Ok(end) = self.expect(
             |t| Self::int_pattern(negative.map(|t| t.span), &t).ok_or(t),
             "expected number",
@@ -991,7 +984,7 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn literal_pattern(&mut self) -> Option<Located<Pattern>> {
-        let string = self.advance_if_map(|t| {
+        let string = self.next_if_map(|t| {
             t.data
                 .as_string()
                 .map(|value| Located::new(t.span, value.to_string()))
@@ -1001,7 +994,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             return Some(string.map(Pattern::String));
         }
 
-        if let Some(token) = self.advance_if_kind(Token::Minus) {
+        if let Some(token) = self.next_if_kind(Token::Minus) {
             let Ok(start) = self.expect(
                 |t| Self::int_pattern(Some(token.span), &t).ok_or(t),
                 "expected number",
@@ -1012,15 +1005,14 @@ impl<'a, 'b> Parser<'a, 'b> {
             return Some(self.maybe_range_pattern(start));
         }
 
-        let int = self.advance_if_map(|t| Self::int_pattern(None, t));
+        let int = self.next_if_map(|t| Self::int_pattern(None, t));
         if let Some(int) = int {
             return Some(self.maybe_range_pattern(int));
         }
 
-        let char = self.advance_if_map(|t| t.data.as_char().map(|&ch| Located::new(t.span, ch)));
+        let char = self.next_if_map(|t| t.data.as_char().map(|&ch| Located::new(t.span, ch)));
         if let Some(char) = char {
-            let Some(range) =
-                self.advance_if(|t| matches!(t, Token::Range | Token::RangeInclusive))
+            let Some(range) = self.next_if(|t| matches!(t, Token::Range | Token::RangeInclusive))
             else {
                 return Some(char.map(Pattern::Char));
             };
@@ -1050,43 +1042,40 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn pattern(&mut self, mut_var: bool) -> Located<Pattern> {
-        if self.advance_if_kind(Token::Question).is_some() {
+        if self.next_if_kind(Token::Question).is_some() {
             return self
                 .pattern(false)
                 .map(|inner| Pattern::Option(inner.into()));
         }
 
-        if let Some(token) = self.advance_if_kind(Token::None) {
+        if let Some(token) = self.next_if_kind(Token::None) {
             return Located::new(token.span, Pattern::Null);
         }
 
-        if let Some(token) = self.advance_if_kind(Token::LCurly) {
+        if let Some(token) = self.next_if_kind(Token::LCurly) {
             return self
                 .csv_one(Token::RCurly, token.span, |this| {
-                    let mutable = this.advance_if_kind(Token::Mut).is_some();
+                    let mutable = this.next_if_kind(Token::Mut).is_some();
                     // if mut_var, this mutable is redundant
-                    let name = this.expect_located_id("expected name");
+                    let name = this.expect_id_l("expected name");
                     Destructure {
                         name,
                         mutable: mutable || mut_var,
-                        pattern: this
-                            .advance_if_kind(Token::Colon)
-                            .map(|_| this.pattern(true)),
+                        pattern: this.next_if_kind(Token::Colon).map(|_| this.pattern(true)),
                     }
                 })
                 .map(Pattern::StructDestructure);
         }
 
-        if let Some(token) = self.advance_if_kind(Token::LBrace) {
+        if let Some(token) = self.next_if_kind(Token::LBrace) {
             return self
                 .csv(Vec::new(), Token::RBrace, token.span, |this| {
-                    if let Some(token) = this.advance_if_kind(Token::Ellipses) {
-                        let pattern = if this.advance_if_kind(Token::Mut).is_some() {
+                    if let Some(token) = this.next_if_kind(Token::Ellipses) {
+                        let pattern = if this.next_if_kind(Token::Mut).is_some() {
                             let ident = this.expect_id("expected name");
                             Some((true, ident))
                         } else {
-                            let ident =
-                                this.advance_if_map(|t| t.data.as_ident().map(|&i| i.into()));
+                            let ident = this.next_if_map(|t| t.data.as_ident().map(|&i| i.into()));
                             Some(false).zip(ident)
                         };
 
@@ -1098,10 +1087,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 .map(Pattern::Array);
         }
 
-        if mut_var || self.advance_if_kind(Token::Mut).is_some() {
-            return self
-                .expect_located_id("expected name")
-                .map(Pattern::MutBinding);
+        if mut_var || self.next_if_kind(Token::Mut).is_some() {
+            return self.expect_id_l("expected name").map(Pattern::MutBinding);
         }
 
         if !mut_var {
@@ -1111,7 +1098,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
 
         let path = self.type_path();
-        if self.advance_if_kind(Token::LParen).is_some() {
+        if self.next_if_kind(Token::LParen).is_some() {
             self.csv(Vec::new(), Token::RParen, path.span, |this| {
                 this.pattern(false)
             })
@@ -1121,73 +1108,32 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
     }
 
-    fn csv<T>(
-        &mut self,
-        mut res: Vec<T>,
-        end: Token,
-        span: Span,
-        mut f: impl FnMut(&mut Self) -> T,
-    ) -> Located<Vec<T>> {
-        if !res.is_empty() && !self.matches_kind(end.clone()) {
-            self.expect_kind(Token::Comma, "expected ','");
-        }
-
-        let span = self.advance_until(end.clone(), span, |this| {
-            res.push(f(this));
-
-            if !this.matches_kind(end.clone()) {
-                this.expect_kind(Token::Comma, "expected ','");
-            }
-        });
-
-        Located::new(span, res)
+    fn is_range_end(&mut self) -> bool {
+        self.matches(|k| {
+            matches!(
+                k,
+                Token::Semicolon | Token::Comma | Token::RBrace | Token::RParen
+            )
+        })
     }
 
-    fn csv_one<T>(
-        &mut self,
-        end: Token,
-        span: Span,
-        mut f: impl FnMut(&mut Self) -> T,
-    ) -> Located<Vec<T>> {
-        let first = f(self);
-        self.csv(vec![first], end, span, f)
+    fn attribute(&mut self) -> Attribute {
+        Attribute {
+            name: self.expect_id_l("expected name"),
+            props: self
+                .next_if_kind(Token::LParen)
+                .map(|_| {
+                    self.csv_one(Token::RParen, Span::default(), Self::attribute)
+                        .data
+                })
+                .unwrap_or_default(),
+        }
     }
 
-    fn rangle_csv_one<T>(
-        &mut self,
-        mut span: Span,
-        mut f: impl FnMut(&mut Self) -> T,
-    ) -> Located<Vec<T>> {
-        let mut res = vec![f(self)];
-        if !res.is_empty() && !self.matches(|tk| matches!(tk, Token::RAngle | Token::Shr)) {
-            self.expect_kind(Token::Comma, "expected ','");
-        }
-
-        loop {
-            match self.advance_if(|t| matches!(t, Token::Eof | Token::RAngle | Token::Shr)) {
-                Some(t) if t.data == Token::Shr => {
-                    self.peek = Some(Ok(Located::new(t.span, Token::RAngle)));
-                    span.extend_to(t.span);
-                    break;
-                }
-                Some(t) => {
-                    span.extend_to(t.span);
-                    break;
-                }
-                None => {}
-            }
-
-            res.push(f(self));
-            if !self.matches(|t| matches!(t, Token::RAngle | Token::Shr)) {
-                self.expect_kind(Token::Comma, "expected ','");
-            }
-        }
-
-        Located::new(span, res)
-    }
+    //
 
     fn parse_type_params(&mut self) -> Vec<(String, Vec<Located<Path>>)> {
-        self.advance_if_kind(Token::LAngle)
+        self.next_if_kind(Token::LAngle)
             .map(|_| {
                 self.rangle_csv_one(Span::default(), |this| {
                     (
@@ -1202,10 +1148,10 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn parse_trait_impl(&mut self) -> Vec<Located<Path>> {
         let mut impls = Vec::new();
-        if self.advance_if_kind(Token::Colon).is_some() {
+        if self.next_if_kind(Token::Colon).is_some() {
             loop {
                 impls.push(self.type_path());
-                if self.advance_if_kind(Token::Plus).is_none() {
+                if self.next_if_kind(Token::Plus).is_none() {
                     break;
                 }
             }
@@ -1214,65 +1160,65 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn parse_type(&mut self) -> TypeHint {
-        if self.advance_if_kind(Token::Asterisk).is_some() {
-            if self.advance_if_kind(Token::Mut).is_some() {
+        if self.next_if_kind(Token::Asterisk).is_some() {
+            if self.next_if_kind(Token::Mut).is_some() {
                 return TypeHint::MutPtr(self.parse_type().into());
             } else {
                 return TypeHint::Ptr(self.parse_type().into());
             }
-        } else if self.advance_if_kind(Token::Question).is_some() {
+        } else if self.next_if_kind(Token::Question).is_some() {
             return TypeHint::Option(self.parse_type().into());
-        } else if self.advance_if_kind(Token::NoneCoalesce).is_some() {
+        } else if self.next_if_kind(Token::NoneCoalesce).is_some() {
             // special case for ??
             return TypeHint::Option(TypeHint::Option(self.parse_type().into()).into());
         }
 
-        if self.advance_if_kind(Token::LBrace).is_some() {
-            if self.advance_if_kind(Token::Mut).is_some() {
+        if self.next_if_kind(Token::LBrace).is_some() {
+            if self.next_if_kind(Token::Mut).is_some() {
                 let inner = self.parse_type();
                 self.expect_kind(Token::Range, "expected '..'");
                 self.expect_kind(Token::RBrace, "expected ']'");
                 TypeHint::SliceMut(inner.into())
             } else {
                 let inner = self.parse_type();
-                if self.advance_if_kind(Token::RBrace).is_some() {
+                if self.next_if_kind(Token::RBrace).is_some() {
                     TypeHint::Vec(inner.into())
-                } else if self.advance_if_kind(Token::Range).is_some() {
+                } else if self.next_if_kind(Token::Range).is_some() {
                     self.expect_kind(Token::RBrace, "expected ']'");
                     TypeHint::Slice(inner.into())
-                } else if self.advance_if_kind(Token::Semicolon).is_some() {
+                } else if self.next_if_kind(Token::Semicolon).is_some() {
                     let count = self.expression();
                     self.expect_kind(Token::RBrace, "expected ']'");
                     TypeHint::Array(inner.into(), count.into())
-                } else if self.advance_if_kind(Token::Colon).is_some() {
+                } else if self.next_if_kind(Token::Colon).is_some() {
                     let value = self.parse_type();
                     self.expect_kind(Token::RBrace, "expected ']'");
                     TypeHint::Map(inner.into(), value.into())
                 } else {
-                    let span = self.advance().span;
+                    let span = self.next().span;
                     self.error(Error::new("expected ']', ';', or ':'", span));
                     return TypeHint::Error;
                 }
             }
-        } else if self.advance_if_kind(Token::LCurly).is_some() {
+        } else if self.next_if_kind(Token::LCurly).is_some() {
             let inner = self.parse_type().into();
             self.expect_kind(Token::RCurly, "expected '}'");
             TypeHint::Set(inner)
-        } else if self.advance_if_kind(Token::LParen).is_some() {
+        } else if self.next_if_kind(Token::LParen).is_some() {
             TypeHint::Tuple(
                 self.csv_one(Token::RParen, Span::default(), Self::parse_type)
                     .data,
             )
-        } else if self.advance_if_kind(Token::Void).is_some() {
+        } else if self.next_if_kind(Token::Void).is_some() {
             TypeHint::Void
-        } else if let Some(this) = self.advance_if_kind(Token::ThisType) {
+        } else if let Some(this) = self.next_if_kind(Token::ThisType) {
             TypeHint::Regular(Located::new(this.span, Path::from(THIS_TYPE.to_owned())))
-        } else if self.advance_if_kind(Token::Fn).is_some() {
+        } else if self.next_if_kind(Token::Fn).is_some() {
             self.expect_kind(Token::LParen, "expected '('");
             let params = self
                 .csv(Vec::new(), Token::RParen, Span::default(), Self::parse_type)
                 .data;
-            let ret = if self.advance_if_kind(Token::FatArrow).is_some() {
+            let ret = if self.next_if_kind(Token::FatArrow).is_some() {
                 self.parse_type()
             } else {
                 TypeHint::Void
@@ -1291,7 +1237,7 @@ impl<'a, 'b> Parser<'a, 'b> {
     fn parse_block(&mut self) -> Located<Vec<Stmt>> {
         let mut stmts = Vec::new();
         let lcurly = self.expect_kind(Token::LCurly, "expected '{'");
-        let span = self.advance_until(Token::RCurly, lcurly.span, |this| {
+        let span = self.try_until(Token::RCurly, lcurly.span, |this| {
             stmts.push(this.statement());
         });
         Located::new(span, stmts)
@@ -1299,7 +1245,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn parse_struct(&mut self, public: bool, span: Span) -> Stmt {
         let attrs = std::mem::take(&mut self.attrs);
-        let name = self.expect_located_id("expected name");
+        let name = self.expect_id_l("expected name");
         let type_params = self.parse_type_params();
 
         self.expect_kind(Token::LCurly, "expected '{'");
@@ -1307,13 +1253,13 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut functions = Vec::new();
         let mut members = Vec::new();
         let mut impls = Vec::new();
-        let span = self.advance_until(Token::RCurly, span, |this| {
+        let span = self.try_until(Token::RCurly, span, |this| {
             let config = FnConfig {
                 allow_method: true,
-                is_public: this.advance_if_kind(Token::Pub).is_some(),
+                is_public: this.next_if_kind(Token::Pub).is_some(),
                 is_async: false,
                 is_extern: false,
-                is_unsafe: this.advance_if_kind(Token::Unsafe).is_some(),
+                is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
                 body: true,
             };
             if config.is_unsafe {
@@ -1322,7 +1268,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 }
             } else if let Some(func) = this.try_parse_fn(config) {
                 functions.push(func.data);
-            } else if let Some(token) = this.advance_if_kind(Token::Impl) {
+            } else if let Some(token) = this.next_if_kind(Token::Impl) {
                 if config.is_public {
                     // TODO: use the span for `pub`
                     this.error(Error::not_valid_here("pub", token.span));
@@ -1333,9 +1279,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let name = this.expect_id("expected name");
                 this.expect_kind(Token::Colon, "expected type");
                 let ty = this.parse_type();
-                let value = this
-                    .advance_if_kind(Token::Assign)
-                    .map(|_| this.expression());
+                let value = this.next_if_kind(Token::Assign).map(|_| this.expression());
 
                 if !this.matches_kind(Token::RCurly) {
                     this.expect_kind(Token::Comma, "expected ','");
@@ -1366,25 +1310,25 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn parse_union(&mut self, public: bool, span: Span, is_unsafe: bool) -> Stmt {
         let attrs = std::mem::take(&mut self.attrs);
-        let tag = self.advance_if_kind(Token::LParen).map(|_| {
+        let tag = self.next_if_kind(Token::LParen).map(|_| {
             let tag = self.type_path();
             self.expect_kind(Token::RParen, "expected ')'");
             tag
         });
-        let name = self.expect_located_id("expected name");
+        let name = self.expect_id_l("expected name");
         let type_params = self.parse_type_params();
         let mut functions = Vec::new();
         let mut members = Vec::new();
         let mut impls = Vec::new();
 
         self.expect_kind(Token::LCurly, "expected '{'");
-        let span = self.advance_until(Token::RCurly, span, |this| {
+        let span = self.try_until(Token::RCurly, span, |this| {
             let config = FnConfig {
                 allow_method: true,
-                is_public: this.advance_if_kind(Token::Pub).is_some(),
+                is_public: this.next_if_kind(Token::Pub).is_some(),
                 is_async: false,
                 is_extern: false,
-                is_unsafe: this.advance_if_kind(Token::Unsafe).is_some(),
+                is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
                 body: true,
             };
             if config.is_public || config.is_unsafe {
@@ -1393,14 +1337,12 @@ impl<'a, 'b> Parser<'a, 'b> {
                 }
             } else if let Some(func) = this.try_parse_fn(config) {
                 functions.push(func.data);
-            } else if this.advance_if_kind(Token::Shared).is_some() {
+            } else if this.next_if_kind(Token::Shared).is_some() {
                 // warn if pub was specified that it is useless
                 let name = this.expect_id("expected name");
                 this.expect_kind(Token::Colon, "expected type");
                 let ty = this.parse_type();
-                let value = this
-                    .advance_if_kind(Token::Assign)
-                    .map(|_| this.expression());
+                let value = this.next_if_kind(Token::Assign).map(|_| this.expression());
                 this.expect_kind(Token::Comma, "expected ','");
 
                 members.push(MemVar {
@@ -1410,17 +1352,16 @@ impl<'a, 'b> Parser<'a, 'b> {
                     ty,
                     default: value,
                 });
-            } else if let Some(token) = this.advance_if_kind(Token::Impl) {
+            } else if let Some(token) = this.next_if_kind(Token::Impl) {
                 impls.push(this.parse_impl_block(token.span));
             } else {
                 let name = this.expect_id("expected variant name");
-                let (ty, value) = if this.advance_if_kind(Token::LParen).is_some() {
+                let (ty, value) = if this.next_if_kind(Token::LParen).is_some() {
                     let ty = this.parse_type();
                     this.expect_kind(Token::RParen, "expected ')'");
                     (
                         ty,
-                        this.advance_if_kind(Token::Assign)
-                            .map(|_| this.expression()),
+                        this.next_if_kind(Token::Assign).map(|_| this.expression()),
                     )
                 } else {
                     (TypeHint::Void, None)
@@ -1459,14 +1400,14 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn parse_trait(&mut self, public: bool, span: Span, is_unsafe: bool) -> Stmt {
         let attrs = std::mem::take(&mut self.attrs);
-        let name = self.expect_located_id("expected name");
+        let name = self.expect_id_l("expected name");
         let type_params = self.parse_type_params();
         let impls = self.parse_trait_impl();
         self.expect_kind(Token::LCurly, "expected '{'");
 
         let mut functions = Vec::new();
-        let span = self.advance_until(Token::RCurly, span, |this| {
-            let is_unsafe = this.advance_if_kind(Token::Unsafe).is_some();
+        let span = self.try_until(Token::RCurly, span, |this| {
+            let is_unsafe = this.next_if_kind(Token::Unsafe).is_some();
             if let Ok(proto) = this.expect_fn(FnConfig {
                 body: false,
                 allow_method: true,
@@ -1495,20 +1436,20 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn parse_enum(&mut self, public: bool, span: Span) -> Stmt {
         let attrs = std::mem::take(&mut self.attrs);
-        let name = self.expect_located_id("expected name");
+        let name = self.expect_id_l("expected name");
         self.expect_kind(Token::LCurly, "expected '{'");
 
         let mut functions = Vec::new();
         let mut variants = Vec::new();
         let mut impls = Vec::new();
-        let span = self.advance_until(Token::RCurly, span, |this| {
+        let span = self.try_until(Token::RCurly, span, |this| {
             let config = FnConfig {
                 allow_method: true,
-                is_public: this.advance_if_kind(Token::Pub).is_some(),
+                is_public: this.next_if_kind(Token::Pub).is_some(),
                 is_async: false,
                 is_extern: false,
                 body: true,
-                is_unsafe: this.advance_if_kind(Token::Unsafe).is_some(),
+                is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
             };
             if config.is_public || config.is_unsafe {
                 if let Ok(func) = this.expect_fn(config) {
@@ -1516,12 +1457,12 @@ impl<'a, 'b> Parser<'a, 'b> {
                 }
             } else if let Some(func) = this.try_parse_fn(config) {
                 functions.push(func.data);
-            } else if let Some(token) = this.advance_if_kind(Token::Impl) {
+            } else if let Some(token) = this.next_if_kind(Token::Impl) {
                 impls.push(this.parse_impl_block(token.span));
             } else {
                 variants.push((
                     this.expect_id("expected variant name"),
-                    if this.advance_if_kind(Token::Assign).is_some() {
+                    if this.next_if_kind(Token::Assign).is_some() {
                         Some(this.expression())
                     } else {
                         None
@@ -1558,16 +1499,16 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         let mut functions = Vec::new();
         let mut impls = Vec::new();
-        let span = self.advance_until(Token::RCurly, span, |this| {
-            if let Some(token) = this.advance_if_kind(Token::Impl) {
+        let span = self.try_until(Token::RCurly, span, |this| {
+            if let Some(token) = this.next_if_kind(Token::Impl) {
                 impls.push(this.parse_impl_block(token.span));
             } else {
                 let config = FnConfig {
                     allow_method: true,
-                    is_public: this.advance_if_kind(Token::Pub).is_some(),
+                    is_public: this.next_if_kind(Token::Pub).is_some(),
                     is_async: false,
                     is_extern: false,
-                    is_unsafe: this.advance_if_kind(Token::Unsafe).is_some(),
+                    is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
                     body: true,
                 };
                 if let Ok(func) = this.expect_fn(config) {
@@ -1596,12 +1537,12 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.expect_kind(Token::LCurly, "expected '{'");
 
         let mut functions = Vec::new();
-        self.advance_until(Token::RCurly, span, |this| {
-            if let Some(token) = this.advance_if_kind(Token::Pub) {
+        self.try_until(Token::RCurly, span, |this| {
+            if let Some(token) = this.next_if_kind(Token::Pub) {
                 this.error_unconditional(Error::not_valid_here("pub", token.span));
             }
 
-            let is_unsafe = this.advance_if_kind(Token::Unsafe).is_some();
+            let is_unsafe = this.next_if_kind(Token::Unsafe).is_some();
             if let Ok(func) = this.expect_fn(FnConfig {
                 allow_method: true,
                 is_public: true,
@@ -1632,7 +1573,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             body,
         }: FnConfig,
     ) -> Fn {
-        let name = self.expect_located_id("expected name");
+        let name = self.expect_id_l("expected name");
         let mut variadic = false;
         let type_params = self.parse_type_params();
         let mut params = Vec::new();
@@ -1640,18 +1581,18 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut has_default = false;
         self.expect_kind(Token::LParen, "expected parameter list");
         while self
-            .advance_if(|t| matches!(t, Token::RParen | Token::Eof))
+            .next_if(|t| matches!(t, Token::RParen | Token::Eof))
             .is_none()
         {
-            if self.advance_if_kind(Token::Ellipses).is_some() {
+            if self.next_if_kind(Token::Ellipses).is_some() {
                 variadic = true;
                 self.expect_kind(Token::RParen, "expected ')'");
                 break;
             }
 
-            let keyword = self.advance_if_kind(Token::Keyword).is_some();
-            let mutable = self.advance_if_kind(Token::Mut).is_some();
-            if allow_method && count == 0 && self.advance_if_kind(Token::This).is_some() {
+            let keyword = self.next_if_kind(Token::Keyword).is_some();
+            let mutable = self.next_if_kind(Token::Mut).is_some();
+            if allow_method && count == 0 && self.next_if_kind(Token::This).is_some() {
                 params.push(Param {
                     mutable: false,
                     keyword,
@@ -1664,10 +1605,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                     default: None,
                 })
             } else {
-                let name = self.expect_located_id("expected name");
+                let name = self.expect_id_l("expected name");
                 self.expect_kind(Token::Colon, "expected type");
                 let ty = self.parse_type();
-                let default = if self.advance_if_kind(Token::Assign).is_some() {
+                let default = if self.next_if_kind(Token::Assign).is_some() {
                     has_default = true;
                     Some(self.expression())
                 } else {
@@ -1697,7 +1638,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             count += 1;
         }
 
-        let ret = if self.advance_if_kind(Token::Colon).is_some() {
+        let ret = if self.next_if_kind(Token::Colon).is_some() {
             self.parse_type()
         } else {
             TypeHint::Void
@@ -1725,7 +1666,7 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn try_parse_fn(&mut self, params: FnConfig) -> Option<Located<Fn>> {
-        if let Some(token) = self.advance_if_kind(Token::Fn) {
+        if let Some(token) = self.next_if_kind(Token::Fn) {
             Some(Located::new(
                 token.span,
                 self.parse_fn(FnConfig {
@@ -1733,7 +1674,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     ..params
                 }),
             ))
-        } else if let Some(token) = self.advance_if_kind(Token::Async) {
+        } else if let Some(token) = self.next_if_kind(Token::Async) {
             self.expect_kind(Token::Fn, "expected 'fn'");
             Some(Located::new(
                 token.span,
@@ -1754,7 +1695,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
 
             loop {
-                let token = self.advance();
+                let token = self.next();
                 match token.data {
                     Token::Extern | Token::Fn | Token::Async => break,
                     Token::Eof => {
@@ -1767,65 +1708,117 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
     }
 
-    fn is_range_end(&mut self) -> bool {
-        self.matches(|k| {
-            matches!(
-                k,
-                Token::Semicolon | Token::Comma | Token::RBrace | Token::RParen
-            )
-        })
+    //
+
+    fn csv<T>(
+        &mut self,
+        mut res: Vec<T>,
+        end: Token,
+        span: Span,
+        mut f: impl FnMut(&mut Self) -> T,
+    ) -> Located<Vec<T>> {
+        if !res.is_empty() && !self.matches_kind(end.clone()) {
+            self.expect_kind(Token::Comma, "expected ','");
+        }
+
+        let span = self.try_until(end.clone(), span, |this| {
+            res.push(f(this));
+
+            if !this.matches_kind(end.clone()) {
+                this.expect_kind(Token::Comma, "expected ','");
+            }
+        });
+
+        Located::new(span, res)
     }
 
-    fn attribute(&mut self) -> Attribute {
-        Attribute {
-            name: self.expect_located_id("expected name"),
-            props: self
-                .advance_if_kind(Token::LParen)
-                .map(|_| {
-                    self.csv_one(Token::RParen, Span::default(), Self::attribute)
-                        .data
-                })
-                .unwrap_or_default(),
+    fn csv_one<T>(
+        &mut self,
+        end: Token,
+        span: Span,
+        mut f: impl FnMut(&mut Self) -> T,
+    ) -> Located<Vec<T>> {
+        let first = f(self);
+        self.csv(vec![first], end, span, f)
+    }
+
+    fn rangle_csv_one<T>(
+        &mut self,
+        mut span: Span,
+        mut f: impl FnMut(&mut Self) -> T,
+    ) -> Located<Vec<T>> {
+        let mut res = vec![f(self)];
+        if !res.is_empty() && !self.matches(|tk| matches!(tk, Token::RAngle | Token::Shr)) {
+            self.expect_kind(Token::Comma, "expected ','");
         }
+
+        loop {
+            match self.next_if(|t| matches!(t, Token::Eof | Token::RAngle | Token::Shr)) {
+                Some(t) if t.data == Token::Shr => {
+                    self.peek = Some(Located::new(t.span, Token::RAngle));
+                    span.extend_to(t.span);
+                    break;
+                }
+                Some(t) => {
+                    span.extend_to(t.span);
+                    break;
+                }
+                None => {}
+            }
+
+            res.push(f(self));
+            if !self.matches(|t| matches!(t, Token::RAngle | Token::Shr)) {
+                self.expect_kind(Token::Comma, "expected ','");
+            }
+        }
+
+        Located::new(span, res)
+    }
+
+    fn try_until(&mut self, token: Token, mut span: Span, mut f: impl FnMut(&mut Self)) -> Span {
+        while match self.next_if(|t| t == &token || t == &Token::Eof) {
+            Some(c) => {
+                span.extend_to(c.span);
+                false
+            }
+            None => true,
+        } {
+            f(self);
+        }
+
+        span
     }
 
     //
 
     fn synchronize(&mut self) {
-        use Token::*;
-
+        use Token as T;
         loop {
-            match self.peek() {
-                Ok(token) if token.data == Semicolon => {
-                    self.advance();
+            match self.peek().data {
+                T::Semicolon => {
+                    self.next();
                     break;
                 }
-                Ok(token)
-                    if matches!(
-                        token.data,
-                        Pub | Struct
-                            | Enum
-                            | Union
-                            | Extension
-                            | Trait
-                            | Fn
-                            | Let
-                            | Static
-                            | Extern
-                            | Loop
-                            | If
-                            | Match
-                            | While
-                            | Return
-                            | Yield
-                            | Break
-                            | Eof
-                    ) =>
-                {
-                    break
-                }
+                T::Pub
+                | T::Struct
+                | T::Enum
+                | T::Union
+                | T::Extension
+                | T::Trait
+                | T::Fn
+                | T::Let
+                | T::Static
+                | T::Extern
+                | T::Loop
+                | T::If
+                | T::Match
+                | T::While
+                | T::Return
+                | T::Yield
+                | T::Break
+                | T::Eof => break,
                 _ => {
-                    self.advance();
+                    self.next();
                 }
             }
         }
@@ -1843,54 +1836,45 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.diag.error(err);
     }
 
-    fn advance(&mut self) -> Located<Token<'a>> {
-        loop {
-            match self.next() {
-                Ok(tok) => break tok,
-                Err(err) => self.error(Error::new(err.data.tell(), err.span)),
-            }
-        }
+    //
+
+    fn peek(&mut self) -> &Located<Token<'a>> {
+        self.peek.get_or_insert_with(|| self.lexer.token(self.diag))
     }
 
-    fn advance_if(&mut self, pred: impl FnOnce(&Token) -> bool) -> Option<Located<Token<'a>>> {
-        self.next_if(|tok| matches!(tok, Ok(tok) if pred(&tok.data)))
-            .map(|token| token.unwrap())
+    fn next(&mut self) -> Located<Token<'a>> {
+        self.peek
+            .take()
+            .unwrap_or_else(|| self.lexer.token(self.diag))
     }
 
-    fn advance_if_kind(&mut self, kind: Token) -> Option<Located<Token<'a>>> {
-        self.advance_if(|t| t == &kind)
+    fn next_if_l(&mut self, f: impl FnOnce(&Located<Token>) -> bool) -> Option<Located<Token<'a>>> {
+        f(self.peek()).then(|| self.next())
     }
 
-    fn advance_if_map<T>(&mut self, pred: impl FnOnce(&Located<Token>) -> Option<T>) -> Option<T> {
+    fn next_if(&mut self, pred: impl FnOnce(&Token) -> bool) -> Option<Located<Token<'a>>> {
+        self.next_if_l(|tok| pred(&tok.data))
+    }
+
+    fn next_if_kind(&mut self, kind: Token) -> Option<Located<Token<'a>>> {
+        self.next_if(|t| t == &kind)
+    }
+
+    fn next_if_map<T>(&mut self, pred: impl FnOnce(&Located<Token>) -> Option<T>) -> Option<T> {
         let mut outer = None;
-        self.next_if(|t| {
-            if let Ok(t) = t {
-                outer = pred(t);
-                outer.is_some()
-            } else {
-                false
-            }
+        self.next_if_l(|t| {
+            outer = pred(t);
+            outer.is_some()
         });
         outer
     }
 
-    fn advance_until(
-        &mut self,
-        token: Token,
-        mut span: Span,
-        mut f: impl FnMut(&mut Self),
-    ) -> Span {
-        while match self.advance_if(|t| t == &token || t == &Token::Eof) {
-            Some(c) => {
-                span.extend_to(c.span);
-                false
-            }
-            None => true,
-        } {
-            f(self);
-        }
+    fn matches(&mut self, pred: impl FnOnce(&Token) -> bool) -> bool {
+        pred(&self.peek().data)
+    }
 
-        span
+    fn matches_kind(&mut self, kind: Token) -> bool {
+        self.matches(|t| t == &kind)
     }
 
     fn expect<T>(
@@ -1898,7 +1882,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         pred: impl FnOnce(Located<Token<'a>>) -> Result<T, Located<Token<'a>>>,
         msg: &str,
     ) -> Result<T, Located<Token<'a>>> {
-        match pred(self.advance()) {
+        match pred(self.next()) {
             Ok(t) => Ok(t),
             Err(e) => {
                 self.error(Error::new(msg, e.span));
@@ -1929,7 +1913,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         .unwrap_or_default()
     }
 
-    fn expect_located_id(&mut self, msg: &str) -> Located<String> {
+    fn expect_id_l(&mut self, msg: &str) -> Located<String> {
         self.expect(
             |t| {
                 t.data
@@ -1940,25 +1924,5 @@ impl<'a, 'b> Parser<'a, 'b> {
             msg,
         )
         .unwrap_or_else(|err| Located::new(err.span, String::new()))
-    }
-
-    fn matches(&mut self, pred: impl FnOnce(&Token) -> bool) -> bool {
-        matches!(self.peek(), Ok(token) if pred(&token.data))
-    }
-
-    fn matches_kind(&mut self, kind: Token) -> bool {
-        self.matches(|t| t == &kind)
-    }
-
-    fn peek(&mut self) -> &LexerResult<'a> {
-        self.peek.get_or_insert_with(|| self.lexer.token())
-    }
-
-    fn next(&mut self) -> LexerResult<'a> {
-        self.peek.take().unwrap_or_else(|| self.lexer.token())
-    }
-
-    fn next_if(&mut self, f: impl FnOnce(&LexerResult) -> bool) -> Option<LexerResult<'a>> {
-        f(self.peek()).then(|| self.next())
     }
 }

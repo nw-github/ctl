@@ -2,7 +2,10 @@ use std::borrow::Cow;
 
 use enum_as_inner::EnumAsInner;
 
-use crate::{error::FileId, THIS_PARAM, THIS_TYPE};
+use crate::{
+    error::{Diagnostics, Error, FileId},
+    THIS_PARAM, THIS_TYPE,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, EnumAsInner)]
 pub enum Token<'a> {
@@ -173,35 +176,6 @@ impl Token<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Error {
-    UnterminatedStr,
-    UnterminatedChar,
-    CharTooLong,
-    BadByteChar,
-    BadByteStr,
-    EmptyChar,
-    UnterminatedComment,
-    UnrecognizedChar,
-    InvalidEscape,
-}
-
-impl Error {
-    pub fn tell(&self) -> &'static str {
-        match self {
-            Error::UnterminatedStr => "unterminated string literal",
-            Error::UnterminatedChar => "unterminated char literal",
-            Error::EmptyChar => "empty char literal",
-            Error::CharTooLong => "char literal must only contain one character",
-            Error::BadByteStr => "invalid character in byte string",
-            Error::BadByteChar => "invalid character in byte literal (must be ascii)",
-            Error::UnterminatedComment => "unterminated block comment",
-            Error::UnrecognizedChar => "unexpected character",
-            Error::InvalidEscape => "invalid UTF-8 escape sequence",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Span {
     pub pos: usize,
@@ -242,8 +216,6 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Located<T> {
     }
 }
 
-pub type LexerResult<'a> = Result<Located<Token<'a>>, Located<Error>>;
-
 pub struct Lexer<'a> {
     src: &'a str,
     pos: usize,
@@ -255,15 +227,17 @@ impl<'a> Lexer<'a> {
         Self { src, file, pos: 0 }
     }
 
-    pub fn token(&mut self) -> LexerResult<'a> {
-        self.next_internal().unwrap_or(Ok(Located::new(
-            Span {
-                pos: self.pos,
-                len: 0,
-                file: self.file,
-            },
-            Token::Eof,
-        )))
+    pub fn token(&mut self, diag: &mut Diagnostics) -> Located<Token<'a>> {
+        self.next(diag).unwrap_or_else(|| {
+            Located::new(
+                Span {
+                    pos: self.pos,
+                    len: 0,
+                    file: self.file,
+                },
+                Token::Eof,
+            )
+        })
     }
 
     #[inline]
@@ -315,92 +289,81 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn escape_char(&mut self) -> Result<char, Located<Error>> {
-        Ok(match self.advance() {
+    fn escape_char(&mut self, diag: &mut Diagnostics) -> char {
+        match self.advance() {
             Some('"') => '"',
             Some('\'') => '\'',
             Some('\\') => '\\',
             Some('n') => '\n',
             Some('t') => '\t',
             _ => {
-                return Err(Located::new(
-                    Span {
-                        pos: self.pos,
-                        file: self.file,
-                        len: 1,
-                    },
-                    Error::InvalidEscape,
-                ));
+                diag.error(Error::new("invalid UTF-8 escape sequence", Span {
+                    pos: self.pos,
+                    file: self.file,
+                    len: 1,
+                }));
+                '\0'
             }
-        })
+        }
     }
 
-    fn string_literal(&mut self, start: usize) -> Result<Token<'a>, Located<Error>> {
+    fn string_literal(&mut self, diag: &mut Diagnostics, start: usize) -> Token<'a> {
         let mut result = Cow::from("");
         loop {
             match self.advance() {
                 Some('\\') => {
-                    result.to_mut().push(self.escape_char()?);
+                    result.to_mut().push(self.escape_char(diag));
                 }
-                Some('"') => break Ok(Token::String(result)),
+                Some('"') => break Token::String(result),
                 Some(ch) => match &mut result {
                     Cow::Borrowed(str) => *str = &self.src[start + 1..self.pos],
                     Cow::Owned(str) => str.push(ch),
                 },
                 None => {
-                    return Err(Located::new(
-                        Span {
-                            pos: self.pos,
-                            len: 0,
-                            file: self.file,
-                        },
-                        Error::UnterminatedStr,
-                    ));
+                    diag.error(Error::new("unterminated string literal", Span {
+                        pos: self.pos,
+                        len: 0,
+                        file: self.file,
+                    }));
+
+                    break Token::String(result);
                 }
             }
         }
     }
 
-    fn char_literal(&mut self) -> Result<Token<'a>, Located<Error>> {
+    fn char_literal(&mut self, diag: &mut Diagnostics) -> Token<'a> {
         let ch = match self.advance() {
-            Some('\\') => self.escape_char()?,
+            Some('\\') => self.escape_char(diag),
             Some('\'') => {
-                return Err(Located::new(
-                    Span {
-                        pos: self.pos,
-                        len: 0,
-                        file: self.file,
-                    },
-                    Error::EmptyChar,
-                ))
+                diag.error(Error::new("empty char literal", Span {
+                    pos: self.pos,
+                    len: 0,
+                    file: self.file,
+                }));
+                '\0'
             }
             Some(any) => any,
             None => {
-                return Err(Located::new(
-                    Span {
-                        pos: self.pos,
-                        len: 0,
-                        file: self.file,
-                    },
-                    Error::UnterminatedChar,
-                ))
+                diag.error(Error::new("unterminated char literal", Span {
+                    pos: self.pos,
+                    len: 0,
+                    file: self.file,
+                }));
+                '\0'
             }
         };
 
         if !self.advance_if('\'') {
             self.advance_while(|c| c != '\'');
             self.advance();
-            Err(Located::new(
-                Span {
-                    pos: self.pos,
-                    len: 0,
-                    file: self.file,
-                },
-                Error::CharTooLong,
-            ))
-        } else {
-            Ok(Token::Char(ch))
+            diag.error(Error::new("char literal must only contain one character", Span {
+                pos: self.pos,
+                len: 0,
+                file: self.file,
+            }));
         }
+        Token::Char(ch)
     }
 
     fn numeric_suffix(&mut self) -> Option<&'a str> {
@@ -505,44 +468,43 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn maybe_byte_string(&mut self, start: usize) -> Result<Token<'a>, Located<Error>> {
+    fn maybe_byte_string(&mut self, diag: &mut Diagnostics, start: usize) -> Token<'a> {
         match self.peek() {
             Some('\'') => {
                 self.advance();
-                let Token::Char(c) = self.char_literal()? else {
+                let Token::Char(c) = self.char_literal(diag) else {
                     unreachable!()
                 };
                 match c.try_into() {
-                    Ok(c) => Ok(Token::ByteChar(c)),
-                    Err(_) => Err(Located::new(
-                        Span {
-                            pos: self.pos,
-                            len: 0,
-                            file: self.file,
-                        },
-                        Error::BadByteChar,
-                    )),
+                    Ok(c) => Token::ByteChar(c),
+                    Err(_) => {
+                        diag.error(Error::new(
+                            "invalid character in ascii string literal",
+                            Span {
+                                pos: self.pos,
+                                len: 0,
+                                file: self.file,
+                            },
+                        ));
+                        Token::ByteChar(0)
+                    }
                 }
             }
             Some('"') => {
                 self.advance();
-                let Token::String(s) = self.string_literal(start)? else {
+                let Token::String(s) = self.string_literal(diag, start) else {
                     unreachable!()
                 };
                 if s.chars().any(|c| !c.is_ascii()) {
-                    Err(Located::new(
-                        Span {
-                            pos: self.pos,
-                            len: 0,
-                            file: self.file,
-                        },
-                        Error::BadByteStr,
-                    ))
-                } else {
-                    Ok(Token::ByteString(s))
+                    diag.error(Error::new("invalid character in byte string", Span {
+                        pos: start,
+                        len: self.pos - start,
+                        file: self.file,
+                    }));
                 }
+                Token::ByteString(s)
             }
-            _ => Ok(self.identifier(start)),
+            _ => self.identifier(start),
         }
     }
 
@@ -554,7 +516,7 @@ impl<'a> Lexer<'a> {
         matches!(ch, '_' | 'a'..='z' | 'A'..='Z')
     }
 
-    fn next_internal(&mut self) -> Option<LexerResult<'a>> {
+    fn next(&mut self, diag: &mut Diagnostics) -> Option<Located<Token<'a>>> {
         loop {
             self.advance_while(char::is_whitespace);
             if self.advance_match("//") {
@@ -567,14 +529,15 @@ impl<'a> Lexer<'a> {
                     } else if self.advance_match("/*") {
                         count += 1;
                     } else if self.pos >= self.src.len() {
-                        return Some(Err(Located::new(
+                        diag.error(Error::new(
+                            "unterminated block comment",
                             Span {
                                 pos: self.pos,
                                 len: 0,
                                 file: self.file,
                             },
-                            Error::UnterminatedComment,
-                        )));
+                        ));
+                        return None;
                     } else {
                         self.advance();
                     }
@@ -741,39 +704,32 @@ impl<'a> Lexer<'a> {
                     Token::Assign
                 }
             }
-            '"' => match self.string_literal(start) {
-                Ok(token) => token,
-                Err(err) => return Some(Err(err)),
-            },
-            '\'' => match self.char_literal() {
-                Ok(token) => token,
-                Err(err) => return Some(Err(err)),
-            },
+            '"' => self.string_literal(diag, start),
+            '\'' => self.char_literal(diag),
             '0'..='9' => self.numeric_literal(start),
-            'b' => match self.maybe_byte_string(start) {
-                Ok(token) => token,
-                Err(err) => return Some(Err(err)),
-            },
+            'b' => self.maybe_byte_string(diag, start),
             ch if Self::is_identifier_first_char(ch) => self.identifier(start),
             _ => {
-                return Some(Err(Located::new(
+                diag.error(Error::new(
+                    "unexpected character",
                     Span {
                         pos: self.pos,
                         len: 0,
                         file: self.file,
                     },
-                    Error::UnrecognizedChar,
-                )))
+                ));
+
+                return self.next(diag);
             }
         };
 
-        Some(Ok(Located::new(
+        Some(Located::new(
             Span {
                 pos: start,
                 len: self.pos - start,
                 file: self.file,
             },
             token,
-        )))
+        ))
     }
 }
