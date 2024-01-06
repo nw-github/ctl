@@ -203,15 +203,8 @@ impl Error {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub struct Location {
-    pub row: usize,
-    pub col: usize,
-    pub pos: usize,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
 pub struct Span {
-    pub loc: Location,
+    pub pos: usize,
     pub len: usize,
     pub file: FileId,
 }
@@ -221,18 +214,13 @@ impl Span {
         *self = self.extended_to(b);
     }
 
-    pub fn extended_to(&self, b: impl Into<Span>) -> Self {
+    pub fn extended_to(self, b: impl Into<Span>) -> Self {
         let b: Span = b.into();
-        assert!(b.loc.pos >= self.loc.pos);
+        debug_assert!(b.pos >= self.pos);
         Self {
-            loc: self.loc,
-            len: b.loc.pos - self.loc.pos + b.len,
-            file: self.file,
+            len: b.pos - self.pos + b.len,
+            ..self
         }
-    }
-
-    pub fn text<'a>(&self, text: &'a str) -> &'a str {
-        &text[self.loc.pos..][..self.len]
     }
 }
 
@@ -258,27 +246,19 @@ pub type LexerResult<'a> = Result<Located<Token<'a>>, Located<Error>>;
 
 pub struct Lexer<'a> {
     src: &'a str,
-    loc: Location,
+    pos: usize,
     file: FileId,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a str, file: FileId) -> Self {
-        Self {
-            src,
-            loc: Location {
-                row: 1,
-                col: 1,
-                pos: 0,
-            },
-            file,
-        }
+        Self { src, file, pos: 0 }
     }
 
     pub fn token(&mut self) -> LexerResult<'a> {
         self.next_internal().unwrap_or(Ok(Located::new(
             Span {
-                loc: self.loc,
+                pos: self.pos,
                 len: 0,
                 file: self.file,
             },
@@ -288,24 +268,17 @@ impl<'a> Lexer<'a> {
 
     #[inline]
     fn peek(&self) -> Option<char> {
-        self.src[self.loc.pos..].chars().next()
+        self.src[self.pos..].chars().next()
     }
 
     #[inline]
     fn peek_next(&self) -> Option<char> {
-        self.src[self.loc.pos..].chars().nth(1)
+        self.src[self.pos..].chars().nth(1)
     }
 
     fn advance(&mut self) -> Option<char> {
         if let Some(ch) = self.peek() {
-            self.loc.pos += ch.len_utf8();
-            if ch == '\n' {
-                self.loc.col = 1;
-                self.loc.row += 1;
-            } else {
-                self.loc.col += 1;
-            }
-
+            self.pos += ch.len_utf8();
             Some(ch)
         } else {
             None
@@ -322,15 +295,15 @@ impl<'a> Lexer<'a> {
     }
 
     fn advance_while(&mut self, mut f: impl FnMut(char) -> bool) -> &'a str {
-        let start = self.loc.pos;
+        let start = self.pos;
         while self.peek().map_or(false, &mut f) {
             self.advance();
         }
-        &self.src[start..self.loc.pos]
+        &self.src[start..self.pos]
     }
 
     fn advance_match(&mut self, s: &str) -> bool {
-        let source = &self.src[self.loc.pos..];
+        let source = &self.src[self.pos..];
         if s.len() <= source.len() && s == &source[..s.len()] {
             for _ in 0..s.len() {
                 self.advance();
@@ -352,9 +325,9 @@ impl<'a> Lexer<'a> {
             _ => {
                 return Err(Located::new(
                     Span {
-                        loc: self.loc,
-                        len: 1,
+                        pos: self.pos,
                         file: self.file,
+                        len: 1,
                     },
                     Error::InvalidEscape,
                 ));
@@ -371,13 +344,13 @@ impl<'a> Lexer<'a> {
                 }
                 Some('"') => break Ok(Token::String(result)),
                 Some(ch) => match &mut result {
-                    Cow::Borrowed(str) => *str = &self.src[start + 1..self.loc.pos],
+                    Cow::Borrowed(str) => *str = &self.src[start + 1..self.pos],
                     Cow::Owned(str) => str.push(ch),
                 },
                 None => {
                     return Err(Located::new(
                         Span {
-                            loc: self.loc,
+                            pos: self.pos,
                             len: 0,
                             file: self.file,
                         },
@@ -394,7 +367,7 @@ impl<'a> Lexer<'a> {
             Some('\'') => {
                 return Err(Located::new(
                     Span {
-                        loc: self.loc,
+                        pos: self.pos,
                         len: 0,
                         file: self.file,
                     },
@@ -405,7 +378,7 @@ impl<'a> Lexer<'a> {
             None => {
                 return Err(Located::new(
                     Span {
-                        loc: self.loc,
+                        pos: self.pos,
                         len: 0,
                         file: self.file,
                     },
@@ -419,7 +392,7 @@ impl<'a> Lexer<'a> {
             self.advance();
             Err(Located::new(
                 Span {
-                    loc: self.loc,
+                    pos: self.pos,
                     len: 0,
                     file: self.file,
                 },
@@ -466,9 +439,9 @@ impl<'a> Lexer<'a> {
         if self.peek() == Some('.') && self.peek_next().map_or(false, |f| f.is_ascii_digit()) {
             self.advance();
             self.advance_while(|ch| ch.is_ascii_digit());
-            Token::Float(&self.src[start..self.loc.pos])
+            Token::Float(&self.src[start..self.pos])
         } else {
-            let src = &self.src[start..self.loc.pos];
+            let src = &self.src[start..self.pos];
             if src.len() == 1 {
                 // TODO: warn about leading zero, dont make it an error
             }
@@ -483,7 +456,7 @@ impl<'a> Lexer<'a> {
 
     fn identifier(&mut self, start: usize) -> Token<'a> {
         self.advance_while(Self::is_identifier_char);
-        match &self.src[start..self.loc.pos] {
+        match &self.src[start..self.pos] {
             "as" => Token::As,
             "async" => Token::Async,
             "await" => Token::Await,
@@ -543,7 +516,7 @@ impl<'a> Lexer<'a> {
                     Ok(c) => Ok(Token::ByteChar(c)),
                     Err(_) => Err(Located::new(
                         Span {
-                            loc: self.loc,
+                            pos: self.pos,
                             len: 0,
                             file: self.file,
                         },
@@ -559,7 +532,7 @@ impl<'a> Lexer<'a> {
                 if s.chars().any(|c| !c.is_ascii()) {
                     Err(Located::new(
                         Span {
-                            loc: self.loc,
+                            pos: self.pos,
                             len: 0,
                             file: self.file,
                         },
@@ -593,10 +566,10 @@ impl<'a> Lexer<'a> {
                         count -= 1;
                     } else if self.advance_match("/*") {
                         count += 1;
-                    } else if self.loc.pos >= self.src.len() {
+                    } else if self.pos >= self.src.len() {
                         return Some(Err(Located::new(
                             Span {
-                                loc: self.loc,
+                                pos: self.pos,
                                 len: 0,
                                 file: self.file,
                             },
@@ -611,7 +584,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        let start = self.loc;
+        let start = self.pos;
         let token = match self.advance()? {
             '{' => Token::LCurly,
             '}' => Token::RCurly,
@@ -628,7 +601,7 @@ impl<'a> Lexer<'a> {
                 } else {
                     Token::Hash
                 }
-            },
+            }
             '.' => {
                 if self.advance_if('.') {
                     if self.advance_if('.') {
@@ -768,7 +741,7 @@ impl<'a> Lexer<'a> {
                     Token::Assign
                 }
             }
-            '"' => match self.string_literal(start.pos) {
+            '"' => match self.string_literal(start) {
                 Ok(token) => token,
                 Err(err) => return Some(Err(err)),
             },
@@ -776,16 +749,16 @@ impl<'a> Lexer<'a> {
                 Ok(token) => token,
                 Err(err) => return Some(Err(err)),
             },
-            '0'..='9' => self.numeric_literal(start.pos),
-            'b' => match self.maybe_byte_string(start.pos) {
+            '0'..='9' => self.numeric_literal(start),
+            'b' => match self.maybe_byte_string(start) {
                 Ok(token) => token,
                 Err(err) => return Some(Err(err)),
             },
-            ch if Self::is_identifier_first_char(ch) => self.identifier(start.pos),
+            ch if Self::is_identifier_first_char(ch) => self.identifier(start),
             _ => {
                 return Some(Err(Located::new(
                     Span {
-                        loc: self.loc,
+                        pos: self.pos,
                         len: 0,
                         file: self.file,
                     },
@@ -796,8 +769,8 @@ impl<'a> Lexer<'a> {
 
         Some(Ok(Located::new(
             Span {
-                loc: start,
-                len: self.loc.pos - start.pos,
+                pos: start,
+                len: self.pos - start,
                 file: self.file,
             },
             token,

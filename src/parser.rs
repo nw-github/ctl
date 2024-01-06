@@ -59,9 +59,9 @@ impl<'a, 'b> Parser<'a, 'b> {
                 name: crate::derive_module_name(this.diag.file_path(file)),
             },
             span: Span {
-                loc: Default::default(),
-                len: 0,
                 file,
+                pos: 0,
+                len: 0,
             },
             attrs: Vec::new(),
         })

@@ -30,8 +30,26 @@ impl Diagnostics {
     }
 
     pub fn display(&self) {
-        for error in self.errors.iter() {
-            error.display(&self.paths[error.span.file.0]);
+        for (i, path) in self.paths.iter().enumerate() {
+            let mut file = None;
+            for Error { diagnostic, span } in
+                self.errors.iter().filter(|err| err.span.file == FileId(i))
+            {
+                // TODO: report error instead of unwrapping
+                let data = file.get_or_insert_with(|| std::fs::read_to_string(path).unwrap());
+                let (mut row, mut col) = (1, 1);
+                // maybe do this first and keep a vector of positions?
+                for ch in data.chars().take(span.pos) {
+                    if ch == '\n' {
+                        row += 1;
+                        col = 1;
+                    } else {
+                        col += 1;
+                    }
+                }
+
+                eprintln!("{}:{row}:{col}: {diagnostic}", path.display())
+            }
         }
     }
 }
@@ -48,16 +66,6 @@ impl Error {
             diagnostic: diagnostic.into(),
             span: span.into(),
         }
-    }
-
-    pub fn display(&self, path: &Path) {
-        eprintln!(
-            "{}:{}:{}: {}",
-            path.display(),
-            self.span.loc.row,
-            self.span.loc.col,
-            self.diagnostic
-        )
     }
 
     pub fn not_valid_here(token: &str, span: Span) -> Self {
