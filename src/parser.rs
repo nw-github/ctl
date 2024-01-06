@@ -9,7 +9,7 @@ use crate::{
         Attribute, UnaryOp,
     },
     error::{Diagnostics, Error, FileId},
-    lexer::{Lexer, Located, Precedence, Span, Token, LexerResult},
+    lexer::{Lexer, LexerResult, Located, Precedence, Span, Token},
     THIS_PARAM, THIS_TYPE,
 };
 
@@ -382,6 +382,28 @@ impl<'a, 'b> Parser<'a, 'b> {
                     ExprData::Unary {
                         op,
                         expr: expr.into(),
+                    },
+                )
+            }
+            Token::LogicalAnd => {
+                let op = if self.advance_if_kind(Token::Mut).is_some() {
+                    UnaryOp::AddrMut
+                } else {
+                    UnaryOp::Addr
+                };
+
+                let expr = self.precedence(Precedence::Prefix);
+                Expr::new(
+                    span.extended_to(expr.span),
+                    ExprData::Unary {
+                        op: UnaryOp::Addr,
+                        expr: Box::new(Located::new(
+                            span,
+                            ExprData::Unary {
+                                op,
+                                expr: expr.into(),
+                            },
+                        )),
                     },
                 )
             }
@@ -1142,7 +1164,8 @@ impl<'a, 'b> Parser<'a, 'b> {
         loop {
             match self.advance_if(|t| matches!(t, Token::Eof | Token::RAngle | Token::Shr)) {
                 Some(t) if t.data == Token::Shr => {
-                    self.lexer.replace_peek(Ok(Located::new(t.span, Token::RAngle)));
+                    self.lexer
+                        .replace_peek(Ok(Located::new(t.span, Token::RAngle)));
                     span.extend_to(t.span);
                     break;
                 }
@@ -1150,7 +1173,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     span.extend_to(t.span);
                     break;
                 }
-                None => { }
+                None => {}
             }
 
             res.push(f(self));
@@ -1930,15 +1953,12 @@ impl<'a, 'b> Parser<'a, 'b> {
 
 pub struct PeekableLexer<'a> {
     lexer: Lexer<'a>,
-    peek: Option<LexerResult<'a>>
+    peek: Option<LexerResult<'a>>,
 }
 
 impl<'a> PeekableLexer<'a> {
     pub fn new(lexer: Lexer<'a>) -> Self {
-        Self {
-            lexer,
-            peek: None,
-        }
+        Self { lexer, peek: None }
     }
 
     pub fn peek(&mut self) -> &LexerResult<'a> {
