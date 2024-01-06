@@ -24,7 +24,8 @@ struct FnConfig {
 }
 
 pub struct Parser<'a, 'b> {
-    lexer: PeekableLexer<'a>,
+    lexer: Lexer<'a>,
+    peek: Option<LexerResult<'a>>,
     needs_sync: bool,
     diag: &'b mut Diagnostics,
     attrs: Vec<Attribute>,
@@ -35,7 +36,8 @@ impl<'a, 'b> Parser<'a, 'b> {
     fn new(src: &'a str, diag: &'b mut Diagnostics, file: FileId) -> Self {
         Self {
             diag,
-            lexer: PeekableLexer::new(Lexer::new(src, file)),
+            lexer: Lexer::new(src, file),
+            peek: None,
             needs_sync: false,
             attrs: Vec::new(),
             is_unsafe: None,
@@ -1164,8 +1166,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         loop {
             match self.advance_if(|t| matches!(t, Token::Eof | Token::RAngle | Token::Shr)) {
                 Some(t) if t.data == Token::Shr => {
-                    self.lexer
-                        .replace_peek(Ok(Located::new(t.span, Token::RAngle)));
+                    self.peek = Some(Ok(Located::new(t.span, Token::RAngle)));
                     span.extend_to(t.span);
                     break;
                 }
@@ -1794,7 +1795,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         use Token::*;
 
         loop {
-            match self.lexer.peek() {
+            match self.peek() {
                 Ok(token) if token.data == Semicolon => {
                     self.advance();
                     break;
@@ -1844,7 +1845,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn advance(&mut self) -> Located<Token<'a>> {
         loop {
-            match self.lexer.next() {
+            match self.next() {
                 Ok(tok) => break tok,
                 Err(err) => self.error(Error::new(err.data.tell(), err.span)),
             }
@@ -1852,8 +1853,7 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn advance_if(&mut self, pred: impl FnOnce(&Token) -> bool) -> Option<Located<Token<'a>>> {
-        self.lexer
-            .next_if(|tok| matches!(tok, Ok(tok) if pred(&tok.data)))
+        self.next_if(|tok| matches!(tok, Ok(tok) if pred(&tok.data)))
             .map(|token| token.unwrap())
     }
 
@@ -1863,7 +1863,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn advance_if_map<T>(&mut self, pred: impl FnOnce(&Located<Token>) -> Option<T>) -> Option<T> {
         let mut outer = None;
-        self.lexer.next_if(|t| {
+        self.next_if(|t| {
             if let Ok(t) = t {
                 outer = pred(t);
                 outer.is_some()
@@ -1943,43 +1943,22 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn matches(&mut self, pred: impl FnOnce(&Token) -> bool) -> bool {
-        matches!(self.lexer.peek(), Ok(token) if pred(&token.data))
+        matches!(self.peek(), Ok(token) if pred(&token.data))
     }
 
     fn matches_kind(&mut self, kind: Token) -> bool {
         self.matches(|t| t == &kind)
     }
-}
 
-pub struct PeekableLexer<'a> {
-    lexer: Lexer<'a>,
-    peek: Option<LexerResult<'a>>,
-}
-
-impl<'a> PeekableLexer<'a> {
-    pub fn new(lexer: Lexer<'a>) -> Self {
-        Self { lexer, peek: None }
-    }
-
-    pub fn peek(&mut self) -> &LexerResult<'a> {
+    fn peek(&mut self) -> &LexerResult<'a> {
         self.peek.get_or_insert_with(|| self.lexer.token())
     }
 
-    pub fn next(&mut self) -> LexerResult<'a> {
+    fn next(&mut self) -> LexerResult<'a> {
         self.peek.take().unwrap_or_else(|| self.lexer.token())
     }
 
-    pub fn next_if(&mut self, f: impl FnOnce(&LexerResult) -> bool) -> Option<LexerResult<'a>> {
-        let next = self.next();
-        if f(&next) {
-            Some(next)
-        } else {
-            self.peek = Some(next);
-            None
-        }
-    }
-
-    pub fn replace_peek(&mut self, peek: LexerResult<'a>) {
-        self.peek = Some(peek);
+    fn next_if(&mut self, f: impl FnOnce(&LexerResult) -> bool) -> Option<LexerResult<'a>> {
+        f(self.peek()).then(|| self.next())
     }
 }
