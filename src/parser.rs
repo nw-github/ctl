@@ -1,4 +1,4 @@
-use std::{iter::Peekable, path::PathBuf};
+use std::path::PathBuf;
 
 use crate::{
     ast::{
@@ -9,7 +9,7 @@ use crate::{
         Attribute, UnaryOp,
     },
     error::{Diagnostics, Error, FileId},
-    lexer::{Lexer, Located, Precedence, Span, Token},
+    lexer::{Lexer, Located, Precedence, Span, Token, LexerResult},
     THIS_PARAM, THIS_TYPE,
 };
 
@@ -24,7 +24,7 @@ struct FnConfig {
 }
 
 pub struct Parser<'a, 'b> {
-    lexer: Peekable<Lexer<'a>>,
+    lexer: PeekableLexer<'a>,
     needs_sync: bool,
     diag: &'b mut Diagnostics,
     attrs: Vec<Attribute>,
@@ -35,7 +35,7 @@ impl<'a, 'b> Parser<'a, 'b> {
     fn new(src: &'a str, diag: &'b mut Diagnostics, file: FileId) -> Self {
         Self {
             diag,
-            lexer: Lexer::new(src, file).peekable(),
+            lexer: PeekableLexer::new(Lexer::new(src, file)),
             needs_sync: false,
             attrs: Vec::new(),
             is_unsafe: None,
@@ -668,7 +668,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let member = self.expect_located_id("expected member name");
                 let generics = if self.advance_if_kind(Token::ScopeRes).is_some() {
                     self.expect_kind(Token::LAngle, "expected '<'");
-                    self.csv_one(Token::RAngle, left.span, Self::parse_type)
+                    self.rangle_csv_one(left.span, Self::parse_type)
                 } else {
                     Located::new(left.span.extended_to(member.span), Vec::new())
                 };
@@ -857,7 +857,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             .unwrap_or_default();
         while self.advance_if_kind(Token::ScopeRes).is_some() {
             if self.advance_if_kind(Token::LAngle).is_some() {
-                let params = self.csv_one(Token::RAngle, *outspan, Self::parse_type);
+                let params = self.rangle_csv_one(*outspan, Self::parse_type);
                 data.last_mut().unwrap().1 = params.data;
                 *outspan = params.span;
             } else {
@@ -890,7 +890,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 span = Some(ident.span);
             }
             if self.advance_if_kind(Token::LAngle).is_some() {
-                let params = self.csv_one(Token::RAngle, span.unwrap(), Self::parse_type);
+                let params = self.rangle_csv_one(span.unwrap(), Self::parse_type);
                 data.push((ident.data, params.data));
                 span = Some(params.span);
             } else {
@@ -1129,10 +1129,43 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.csv(vec![first], end, span, f)
     }
 
+    fn rangle_csv_one<T>(
+        &mut self,
+        mut span: Span,
+        mut f: impl FnMut(&mut Self) -> T,
+    ) -> Located<Vec<T>> {
+        let mut res = vec![f(self)];
+        if !res.is_empty() && !self.matches(|tk| matches!(tk, Token::RAngle | Token::Shr)) {
+            self.expect_kind(Token::Comma, "expected ','");
+        }
+
+        loop {
+            match self.advance_if(|t| matches!(t, Token::Eof | Token::RAngle | Token::Shr)) {
+                Some(t) if t.data == Token::Shr => {
+                    self.lexer.replace_peek(Ok(Located::new(t.span, Token::RAngle)));
+                    span.extend_to(t.span);
+                    break;
+                }
+                Some(t) => {
+                    span.extend_to(t.span);
+                    break;
+                }
+                None => { }
+            }
+
+            res.push(f(self));
+            if !self.matches(|t| matches!(t, Token::RAngle | Token::Shr)) {
+                self.expect_kind(Token::Comma, "expected ','");
+            }
+        }
+
+        Located::new(span, res)
+    }
+
     fn parse_type_params(&mut self) -> Vec<(String, Vec<Located<Path>>)> {
         self.advance_if_kind(Token::LAngle)
             .map(|_| {
-                self.csv_one(Token::RAngle, Span::default(), |this| {
+                self.rangle_csv_one(Span::default(), |this| {
                     (
                         this.expect_id("expected type name"),
                         this.parse_trait_impl(),
@@ -1739,11 +1772,11 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         loop {
             match self.lexer.peek() {
-                Some(Ok(token)) if token.data == Semicolon => {
+                Ok(token) if token.data == Semicolon => {
                     self.advance();
                     break;
                 }
-                Some(Ok(token))
+                Ok(token)
                     if matches!(
                         token.data,
                         Pub | Struct
@@ -1767,7 +1800,6 @@ impl<'a, 'b> Parser<'a, 'b> {
                 {
                     break
                 }
-                Option::None => break,
                 _ => {
                     self.advance();
                 }
@@ -1789,7 +1821,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn advance(&mut self) -> Located<Token<'a>> {
         loop {
-            match self.lexer.next().unwrap() {
+            match self.lexer.next() {
                 Ok(tok) => break tok,
                 Err(err) => self.error(Error::new(err.data.tell(), err.span)),
             }
@@ -1888,13 +1920,46 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn matches(&mut self, pred: impl FnOnce(&Token) -> bool) -> bool {
-        self.lexer.peek().map_or(
-            false,
-            |token| matches!(token, Ok(token) if pred(&token.data)),
-        )
+        matches!(self.lexer.peek(), Ok(token) if pred(&token.data))
     }
 
     fn matches_kind(&mut self, kind: Token) -> bool {
         self.matches(|t| t == &kind)
+    }
+}
+
+pub struct PeekableLexer<'a> {
+    lexer: Lexer<'a>,
+    peek: Option<LexerResult<'a>>
+}
+
+impl<'a> PeekableLexer<'a> {
+    pub fn new(lexer: Lexer<'a>) -> Self {
+        Self {
+            lexer,
+            peek: None,
+        }
+    }
+
+    pub fn peek(&mut self) -> &LexerResult<'a> {
+        self.peek.get_or_insert_with(|| self.lexer.token())
+    }
+
+    pub fn next(&mut self) -> LexerResult<'a> {
+        self.peek.take().unwrap_or_else(|| self.lexer.token())
+    }
+
+    pub fn next_if(&mut self, f: impl FnOnce(&LexerResult) -> bool) -> Option<LexerResult<'a>> {
+        let next = self.next();
+        if f(&next) {
+            Some(next)
+        } else {
+            self.peek = Some(next);
+            None
+        }
+    }
+
+    pub fn replace_peek(&mut self, peek: LexerResult<'a>) {
+        self.peek = Some(peek);
     }
 }

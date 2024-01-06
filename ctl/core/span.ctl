@@ -31,7 +31,7 @@ pub struct Span<T> {
         unsafe core::ptr::offset(this.ptr, idx)
     }
 
-    pub fn as_raw(this): core::ptr::Raw<T> {
+    pub fn as_raw(this): Raw<T> {
         Raw::from_ptr(this.ptr)
     }
 
@@ -42,7 +42,7 @@ pub struct Span<T> {
         )
     }
 
-    pub fn subspan<R: RangeBounds<usize> >(this, range: R): [T..] {
+    pub fn subspan<R: RangeBounds<usize>>(this, range: R): [T..] {
         let start = match range.begin() {
             Bound::Inclusive(start) => start,
             Bound::Exclusive(start) => start + 1,

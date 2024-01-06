@@ -254,6 +254,8 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Located<T> {
     }
 }
 
+pub type LexerResult<'a> = Result<Located<Token<'a>>, Located<Error>>;
+
 pub struct Lexer<'a> {
     src: &'a str,
     loc: Location,
@@ -271,6 +273,17 @@ impl<'a> Lexer<'a> {
             },
             file,
         }
+    }
+
+    pub fn token(&mut self) -> LexerResult<'a> {
+        self.next_internal().unwrap_or(Ok(Located::new(
+            Span {
+                loc: self.loc,
+                len: 0,
+                file: self.file,
+            },
+            Token::Eof,
+        )))
     }
 
     #[inline]
@@ -568,7 +581,7 @@ impl<'a> Lexer<'a> {
         matches!(ch, '_' | 'a'..='z' | 'A'..='Z')
     }
 
-    fn next_internal(&mut self) -> Option<<Self as Iterator>::Item> {
+    fn next_internal(&mut self) -> Option<LexerResult<'a>> {
         loop {
             self.advance_while(char::is_whitespace);
             if self.advance_match("//") {
@@ -789,20 +802,5 @@ impl<'a> Lexer<'a> {
             },
             token,
         )))
-    }
-}
-
-impl<'a> Iterator for Lexer<'a> {
-    type Item = Result<Located<Token<'a>>, Located<Error>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        Some(self.next_internal().unwrap_or(Ok(Located::new(
-            Span {
-                loc: self.loc,
-                len: 0,
-                file: self.file,
-            },
-            Token::Eof,
-        ))))
     }
 }

@@ -98,7 +98,7 @@ pub struct Vec<T> {
         this.len += mem::replace(&mut rhs.len, 0);
     }
 
-    pub fn extend<I: Iterator<*T> >(mut this, iter: I) {
+    pub fn extend<I: Iterator<*T>>(mut this, iter: I) {
         for elem in iter {
             this.push(*elem);
         }
