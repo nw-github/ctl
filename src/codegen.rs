@@ -1562,7 +1562,7 @@ impl Codegen {
                         });
                     }
 
-                    // self.buffer.emit("else { UNREACHABLE(); }");
+                    self.buffer.emit("else { UNREACHABLE(); }");
                 })
             }
             CheckedExprData::As(inner, _) => {

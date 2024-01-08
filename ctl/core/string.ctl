@@ -49,11 +49,13 @@ pub struct str {
             ?ch => if !is_char_boundary(*ch) {
                 panic("str::substr(): range does not start at char boundary");
             }
+            _ => {}
         }
         match span.get(span.len()) {
             ?ch => if !is_char_boundary(*ch) {
                 panic("str::substr(): range does not end at char boundary");
             }
+            _ => {}
         }
         str(span:)
     }

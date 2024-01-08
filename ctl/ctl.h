@@ -5,7 +5,12 @@
 
 #define SINT(bits) _BitInt(bits)
 #define UINT(bits) unsigned _BitInt(bits)
-#define UNREACHABLE() __asm__ volatile("ud2")
+
+#ifdef NDEBUG
+#define UNREACHABLE() __builtin_unreachable()
+#else
+#define UNREACHABLE() do { __asm__ volatile("ud2"); __builtin_unreachable(); } while (0)
+#endif
 
 typedef SINT(sizeof(void *) * 8) isize;
 typedef UINT(sizeof(void *) * 8) usize;

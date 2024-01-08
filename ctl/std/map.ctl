@@ -155,6 +155,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
                         );
                     }
                 }
+                _ => {}
             }
 
             i++;
