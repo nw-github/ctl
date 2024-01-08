@@ -14,13 +14,18 @@ use crate::{
         parsed::RangePattern,
         UnaryOp,
     },
+    error::Error,
     lexer::Span,
-    sym::{FunctionId, Member, ScopeId, ScopeKind, Scopes, UserTypeData, UserTypeId, VariableId},
-    typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type}, error::Error,
+    sym::{
+        FunctionId, Member, ParamPattern, ScopeId, ScopeKind, Scopes, UserTypeData, UserTypeId,
+        VariableId,
+    },
+    typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type},
 };
 
 const UNION_TAG_NAME: &str = "$tag";
 const ARRAY_DATA_NAME: &str = "$data";
+const PARAM_PREFIX: &str = "$p";
 
 #[derive(PartialEq, Eq, Clone)]
 struct State {
@@ -515,22 +520,9 @@ impl Buffer {
                 self.emit(", ");
             }
 
-            if f.is_extern || is_prototype {
-                self.emit_type(scopes, &ty, tg);
-                if !param.mutable {
-                    self.emit(" const");
-                }
-            } else {
-                _ = self.emit_local_decl(
-                    scopes,
-                    **scopes[f.body_scope]
-                        .vars
-                        .iter()
-                        .find(|&&v| scopes.get(*v).name == param.name)
-                        .unwrap(),
-                    state,
-                    tg,
-                );
+            self.emit_type(scopes, &ty, tg);
+            if !f.is_extern && !is_prototype {
+                self.emit(format!(" {PARAM_PREFIX}{i}"));
             }
         }
 
@@ -702,22 +694,34 @@ impl Codegen {
 
             for mut state in diff {
                 // TODO: emit an error if a function has the c_macro attribute and a body
-                if scopes
-                    .get(state.func.id)
-                    .attrs
-                    .iter()
-                    .any(|attr| attr.name.data == "c_macro")
-                {
+                let func = scopes.get(state.func.id);
+                if func.attrs.iter().any(|attr| attr.name.data == "c_macro") {
                     continue;
                 }
 
                 prototypes.emit_prototype(scopes, &mut state, true, &mut this.type_gen);
                 prototypes.emit(";");
 
-                if let Some(body) = scopes.get(state.func.id).body.clone() {
+                if let Some(body) = func.body.clone() {
                     this.buffer
                         .emit_prototype(scopes, &mut state, false, &mut this.type_gen);
-                    this.emit_block(scopes, body, &mut state);
+                    this.buffer.emit("{");
+                    for (i, param) in func.params.iter().enumerate() {
+                        let ParamPattern::Checked(patt) = &param.patt else {
+                            continue;
+                        };
+                        this.gen_irrefutable_pattern(
+                            scopes,
+                            &mut state,
+                            patt,
+                            &format!("{PARAM_PREFIX}{i}"),
+                        );
+                    }
+
+                    for stmt in body.into_iter() {
+                        this.gen_stmt(scopes, stmt, &mut state);
+                    }
+                    this.buffer.emit("}");
                 }
             }
         }
@@ -1015,7 +1019,7 @@ impl Codegen {
                     .get(original_id)
                     .params
                     .iter()
-                    .flat_map(|param| args.shift_remove(&param.name))
+                    .flat_map(|param| args.shift_remove(&param.label))
                     .for_each(|arg| arg!(arg));
                 args.into_iter().for_each(|(_, arg)| arg!(arg));
                 self.buffer.emit(")");

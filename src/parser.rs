@@ -1592,20 +1592,32 @@ impl<'a, 'b> Parser<'a, 'b> {
 
             let keyword = self.next_if_kind(Token::Keyword).is_some();
             let mutable = self.next_if_kind(Token::Mut).is_some();
-            if allow_method && count == 0 && self.next_if_kind(Token::This).is_some() {
+            if let Some(token) = self.next_if_kind(Token::This) {
+                if !allow_method || count != 0 {
+                    self.error(Error::not_valid_here("this", token.span));
+                }
+
                 params.push(Param {
-                    mutable: false,
                     keyword,
-                    name: THIS_PARAM.into(),
+                    patt: Located::new(
+                        token.span,
+                        Pattern::Path(Path::from(THIS_PARAM.to_string())),
+                    ),
                     ty: if mutable {
                         TypeHint::MutThis
                     } else {
                         TypeHint::This
                     },
                     default: None,
-                })
+                });
             } else {
-                let name = self.expect_id_l("expected name");
+                let patt = if mutable {
+                    self.expect_id_l("expected name").map(Pattern::MutBinding)
+                } else if keyword {
+                    self.expect_id_l("expected name").map(|name| Pattern::Path(Path::from(name)))
+                } else {
+                    self.pattern(false)
+                };
                 self.expect_kind(Token::Colon, "expected type");
                 let ty = self.parse_type();
                 let default = if self.next_if_kind(Token::Assign).is_some() {
@@ -1623,12 +1635,11 @@ impl<'a, 'b> Parser<'a, 'b> {
                 };
 
                 params.push(Param {
-                    mutable,
+                    patt,
                     keyword,
-                    name: name.data,
                     ty,
                     default,
-                })
+                });
             }
 
             if !self.matches_kind(Token::RParen) {

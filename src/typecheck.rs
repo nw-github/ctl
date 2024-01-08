@@ -214,9 +214,11 @@ impl TypeChecker {
                                 .members
                                 .iter()
                                 .map(|member| Param {
-                                    mutable: false,
                                     keyword: true,
-                                    name: member.name.clone(),
+                                    patt: Located::new(
+                                        Span::default(),
+                                        Pattern::Path(Path::from(member.name.clone())),
+                                    ),
                                     ty: member.ty.clone(),
                                     default: member.default.clone(),
                                 })
@@ -322,9 +324,11 @@ impl TypeChecker {
                             ))
                         } else if member.shared {
                             params.push(Param {
-                                mutable: false,
                                 keyword: true,
-                                name: member.name.clone(),
+                                patt: Located::new(
+                                    Span::default(),
+                                    Pattern::Path(Path::from(member.name.clone())),
+                                ),
                                 ty: member.ty.clone(),
                                 default: member.default.clone(),
                             });
@@ -342,9 +346,11 @@ impl TypeChecker {
                             let mut params = params.clone();
                             if !matches!(member.ty, TypeHint::Void) {
                                 params.push(Param {
-                                    mutable: false,
                                     keyword: false,
-                                    name: member.name.clone(),
+                                    patt: Located::new(
+                                        Span::default(),
+                                        Pattern::Path(Path::from(member.name.clone())),
+                                    ),
                                     ty: member.ty,
                                     default: member.default,
                                 });
@@ -645,10 +651,16 @@ impl TypeChecker {
             scopes.get_mut(id).params = f
                 .params
                 .into_iter()
-                .map(|param| CheckedParam {
-                    mutable: param.mutable,
+                .enumerate()
+                .map(|(i, param)| CheckedParam {
                     keyword: param.keyword,
-                    name: param.name,
+                    label: match &param.patt.data {
+                        Pattern::MutBinding(name) => Some(name.clone()),
+                        Pattern::Path(name) => name.as_identifier().map(|name| name.into()),
+                        _ => None,
+                    }
+                    .unwrap_or_else(|| format!("$unnamed{i}")),
+                    patt: ParamPattern::Unchecked(param.patt),
                     ty: self.resolve_typehint(scopes, &param.ty),
                     default: param
                         .default
@@ -898,10 +910,7 @@ impl TypeChecker {
 
                 CheckedStmt::LetPattern(pattern, value)
             }
-            _ => self.error(Error::new(
-                "variable binding pattern must be irrefutable",
-                span,
-            )),
+            _ => self.error(Error::must_be_irrefutable("variable binding pattern", span)),
         }
     }
 
@@ -945,7 +954,7 @@ impl TypeChecker {
 
         for (s, t) in lhs.params.iter().zip(rhs.params.iter().cloned()) {
             if let Err(err) = compare_types(&s.ty, t.ty) {
-                return Err(format!("parameter '{}' is incorrect: {err}", t.name));
+                return Err(format!("parameter '{}' is incorrect: {err}", t.label));
             }
         }
 
@@ -1064,20 +1073,21 @@ impl TypeChecker {
         // TODO: disallow private type in public interface
         scopes.enter_id(scopes.get(id).body_scope, |scopes| {
             self.resolve_proto(scopes, id);
-            for param in scopes
-                .get(id)
-                .params
-                .iter()
-                .map(|param| Variable {
-                    name: param.name.clone(),
-                    ty: param.ty.clone(),
-                    is_static: false,
-                    mutable: param.mutable,
-                    value: None,
-                })
-                .collect::<Vec<_>>()
-            {
-                scopes.insert::<VariableId>(param, false);
+            for i in 0..scopes.get(id).params.len() {
+                if let ParamPattern::Unchecked(patt) = scopes.get_mut(id).params[i].patt.clone() {
+                    let span = patt.span;
+                    let CheckedPattern::Irrefutable(patt) = self.check_pattern(
+                        scopes,
+                        true,
+                        &scopes.get(id).params[i].ty.clone(),
+                        false,
+                        patt,
+                    ) else {
+                        self.error::<()>(Error::must_be_irrefutable("parameter patterns", span));
+                        continue;
+                    };
+                    scopes.get_mut(id).params[i].patt = ParamPattern::Checked(patt);
+                }
             }
 
             if let Some(body) = body {
@@ -1671,9 +1681,7 @@ impl TypeChecker {
                         let patt_span = patt.span;
                         let patt = match self.check_pattern(scopes, true, &next_ty, false, patt) {
                             CheckedPattern::Irrefutable(patt) => Some(patt),
-                            _ => {
-                                self.error(Error::new("for pattern must be irrefutable", patt_span))
-                            }
+                            _ => self.error(Error::must_be_irrefutable("for patterns", patt_span)),
                         };
 
                         (
@@ -2322,7 +2330,7 @@ impl TypeChecker {
                 false,
                 pattern,
             ) else {
-                return Some(self.error(Error::new("union subpatterns must be irrefutable", span)));
+                return Some(self.error(Error::must_be_irrefutable("union subpatterns", span)));
             };
 
             Some(CheckedPattern::UnionMember {
@@ -2427,7 +2435,7 @@ impl TypeChecker {
                 let CheckedPattern::Irrefutable(pattern) =
                     self.check_pattern(scopes, true, &inner_ptr, false, pattern)
                 else {
-                    self.error::<()>(Error::new("span subpatterns must be irrefutable", span));
+                    self.error::<()>(Error::must_be_irrefutable("span subpattterns", span));
                     continue;
                 };
 
@@ -2879,7 +2887,7 @@ impl TypeChecker {
                     ));
                 };
                 let f = scopes.get(*func);
-                let Some(this_param) = f.params.first().filter(|p| p.name == THIS_PARAM) else {
+                let Some(this_param) = f.params.first().filter(|p| p.label == THIS_PARAM) else {
                     return self.error(Error::new(
                         format!("associated function '{member}' cannot be used as a method"),
                         span,
@@ -3161,7 +3169,7 @@ impl TypeChecker {
                     }
                     Entry::Vacant(entry) => {
                         if let Some(param) =
-                            scopes.get(func.id).params.iter().find(|p| p.name == name)
+                            scopes.get(func.id).params.iter().find(|p| p.label == name)
                         {
                             entry.insert(self.check_arg(func, scopes, expr, &param.clone(), inst));
                         } else {
@@ -3181,7 +3189,7 @@ impl TypeChecker {
                 .find(|(_, param)| !param.keyword)
             {
                 result.insert(
-                    param.name.clone(),
+                    param.label.clone(),
                     self.check_arg(func, scopes, expr, &param.clone(), inst),
                 );
                 last_pos = i + 1;
@@ -3198,11 +3206,11 @@ impl TypeChecker {
             .get(func.id)
             .params
             .iter()
-            .filter(|p| !result.contains_key(&p.name))
+            .filter(|p| !result.contains_key(&p.label))
             .collect::<Vec<_>>()
         {
             if let Some(DefaultExpr::Checked(expr)) = &param.default {
-                result.insert(param.name.clone(), expr.clone());
+                result.insert(param.label.clone(), expr.clone());
             }
         }
 
@@ -3212,13 +3220,13 @@ impl TypeChecker {
                 .get(func.id)
                 .params
                 .iter()
-                .filter(|p| !result.contains_key(&p.name))
+                .filter(|p| !result.contains_key(&p.label))
             {
                 if !missing.is_empty() {
                     missing.push_str(", ");
                 }
 
-                missing.push_str(&param.name);
+                missing.push_str(&param.label);
             }
 
             self.error::<()>(Error::new(

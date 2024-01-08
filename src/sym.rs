@@ -5,12 +5,13 @@ use std::collections::HashMap;
 
 use crate::{
     ast::{
-        checked::{CheckedExpr, CheckedStmt},
-        parsed::{Expr, Path},
+        checked::{CheckedExpr, CheckedStmt, IrrefutablePattern},
+        parsed::{Expr, Path, Pattern},
         Attribute,
     },
+    error::Error,
     lexer::{Located, Span},
-    typeid::{GenericFunc, GenericUserType, Type}, error::Error,
+    typeid::{GenericFunc, GenericUserType, Type},
 };
 
 macro_rules! id {
@@ -119,10 +120,16 @@ pub enum DefaultExpr {
 }
 
 #[derive(Debug, Clone)]
+pub enum ParamPattern {
+    Unchecked(Located<Pattern>),
+    Checked(IrrefutablePattern),
+}
+
+#[derive(Debug, Clone)]
 pub struct CheckedParam {
-    pub mutable: bool,
     pub keyword: bool,
-    pub name: String,
+    pub label: String,
+    pub patt: ParamPattern,
     pub ty: Type,
     pub default: Option<DefaultExpr>,
 }

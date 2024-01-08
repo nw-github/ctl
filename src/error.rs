@@ -116,4 +116,8 @@ impl Error {
     pub fn name_redef(name: &str, span: Span) -> Self {
         Self::new(format!("redefinition of name {name}"), span)
     }
+
+    pub fn must_be_irrefutable(ty: &str, span: Span) -> Self {
+        Self::new(format!("{ty} must be irrefuable"), span)
+    }
 }

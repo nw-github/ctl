@@ -201,30 +201,30 @@ impl CheckedExpr {
         }
     }
 
-    pub fn coerce_to(self, target: &Type, scopes: &Scopes) -> CheckedExpr {
+    pub fn coerce_to(mut self, target: &Type, scopes: &Scopes) -> CheckedExpr {
         match (&self.ty, target) {
+            (Type::Never | Type::Unknown(_), _) | (_, Type::Unknown(_)) => {
+                self.ty = target.clone();
+                self
+            }
             (Type::MutPtr(lhs), Type::Ptr(rhs)) if lhs == rhs => {
-                CheckedExpr::new(target.clone(), self.data)
+                self.ty = target.clone();
+                self
             }
             (ty, target)
                 if scopes
                     .as_option_inner(target)
                     .map_or(false, |inner| ty.coerces_to(scopes, inner)) =>
             {
-                let inner = scopes.as_option_inner(target).unwrap();
-                let expr = self.coerce_to(inner, scopes);
+                let expr = self.coerce_to(scopes.as_option_inner(target).unwrap(), scopes);
                 CheckedExpr::new(
-                    scopes
-                        .make_lang_type("option", vec![expr.ty.clone()])
-                        .unwrap(),
+                    target.clone(),
                     CheckedExprData::Instance {
                         members: [("Some".into(), expr)].into(),
                         variant: Some("Some".into()),
                     },
                 )
-                .coerce_to(target, scopes)
             }
-            (Type::Never, _) => CheckedExpr::new(target.clone(), self.data),
             _ => self,
         }
     }
@@ -245,11 +245,11 @@ impl CheckedExpr {
 
         while my_indirection > indirection {
             my_indirection -= 1;
-            let (Type::Ptr(inner) | Type::MutPtr(inner)) = self.ty.clone() else {
+            let (Type::Ptr(inner) | Type::MutPtr(inner)) = &self.ty else {
                 unreachable!()
             };
             self = CheckedExpr::new(
-                (*inner).clone(),
+                (**inner).clone(),
                 CheckedExprData::Unary {
                     op: UnaryOp::Deref,
                     expr: self.into(),

@@ -504,6 +504,8 @@ impl Type {
 
     pub fn coerces_to(&self, scopes: &Scopes, target: &Type) -> bool {
         match (self, target) {
+            (Type::Never | Type::Unknown(_), _) => true,
+            (_, Type::Unknown(_)) => true,
             (ty, target)
                 if scopes
                     .as_option_inner(target)
@@ -511,8 +513,6 @@ impl Type {
             {
                 true
             }
-            (Type::Never | Type::Unknown(_), _) => true,
-            (_, Type::Unknown(_)) => true,
             (ty, target) if ty.may_ptr_coerce(target) => true,
             (ty, target) => ty == target,
         }

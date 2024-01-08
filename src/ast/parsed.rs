@@ -351,9 +351,8 @@ impl std::fmt::Debug for TypeHint {
 
 #[derive(Debug, Clone)]
 pub struct Param {
-    pub mutable: bool,
     pub keyword: bool,
-    pub name: String,
+    pub patt: Located<Pattern>,
     pub ty: TypeHint,
     pub default: Option<Expr>,
 }
