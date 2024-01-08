@@ -1432,7 +1432,7 @@ impl TypeChecker {
                 CheckedExpr::new(Type::Uint(8), CheckedExprData::Integer(BigInt::from(c)))
             }
             ExprData::None => {
-                if let Some(inner) = target.and_then(|target| scopes.as_option_inner(target)) {
+                if let Some(inner) = target.and_then(|target| target.as_option_inner(scopes)) {
                     CheckedExpr::new(
                         scopes
                             .make_lang_type("option", vec![inner.clone()])
@@ -2223,9 +2223,9 @@ impl TypeChecker {
             }
             Unwrap => {
                 let expr =
-                    self.check_expr(scopes, expr, target.and_then(|t| scopes.as_option_inner(t)));
+                    self.check_expr(scopes, expr, target.and_then(|t| t.as_option_inner(scopes)));
 
-                if let Some(inner) = scopes.as_option_inner(&expr.ty) {
+                if let Some(inner) = expr.ty.as_option_inner(scopes) {
                     let func = scopes.find_in(
                         "unwrap",
                         scopes.get(scopes.get_option_id().unwrap()).body_scope,

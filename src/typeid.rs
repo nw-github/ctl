@@ -40,7 +40,7 @@ impl GenericFunc {
                     if let Some(t) = target.as_user() {
                         if src.id != t.id {
                             if let Some(inner) =
-                                scopes.as_option_inner(target).and_then(|i| i.as_user())
+                                target.as_option_inner(scopes).and_then(|i| i.as_user())
                             {
                                 for (src, target) in src.ty_args.iter().zip(inner.ty_args.iter()) {
                                     self.infer_type_args(src, target, scopes);
@@ -279,7 +279,7 @@ impl Type {
 
     pub fn strip_options(&self, scopes: &Scopes) -> &Type {
         let mut id = self;
-        while let Some(inner) = scopes.as_option_inner(id) {
+        while let Some(inner) = id.as_option_inner(scopes) {
             id = inner;
         }
         id
@@ -507,8 +507,8 @@ impl Type {
             (Type::Never | Type::Unknown(_), _) => true,
             (_, Type::Unknown(_)) => true,
             (ty, target)
-                if scopes
-                    .as_option_inner(target)
+                if target
+                    .as_option_inner(scopes)
                     .map_or(false, |inner| ty.coerces_to(scopes, inner)) =>
             {
                 true
@@ -592,6 +592,14 @@ impl Type {
         scopes
             .extensions_in_scope_for(self)
             .any(|ext| search(self.as_user().map(|ty| &**ty), &ext.impls))
+    }
+
+    pub fn as_option_inner<'a>(&'a self, scopes: &Scopes) -> Option<&'a Type> {
+        scopes.get_option_id().and_then(|opt| {
+            self.as_user()
+                .filter(|ut| ut.id == opt)
+                .map(|ut| &ut.ty_args[0])
+        })
     }
 
     pub fn get_trait_impl<'a, 'b>(

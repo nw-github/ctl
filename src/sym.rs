@@ -561,14 +561,6 @@ impl Scopes {
         self.lang_types.get("option").copied()
     }
 
-    pub fn as_option_inner<'a>(&self, ty: &'a Type) -> Option<&'a Type> {
-        self.get_option_id().and_then(|opt| {
-            ty.as_user()
-                .filter(|ut| ut.id == opt)
-                .map(|ut| &ut.ty_args[0])
-        })
-    }
-
     pub fn make_lang_type(&self, name: &str, ty_args: Vec<Type>) -> Option<Type> {
         Some(Type::User(
             GenericUserType::new(self.lang_types.get(name).copied()?, ty_args).into(),

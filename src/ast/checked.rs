@@ -216,11 +216,11 @@ impl CheckedExpr {
                 self
             }
             (ty, target)
-                if scopes
-                    .as_option_inner(target)
+                if target
+                    .as_option_inner(scopes)
                     .map_or(false, |inner| ty.coerces_to(scopes, inner)) =>
             {
-                let expr = self.coerce_to(scopes.as_option_inner(target).unwrap(), scopes);
+                let expr = self.coerce_to(target.as_option_inner(scopes).unwrap(), scopes);
                 CheckedExpr::new(
                     target.clone(),
                     CheckedExprData::Instance {

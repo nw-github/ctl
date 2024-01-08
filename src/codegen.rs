@@ -1463,7 +1463,7 @@ impl Codegen {
                         &CheckedPattern::UnionMember {
                             pattern: Some(patt),
                             variant: "Some".into(),
-                            inner: scopes.as_option_inner(&next_ty).unwrap().clone(),
+                            inner: next_ty.as_option_inner(scopes).unwrap().clone(),
                         },
                         &item,
                         &next_ty,
@@ -1627,8 +1627,8 @@ impl Codegen {
             } => {
                 let src = deref(src, ty);
                 let base = ty.strip_references();
-                if let Some(inner) = scopes
-                    .as_option_inner(base)
+                if let Some(inner) = base
+                    .as_option_inner(scopes)
                     .filter(|inner| matches!(inner, Type::Ptr(_) | Type::MutPtr(_)))
                 {
                     if variant == "Some" {
@@ -1932,8 +1932,7 @@ impl Codegen {
 }
 
 fn is_opt_ptr(scopes: &Scopes, ty: &Type) -> bool {
-    scopes
-        .as_option_inner(ty)
+    ty.as_option_inner(scopes)
         .map(|inner| inner.is_ptr() || inner.is_mut_ptr())
         .unwrap_or(false)
 }
