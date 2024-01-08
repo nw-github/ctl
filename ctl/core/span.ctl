@@ -125,7 +125,7 @@ pub struct SpanMut<T> {
         )
     }
 
-    pub fn subspan<R: RangeBounds<usize> >(this, range: R): [mut T..] {
+    pub fn subspan<R: RangeBounds<usize>>(this, range: R): [mut T..] {
         let start = match range.begin() {
             Bound::Inclusive(start) => start,
             Bound::Exclusive(start) => start + 1,

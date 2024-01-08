@@ -43,7 +43,7 @@ pub struct str {
         Chars(s: this.as_bytes())
     }
 
-    pub fn substr<R: RangeBounds<usize> >(this, range: R): str {
+    pub fn substr<R: RangeBounds<usize>>(this, range: R): str {
         let span = this.span.subspan(range);
         match span.get(0) {
             ?ch => if !is_char_boundary(*ch) {
