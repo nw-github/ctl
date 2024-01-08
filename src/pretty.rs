@@ -34,7 +34,7 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
             is_unsafe,
         } => {
             if let Some(tag) = tag {
-                print_struct(&format!("Union({:?})", tag.data), base, indent);
+                print_struct(&format!("Union({tag:?})"), base, indent);
                 print_bool!(is_unsafe);
             } else {
                 print_struct("Union", base, indent);
@@ -49,7 +49,7 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
             functions,
             is_unsafe,
         } => {
-            eprint!("{tabs}Trait[{}]", name.data);
+            eprint!("{tabs}Trait[{name}]");
             print_bool!(public);
             print_bool!(is_unsafe);
             eprintln!();
@@ -81,7 +81,7 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
             functions,
             public,
         } => {
-            eprint!("{tabs}Enum[{}]", name.data);
+            eprint!("{tabs}Enum[{name}]");
             print_bool!(public);
             eprintln!();
 
@@ -400,7 +400,7 @@ pub fn print_expr(expr: &Expr, indent: usize) {
                 eprintln!("{tabs}Params:");
                 let plus_1 = INDENT.repeat(indent + 1);
                 for (name, ty) in params {
-                    eprintln!("{plus_1}{}: {ty:?}", name.data);
+                    eprintln!("{plus_1}{name}: {ty:?}");
                 }
             }
 
@@ -436,7 +436,7 @@ fn print_fn(
     indent: usize,
 ) {
     let tabs = INDENT.repeat(indent);
-    eprint!("{tabs}Fn[{}]", name.data);
+    eprint!("{tabs}Fn[{name}]");
     print_bool!(is_async);
     print_bool!(is_extern);
     print_bool!(is_unsafe);
@@ -479,7 +479,7 @@ fn print_struct(
     indent: usize,
 ) {
     let tabs = INDENT.repeat(indent);
-    eprintln!("{tabs}{type_name}[{}]", name.data);
+    eprintln!("{tabs}{type_name}[{name}]");
     print_bool!(public);
     eprintln!();
 
@@ -519,7 +519,7 @@ fn print_impls(indent: usize, impls: &[ImplBlock]) {
                 }
             }
 
-            eprintln!("{plus_1}{:?}", imp.path.data);
+            eprintln!("{plus_1}{:?}", imp.path);
             for f in imp.functions.iter() {
                 print_fn(f, indent + 2)
             }

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::{
     ast::{
         parsed::{
-            Destructure, Expr, ExprData, Fn, ImplBlock, IntPattern, MemVar, Param, Path, Pattern,
+            Destructure, Expr, ExprData, Fn, ImplBlock, IntPattern, Member, Param, Path, Pattern,
             RangePattern, Stmt, StmtData, Struct, TypeHint,
         },
         Attribute, UnaryOp,
@@ -1276,7 +1276,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
                 impls.push(this.parse_impl_block(token.span));
             } else {
-                let name = this.expect_id("expected name");
+                let name = this.expect_id_l("expected name");
                 this.expect_kind(Token::Colon, "expected type");
                 let ty = this.parse_type();
                 let value = this.next_if_kind(Token::Assign).map(|_| this.expression());
@@ -1284,7 +1284,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 if !this.matches_kind(Token::RCurly) {
                     this.expect_kind(Token::Comma, "expected ','");
                 }
-                members.push(MemVar {
+                members.push(Member {
                     public: config.is_public,
                     ty,
                     name,
@@ -1339,13 +1339,13 @@ impl<'a, 'b> Parser<'a, 'b> {
                 functions.push(func.data);
             } else if this.next_if_kind(Token::Shared).is_some() {
                 // warn if pub was specified that it is useless
-                let name = this.expect_id("expected name");
+                let name = this.expect_id_l("expected name");
                 this.expect_kind(Token::Colon, "expected type");
                 let ty = this.parse_type();
                 let value = this.next_if_kind(Token::Assign).map(|_| this.expression());
                 this.expect_kind(Token::Comma, "expected ','");
 
-                members.push(MemVar {
+                members.push(Member {
                     public: true,
                     name,
                     shared: true,
@@ -1355,7 +1355,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             } else if let Some(token) = this.next_if_kind(Token::Impl) {
                 impls.push(this.parse_impl_block(token.span));
             } else {
-                let name = this.expect_id("expected variant name");
+                let name = this.expect_id_l("expected variant name");
                 let (ty, value) = if this.next_if_kind(Token::LParen).is_some() {
                     let ty = this.parse_type();
                     this.expect_kind(Token::RParen, "expected ')'");
@@ -1370,7 +1370,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 if !this.matches_kind(Token::RCurly) {
                     this.expect_kind(Token::Comma, "expected ','");
                 }
-                members.push(MemVar {
+                members.push(Member {
                     public: config.is_public,
                     name,
                     shared: false,
@@ -1461,7 +1461,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 impls.push(this.parse_impl_block(token.span));
             } else {
                 variants.push((
-                    this.expect_id("expected variant name"),
+                    this.expect_id_l("expected variant name"),
                     if this.next_if_kind(Token::Assign).is_some() {
                         Some(this.expression())
                     } else {
@@ -1614,7 +1614,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let patt = if mutable {
                     self.expect_id_l("expected name").map(Pattern::MutBinding)
                 } else if keyword {
-                    self.expect_id_l("expected name").map(|name| Pattern::Path(Path::from(name)))
+                    self.expect_id_l("expected name")
+                        .map(|name| Pattern::Path(Path::from(name)))
                 } else {
                     self.pattern(false)
                 };

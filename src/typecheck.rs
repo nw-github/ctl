@@ -152,7 +152,7 @@ impl TypeChecker {
         span: Span,
     ) -> UserTypeId {
         if scopes.find::<UserTypeId>(&ty.name).is_some() {
-            self.error(Error::name_redef(&ty.name, span))
+            self.error(Error::redefinition("type", &ty.name, span))
         }
 
         let id = scopes.insert(ty, public);
@@ -216,8 +216,8 @@ impl TypeChecker {
                                 .map(|member| Param {
                                     keyword: true,
                                     patt: Located::new(
-                                        Span::default(),
-                                        Pattern::Path(Path::from(member.name.clone())),
+                                        member.name.span,
+                                        Pattern::Path(Path::from(member.name.data.clone())),
                                     ),
                                     ty: member.ty.clone(),
                                     default: member.default.clone(),
@@ -253,16 +253,27 @@ impl TypeChecker {
                     scopes.get_mut(id).body_scope = scopes.current;
                     scopes.get_mut(id).type_params =
                         self.declare_type_params(scopes, TT::Struct, base.type_params);
-                    *scopes.get_mut(id).data.as_struct_mut().unwrap().0 = base
-                        .members
-                        .into_iter()
-                        .map(|member| Member {
+
+                    let mut members = Vec::with_capacity(base.members.len());
+                    for member in base.members {
+                        if members.iter().any(|m: &CheckedMember| m.name == member.name.data) {
+                            self.error(Error::redefinition(
+                                "member variable",
+                                &member.name.data,
+                                member.name.span,
+                            ))
+                        }
+
+                        members.push(CheckedMember {
                             public: member.public,
-                            name: member.name,
+                            name: member.name.data,
                             shared: member.shared,
                             ty: self.resolve_typehint(scopes, &member.ty),
-                        })
-                        .collect();
+                        });
+                    }
+
+                    *scopes.get_mut(id).data.as_struct_mut().unwrap().0 = members;
+
                     let (impls, impl_blocks) = self.declare_impl_blocks(scopes, base.impls);
                     scopes.get_mut(id).impls = impls;
 
@@ -309,9 +320,20 @@ impl TypeChecker {
                     let mut variants = Vec::with_capacity(base.members.len());
                     let mut params = Vec::with_capacity(base.members.len());
                     for member in base.members.iter() {
-                        variants.push(Member {
+                        if variants
+                            .iter()
+                            .any(|m: &CheckedMember| m.name == member.name.data)
+                        {
+                            self.error(Error::redefinition(
+                                "member",
+                                &member.name.data,
+                                member.name.span,
+                            ))
+                        }
+
+                        variants.push(CheckedMember {
                             public: member.public,
-                            name: member.name.clone(),
+                            name: member.name.data.clone(),
                             shared: member.shared,
                             ty: self.resolve_typehint(scopes, &member.ty),
                         });
@@ -326,8 +348,8 @@ impl TypeChecker {
                             params.push(Param {
                                 keyword: true,
                                 patt: Located::new(
-                                    Span::default(),
-                                    Pattern::Path(Path::from(member.name.clone())),
+                                    member.name.span,
+                                    Pattern::Path(Path::from(member.name.data.clone())),
                                 ),
                                 ty: member.ty.clone(),
                                 default: member.default.clone(),
@@ -348,8 +370,8 @@ impl TypeChecker {
                                 params.push(Param {
                                     keyword: false,
                                     patt: Located::new(
-                                        Span::default(),
-                                        Pattern::Path(Path::from(member.name.clone())),
+                                        member.name.span,
+                                        Pattern::Path(Path::from(member.name.data.clone())),
                                     ),
                                     ty: member.ty,
                                     default: member.default,
@@ -361,7 +383,7 @@ impl TypeChecker {
                                 true,
                                 Fn {
                                     public: base.public,
-                                    name: Located::new(Span::default(), member.name.clone()),
+                                    name: Located::new(Span::default(), member.name.data.clone()),
                                     is_async: false,
                                     is_extern: false,
                                     variadic: false,
@@ -454,35 +476,39 @@ impl TypeChecker {
 
                 scopes.enter(ScopeKind::UserType(id), public, |scopes| {
                     scopes.get_mut(id).body_scope = scopes.current;
+                    let mut n_variants: Vec<(VariableId, Option<Located<ExprData>>)> =
+                        Vec::with_capacity(variants.len());
+                    for (i, (name, expr)) in variants.into_iter().enumerate() {
+                        if n_variants
+                            .iter()
+                            .any(|(id, _)| scopes.get(*id).name == name.data)
+                        {
+                            self.error(Error::redefinition("variant", &name.data, name.span))
+                        }
 
-                    let variants = variants
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, (name, expr))| {
-                            (
-                                scopes.insert(
-                                    Variable {
-                                        name: name.clone(),
-                                        ty: Type::User(GenericUserType::new(id, vec![]).into()),
-                                        is_static: true,
-                                        mutable: false,
-                                        value: Some(CheckedExpr::new(
-                                            backing.clone(),
-                                            CheckedExprData::Integer(BigInt::from(i)),
-                                        )),
-                                    },
-                                    true,
-                                ),
-                                expr,
-                            )
-                        })
-                        .collect();
+                        n_variants.push((
+                            scopes.insert(
+                                Variable {
+                                    name: name.data.clone(),
+                                    ty: Type::User(GenericUserType::new(id, vec![]).into()),
+                                    is_static: true,
+                                    mutable: false,
+                                    value: Some(CheckedExpr::new(
+                                        backing.clone(),
+                                        CheckedExprData::Integer(BigInt::from(i)),
+                                    )),
+                                },
+                                true,
+                            ),
+                            expr,
+                        ));
+                    }
 
                     let (impls, impl_blocks) = self.declare_impl_blocks(scopes, impls);
                     scopes.get_mut(id).impls = impls;
                     DeclaredStmtData::Enum {
                         id,
-                        variants,
+                        variants: n_variants,
                         impl_blocks,
                         functions: functions
                             .into_iter()
@@ -596,9 +622,10 @@ impl TypeChecker {
             ))
         }
 
-        if scopes
-            .find_in::<FunctionId>(&f.name.data, scopes.current)
-            .is_some()
+        if !constructor
+            && scopes
+                .find_in::<FunctionId>(&f.name.data, scopes.current)
+                .is_some()
         {
             self.error(Error::new(
                 format!("redeclaration of function '{}'", f.name.data),
@@ -3593,7 +3620,7 @@ impl TypeChecker {
                 if scopes.find_in::<FunctionId>(name, scopes.current).is_some()
                     || scopes.find_in::<UserTypeId>(name, scopes.current).is_some()
                 {
-                    self.error(Error::name_redef(name, span))
+                    self.error(Error::redefinition("name", name, span))
                 }
 
                 if all {
@@ -3608,7 +3635,7 @@ impl TypeChecker {
                     || scopes.find_in::<FunctionId>(name, scopes.current).is_some()
                     || scopes.find_in::<VariableId>(name, scopes.current).is_some()
                 {
-                    self.error(Error::name_redef(name, span))
+                    self.error(Error::redefinition("name", name, span))
                 }
                 if all {
                     self.error(Error::wildcard_import(span))
@@ -3631,7 +3658,7 @@ impl TypeChecker {
                 if scopes.find_in::<FunctionId>(name, scopes.current).is_some()
                     || scopes.find_in::<VariableId>(name, scopes.current).is_some()
                 {
-                    self.error(Error::name_redef(name, span))
+                    self.error(Error::redefinition("name", name, span))
                 }
 
                 if all {

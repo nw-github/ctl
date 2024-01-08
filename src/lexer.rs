@@ -216,6 +216,12 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Located<T> {
     }
 }
 
+impl<T: std::fmt::Display> std::fmt::Display for Located<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.data.fmt(f)
+    }
+}
+
 pub struct Lexer<'a> {
     src: &'a str,
     pos: usize,

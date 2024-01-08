@@ -14,8 +14,8 @@ use crate::{
     error::Error,
     lexer::Span,
     sym::{
-        FunctionId, Member, ParamPattern, ScopeId, ScopeKind, Scopes, UserTypeData, UserTypeId,
-        VariableId,
+        CheckedMember, FunctionId, ParamPattern, ScopeId, ScopeKind, Scopes, UserTypeData,
+        UserTypeId, VariableId,
     },
     typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type},
 };
@@ -242,7 +242,7 @@ impl TypeGen {
         &mut self,
         scopes: &Scopes,
         ut: &GenericUserType,
-        member: &Member,
+        member: &CheckedMember,
         buffer: &mut Buffer,
     ) {
         let mut ty = member.ty.clone();

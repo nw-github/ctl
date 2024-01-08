@@ -113,8 +113,8 @@ impl Error {
         Self::new("this operation is unsafe", span)
     }
 
-    pub fn name_redef(name: &str, span: Span) -> Self {
-        Self::new(format!("redefinition of name {name}"), span)
+    pub fn redefinition(kind: &str, name: &str, span: Span) -> Self {
+        Self::new(format!("redefinition of {kind} '{name}'"), span)
     }
 
     pub fn must_be_irrefutable(ty: &str, span: Span) -> Self {

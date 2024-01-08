@@ -41,7 +41,7 @@ pub enum StmtData {
         public: bool,
         name: Located<String>,
         impls: Vec<ImplBlock>,
-        variants: Vec<(String, Option<Expr>)>,
+        variants: Vec<(Located<String>, Option<Expr>)>,
         functions: Vec<Fn>,
     },
     Extension {
@@ -372,9 +372,9 @@ pub struct Fn {
 }
 
 #[derive(Debug, Clone)]
-pub struct MemVar {
+pub struct Member {
     pub public: bool,
-    pub name: String,
+    pub name: Located<String>,
     pub shared: bool,
     pub ty: TypeHint,
     pub default: Option<Expr>,
@@ -385,7 +385,7 @@ pub struct Struct {
     pub public: bool,
     pub name: Located<String>,
     pub type_params: Vec<(String, Vec<Located<Path>>)>,
-    pub members: Vec<MemVar>,
+    pub members: Vec<Member>,
     pub impls: Vec<ImplBlock>,
     pub functions: Vec<Fn>,
 }

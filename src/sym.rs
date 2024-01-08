@@ -161,7 +161,7 @@ pub struct Function {
 }
 
 #[derive(Debug, Clone)]
-pub struct Member {
+pub struct CheckedMember {
     pub public: bool,
     pub name: String,
     pub shared: bool,
@@ -170,7 +170,7 @@ pub struct Member {
 
 #[derive(Debug, Clone)]
 pub struct Union {
-    pub variants: Vec<Member>,
+    pub variants: Vec<CheckedMember>,
     pub is_unsafe: bool,
 }
 
@@ -196,7 +196,7 @@ pub enum TT {
 #[derive(Debug, EnumAsInner)]
 pub enum UserTypeData {
     Struct {
-        members: Vec<Member>,
+        members: Vec<CheckedMember>,
         init: FunctionId,
     },
     Union(Union),
@@ -233,7 +233,7 @@ pub struct UserType {
 }
 
 impl UserType {
-    pub fn members(&self) -> Option<&[Member]> {
+    pub fn members(&self) -> Option<&[CheckedMember]> {
         match &self.data {
             UserTypeData::Struct { members, .. } => Some(members),
             UserTypeData::Union(union) => Some(&union.variants),
@@ -241,7 +241,7 @@ impl UserType {
         }
     }
 
-    pub fn members_mut(&mut self) -> Option<&mut [Member]> {
+    pub fn members_mut(&mut self) -> Option<&mut [CheckedMember]> {
         match &mut self.data {
             UserTypeData::Struct { members, .. } => Some(members),
             UserTypeData::Union(union) => Some(&mut union.variants),
