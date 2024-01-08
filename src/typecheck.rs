@@ -2319,30 +2319,25 @@ impl TypeChecker {
 
         let mut ty = member.ty.clone();
         ty.fill_struct_templates(scopes, ut);
-
-        let ptr = scrutinee.is_ptr() || scrutinee.is_mut_ptr();
         if let Some(pattern) = subpatterns.into_iter().next() {
             let span = pattern.span;
-            let CheckedPattern::Irrefutable(pattern) = self.check_pattern(
-                scopes,
-                true,
-                &scrutinee.matched_inner_type(ty),
-                false,
-                pattern,
-            ) else {
+            let ty = scrutinee.matched_inner_type(ty);
+            let CheckedPattern::Irrefutable(pattern) =
+                self.check_pattern(scopes, true, &ty, false, pattern)
+            else {
                 return Some(self.error(Error::must_be_irrefutable("union subpatterns", span)));
             };
 
             Some(CheckedPattern::UnionMember {
                 pattern: Some(pattern),
                 variant,
-                ptr,
+                inner: ty,
             })
         } else if ty.is_void() {
             Some(CheckedPattern::UnionMember {
                 pattern: None,
                 variant,
-                ptr,
+                inner: Type::Void,
             })
         } else {
             Some(self.error(Error::new(
@@ -2445,10 +2440,14 @@ impl TypeChecker {
 
         if let Some(RestPattern { id: Some(id), .. }) = &mut rest {
             scopes.get_mut(*id).item.ty =
-                Type::User(GenericUserType::new(span_id, vec![span_inner]).into());
+                Type::User(GenericUserType::new(span_id, vec![span_inner.clone()]).into());
         }
 
-        CheckedPattern::Span(result, rest)
+        CheckedPattern::Span {
+            patterns: result,
+            rest,
+            inner: span_inner,
+        }
     }
 
     fn check_array_pattern(
@@ -2552,24 +2551,22 @@ impl TypeChecker {
                 (real_inner.clone(), arr_len - result.len()).into(),
             ));
         }
-
-        let ptr = target.is_ptr() || target.is_mut_ptr();
         if had_refutable {
             CheckedPattern::Array(ArrayPattern {
                 rest,
-                patterns: result,
                 arr_len,
-                ptr,
+                inner,
+                patterns: result,
             })
         } else {
             CheckedPattern::Irrefutable(IrrefutablePattern::Array(ArrayPattern {
                 rest,
+                arr_len,
+                inner,
                 patterns: result
                     .into_iter()
                     .map(|patt| patt.into_irrefutable().unwrap())
                     .collect(),
-                arr_len,
-                ptr,
             }))
         }
     }
@@ -2740,10 +2737,11 @@ impl TypeChecker {
                             if !matches!(patt, CheckedPattern::Irrefutable(_)) {
                                 had_refutable = true;
                             }
-                            (name, patt)
+                            (name, ty, patt)
                         } else {
                             (
                                 name.clone(),
+                                ty.clone(),
                                 CheckedPattern::Irrefutable(IrrefutablePattern::Variable(
                                     scopes.insert(
                                         Variable {
@@ -2766,7 +2764,7 @@ impl TypeChecker {
                     CheckedPattern::Irrefutable(IrrefutablePattern::Destrucure(
                         checked
                             .into_iter()
-                            .map(|(name, patt)| (name, patt.into_irrefutable().unwrap()))
+                            .map(|(name, ty, patt)| (name, ty, patt.into_irrefutable().unwrap()))
                             .collect(),
                     ))
                 }

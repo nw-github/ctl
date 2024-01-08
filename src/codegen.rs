@@ -1,7 +1,4 @@
-use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
-    fmt::Display,
-};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 use indexmap::IndexMap;
 
@@ -520,9 +517,14 @@ impl Buffer {
                 self.emit(", ");
             }
 
-            self.emit_type(scopes, &ty, tg);
-            if !f.is_extern && !is_prototype {
-                self.emit(format!(" {PARAM_PREFIX}{i}"));
+            if f.is_extern || is_prototype {
+                self.emit_type(scopes, &ty, tg);
+            } else if let ParamPattern::Checked(IrrefutablePattern::Variable(id)) = &param.patt {
+                _ = self.emit_local_decl(scopes, *id, state, tg);
+                continue;
+            } else {
+                self.emit_type(scopes, &ty, tg);
+                self.emit(format!(" {PARAM_PREFIX}{}", param.label));
             }
         }
 
@@ -693,36 +695,7 @@ impl Codegen {
             emitted.extend(this.funcs.drain());
 
             for mut state in diff {
-                // TODO: emit an error if a function has the c_macro attribute and a body
-                let func = scopes.get(state.func.id);
-                if func.attrs.iter().any(|attr| attr.name.data == "c_macro") {
-                    continue;
-                }
-
-                prototypes.emit_prototype(scopes, &mut state, true, &mut this.type_gen);
-                prototypes.emit(";");
-
-                if let Some(body) = func.body.clone() {
-                    this.buffer
-                        .emit_prototype(scopes, &mut state, false, &mut this.type_gen);
-                    this.buffer.emit("{");
-                    for (i, param) in func.params.iter().enumerate() {
-                        let ParamPattern::Checked(patt) = &param.patt else {
-                            continue;
-                        };
-                        this.gen_irrefutable_pattern(
-                            scopes,
-                            &mut state,
-                            patt,
-                            &format!("{PARAM_PREFIX}{i}"),
-                        );
-                    }
-
-                    for stmt in body.into_iter() {
-                        this.gen_stmt(scopes, stmt, &mut state);
-                    }
-                    this.buffer.emit("}");
-                }
+                this.gen_fn(scopes, &mut state, &mut prototypes);
             }
         }
 
@@ -796,6 +769,46 @@ impl Codegen {
         Ok(this.buffer.0)
     }
 
+    fn gen_fn(&mut self, scopes: &Scopes, state: &mut State, prototypes: &mut Buffer) {
+        // TODO: emit an error if a function has the c_macro attribute and a body
+        let func = scopes.get(state.func.id);
+        if func.attrs.iter().any(|attr| attr.name.data == "c_macro") {
+            return;
+        }
+
+        prototypes.emit_prototype(scopes, state, true, &mut self.type_gen);
+        prototypes.emit(";");
+
+        if let Some(body) = func.body.clone() {
+            self.buffer
+                .emit_prototype(scopes, state, false, &mut self.type_gen);
+            self.buffer.emit("{");
+            for param in func.params.iter() {
+                let Some(patt) = param
+                    .patt
+                    .as_checked()
+                    .filter(|patt| !matches!(patt, IrrefutablePattern::Variable(_)))
+                else {
+                    continue;
+                };
+                self.gen_irrefutable_pattern(
+                    scopes,
+                    state,
+                    patt,
+                    &format!("{PARAM_PREFIX}{}", param.label),
+                    &param.ty,
+                    false,
+                    false,
+                );
+            }
+
+            for stmt in body.into_iter() {
+                self.gen_stmt(scopes, stmt, state);
+            }
+            self.buffer.emit("}");
+        }
+    }
+
     fn gen_stmt(&mut self, scopes: &Scopes, stmt: CheckedStmt, state: &mut State) {
         match stmt {
             CheckedStmt::Module(block) => {
@@ -845,7 +858,7 @@ impl Codegen {
                     self.buffer.emit(format!(" {tmp} = "));
                     self.gen_expr(scopes, value, state);
                     self.buffer.emit(";");
-                    self.gen_irrefutable_pattern(scopes, state, &pattern, &deref(&tmp, ty, true));
+                    self.gen_irrefutable_pattern(scopes, state, &pattern, &tmp, ty, false, false);
                 });
             }
             CheckedStmt::None => {}
@@ -1450,9 +1463,7 @@ impl Codegen {
                         &CheckedPattern::UnionMember {
                             pattern: Some(patt),
                             variant: "Some".into(),
-                            ptr: scopes
-                                .as_option_inner(&next_ty)
-                                .map_or(false, |ty| ty.is_ptr() || ty.is_mut_ptr()),
+                            inner: scopes.as_option_inner(&next_ty).unwrap().clone(),
                         },
                         &item,
                         &next_ty,
@@ -1605,59 +1616,82 @@ impl Codegen {
         scopes: &Scopes,
         state: &mut State,
         pattern: &CheckedPattern,
-        tmp_name: &str,
+        src: &str,
         ty: &Type,
     ) {
         match pattern {
             CheckedPattern::UnionMember {
                 pattern,
                 variant,
-                ptr,
+                inner: member_ty,
             } => {
-                let ty_base = ty.strip_references();
-                let opt_ptr = is_opt_ptr(scopes, ty_base);
-                let tmp_name = deref(tmp_name, ty, false);
-                if opt_ptr && variant == "Some" {
-                    self.buffer.emit(format!("if ({tmp_name} != NULL) {{"));
-                    if let Some(pattern) = pattern {
-                        let tmp_name = if *ptr {
-                            format!("&(*{tmp_name})")
-                        } else {
-                            tmp_name
-                        };
-                        self.gen_irrefutable_pattern(scopes, state, pattern, &tmp_name);
+                let src = deref(src, ty);
+                let base = ty.strip_references();
+                if let Some(inner) = scopes
+                    .as_option_inner(base)
+                    .filter(|inner| matches!(inner, Type::Ptr(_) | Type::MutPtr(_)))
+                {
+                    if variant == "Some" {
+                        self.buffer.emit(format!("if ({src} != NULL) {{"));
+                        if let Some(pattern) = pattern {
+                            self.gen_irrefutable_pattern(
+                                scopes, state, pattern, &src, inner, false, false,
+                            );
+                        }
+                    } else {
+                        self.buffer.emit(format!("if ({src} == NULL) {{"));
                     }
-                } else if opt_ptr && variant == "None" {
-                    self.buffer.emit(format!("if ({tmp_name} == NULL) {{",));
                 } else {
-                    let tag = ty_base
+                    let tag = base
                         .as_user()
                         .and_then(|ut| scopes.get(ut.id).data.as_union())
                         .and_then(|union| union.variant_tag(variant))
                         .unwrap();
                     self.buffer
-                        .emit(format!("if ({tmp_name}.{UNION_TAG_NAME} == {tag}) {{"));
+                        .emit(format!("if ({src}.{UNION_TAG_NAME} == {tag}) {{"));
 
                     if let Some(pattern) = pattern {
-                        let tmp_name = if *ptr {
-                            format!("&{tmp_name}.{variant}")
-                        } else {
-                            format!("{tmp_name}.{variant}")
-                        };
-                        self.gen_irrefutable_pattern(scopes, state, pattern, &tmp_name);
+                        self.gen_irrefutable_pattern(
+                            scopes,
+                            state,
+                            pattern,
+                            &format!("{src}.{variant}"),
+                            member_ty,
+                            ty.is_ptr() || ty.is_mut_ptr(),
+                            false,
+                        );
                     }
                 }
             }
             CheckedPattern::Irrefutable(pattern) => {
                 self.buffer.emit("if (1) {");
-                self.gen_irrefutable_pattern(scopes, state, pattern, tmp_name);
+                self.gen_irrefutable_pattern(scopes, state, pattern, src, ty, false, false);
             }
-            CheckedPattern::Int(value) => self.gen_literal_pattern(scopes, tmp_name, ty, value),
-            CheckedPattern::IntRange(range) => self.gen_range_pattern(scopes, tmp_name, ty, range),
-            CheckedPattern::String(value) => {
-                let tmp_name = deref(tmp_name, ty, false);
+            CheckedPattern::Int(value) => {
+                self.buffer.emit(format!("if ({} == ", deref(src, ty)));
+                self.emit_cast(scopes, ty.strip_references());
+                self.buffer.emit(format!("{value}) {{"));
+            }
+            CheckedPattern::IntRange(RangePattern {
+                inclusive,
+                start,
+                end,
+            }) => {
+                let src = deref(src, ty);
+                let base = ty.strip_references();
+                self.buffer.emit(format!("if ({src} >= "));
+                self.emit_cast(scopes, base);
                 self.buffer.emit(format!(
-                    "if ({tmp_name}.span.len == {} && __builtin_memcmp({tmp_name}.span.ptr, \"",
+                    "{start} && {src} {} ",
+                    if *inclusive { "<=" } else { "<" }
+                ));
+                self.emit_cast(scopes, base);
+                self.buffer.emit(format!("{end}) {{"));
+            }
+            CheckedPattern::String(value) => {
+                let src = deref(src, ty);
+                self.buffer.emit(format!(
+                    "if ({src}.span.len == {} && __builtin_memcmp({src}.span.ptr, \"",
                     value.len()
                 ));
                 for byte in value.as_bytes() {
@@ -1665,10 +1699,14 @@ impl Codegen {
                 }
                 self.buffer.emit(format!("\", {}) == 0) {{", value.len()));
             }
-            CheckedPattern::Span(patterns, rest) => {
-                let tmp_name = deref(tmp_name, ty, false);
+            CheckedPattern::Span {
+                patterns,
+                rest,
+                inner,
+            } => {
+                let src = deref(src, ty);
                 self.buffer.emit(format!(
-                    "if ({tmp_name}.len {} {}) {{",
+                    "if ({src}.len {} {}) {{",
                     if rest.is_some() { ">=" } else { "==" },
                     patterns.len()
                 ));
@@ -1682,7 +1720,7 @@ impl Codegen {
                         .is_some()
                     {
                         self.buffer.emit(format!(
-                            " = {{ .ptr = {tmp_name}.ptr + {pos}, .len = {tmp_name}.len - {} }};",
+                            " = {{ .ptr = {src}.ptr + {pos}, .len = {src}.len - {} }};",
                             patterns.len()
                         ));
                     }
@@ -1693,13 +1731,13 @@ impl Codegen {
                             state,
                             patt,
                             &if i < pos {
-                                format!("{tmp_name}.ptr + {i}")
+                                format!("{src}.ptr + {i}")
                             } else {
-                                format!(
-                                    "{tmp_name}.ptr + {tmp_name}.len - {} + {i}",
-                                    patterns.len()
-                                )
+                                format!("{src}.ptr + {src}.len - {} + {i}", patterns.len())
                             },
+                            inner,
+                            false,
+                            false,
                         );
                     }
                 } else {
@@ -1708,7 +1746,10 @@ impl Codegen {
                             scopes,
                             state,
                             patt,
-                            &format!("{tmp_name}.ptr + {i}"),
+                            &format!("{src}.ptr + {i}"),
+                            inner,
+                            false,
+                            false,
                         );
                     }
                 }
@@ -1719,43 +1760,16 @@ impl Codegen {
         }
     }
 
-    fn gen_literal_pattern(&mut self, scopes: &Scopes, src: &str, ty: &Type, value: impl Display) {
-        self.buffer
-            .emit(format!("if ({} == ", deref(src, ty, false)));
-        self.emit_cast(scopes, ty.strip_references());
-        self.buffer.emit(format!("{value}) {{"));
-    }
-
-    fn gen_range_pattern<T: Display>(
-        &mut self,
-        scopes: &Scopes,
-        src: &str,
-        ty: &Type,
-        RangePattern {
-            inclusive,
-            start,
-            end,
-        }: &RangePattern<T>,
-    ) {
-        let src = deref(src, ty, false);
-        let base = ty.strip_references();
-
-        self.buffer.emit(format!("if ({src} >= "));
-        self.emit_cast(scopes, base);
-        self.buffer.emit(format!(
-            "{start} && {src} {} ",
-            if *inclusive { "<=" } else { "<" }
-        ));
-        self.emit_cast(scopes, base);
-        self.buffer.emit(format!("{end}) {{"));
-    }
-
+    #[allow(clippy::too_many_arguments)]
     fn gen_irrefutable_pattern(
         &mut self,
         scopes: &Scopes,
         state: &mut State,
         pattern: &IrrefutablePattern,
         src: &str,
+        ty: &Type,
+        borrow: bool,
+        recursive: bool,
     ) {
         match pattern {
             &IrrefutablePattern::Variable(id) => {
@@ -1764,21 +1778,36 @@ impl Codegen {
                     .emit_local_decl(scopes, id, state, &mut self.type_gen)
                     .is_ok()
                 {
-                    self.buffer.emit(format!(" = {src};"));
+                    self.buffer
+                        .emit(format!(" = {}{src};", if borrow { "&" } else { "" }));
                 }
             }
-            IrrefutablePattern::Destrucure(subpatterns) => {
-                for (member, patt) in subpatterns {
-                    self.gen_irrefutable_pattern(scopes, state, patt, &format!("{src}.{member}"));
+            IrrefutablePattern::Destrucure(patterns) => {
+                for (member, inner, patt) in patterns {
+                    self.gen_irrefutable_pattern(
+                        scopes,
+                        state,
+                        patt,
+                        &format!(
+                            "({}{src}).{member}",
+                            "*".repeat(ty.indirection() - usize::from(borrow))
+                        ),
+                        inner,
+                        ty.is_ptr() || ty.is_mut_ptr(),
+                        true,
+                    );
                 }
             }
             IrrefutablePattern::Array(ArrayPattern {
                 patterns,
                 rest,
                 arr_len,
-                ptr,
+                inner,
             }) => {
-                let src = if *ptr {
+                let from_ptr = ty.is_ptr() || ty.is_mut_ptr();
+                // for recursive calls, src will be an actually pointer to the array type, not a
+                // pointer to the inner type like we emit for normal array pointers
+                let src = if (!recursive || !borrow) && from_ptr {
                     src.into()
                 } else {
                     format!("{src}.{ARRAY_DATA_NAME}")
@@ -1793,8 +1822,8 @@ impl Codegen {
                         })
                         .is_some()
                     {
-                        if *ptr {
-                            self.buffer.emit(format!(" = (*{src}) + {pos};"));
+                        if from_ptr {
+                            self.buffer.emit(format!(" = {src} + {pos};"));
                         } else {
                             self.buffer.emit(format!(" = {{ .{ARRAY_DATA_NAME} = {{"));
                             for i in 0..rest_len {
@@ -1806,11 +1835,27 @@ impl Codegen {
 
                     for (i, patt) in patterns.iter().enumerate() {
                         let i = if i < pos { i } else { rest_len + i };
-                        self.gen_irrefutable_pattern(scopes, state, patt, &format!("{src}[{i}]"));
+                        self.gen_irrefutable_pattern(
+                            scopes,
+                            state,
+                            patt,
+                            &format!("{src}[{i}]"),
+                            inner,
+                            from_ptr,
+                            true,
+                        );
                     }
                 } else {
                     for (i, patt) in patterns.iter().enumerate() {
-                        self.gen_irrefutable_pattern(scopes, state, patt, &format!("{src}[{i}]"));
+                        self.gen_irrefutable_pattern(
+                            scopes,
+                            state,
+                            patt,
+                            &format!("{src}[{i}]"),
+                            inner,
+                            from_ptr,
+                            true,
+                        );
                     }
                 }
             }
@@ -1893,11 +1938,10 @@ fn is_opt_ptr(scopes: &Scopes, ty: &Type) -> bool {
         .unwrap_or(false)
 }
 
-fn deref(src: &str, ty: &Type, make_ref: bool) -> String {
+fn deref(src: &str, ty: &Type) -> String {
     if ty.is_ptr() || ty.is_mut_ptr() {
         format!(
-            "{}({}{src})",
-            if make_ref { "&" } else { "" },
+            "({}{src})",
             "*".repeat(ty.indirection() - usize::from(ty.strip_references().is_array()))
         )
     } else {

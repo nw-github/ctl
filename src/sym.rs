@@ -119,7 +119,7 @@ pub enum DefaultExpr {
     Checked(CheckedExpr),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, EnumAsInner)]
 pub enum ParamPattern {
     Unchecked(Located<Pattern>),
     Checked(IrrefutablePattern),

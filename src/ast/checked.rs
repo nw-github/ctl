@@ -27,13 +27,13 @@ pub struct ArrayPattern<T> {
     pub patterns: Vec<T>,
     pub rest: Option<RestPattern>,
     pub arr_len: usize,
-    pub ptr: bool,
+    pub inner: Type,
 }
 
 #[derive(Debug, Clone)]
 pub enum IrrefutablePattern {
     Variable(VariableId),
-    Destrucure(Vec<(String, IrrefutablePattern)>),
+    Destrucure(Vec<(String, Type, IrrefutablePattern)>),
     Array(ArrayPattern<IrrefutablePattern>),
 }
 
@@ -42,15 +42,19 @@ pub enum CheckedPattern {
     UnionMember {
         pattern: Option<IrrefutablePattern>,
         variant: String,
-        ptr: bool,
+        inner: Type,
     },
+    Destrucure(Vec<(String, Type, CheckedPattern)>),
+    Array(ArrayPattern<CheckedPattern>),
     Irrefutable(IrrefutablePattern),
-    Destrucure(Vec<(String, CheckedPattern)>),
     Int(BigInt),
     IntRange(RangePattern<BigInt>),
     String(String),
-    Array(ArrayPattern<CheckedPattern>),
-    Span(Vec<IrrefutablePattern>, Option<RestPattern>),
+    Span {
+        patterns: Vec<IrrefutablePattern>,
+        rest: Option<RestPattern>,
+        inner: Type,
+    },
     #[default]
     Error,
 }

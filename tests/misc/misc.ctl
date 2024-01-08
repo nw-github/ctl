@@ -87,6 +87,24 @@ fn main() {
 
         std::println("array_ptr_pattern()...");
         patterns::array_ptr_pattern();
+    
+        std::println("nested_ptr_by_val()...");
+        patterns::nested_ptr_by_val();
+    
+        std::println("nested_ptr_by_ref()...");
+        patterns::nested_ptr_by_ref();
+
+        std::println("nested_destructure_1()...");
+        patterns::nested_destructure_1();
+
+        std::println("nested_destructure_2()...");
+        patterns::nested_destructure_2();
+
+        std::println("nested_destructure_3()...");
+        patterns::nested_destructure_3();
+
+        std::println("nested_destructure_4()...");
+        patterns::nested_destructure_4();
     }
 
     std::println("\nmisc: ");
