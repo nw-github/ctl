@@ -62,13 +62,13 @@ impl Pipeline<Source> {
                 let path = file.path();
                 if file.file_type()?.is_file() && path.extension() == Some(OsStr::new("ctl")) {
                     let buffer = std::fs::read_to_string(&path)?;
-                    sources.push(Parser::parse(&buffer, &mut self.diag, path)?);
+                    sources.push(Parser::parse(&buffer, &mut self.diag, path));
                 }
             }
         } else {
             let buffer = std::fs::read_to_string(&self.path)
                 .with_context(|| format!("loading path {}", self.path.display()))?;
-            sources.push(Parser::parse(&buffer, &mut self.diag, self.path.clone())?);
+            sources.push(Parser::parse(&buffer, &mut self.diag, self.path.clone()));
         }
 
         Ok(Pipeline {
@@ -97,7 +97,7 @@ impl Pipeline<Parsed> {
 }
 
 impl Pipeline<Checked> {
-    pub fn codegen(mut self) -> std::result::Result<String, Diagnostics> {
+    pub fn codegen(mut self) -> Result<String, Diagnostics> {
         let module = self.state.0;
         if !self.diag.has_errors() {
             match Codegen::build(module.scope, &module.scopes) {

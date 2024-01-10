@@ -44,7 +44,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
     }
 
-    pub fn parse(src: &'a str, diag: &'b mut Diagnostics, path: PathBuf) -> std::io::Result<Stmt> {
+    pub fn parse(src: &'a str, diag: &'b mut Diagnostics, path: PathBuf) -> Stmt {
         let file = diag.add_file(path);
         let mut this = Self::new(src, diag, file);
         let mut stmts = Vec::new();
@@ -52,7 +52,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             stmts.push(this.item());
         }
 
-        Ok(Stmt {
+        Stmt {
             data: StmtData::Module {
                 public: true,
                 body: stmts,
@@ -64,7 +64,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 len: 0,
             },
             attrs: Vec::new(),
-        })
+        }
     }
 
     //
