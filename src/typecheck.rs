@@ -766,7 +766,7 @@ impl TypeChecker {
     fn check_stmt(&mut self, scopes: &mut Scopes, stmt: DeclaredStmt) -> CheckedStmt {
         match stmt.data {
             DeclaredStmtData::Module { id, body } => {
-                return CheckedStmt::Module(scopes.enter_id(id, |scopes| {
+                scopes.enter_id(id, |scopes| {
                     self.include_universal(scopes);
                     Block {
                         body: body
@@ -775,7 +775,7 @@ impl TypeChecker {
                             .collect(),
                         scope: scopes.current,
                     }
-                }))
+                });
             }
             DeclaredStmtData::Struct {
                 init,

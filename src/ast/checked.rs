@@ -70,7 +70,6 @@ pub enum CheckedStmt {
     Expr(CheckedExpr),
     Let(VariableId),
     LetPattern(IrrefutablePattern, CheckedExpr),
-    Module(Block),
     None,
     #[default]
     Error,

@@ -702,21 +702,16 @@ impl Codegen {
         let functions = std::mem::take(&mut this.buffer);
 
         let mut vars = Vec::new();
-        for &id in scopes
-            .scopes()
-            .iter()
-            .flat_map(|s| s.vars.iter())
-            .filter(|&&v| scopes.get(*v).is_static)
-        {
+        for (id, _) in scopes.vars().filter(|(_, v)| v.is_static) {
             if this
                 .buffer
-                .emit_local_decl(scopes, *id, main, &mut this.type_gen)
+                .emit_local_decl(scopes, id, main, &mut this.type_gen)
                 .is_ok()
             {
                 this.buffer.emit(";");
-                vars.push((*id, false));
+                vars.push((id, false));
             } else {
-                vars.push((*id, true));
+                vars.push((id, true));
             }
         }
         let statics = std::mem::take(&mut this.buffer);
@@ -811,11 +806,6 @@ impl Codegen {
 
     fn gen_stmt(&mut self, scopes: &Scopes, stmt: CheckedStmt, state: &mut State) {
         match stmt {
-            CheckedStmt::Module(block) => {
-                for stmt in block.body.into_iter() {
-                    self.gen_stmt(scopes, stmt, state);
-                }
-            }
             CheckedStmt::Expr(mut expr) => {
                 stmt!(self, {
                     state.fill_generics(scopes, &mut expr.ty);

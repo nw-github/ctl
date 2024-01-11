@@ -510,8 +510,8 @@ impl Scopes {
             .and_then(|id| self[id].kind.as_module_mut().map(|m| m.1))
     }
 
-    pub fn scopes(&self) -> &[Scope] {
-        &self.scopes
+    pub fn vars(&self) -> impl Iterator<Item = (VariableId, &Scoped<Variable>)> {
+        self.vars.iter().enumerate().map(|(i, var)| (VariableId(i), var))
     }
 
     pub fn extensions(&self) -> &[Scoped<Extension>] {
