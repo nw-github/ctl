@@ -1,6 +1,5 @@
 use crate::{
     ast::parsed::{Expr, Path, Pattern, TypeHint},
-    ast::Attribute,
     lexer::{Located, Span},
     sym::{ExtensionId, FunctionId, ScopeId, UserTypeId, VariableId},
 };
@@ -8,7 +7,6 @@ use crate::{
 pub struct DeclaredStmt {
     pub data: DeclaredStmtData,
     pub span: Span,
-    pub attrs: Vec<Attribute>,
 }
 
 pub struct DeclaredFn {

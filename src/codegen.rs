@@ -974,7 +974,7 @@ impl Codegen {
                 }
 
                 if let Some(name) = scopes.intrinsic_name(func.id) {
-                    self.gen_intrinsic(scopes, name, &func);
+                    self.gen_intrinsic(scopes, name, &func, args, state);
                     return;
                 }
 
@@ -1559,11 +1559,34 @@ impl Codegen {
         }
     }
 
-    fn gen_intrinsic(&mut self, scopes: &Scopes, name: &str, func: &GenericFunc) {
+    fn gen_intrinsic(
+        &mut self,
+        scopes: &Scopes,
+        name: &str,
+        func: &GenericFunc,
+        args: IndexMap<String, CheckedExpr>,
+        state: &mut State,
+    ) {
         match name {
             "size_of" => {
                 self.buffer.emit("(usize)sizeof");
                 self.emit_cast(scopes, &func.ty_args[0]);
+            }
+            "panic" => {
+                let id = scopes.panic_handler.expect("a panic handler should exist");
+                let panic = State::new(GenericFunc::new(id, vec![]), None);
+
+                self.buffer.emit_fn_name(scopes, &panic);
+                self.buffer.emit("(");
+                for (i, (_, expr)) in args.into_iter().enumerate() {
+                    if i > 0 {
+                        self.buffer.emit(", ");
+                    }
+                    self.gen_expr(scopes, expr, state);
+                }
+                self.buffer.emit(")");
+
+                self.funcs.insert(panic);
             }
             _ => unreachable!(),
         }
@@ -1697,7 +1720,7 @@ impl Codegen {
                     if rest.is_some() { ">=" } else { "==" },
                     patterns.len()
                 ));
-                if let Some(RestPattern { id, pos }) = *rest {
+                let pos = rest.map(|RestPattern { id, pos }| {
                     if id
                         .and_then(|id| {
                             self.buffer
@@ -1711,32 +1734,22 @@ impl Codegen {
                             patterns.len()
                         ));
                     }
+                    pos
+                });
 
-                    for (i, patt) in patterns.iter().enumerate() {
-                        self.gen_irrefutable_pattern(
-                            scopes,
-                            state,
-                            patt,
-                            &if i < pos {
-                                format!("{src}.ptr[{i}]")
-                            } else {
-                                format!("{src}.ptr[{src}.len - {} + {i}]", patterns.len())
-                            },
-                            inner,
-                            true,
-                        );
-                    }
-                } else {
-                    for (i, patt) in patterns.iter().enumerate() {
-                        self.gen_irrefutable_pattern(
-                            scopes,
-                            state,
-                            patt,
-                            &format!("{src}.ptr[{i}]"),
-                            inner,
-                            true,
-                        );
-                    }
+                for (i, patt) in patterns.iter().enumerate() {
+                    self.gen_irrefutable_pattern(
+                        scopes,
+                        state,
+                        patt,
+                        &if pos.map_or(false, |pos| i >= pos) {
+                            format!("{src}.ptr[{src}.len - {} + {i}]", patterns.len())
+                        } else {
+                            format!("{src}.ptr[{i}]")
+                        },
+                        inner,
+                        true,
+                    );
                 }
             }
             CheckedPattern::Destrucure(_) => todo!(),
@@ -1791,7 +1804,7 @@ impl Codegen {
                     format!("{src}.{ARRAY_DATA_NAME}")
                 };
                 let borrow = borrow || ty.is_any_ptr();
-                if let Some(RestPattern { id, pos }) = *rest {
+                let rest = rest.map(|RestPattern { id, pos }| {
                     let rest_len = arr_len - patterns.len();
                     if id
                         .and_then(|id| {
@@ -1812,28 +1825,21 @@ impl Codegen {
                         }
                     }
 
-                    for (i, patt) in patterns.iter().enumerate() {
-                        let i = if i < pos { i } else { rest_len + i };
-                        self.gen_irrefutable_pattern(
-                            scopes,
-                            state,
-                            patt,
-                            &format!("{src}[{i}]"),
-                            inner,
-                            borrow || inner.is_any_ptr(),
-                        );
+                    (pos, rest_len)
+                });
+
+                for (mut i, patt) in patterns.iter().enumerate() {
+                    if let Some((_, rest_len)) = rest.filter(|&(pos, _)| i >= pos) {
+                        i += rest_len;
                     }
-                } else {
-                    for (i, patt) in patterns.iter().enumerate() {
-                        self.gen_irrefutable_pattern(
-                            scopes,
-                            state,
-                            patt,
-                            &format!("{src}[{i}]"),
-                            inner,
-                            borrow || inner.is_any_ptr(),
-                        );
-                    }
+                    self.gen_irrefutable_pattern(
+                        scopes,
+                        state,
+                        patt,
+                        &format!("{src}[{i}]"),
+                        inner,
+                        borrow || inner.is_any_ptr(),
+                    );
                 }
             }
         }

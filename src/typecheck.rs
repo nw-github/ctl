@@ -148,7 +148,7 @@ impl TypeChecker {
         scopes: &mut Scopes,
         ty: UserType,
         public: bool,
-        attrs: &[Attribute],
+        attrs: Vec<Attribute>,
         span: Span,
     ) -> UserTypeId {
         if scopes.find::<UserTypeId>(&ty.name).is_some() {
@@ -230,7 +230,7 @@ impl TypeChecker {
                             ),
                             body: None,
                         },
-                        &attrs,
+                        vec![],
                     )
                 });
                 let id = self.insert_type(
@@ -246,7 +246,7 @@ impl TypeChecker {
                         impls: Vec::new(),
                     },
                     base.public,
-                    &attrs,
+                    attrs,
                     base.name.span,
                 );
                 scopes.enter(ScopeKind::UserType(id), base.public, |scopes| {
@@ -287,7 +287,7 @@ impl TypeChecker {
                         functions: base
                             .functions
                             .into_iter()
-                            .map(|f| self.declare_fn(scopes, false, f, &[]))
+                            .map(|f| self.declare_fn(scopes, false, f, vec![]))
                             .collect(),
                     }
                 })
@@ -312,7 +312,7 @@ impl TypeChecker {
                         impls: Vec::new(),
                     },
                     base.public,
-                    &attrs,
+                    attrs,
                     base.name.span,
                 );
                 scopes.enter(ScopeKind::UserType(id), base.public, |scopes| {
@@ -396,7 +396,7 @@ impl TypeChecker {
                                     ret: ret.clone(),
                                     body: None,
                                 },
-                                &[],
+                                vec![],
                             )
                         })
                         .collect();
@@ -408,7 +408,7 @@ impl TypeChecker {
                         functions: base
                             .functions
                             .into_iter()
-                            .map(|f| self.declare_fn(scopes, false, f, &[]))
+                            .map(|f| self.declare_fn(scopes, false, f, vec![]))
                             .collect(),
                     }
                 })
@@ -431,7 +431,7 @@ impl TypeChecker {
                         type_params: Vec::new(),
                     },
                     public,
-                    &attrs,
+                    attrs,
                     name.span,
                 );
                 scopes.enter(ScopeKind::UserType(id), public, |scopes| {
@@ -449,7 +449,7 @@ impl TypeChecker {
                         id,
                         functions: functions
                             .into_iter()
-                            .map(|f| self.declare_fn(scopes, false, f, &[]))
+                            .map(|f| self.declare_fn(scopes, false, f, vec![]))
                             .collect(),
                     }
                 })
@@ -473,7 +473,7 @@ impl TypeChecker {
                         impls: Vec::new(),
                     },
                     public,
-                    &attrs,
+                    attrs,
                     name.span,
                 );
 
@@ -515,7 +515,7 @@ impl TypeChecker {
                         impl_blocks,
                         functions: functions
                             .into_iter()
-                            .map(|f| self.declare_fn(scopes, false, f, &[]))
+                            .map(|f| self.declare_fn(scopes, false, f, vec![]))
                             .collect(),
                     }
                 })
@@ -552,12 +552,12 @@ impl TypeChecker {
                         impl_blocks,
                         functions: functions
                             .into_iter()
-                            .map(|f| self.declare_fn(scopes, false, f, &[]))
+                            .map(|f| self.declare_fn(scopes, false, f, vec![]))
                             .collect(),
                     }
                 })
             }
-            StmtData::Fn(f) => DeclaredStmtData::Fn(self.declare_fn(scopes, false, f, &attrs)),
+            StmtData::Fn(f) => DeclaredStmtData::Fn(self.declare_fn(scopes, false, f, attrs)),
             StmtData::Static {
                 public,
                 name,
@@ -596,7 +596,6 @@ impl TypeChecker {
                         return DeclaredStmt {
                             data: DeclaredStmtData::None,
                             span,
-                            attrs,
                         };
                     }
                 }
@@ -608,7 +607,7 @@ impl TypeChecker {
             StmtData::Error => DeclaredStmtData::None,
         };
 
-        DeclaredStmt { data, span, attrs }
+        DeclaredStmt { data, span }
     }
 
     fn declare_fn(
@@ -616,7 +615,7 @@ impl TypeChecker {
         scopes: &mut Scopes,
         constructor: bool,
         f: Fn,
-        attrs: &[Attribute],
+        attrs: Vec<Attribute>,
     ) -> DeclaredFn {
         if f.variadic && !f.is_extern {
             self.error(Error::new(
@@ -638,7 +637,7 @@ impl TypeChecker {
 
         let id = scopes.insert(
             Function {
-                attrs: attrs.to_vec(),
+                attrs,
                 name: f.name,
                 is_async: f.is_async,
                 is_extern: f.is_extern,
@@ -655,10 +654,14 @@ impl TypeChecker {
             f.public,
         );
 
-        if let Some(attr) = attrs.iter().find(|attr| attr.name.data == "intrinsic") {
+        let attrs = &scopes.get::<FunctionId>(id).attrs;
+        if attrs.iter().any(|attr| attr.name.data == "panic_handler") {
+            scopes.panic_handler = Some(id);
+            // TODO: verify the signature
+        } else if let Some(attr) = attrs.iter().find(|attr| attr.name.data == "intrinsic") {
             if let Some(attr) = attr.props.first() {
                 match attr.name.data.as_str() {
-                    "size_of" => {
+                    "size_of" | "panic" => {
                         scopes.intrinsics.insert(id, attr.name.data.clone());
                     }
                     _ => self.error(Error::new(
@@ -757,7 +760,7 @@ impl TypeChecker {
                     functions: block
                         .functions
                         .into_iter()
-                        .map(|f| self.declare_fn(scopes, false, f, &[]))
+                        .map(|f| self.declare_fn(scopes, false, f, vec![]))
                         .collect(),
                 }
             }));

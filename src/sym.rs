@@ -363,6 +363,7 @@ pub struct Scopes {
     pub current: ScopeId,
     pub lang_types: HashMap<String, UserTypeId>,
     pub intrinsics: HashMap<FunctionId, String>,
+    pub panic_handler: Option<FunctionId>,
 }
 
 impl Scopes {
@@ -376,6 +377,7 @@ impl Scopes {
             exts: Vec::new(),
             lang_types: HashMap::new(),
             intrinsics: HashMap::new(),
+            panic_handler: None,
         }
     }
 

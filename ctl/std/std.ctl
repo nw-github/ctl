@@ -1,4 +1,5 @@
 extern fn write(fd: c_int, buf: *c_void, count: usize): isize;
+extern fn abort(): never;
 
 pub fn println(s: str) {
     print(s);
@@ -26,6 +27,17 @@ fn convert_argv(argc: c_int, argv: **c_char): [str..] {
         args.push(str::from_c_str(*unsafe core::ptr::offset(argv, i++)));
     }
     args.as_span()
+}
+
+#{panic_handler}
+fn panic_handler(s: str): never {
+    unsafe {
+        let prefix = "fatal error: ";
+        write(2, prefix.as_ptr() as *c_void, prefix.len());
+        write(2, s.as_ptr() as *c_void, s.len());
+        write(2, &b'\n' as *c_void, 1);
+        abort();
+    }
 }
 
 #{autouse}
