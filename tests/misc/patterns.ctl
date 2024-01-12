@@ -108,358 +108,65 @@ pub fn string_pattern() {
     }
 }
 
-mod val {
-    pub fn subscript(a: [i32; 4], b: *mut [i32; 4]) {
-        b[0] = a[0];
-        b[1] = a[1];
-        b[2] = a[2];
-        b[3] = a[3];
-    }
+pub fn span_pattern() {
+    mut vec = @[10, 10, 10, 10, 10];
+    match vec.as_span_mut() {
+        [a, b, ...mid, c, d] => {
+            *a = 1;
+            *b = 2;
+            *mid.get_mut(0)! = 3;
+            *c = 4;
+            *d = 5;
 
-    pub fn destructure(a: [i32; 4], b: *mut [i32; 4]) {
-        let [x, y, z, w] = a;
-        b[0] = x;
-        b[1] = y;
-        b[2] = z;
-        b[3] = w;
-    }
-
-    pub fn destructure_end(a: [i32; 4], b: *mut [i32; 4]) {
-        let [x, y, ...end] = a;
-        b[0] = x;
-        b[1] = y;
-        b[2] = end[0];
-        b[3] = end[1];
-    }
-
-    pub fn destructure_start(a: [i32; 4], b: *mut [i32; 4]) {
-        let [...start, x, y] = a;
-        b[0] = start[0];
-        b[1] = start[1];
-        b[2] = x;
-        b[3] = y;
-    }
-
-    pub fn destructure_mid(a: [i32; 4], b: *mut [i32; 4]) {
-        let [x, ...mid, y] = a;
-        b[0] = x;
-        b[1] = mid[0];
-        b[2] = mid[1];
-        b[3] = y;
-    }
-}
-
-pub fn array_pattern() {
-    mut fptrs = @[
-        val::subscript,
-        val::destructure,
-        val::destructure_end,
-        val::destructure_start,
-        val::destructure_mid,
-    ];
-
-    for fptr in fptrs.iter() {
-        let a = [1, 2, 3, 4];
-        mut b = [5, 6, 7, 8];
-        (*fptr)(a, &mut b);
-
-        assert(b[0] == 1, "b[0] != 1");
-        assert(b[1] == 2, "b[1] != 2");
-        assert(b[2] == 3, "b[2] != 3");
-        assert(b[3] == 4, "b[3] != 4");
-    }
-}
-
-mod ptr {
-    pub fn destructure(a: [i32; 4], b: *mut [i32; 4]) {
-        let [x, y, z, w] = b;
-        *x = a[0];
-        *y = a[1];
-        *z = a[2];
-        *w = a[3];
-    }
-
-    pub fn destructure_end(a: [i32; 4], b: *mut [i32; 4]) {
-        let [x, y, ...end] = b;
-        *x = a[0];
-        *y = a[1];
-        (*end)[0] = a[2];
-        (*end)[1] = a[3];
-    }
-
-    pub fn destructure_start(a: [i32; 4], b: *mut [i32; 4]) {
-        let [...start, x, y] = b;
-        (*start)[0] = a[0];
-        (*start)[1] = a[1];
-        *x = a[2];
-        *y = a[3];
-    }
-
-    pub fn destructure_mid(a: [i32; 4], b: *mut [i32; 4]) {
-        let [x, ...mid, y] = b;
-        *x = a[0];
-        (*mid)[0] = a[1];
-        (*mid)[1] = a[2];
-        *y = a[3];
-    }
-}
-
-pub fn array_ptr_pattern() {
-    mut fptrs = @[
-        ptr::destructure,
-        ptr::destructure_end,
-        ptr::destructure_start,
-        ptr::destructure_mid,
-    ];
-
-    for fptr in fptrs.iter() {
-        let a = [1, 2, 3, 4];
-        mut b = [5, 6, 7, 8];
-        (*fptr)(a, &mut b);
-
-        assert(b[0] == 1, "b[0] != 1");
-        assert(b[1] == 2, "b[1] != 2");
-        assert(b[2] == 3, "b[2] != 3");
-        assert(b[3] == 4, "b[3] != 4");
-    }
-}
-
-union Baz {
-    A(*mut Foo),
-    B(*mut [i32; 2]),
-}
-
-fn by_val(x: Baz) {
-    match x {
-        Baz::A({a, b}) => {
-            *a = 5;
-            *b = 5;
+            assert(*vec.get(0)! == 1, "vec[0] != 1");
+            assert(*vec.get(1)! == 2, "vec[1] != 2");
+            assert(*vec.get(2)! == 3, "vec[2] != 3");
+            assert(*vec.get(3)! == 4, "vec[3] != 4");
+            assert(*vec.get(4)! == 5, "vec[4] != 5");
         }
-        Baz::B([x, y]) => {
-            *x = 5;
-            *y = 5;
+        _ => {
+            assert(false, "span pattern didnt match");
         }
     }
 }
 
-fn by_ref(x: *mut Baz) {
-    match x {
-        Baz::A({a, b}) => {
-            *a = 5;
-            *b = 5;
+pub fn span_pattern_destructure() {
+    mut vec = @[Foo(a: 10, b: 10), Foo(a: 10, b: 10)];
+    match vec.as_span_mut() {
+        [{a, b}, {a: a2, b: b2}] => {
+            *a = 1;
+            *b = 2;
+            *a2 = 3;
+            *b2 = 4;
+
+            assert(vec.get(0)!.a == 1, "vec[0] != 1");
+            assert(vec.get(0)!.b == 2, "vec[0] != 2");
+            assert(vec.get(1)!.a == 3, "vec[1] != 3");
+            assert(vec.get(1)!.b == 4, "vec[1] != 4");
         }
-        Baz::B([x, y]) => {
-            *x = 5;
-            *y = 5;
-        }
-    }
-}
-
-pub fn nested_ptr_by_val() {
-    mut foo = Foo(a: 10, b: 10);
-    by_val(Baz::A(&mut foo));
-    assert(foo.a == 5, "foo.a wasnt set to 5");
-    assert(foo.b == 5, "foo.b wasnt set to 5");
-
-    mut arr = [10, 10];
-    by_val(Baz::B(&mut arr));
-    assert(arr[0] == 5, "arr[0] wasnt set to 5");
-    assert(arr[1] == 5, "arr[1] wasnt set to 5");
-}
-
-pub fn nested_ptr_by_ref() {
-    mut foo = Foo(a: 10, b: 10);
-    by_ref(&mut Baz::A(&mut foo));
-    assert(foo.a == 5, "foo.a wasnt set to 5");
-    assert(foo.b == 5, "foo.b wasnt set to 5");
-
-    mut arr = [10, 10];
-    by_ref(&mut Baz::B(&mut arr));
-    assert(arr[0] == 5, "arr[0] wasnt set to 5");
-    assert(arr[1] == 5, "arr[1] wasnt set to 5");
-}
-
-mod ptr_foo {
-    use super::assert;
-
-    struct Quux {
-        x: i32,
-        y: i32,
-    }
-
-    struct Baz {
-        quux: Quux,
-    }
-
-    struct Bar {
-        elem: [Baz; 2],
-    }
-
-    union Foo {
-        A(*mut Bar),
-        B,
-    }
-
-    pub fn test() {
-        mut bar = Bar(elem: [
-            Baz(quux: Quux(x: 1, y: 2)), 
-            Baz(quux: Quux(x: 3, y: 4))
-        ]);
-
-        match Foo::A(&mut bar) {
-            Foo::A({elem: [{quux: {x, y}}, {quux: {x: x2, y: y2}}]}) => {
-                *x = 5;
-                *y = 5;
-                *x2 = 5;
-                *y2 = 5;
-
-                assert(bar.elem[0].quux.x == 5, "first Quux::x was not set to 5");
-                assert(bar.elem[0].quux.y == 5, "first Quux::y was not set to 5");
-                assert(bar.elem[1].quux.x == 5, "second Quux::x was not set to 5");
-                assert(bar.elem[1].quux.y == 5, "second Quux::y was not set to 5");
-            }
-            Foo::B => { }
+        _ => {
+            assert(false, "span pattern didnt match");
         }
     }
 }
 
-mod ptr_bar {
-    use super::assert;
+pub fn span_pattern_destructure_2() {
+    mut fooa = Foo(a: 10, b: 10);
+    mut foob = Foo(a: 10, b: 10);
+    match @[&mut fooa, &mut foob].as_span_mut() {
+        [{a, b}, {a: a2, b: b2}] => {
+            *a = 1;
+            *b = 2;
+            *a2 = 3;
+            *b2 = 4;
 
-    struct Quux {
-        x: i32,
-        y: i32,
-    }
-
-    struct Baz {
-        quux: Quux,
-    }
-
-    struct Bar {
-        elem: *mut [Baz; 2],
-    }
-
-    union Foo {
-        A(Bar),
-        B,
-    }
-
-    pub fn test() {
-        mut elem = &mut [
-            Baz(quux: Quux(x: 10, y: 10)), 
-            Baz(quux: Quux(x: 5, y: 5)),
-        ];
-        match Foo::A(Bar(elem:)) {
-            Foo::A({elem: [{quux: {x, y}}, {quux: {x: x2, y: y2}}]}) => {
-                *x = 5;
-                *y = 5;
-                *x2 = 5;
-                *y2 = 5;
-
-                assert(elem[0].quux.x == 5, "first Quux::x was not set to 5");
-                assert(elem[0].quux.y == 5, "first Quux::y was not set to 5");
-                assert(elem[1].quux.x == 5, "second Quux::x was not set to 5");
-                assert(elem[1].quux.y == 5, "second Quux::y was not set to 5");
-            }
-            Foo::B => { }
+            assert(fooa.a == 1, "fooa != 1");
+            assert(fooa.b == 2, "fooa != 2");
+            assert(foob.a == 3, "foob != 3");
+            assert(foob.b == 4, "foob != 4");
+        }
+        _ => {
+            assert(false, "span pattern didnt match");
         }
     }
-}
-
-mod ptr_arr {
-    use super::assert;
-
-    struct Quux {
-        x: i32,
-        y: i32,
-    }
-
-    struct Baz {
-        quux: Quux,
-    }
-
-    struct Bar {
-        elem: [*mut Baz; 2],
-    }
-
-    union Foo {
-        A(Bar),
-        B,
-    }
-
-    pub fn test() {
-        mut baza = Baz(quux: Quux(x: 10, y: 10));
-        mut bazb = Baz(quux: Quux(x: 5, y: 5));
-        match Foo::A(Bar(elem: [&mut baza, &mut bazb])) {
-            Foo::A({elem: [{quux: {x, y}}, {quux: {x: x2, y: y2}}]}) => {
-                *x = 5;
-                *y = 5;
-                *x2 = 5;
-                *y2 = 5;
-
-                assert(baza.quux.x == 5, "first Quux::x was not set to 5");
-                assert(baza.quux.y == 5, "first Quux::y was not set to 5");
-                assert(bazb.quux.x == 5, "second Quux::x was not set to 5");
-                assert(bazb.quux.y == 5, "second Quux::y was not set to 5");
-            }
-            Foo::B => { }
-        }
-    }
-}
-
-mod ptr_baz {
-    use super::assert;
-
-    struct Quux {
-        x: i32,
-        y: i32,
-    }
-
-    struct Baz {
-        quux: *mut Quux,
-    }
-
-    struct Bar {
-        elem: [Baz; 2],
-    }
-
-    union Foo {
-        A(Bar),
-        B,
-    }
-
-    pub fn test() {
-        mut quuxa = Quux(x: 10, y: 10);
-        mut quuxb = Quux(x: 5, y: 5);
-        match Foo::A(Bar(elem: [Baz(quux: &mut quuxa), Baz(quux: &mut quuxb)])) {
-            Foo::A({elem: [{quux: {x, y}}, {quux: {x: x2, y: y2}}]}) => {
-                *x = 5;
-                *y = 5;
-                *x2 = 5;
-                *y2 = 5;
-
-                assert(quuxa.x == 5, "first Quux::x was not set to 5");
-                assert(quuxa.y == 5, "first Quux::y was not set to 5");
-                assert(quuxb.x == 5, "second Quux::x was not set to 5");
-                assert(quuxb.y == 5, "second Quux::y was not set to 5");
-            }
-            Foo::B => { }
-        }
-    }
-}
-
-pub fn nested_destructure_1() {
-    ptr_foo::test();
-}
-
-pub fn nested_destructure_2() {
-    ptr_bar::test();
-}
-
-pub fn nested_destructure_3() {
-    ptr_arr::test();
-}
-
-pub fn nested_destructure_4() {
-    ptr_baz::test();
 }

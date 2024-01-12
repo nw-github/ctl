@@ -256,7 +256,10 @@ impl TypeChecker {
 
                     let mut members = Vec::with_capacity(base.members.len());
                     for member in base.members {
-                        if members.iter().any(|m: &CheckedMember| m.name == member.name.data) {
+                        if members
+                            .iter()
+                            .any(|m: &CheckedMember| m.name == member.name.data)
+                        {
                             self.error(Error::redefinition(
                                 "member variable",
                                 &member.name.data,
@@ -2347,18 +2350,22 @@ impl TypeChecker {
         let mut ty = member.ty.clone();
         ty.fill_struct_templates(scopes, ut);
         if let Some(pattern) = subpatterns.into_iter().next() {
+            let inner = ty.clone();
             let span = pattern.span;
-            let ty = scrutinee.matched_inner_type(ty);
-            let CheckedPattern::Irrefutable(pattern) =
-                self.check_pattern(scopes, true, &ty, false, pattern)
-            else {
+            let CheckedPattern::Irrefutable(pattern) = self.check_pattern(
+                scopes,
+                true,
+                &scrutinee.matched_inner_type(ty),
+                false,
+                pattern,
+            ) else {
                 return Some(self.error(Error::must_be_irrefutable("union subpatterns", span)));
             };
 
             Some(CheckedPattern::UnionMember {
                 pattern: Some(pattern),
                 variant,
-                inner: ty,
+                inner,
             })
         } else if ty.is_void() {
             Some(CheckedPattern::UnionMember {
@@ -2582,14 +2589,14 @@ impl TypeChecker {
             CheckedPattern::Array(ArrayPattern {
                 rest,
                 arr_len,
-                inner,
+                inner: real_inner.clone(),
                 patterns: result,
             })
         } else {
             CheckedPattern::Irrefutable(IrrefutablePattern::Array(ArrayPattern {
                 rest,
                 arr_len,
-                inner,
+                inner: real_inner.clone(),
                 patterns: result
                     .into_iter()
                     .map(|patt| patt.into_irrefutable().unwrap())
@@ -2750,7 +2757,7 @@ impl TypeChecker {
                     }
 
                     // TODO: duplicates
-                    let mut ty = scrutinee.matched_inner_type(member.ty.clone());
+                    let mut ty = member.ty.clone();
                     ty.fill_struct_templates(scopes, ut);
                     vars.push((name.data, mutable || pm, ty, pattern));
                 }
@@ -2758,17 +2765,18 @@ impl TypeChecker {
                 let mut had_refutable = false;
                 let checked: Vec<_> = vars
                     .into_iter()
-                    .map(|(name, mutable, ty, patt)| {
+                    .map(|(name, mutable, inner, patt)| {
+                        let ty = scrutinee.matched_inner_type(inner.clone());
                         if let Some(patt) = patt {
                             let patt = self.check_pattern(scopes, true, &ty, mutable, patt);
                             if !matches!(patt, CheckedPattern::Irrefutable(_)) {
                                 had_refutable = true;
                             }
-                            (name, ty, patt)
+                            (name, inner, patt)
                         } else {
                             (
                                 name.clone(),
-                                ty.clone(),
+                                inner,
                                 CheckedPattern::Irrefutable(IrrefutablePattern::Variable(
                                     scopes.insert(
                                         Variable {

@@ -468,12 +468,12 @@ impl Type {
         )
     }
 
+    pub fn is_any_ptr(&self) -> bool {
+        matches!(self, Type::Ptr(_) | Type::MutPtr(_))
+    }
+
     pub fn is_void_like(&self) -> bool {
-        match self {
-            Type::Void | Type::Never | Type::CVoid => true,
-            //TypeId::Array(arr) => arr.1 == 0,
-            _ => false,
-        }
+        matches!(self, Type::Void | Type::Never | Type::CVoid)
     }
 
     pub fn integer_stats(&self) -> Option<IntStats> {

@@ -22,7 +22,6 @@ use crate::{
 
 const UNION_TAG_NAME: &str = "$tag";
 const ARRAY_DATA_NAME: &str = "$data";
-const PARAM_PREFIX: &str = "$p";
 
 #[derive(PartialEq, Eq, Clone)]
 struct State {
@@ -524,7 +523,7 @@ impl Buffer {
                 continue;
             } else {
                 self.emit_type(scopes, &ty, tg);
-                self.emit(format!(" {PARAM_PREFIX}{}", param.label));
+                self.emit(format!(" {}", param.label));
             }
         }
 
@@ -786,15 +785,8 @@ impl Codegen {
                 else {
                     continue;
                 };
-                self.gen_irrefutable_pattern(
-                    scopes,
-                    state,
-                    patt,
-                    &format!("{PARAM_PREFIX}{}", param.label),
-                    &param.ty,
-                    false,
-                    false,
-                );
+
+                self.gen_irrefutable_pattern(scopes, state, patt, &param.label, &param.ty, false);
             }
 
             for stmt in body.into_iter() {
@@ -848,7 +840,8 @@ impl Codegen {
                     self.buffer.emit(format!(" {tmp} = "));
                     self.gen_expr(scopes, value, state);
                     self.buffer.emit(";");
-                    self.gen_irrefutable_pattern(scopes, state, &pattern, &tmp, ty, false, false);
+
+                    self.gen_irrefutable_pattern(scopes, state, &pattern, &tmp, ty, false);
                 });
             }
             CheckedStmt::None => {}
@@ -1613,7 +1606,7 @@ impl Codegen {
             CheckedPattern::UnionMember {
                 pattern,
                 variant,
-                inner: member_ty,
+                inner,
             } => {
                 let src = deref(src, ty);
                 let base = ty.strip_references();
@@ -1625,7 +1618,12 @@ impl Codegen {
                         self.buffer.emit(format!("if ({src} != NULL) {{"));
                         if let Some(pattern) = pattern {
                             self.gen_irrefutable_pattern(
-                                scopes, state, pattern, &src, inner, false, false,
+                                scopes,
+                                state,
+                                pattern,
+                                &src,
+                                inner,
+                                ty.is_any_ptr(),
                             );
                         }
                     } else {
@@ -1646,16 +1644,15 @@ impl Codegen {
                             state,
                             pattern,
                             &format!("{src}.{variant}"),
-                            member_ty,
-                            ty.is_ptr() || ty.is_mut_ptr(),
-                            false,
+                            inner,
+                            ty.is_any_ptr(),
                         );
                     }
                 }
             }
             CheckedPattern::Irrefutable(pattern) => {
                 self.buffer.emit("if (1) {");
-                self.gen_irrefutable_pattern(scopes, state, pattern, src, ty, false, false);
+                self.gen_irrefutable_pattern(scopes, state, pattern, src, ty, false);
             }
             CheckedPattern::Int(value) => {
                 self.buffer.emit(format!("if ({} == ", deref(src, ty)));
@@ -1721,13 +1718,12 @@ impl Codegen {
                             state,
                             patt,
                             &if i < pos {
-                                format!("{src}.ptr + {i}")
+                                format!("{src}.ptr[{i}]")
                             } else {
-                                format!("{src}.ptr + {src}.len - {} + {i}", patterns.len())
+                                format!("{src}.ptr[{src}.len - {} + {i}]", patterns.len())
                             },
                             inner,
-                            false,
-                            false,
+                            true,
                         );
                     }
                 } else {
@@ -1736,10 +1732,9 @@ impl Codegen {
                             scopes,
                             state,
                             patt,
-                            &format!("{src}.ptr + {i}"),
+                            &format!("{src}.ptr[{i}]"),
                             inner,
-                            false,
-                            false,
+                            true,
                         );
                     }
                 }
@@ -1750,7 +1745,6 @@ impl Codegen {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn gen_irrefutable_pattern(
         &mut self,
         scopes: &Scopes,
@@ -1759,7 +1753,6 @@ impl Codegen {
         src: &str,
         ty: &Type,
         borrow: bool,
-        recursive: bool,
     ) {
         match pattern {
             &IrrefutablePattern::Variable(id) => {
@@ -1773,18 +1766,16 @@ impl Codegen {
                 }
             }
             IrrefutablePattern::Destrucure(patterns) => {
+                let deref = "*".repeat(ty.indirection());
+                let borrow = borrow || ty.is_any_ptr();
                 for (member, inner, patt) in patterns {
                     self.gen_irrefutable_pattern(
                         scopes,
                         state,
                         patt,
-                        &format!(
-                            "({}{src}).{member}",
-                            "*".repeat(ty.indirection() - usize::from(borrow))
-                        ),
+                        &format!("({deref}{src}).{member}"),
                         inner,
-                        ty.is_ptr() || ty.is_mut_ptr(),
-                        true,
+                        borrow || inner.is_any_ptr(),
                     );
                 }
             }
@@ -1794,14 +1785,12 @@ impl Codegen {
                 arr_len,
                 inner,
             }) => {
-                let from_ptr = ty.is_ptr() || ty.is_mut_ptr();
-                // for recursive calls, src will be an actually pointer to the array type, not a
-                // pointer to the inner type like we emit for normal array pointers
-                let src = if (!recursive || !borrow) && from_ptr {
+                let src = if ty.is_any_ptr() {
                     src.into()
                 } else {
                     format!("{src}.{ARRAY_DATA_NAME}")
                 };
+                let borrow = borrow || ty.is_any_ptr();
                 if let Some(RestPattern { id, pos }) = *rest {
                     let rest_len = arr_len - patterns.len();
                     if id
@@ -1812,7 +1801,7 @@ impl Codegen {
                         })
                         .is_some()
                     {
-                        if from_ptr {
+                        if ty.is_any_ptr() {
                             self.buffer.emit(format!(" = {src} + {pos};"));
                         } else {
                             self.buffer.emit(format!(" = {{ .{ARRAY_DATA_NAME} = {{"));
@@ -1831,8 +1820,7 @@ impl Codegen {
                             patt,
                             &format!("{src}[{i}]"),
                             inner,
-                            from_ptr,
-                            true,
+                            borrow || inner.is_any_ptr(),
                         );
                     }
                 } else {
@@ -1843,8 +1831,7 @@ impl Codegen {
                             patt,
                             &format!("{src}[{i}]"),
                             inner,
-                            from_ptr,
-                            true,
+                            borrow || inner.is_any_ptr(),
                         );
                     }
                 }

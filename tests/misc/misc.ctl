@@ -62,6 +62,30 @@ fn main() {
         ordering::keyword_call();
     }
 
+    std::println("\narray: ");
+    {
+        std::println("pattern_stuff()...");
+        array::pattern_stuff();
+    
+        std::println("nested_ptr()...");
+        array::nested_ptr();
+
+        std::println("nested_destructure_1()...");
+        array::nested_destructure_1();
+
+        std::println("nested_destructure_2()...");
+        array::nested_destructure_2();
+
+        std::println("nested_destructure_3()...");
+        array::nested_destructure_3();
+
+        std::println("nested_destructure_4()...");
+        array::nested_destructure_4();
+
+        std::println("nested_destructure_5()...");
+        array::nested_destructure_5();
+    }
+
     std::println("\npatterns: ");
     {
         std::println("struct_pattern()...");
@@ -82,29 +106,14 @@ fn main() {
         std::println("string_pattern()...");
         patterns::string_pattern();
 
-        std::println("array_pattern()...");
-        patterns::array_pattern();
+        std::println("span_pattern()...");
+        patterns::span_pattern();
 
-        std::println("array_ptr_pattern()...");
-        patterns::array_ptr_pattern();
-    
-        std::println("nested_ptr_by_val()...");
-        patterns::nested_ptr_by_val();
-    
-        std::println("nested_ptr_by_ref()...");
-        patterns::nested_ptr_by_ref();
+        std::println("span_pattern_destructure()...");
+        patterns::span_pattern_destructure();
 
-        std::println("nested_destructure_1()...");
-        patterns::nested_destructure_1();
-
-        std::println("nested_destructure_2()...");
-        patterns::nested_destructure_2();
-
-        std::println("nested_destructure_3()...");
-        patterns::nested_destructure_3();
-
-        std::println("nested_destructure_4()...");
-        patterns::nested_destructure_4();
+        std::println("span_pattern_destructure_2()...");
+        patterns::span_pattern_destructure_2();
     }
 
     std::println("\nmisc: ");
