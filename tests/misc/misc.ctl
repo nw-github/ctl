@@ -1,6 +1,6 @@
 fn assert(cond: bool, msg: str) {
     if !cond {
-        core::panic(msg);
+        panic(msg);
     }
 }
 
@@ -9,6 +9,15 @@ fn main() {
     {
         std::println("running ranges()...");
         span::ranges();
+
+        std::println("pattern()...");
+        span::pattern();
+
+        std::println("pattern_destructure()...");
+        span::pattern_destructure();
+
+        std::println("pattern_destructure_2()...");
+        span::pattern_destructure_2();
     }
 
     std::println("\nvec: ");
@@ -105,15 +114,6 @@ fn main() {
 
         std::println("string_pattern()...");
         patterns::string_pattern();
-
-        std::println("span_pattern()...");
-        patterns::span_pattern();
-
-        std::println("span_pattern_destructure()...");
-        patterns::span_pattern_destructure();
-
-        std::println("span_pattern_destructure_2()...");
-        patterns::span_pattern_destructure_2();
     }
 
     std::println("\nmisc: ");

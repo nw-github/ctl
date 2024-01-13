@@ -3,23 +3,23 @@ use super::assert;
 fn double(n: *mut i32): i32 {
     let old = *n;
     *n *= 2;
-    return old;
+    old
 }
 
 fn add(a: i32, b: i32): i32 {
-    return a + b;
+    a + b
 }
 
 pub fn blocks(trigger_else: bool) {
-    let val2 = if !trigger_else { yield 2; } else { yield 0; };
+    let val2 = if !trigger_else { 2 } else { 0 };
 
     mut x = 1;
-    let y = if { yield double(&mut x) == 2; } {   // should always fail
-        yield 1;
-    } else if { yield double(&mut x) == val2; } { // succeeds if trigger else
-        yield 2;
+    let y = if { double(&mut x) == 2 } {   // should always fail
+        1
+    } else if { double(&mut x) == val2 } { // succeeds if trigger else
+        2
     } else {
-        yield double(&mut x);
+        double(&mut x)
     };
 
     if !trigger_else {
