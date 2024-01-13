@@ -609,6 +609,23 @@ impl Scopes {
         })
     }
 
+    pub fn extension_ids_in_scope_for<'a, 'b>(
+        &'a self,
+        ty: &'b Type,
+    ) -> impl Iterator<Item = ExtensionId> + 'b
+    where
+        'a: 'b,
+    {
+        self.iter().flat_map(|(_, scope)| {
+            scope
+                .exts
+                .iter()
+                .map(|ext| ext.id)
+                .filter(|&id| self.get(id).matches_type(ty))
+        })
+    }
+
+
     pub fn can_access_privates(&self, scope: ScopeId) -> bool {
         let target = self
             .module_of(scope)

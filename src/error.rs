@@ -74,7 +74,7 @@ impl Error {
 
     pub fn type_mismatch(expected: &str, received: &str, span: Span) -> Self {
         Self::new(
-            format!("type mismatch: expected type '{expected}', got '{received}'"),
+            format!("type mismatch: expected type '{expected}', found '{received}'"),
             span,
         )
     }

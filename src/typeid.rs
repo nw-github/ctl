@@ -199,6 +199,10 @@ impl std::hash::Hash for Type {
 impl Eq for Type {}
 
 impl Type {
+    pub fn from_typehint(hint: TypeHint, scopes: &Scopes) -> Self {
+        Self::Unknown(Some((hint, scopes.current).into()))
+    }
+
     pub fn discriminant_for(max: usize) -> Type {
         Type::Uint((max as f64).log2().ceil() as u32)
     }
@@ -569,16 +573,14 @@ impl Type {
             return true;
         }
 
-        let search = |this: Option<&GenericUserType>, impls: &[Type]| {
+        let search = |this, impls: &[Type]| {
             impls.iter().any(|tr| {
-                let mut tr = tr.as_user().unwrap().clone();
+                eprintln!("impl: {} bound: {}", tr.name(scopes), bound.name(scopes));
+                let mut tr = tr.clone();
                 if let Some(this) = this {
-                    for ut in tr.ty_args.iter_mut() {
-                        ut.fill_struct_templates(scopes, this);
-                    }
+                    tr.fill_struct_templates(scopes, this);
                 }
-
-                &*tr == bound
+                &**tr.as_user().unwrap() == bound
             })
         };
 
