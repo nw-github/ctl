@@ -4,6 +4,8 @@ use core::hash::Hasher;
 use core::ops::Eq;
 use core::range::RangeBounds;
 use core::iter::Iterator;
+use core::panic;
+use core::unreachable;
 
 #{lang(string)}
 pub struct str {

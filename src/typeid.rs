@@ -1,5 +1,9 @@
 use crate::{
-    ast::{parsed::TypeHint, BinaryOp},
+    ast::{
+        parsed::{Path, TypeHint},
+        BinaryOp,
+    },
+    lexer::Located,
     sym::{FunctionId, ScopeId, Scopes, UserTypeId, Vis},
 };
 use derive_more::Constructor;
@@ -131,9 +135,11 @@ pub struct FnPtr {
     pub ret: Type,
 }
 
-#[derive(Debug, Clone, EnumAsInner)]
+#[derive(Debug, Default, Clone, EnumAsInner)]
 pub enum Type {
-    Unknown(Option<Box<(TypeHint, ScopeId)>>),
+    #[default]
+    Unknown,
+    Unresolved(Box<(TypeHint, ScopeId)>),
     Void,
     Never,
     Int(u32),
@@ -155,16 +161,9 @@ pub enum Type {
     TraitSelf,
 }
 
-impl Default for Type {
-    fn default() -> Self {
-        Self::Unknown(None)
-    }
-}
-
 impl PartialEq for Type {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Unknown(_), Self::Unknown(_)) => true,
             (Self::Int(l0), Self::Int(r0)) => l0 == r0,
             (Self::Uint(l0), Self::Uint(r0)) => l0 == r0,
             (Self::CInt(l0), Self::CInt(r0)) => l0 == r0,
@@ -200,7 +199,11 @@ impl Eq for Type {}
 
 impl Type {
     pub fn from_typehint(hint: TypeHint, scopes: &Scopes) -> Self {
-        Self::Unknown(Some((hint, scopes.current).into()))
+        Self::Unresolved((hint, scopes.current).into())
+    }
+
+    pub fn from_type_path(path: Located<Path>, scopes: &Scopes) -> Self {
+        Self::Unresolved((TypeHint::Regular(path), scopes.current).into())
     }
 
     pub fn discriminant_for(max: usize) -> Type {
@@ -408,13 +411,13 @@ impl Type {
 
     pub fn name(&self, scopes: &Scopes) -> String {
         match self {
+            Type::Unknown => "{unknown}".into(),
+            // for debug purposes, ideally this should never be visible
+            Type::Unresolved(_) => "{unresolved}".into(),
             Type::Void => "void".into(),
             Type::Never => "never".into(),
             Type::Int(bits) => format!("i{bits}"),
             Type::Uint(bits) => format!("u{bits}"),
-            // for debug purposes, ideally this should never be visible
-            Type::Unknown(Some(_)) => "{unresolved}".into(),
-            Type::Unknown(None) => "{unknown}".into(),
             Type::F32 => "f32".into(),
             Type::F64 => "f64".into(),
             Type::Bool => "bool".into(),
@@ -508,8 +511,8 @@ impl Type {
 
     pub fn coerces_to(&self, scopes: &Scopes, target: &Type) -> bool {
         match (self, target) {
-            (Type::Never | Type::Unknown(_), _) => true,
-            (_, Type::Unknown(_)) => true,
+            (Type::Never | Type::Unknown, _) => true,
+            (_, Type::Unknown) => true,
             (ty, target)
                 if target
                     .as_option_inner(scopes)
@@ -580,7 +583,7 @@ impl Type {
                 if let Some(this) = this {
                     tr.fill_struct_templates(scopes, this);
                 }
-                &**tr.as_user().unwrap() == bound
+                tr.as_user().map_or(false, |tr| &**tr == bound)
             })
         };
 
@@ -651,7 +654,7 @@ impl Type {
         if let Some(ut) = self.as_user().map(|ut| scopes.get(ut.id)) {
             let src_scope = ut.scope;
             if ut.data.is_template() {
-                for ut in ut.impls.iter().map(|ut| ut.as_user().unwrap()) {
+                for ut in ut.impls.iter().flat_map(|ut| ut.as_user()) {
                     if let Some(func) = scopes.find_in(member, scopes.get(ut.id).body_scope) {
                         return Some((Some((**ut).clone()), func, src_scope));
                     }

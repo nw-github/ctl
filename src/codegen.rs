@@ -373,7 +373,8 @@ impl Buffer {
                     }
                 }
             }
-            Type::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_type"),
+            Type::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
+            Type::Unresolved(_) => panic!("ICE: TypeId::Unresolved in emit_type"),
             Type::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_type"),
         }
     }
@@ -415,7 +416,8 @@ impl Buffer {
             Type::User(ut) => {
                 self.emit_type_name(scopes, ut);
             }
-            Type::Unknown(_) => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
+            Type::Unknown => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
+            Type::Unresolved(_) => panic!("ICE: TypeId::Unresolved in emit_generic_mangled_name"),
             Type::Array(data) => self.emit_array_struct_name(scopes, &data.0, data.1),
             Type::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_generic_mangled_name"),
         }

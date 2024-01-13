@@ -3,6 +3,7 @@ use core::ptr::RawMut;
 use core::range::RangeBounds;
 use core::range::Bound;
 use core::iter::Iterator;
+use core::panic;
 
 #{lang(span)}
 pub struct Span<T> {

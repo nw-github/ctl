@@ -1,5 +1,5 @@
 use crate::{
-    ast::parsed::{Expr, Path, Pattern, TypeHint},
+    ast::parsed::{Expr, Pattern, TypeHint},
     lexer::{Located, Span},
     sym::{ExtensionId, FunctionId, ScopeId, UserTypeId, VariableId},
 };
@@ -23,11 +23,6 @@ pub struct DeclaredImplBlock {
 
 pub enum DeclaredStmtData {
     Expr(Expr),
-    Use {
-        public: bool,
-        path: Path,
-        all: bool,
-    },
     Let {
         patt: Located<Pattern>,
         ty: Option<TypeHint>,

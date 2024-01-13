@@ -352,6 +352,7 @@ pub struct Scope {
     pub vars: IndexSet<Vis<VariableId>>,
     pub exts: IndexSet<Vis<ExtensionId>>,
     pub children: IndexSet<Vis<ScopeId>>,
+    pub use_stmts: Vec<UnresolvedUse>,
 }
 
 pub struct Scopes {
@@ -505,11 +506,6 @@ impl Scopes {
         }
 
         None
-    }
-
-    pub fn unresolved_use_stmts(&mut self, id: ScopeId) -> Option<&mut Vec<UnresolvedUse>> {
-        self.module_of(id)
-            .and_then(|id| self[id].kind.as_module_mut().map(|m| m.1))
     }
 
     pub fn vars(&self) -> impl Iterator<Item = (VariableId, &Scoped<Variable>)> {

@@ -206,7 +206,7 @@ impl CheckedExpr {
 
     pub fn coerce_to(mut self, target: &Type, scopes: &Scopes) -> CheckedExpr {
         match (&self.ty, target) {
-            (Type::Never | Type::Unknown(_), _) | (_, Type::Unknown(_)) => {
+            (Type::Never | Type::Unknown, _) | (_, Type::Unknown) => {
                 self.ty = target.clone();
                 self
             }
