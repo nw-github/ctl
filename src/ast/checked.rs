@@ -154,6 +154,7 @@ pub enum CheckedExprData {
         args: Vec<CheckedExpr>,
     },
     As(Box<CheckedExpr>, bool),
+    Is(Box<CheckedExpr>, CheckedPattern),
     Return(Box<CheckedExpr>),
     Yield(Box<CheckedExpr>),
     Break(Box<CheckedExpr>),

@@ -1556,6 +1556,25 @@ impl Codegen {
                 self.gen_expr(scopes, *inner, state);
                 self.buffer.emit(")");
             }
+            CheckedExprData::Is(mut inner, patt) => {
+                enter_block!(self, state, scopes, &expr.ty, |tmp| {
+                    // TODO: update to exclude void when literal patterns are implemented
+                    state.fill_generics(scopes, &mut inner.ty);
+                    let ty = inner.ty.clone();
+
+                    self.emit_type(scopes, &inner.ty);
+                    self.buffer.emit(format!(" {tmp} = "));
+                    self.gen_expr(scopes, *inner, state);
+                    self.buffer.emit(";");
+
+                    // TODO: pattern condition
+                    self.gen_pattern(scopes, state, &patt, &tmp, &ty);
+                    self.buffer.emit(format!(
+                        "{0} = 1; }} else {{ {0} = 0; }}",
+                        self.cur_block
+                    ));
+                })
+            }
             CheckedExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
             CheckedExprData::Lambda(_) => todo!(),
         }

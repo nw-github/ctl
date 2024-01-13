@@ -569,12 +569,6 @@ impl TypeChecker {
         expr: Expr,
         target: Option<&Type>,
     ) -> CheckedExpr {
-        macro_rules! l {
-            ($e: expr) => {
-                Located::new(Span::default(), $e)
-            };
-        }
-
         let span = expr.span;
         match expr.data {
             ExprData::Binary { op, left, right } => {
@@ -1268,20 +1262,11 @@ impl TypeChecker {
 
                 CheckedExpr::new(Type::Never, CheckedExprData::Continue)
             }
-            ExprData::Is { expr, pattern } => self.check_expr(
-                scopes,
-                l!(ExprData::Match {
-                    expr,
-                    body: vec![
-                        (pattern, l!(ExprData::Bool(true))),
-                        (
-                            l!(Pattern::Path(Path::from("_".to_string()))),
-                            l!(ExprData::Bool(false))
-                        )
-                    ],
-                }),
-                Some(&Type::Bool),
-            ),
+            ExprData::Is { expr, pattern } => {
+                let expr = self.check_expr(scopes, *expr, target);
+                let patt = self.check_pattern(scopes, false, &expr.ty, false, pattern);
+                CheckedExpr::new(Type::Bool, CheckedExprData::Is(expr.into(), patt))
+            },
             ExprData::Match { expr, body } => {
                 let scrutinee = self.check_expr(scopes, *expr, None);
                 let mut target = target.cloned();
