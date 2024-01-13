@@ -120,4 +120,11 @@ impl Error {
     pub fn must_be_irrefutable(ty: &str, span: Span) -> Self {
         Self::new(format!("{ty} must be irrefuable"), span)
     }
+
+    pub fn expected_found(expected: &str, received: &str, span: Span) -> Self {
+        Self::new(
+            format!("expected {expected}, found {received}"),
+            span,
+        )
+    }
 }

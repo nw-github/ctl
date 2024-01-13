@@ -7,6 +7,7 @@ mod pretty;
 mod sym;
 mod typecheck;
 mod typeid;
+mod declare;
 
 use std::{
     ffi::OsStr,
