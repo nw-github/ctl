@@ -12,8 +12,8 @@ use crate::{
         },
         declared::{DeclaredFn, DeclaredImplBlock, DeclaredStmt, DeclaredStmtData},
         parsed::{
-            Destructure, Expr, ExprData, IntPattern, Path, Pattern, RangePattern, Stmt, StmtData,
-            TypeHint,
+            Destructure, Expr, ExprData, IntPattern, Pattern, RangePattern, Stmt, StmtData,
+            TypeHint, TypePath, TypePathComponent,
         },
         BinaryOp, UnaryOp,
     },
@@ -1266,7 +1266,7 @@ impl TypeChecker {
                 let expr = self.check_expr(scopes, *expr, target);
                 let patt = self.check_pattern(scopes, false, &expr.ty, false, pattern);
                 CheckedExpr::new(Type::Bool, CheckedExprData::Is(expr.into(), patt))
-            },
+            }
             ExprData::Match { expr, body } => {
                 let scrutinee = self.check_expr(scopes, *expr, None);
                 let mut target = target.cloned();
@@ -2080,7 +2080,7 @@ impl TypeChecker {
             Pattern::Option(patt) => {
                 let Some(path) = self.resolve_path_in(
                     scopes,
-                    &[("Some".into(), vec![])],
+                    &[TypePathComponent("Some".into(), vec![])],
                     scopes.get(scopes.get_option_id().unwrap()).body_scope,
                     pattern.span,
                 ) else {
@@ -2101,7 +2101,7 @@ impl TypeChecker {
             Pattern::Null => {
                 let Some(path) = self.resolve_path_in(
                     scopes,
-                    &[("None".into(), vec![])],
+                    &[TypePathComponent("None".into(), vec![])],
                     scopes.get(scopes.get_option_id().unwrap()).body_scope,
                     pattern.span,
                 ) else {
@@ -3143,10 +3143,15 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_path(&mut self, scopes: &Scopes, path: &Path, span: Span) -> Option<ResolvedPath> {
+    fn resolve_path(
+        &mut self,
+        scopes: &Scopes,
+        path: &TypePath,
+        span: Span,
+    ) -> Option<ResolvedPath> {
         match path {
-            Path::Root(data) => self.resolve_path_in(scopes, data, ScopeId(0), span),
-            Path::Super(data) => {
+            TypePath::Root(data) => self.resolve_path_in(scopes, data, ScopeId(0), span),
+            TypePath::Super(data) => {
                 if let Some(module) = scopes.module_of(
                     scopes[scopes.module_of(scopes.current).unwrap()]
                         .parent
@@ -3157,8 +3162,8 @@ impl TypeChecker {
                     self.error(Error::new("cannot use super here", span))
                 }
             }
-            Path::Normal(data) => {
-                let (name, ty_args) = data.first().unwrap();
+            TypePath::Normal(data) => {
+                let TypePathComponent(name, ty_args) = data.first().unwrap();
                 let is_end = data.len() == 1;
                 if let Some(id) = scopes.find(name) {
                     if is_end {
@@ -3227,11 +3232,11 @@ impl TypeChecker {
     fn resolve_path_in(
         &mut self,
         scopes: &Scopes,
-        data: &[(String, Vec<TypeHint>)],
+        data: &[TypePathComponent],
         mut scope: ScopeId,
         span: Span,
     ) -> Option<ResolvedPath> {
-        for (i, (name, ty_args)) in data.iter().enumerate() {
+        for (i, TypePathComponent(name, ty_args)) in data.iter().enumerate() {
             let is_end = i + 1 == data.len();
             if let Some(id) = scopes.find_in(name, scope) {
                 if !id.public && !scopes.can_access_privates(scope) {

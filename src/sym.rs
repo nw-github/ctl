@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::{
     ast::{
         checked::{CheckedExpr, CheckedStmt, IrrefutablePattern},
-        parsed::{Expr, Path, Pattern},
+        parsed::{Expr, Pattern, TypePath},
         Attribute,
     },
     error::Error,
@@ -80,7 +80,7 @@ id!(ExtensionId => Extension, exts, name, ext);
 #[derive(Debug, Clone)]
 pub struct UnresolvedUse {
     pub public: bool,
-    pub path: Path,
+    pub path: TypePath,
     pub all: bool,
     pub span: Span,
 }
@@ -509,7 +509,10 @@ impl Scopes {
     }
 
     pub fn vars(&self) -> impl Iterator<Item = (VariableId, &Scoped<Variable>)> {
-        self.vars.iter().enumerate().map(|(i, var)| (VariableId(i), var))
+        self.vars
+            .iter()
+            .enumerate()
+            .map(|(i, var)| (VariableId(i), var))
     }
 
     pub fn extensions(&self) -> &[Scoped<Extension>] {
@@ -620,7 +623,6 @@ impl Scopes {
                 .filter(|&id| self.get(id).matches_type(ty))
         })
     }
-
 
     pub fn can_access_privates(&self, scope: ScopeId) -> bool {
         let target = self

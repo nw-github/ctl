@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use crate::{
     ast::{
         parsed::{
-            Destructure, Expr, ExprData, Fn, ImplBlock, IntPattern, Member, Param, Path, Pattern,
-            RangePattern, Stmt, StmtData, Struct, TypeHint,
+            Destructure, Expr, ExprData, Fn, ImplBlock, IntPattern, Member, Param, Pattern,
+            RangePattern, Stmt, StmtData, Struct, TypeHint, TypePath, TypePathComponent,
         },
         Attribute, UnaryOp,
     },
@@ -177,7 +177,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                     break;
                 }
 
-                components.push((self.expect_id("expected path component"), Vec::new()));
+                components.push(TypePathComponent(
+                    self.expect_id("expected path component"),
+                    Vec::new(),
+                ));
                 if self.next_if_kind(Token::ScopeRes).is_none() {
                     break;
                 }
@@ -188,11 +191,11 @@ impl<'a, 'b> Parser<'a, 'b> {
                 data: StmtData::Use {
                     public: public.is_some(),
                     path: if root.is_some() {
-                        Path::Root(components)
+                        TypePath::Root(components)
                     } else if sup {
-                        Path::Super(components)
+                        TypePath::Super(components)
                     } else {
-                        Path::Normal(components)
+                        TypePath::Normal(components)
                     },
                     all,
                 },
@@ -257,7 +260,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     if let Some(is_unsafe) = is_unsafe {
                         self.error_unconditional(Error::not_valid_here("unsafe", is_unsafe.span));
                     }
-        
+
                     let patt = self.pattern(matches!(token.data, Token::Mut));
                     let ty = self.next_if_kind(Token::Colon).map(|_| self.type_hint());
                     let value = self.next_if_kind(Token::Assign).map(|_| self.expression());
@@ -276,14 +279,14 @@ impl<'a, 'b> Parser<'a, 'b> {
                     } else {
                         self.next_if_kind(Token::Semicolon);
                     }
-        
+
                     if let Some(is_unsafe) = is_unsafe {
                         expr = Expr::new(
                             is_unsafe.span.extended_to(expr.span),
                             ExprData::Unsafe(expr.into()),
                         );
                     }
-        
+
                     Stmt {
                         span: expr.span,
                         data: StmtData::Expr(expr),
@@ -337,18 +340,18 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::ByteChar(value) => Expr::new(span, ExprData::ByteChar(value)),
             Token::Ident(ident) => {
                 let data = self.path_components(Some(ident), &mut span);
-                Expr::new(span, ExprData::Path(Path::Normal(data)))
+                Expr::new(span, ExprData::Path(TypePath::Normal(data)))
             }
             Token::This => Expr::new(span, ExprData::Path(THIS_PARAM.to_owned().into())),
             Token::ThisType => Expr::new(span, ExprData::Path(THIS_TYPE.to_owned().into())),
             Token::ScopeRes => {
                 let ident = self.expect_id("expected name");
                 let data = self.path_components(Some(&ident), &mut span);
-                Expr::new(span, ExprData::Path(Path::Root(data)))
+                Expr::new(span, ExprData::Path(TypePath::Root(data)))
             }
             Token::Super => {
                 let data = self.path_components(None, &mut span);
-                Expr::new(span, ExprData::Path(Path::Super(data)))
+                Expr::new(span, ExprData::Path(TypePath::Super(data)))
             }
             // prefix operators
             Token::Plus
@@ -858,9 +861,9 @@ impl<'a, 'b> Parser<'a, 'b> {
         &mut self,
         first: Option<&str>,
         outspan: &mut Span,
-    ) -> Vec<(String, Vec<TypeHint>)> {
+    ) -> Vec<TypePathComponent> {
         let mut data = first
-            .map(|s| vec![(s.into(), Vec::new())])
+            .map(|s| vec![TypePathComponent(s.into(), Vec::new())])
             .unwrap_or_default();
         while self.next_if_kind(Token::ScopeRes).is_some() {
             if self.next_if_kind(Token::LAngle).is_some() {
@@ -869,7 +872,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 *outspan = params.span;
             } else {
                 let name = self.expect_id_l("expected name");
-                data.push((name.data.to_owned(), Vec::new()));
+                data.push(TypePathComponent(name.data.to_owned(), Vec::new()));
                 outspan.extend_to(name.span);
             }
         }
@@ -877,7 +880,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         data
     }
 
-    fn type_path(&mut self) -> Located<Path> {
+    fn type_path(&mut self) -> Located<TypePath> {
         let root = self.next_if_kind(Token::ScopeRes);
         let sup = root
             .is_none()
@@ -898,10 +901,10 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
             if self.next_if_kind(Token::LAngle).is_some() {
                 let params = self.rangle_csv_one(span.unwrap(), Self::type_hint);
-                data.push((ident.data, params.data));
+                data.push(TypePathComponent(ident.data, params.data));
                 span = Some(params.span);
             } else {
-                data.push((ident.data, Vec::new()));
+                data.push(TypePathComponent(ident.data, Vec::new()));
             }
 
             if self.next_if_kind(Token::ScopeRes).is_none() {
@@ -912,11 +915,11 @@ impl<'a, 'b> Parser<'a, 'b> {
         Located::new(
             span.unwrap(),
             if root.is_some() {
-                Path::Root(data)
+                TypePath::Root(data)
             } else if sup.is_some() {
-                Path::Super(data)
+                TypePath::Super(data)
             } else {
-                Path::Normal(data)
+                TypePath::Normal(data)
             },
         )
     }
@@ -1124,7 +1127,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     //
 
-    fn type_params(&mut self) -> Vec<(String, Vec<Located<Path>>)> {
+    fn type_params(&mut self) -> Vec<(String, Vec<Located<TypePath>>)> {
         self.next_if_kind(Token::LAngle)
             .map(|_| {
                 self.rangle_csv_one(Span::default(), |this| {
@@ -1135,7 +1138,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             .unwrap_or_default()
     }
 
-    fn trait_impls(&mut self) -> Vec<Located<Path>> {
+    fn trait_impls(&mut self) -> Vec<Located<TypePath>> {
         let mut impls = Vec::new();
         if self.next_if_kind(Token::Colon).is_some() {
             loop {
@@ -1201,7 +1204,10 @@ impl<'a, 'b> Parser<'a, 'b> {
         } else if self.next_if_kind(Token::Void).is_some() {
             TypeHint::Void
         } else if let Some(this) = self.next_if_kind(Token::ThisType) {
-            TypeHint::Regular(Located::new(this.span, Path::from(THIS_TYPE.to_owned())))
+            TypeHint::Regular(Located::new(
+                this.span,
+                TypePath::from(THIS_TYPE.to_owned()),
+            ))
         } else if self.next_if_kind(Token::Fn).is_some() {
             self.expect_kind(Token::LParen, "expected '('");
             let params = self
@@ -1593,7 +1599,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     keyword,
                     patt: Located::new(
                         token.span,
-                        Pattern::Path(Path::from(THIS_PARAM.to_string())),
+                        Pattern::Path(TypePath::from(THIS_PARAM.to_string())),
                     ),
                     ty: if mutable {
                         TypeHint::MutThis
@@ -1607,7 +1613,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     self.expect_id_l("expected name").map(Pattern::MutBinding)
                 } else if keyword {
                     self.expect_id_l("expected name")
-                        .map(|name| Pattern::Path(Path::from(name)))
+                        .map(|name| Pattern::Path(TypePath::from(name)))
                 } else {
                     self.pattern(false)
                 };

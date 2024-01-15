@@ -4,7 +4,10 @@ use crate::{
     ast::{
         checked::{CheckedExpr, CheckedExprData},
         declared::{DeclaredFn, DeclaredImplBlock, DeclaredStmt, DeclaredStmtData},
-        parsed::{ExprData, Fn, ImplBlock, Param, Path, Pattern, Stmt, StmtData, TypeHint},
+        parsed::{
+            ExprData, Fn, ImplBlock, Param, Pattern, Stmt, StmtData, TypeHint, TypePath,
+            TypePathComponent,
+        },
         Attribute,
     },
     error::{Diagnostics, Error},
@@ -36,7 +39,10 @@ pub fn declare_stmt(
                 let core = scopes.find_module_in("core", ScopeId(0)).map(|s| s.id);
                 let std = scopes.find_module_in("std", ScopeId(0)).map(|s| s.id);
                 if attrs.iter().any(|attr| attr.name.data == "autouse") {
-                    if scopes.iter().any(|(id, _)| Some(id) == core || Some(id) == std) {
+                    if scopes
+                        .iter()
+                        .any(|(id, _)| Some(id) == core || Some(id) == std)
+                    {
                         autouse.push(scopes.current);
                     } else {
                         diag.error(Error::new(
@@ -77,7 +83,7 @@ pub fn declare_stmt(
                                 keyword: true,
                                 patt: Located::new(
                                     member.name.span,
-                                    Pattern::Path(Path::from(member.name.data.clone())),
+                                    Pattern::Path(TypePath::from(member.name.data.clone())),
                                 ),
                                 ty: member.ty.clone(),
                                 default: member.default.clone(),
@@ -210,7 +216,7 @@ pub fn declare_stmt(
                             keyword: true,
                             patt: Located::new(
                                 member.name.span,
-                                Pattern::Path(Path::from(member.name.data.clone())),
+                                Pattern::Path(TypePath::from(member.name.data.clone())),
                             ),
                             ty: member.ty.clone(),
                             default: member.default.clone(),
@@ -232,7 +238,7 @@ pub fn declare_stmt(
                                 keyword: false,
                                 patt: Located::new(
                                     member.name.span,
-                                    Pattern::Path(Path::from(member.name.data.clone())),
+                                    Pattern::Path(TypePath::from(member.name.data.clone())),
                                 ),
                                 ty: member.ty,
                                 default: member.default,
@@ -242,7 +248,7 @@ pub fn declare_stmt(
                         declare_fn(
                             diag,
                             scopes,
-                            autouse, 
+                            autouse,
                             true,
                             Fn {
                                 public: base.public,
@@ -560,7 +566,7 @@ fn declare_fn(
 fn declare_type_params(
     scopes: &mut Scopes,
     tt: TT,
-    type_params: Vec<(String, Vec<Located<Path>>)>,
+    type_params: Vec<(String, Vec<Located<TypePath>>)>,
 ) -> Vec<UserTypeId> {
     type_params
         .into_iter()
@@ -644,16 +650,16 @@ fn insert_type(
 
 fn typehint_for_struct(
     name: &str,
-    type_params: &[(String, Vec<Located<Path>>)],
+    type_params: &[(String, Vec<Located<TypePath>>)],
     span: Span,
 ) -> TypeHint {
     TypeHint::Regular(Located::new(
         span,
-        Path::Normal(vec![(
+        TypePath::Normal(vec![TypePathComponent(
             name.into(),
             type_params
                 .iter()
-                .map(|(n, _)| TypeHint::Regular(Located::new(span, Path::from(n.clone()))))
+                .map(|(n, _)| TypeHint::Regular(Located::new(span, TypePath::from(n.clone()))))
                 .collect(),
         )]),
     ))

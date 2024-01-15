@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        parsed::{Path, TypeHint},
+        parsed::{TypeHint, TypePath},
         BinaryOp,
     },
     lexer::Located,
@@ -202,7 +202,7 @@ impl Type {
         Self::Unresolved((hint, scopes.current).into())
     }
 
-    pub fn from_type_path(path: Located<Path>, scopes: &Scopes) -> Self {
+    pub fn from_type_path(path: Located<TypePath>, scopes: &Scopes) -> Self {
         Self::Unresolved((TypeHint::Regular(path), scopes.current).into())
     }
 
