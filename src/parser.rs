@@ -1302,13 +1302,9 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn union(&mut self, public: bool, attrs: Vec<Attribute>, span: Span, is_unsafe: bool) -> Stmt {
-        let tag = self.next_if_kind(Token::LParen).map(|_| {
-            let tag = self.type_path();
-            self.expect_kind(Token::RParen, "expected ')'");
-            tag
-        });
         let name = self.expect_id_l("expected name");
         let type_params = self.type_params();
+        let tag = self.next_if_kind(Token::Colon).map(|_| self.type_path());
         let mut functions = Vec::new();
         let mut members = Vec::new();
         let mut impls = Vec::new();
@@ -1431,6 +1427,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn enumeration(&mut self, public: bool, attrs: Vec<Attribute>, span: Span) -> Stmt {
         let name = self.expect_id_l("expected name");
+        let base_ty = self.next_if_kind(Token::Colon).map(|_| self.type_path());
         self.expect_kind(Token::LCurly, "expected '{'");
 
         let mut functions = Vec::new();
@@ -1472,6 +1469,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             span,
             data: StmtData::Enum {
                 public,
+                base_ty,
                 name,
                 impls,
                 variants,

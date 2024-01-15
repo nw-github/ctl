@@ -325,6 +325,7 @@ pub fn declare_stmt(
             impls,
             variants,
             functions,
+            base_ty: _,
         } => {
             // TODO: should be the largest variant
             let backing = Type::discriminant_for(variants.len());

@@ -39,6 +39,7 @@ pub enum StmtData {
     },
     Enum {
         public: bool,
+        base_ty: Option<Located<TypePath>>,
         name: Located<String>,
         impls: Vec<ImplBlock>,
         variants: Vec<(Located<String>, Option<Expr>)>,

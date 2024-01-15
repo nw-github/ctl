@@ -80,8 +80,13 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
             variants,
             functions,
             public,
+            base_ty,
         } => {
-            eprint!("{tabs}Enum[{name}]");
+            if let Some(base_ty) = base_ty {
+                eprint!("{tabs}Enum({name}{base_ty:?})");
+            } else {
+                eprint!("{tabs}Enum({name})");
+            }
             print_bool!(public);
             eprintln!();
 
