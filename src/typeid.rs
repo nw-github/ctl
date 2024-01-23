@@ -116,16 +116,20 @@ pub struct IntStats {
 }
 
 impl IntStats {
-    pub fn min_signed(&self) -> BigInt {
-        -(BigInt::from(1) << (self.bits - 1))
+    pub fn min(&self) -> BigInt {
+        if self.signed {
+            -(BigInt::from(1) << (self.bits - 1))
+        } else {
+            BigInt::default()
+        }
     }
 
-    pub fn max_signed(&self) -> BigInt {
-        (BigInt::from(1) << (self.bits - 1)) - 1
-    }
-
-    pub fn max_unsigned(&self) -> BigInt {
-        (BigInt::from(1u8) << self.bits) - 1u8
+    pub fn max(&self) -> BigInt {
+        if self.signed {
+            (BigInt::from(1) << (self.bits - 1)) - 1
+        } else {
+            (BigInt::from(1u8) << self.bits) - 1u8
+        }
     }
 }
 
@@ -483,6 +487,10 @@ impl Type {
         matches!(self, Type::Void | Type::Never | Type::CVoid)
     }
 
+    pub fn is_any_int(&self) -> bool {
+        matches!(self, Type::Int(_) | Type::Uint(_) | Type::CInt(_) | Type::CUint(_) | Type::Isize | Type::Usize)
+    }
+
     pub fn integer_stats(&self) -> Option<IntStats> {
         use std::ffi::*;
 
@@ -500,6 +508,7 @@ impl Type {
             }
             Type::Isize => (std::mem::size_of::<isize>() as u32, true),
             Type::Usize => (std::mem::size_of::<usize>() as u32, false),
+            Type::Char => (std::mem::size_of::<char>() as u32, false),
             _ => return None,
         };
 

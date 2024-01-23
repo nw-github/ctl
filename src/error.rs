@@ -127,4 +127,8 @@ impl Error {
             span,
         )
     }
+
+    pub fn match_statement(why: &str, span: Span) -> Self {
+        Self::new(format!("match statement does not cover all cases {why}"), span)
+    }
 }

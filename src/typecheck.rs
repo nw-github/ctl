@@ -1292,6 +1292,12 @@ impl TypeChecker {
                     ));
                 }
 
+                self.check_match_coverage(
+                    scopes,
+                    &scrutinee.ty,
+                    result.iter().map(|it| &it.0),
+                    span,
+                );
                 CheckedExpr::new(
                     target.unwrap_or(Type::Void),
                     CheckedExprData::Match {
@@ -1489,6 +1495,93 @@ impl TypeChecker {
         expr
     }
 
+    fn check_match_coverage<'a>(
+        &mut self,
+        scopes: &Scopes,
+        ty: &Type,
+        mut patterns: impl Iterator<Item = &'a CheckedPattern> + Clone,
+        span: Span,
+    ) {
+        if let Some(int) = ty.integer_stats() {
+            let mut value = int.min();
+            let max = int.max();
+            'outer: while value <= max {
+                if ty.is_char() && (0xd800.into()..=0xe000.into()).contains(&value) {
+                    value = 0xe000.into();
+                }
+
+                for pattern in patterns.clone() {
+                    match pattern {
+                        CheckedPattern::Int(i) if i == &value => {
+                            value += 1;
+                            continue 'outer;
+                        }
+                        CheckedPattern::IntRange(i) => {
+                            if i.inclusive {
+                                if value >= i.start && value <= i.end {
+                                    value = &i.end + 1;
+                                    continue 'outer;
+                                }
+                            } else if value >= i.start && value < i.end {
+                                value = i.end.clone();
+                                continue 'outer;
+                            }
+                        }
+                        CheckedPattern::Irrefutable(_) => return,
+                        _ => {}
+                    }
+                }
+
+                return self.error(Error::match_statement("", span));
+            }
+        } else if ty
+            .as_user()
+            .map_or(false, |ut| Some(&ut.id) == scopes.lang_types.get("string"))
+        {
+            if !patterns.any(|patt| patt.is_irrefutable()) {
+                self.error(Error::match_statement("", span))
+            }
+        } else if ty.as_user().map_or(false, |ut| {
+            Some(&ut.id) == scopes.lang_types.get("span")
+                || Some(&ut.id) == scopes.lang_types.get("span_mut")
+        }) {
+            if !patterns.any(|patt| match patt {
+                CheckedPattern::Irrefutable(_) => true,
+                CheckedPattern::Span { patterns, rest, .. } => {
+                    patterns.is_empty() && rest.is_some()
+                }
+                _ => false,
+            }) {
+                self.error(Error::match_statement("", span))
+            }
+        } else if let Some(ut) = ty
+            .as_user()
+            .and_then(|ut| scopes.get(ut.id).data.as_union())
+        {
+            let mut missing = vec![];
+            'outer: for v in ut.variants.iter().filter(|variant| !variant.shared) {
+                for patt in patterns.clone() {
+                    match patt {
+                        CheckedPattern::Irrefutable(_) => return,
+                        CheckedPattern::UnionMember { variant, .. } if &v.name == variant => {
+                            continue 'outer;
+                        },
+                        _ => {},
+                    }
+                }
+
+                missing.push(&v.name[..]);
+            }
+
+            if !missing.is_empty() {
+                return self.error(Error::match_statement(
+                    &format!("(missing variant(s) {})", missing.join(", ")),
+                    span,
+                ));
+            }
+        }
+    }
+
     fn check_yield(&mut self, scopes: &mut Scopes, expr: Expr) -> CheckedExpr {
         let ScopeKind::Block(target, _) = &scopes.current().kind else {
             return self.error(Error::new("yield outside of block", expr.span));
@@ -1582,7 +1675,7 @@ impl TypeChecker {
             PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
                 let span = expr.span;
                 let expr = self.check_expr(scopes, expr, target);
-                if expr.ty.integer_stats().is_some() {
+                if expr.ty.is_any_int() {
                     if !expr.is_assignable(scopes) {
                         self.error::<()>(Error::new("expression is not assignable", span));
                     }
@@ -1594,7 +1687,7 @@ impl TypeChecker {
             }
             Not => {
                 let expr = self.check_expr(scopes, expr, target);
-                if !(expr.ty.is_bool() || expr.ty.integer_stats().is_some()) {
+                if !(expr.ty.is_bool() || expr.ty.is_any_int()) {
                     invalid!(expr.ty)
                 }
                 (expr.ty.clone(), expr)
@@ -3450,55 +3543,32 @@ impl TypeChecker {
         };
 
         let stats = ty.integer_stats().unwrap();
-        if stats.signed {
-            let result = match BigInt::from_str_radix(&value, base as u32) {
-                Ok(result) => result,
-                Err(e) => {
-                    return self.error(Error::new(
-                        format!("integer literal '{value}' could not be parsed: {e}"),
-                        span,
-                    ));
-                }
-            };
-
-            let max = stats.max_signed();
-            if result > max {
+        let result = match BigInt::from_str_radix(&value, base as u32) {
+            Ok(result) => result,
+            Err(e) => {
                 return self.error(Error::new(
-                    format!("integer literal is larger than its type allows ({max})"),
+                    format!("integer literal '{value}' could not be parsed: {e}"),
                     span,
                 ));
             }
-
-            let min = stats.min_signed();
-            if result < min {
-                return self.error(Error::new(
-                    format!("integer literal is smaller than its type allows ({min})"),
-                    span,
-                ));
-            }
-
-            (ty, result)
-        } else {
-            let result = match BigInt::from_str_radix(&value, base as u32) {
-                Ok(result) => result,
-                Err(e) => {
-                    return self.error(Error::new(
-                        format!("integer literal '{value}' could not be parsed: {e}"),
-                        span,
-                    ));
-                }
-            };
-
-            let max = stats.max_unsigned();
-            if result >= max {
-                return self.error(Error::new(
-                    format!("integer literal is larger than its type allows ({max})"),
-                    span,
-                ));
-            }
-
-            (ty, result)
+        };
+        let max = stats.max();
+        if result > max {
+            return self.error(Error::new(
+                format!("integer literal is larger than its type allows ({max})"),
+                span,
+            ));
         }
+
+        let min = stats.min();
+        if result < min {
+            return self.error(Error::new(
+                format!("integer literal is smaller than its type allows ({min})"),
+                span,
+            ));
+        }
+
+        (ty, result)
     }
 
     fn consteval(scopes: &Scopes, expr: &Expr, target: Option<&Type>) -> Result<usize, Error> {
