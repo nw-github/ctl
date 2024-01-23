@@ -744,6 +744,9 @@ impl<'a, 'b> Parser<'a, 'b> {
             (false, self.match_expr(token.span))
         } else if let Some(token) = self.next_if_kind(Token::LCurly) {
             (false, self.block_expr(token.span))
+        } else if self.next_if_kind(Token::Unsafe).is_some() {
+            let (is_unsafe, expr) = self.block_or_normal_expr();
+            (is_unsafe, Expr::new(expr.span, ExprData::Unsafe(expr.into())))
         } else {
             (true, self.expression())
         }
@@ -1076,7 +1079,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
                         Located::new(token.span, Pattern::Rest(pattern))
                     } else {
-                        this.pattern(false)
+                        this.pattern(mut_var)
                     }
                 })
                 .map(Pattern::Array);
