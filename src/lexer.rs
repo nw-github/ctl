@@ -125,6 +125,36 @@ pub enum Token<'a> {
     Eof,
 }
 
+impl std::fmt::Display for Token<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::LCurly => write!(f, "{{"),
+            Token::RCurly => write!(f, "}}"),
+            Token::LBrace => write!(f, "["),
+            Token::RBrace => write!(f, "]"),
+            Token::LParen => write!(f, "("),
+            Token::RParen => write!(f, ")"),
+            Token::LAngle => write!(f, "<"),
+            Token::RAngle => write!(f, ">"),
+            Token::Dot => write!(f, "."),
+            Token::Range => write!(f, ".."),
+            Token::RangeInclusive => write!(f, "..="),
+            Token::Ellipses => write!(f, "..."),
+            Token::ScopeRes => write!(f, "::"),
+            Token::Arrow => write!(f, "->"),
+            Token::FatArrow => write!(f, "=>"),
+            Token::Comma => write!(f, ","),
+            Token::Colon => write!(f, ":"),
+            Token::Semicolon => write!(f, ";"),
+            Token::Hash => write!(f, "#"),
+            Token::HashLCurly => write!(f, "#{{"),
+            Token::Assign => write!(f, "="),
+            Token::Fn => write!(f, "fn"),
+            _ => write!(f, "FIXME: {self:?}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Precedence {
     Min,

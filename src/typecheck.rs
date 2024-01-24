@@ -1165,39 +1165,40 @@ impl TypeChecker {
                 }
 
                 let ty = scopes.get(ut_id);
-                if let Some(members) = ty.members() {
-                    if let Some(member) = members.iter().find(|m| m.name == name) {
-                        if let Some(union) = ty.data.as_union() {
-                            if !member.shared && !union.is_unsafe {
-                                return self.error(Error::new(
-                                    "cannot access union variant with '.' (only shared members)",
-                                    span,
-                                ));
-                            }
-
-                            if !member.shared && union.is_unsafe && self.safety != Safety::Unsafe {
-                                self.error(Error::is_unsafe(span))
-                            }
+                if let Some(member) = ty
+                    .members()
+                    .and_then(|members| members.iter().find(|m| m.name == name))
+                {
+                    if let Some(union) = ty.data.as_union() {
+                        if !member.shared && !union.is_unsafe {
+                            return self.error(Error::new(
+                                "cannot access union variant with '.' (only shared members)",
+                                span,
+                            ));
                         }
 
-                        if !member.public && !scopes.can_access_privates(ty.scope) {
-                            self.error(Error::private_member(&id.name(scopes), &member.name, span))
+                        if !member.shared && union.is_unsafe && self.safety != Safety::Unsafe {
+                            self.error(Error::is_unsafe(span))
                         }
-
-                        let mut ty = member.ty.clone();
-                        if let Some(instance) = id.as_user() {
-                            ty.fill_struct_templates(scopes, instance);
-                        }
-
-                        let id = id.clone();
-                        return CheckedExpr::new(
-                            ty,
-                            CheckedExprData::Member {
-                                source: source.auto_deref(&id).into(),
-                                member: name,
-                            },
-                        );
                     }
+
+                    if !member.public && !scopes.can_access_privates(ty.scope) {
+                        self.error(Error::private_member(&id.name(scopes), &member.name, span))
+                    }
+
+                    let mut ty = member.ty.clone();
+                    if let Some(instance) = id.as_user() {
+                        ty.fill_struct_templates(scopes, instance);
+                    }
+
+                    let id = id.clone();
+                    return CheckedExpr::new(
+                        ty,
+                        CheckedExprData::Member {
+                            source: source.auto_deref(&id).into(),
+                            member: name,
+                        },
+                    );
                 }
 
                 self.error(Error::no_member(&source.ty.name(scopes), &name, span))
