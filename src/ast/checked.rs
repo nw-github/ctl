@@ -157,7 +157,7 @@ pub enum CheckedExprData {
     Is(Box<CheckedExpr>, CheckedPattern),
     Return(Box<CheckedExpr>),
     Yield(Box<CheckedExpr>),
-    Break(Box<CheckedExpr>),
+    Break(Option<Box<CheckedExpr>>),
     Lambda(Vec<CheckedStmt>),
     Continue,
     #[default]

@@ -155,9 +155,8 @@ pub enum ExprData {
         args: Vec<Expr>,
     },
     Return(Box<Expr>),
-    Yield(Box<Expr>),
     Tail(Box<Expr>),
-    Break(Box<Expr>),
+    Break(Option<Box<Expr>>),
     Unsafe(Box<Expr>),
     Range {
         start: Option<Box<Expr>>,

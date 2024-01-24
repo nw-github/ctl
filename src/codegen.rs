@@ -1509,11 +1509,16 @@ impl Codegen {
                 //self.yielded = true;
             }
             CheckedExprData::Break(expr) => {
-                if !expr.ty.is_void_like() {
-                    self.buffer.emit(format!("{} = ", self.cur_loop));
+                if let Some(expr) = expr {
+                    if !expr.ty.is_void_like() {
+                        self.buffer.emit(format!("{} = ", self.cur_loop));
+                    }
+                    self.gen_expr(scopes, *expr, state);
+                    self.buffer.emit("; break;");
+                } else {
+                    self.buffer.emit("break;");
                 }
-                self.gen_expr(scopes, *expr, state);
-                self.buffer.emit("; break;");
+                
                 //self.yielded = true;
             }
             CheckedExprData::Continue => {

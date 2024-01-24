@@ -540,7 +540,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     },
                 )
             }
-            Token::Return | Token::Break | Token::Yield => {
+            Token::Return => {
                 let (span, expr) = if !self.is_range_end() {
                     let expr = self.expression();
                     (span.extended_to(expr.span), expr.into())
@@ -548,15 +548,17 @@ impl<'a, 'b> Parser<'a, 'b> {
                     (span, Expr::new(span, ExprData::Void).into())
                 };
 
-                Expr::new(
-                    span,
-                    match data {
-                        Token::Return => ExprData::Return(expr),
-                        Token::Break => ExprData::Break(expr),
-                        Token::Yield => ExprData::Yield(expr),
-                        _ => unreachable!(),
-                    },
-                )
+                Expr::new(span, ExprData::Return(expr))
+            }
+            Token::Break => {
+                let (span, expr) = if !self.is_range_end() {
+                    let expr = self.expression();
+                    (span.extended_to(expr.span), Some(expr.into()))
+                } else {
+                    (span, None)
+                };
+
+                Expr::new(span, ExprData::Break(expr))
             }
             Token::Unsafe => {
                 let expr = self.expression();
@@ -746,7 +748,10 @@ impl<'a, 'b> Parser<'a, 'b> {
             (false, self.block_expr(token.span))
         } else if self.next_if_kind(Token::Unsafe).is_some() {
             let (is_unsafe, expr) = self.block_or_normal_expr();
-            (is_unsafe, Expr::new(expr.span, ExprData::Unsafe(expr.into())))
+            (
+                is_unsafe,
+                Expr::new(expr.span, ExprData::Unsafe(expr.into())),
+            )
         } else {
             (true, self.expression())
         }

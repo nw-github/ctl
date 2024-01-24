@@ -348,17 +348,15 @@ pub fn print_expr(expr: &Expr, indent: usize) {
             eprintln!("{tabs}Return");
             print_expr(expr, indent + 1);
         }
-        ExprData::Yield(expr) => {
-            eprintln!("{tabs}Yield");
-            print_expr(expr, indent + 1);
-        }
         ExprData::Tail(expr) => {
             eprintln!("{tabs}Tail");
             print_expr(expr, indent + 1);
         }
         ExprData::Break(expr) => {
             eprintln!("{tabs}Break");
-            print_expr(expr, indent + 1);
+            if let Some(expr) = expr {
+                print_expr(expr, indent + 1);
+            }
         }
         ExprData::Bool(value) => {
             eprintln!("{tabs}Bool = {value}");
