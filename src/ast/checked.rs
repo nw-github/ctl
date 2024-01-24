@@ -135,11 +135,13 @@ pub enum CheckedExprData {
         cond: Option<Box<CheckedExpr>>,
         body: Block,
         do_while: bool,
+        optional: bool,
     },
     For {
         iter: Box<CheckedExpr>,
         patt: IrrefutablePattern,
         body: Vec<CheckedStmt>,
+        optional: bool,
     },
     Match {
         expr: Box<CheckedExpr>,

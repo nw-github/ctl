@@ -1051,13 +1051,23 @@ impl TypeChecker {
                 let infinite = cond.is_none();
                 let cond = cond.map(|cond| self.type_check(scopes, *cond, &Type::Bool));
                 let target = Self::loop_target(scopes, target, infinite);
-                let body = self.create_block(scopes, body, ScopeKind::Loop(target.cloned(), None));
+                let body = self.create_block(
+                    scopes,
+                    body,
+                    ScopeKind::Loop {
+                        target: target.cloned(),
+                        breaks: None,
+                        infinite,
+                    },
+                );
+                let (out_type, optional) = Self::loop_out_type(scopes, &scopes[body.scope].kind);
                 CheckedExpr::new(
-                    Self::loop_out_type(scopes, &scopes[body.scope].kind, infinite),
+                    out_type,
                     CheckedExprData::Loop {
                         cond: cond.map(|cond| cond.into()),
                         body,
                         do_while,
+                        optional,
                     },
                 )
             }
@@ -1065,8 +1075,12 @@ impl TypeChecker {
                 let span = iter.span;
                 let iter = self.check_expr(scopes, *iter, None);
                 let iter_id = scopes.lang_types.get("iter").copied().unwrap();
-                let target = Self::loop_target(scopes, target, false);
-                scopes.enter(ScopeKind::Loop(target.cloned(), None), false, |scopes| {
+                let kind = ScopeKind::Loop {
+                    target: Self::loop_target(scopes, target, false).cloned(),
+                    breaks: None,
+                    infinite: false,
+                };
+                scopes.enter(kind, false, |scopes| {
                     let Some(ty) = iter.ty.get_trait_impl(scopes, iter_id).cloned() else {
                         for stmt in body {
                             let stmt =
@@ -1101,11 +1115,14 @@ impl TypeChecker {
                         .collect();
 
                     patt.map(|patt| {
+                        let (out_type, optional) =
+                            Self::loop_out_type(scopes, &scopes[scopes.current].kind);
                         CheckedExpr::new(
-                            Self::loop_out_type(scopes, &scopes[scopes.current].kind, false),
+                            out_type,
                             CheckedExprData::For {
                                 patt,
                                 body,
+                                optional,
                                 iter: iter.into(),
                             },
                         )
@@ -1217,11 +1234,14 @@ impl TypeChecker {
                 ScopeKind::Function(_) | ScopeKind::Lambda(_, _) => {
                     self.check_return(scopes, *expr)
                 }
-                ScopeKind::Loop(_, _) => self.type_check(scopes, *expr, &Type::Void),
+                ScopeKind::Loop { .. } => self.type_check(scopes, *expr, &Type::Void),
                 _ => self.check_yield(scopes, *expr),
             },
             ExprData::Break(expr) => {
-                let Some(((target, _), id)) = scopes.iter().find_map(|(id, scope)| scope.kind.as_loop().zip(Some(id))) else {
+                let Some(((target, _, &infinite), id)) = scopes
+                    .iter()
+                    .find_map(|(id, scope)| scope.kind.as_loop().zip(Some(id)))
+                else {
                     if let Some(expr) = expr {
                         self.check_expr(scopes, *expr, None);
                     }
@@ -1233,13 +1253,31 @@ impl TypeChecker {
                     let mut expr = self.check_expr(scopes, *expr, target.as_ref());
                     if let Some(target) = target {
                         expr = self.type_check_checked(scopes, expr, &target, span);
-                        scopes[id].kind = ScopeKind::Loop(Some(target), Some(true));
+                        scopes[id].kind = ScopeKind::Loop {
+                            target: Some(target),
+                            breaks: Some(true),
+                            infinite,
+                        };
                     } else {
-                        scopes[id].kind = ScopeKind::Loop(Some(expr.ty.clone()), Some(true));
+                        scopes[id].kind = ScopeKind::Loop {
+                            target: Some(expr.ty.clone()),
+                            breaks: Some(true),
+                            infinite,
+                        };
                     }
-                    Some(expr.into())
+
+                    let (target, opt) = Self::loop_out_type(scopes, &scopes[id].kind);
+                    if opt {
+                        Some(expr.coerce_to(&target, scopes).into())
+                    } else {
+                        Some(expr.into())
+                    }
                 } else {
-                    scopes[id].kind = ScopeKind::Loop(Some(Type::Void), Some(false));
+                    scopes[id].kind = ScopeKind::Loop {
+                        target: Some(Type::Void),
+                        breaks: Some(false),
+                        infinite,
+                    };
                     None
                 };
 
@@ -1248,7 +1286,7 @@ impl TypeChecker {
             ExprData::Continue => {
                 if !scopes
                     .iter()
-                    .any(|(_, scope)| matches!(scope.kind, ScopeKind::Loop(_, _)))
+                    .any(|(_, scope)| matches!(scope.kind, ScopeKind::Loop { .. }))
                 {
                     return self.error(Error::new("continue outside of loop", span));
                 }
@@ -3610,23 +3648,30 @@ impl TypeChecker {
         }
     }
 
-    fn loop_out_type(scopes: &Scopes, kind: &ScopeKind, infinite: bool) -> Type {
-        let ScopeKind::Loop(target, breaks) = kind else {
+    fn loop_out_type(scopes: &Scopes, kind: &ScopeKind) -> (Type, bool) {
+        let ScopeKind::Loop {
+            target,
+            breaks,
+            infinite,
+        } = kind
+        else {
             panic!("ICE: target of loop changed from loop to something else");
         };
 
-        if infinite {
+        if *infinite {
             match breaks {
-                Some(_) => target.clone().unwrap(),
-                None => Type::Never,
+                Some(_) => (target.clone().unwrap(), false),
+                None => (Type::Never, false),
             }
         } else {
-            // TODO: coerce the break statements
             match breaks {
-                Some(true) => scopes
-                    .make_lang_type("option", vec![target.clone().unwrap()])
-                    .unwrap(),
-                _ => Type::Void,
+                Some(true) => (
+                    scopes
+                        .make_lang_type("option", vec![target.clone().unwrap()])
+                        .unwrap(),
+                    true,
+                ),
+                _ => (Type::Void, false),
             }
         }
     }

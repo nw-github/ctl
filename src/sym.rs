@@ -88,7 +88,11 @@ pub struct UnresolvedUse {
 #[derive(Default, Debug, Clone, EnumAsInner)]
 pub enum ScopeKind {
     Block(Option<Type>, bool),
-    Loop(Option<Type>, Option<bool>),
+    Loop {
+        target: Option<Type>, 
+        breaks: Option<bool>,
+        infinite: bool,
+    },
     Lambda(Option<Type>, bool),
     Function(FunctionId),
     UserType(UserTypeId),

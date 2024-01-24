@@ -1359,6 +1359,7 @@ impl Codegen {
                 cond,
                 body,
                 do_while,
+                optional,
             } => {
                 let mut emit = false;
                 let tmp = tmpbuf!(self, state, |tmp| {
@@ -1379,7 +1380,11 @@ impl Codegen {
                                     {
                                         self.buffer.emit("if (!");
                                         self.gen_expr(scopes, *cond, state);
-                                        self.buffer.emit(") { break; }");
+                                        self.buffer.emit(") { ");
+                                        if optional {
+                                            self.gen_loop_none(scopes, state, expr.ty);
+                                        }
+                                        self.buffer.emit("break; }");
                                     }
                                 }
                             }
@@ -1401,7 +1406,12 @@ impl Codegen {
                     self.buffer.emit(tmp);
                 }
             }
-            CheckedExprData::For { iter, patt, body } => {
+            CheckedExprData::For {
+                iter,
+                patt,
+                body,
+                optional,
+            } => {
                 let mut emit = false;
                 let tmp = tmpbuf!(self, state, |tmp| {
                     let old = std::mem::replace(&mut self.cur_loop, tmp);
@@ -1454,7 +1464,11 @@ impl Codegen {
                         &next_ty,
                     );
                     self.emit_block(scopes, body, state);
-                    self.buffer.emit("} else { break; } } ");
+                    self.buffer.emit("} else { ");
+                    if optional {
+                        self.gen_loop_none(scopes, state, expr.ty);
+                    }
+                    self.buffer.emit(" break; } } ");
 
                     self.funcs.insert(next_state);
                     std::mem::replace(&mut self.cur_loop, old)
@@ -1518,7 +1532,7 @@ impl Codegen {
                 } else {
                     self.buffer.emit("break;");
                 }
-                
+
                 //self.yielded = true;
             }
             CheckedExprData::Continue => {
@@ -1574,15 +1588,33 @@ impl Codegen {
 
                     // TODO: pattern condition
                     self.gen_pattern(scopes, state, &patt, &tmp, &ty);
-                    self.buffer.emit(format!(
-                        "{0} = 1; }} else {{ {0} = 0; }}",
-                        self.cur_block
-                    ));
+                    self.buffer
+                        .emit(format!("{0} = 1; }} else {{ {0} = 0; }}", self.cur_block));
                 })
             }
             CheckedExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
             CheckedExprData::Lambda(_) => todo!(),
         }
+    }
+
+    fn gen_loop_none(&mut self, scopes: &Scopes, state: &mut State, ty: Type) {
+        self.buffer.emit(format!("{} = ", self.cur_loop));
+        self.gen_expr(
+            scopes,
+            CheckedExpr::new(
+                ty,
+                CheckedExprData::Instance {
+                    members: [(
+                        "None".into(),
+                        CheckedExpr::new(Type::Void, CheckedExprData::Void),
+                    )]
+                    .into(),
+                    variant: Some("None".into()),
+                },
+            ),
+            state,
+        );
+        self.buffer.emit(";");
     }
 
     fn gen_intrinsic(

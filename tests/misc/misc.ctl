@@ -137,5 +137,17 @@ fn main() {
         modules::test();
     }
 
+    std::println("\nloops: ");
+    {
+        std::println("while_loop()...");
+        loops::while_loop();
+
+        std::println("for_loop()...");
+        loops::for_loop();
+
+        std::println("infinite_loop()...");
+        loops::infinite_loop();
+    }
+
     std::println("\nall tests passed!");
 }
