@@ -488,7 +488,15 @@ impl Type {
     }
 
     pub fn is_any_int(&self) -> bool {
-        matches!(self, Type::Int(_) | Type::Uint(_) | Type::CInt(_) | Type::CUint(_) | Type::Isize | Type::Usize)
+        matches!(
+            self,
+            Type::Int(_)
+                | Type::Uint(_)
+                | Type::CInt(_)
+                | Type::CUint(_)
+                | Type::Isize
+                | Type::Usize
+        )
     }
 
     pub fn integer_stats(&self) -> Option<IntStats> {
@@ -524,7 +532,7 @@ impl Type {
             (ty, target)
                 if target
                     .as_option_inner(scopes)
-                    .map_or(false, |inner| ty.coerces_to(scopes, inner)) =>
+                    .is_some_and(|inner| ty.coerces_to(scopes, inner)) =>
             {
                 true
             }
@@ -586,18 +594,17 @@ impl Type {
 
         let search = |this, impls: &[Type]| {
             impls.iter().any(|tr| {
-                eprintln!("impl: {} bound: {}", tr.name(scopes), bound.name(scopes));
                 let mut tr = tr.clone();
                 if let Some(this) = this {
                     tr.fill_struct_templates(scopes, this);
                 }
-                tr.as_user().map_or(false, |tr| &**tr == bound)
+                tr.as_user().is_some_and(|tr| &**tr == bound)
             })
         };
 
         if self
             .as_user()
-            .map_or(false, |this| search(Some(this), &scopes.get(this.id).impls))
+            .is_some_and(|this| search(Some(this), &scopes.get(this.id).impls))
         {
             return true;
         }

@@ -99,7 +99,7 @@ impl TypeGen {
         let mut emitted_arrays = HashSet::new();
         for ut in Self::get_struct_order(scopes, &structs)? {
             let union = scopes.get(ut.id).data.as_union();
-            let unsafe_union = union.as_ref().map_or(false, |union| union.is_unsafe);
+            let unsafe_union = union.is_some_and(|union| union.is_unsafe);
             if unsafe_union {
                 buffer.emit("typedef union ");
                 definitions.emit("union ");
@@ -1763,7 +1763,7 @@ impl Codegen {
                         scopes,
                         state,
                         patt,
-                        &if pos.map_or(false, |pos| i >= pos) {
+                        &if pos.is_some_and(|pos| i >= pos) {
                             format!("{src}.ptr[{src}.len - {} + {i}]", patterns.len())
                         } else {
                             format!("{src}.ptr[{i}]")

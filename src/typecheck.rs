@@ -1377,7 +1377,7 @@ impl TypeChecker {
             ExprData::Lambda { params, ret, body } => {
                 let ty_is_generic = |scopes: &Scopes, ty: &Type| {
                     !ty.as_user()
-                        .map_or(false, |ut| scopes.get(ut.id).data.is_template())
+                        .is_some_and(|ut| scopes.get(ut.id).data.is_template())
                 };
 
                 let mut lparams = Vec::new();
@@ -1506,7 +1506,10 @@ impl TypeChecker {
         if let Some((mut value, max)) = ty
             .integer_stats()
             .map(|int| (int.min(), int.max()))
-            .or_else(|| ty.is_char().then(|| (BigInt::default(), BigInt::from(char::MAX as u32))))
+            .or_else(|| {
+                ty.is_char()
+                    .then(|| (BigInt::default(), BigInt::from(char::MAX as u32)))
+            })
         {
             'outer: while value <= max {
                 if ty.is_char() && (0xd800.into()..=0xe000.into()).contains(&value) {
@@ -1539,12 +1542,12 @@ impl TypeChecker {
             }
         } else if ty
             .as_user()
-            .map_or(false, |ut| Some(&ut.id) == scopes.lang_types.get("string"))
+            .is_some_and(|ut| Some(&ut.id) == scopes.lang_types.get("string"))
         {
             if !patterns.any(|patt| patt.is_irrefutable()) {
                 self.error(Error::match_statement("", span))
             }
-        } else if ty.as_user().map_or(false, |ut| {
+        } else if ty.as_user().is_some_and(|ut| {
             Some(&ut.id) == scopes.lang_types.get("span")
                 || Some(&ut.id) == scopes.lang_types.get("span_mut")
         }) {
@@ -3209,7 +3212,7 @@ impl TypeChecker {
             let imp = &scopes.get(id).get_impls()[i];
             if !imp
                 .as_user()
-                .map_or(false, |t| scopes.get(t.id).data.is_trait())
+                .is_some_and(|t| scopes.get(t.id).data.is_trait())
                 && !imp.is_unknown()
             {
                 self.error(Error::new("expected trait", Span::default()))
@@ -3475,10 +3478,10 @@ impl TypeChecker {
             if let Some(this) = this {
                 tr.fill_struct_templates(scopes, this);
             }
-            tr.as_user().map_or(false, |tr| &**tr == bound)
+            tr.as_user().is_some_and(|tr| &**tr == bound)
         }
 
-        let has_impl = ty.as_user().map_or(false, |this| {
+        let has_impl = ty.as_user().is_some_and(|this| {
             for i in 0..scopes.get(this.id).impls.len() {
                 resolve_type!(self, scopes, scopes.get_mut(this.id).impls[i]);
                 if check(scopes, Some(this), &scopes.get(this.id).impls[i], bound) {

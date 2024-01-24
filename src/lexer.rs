@@ -276,7 +276,7 @@ impl<'a> Lexer<'a> {
 
     fn advance_while(&mut self, mut f: impl FnMut(char) -> bool) -> &'a str {
         let start = self.pos;
-        while self.peek().map_or(false, &mut f) {
+        while self.peek().is_some_and(&mut f) {
             self.advance();
         }
         &self.src[start..self.pos]
@@ -424,7 +424,7 @@ impl<'a> Lexer<'a> {
         }
 
         self.advance_while(|ch| ch.is_ascii_digit());
-        if self.peek() == Some('.') && self.peek_next().map_or(false, |f| f.is_ascii_digit()) {
+        if self.peek() == Some('.') && self.peek_next().is_some_and(|f| f.is_ascii_digit()) {
             self.advance();
             self.advance_while(|ch| ch.is_ascii_digit());
             Token::Float(&self.src[start..self.pos])
