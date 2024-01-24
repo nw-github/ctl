@@ -1502,9 +1502,12 @@ impl TypeChecker {
         mut patterns: impl Iterator<Item = &'a CheckedPattern> + Clone,
         span: Span,
     ) {
-        if let Some(int) = ty.integer_stats() {
-            let mut value = int.min();
-            let max = int.max();
+        let ty = ty.strip_references();
+        if let Some((mut value, max)) = ty
+            .integer_stats()
+            .map(|int| (int.min(), int.max()))
+            .or_else(|| ty.is_char().then(|| (BigInt::default(), BigInt::from(char::MAX as u32))))
+        {
             'outer: while value <= max {
                 if ty.is_char() && (0xd800.into()..=0xe000.into()).contains(&value) {
                     value = 0xe000.into();
@@ -1565,8 +1568,8 @@ impl TypeChecker {
                         CheckedPattern::Irrefutable(_) => return,
                         CheckedPattern::UnionMember { variant, .. } if &v.name == variant => {
                             continue 'outer;
-                        },
-                        _ => {},
+                        }
+                        _ => {}
                     }
                 }
 

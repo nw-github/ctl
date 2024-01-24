@@ -234,16 +234,8 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn token(&mut self, diag: &mut Diagnostics) -> Located<Token<'a>> {
-        self.next(diag).unwrap_or_else(|| {
-            Located::new(
-                Span {
-                    pos: self.pos,
-                    len: 0,
-                    file: self.file,
-                },
-                Token::Eof,
-            )
-        })
+        self.next(diag)
+            .unwrap_or_else(|| Located::new(self.here(0), Token::Eof))
     }
 
     #[inline]
@@ -254,6 +246,14 @@ impl<'a> Lexer<'a> {
     #[inline]
     fn peek_next(&self) -> Option<char> {
         self.src[self.pos..].chars().nth(1)
+    }
+
+    fn here(&self, len: usize) -> Span {
+        Span {
+            pos: self.pos,
+            file: self.file,
+            len,
+        }
     }
 
     fn advance(&mut self) -> Option<char> {
@@ -295,6 +295,14 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn expect(&mut self, diag: &mut Diagnostics, c: char) {
+        if !matches!(self.peek(), Some(ch) if ch == c) {
+            diag.error(Error::new(format!("expected '{c}'"), self.here(1)));
+        } else {
+            self.advance();
+        }
+    }
+
     fn escape_char(&mut self, diag: &mut Diagnostics) -> char {
         match self.advance() {
             Some('"') => '"',
@@ -302,12 +310,33 @@ impl<'a> Lexer<'a> {
             Some('\\') => '\\',
             Some('n') => '\n',
             Some('t') => '\t',
+            Some('r') => '\r',
+            Some('0') => '\0',
+            Some('u') => {
+                self.expect(diag, '{');
+                let chars = self.advance_while(|ch| ch.is_ascii_hexdigit());
+                if chars.is_empty() {
+                    diag.error(Error::new("expected hexadecimal digits", self.here(1)));
+                    '\0'
+                } else if let Some(ch) =
+                    u32::from_str_radix(chars, 16).ok().and_then(char::from_u32)
+                {
+                    self.expect(diag, '}');
+                    ch
+                } else {
+                    diag.error(Error::new(
+                        "invalid char escape",
+                        Span {
+                            pos: self.pos - chars.len(),
+                            file: self.file,
+                            len: chars.len(),
+                        },
+                    ));
+                    '\0'
+                }
+            }
             _ => {
-                diag.error(Error::new("invalid UTF-8 escape sequence", Span {
-                    pos: self.pos,
-                    file: self.file,
-                    len: 1,
-                }));
+                diag.error(Error::new("invalid escape sequence", self.here(1)));
                 '\0'
             }
         }
@@ -326,12 +355,7 @@ impl<'a> Lexer<'a> {
                     Cow::Owned(str) => str.push(ch),
                 },
                 None => {
-                    diag.error(Error::new("unterminated string literal", Span {
-                        pos: self.pos,
-                        len: 0,
-                        file: self.file,
-                    }));
-
+                    diag.error(Error::new("unterminated string literal", self.here(1)));
                     break Token::String(result);
                 }
             }
@@ -342,32 +366,27 @@ impl<'a> Lexer<'a> {
         let ch = match self.advance() {
             Some('\\') => self.escape_char(diag),
             Some('\'') => {
-                diag.error(Error::new("empty char literal", Span {
-                    pos: self.pos,
-                    len: 0,
-                    file: self.file,
-                }));
+                diag.error(Error::new("empty char literal", self.here(1)));
                 '\0'
             }
             Some(any) => any,
             None => {
-                diag.error(Error::new("unterminated char literal", Span {
-                    pos: self.pos,
-                    len: 0,
-                    file: self.file,
-                }));
+                diag.error(Error::new("unterminated char literal", self.here(1)));
                 '\0'
             }
         };
 
         if !self.advance_if('\'') {
-            self.advance_while(|c| c != '\'');
+            let ch = self.advance_while(|c| c != '\'');
             self.advance();
-            diag.error(Error::new("char literal must only contain one character", Span {
-                pos: self.pos,
-                len: 0,
-                file: self.file,
-            }));
+            diag.error(Error::new(
+                "char literal must only contain one character",
+                Span {
+                    pos: self.pos - ch.len() - 1,
+                    len: ch.len(),
+                    file: self.file,
+                },
+            ));
         }
         Token::Char(ch)
     }
@@ -486,11 +505,7 @@ impl<'a> Lexer<'a> {
                     Err(_) => {
                         diag.error(Error::new(
                             "invalid character in ascii string literal",
-                            Span {
-                                pos: self.pos,
-                                len: 0,
-                                file: self.file,
-                            },
+                            self.here(1),
                         ));
                         Token::ByteChar(0)
                     }
@@ -502,11 +517,14 @@ impl<'a> Lexer<'a> {
                     unreachable!()
                 };
                 if s.chars().any(|c| !c.is_ascii()) {
-                    diag.error(Error::new("invalid character in byte string", Span {
-                        pos: start,
-                        len: self.pos - start,
-                        file: self.file,
-                    }));
+                    diag.error(Error::new(
+                        "invalid character in byte string",
+                        Span {
+                            pos: start,
+                            len: self.pos - start,
+                            file: self.file,
+                        },
+                    ));
                 }
                 Token::ByteString(s)
             }
@@ -535,14 +553,7 @@ impl<'a> Lexer<'a> {
                     } else if self.advance_match("/*") {
                         count += 1;
                     } else if self.pos >= self.src.len() {
-                        diag.error(Error::new(
-                            "unterminated block comment",
-                            Span {
-                                pos: self.pos,
-                                len: 0,
-                                file: self.file,
-                            },
-                        ));
+                        diag.error(Error::new("unterminated block comment", self.here(0)));
                         return None;
                     } else {
                         self.advance();
@@ -716,15 +727,7 @@ impl<'a> Lexer<'a> {
             'b' => self.maybe_byte_string(diag, start),
             ch if Self::is_identifier_first_char(ch) => self.identifier(start),
             _ => {
-                diag.error(Error::new(
-                    "unexpected character",
-                    Span {
-                        pos: self.pos,
-                        len: 0,
-                        file: self.file,
-                    },
-                ));
-
+                diag.error(Error::new("unexpected character", self.here(0)));
                 return self.next(diag);
             }
         };

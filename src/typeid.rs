@@ -508,7 +508,6 @@ impl Type {
             }
             Type::Isize => (std::mem::size_of::<isize>() as u32, true),
             Type::Usize => (std::mem::size_of::<usize>() as u32, false),
-            Type::Char => (std::mem::size_of::<char>() as u32, false),
             _ => return None,
         };
 
