@@ -25,7 +25,7 @@
     } while (0)
 #endif
 
-inline void ctl_init() {
+static inline void ctl_init() {
 #ifndef CTL_NOGC
     GC_INIT();
 #endif
