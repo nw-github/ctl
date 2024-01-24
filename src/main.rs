@@ -12,6 +12,8 @@ struct Arguments {
     no_core: bool,
     #[clap(action, long)]
     no_std: bool,
+    #[clap(action, long)]
+    leak: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -34,7 +36,7 @@ fn main() -> anyhow::Result<()> {
             }
         })
         .typecheck(libs)?
-        .codegen();
+        .codegen(args.leak);
 
     match result {
         Ok(result) => {

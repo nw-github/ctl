@@ -664,7 +664,7 @@ pub struct Codegen {
 }
 
 impl Codegen {
-    pub fn build(scope: ScopeId, scopes: &Scopes) -> Result<String, Error> {
+    pub fn build(scope: ScopeId, scopes: &Scopes, leak: bool) -> Result<String, Error> {
         let main = &mut State::new(
             GenericFunc::new(
                 *scopes
@@ -717,14 +717,16 @@ impl Codegen {
         }
         let statics = std::mem::take(&mut this.buffer);
 
+        if leak {
+            this.buffer.emit("#define CTL_NOGC\n");
+        }
         this.buffer.emit(include_str!("../ctl/ctl.h"));
         this.type_gen.finish(&mut this.buffer, scopes)?;
         this.buffer.emit(prototypes.0);
         this.buffer.emit(statics.0);
         this.buffer.emit(functions.0);
         this.buffer.emit("int main(int argc, char **argv) {");
-        this.buffer.emit("GC_INIT();");
-        this.buffer.emit("setlocale(LC_ALL, \"C.UTF-8\");");
+        this.buffer.emit("ctl_init();");
         for (id, void) in vars {
             if !void {
                 this.buffer.emit_var_name(scopes, id, main);
