@@ -116,7 +116,7 @@ pub enum CheckedExprData {
     Integer(BigInt),
     Float(String),
     String(String),
-    ByteString(String),
+    ByteString(Vec<u8>),
     Char(char),
     Void,
     Symbol(Symbol),

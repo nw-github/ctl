@@ -333,7 +333,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::Float(value) => Expr::new(span, ExprData::Float(value.into())),
             Token::String(value) => Expr::new(span, ExprData::String(value.into())),
             Token::Char(value) => Expr::new(span, ExprData::Char(value)),
-            Token::ByteString(value) => Expr::new(span, ExprData::ByteString(value.into())),
+            Token::ByteString(value) => Expr::new(span, ExprData::ByteString(value)),
             Token::ByteChar(value) => Expr::new(span, ExprData::ByteChar(value)),
             Token::Ident(ident) => {
                 let data = self.path_components(Some(ident), &mut span);

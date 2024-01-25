@@ -119,7 +119,7 @@ pub enum Token<'a> {
     },
     Float(&'a str),
     String(Cow<'a, str>),
-    ByteString(Cow<'a, str>),
+    ByteString(Vec<u8>),
     Char(char),
     ByteChar(u8),
     Eof,
@@ -333,7 +333,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn escape_char(&mut self, diag: &mut Diagnostics) -> char {
+    fn escape_char(&mut self, diag: &mut Diagnostics, byte: bool) -> char {
         match self.advance() {
             Some('"') => '"',
             Some('\'') => '\'',
@@ -342,6 +342,32 @@ impl<'a> Lexer<'a> {
             Some('t') => '\t',
             Some('r') => '\r',
             Some('0') => '\0',
+            Some('x') => {
+                let mut count = 0;
+                let chars = self.advance_while(|ch| {
+                    let result = count < 2 && ch.is_ascii_hexdigit();
+                    count += 1;
+                    result
+                });
+                let span = Span {
+                    pos: self.pos - chars.len(),
+                    file: self.file,
+                    len: chars.len(),
+                };
+                if chars.len() < 2 {
+                    diag.error(Error::new("hexadecimal literal is too short", span));
+                    '\0'
+                } else if let Ok(ch) = u8::from_str_radix(chars, 16) {
+                    let ch = char::from(ch);
+                    if !byte && !ch.is_ascii() {
+                        diag.error(Error::non_ascii_char(span));
+                    }
+                    ch
+                } else {
+                    diag.error(Error::non_ascii_char(span));
+                    '\0'
+                }
+            }
             Some('u') => {
                 self.expect(diag, '{');
                 let chars = self.advance_while(|ch| ch.is_ascii_hexdigit());
@@ -355,7 +381,7 @@ impl<'a> Lexer<'a> {
                     ch
                 } else {
                     diag.error(Error::new(
-                        "invalid char escape",
+                        "invalid unicode literal",
                         Span {
                             pos: self.pos - chars.len(),
                             file: self.file,
@@ -376,10 +402,10 @@ impl<'a> Lexer<'a> {
         let mut result = Cow::from("");
         loop {
             match self.advance() {
-                Some('\\') => {
-                    result.to_mut().push(self.escape_char(diag));
-                }
                 Some('"') => break Token::String(result),
+                Some('\\') => {
+                    result.to_mut().push(self.escape_char(diag, false));
+                }
                 Some(ch) => match &mut result {
                     Cow::Borrowed(str) => *str = &self.src[start + 1..self.pos],
                     Cow::Owned(str) => str.push(ch),
@@ -392,9 +418,9 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn char_literal(&mut self, diag: &mut Diagnostics) -> Token<'a> {
+    fn char_literal(&mut self, diag: &mut Diagnostics, byte: bool) -> char {
         let ch = match self.advance() {
-            Some('\\') => self.escape_char(diag),
+            Some('\\') => self.escape_char(diag, byte),
             Some('\'') => {
                 diag.error(Error::new("empty char literal", self.here(1)));
                 '\0'
@@ -418,7 +444,7 @@ impl<'a> Lexer<'a> {
                 },
             ));
         }
-        Token::Char(ch)
+        ch
     }
 
     fn numeric_suffix(&mut self) -> Option<&'a str> {
@@ -524,39 +550,49 @@ impl<'a> Lexer<'a> {
     }
 
     fn maybe_byte_string(&mut self, diag: &mut Diagnostics, start: usize) -> Token<'a> {
+        fn bchar(diag: &mut Diagnostics, c: char, name: &str, span: Span) -> u8 {
+            match c.try_into() {
+                Ok(c) => c,
+                Err(_) => {
+                    diag.error(Error::new(
+                        format!(
+                            "invalid character '{c}' ({:#x}) in byte {name} literal",
+                            c as u8
+                        ),
+                        span,
+                    ));
+                    0
+                }
+            }
+        }
+
         match self.peek() {
             Some('\'') => {
                 self.advance();
-                let Token::Char(c) = self.char_literal(diag) else {
-                    unreachable!()
-                };
-                match c.try_into() {
-                    Ok(c) => Token::ByteChar(c),
-                    Err(_) => {
-                        diag.error(Error::new(
-                            "invalid character in ascii string literal",
-                            self.here(1),
-                        ));
-                        Token::ByteChar(0)
-                    }
-                }
+                let prev = self.here(0);
+                let ch = self.char_literal(diag, true);
+                Token::ByteChar(bchar(diag, ch, "char", prev.extended_to(self.here(0))))
             }
             Some('"') => {
                 self.advance();
-                let Token::String(s) = self.string_literal(diag, start) else {
-                    unreachable!()
-                };
-                if s.chars().any(|c| !c.is_ascii()) {
-                    diag.error(Error::new(
-                        "invalid character in byte string",
-                        Span {
-                            pos: start,
-                            len: self.pos - start,
-                            file: self.file,
-                        },
-                    ));
+                let mut result = vec![];
+                loop {
+                    let prev = self.here(0);
+                    match self.advance() {
+                        Some('"') => break Token::ByteString(result),
+                        Some('\\') => {
+                            let ch = self.escape_char(diag, true);
+                            result.push(bchar(diag, ch, "string", prev.extended_to(self.here(0))))
+                        }
+                        Some(ch) => {
+                            result.push(bchar(diag, ch, "string", prev.extended_to(self.here(0))))
+                        }
+                        None => {
+                            diag.error(Error::unterminated_str(self.here(1)));
+                            break Token::ByteString(result);
+                        }
+                    }
                 }
-                Token::ByteString(s)
             }
             _ => self.identifier(start),
         }
@@ -752,7 +788,7 @@ impl<'a> Lexer<'a> {
                 }
             }
             '"' => self.string_literal(diag, start),
-            '\'' => self.char_literal(diag),
+            '\'' => Token::Char(self.char_literal(diag, false)),
             '0'..='9' => self.numeric_literal(start),
             'b' => self.maybe_byte_string(diag, start),
             ch if Self::is_identifier_first_char(ch) => self.identifier(start),

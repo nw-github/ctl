@@ -68,6 +68,17 @@ impl Error {
         }
     }
 
+    pub fn unterminated_str(span: Span) -> Self {
+        Self::new("unterminated string literal", span)
+    }
+
+    pub fn non_ascii_char(span: Span) -> Self {
+        Self::new(
+            "invalid char escape (must be within the range 0..=0x7f)",
+            span,
+        )
+    }
+
     pub fn not_valid_here(token: &str, span: Span) -> Self {
         Self::new(format!("'{token}' is not valid here"), span)
     }
@@ -122,13 +133,13 @@ impl Error {
     }
 
     pub fn expected_found(expected: &str, received: &str, span: Span) -> Self {
-        Self::new(
-            format!("expected {expected}, found {received}"),
-            span,
-        )
+        Self::new(format!("expected {expected}, found {received}"), span)
     }
 
     pub fn match_statement(why: &str, span: Span) -> Self {
-        Self::new(format!("match statement does not cover all cases {why}"), span)
+        Self::new(
+            format!("match statement does not cover all cases {why}"),
+            span,
+        )
     }
 }

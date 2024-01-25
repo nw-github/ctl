@@ -1232,10 +1232,9 @@ impl Codegen {
                     .emit(format!("\", .len = (usize){} }} }}", value.len()));
             }
             CheckedExprData::ByteString(value) => {
-                self.buffer.emit("(");
-                self.emit_type(scopes, &Type::Ptr(Type::Uint(8).into()));
-                self.buffer.emit(")\"");
-                for byte in value.as_bytes() {
+                self.emit_cast(scopes, &Type::Ptr(Type::Uint(8).into()));
+                self.buffer.emit("\"");
+                for byte in value {
                     self.buffer.emit(format!("\\x{byte:x}"));
                 }
                 self.buffer.emit("\"");

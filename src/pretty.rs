@@ -255,7 +255,7 @@ pub fn print_expr(expr: &Expr, indent: usize) {
             eprintln!("{tabs}Char = \'{value}\'");
         }
         ExprData::ByteString(value) => {
-            eprintln!("{tabs}ByteString = \'{value}\'");
+            eprintln!("{tabs}ByteString = \'{value:?}\'");
         }
         ExprData::ByteChar(value) => {
             eprintln!("{tabs}ByteChar = \'{value}\'");
