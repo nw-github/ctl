@@ -1295,9 +1295,11 @@ impl TypeChecker {
                 CheckedExpr::new(Type::Never, CheckedExprData::Continue)
             }
             ExprData::Is { expr, pattern } => {
-                let expr = self.check_expr(scopes, *expr, target);
-                let patt = self.check_pattern(scopes, false, &expr.ty, false, pattern);
-                CheckedExpr::new(Type::Bool, CheckedExprData::Is(expr.into(), patt))
+                scopes.enter(ScopeKind::None, false, |scopes| {
+                    let expr = self.check_expr(scopes, *expr, target);
+                    let patt = self.check_pattern(scopes, false, &expr.ty, false, pattern);
+                    CheckedExpr::new(Type::Bool, CheckedExprData::Is(expr.into(), patt))
+                })
             }
             ExprData::Match { expr, body } => {
                 let scrutinee = self.check_expr(scopes, *expr, None);
