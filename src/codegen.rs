@@ -681,7 +681,7 @@ impl Codegen {
 
         let conv_argv = (scopes.get(main.func.id).params.len() == 1).then(|| {
             let id = scopes
-                .find_in("convert_argv", *scopes.find_module("std").unwrap())
+                .find_in("convert_argv", *scopes.find_module_in("std", ScopeId(0)).unwrap())
                 .unwrap();
 
             let state = State::new(GenericFunc::new(*id, vec![]), None);

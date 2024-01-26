@@ -1,10 +1,6 @@
 use crate::{
-    ast::{
-        parsed::{TypeHint, TypePath},
-        BinaryOp,
-    },
-    lexer::Located,
-    sym::{FunctionId, ScopeId, Scopes, UserTypeId, Vis},
+    ast::{parsed::TypeHint, BinaryOp},
+    sym::{FunctionId, ScopeId, Scopes, UserTypeId},
 };
 use derive_more::Constructor;
 use enum_as_inner::EnumAsInner;
@@ -202,14 +198,6 @@ impl std::hash::Hash for Type {
 impl Eq for Type {}
 
 impl Type {
-    pub fn from_typehint(hint: TypeHint, scopes: &Scopes) -> Self {
-        Self::Unresolved((hint, scopes.current).into())
-    }
-
-    pub fn from_type_path(path: Located<TypePath>, scopes: &Scopes) -> Self {
-        Self::Unresolved((TypeHint::Regular(path), scopes.current).into())
-    }
-
     pub fn discriminant_for(max: usize) -> Type {
         Type::Uint((max as f64).log2().ceil() as u32)
     }
@@ -587,104 +575,11 @@ impl Type {
         }
     }
 
-    pub fn implements_trait(&self, scopes: &Scopes, bound: &GenericUserType) -> bool {
-        if self.is_unknown() {
-            return true;
-        }
-
-        let search = |this, impls: &[Type]| {
-            impls.iter().any(|tr| {
-                let mut tr = tr.clone();
-                if let Some(this) = this {
-                    tr.fill_struct_templates(scopes, this);
-                }
-                tr.as_user().is_some_and(|tr| &**tr == bound)
-            })
-        };
-
-        if self
-            .as_user()
-            .is_some_and(|this| search(Some(this), &scopes.get(this.id).impls))
-        {
-            return true;
-        }
-
-        scopes
-            .extensions_in_scope_for(self)
-            .any(|ext| search(self.as_user().map(|ty| &**ty), &ext.impls))
-    }
-
     pub fn as_option_inner<'a>(&'a self, scopes: &Scopes) -> Option<&'a Type> {
         scopes.get_option_id().and_then(|opt| {
             self.as_user()
                 .filter(|ut| ut.id == opt)
                 .map(|ut| &ut.ty_args[0])
         })
-    }
-
-    pub fn get_trait_impl<'a, 'b>(
-        &'b self,
-        scopes: &'a Scopes,
-        id: UserTypeId,
-    ) -> Option<&'b GenericUserType>
-    where
-        'a: 'b,
-    {
-        let search = |impls: &'a [Type]| {
-            impls
-                .iter()
-                .flat_map(|i| i.as_user().map(|ut| &**ut))
-                .find(|ut| ut.id == id)
-        };
-
-        if let Some(ty) = self
-            .as_user()
-            .and_then(|ut| search(&scopes.get(ut.id).impls))
-        {
-            return Some(ty);
-        }
-
-        scopes
-            .extensions_in_scope_for(self)
-            .find_map(|ext| search(&ext.impls))
-    }
-
-    pub fn get_member_fn(
-        &self,
-        scopes: &Scopes,
-        member: &str,
-    ) -> Option<(Option<GenericUserType>, Vis<FunctionId>, ScopeId)> {
-        let search = |src_scope: ScopeId, scope: ScopeId| {
-            // TODO: trait implement overload ie.
-            // impl Eq<f32> { ... } impl Eq<i32> { ... }
-            std::iter::once(scope)
-                .chain(scopes[scope].children.iter().map(|s| s.id))
-                .find_map(|scope| {
-                    scopes
-                        .find_in(member, scope)
-                        .map(|func| (None, func, src_scope))
-                })
-        };
-
-        if let Some(ut) = self.as_user().map(|ut| scopes.get(ut.id)) {
-            let src_scope = ut.scope;
-            if ut.data.is_template() {
-                for ut in ut.impls.iter().flat_map(|ut| ut.as_user()) {
-                    if let Some(func) = scopes.find_in(member, scopes.get(ut.id).body_scope) {
-                        return Some((Some((**ut).clone()), func, src_scope));
-                    }
-                }
-
-                return None;
-            }
-
-            if let Some(result) = search(src_scope, ut.body_scope) {
-                return Some(result);
-            }
-        }
-
-        scopes
-            .extensions_in_scope_for(self)
-            .find_map(|ext| search(ext.scope, ext.body_scope))
     }
 }

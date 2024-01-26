@@ -4,10 +4,7 @@ use crate::{
     sym::{ExtensionId, FunctionId, ScopeId, UserTypeId, VariableId},
 };
 
-pub struct DeclaredStmt {
-    pub data: DeclaredStmtData,
-    pub span: Span,
-}
+pub type DeclaredStmt = Located<DeclaredStmtData>;
 
 pub struct DeclaredFn {
     pub id: FunctionId,

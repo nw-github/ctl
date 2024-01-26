@@ -33,8 +33,8 @@ macro_rules! id {
                 &mut scopes.$vec[self.0]
             }
 
-            fn find(scopes: &Scopes, name: &str) -> Option<Vis<Self>> {
-                for (id, scope) in scopes.iter() {
+            fn find(scopes: &Scopes, current: ScopeId, name: &str) -> Option<Vis<Self>> {
+                for (id, scope) in scopes.walk(current) {
                     if let Some(item) = Self::find_in(scopes, name, id) {
                         return Some(item);
                     }
@@ -52,10 +52,6 @@ macro_rules! id {
                     .iter()
                     .rev()
                     .find_map(|id| (scopes.$vec[id.0].$($parts).+ == name).then_some(*id))
-            }
-
-            fn insert(scopes: &mut Scopes, value: Self::Value, public: bool) -> Self {
-                Self::insert_in(scopes, value, public, scopes.current)
             }
 
             fn insert_in(scopes: &mut Scopes, value: Self::Value, public: bool, scope: ScopeId) -> Self {
@@ -340,10 +336,9 @@ pub trait ItemId: Sized {
     fn get(self, scopes: &Scopes) -> &Scoped<Self::Value>;
     fn get_mut(self, scopes: &mut Scopes) -> &mut Scoped<Self::Value>;
 
-    fn find(scopes: &Scopes, name: &str) -> Option<Vis<Self>>;
+    fn find(scopes: &Scopes, current: ScopeId, name: &str) -> Option<Vis<Self>>;
     fn find_in(scopes: &Scopes, name: &str, scope: ScopeId) -> Option<Vis<Self>>;
 
-    fn insert(scopes: &mut Scopes, value: Self::Value, public: bool) -> Self;
     fn insert_in(scopes: &mut Scopes, value: Self::Value, public: bool, scope: ScopeId) -> Self;
 }
 
@@ -365,7 +360,6 @@ pub struct Scopes {
     types: Vec<Scoped<UserType>>,
     vars: Vec<Scoped<Variable>>,
     exts: Vec<Scoped<Extension>>,
-    pub current: ScopeId,
     pub lang_types: HashMap<String, UserTypeId>,
     pub intrinsics: HashMap<FunctionId, String>,
     pub panic_handler: Option<FunctionId>,
@@ -375,7 +369,6 @@ impl Scopes {
     pub fn new() -> Self {
         Self {
             scopes: vec![Scope::default()],
-            current: ScopeId(0),
             fns: Vec::new(),
             types: Vec::new(),
             vars: Vec::new(),
@@ -386,7 +379,17 @@ impl Scopes {
         }
     }
 
-    pub fn iter_from(&self, id: ScopeId) -> impl Iterator<Item = (ScopeId, &Scope)> {
+    pub fn create_scope(&mut self, parent: ScopeId, kind: ScopeKind) -> ScopeId {
+        let id = ScopeId(self.scopes.len());
+        self.scopes.push(Scope {
+            parent: Some(parent),
+            kind,
+            ..Default::default()
+        });
+        id
+    }
+
+    pub fn walk(&self, id: ScopeId) -> impl Iterator<Item = (ScopeId, &Scope)> {
         pub struct ScopeIter<'a> {
             scopes: &'a Scopes,
             next: Option<ScopeId>,
@@ -409,16 +412,9 @@ impl Scopes {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (ScopeId, &Scope)> {
-        self.iter_from(self.current)
-    }
-
     pub fn full_name(&self, id: ScopeId, ident: &str) -> String {
         let mut name: String = ident.chars().rev().collect();
-        for scope_name in self
-            .iter_from(id)
-            .flat_map(|(_, scope)| scope.kind.name(self))
-        {
+        for scope_name in self.walk(id).flat_map(|(_, scope)| scope.kind.name(self)) {
             name.reserve(scope_name.len() + 1);
             name.push('_');
             for c in scope_name.chars().rev() {
@@ -427,34 +423,6 @@ impl Scopes {
         }
 
         name.chars().rev().collect::<String>()
-    }
-
-    pub fn current(&mut self) -> &mut Scope {
-        let i = self.current;
-        &mut self[i]
-    }
-
-    pub fn enter<T>(&mut self, kind: ScopeKind, public: bool, f: impl FnOnce(&mut Self) -> T) -> T {
-        let id = ScopeId(self.scopes.len());
-        self.current().children.insert(Vis { id, public });
-        let parent = Some(self.current);
-        self.enter_id(id, |this| {
-            this.scopes.push(Scope {
-                parent,
-                kind,
-                ..Default::default()
-            });
-
-            f(this)
-        })
-    }
-
-    pub fn enter_id<T>(&mut self, id: ScopeId, f: impl FnOnce(&mut Self) -> T) -> T {
-        let prev = self.current;
-        self.current = id;
-        let result = f(self);
-        self.current = prev;
-        result
     }
 
     pub fn this_type_of(&self, id: UserTypeId) -> Type {
@@ -471,39 +439,13 @@ impl Scopes {
         )
     }
 
-    pub fn current_this_type(&self) -> Option<Type> {
-        self.iter().find_map(|(_, scope)| {
-            match scope.kind {
-                ScopeKind::UserType(id) => {
-                    let ty = self.get(id);
-                    if !ty.data.is_template() {
-                        if ty.data.is_trait() {
-                            return Some(Type::TraitSelf);
-                        }
-
-                        return Some(self.this_type_of(id));
-                    }
-                }
-                ScopeKind::Extension(id) => {
-                    return Some(self.get(id).ty.clone());
-                }
-                _ => {}
-            }
-            None
-        })
-    }
-
-    pub fn current_function(&self) -> Option<FunctionId> {
-        self.function_of(self.current)
-    }
-
     pub fn function_of(&self, scope: ScopeId) -> Option<FunctionId> {
-        self.iter_from(scope)
+        self.walk(scope)
             .find_map(|(_, scope)| scope.kind.as_function().copied())
     }
 
     pub fn module_of(&self, id: ScopeId) -> Option<ScopeId> {
-        for (id, current) in self.iter_from(id) {
+        for (id, current) in self.walk(id) {
             if matches!(current.kind, ScopeKind::Module(_, _)) {
                 return Some(id);
             }
@@ -531,37 +473,6 @@ impl Scopes {
             .copied()
     }
 
-    pub fn find_module(&self, name: &str) -> Option<Vis<ScopeId>> {
-        for (id, scope) in self.iter() {
-            if let Some(item) = self.find_module_in(name, id) {
-                return Some(item);
-            }
-
-            if matches!(scope.kind, ScopeKind::Module(_, _)) {
-                break;
-            }
-        }
-
-        None
-    }
-
-    pub fn find_free_fn(&self, name: &str) -> Option<Vis<FunctionId>> {
-        for (id, scope) in self
-            .iter()
-            .filter(|(_, s)| !matches!(s.kind, ScopeKind::UserType(_)))
-        {
-            if let Some(item) = self.find_in(name, id) {
-                return Some(item);
-            }
-
-            if matches!(scope.kind, ScopeKind::Module(_, _)) {
-                break;
-            }
-        }
-
-        None
-    }
-
     pub fn get_option_id(&self) -> Option<UserTypeId> {
         self.lang_types.get("option").copied()
     }
@@ -584,55 +495,8 @@ impl Scopes {
         id.get_mut(self)
     }
 
-    pub fn find<T: ItemId>(&self, name: &str) -> Option<Vis<T>> {
-        T::find(self, name)
-    }
-
     pub fn find_in<T: ItemId>(&self, name: &str, scope: ScopeId) -> Option<Vis<T>> {
         T::find_in(self, name, scope)
-    }
-
-    pub fn insert<T: ItemId>(&mut self, value: T::Value, public: bool) -> T {
-        T::insert(self, value, public)
-    }
-
-    pub fn extensions_in_scope_for<'a, 'b>(
-        &'a self,
-        ty: &'b Type,
-    ) -> impl Iterator<Item = &Scoped<Extension>> + 'b
-    where
-        'a: 'b,
-    {
-        self.iter().flat_map(|(_, scope)| {
-            scope
-                .exts
-                .iter()
-                .map(|ext| self.get(ext.id))
-                .filter(|ext| ext.matches_type(ty))
-        })
-    }
-
-    pub fn extension_ids_in_scope_for<'a, 'b>(
-        &'a self,
-        ty: &'b Type,
-    ) -> impl Iterator<Item = ExtensionId> + 'b
-    where
-        'a: 'b,
-    {
-        self.iter().flat_map(|(_, scope)| {
-            scope
-                .exts
-                .iter()
-                .map(|ext| ext.id)
-                .filter(|&id| self.get(id).matches_type(ty))
-        })
-    }
-
-    pub fn can_access_privates(&self, scope: ScopeId) -> bool {
-        let target = self
-            .module_of(scope)
-            .expect("root scope passed to can_access_privates()");
-        self.iter().any(|(id, _)| id == target)
     }
 }
 
