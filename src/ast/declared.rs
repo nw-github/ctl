@@ -4,8 +4,6 @@ use crate::{
     sym::{ExtensionId, FunctionId, ScopeId, UserTypeId, VariableId},
 };
 
-pub type DeclaredStmt = Located<DeclaredStmtData>;
-
 pub struct DeclaredFn {
     pub id: FunctionId,
     pub body: Option<Vec<DeclaredStmt>>,
@@ -18,7 +16,7 @@ pub struct DeclaredImplBlock {
     pub functions: Vec<DeclaredFn>,
 }
 
-pub enum DeclaredStmtData {
+pub enum DeclaredStmt {
     Expr(Expr),
     Let {
         patt: Located<Pattern>,

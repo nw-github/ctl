@@ -51,12 +51,14 @@ impl<'a, 'b> Parser<'a, 'b> {
             data: StmtData::Module {
                 public: true,
                 body: stmts,
-                name: crate::derive_module_name(this.diag.file_path(file)),
-            },
-            span: Span {
-                file,
-                pos: 0,
-                len: 0,
+                name: Located::new(
+                    Span {
+                        file,
+                        pos: 0,
+                        len: 0,
+                    },
+                    crate::derive_module_name(this.diag.file_path(file)),
+                ),
             },
             attrs: Vec::new(),
         }
@@ -74,7 +76,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let public = self.next_if_kind(Token::Pub);
         let is_unsafe = self.next_if_kind(Token::Unsafe);
         let is_extern = self.next_if_kind(Token::Extern);
-        if let Some(Located { span, data }) = self.try_function(FnConfig {
+        if let Some(func) = self.try_function(FnConfig {
             allow_method: false,
             is_public: public.is_some(),
             is_extern: is_extern.is_some(),
@@ -82,9 +84,8 @@ impl<'a, 'b> Parser<'a, 'b> {
             body: is_extern.is_none(),
         }) {
             Ok(Stmt {
-                data: StmtData::Fn(data),
-                span: public.map_or(span, |p| p.span).extended_to(span),
                 attrs,
+                data: StmtData::Fn(func.data),
             })
         } else if let Some(token) = self.next_if_kind(Token::Struct) {
             if let Some(token) = is_unsafe {
@@ -137,17 +138,16 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.error_unconditional(Error::not_valid_here("extern", token.span));
             }
 
-            let name = self.expect_id("expected name");
+            let name = self.expect_id_l("expected name");
             let mut body = Vec::new();
             self.expect_kind(Token::LCurly);
-            let span = self.next_until(Token::RCurly, token.span, |this| body.push(this.item()));
+            self.next_until(Token::RCurly, token.span, |this| body.push(this.item()));
             Ok(Stmt {
                 data: StmtData::Module {
                     public: public.is_some(),
                     name,
                     body,
                 },
-                span,
                 attrs,
             })
         } else if let Some(token) = self.next_if_kind(Token::Use) {
@@ -190,19 +190,21 @@ impl<'a, 'b> Parser<'a, 'b> {
             Ok(Stmt {
                 data: StmtData::Use {
                     public: public.is_some(),
-                    path: if root.is_some() {
-                        TypePath::Root(components)
-                    } else if sup {
-                        TypePath::Super(components)
-                    } else {
-                        TypePath::Normal(components)
-                    },
+                    path: Located::new(
+                        token.span.extended_to(semi.span),
+                        if root.is_some() {
+                            TypePath::Root(components)
+                        } else if sup {
+                            TypePath::Super(components)
+                        } else {
+                            TypePath::Normal(components)
+                        },
+                    ),
                     all,
                 },
-                span: token.span.extended_to(semi.span),
                 attrs,
             })
-        } else if let Some(token) = self.next_if_kind(Token::Static) {
+        } else if self.next_if_kind(Token::Static).is_some() {
             if let Some(token) = is_unsafe {
                 self.error_unconditional(Error::not_valid_here("unsafe", token.span));
             }
@@ -216,8 +218,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             let ty = self.type_hint();
             self.expect_kind(Token::Assign);
             let value = self.expression();
-            let semi = self.expect_kind(Token::Semicolon);
-
+            self.expect_kind(Token::Semicolon);
             Ok(Stmt {
                 data: StmtData::Static {
                     public: public.is_some(),
@@ -225,7 +226,6 @@ impl<'a, 'b> Parser<'a, 'b> {
                     ty,
                     value,
                 },
-                span: token.span.extended_to(semi.span),
                 attrs,
             })
         } else {
@@ -244,7 +244,6 @@ impl<'a, 'b> Parser<'a, 'b> {
             Stmt {
                 data: StmtData::Error,
                 attrs,
-                span,
             }
         })
     }
@@ -261,10 +260,9 @@ impl<'a, 'b> Parser<'a, 'b> {
                     let patt = self.pattern(matches!(token.data, Token::Mut));
                     let ty = self.next_if_kind(Token::Colon).map(|_| self.type_hint());
                     let value = self.next_if_kind(Token::Assign).map(|_| self.expression());
-                    let semi = self.expect_kind(Token::Semicolon);
+                    self.expect_kind(Token::Semicolon);
                     Stmt {
                         data: StmtData::Let { ty, value, patt },
-                        span: token.span.extended_to(semi.span),
                         attrs,
                     }
                 } else {
@@ -285,9 +283,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                     }
 
                     Stmt {
-                        span: expr.span,
-                        data: StmtData::Expr(expr),
                         attrs,
+                        data: StmtData::Expr(expr),
                     }
                 }
             }
@@ -1061,9 +1058,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     Destructure {
                         name,
                         mutable: mutable || mut_var,
-                        pattern: this
-                            .next_if_kind(Token::Colon)
-                            .map(|_| this.pattern(true)),
+                        pattern: this.next_if_kind(Token::Colon).map(|_| this.pattern(true)),
                     }
                 })
                 .map(Pattern::StructDestructure);
@@ -1263,10 +1258,11 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut functions = Vec::new();
         let mut members = Vec::new();
         let mut impls = Vec::new();
-        let span = self.next_until(Token::RCurly, span, |this| {
+        self.next_until(Token::RCurly, span, |this| {
+            let public = this.next_if_kind(Token::Pub);
             let config = FnConfig {
                 allow_method: true,
-                is_public: this.next_if_kind(Token::Pub).is_some(),
+                is_public: public.is_some(),
                 is_extern: false,
                 is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
                 body: true,
@@ -1278,8 +1274,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             } else if let Some(func) = this.try_function(config) {
                 functions.push(func.data);
             } else if let Some(token) = this.next_if_kind(Token::Impl) {
-                if config.is_public {
-                    // TODO: use the span for `pub`
+                if let Some(token) = public {
                     this.error(Error::not_valid_here("pub", token.span));
                 }
 
@@ -1304,7 +1299,6 @@ impl<'a, 'b> Parser<'a, 'b> {
         });
 
         Stmt {
-            span,
             data: StmtData::Struct(Struct {
                 public,
                 name,
@@ -1326,7 +1320,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut impls = Vec::new();
 
         self.expect_kind(Token::LCurly);
-        let span = self.next_until(Token::RCurly, span, |this| {
+        self.next_until(Token::RCurly, span, |this| {
             let config = FnConfig {
                 allow_method: true,
                 is_public: this.next_if_kind(Token::Pub).is_some(),
@@ -1384,7 +1378,6 @@ impl<'a, 'b> Parser<'a, 'b> {
         });
 
         Stmt {
-            span,
             data: StmtData::Union {
                 tag,
                 base: Struct {
@@ -1414,7 +1407,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.expect_kind(Token::LCurly);
 
         let mut functions = Vec::new();
-        let span = self.next_until(Token::RCurly, span, |this| {
+        self.next_until(Token::RCurly, span, |this| {
             let is_unsafe = this.next_if_kind(Token::Unsafe).is_some();
             if let Ok(proto) = this.expect_fn(FnConfig {
                 body: false,
@@ -1428,7 +1421,6 @@ impl<'a, 'b> Parser<'a, 'b> {
         });
 
         Stmt {
-            span,
             data: StmtData::Trait {
                 public,
                 is_unsafe,
@@ -1449,7 +1441,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut functions = Vec::new();
         let mut variants = Vec::new();
         let mut impls = Vec::new();
-        let span = self.next_until(Token::RCurly, span, |this| {
+        self.next_until(Token::RCurly, span, |this| {
             let config = FnConfig {
                 allow_method: true,
                 is_public: this.next_if_kind(Token::Pub).is_some(),
@@ -1482,7 +1474,6 @@ impl<'a, 'b> Parser<'a, 'b> {
         });
 
         Stmt {
-            span,
             data: StmtData::Enum {
                 public,
                 base_ty,
@@ -1505,7 +1496,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         let mut functions = Vec::new();
         let mut impls = Vec::new();
-        let span = self.next_until(Token::RCurly, span, |this| {
+        self.next_until(Token::RCurly, span, |this| {
             if let Some(token) = this.next_if_kind(Token::Impl) {
                 impls.push(this.impl_block(token.span));
             } else {
@@ -1523,7 +1514,6 @@ impl<'a, 'b> Parser<'a, 'b> {
         });
 
         Stmt {
-            span,
             data: StmtData::Extension {
                 public,
                 name,

@@ -1,11 +1,10 @@
-use crate::lexer::{Located, Span};
+use crate::lexer::Located;
 
 use super::{Attribute, BinaryOp, UnaryOp};
 
 #[derive(Debug, Clone)]
 pub struct Stmt {
     pub data: StmtData,
-    pub span: Span,
     pub attrs: Vec<Attribute>,
 }
 
@@ -14,7 +13,7 @@ pub enum StmtData {
     Expr(Expr),
     Use {
         public: bool,
-        path: TypePath,
+        path: Located<TypePath>,
         all: bool,
     },
     Let {
@@ -61,7 +60,7 @@ pub enum StmtData {
     },
     Module {
         public: bool,
-        name: String,
+        name: Located<String>,
         body: Vec<Stmt>,
     },
     Error,

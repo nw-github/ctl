@@ -99,7 +99,7 @@ impl TypeChecker {
                     .map(|ast| {
                         let mut declared = Vec::new();
                         match ast.data {
-                            StmtData::Module { name, body, .. } if name == project => {
+                            StmtData::Module { name, body, .. } if name.data == project => {
                                 declared.extend(
                                     body.into_iter()
                                         .map(|stmt| this.declare_stmt(&mut autouse, stmt)),
@@ -161,7 +161,9 @@ impl TypeChecker {
 
     fn enter<T>(&mut self, kind: ScopeKind, public: bool, f: impl FnOnce(&mut Self) -> T) -> T {
         let id = self.scopes.create_scope(self.current, kind);
-        self.scopes[self.current].children.insert(Vis { id, public });
+        self.scopes[self.current]
+            .children
+            .insert(Vis { id, public });
         self.enter_id(id, f)
     }
 
@@ -175,16 +177,18 @@ impl TypeChecker {
 
     fn enter_id_and_resolve<T>(&mut self, id: ScopeId, f: impl FnOnce(&mut Self) -> T) -> T {
         self.enter_id(id, |this| {
-            for id in this.scopes.walk(this.current).map(|(id, _)| id).collect::<Vec<_>>() {
+            for id in this
+                .scopes
+                .walk(this.current)
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+            {
                 this.enter_id(id, |this| {
-                    for UnresolvedUse {
-                        public,
-                        path,
-                        all,
-                        span,
-                    } in std::mem::take(&mut this.current().use_stmts)
+                    for UnresolvedUse { public, path, all } in
+                        std::mem::take(&mut this.current().use_stmts)
                     {
-                        if let Some(path) = this.resolve_path(&path, span) {
+                        let span = path.span;
+                        if let Some(path) = this.resolve_path(&path.data, span) {
                             this.resolve_use(public, all, path, span);
                         }
                     }
@@ -277,24 +281,24 @@ impl TypeChecker {
 }
 
 impl TypeChecker {
-    fn declare_stmt(
-        &mut self,
-        autouse: &mut Vec<ScopeId>,
-        Stmt { data, span, attrs }: Stmt,
-    ) -> DeclaredStmt {
-        let data = match data {
+    fn declare_stmt(&mut self, autouse: &mut Vec<ScopeId>, stmt: Stmt) -> DeclaredStmt {
+        match stmt.data {
             StmtData::Module { public, name, body } => {
-                if self.scopes.find_module_in(&name, self.current).is_some() {
+                if self
+                    .scopes
+                    .find_module_in(&name.data, self.current)
+                    .is_some()
+                {
                     self.error(Error::new(
                         format!("redeclaration of module '{name}'"),
-                        span,
+                        name.span,
                     ))
                 }
 
-                self.enter(ScopeKind::Module(name, Vec::new()), public, |this| {
+                self.enter(ScopeKind::Module(name.data, Vec::new()), public, |this| {
                     let core = this.scopes.find_module_in("core", ScopeId(0)).map(|s| s.id);
                     let std = this.scopes.find_module_in("std", ScopeId(0)).map(|s| s.id);
-                    if attrs.iter().any(|attr| attr.name.data == "autouse") {
+                    if stmt.attrs.iter().any(|attr| attr.name.data == "autouse") {
                         if this
                             .scopes
                             .walk(this.current)
@@ -304,12 +308,12 @@ impl TypeChecker {
                         } else {
                             this.error(Error::new(
                                 "autouse modules may only be defined by 'core' and 'std'",
-                                span,
+                                name.span,
                             ))
                         }
                     }
 
-                    DeclaredStmtData::Module {
+                    DeclaredStmt::Module {
                         id: this.current,
                         body: body
                             .into_iter()
@@ -347,7 +351,7 @@ impl TypeChecker {
                             ret: Self::typehint_for_struct(
                                 &base.name.data,
                                 &base.type_params,
-                                span,
+                                base.name.span,
                             ),
                             body: None,
                         },
@@ -366,7 +370,7 @@ impl TypeChecker {
                         impls: Vec::new(),
                     },
                     base.public,
-                    attrs,
+                    stmt.attrs,
                     base.name.span,
                 );
                 self.enter(ScopeKind::UserType(id), base.public, |this| {
@@ -400,7 +404,7 @@ impl TypeChecker {
                     let (impls, impl_blocks) = this.declare_impl_blocks(autouse, base.impls);
                     this.scopes.get_mut(id).impls = impls;
 
-                    DeclaredStmtData::Struct {
+                    DeclaredStmt::Struct {
                         init,
                         id,
                         impl_blocks,
@@ -418,7 +422,7 @@ impl TypeChecker {
                 is_unsafe,
             } => {
                 let tp = base.type_params.clone();
-                let ret = Self::typehint_for_struct(&base.name.data, &tp, span);
+                let ret = Self::typehint_for_struct(&base.name.data, &tp, base.name.span);
                 let id = self.declare_type(
                     UserType {
                         name: base.name.data,
@@ -431,7 +435,7 @@ impl TypeChecker {
                         impls: Vec::new(),
                     },
                     base.public,
-                    attrs,
+                    stmt.attrs,
                     base.name.span,
                 );
                 self.enter(ScopeKind::UserType(id), base.public, |this| {
@@ -461,10 +465,9 @@ impl TypeChecker {
                         });
 
                         if member.shared && is_unsafe {
-                            // FIXME: span should be related to the member
                             this.error(Error::new(
                                 "cannot have shared members in an unsafe union",
-                                span,
+                                member.name.span,
                             ))
                         } else if member.shared {
                             params.push(Param {
@@ -525,7 +528,7 @@ impl TypeChecker {
                         })
                         .collect();
 
-                    DeclaredStmtData::Union {
+                    DeclaredStmt::Union {
                         member_cons,
                         id,
                         impl_blocks,
@@ -554,7 +557,7 @@ impl TypeChecker {
                         type_params: Vec::new(),
                     },
                     public,
-                    attrs,
+                    stmt.attrs,
                     name.span,
                 );
                 self.enter(ScopeKind::UserType(id), public, |this| {
@@ -566,7 +569,7 @@ impl TypeChecker {
                         .map(|path| this.declare_type_path(path))
                         .collect();
 
-                    DeclaredStmtData::Trait {
+                    DeclaredStmt::Trait {
                         id,
                         functions: functions
                             .into_iter()
@@ -594,7 +597,7 @@ impl TypeChecker {
                         impls: Vec::new(),
                     },
                     public,
-                    attrs,
+                    stmt.attrs,
                     name.span,
                 );
 
@@ -630,7 +633,7 @@ impl TypeChecker {
 
                     let (impls, impl_blocks) = this.declare_impl_blocks(autouse, impls);
                     this.scopes.get_mut(id).impls = impls;
-                    DeclaredStmtData::Enum {
+                    DeclaredStmt::Enum {
                         id,
                         variants: n_variants,
                         impl_blocks,
@@ -668,7 +671,7 @@ impl TypeChecker {
                     let (impls, impl_blocks) = this.declare_impl_blocks(autouse, impls);
                     this.scopes.get_mut(id).impls = impls;
 
-                    DeclaredStmtData::Extension {
+                    DeclaredStmt::Extension {
                         id,
                         impl_blocks,
                         functions: functions
@@ -678,13 +681,13 @@ impl TypeChecker {
                     }
                 })
             }
-            StmtData::Fn(f) => DeclaredStmtData::Fn(self.declare_fn(autouse, false, f, attrs)),
+            StmtData::Fn(f) => DeclaredStmt::Fn(self.declare_fn(autouse, false, f, stmt.attrs)),
             StmtData::Static {
                 public,
                 name,
                 ty,
                 value,
-            } => DeclaredStmtData::Static {
+            } => DeclaredStmt::Static {
                 id: self.insert(
                     Variable {
                         name,
@@ -698,20 +701,15 @@ impl TypeChecker {
                 value,
             },
             StmtData::Use { path, public, all } => {
-                self.current().use_stmts.push(UnresolvedUse {
-                    path,
-                    public,
-                    all,
-                    span,
-                });
-                DeclaredStmtData::None
+                self.current()
+                    .use_stmts
+                    .push(UnresolvedUse { path, public, all });
+                DeclaredStmt::None
             }
-            StmtData::Let { ty, value, patt } => DeclaredStmtData::Let { ty, value, patt },
-            StmtData::Expr(expr) => DeclaredStmtData::Expr(expr),
-            StmtData::Error => DeclaredStmtData::None,
-        };
-
-        DeclaredStmt { data, span }
+            StmtData::Let { ty, value, patt } => DeclaredStmt::Let { ty, value, patt },
+            StmtData::Expr(expr) => DeclaredStmt::Expr(expr),
+            StmtData::Error => DeclaredStmt::None,
+        }
     }
 
     fn declare_fn(
@@ -927,9 +925,9 @@ impl TypeChecker {
 }
 
 impl TypeChecker {
-    fn check_stmt(&mut self, DeclaredStmt { data, span }: DeclaredStmt) -> CheckedStmt {
-        match data {
-            DeclaredStmtData::Module { id, body } => {
+    fn check_stmt(&mut self, stmt: DeclaredStmt) -> CheckedStmt {
+        match stmt {
+            DeclaredStmt::Module { id, body } => {
                 self.enter_id_and_resolve(id, |this| {
                     this.include_universal();
                     Block {
@@ -938,7 +936,7 @@ impl TypeChecker {
                     }
                 });
             }
-            DeclaredStmtData::Struct {
+            DeclaredStmt::Struct {
                 init,
                 id,
                 impl_blocks,
@@ -960,7 +958,7 @@ impl TypeChecker {
                     }
                 });
             }
-            DeclaredStmtData::Union {
+            DeclaredStmt::Union {
                 member_cons,
                 id,
                 impl_blocks,
@@ -989,7 +987,7 @@ impl TypeChecker {
                     }
                 });
             }
-            DeclaredStmtData::Trait { id, functions } => {
+            DeclaredStmt::Trait { id, functions } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
                     this.resolve_impls(id);
                     for f in functions {
@@ -997,7 +995,7 @@ impl TypeChecker {
                     }
                 });
             }
-            DeclaredStmtData::Enum {
+            DeclaredStmt::Enum {
                 id,
                 variants,
                 functions,
@@ -1020,7 +1018,7 @@ impl TypeChecker {
                     }
                 });
             }
-            DeclaredStmtData::Extension {
+            DeclaredStmt::Extension {
                 id,
                 impl_blocks,
                 functions,
@@ -1034,8 +1032,8 @@ impl TypeChecker {
                     }
                 });
             }
-            DeclaredStmtData::Expr(expr) => return CheckedStmt::Expr(self.check_expr(expr, None)),
-            DeclaredStmtData::Let { ty, value, patt } => {
+            DeclaredStmt::Expr(expr) => return CheckedStmt::Expr(self.check_expr(expr, None)),
+            DeclaredStmt::Let { ty, value, patt } => {
                 if let Some(ty) = ty {
                     let ty = self.resolve_typehint(&ty);
                     if let Some(value) = value {
@@ -1048,11 +1046,11 @@ impl TypeChecker {
                     let value = self.check_expr(value, None);
                     return self.check_var_stmt(value.ty.clone(), Some(value), patt);
                 } else {
-                    return self.error(Error::new("cannot infer type", span));
+                    return self.error(Error::new("cannot infer type", patt.span));
                 }
             }
-            DeclaredStmtData::Fn(f) => self.check_fn(f),
-            DeclaredStmtData::Static { id, value } => {
+            DeclaredStmt::Fn(f) => self.check_fn(f),
+            DeclaredStmt::Static { id, value } => {
                 // FIXME: detect cycles like static X: usize = X;
                 // FIXME: non-const statics should be disallowed
                 let mut ty = self.scopes.get_mut(id).ty.clone();
@@ -1063,7 +1061,7 @@ impl TypeChecker {
                 let var = self.scopes.get_mut(id);
                 var.value = Some(value);
             }
-            DeclaredStmtData::None => return CheckedStmt::Error,
+            DeclaredStmt::None => return CheckedStmt::Error,
         }
 
         CheckedStmt::None
@@ -4302,16 +4300,11 @@ impl TypeChecker {
             return true;
         }
 
-        self
-            .extensions_in_scope_for(ty)
+        self.extensions_in_scope_for(ty)
             .any(|ext| search(ty.as_user().map(|ty| &**ty), &ext.impls))
     }
 
-    fn get_trait_impl<'a, 'b>(
-        &'a self,
-        ty: &'b Type,
-        id: UserTypeId,
-    ) -> Option<&'b GenericUserType>
+    fn get_trait_impl<'a, 'b>(&'a self, ty: &'b Type, id: UserTypeId) -> Option<&'b GenericUserType>
     where
         'a: 'b,
     {
@@ -4329,8 +4322,7 @@ impl TypeChecker {
             return Some(ty);
         }
 
-        self
-            .extensions_in_scope_for(ty)
+        self.extensions_in_scope_for(ty)
             .find_map(|ext| search(&ext.impls))
     }
 
@@ -4355,7 +4347,10 @@ impl TypeChecker {
             let src_scope = ut.scope;
             if ut.data.is_template() {
                 for ut in ut.impls.iter().flat_map(|ut| ut.as_user()) {
-                    if let Some(func) = self.scopes.find_in(member, self.scopes.get(ut.id).body_scope) {
+                    if let Some(func) = self
+                        .scopes
+                        .find_in(member, self.scopes.get(ut.id).body_scope)
+                    {
                         return Some((Some((**ut).clone()), func, src_scope));
                     }
                 }
@@ -4368,8 +4363,7 @@ impl TypeChecker {
             }
         }
 
-        self
-            .extensions_in_scope_for(ty)
+        self.extensions_in_scope_for(ty)
             .find_map(|ext| search(ext.scope, ext.body_scope))
     }
 

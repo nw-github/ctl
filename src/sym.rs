@@ -10,7 +10,7 @@ use crate::{
         Attribute,
     },
     error::Error,
-    lexer::{Located, Span},
+    lexer::Located,
     typeid::{GenericFunc, GenericUserType, Type},
 };
 
@@ -76,9 +76,8 @@ id!(ExtensionId => Extension, exts, name, ext);
 #[derive(Debug, Clone)]
 pub struct UnresolvedUse {
     pub public: bool,
-    pub path: TypePath,
+    pub path: Located<TypePath>,
     pub all: bool,
-    pub span: Span,
 }
 
 #[derive(Default, Debug, Clone, EnumAsInner)]
