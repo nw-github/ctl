@@ -1735,41 +1735,17 @@ impl TypeChecker {
             } => {
                 let (cond, mut if_branch) = if let ExprData::Is { expr, pattern } = cond.data {
                     self.check_is_expr(*expr, pattern, |this, cond| {
-                        let target = if else_branch.is_some() {
-                            target
-                        } else {
-                            target
-                                .and_then(|t| t.as_user())
-                                .filter(|t| t.id == this.scopes.get_option_id().unwrap())
-                                .map(|target| &target.ty_args[0])
-                        };
-    
-                        let if_span = if_branch.span;
-                        let if_branch = this.check_expr_inner(*if_branch, target);
-                        if let Some(target) = target {
-                            (cond, this.type_check_checked(if_branch, target, if_span))
-                        } else {
-                            (cond, if_branch)
-                        }
+                        (
+                            cond,
+                            this.check_if_branch(*if_branch, target, else_branch.is_some()),
+                        )
                     })
                 } else {
                     let cond = self.type_check(*cond, &Type::Bool);
-                    let target = if else_branch.is_some() {
-                        target
-                    } else {
-                        target
-                            .and_then(|t| t.as_user())
-                            .filter(|t| t.id == self.scopes.get_option_id().unwrap())
-                            .map(|target| &target.ty_args[0])
-                    };
-
-                    let if_span = if_branch.span;
-                    let if_branch = self.check_expr_inner(*if_branch, target);
-                    if let Some(target) = target {
-                        (cond, self.type_check_checked(if_branch, target, if_span))
-                    } else {
-                        (cond, if_branch)
-                    }
+                    (
+                        cond,
+                        self.check_if_branch(*if_branch, target, else_branch.is_some()),
+                    )
                 };
 
                 let mut out_type = if_branch.ty.clone();
@@ -1823,27 +1799,57 @@ impl TypeChecker {
                 body,
                 do_while,
             } => {
-                // if let Some(Expr::Is { expr, pattern }) = cond.map(|cond| cond.data) {
-                //
-                // }
-
                 let infinite = cond.is_none();
-                let cond = cond.map(|cond| self.type_check(*cond, &Type::Bool));
                 let target = Self::loop_target(&self.scopes, target, infinite);
-                let body = self.create_block(
-                    body,
-                    ScopeKind::Loop {
-                        target: target.cloned(),
-                        breaks: None,
-                        infinite,
-                    },
-                );
+                let (cond, body) = if let Some(cond) = cond {
+                    match cond.data {
+                        ExprData::Is { expr, pattern } if !do_while => {
+                            self.check_is_expr(*expr, pattern, |this, cond| {
+                                (
+                                    Some(cond.into()),
+                                    this.create_block(
+                                        body,
+                                        ScopeKind::Loop {
+                                            target: target.cloned(),
+                                            breaks: None,
+                                            infinite,
+                                        },
+                                    ),
+                                )
+                            })
+                        }
+                        _ => (
+                            Some(self.type_check(*cond, &Type::Bool).into()),
+                            self.create_block(
+                                body,
+                                ScopeKind::Loop {
+                                    target: target.cloned(),
+                                    breaks: None,
+                                    infinite,
+                                },
+                            ),
+                        ),
+                    }
+                } else {
+                    (
+                        None,
+                        self.create_block(
+                            body,
+                            ScopeKind::Loop {
+                                target: target.cloned(),
+                                breaks: None,
+                                infinite,
+                            },
+                        ),
+                    )
+                };
+
                 let (out_type, optional) =
                     Self::loop_out_type(&self.scopes, &self.scopes[body.scope].kind);
                 CheckedExpr::new(
                     out_type,
                     CheckedExprData::Loop {
-                        cond: cond.map(|cond| cond.into()),
+                        cond,
                         body,
                         do_while,
                         optional,
@@ -2284,6 +2290,25 @@ impl TypeChecker {
             }
         }
         expr
+    }
+
+    fn check_if_branch(&mut self, expr: Expr, target: Option<&Type>, el: bool) -> CheckedExpr {
+        let target = if el {
+            target
+        } else {
+            target
+                .and_then(|t| t.as_user())
+                .filter(|t| t.id == self.scopes.get_option_id().unwrap())
+                .map(|target| &target.ty_args[0])
+        };
+
+        let if_span = expr.span;
+        let expr = self.check_expr_inner(expr, target);
+        if let Some(target) = target {
+            self.type_check_checked(expr, target, if_span)
+        } else {
+            expr
+        }
     }
 
     fn check_is_expr<T>(

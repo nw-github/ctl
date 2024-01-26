@@ -1393,30 +1393,48 @@ impl Codegen {
                     self.buffer.emit("for (;;) {");
 
                     macro_rules! cond {
-                        () => {
-                            if let Some(cond) = cond {
-                                stmt! {
-                                    self,
-                                    {
-                                        self.buffer.emit("if (!");
-                                        self.gen_expr(scopes, *cond, state);
-                                        self.buffer.emit(") { ");
-                                        if optional {
-                                            self.gen_loop_none(scopes, state, expr.ty);
-                                        }
-                                        self.buffer.emit("break; }");
+                        ($cond: expr) => {
+                            stmt! {
+                                self,
+                                {
+                                    self.buffer.emit("if (!");
+                                    self.gen_expr(scopes, $cond, state);
+                                    self.buffer.emit(") { ");
+                                    if optional {
+                                        self.gen_loop_none(scopes, state, expr.ty);
                                     }
+                                    self.buffer.emit("break; }");
                                 }
                             }
                         };
                     }
 
-                    if !do_while {
-                        cond!();
-                        self.emit_block(scopes, body.body, state);
+                    if let Some(cond) = cond {
+                        if let CheckedExprData::Is(mut cond, patt) = cond.data {
+                            state.fill_generics(scopes, &mut cond.ty);
+                            let ty = cond.ty.clone();
+                            let tmp = state.tmpvar();
+                            self.emit_type(scopes, &cond.ty);
+                            self.buffer.emit(format!(" {tmp} = "));
+                            self.gen_expr_inner(scopes, *cond, state);
+                            self.buffer.emit(";");
+
+                            self.gen_pattern(scopes, state, &patt, &tmp, &ty);
+                            self.emit_block(scopes, body.body, state);
+                            self.buffer.emit("} else {");
+                            if optional {
+                                self.gen_loop_none(scopes, state, expr.ty);
+                            }
+                            self.buffer.emit("break; }");
+                        } else if !do_while {
+                            cond!(*cond);
+                            self.emit_block(scopes, body.body, state);
+                        } else {
+                            self.emit_block(scopes, body.body, state);
+                            cond!(*cond);
+                        }
                     } else {
                         self.emit_block(scopes, body.body, state);
-                        cond!();
                     }
 
                     self.buffer.emit("}");

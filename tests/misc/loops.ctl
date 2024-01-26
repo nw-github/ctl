@@ -23,6 +23,16 @@ pub fn while_loop() {
 
         assert(y is null, "y was not null");
     }
+    {
+        let x = @[1, 2, 3, 4];
+        mut total = 0;
+        mut iter = x.iter();
+        while iter.next() is ?item {
+            total += *item;
+        }
+
+        assert(total == 10, "all items were not added up");
+    }
 }
 
 pub fn for_loop() {
