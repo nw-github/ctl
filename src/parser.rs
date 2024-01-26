@@ -96,19 +96,28 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.error_unconditional(Error::not_valid_here("extern", token.span));
             }
 
-            Ok(self.structure(public.is_some(), attrs, token.span))
+            Ok(Stmt {
+                attrs,
+                data: self.structure(public.is_some(), token.span),
+            })
         } else if let Some(token) = self.next_if_kind(Token::Union) {
             if let Some(token) = is_extern {
                 self.error(Error::not_valid_here("extern", token.span));
             }
 
-            Ok(self.union(public.is_some(), attrs, token.span, is_unsafe.is_some()))
+            Ok(Stmt {
+                attrs,
+                data: self.union(public.is_some(), token.span, is_unsafe.is_some()),
+            })
         } else if let Some(token) = self.next_if_kind(Token::Trait) {
             if let Some(token) = is_extern {
                 self.error_unconditional(Error::not_valid_here("extern", token.span));
             }
 
-            Ok(self.r#trait(public.is_some(), attrs, token.span, is_unsafe.is_some()))
+            Ok(Stmt {
+                attrs,
+                data: self.r#trait(public.is_some(), token.span, is_unsafe.is_some()),
+            })
         } else if let Some(token) = self.next_if_kind(Token::Enum) {
             if let Some(token) = is_unsafe {
                 self.error_unconditional(Error::not_valid_here("unsafe", token.span));
@@ -118,7 +127,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.error_unconditional(Error::not_valid_here("extern", token.span));
             }
 
-            Ok(self.enumeration(public.is_some(), attrs, token.span))
+            Ok(Stmt {
+                attrs,
+                data: self.enumeration(public.is_some(), token.span),
+            })
         } else if let Some(token) = self.next_if_kind(Token::Extension) {
             if let Some(token) = is_unsafe {
                 self.error_unconditional(Error::not_valid_here("unsafe", token.span));
@@ -128,7 +140,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.error_unconditional(Error::not_valid_here("extern", token.span));
             }
 
-            Ok(self.extension(public.is_some(), attrs, token.span))
+            Ok(Stmt {
+                attrs,
+                data: self.extension(public.is_some(), token.span),
+            })
         } else if let Some(token) = self.next_if_kind(Token::Mod) {
             if let Some(token) = is_unsafe {
                 self.error_unconditional(Error::not_valid_here("unsafe", token.span));
@@ -1249,7 +1264,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         Located::new(span, stmts)
     }
 
-    fn structure(&mut self, public: bool, attrs: Vec<Attribute>, span: Span) -> Stmt {
+    fn structure(&mut self, public: bool, span: Span) -> StmtData {
         let name = self.expect_id_l("expected name");
         let type_params = self.type_params();
 
@@ -1298,20 +1313,17 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
         });
 
-        Stmt {
-            data: StmtData::Struct(Struct {
-                public,
-                name,
-                type_params,
-                members,
-                impls,
-                functions,
-            }),
-            attrs,
-        }
+        StmtData::Struct(Struct {
+            public,
+            name,
+            type_params,
+            members,
+            impls,
+            functions,
+        })
     }
 
-    fn union(&mut self, public: bool, attrs: Vec<Attribute>, span: Span, is_unsafe: bool) -> Stmt {
+    fn union(&mut self, public: bool, span: Span, is_unsafe: bool) -> StmtData {
         let name = self.expect_id_l("expected name");
         let type_params = self.type_params();
         let tag = self.next_if_kind(Token::Colon).map(|_| self.type_path());
@@ -1377,30 +1389,21 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
         });
 
-        Stmt {
-            data: StmtData::Union {
-                tag,
-                base: Struct {
-                    public,
-                    name,
-                    type_params,
-                    members,
-                    functions,
-                    impls,
-                },
-                is_unsafe,
+        StmtData::Union {
+            tag,
+            base: Struct {
+                public,
+                name,
+                type_params,
+                members,
+                functions,
+                impls,
             },
-            attrs,
+            is_unsafe,
         }
     }
 
-    fn r#trait(
-        &mut self,
-        public: bool,
-        attrs: Vec<Attribute>,
-        span: Span,
-        is_unsafe: bool,
-    ) -> Stmt {
+    fn r#trait(&mut self, public: bool, span: Span, is_unsafe: bool) -> StmtData {
         let name = self.expect_id_l("expected name");
         let type_params = self.type_params();
         let impls = self.trait_impls();
@@ -1420,20 +1423,17 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
         });
 
-        Stmt {
-            data: StmtData::Trait {
-                public,
-                is_unsafe,
-                name,
-                type_params,
-                impls,
-                functions,
-            },
-            attrs,
+        StmtData::Trait {
+            public,
+            is_unsafe,
+            name,
+            type_params,
+            impls,
+            functions,
         }
     }
 
-    fn enumeration(&mut self, public: bool, attrs: Vec<Attribute>, span: Span) -> Stmt {
+    fn enumeration(&mut self, public: bool, span: Span) -> StmtData {
         let name = self.expect_id_l("expected name");
         let base_ty = self.next_if_kind(Token::Colon).map(|_| self.type_path());
         self.expect_kind(Token::LCurly);
@@ -1473,20 +1473,17 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
         });
 
-        Stmt {
-            data: StmtData::Enum {
-                public,
-                base_ty,
-                name,
-                impls,
-                variants,
-                functions,
-            },
-            attrs,
+        StmtData::Enum {
+            public,
+            base_ty,
+            name,
+            impls,
+            variants,
+            functions,
         }
     }
 
-    fn extension(&mut self, public: bool, attrs: Vec<Attribute>, span: Span) -> Stmt {
+    fn extension(&mut self, public: bool, span: Span) -> StmtData {
         let type_params = self.type_params();
         let name = self.expect_id("expected name");
 
@@ -1513,16 +1510,13 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
         });
 
-        Stmt {
-            data: StmtData::Extension {
-                public,
-                name,
-                ty,
-                type_params,
-                impls,
-                functions,
-            },
-            attrs,
+        StmtData::Extension {
+            public,
+            name,
+            ty,
+            type_params,
+            impls,
+            functions,
         }
     }
 

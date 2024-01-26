@@ -513,14 +513,14 @@ impl Type {
         })
     }
 
-    pub fn coerces_to(&self, scopes: &Scopes, target: &Type) -> bool {
+    pub fn coercible_to(&self, scopes: &Scopes, target: &Type) -> bool {
         match (self, target) {
             (Type::Never | Type::Unknown, _) => true,
             (_, Type::Unknown) => true,
             (ty, target)
                 if target
                     .as_option_inner(scopes)
-                    .is_some_and(|inner| ty.coerces_to(scopes, inner)) =>
+                    .is_some_and(|inner| ty.coercible_to(scopes, inner)) =>
             {
                 true
             }

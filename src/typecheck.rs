@@ -18,7 +18,7 @@ macro_rules! type_check_bail {
         let source = $source;
         let span = source.span;
         let source = $self.check_expr(source, Some($target));
-        if !source.ty.coerces_to(&$self.scopes, $target) {
+        if !source.ty.coercible_to(&$self.scopes, $target) {
             return $self.error(Error::type_mismatch(
                 &$target.name(&$self.scopes),
                 &source.ty.name(&$self.scopes),
@@ -32,7 +32,7 @@ macro_rules! type_check_bail {
 
 macro_rules! resolve_type {
     ($self: expr, $ty: expr) => {
-        let mut ty = $ty.clone();
+        let mut ty = std::mem::take(&mut $ty);
         $self.resolve_type(&mut ty);
         $ty = ty;
     };
@@ -69,7 +69,7 @@ impl TypeChecker {
             universal: Vec::new(),
             scopes: Scopes::new(),
             safety: Safety::Safe,
-            current: ScopeId(0),
+            current: ScopeId::ROOT,
             diag,
         };
         for lib in libs {
@@ -296,8 +296,14 @@ impl TypeChecker {
                 }
 
                 self.enter(ScopeKind::Module(name.data, Vec::new()), public, |this| {
-                    let core = this.scopes.find_module_in("core", ScopeId(0)).map(|s| s.id);
-                    let std = this.scopes.find_module_in("std", ScopeId(0)).map(|s| s.id);
+                    let core = this
+                        .scopes
+                        .find_module_in("core", ScopeId::ROOT)
+                        .map(|s| s.id);
+                    let std = this
+                        .scopes
+                        .find_module_in("std", ScopeId::ROOT)
+                        .map(|s| s.id);
                     if stmt.attrs.iter().any(|attr| attr.name.data == "autouse") {
                         if this
                             .scopes
@@ -348,11 +354,7 @@ impl TypeChecker {
                                     default: member.default.clone(),
                                 })
                                 .collect(),
-                            ret: Self::typehint_for_struct(
-                                &base.name.data,
-                                &base.type_params,
-                                base.name.span,
-                            ),
+                            ret: Self::typehint_for_struct(&base.name, &base.type_params),
                             body: None,
                         },
                         vec![],
@@ -361,7 +363,7 @@ impl TypeChecker {
                 let id = self.declare_type(
                     UserType {
                         name: base.name.data,
-                        body_scope: ScopeId(0),
+                        body_scope: ScopeId::ROOT,
                         data: UserTypeData::Struct {
                             members: Vec::new(),
                             init: init.id,
@@ -422,11 +424,11 @@ impl TypeChecker {
                 is_unsafe,
             } => {
                 let tp = base.type_params.clone();
-                let ret = Self::typehint_for_struct(&base.name.data, &tp, base.name.span);
+                let ret = Self::typehint_for_struct(&base.name, &tp);
                 let id = self.declare_type(
                     UserType {
                         name: base.name.data,
-                        body_scope: ScopeId(0),
+                        body_scope: ScopeId::ROOT,
                         data: UserTypeData::Union(Union {
                             variants: Vec::new(),
                             is_unsafe,
@@ -440,8 +442,7 @@ impl TypeChecker {
                 );
                 self.enter(ScopeKind::UserType(id), base.public, |this| {
                     this.scopes.get_mut(id).body_scope = this.current;
-                    this.scopes.get_mut(id).type_params =
-                        this.declare_type_params(TT::Struct, base.type_params);
+                    this.scopes.get_mut(id).type_params = this.declare_type_params(TT::Struct, tp);
 
                     let mut variants = Vec::with_capacity(base.members.len());
                     let mut params = Vec::with_capacity(base.members.len());
@@ -518,7 +519,7 @@ impl TypeChecker {
                                     is_extern: false,
                                     variadic: false,
                                     is_unsafe: false,
-                                    type_params: tp.clone(),
+                                    type_params: base.type_params.clone(),
                                     params,
                                     ret: ret.clone(),
                                     body: None,
@@ -551,7 +552,7 @@ impl TypeChecker {
                 let id = self.declare_type(
                     UserType {
                         name: name.data,
-                        body_scope: ScopeId(0),
+                        body_scope: ScopeId::ROOT,
                         data: UserTypeData::Trait,
                         impls: Vec::new(),
                         type_params: Vec::new(),
@@ -591,7 +592,7 @@ impl TypeChecker {
                 let id = self.declare_type(
                     UserType {
                         name: name.data,
-                        body_scope: ScopeId(0),
+                        body_scope: ScopeId::ROOT,
                         data: UserTypeData::Enum(backing.clone()),
                         type_params: Vec::new(),
                         impls: Vec::new(),
@@ -658,7 +659,7 @@ impl TypeChecker {
                         ty: Type::Unknown,
                         impls: Vec::new(),
                         type_params: Vec::new(),
-                        body_scope: ScopeId(0),
+                        body_scope: ScopeId::ROOT,
                     },
                     public,
                 );
@@ -750,7 +751,7 @@ impl TypeChecker {
                 params: Vec::new(),
                 ret: Type::Unknown,
                 body: None,
-                body_scope: ScopeId(0),
+                body_scope: ScopeId::ROOT,
                 returns: false,
                 constructor,
             },
@@ -907,17 +908,16 @@ impl TypeChecker {
     }
 
     fn typehint_for_struct(
-        name: &str,
+        Located { span, data }: &Located<String>,
         type_params: &[(String, Vec<Located<TypePath>>)],
-        span: Span,
     ) -> TypeHint {
         TypeHint::Regular(Located::new(
-            span,
+            *span,
             TypePath::Normal(vec![TypePathComponent(
-                name.into(),
+                data.into(),
                 type_params
                     .iter()
-                    .map(|(n, _)| TypeHint::Regular(Located::new(span, TypePath::from(n.clone()))))
+                    .map(|(n, _)| TypeHint::Regular(Located::new(*span, TypePath::from(n.clone()))))
                     .collect(),
             )]),
         ))
@@ -2095,7 +2095,7 @@ impl TypeChecker {
             ExprData::As { expr, ty, throwing } => {
                 let mut expr = self.check_expr(*expr, None);
                 let ty = self.resolve_typehint(&ty);
-                if !expr.ty.coerces_to(&self.scopes, &ty) {
+                if !expr.ty.coercible_to(&self.scopes, &ty) {
                     match (&expr.ty, &ty) {
                         (a, b) if a == b => {}
                         (Type::Int(a), Type::Int(b) | Type::Uint(b)) if a <= b => {}
@@ -3656,7 +3656,7 @@ impl TypeChecker {
         target: &Type,
         span: Span,
     ) -> CheckedExpr {
-        if !source.ty.coerces_to(&self.scopes, target) {
+        if !source.ty.coercible_to(&self.scopes, target) {
             self.error(Error::type_mismatch(
                 &target.name(&self.scopes),
                 &source.ty.name(&self.scopes),
@@ -4032,7 +4032,7 @@ impl TypeChecker {
 
     fn resolve_path(&mut self, path: &TypePath, span: Span) -> Option<ResolvedPath> {
         match path {
-            TypePath::Root(data) => self.resolve_path_in(data, ScopeId(0), span),
+            TypePath::Root(data) => self.resolve_path_in(data, ScopeId::ROOT, span),
             TypePath::Super(data) => {
                 if let Some(module) = self.scopes.module_of(
                     self.scopes[self.scopes.module_of(self.current).unwrap()]
@@ -4104,7 +4104,7 @@ impl TypeChecker {
 
                     self.resolve_path_in(&data[1..], *id, span)
                 } else {
-                    self.resolve_path_in(data, ScopeId(0), span)
+                    self.resolve_path_in(data, ScopeId::ROOT, span)
                 }
             }
         }

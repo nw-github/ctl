@@ -68,6 +68,10 @@ macro_rules! id {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct ScopeId(pub usize);
 
+impl ScopeId {
+    pub const ROOT: ScopeId = ScopeId(0);
+}
+
 id!(FunctionId => Function, fns, name.data, func);
 id!(UserTypeId => UserType, types, name, user_type);
 id!(VariableId => Variable, vars, name, var);

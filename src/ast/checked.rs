@@ -220,7 +220,7 @@ impl CheckedExpr {
             (ty, target)
                 if target
                     .as_option_inner(scopes)
-                    .is_some_and(|inner| ty.coerces_to(scopes, inner)) =>
+                    .is_some_and(|inner| ty.coercible_to(scopes, inner)) =>
             {
                 let expr = self.coerce_to(target.as_option_inner(scopes).unwrap(), scopes);
                 CheckedExpr::new(
