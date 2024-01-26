@@ -681,7 +681,10 @@ impl Codegen {
 
         let conv_argv = (scopes.get(main.func.id).params.len() == 1).then(|| {
             let id = scopes
-                .find_in("convert_argv", *scopes.find_module_in("std", ScopeId::ROOT).unwrap())
+                .find_in(
+                    "convert_argv",
+                    *scopes.find_module_in("std", ScopeId::ROOT).unwrap(),
+                )
                 .unwrap();
 
             let state = State::new(GenericFunc::new(*id, vec![]), None);
@@ -1333,9 +1336,25 @@ impl Codegen {
                 else_branch,
             } => {
                 enter_block!(self, state, scopes, &expr.ty, |_tmp| {
-                    self.buffer.emit("if (");
-                    self.gen_expr(scopes, *cond, state);
-                    self.buffer.emit(") {");
+                    if let CheckedExprData::Is(mut expr, patt) = cond.data {
+                        state.fill_generics(scopes, &mut expr.ty);
+                        let ty = expr.ty.clone();
+
+                        let tmp = tmpbuf!(self, state, |tmp| {
+                            self.emit_type(scopes, &expr.ty);
+                            self.buffer.emit(format!(" {tmp} = "));
+                            self.gen_expr(scopes, *expr, state);
+                            self.buffer.emit(";");
+                            tmp
+                        });
+    
+                        self.gen_pattern(scopes, state, &patt, &tmp, &ty);
+                    } else {
+                        self.buffer.emit("if (");
+                        self.gen_expr(scopes, *cond, state);
+                        self.buffer.emit(") {");
+                        
+                    }
                     stmt!(self, {
                         if !expr.ty.is_void_like() {
                             self.buffer.emit(format!("{} = ", self.cur_block));

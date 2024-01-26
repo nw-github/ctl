@@ -1733,21 +1733,44 @@ impl TypeChecker {
                 if_branch,
                 else_branch,
             } => {
-                let cond = self.type_check(*cond, &Type::Bool);
-                let target = if else_branch.is_some() {
-                    target
+                let (cond, mut if_branch) = if let ExprData::Is { expr, pattern } = cond.data {
+                    self.check_is_expr(*expr, pattern, |this, cond| {
+                        let target = if else_branch.is_some() {
+                            target
+                        } else {
+                            target
+                                .and_then(|t| t.as_user())
+                                .filter(|t| t.id == this.scopes.get_option_id().unwrap())
+                                .map(|target| &target.ty_args[0])
+                        };
+    
+                        let if_span = if_branch.span;
+                        let if_branch = this.check_expr_inner(*if_branch, target);
+                        if let Some(target) = target {
+                            (cond, this.type_check_checked(if_branch, target, if_span))
+                        } else {
+                            (cond, if_branch)
+                        }
+                    })
                 } else {
-                    target
-                        .and_then(|t| t.as_user())
-                        .filter(|t| t.id == self.scopes.get_option_id().unwrap())
-                        .map(|target| &target.ty_args[0])
-                };
+                    let cond = self.type_check(*cond, &Type::Bool);
+                    let target = if else_branch.is_some() {
+                        target
+                    } else {
+                        target
+                            .and_then(|t| t.as_user())
+                            .filter(|t| t.id == self.scopes.get_option_id().unwrap())
+                            .map(|target| &target.ty_args[0])
+                    };
 
-                let if_span = if_branch.span;
-                let mut if_branch = self.check_expr_inner(*if_branch, target);
-                if let Some(target) = target {
-                    if_branch = self.type_check_checked(if_branch, target, if_span);
-                }
+                    let if_span = if_branch.span;
+                    let if_branch = self.check_expr_inner(*if_branch, target);
+                    if let Some(target) = target {
+                        (cond, self.type_check_checked(if_branch, target, if_span))
+                    } else {
+                        (cond, if_branch)
+                    }
+                };
 
                 let mut out_type = if_branch.ty.clone();
                 let else_branch = if let Some(expr) = else_branch {
@@ -2053,11 +2076,7 @@ impl TypeChecker {
 
                 CheckedExpr::new(Type::Never, CheckedExprData::Continue)
             }
-            ExprData::Is { expr, pattern } => self.enter(ScopeKind::None, false, |this| {
-                let expr = this.check_expr(*expr, target);
-                let patt = this.check_full_pattern(&expr.ty, pattern);
-                CheckedExpr::new(Type::Bool, CheckedExprData::Is(expr.into(), patt))
-            }),
+            ExprData::Is { expr, pattern } => self.check_is_expr(*expr, pattern, |_, expr| expr),
             ExprData::Match { expr, body } => {
                 let scrutinee = self.check_expr(*expr, None);
                 let mut target = target.cloned();
@@ -2265,6 +2284,22 @@ impl TypeChecker {
             }
         }
         expr
+    }
+
+    fn check_is_expr<T>(
+        &mut self,
+        expr: Expr,
+        patt: Located<FullPattern>,
+        f: impl FnOnce(&mut Self, CheckedExpr) -> T,
+    ) -> T {
+        self.enter(ScopeKind::None, false, |this| {
+            let expr = this.check_expr(expr, None);
+            let patt = this.check_full_pattern(&expr.ty, patt);
+            f(
+                this,
+                CheckedExpr::new(Type::Bool, CheckedExprData::Is(expr.into(), patt)),
+            )
+        })
     }
 
     fn check_match_coverage<'a>(

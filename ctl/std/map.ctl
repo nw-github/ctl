@@ -13,11 +13,10 @@ union Bucket<K, V> {
     Tombstone,
 
     pub fn unwrap(this): SomeBucket<K, V> {
-        match *this {
-            Bucket::Some(e) => e,
-            _ => {
-                panic("Bucket::unwrap(): value is not Bucket::Some!");
-            },
+        if this is Bucket::Some(e) {
+            *e
+        } else {
+            panic("Bucket::unwrap(): value is not Bucket::Some!");
         }
     }
 }
@@ -41,16 +40,14 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     }
 
     pub fn get(this, key: *K): ?*V {
-        match this.buckets.get(this.entry_pos(key))! {
-            Bucket::Some(entry) => &entry.val,
-            _ => null,
+        if this.buckets.get(this.entry_pos(key))! is Bucket::Some(entry) {
+            &entry.val
         }
     }
 
     pub fn get_mut(mut this, key: *K): ?*mut V {
-        match this.buckets.get_mut(this.entry_pos(key))! {
-            Bucket::Some(entry) => &mut entry.val,
-            _ => null,
+        if this.buckets.get_mut(this.entry_pos(key))! is Bucket::Some(entry) {
+            &mut entry.val
         }
     }
 
@@ -143,19 +140,15 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
 
         mut i = 0usize;
         while i < old {
-            match this.buckets.get(i)! {
-                Bucket::Some(entry) => {
-                    this.len++;
-
-                    let j = this.entry_pos(&entry.key);
-                    if i != j {
-                        core::mem::swap(
-                            this.buckets.get_mut(i)!,
-                            this.buckets.get_mut(j)!,
-                        );
-                    }
+            if this.buckets.get(i)! is Bucket::Some(entry) {
+                this.len++;
+                let j = this.entry_pos(&entry.key);
+                if i != j {
+                    core::mem::swap(
+                        this.buckets.get_mut(i)!,
+                        this.buckets.get_mut(j)!,
+                    );
                 }
-                _ => {}
             }
 
             i++;

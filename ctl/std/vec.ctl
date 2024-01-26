@@ -218,12 +218,11 @@ pub struct Vec<T> {
         } else {
             std::alloc::realloc(unsafe this.ptr.as_mut_ptr(), cap)
         };
-        match ptr {
-            ?ptr => {
-                this.ptr = ptr;
-                this.cap = cap;
-            },
-            null => panic("Vec::reserve(): out of memory!"),
+        if ptr is ?ptr {
+            this.ptr = ptr;
+            this.cap = cap;
+        } else {
+            panic("Vec::_reserve(): out of memory!");
         }
     }
 }

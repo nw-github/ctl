@@ -6,35 +6,33 @@ pub union Option<T> {
     None,
 
     pub fn unwrap(this): T {
-        match *this {
-            ?inner => inner,
-            null => {
-                panic("Option::unwrap(): value is null!");
-            },
+        if this is ?inner {
+            *inner
+        } else {
+            panic("Option::unwrap(): value is null!");
         }
     }
 
     pub fn unwrap_or(this, or: T): T {
-        match *this {
-            ?val => val,
-            null => or,
+        if this is ?val {
+            *val
+        } else {
+            or
         }
     }
 
     pub fn as_mut(mut this): ?*mut T {
-        match this {
-            ?val => val,
-            null => null,
+        if this is ?val {
+            val
         }
     }
 
     pub fn get_or_insert(mut this, or: T): *mut T {
-        match this {
-            ?val => val,
-            empty => {
-                *empty = or;
-                this.as_mut()!
-            }
+        if this is ?val {
+            val
+        } else {
+            *this = or;
+            this.as_mut()!
         }
     }
 }

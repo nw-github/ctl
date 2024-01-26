@@ -47,17 +47,15 @@ pub struct str {
 
     pub fn substr<R: RangeBounds<usize>>(this, range: R): str {
         let span = this.span.subspan(range);
-        match span.get(0) {
-            ?ch => if !is_char_boundary(*ch) {
+        if span.get(0) is ?ch {
+            if !is_char_boundary(*ch) {
                 panic("str::substr(): range does not start at char boundary");
             }
-            _ => {}
         }
-        match span.get(span.len()) {
-            ?ch => if !is_char_boundary(*ch) {
+        if span.get(span.len()) is ?ch {
+            if !is_char_boundary(*ch) {
                 panic("str::substr(): range does not end at char boundary");
             }
-            _ => {}
         }
         str(span:)
     }
@@ -84,36 +82,33 @@ pub struct Chars {
 
     impl Iterator<char> {
         fn next(mut this): ?char {
-            match this.s.get(0) {
-                ?cp => unsafe {
-                    mut cp = *cp as u32 & 0xff;
-                    if cp < 0x80 {
-                        this.s = this.s.subspan(1usize..);
-                    } else if cp >> 5 == 0x6 {
-                        cp = ((cp << 6) & 0x7ff) + (*this.s.get_unchecked(1) as u32 & 0x3f);
-                        this.s = this.s.subspan(2usize..);
-                    } else if cp >> 4 == 0xe {
-                        cp = (
-                            (cp << 12) & 0xffff) + 
-                            (((*this.s.get_unchecked(1) as u32 & 0xff) << 6) & 0xfff
-                        );
-                        cp += *this.s.get_unchecked(2) as u32 & 0x3f;
-                        this.s = this.s.subspan(3usize..);
-                    } else if cp >> 4 == 0x1e {
-                        cp = (
-                            (cp << 18) & 0x1fffff) + 
-                            (((*this.s.get_unchecked(1) as u32 & 0xff) << 12) & 0x3ffff
-                        );
-                        cp += ((*this.s.get_unchecked(2) as u32 & 0xff) << 6) & 0xfff;
-                        cp += *this.s.get_unchecked(3) as u32 & 0x3f;
-                        this.s = this.s.subspan(4usize..);
-                    } else {
-                        unreachable();
-                    }
+            unsafe if this.s.get(0) is ?cp {
+                mut cp = *cp as u32 & 0xff;
+                if cp < 0x80 {
+                    this.s = this.s.subspan(1usize..);
+                } else if cp >> 5 == 0x6 {
+                    cp = ((cp << 6) & 0x7ff) + (*this.s.get_unchecked(1) as u32 & 0x3f);
+                    this.s = this.s.subspan(2usize..);
+                } else if cp >> 4 == 0xe {
+                    cp = (
+                        (cp << 12) & 0xffff) + 
+                        (((*this.s.get_unchecked(1) as u32 & 0xff) << 6) & 0xfff
+                    );
+                    cp += *this.s.get_unchecked(2) as u32 & 0x3f;
+                    this.s = this.s.subspan(3usize..);
+                } else if cp >> 4 == 0x1e {
+                    cp = (
+                        (cp << 18) & 0x1fffff) + 
+                        (((*this.s.get_unchecked(1) as u32 & 0xff) << 12) & 0x3ffff
+                    );
+                    cp += ((*this.s.get_unchecked(2) as u32 & 0xff) << 6) & 0xfff;
+                    cp += *this.s.get_unchecked(3) as u32 & 0x3f;
+                    this.s = this.s.subspan(4usize..);
+                } else {
+                    unreachable();
+                }
 
-                    cp as! char
-                },
-                null => null,
+                cp as! char
             }
         }
     }
