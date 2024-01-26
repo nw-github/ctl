@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use crate::{
     ast::{
         parsed::{
-            Destructure, Expr, ExprData, Fn, ImplBlock, IntPattern, Member, Param, Pattern,
-            RangePattern, Stmt, StmtData, Struct, TypeHint, TypePath, TypePathComponent,
+            Destructure, Expr, ExprData, Fn, FullPattern, ImplBlock, IntPattern, Member, Param,
+            Pattern, RangePattern, Stmt, StmtData, Struct, TypeHint, TypePath, TypePathComponent,
         },
         Attribute, UnaryOp,
     },
@@ -658,7 +658,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 left.span,
                 ExprData::Is {
                     expr: left.into(),
-                    pattern: self.pattern(false),
+                    pattern: self.full_pattern(),
                 },
             ),
             Token::As => {
@@ -831,7 +831,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.expect_kind(Token::LCurly);
         let mut body = Vec::new();
         let span = self.next_until(Token::RCurly, token, |this| {
-            let pattern = this.pattern(false);
+            let pattern = this.full_pattern();
             this.expect_kind(Token::FatArrow);
             let (needs_comma, expr) = this.block_or_normal_expr();
             if needs_comma {
@@ -1061,7 +1061,9 @@ impl<'a, 'b> Parser<'a, 'b> {
                     Destructure {
                         name,
                         mutable: mutable || mut_var,
-                        pattern: this.next_if_kind(Token::Colon).map(|_| this.pattern(true)),
+                        pattern: this
+                            .next_if_kind(Token::Colon)
+                            .map(|_| this.pattern(true)),
                     }
                 })
                 .map(Pattern::StructDestructure);
@@ -1106,6 +1108,15 @@ impl<'a, 'b> Parser<'a, 'b> {
         } else {
             path.map(Pattern::Path)
         }
+    }
+
+    fn full_pattern(&mut self) -> Located<FullPattern> {
+        self.pattern(false).map(|data| FullPattern {
+            data,
+            if_expr: self
+                .next_if_kind(Token::If)
+                .map(|_| self.expression().into()),
+        })
     }
 
     fn is_range_end(&mut self) -> bool {

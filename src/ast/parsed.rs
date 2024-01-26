@@ -78,7 +78,7 @@ pub enum ExprData {
     },
     Is {
         expr: Box<Expr>,
-        pattern: Located<Pattern>,
+        pattern: Located<FullPattern>,
     },
     As {
         expr: Box<Expr>,
@@ -143,7 +143,7 @@ pub enum ExprData {
     },
     Match {
         expr: Box<Expr>,
-        body: Vec<(Located<Pattern>, Expr)>,
+        body: Vec<(Located<FullPattern>, Expr)>,
     },
     Member {
         source: Box<Expr>,
@@ -290,6 +290,12 @@ pub enum Pattern {
     Array(Vec<Located<Pattern>>),
     Rest(Option<(bool, String)>),
     Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct FullPattern {
+    pub data: Pattern,
+    pub if_expr: Option<Box<Expr>>,
 }
 
 #[derive(Clone)]

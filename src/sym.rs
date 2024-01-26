@@ -89,7 +89,7 @@ pub struct UnresolvedUse {
 pub enum ScopeKind {
     Block(Option<Type>, bool),
     Loop {
-        target: Option<Type>, 
+        target: Option<Type>,
         breaks: Option<bool>,
         infinite: bool,
     },

@@ -12,8 +12,8 @@ use crate::{
         },
         declared::{DeclaredFn, DeclaredImplBlock, DeclaredStmt, DeclaredStmtData},
         parsed::{
-            Destructure, Expr, ExprData, IntPattern, Pattern, RangePattern, Stmt, StmtData,
-            TypeHint, TypePath, TypePathComponent,
+            Destructure, Expr, ExprData, FullPattern, IntPattern, Pattern, RangePattern, Stmt,
+            StmtData, TypeHint, TypePath, TypePathComponent,
         },
         BinaryOp, UnaryOp,
     },
@@ -1294,13 +1294,11 @@ impl TypeChecker {
 
                 CheckedExpr::new(Type::Never, CheckedExprData::Continue)
             }
-            ExprData::Is { expr, pattern } => {
-                scopes.enter(ScopeKind::None, false, |scopes| {
-                    let expr = self.check_expr(scopes, *expr, target);
-                    let patt = self.check_pattern(scopes, false, &expr.ty, false, pattern);
-                    CheckedExpr::new(Type::Bool, CheckedExprData::Is(expr.into(), patt))
-                })
-            }
+            ExprData::Is { expr, pattern } => scopes.enter(ScopeKind::None, false, |scopes| {
+                let expr = self.check_expr(scopes, *expr, target);
+                let patt = self.check_full_pattern(scopes, &expr.ty, pattern);
+                CheckedExpr::new(Type::Bool, CheckedExprData::Is(expr.into(), patt))
+            }),
             ExprData::Match { expr, body } => {
                 let scrutinee = self.check_expr(scopes, *expr, None);
                 let mut target = target.cloned();
@@ -1309,7 +1307,7 @@ impl TypeChecker {
                     let span = expr.span;
                     let (pattern, mut expr) = scopes.enter(ScopeKind::None, false, |scopes| {
                         (
-                            self.check_pattern(scopes, false, &scrutinee.ty, false, pattern),
+                            self.check_full_pattern(scopes, &scrutinee.ty, pattern),
                             self.check_expr(scopes, expr, target.as_ref()),
                         )
                     });
@@ -1986,8 +1984,8 @@ impl TypeChecker {
     ) -> CheckedPattern {
         let mut rest = None;
         let mut result = Vec::new();
-        for (i, pattern) in patterns.into_iter().enumerate() {
-            if let Pattern::Rest(var) = pattern.data {
+        for (i, patt) in patterns.into_iter().enumerate() {
+            if let Pattern::Rest(var) = patt.data {
                 let id = var.map(|(mutable, name)| {
                     scopes.insert(
                         Variable {
@@ -2004,15 +2002,15 @@ impl TypeChecker {
                 if rest.is_some() {
                     self.error(Error::new(
                         "... can only be used once in an array pattern",
-                        pattern.span,
+                        patt.span,
                     ))
                 } else {
                     rest = Some(RestPattern { id, pos: i });
                 }
             } else {
-                let span = pattern.span;
+                let span = patt.span;
                 let CheckedPattern::Irrefutable(pattern) =
-                    self.check_pattern(scopes, true, &inner_ptr, false, pattern)
+                    self.check_pattern(scopes, true, &inner_ptr, false, patt)
                 else {
                     self.error::<()>(Error::must_be_irrefutable("span subpattterns", span));
                     continue;
@@ -2091,8 +2089,8 @@ impl TypeChecker {
         let mut rest = None;
         let mut had_refutable = false;
         let mut result = Vec::new();
-        for (i, pattern) in patterns.into_iter().enumerate() {
-            if let Pattern::Rest(var) = pattern.data {
+        for (i, patt) in patterns.into_iter().enumerate() {
+            if let Pattern::Rest(var) = patt.data {
                 let id = var.map(|(mutable, name)| {
                     scopes.insert(
                         Variable {
@@ -2109,13 +2107,13 @@ impl TypeChecker {
                 if rest.is_some() {
                     self.error(Error::new(
                         "... can only be used once in an array pattern",
-                        pattern.span,
+                        patt.span,
                     ))
                 } else {
                     rest = Some(RestPattern { id, pos: i });
                 }
             } else {
-                let patt = self.check_pattern(scopes, true, &inner, false, pattern);
+                let patt = self.check_pattern(scopes, true, &inner, false, patt);
                 if !matches!(patt, CheckedPattern::Irrefutable(_)) {
                     had_refutable = true;
                 }
@@ -2434,6 +2432,21 @@ impl TypeChecker {
             }
             Pattern::Error => Default::default(),
         }
+    }
+
+    fn check_full_pattern(
+        &mut self,
+        scopes: &mut Scopes,
+        scrutinee: &Type,
+        pattern: Located<FullPattern>,
+    ) -> CheckedPattern {
+        self.check_pattern(
+            scopes,
+            false,
+            scrutinee,
+            false,
+            pattern.map(|inner| inner.data),
+        )
     }
 
     fn check_call(
