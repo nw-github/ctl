@@ -92,7 +92,7 @@ pub struct RangeInclusive<T> {
 }
 
 // ..
-#{lang(rangrange_fulle_inclusive)}
+#{lang(range_full)}
 pub struct RangeFull<T> {
     impl RangeBounds<T> {
         fn begin(this): Bound<T> {

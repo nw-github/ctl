@@ -26,15 +26,12 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     buckets: [Bucket<K, V>],
     len:     usize,
 
-    pub fn new<_K: Hash + Eq<_K>, _V>(): Map<_K, _V> {
-        Map::<_K, _V>(
-            buckets: Vec::with_capacity(20),
-            len: 0,
-        )
+    pub fn new<K: Hash + Eq<K>, V>(): Map<K, V> {
+        Map(buckets: @[], len: 0)
     }
 
-    pub fn with_capacity<_K: Hash + Eq<_K>, _V>(cap: usize): Map<_K, _V> {
-        mut self: [_K: _V] = Map::new();
+    pub fn with_capacity<K: Hash + Eq<K>, V>(cap: usize): Map<K, V> {
+        mut self: Map<K, V> = Map::new();
         self.adjust_cap(cap);
         self
     }

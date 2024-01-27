@@ -89,8 +89,10 @@ pub struct RawMut<T> {
         unsafe this.addr as *mut T
     }
 
-    pub unsafe fn write(this, t: T) {
-        unsafe mem::copy(dst: this.as_mut_ptr(), src: &t, num: 1);
+    pub unsafe fn write(this, t: T): *mut T {
+        let dst = unsafe this.as_mut_ptr();
+        unsafe mem::copy(dst:, src: &t, num: 1);
+        dst
     }
 
     pub unsafe fn read(this): T {

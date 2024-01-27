@@ -7,14 +7,18 @@ use core::iter::Iterator;
 use core::panic;
 use core::unreachable;
 
+mod builtin {
+    #{c_macro, c_name(__builtin_strlen)}
+    pub extern fn strlen(ptr: *c_char): usize;
+}
+
 #{lang(string)}
 pub struct str {
     span: [u8..],
 
     pub fn from_c_str(ptr: *c_char): str {
-        extern fn strlen(ptr: *c_char): usize;
         // TODO: validate UTF-8
-        str(span: unsafe Span::new(ptr as *u8, strlen(ptr)))
+        str(span: unsafe Span::new(ptr as *u8, builtin::strlen(ptr)))
     }
 
     pub unsafe fn from_utf8_unchecked(span: [u8..]): str {

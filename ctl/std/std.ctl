@@ -3,41 +3,35 @@ extern fn abort(): never;
 
 pub fn println(s: str) {
     print(s);
-    unsafe write(1, &b'\n' as *c_void, 1);
+    write(1, unsafe &b'\n' as *c_void, 1);
 }
 
 pub fn print(s: str) {
-    unsafe write(1, s.as_ptr() as *c_void, s.len());
+    write(1, unsafe s.as_ptr() as *c_void, s.len());
 }
 
 pub fn eprintln(s: str) {
     eprint(s);
-    unsafe write(2, &b'\n' as *c_void, 1);
+    write(2, unsafe &b'\n' as *c_void, 1);
 }
 
 pub fn eprint(s: str) {
-    unsafe write(2, s.as_ptr() as *c_void, s.len());
+    write(2, unsafe s.as_ptr() as *c_void, s.len());
 }
 
 fn convert_argv(argc: c_int, argv: **c_char): [str..] {
-    let argc = argc as! usize;
-    mut args: [str] = std::vec::Vec::with_capacity(argc);
-    mut i = 0usize;
-    while i < argc {
-        args.push(str::from_c_str(*unsafe core::ptr::offset(argv, i++)));
+    mut result: [str] = std::vec::Vec::with_capacity(argc as! usize);
+    for arg in (unsafe core::span::Span::new(ptr: argv, len: argc as! usize)).iter() {
+        result.push(str::from_c_str(*arg));
     }
-    args.as_span()
+    result.as_span()
 }
 
 #{panic_handler}
 fn panic_handler(s: str): never {
-    unsafe {
-        let prefix = "fatal error: ";
-        write(2, prefix.as_ptr() as *c_void, prefix.len());
-        write(2, s.as_ptr() as *c_void, s.len());
-        write(2, &b'\n' as *c_void, 1);
-        abort();
-    }
+    eprint("fatal error: ");
+    eprintln(s);
+    abort();
 }
 
 #{autouse}
