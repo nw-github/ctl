@@ -8,12 +8,17 @@ pub struct FileId(usize);
 #[derive(Default)]
 pub struct Diagnostics {
     errors: Vec<Error>,
+    warnings: Vec<Error>,
     paths: Vec<PathBuf>,
 }
 
 impl Diagnostics {
     pub fn error(&mut self, err: Error) {
         self.errors.push(err);
+    }
+
+    pub fn warn(&mut self, err: Error) {
+        self.warnings.push(err);
     }
 
     pub fn add_file(&mut self, path: PathBuf) -> FileId {
@@ -31,25 +36,31 @@ impl Diagnostics {
 
     pub fn display(&self) {
         for (i, path) in self.paths.iter().enumerate() {
-            let mut file = None;
-            for Error { diagnostic, span } in
-                self.errors.iter().filter(|err| err.span.file == FileId(i))
-            {
-                // TODO: report error instead of unwrapping
-                let data = file.get_or_insert_with(|| std::fs::read_to_string(path).unwrap());
-                let (mut row, mut col) = (1, 1);
-                // maybe do this first and keep a vector of positions?
-                for ch in data.chars().take(span.pos) {
-                    if ch == '\n' {
-                        row += 1;
-                        col = 1;
-                    } else {
-                        col += 1;
-                    }
-                }
+            self.display_diagnostics("error: ", FileId(i), path, &self.errors);
+        }
 
-                eprintln!("{}:{row}:{col}: {diagnostic}", path.display())
+        for (i, path) in self.paths.iter().enumerate() {
+            self.display_diagnostics("warning: ", FileId(i), path, &self.warnings);
+        }
+    }
+
+    fn display_diagnostics(&self, prefix: &str, id: FileId, path: &Path, errors: &[Error]) {
+        let mut file = None;
+        for Error { diagnostic, span } in errors.iter().filter(|err| err.span.file == id) {
+            // TODO: report error instead of unwrapping
+            let data = file.get_or_insert_with(|| std::fs::read_to_string(path).unwrap());
+            let (mut row, mut col) = (1, 1);
+            // maybe do this first and keep a vector of positions?
+            for ch in data.chars().take(span.pos) {
+                if ch == '\n' {
+                    row += 1;
+                    col = 1;
+                } else {
+                    col += 1;
+                }
             }
+
+            eprintln!("{prefix}{}:{row}:{col}: {diagnostic}", path.display())
         }
     }
 }

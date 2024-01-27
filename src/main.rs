@@ -39,7 +39,8 @@ fn main() -> anyhow::Result<()> {
         .codegen(args.leak);
 
     match result {
-        Ok(result) => {
+        Ok((diagnostics, result)) => {
+            diagnostics.display();
             if let Some(output) = args.output {
                 let mut output = File::create(output)?;
                 output.write_all(result.as_bytes())?;

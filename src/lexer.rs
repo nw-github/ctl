@@ -456,26 +456,38 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn numeric_literal(&mut self, start: usize) -> Token<'a> {
-        if self.src[start..].starts_with('0') {
-            if self.advance_if('x') {
-                return Token::Int {
-                    base: 16,
-                    value: self.advance_while(|ch| ch.is_ascii_hexdigit()),
-                    width: self.numeric_suffix(),
-                };
-            } else if self.advance_if('o') {
-                return Token::Int {
-                    base: 8,
-                    value: self.advance_while(|ch| ch.is_digit(8)),
-                    width: self.numeric_suffix(),
-                };
-            } else if self.advance_if('b') {
-                return Token::Int {
-                    base: 2,
-                    value: self.advance_while(|ch| ch.is_digit(2)),
-                    width: self.numeric_suffix(),
-                };
+    fn numeric_literal(&mut self, diag: &mut Diagnostics, ch: char, start: usize) -> Token<'a> {
+        let mut warn_leading_zero = false;
+        if ch == '0' {
+            match self.peek() {
+                Some('x') => {
+                    self.advance();
+                    return Token::Int {
+                        base: 16,
+                        value: self.advance_while(|ch| ch.is_ascii_hexdigit()),
+                        width: self.numeric_suffix(),
+                    };
+                }
+                Some('o') => {
+                    self.advance();
+                    return Token::Int {
+                        base: 8,
+                        value: self.advance_while(|ch| ch.is_digit(8)),
+                        width: self.numeric_suffix(),
+                    };
+                }
+                Some('b') => {
+                    self.advance();
+                    return Token::Int {
+                        base: 2,
+                        value: self.advance_while(|ch| ch.is_digit(2)),
+                        width: self.numeric_suffix(),
+                    };
+                }
+                Some(_) => {
+                    warn_leading_zero = true;
+                }
+                _ => {}
             }
         }
 
@@ -485,14 +497,21 @@ impl<'a> Lexer<'a> {
             self.advance_while(|ch| ch.is_ascii_digit());
             Token::Float(&self.src[start..self.pos])
         } else {
-            let src = &self.src[start..self.pos];
-            if src.len() == 1 {
-                // TODO: warn about leading zero, dont make it an error
+            let value = &self.src[start..self.pos];
+            if warn_leading_zero && value.len() > 1 {
+                diag.warn(Error::new(
+                    "leading zero in decimal literal (use 0o to create an octal literal)",
+                    Span {
+                        pos: start,
+                        len: value.len(),
+                        file: self.file,
+                    },
+                ));
             }
 
             Token::Int {
+                value,
                 base: 10,
-                value: src,
                 width: self.numeric_suffix(),
             }
         }
@@ -789,7 +808,7 @@ impl<'a> Lexer<'a> {
             }
             '"' => self.string_literal(diag, start),
             '\'' => Token::Char(self.char_literal(diag, false)),
-            '0'..='9' => self.numeric_literal(start),
+            ch @ '0'..='9' => self.numeric_literal(diag, ch, start),
             'b' => self.maybe_byte_string(diag, start),
             ch if Self::is_identifier_first_char(ch) => self.identifier(start),
             _ => {
