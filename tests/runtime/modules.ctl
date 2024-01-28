@@ -18,7 +18,7 @@ mod inner {
     }
 
     pub struct B {
-        pub foo: ::misc::modules::A,
+        pub foo: ::runtime::modules::A,
         pub bar: A,
 
         pub fn get_value(this): i32 {

@@ -119,7 +119,7 @@ fn main() {
     std::println("\nmisc: ");
     {
         std::println("booleans()...");
-        bool::booleans();
+        misc::booleans();
 
         std::println("positional::start()...");
         positional::start();
@@ -135,6 +135,12 @@ fn main() {
 
         std::println("modules()...");
         modules::test();
+
+        std::println("statics()...");
+        misc::statics();
+
+        std::println("void_assigns()...");
+        misc::void_assigns();
     }
 
     std::println("\nloops: ");
