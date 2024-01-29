@@ -265,4 +265,18 @@ impl CheckedExpr {
 
         self
     }
+
+    pub fn option_null(opt: Type) -> CheckedExpr {
+        CheckedExpr::new(
+            opt,
+            CheckedExprData::Instance {
+                members: [(
+                    "None".into(),
+                    CheckedExpr::new(Type::Void, CheckedExprData::Void),
+                )]
+                .into(),
+                variant: Some("None".into()),
+            },
+        )
+    }
 }

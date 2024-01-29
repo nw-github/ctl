@@ -75,7 +75,7 @@ impl TypeGen {
     fn finish(&mut self, buffer: &mut Buffer, scopes: &Scopes) -> Result<(), Error> {
         let mut structs = HashMap::new();
         for ut in self.structs.take().unwrap() {
-            Self::get_depencencies(scopes, ut, &mut structs);
+            Self::get_dependencies(scopes, ut, &mut structs);
         }
 
         let mut definitions = Buffer::default();
@@ -207,7 +207,7 @@ impl TypeGen {
         Ok(result)
     }
 
-    fn get_depencencies(
+    fn get_dependencies(
         scopes: &Scopes,
         ut: GenericUserType,
         result: &mut HashMap<GenericUserType, Vec<GenericUserType>>,
@@ -227,7 +227,7 @@ impl TypeGen {
 
             if let Type::User(data) = ty {
                 if !data.ty_args.is_empty() {
-                    Self::get_depencencies(scopes, (*data).clone(), result);
+                    Self::get_dependencies(scopes, (*data).clone(), result);
                 }
 
                 deps.push(*data);
@@ -951,8 +951,42 @@ impl Codegen {
                         self.buffer.emit(format!(".{ARRAY_DATA_NAME}"));
                     }
                 }
+                UnaryOp::Try => {
+                    enter_block!(self, state, scopes, &expr.ty, |tmp| {
+                        let mut opt_ty = inner.ty.clone();
+                        state.fill_generics(scopes, &mut opt_ty);
+    
+                        self.emit_type(scopes, &inner.ty);
+                        self.buffer.emit(format!(" {tmp} = "));
+                        self.gen_expr(scopes, *inner, state);
+                        self.buffer.emit(";");
+
+                        self.gen_pattern(
+                            scopes,
+                            state,
+                            &CheckedPattern::UnionMember {
+                                pattern: None,
+                                variant: "None".into(),
+                                inner: expr.ty.clone(),
+                            },
+                            &tmp,
+                            &opt_ty,
+                        );
+                        self.buffer.emit("return ");
+                        let mut ret_type = scopes.get(state.func.id).ret.clone();
+                        state.fill_generics(scopes, &mut ret_type);
+                        self.gen_expr_inner(scopes, CheckedExpr::option_null(ret_type), state);
+                        self.buffer.emit(format!("; }} else {{ {} = ", self.cur_block));
+                        if is_opt_ptr(scopes, &opt_ty) {
+                            self.buffer.emit(format!("{tmp};"));
+                        } else {
+                            self.buffer.emit(format!("{tmp}.Some;"));
+                        }
+
+                        self.buffer.emit("}");
+                    });
+                }
                 UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in gen_expr"),
-                UnaryOp::Try => todo!(),
             },
             CheckedExprData::Call {
                 mut func,
@@ -1347,13 +1381,12 @@ impl Codegen {
                             self.buffer.emit(";");
                             tmp
                         });
-    
+
                         self.gen_pattern(scopes, state, &patt, &tmp, &ty);
                     } else {
                         self.buffer.emit("if (");
                         self.gen_expr(scopes, *cond, state);
                         self.buffer.emit(") {");
-                        
                     }
                     stmt!(self, {
                         if !expr.ty.is_void_like() {

@@ -184,6 +184,10 @@ impl TypeChecker {
                 .collect::<Vec<_>>()
             {
                 this.enter_id(id, |this| {
+                    if this.scopes[this.current].kind.is_module() {
+                        this.include_universal();
+                    }
+
                     for UnresolvedUse { public, path, all } in
                         std::mem::take(&mut this.current().use_stmts)
                     {
@@ -1061,7 +1065,7 @@ impl TypeChecker {
                 let var = self.scopes.get_mut(id);
                 var.value = Some(value);
             }
-            DeclaredStmt::None => return CheckedStmt::Error,
+            DeclaredStmt::None => {}
         }
 
         CheckedStmt::None
@@ -1593,18 +1597,10 @@ impl TypeChecker {
             ExprData::None => {
                 if let Some(inner) = target.and_then(|target| target.as_option_inner(&self.scopes))
                 {
-                    CheckedExpr::new(
+                    CheckedExpr::option_null(
                         self.scopes
                             .make_lang_type("option", vec![inner.clone()])
                             .unwrap(),
-                        CheckedExprData::Instance {
-                            members: [(
-                                "None".into(),
-                                self.check_expr(Located::new(span, ExprData::Void), target),
-                            )]
-                            .into(),
-                            variant: Some("None".into()),
-                        },
                     )
                 } else {
                     self.error(Error::new("cannot infer type of option null literal", span))
@@ -2593,7 +2589,28 @@ impl TypeChecker {
                 }
                 (invalid!(expr.ty), expr)
             }
-            Try => todo!(),
+            Try => {
+                let expr =
+                    self.check_expr(expr, target.and_then(|t| t.as_option_inner(&self.scopes)));
+
+                if let Some(inner) = expr.ty.as_option_inner(&self.scopes) {
+                    // TODO: lambdas
+                    if self
+                        .current_function()
+                        .and_then(|id| self.scopes.get(id).ret.as_option_inner(&self.scopes))
+                        .is_none()
+                    {
+                        self.error(Error::new(
+                            "operator '?' is only valid in functions that return Option",
+                            span,
+                        ))
+                    }
+
+                    (inner.clone(), expr)
+                } else {
+                    (invalid!(expr.ty), expr)
+                }
+            }
         };
 
         CheckedExpr::new(
