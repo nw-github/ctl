@@ -2114,67 +2114,10 @@ impl TypeChecker {
                 )
             }
             ExprData::As { expr, ty, throwing } => {
-                let mut expr = self.check_expr(*expr, None);
+                let expr = self.check_expr(*expr, None);
                 let ty = self.resolve_typehint(&ty);
                 if !expr.ty.coercible_to(&self.scopes, &ty) {
-                    match (&expr.ty, &ty) {
-                        (a, b) if a == b => {}
-                        (Type::Int(a), Type::Int(b) | Type::Uint(b)) if a <= b => {}
-                        (Type::Uint(a), Type::Uint(b)) if a <= b => {}
-                        (Type::Uint(a), Type::Int(b)) if (a + 1) <= *b => {}
-                        (Type::CInt(a), Type::CInt(b) | Type::CUint(b)) if a <= b => {}
-                        (Type::Char, Type::Uint(num)) if *num >= 32 => {}
-                        (Type::Char, Type::Int(num)) if *num >= 33 => {}
-                        (Type::F32, Type::F64) => {}
-                        (Type::Ptr(_) | Type::MutPtr(_), Type::Usize) => {}
-                        (
-                            Type::Bool,
-                            Type::Int(_)
-                            | Type::Uint(_)
-                            | Type::CInt(_)
-                            | Type::CUint(_)
-                            | Type::Usize
-                            | Type::Isize,
-                        ) => {}
-
-                        (Type::Usize, Type::Ptr(_) | Type::MutPtr(_))
-                        | (Type::MutPtr(_) | Type::Ptr(_), Type::MutPtr(_) | Type::Ptr(_)) => {
-                            if self.safety != Safety::Unsafe {
-                                self.error(Error::is_unsafe(span))
-                            }
-                        }
-
-                        (Type::CUint(a), Type::CUint(b)) if a <= b => {}
-                        (
-                            Type::Int(_)
-                            | Type::Uint(_)
-                            | Type::CInt(_)
-                            | Type::CUint(_)
-                            | Type::Usize
-                            | Type::Isize
-                            | Type::Char,
-                            Type::Int(_)
-                            | Type::Uint(_)
-                            | Type::CInt(_)
-                            | Type::CUint(_)
-                            | Type::Usize
-                            | Type::Isize
-                            | Type::Char,
-                        ) if throwing => {}
-                        (Type::F64, Type::F32) if throwing => {}
-                        _ => {
-                            expr = self.error(Error::new(
-                                format!(
-                                    "cannot{}cast expression of type '{}' to '{}'",
-                                    if !throwing { " infallibly " } else { " " },
-                                    expr.ty.name(&self.scopes),
-                                    ty.name(&self.scopes)
-                                ),
-                                span,
-                            ));
-                        }
-                    }
-
+                    self.check_cast(&expr.ty, &ty, throwing, span);
                     CheckedExpr::new(ty, CheckedExprData::As(expr.into(), throwing))
                 } else {
                     expr.coerce_to(&ty, &self.scopes)
@@ -2286,6 +2229,73 @@ impl TypeChecker {
             }
         }
         expr
+    }
+
+    fn check_cast(&mut self, lhs: &Type, rhs: &Type, throwing: bool, span: Span) {
+        if let Some((a, b)) = lhs.integer_stats().zip(rhs.integer_stats()) {
+            if (a.signed == b.signed || (a.signed && !b.signed)) && a.bits <= b.bits {
+                return;
+            }
+            if (!a.signed && b.signed) && a.bits < b.bits {
+                return;
+            }
+        }
+
+        match (lhs, rhs) {
+            (a, b) if a == b => {}
+            (Type::Char, Type::Uint(num)) if *num >= 32 => {}
+            (Type::Char, Type::Int(num)) if *num >= 33 => {}
+            (Type::Char, Type::Isize) if std::mem::size_of::<isize>() >= 33 => {}
+            (Type::Char, Type::Usize) if std::mem::size_of::<usize>() >= 32 => {}
+            (Type::F32, Type::F64) => {}
+            (Type::Ptr(_) | Type::MutPtr(_), Type::Usize) => {}
+            (
+                Type::Bool,
+                Type::Int(_)
+                | Type::Uint(_)
+                | Type::CInt(_)
+                | Type::CUint(_)
+                | Type::Usize
+                | Type::Isize,
+            ) => {}
+
+            (Type::Usize, Type::Ptr(_) | Type::MutPtr(_))
+            | (Type::MutPtr(_) | Type::Ptr(_), Type::MutPtr(_) | Type::Ptr(_)) => {
+                if self.safety != Safety::Unsafe {
+                    self.error(Error::is_unsafe(span))
+                }
+            }
+
+            (Type::CUint(a), Type::CUint(b)) if a <= b => {}
+            (
+                Type::Int(_)
+                | Type::Uint(_)
+                | Type::CInt(_)
+                | Type::CUint(_)
+                | Type::Usize
+                | Type::Isize
+                | Type::Char,
+                Type::Int(_)
+                | Type::Uint(_)
+                | Type::CInt(_)
+                | Type::CUint(_)
+                | Type::Usize
+                | Type::Isize
+                | Type::Char,
+            ) if throwing => {}
+            (Type::F64, Type::F32) if throwing => {}
+            _ => {
+                self.error(Error::new(
+                    format!(
+                        "cannot{}cast expression of type '{}' to '{}'",
+                        if !throwing { " infallibly " } else { " " },
+                        lhs.name(&self.scopes),
+                        rhs.name(&self.scopes),
+                    ),
+                    span,
+                ))
+            }
+        }
     }
 
     fn check_if_branch(&mut self, expr: Expr, target: Option<&Type>, el: bool) -> CheckedExpr {
@@ -4125,6 +4135,7 @@ impl TypeChecker {
                 let TypePathComponent(name, ty_args) = data.first().unwrap();
                 let is_end = data.len() == 1;
                 if let Some(id) = self.find(name) {
+                    resolve_type!(self, self.scopes.get_mut::<VariableId>(*id).ty);
                     if is_end {
                         return Some(ResolvedPath::Var(*id));
                     }
@@ -4196,6 +4207,7 @@ impl TypeChecker {
         for (i, TypePathComponent(name, ty_args)) in data.iter().enumerate() {
             let is_end = i + 1 == data.len();
             if let Some(id) = self.scopes.find_in(name, scope) {
+                resolve_type!(self, self.scopes.get_mut::<VariableId>(*id).ty);
                 if !id.public && !self.can_access_privates(scope) {
                     self.error(Error::new(format!("variable '{name}' is private"), span))
                 }

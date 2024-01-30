@@ -730,14 +730,16 @@ impl Codegen {
         this.buffer.emit(functions.0);
         this.buffer.emit("int main(int argc, char **argv) {");
         this.buffer.emit("ctl_init();");
-        for (id, void) in vars {
-            if !void {
-                this.buffer.emit_var_name(scopes, id, main);
-                this.buffer.emit(" = ");
+        stmt!(this, {
+            for (id, void) in vars {
+                if !void {
+                    this.buffer.emit_var_name(scopes, id, main);
+                    this.buffer.emit(" = ");
+                }
+                this.gen_expr(scopes, scopes.get(id).value.clone().unwrap(), main);
+                this.buffer.emit(";");
             }
-            this.gen_expr(scopes, scopes.get(id).value.clone().unwrap(), main);
-            this.buffer.emit(";");
-        }
+        });
 
         let returns = scopes.get(main.func.id).ret != Type::Void;
         if let Some(state) = conv_argv {
