@@ -97,16 +97,9 @@ impl Pipeline<Parsed> {
 }
 
 impl Pipeline<Checked> {
-    pub fn codegen(mut self, leak: bool) -> Result<(Diagnostics, String), Diagnostics> {
+    pub fn codegen(self, leak: bool) -> Result<(Diagnostics, String), Diagnostics> {
         let module = self.state.0;
-        if !self.diag.has_errors() {
-            match Codegen::build(module.scope, &module.scopes, leak) {
-                Ok(str) => return Ok((self.diag, str)),
-                Err(err) => self.diag.error(err),
-            }
-        }
-
-        Err(self.diag)
+        Codegen::build(self.diag, module.scope, &module.scopes, leak)
     }
 }
 

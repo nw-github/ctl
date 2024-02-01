@@ -366,7 +366,7 @@ impl TypeChecker {
                 });
                 let id = self.declare_type(
                     UserType {
-                        name: base.name.data,
+                        name: base.name,
                         body_scope: ScopeId::ROOT,
                         data: UserTypeData::Struct {
                             members: Vec::new(),
@@ -377,7 +377,6 @@ impl TypeChecker {
                     },
                     base.public,
                     stmt.attrs,
-                    base.name.span,
                 );
                 self.enter(ScopeKind::UserType(id), base.public, |this| {
                     this.scopes.get_mut(id).body_scope = this.current;
@@ -431,7 +430,7 @@ impl TypeChecker {
                 let ret = Self::typehint_for_struct(&base.name, &tp);
                 let id = self.declare_type(
                     UserType {
-                        name: base.name.data,
+                        name: base.name,
                         body_scope: ScopeId::ROOT,
                         data: UserTypeData::Union(Union {
                             variants: Vec::new(),
@@ -442,7 +441,6 @@ impl TypeChecker {
                     },
                     base.public,
                     stmt.attrs,
-                    base.name.span,
                 );
                 self.enter(ScopeKind::UserType(id), base.public, |this| {
                     this.scopes.get_mut(id).body_scope = this.current;
@@ -555,7 +553,7 @@ impl TypeChecker {
             } => {
                 let id = self.declare_type(
                     UserType {
-                        name: name.data,
+                        name,
                         body_scope: ScopeId::ROOT,
                         data: UserTypeData::Trait,
                         impls: Vec::new(),
@@ -563,7 +561,6 @@ impl TypeChecker {
                     },
                     public,
                     stmt.attrs,
-                    name.span,
                 );
                 self.enter(ScopeKind::UserType(id), public, |this| {
                     this.scopes.get_mut(id).body_scope = this.current;
@@ -595,7 +592,7 @@ impl TypeChecker {
                 let backing = Type::discriminant_for(variants.len());
                 let id = self.declare_type(
                     UserType {
-                        name: name.data,
+                        name,
                         body_scope: ScopeId::ROOT,
                         data: UserTypeData::Enum(backing.clone()),
                         type_params: Vec::new(),
@@ -603,7 +600,6 @@ impl TypeChecker {
                     },
                     public,
                     stmt.attrs,
-                    name.span,
                 );
 
                 self.enter(ScopeKind::UserType(id), public, |this| {
@@ -831,7 +827,7 @@ impl TypeChecker {
             .map(|(i, (name, impls))| {
                 self.insert(
                     UserType {
-                        name,
+                        name: Located::new(Span::default(), name),
                         body_scope: self.current,
                         data: UserTypeData::Template(tt, i),
                         type_params: Vec::new(),
@@ -875,19 +871,13 @@ impl TypeChecker {
         (impls, declared_blocks)
     }
 
-    fn declare_type(
-        &mut self,
-        ty: UserType,
-        public: bool,
-        attrs: Vec<Attribute>,
-        span: Span,
-    ) -> UserTypeId {
+    fn declare_type(&mut self, ty: UserType, public: bool, attrs: Vec<Attribute>) -> UserTypeId {
         if self
             .scopes
-            .find_in::<UserTypeId>(&ty.name, self.current)
+            .find_in::<UserTypeId>(&ty.name.data, self.current)
             .is_some()
         {
-            self.error(Error::redefinition("type", &ty.name, span))
+            self.error(Error::redefinition("type", &ty.name.data, ty.name.span))
         }
 
         let id = self.insert(ty, public);
@@ -2282,17 +2272,15 @@ impl TypeChecker {
                 | Type::Char,
             ) if throwing => {}
             (Type::F64, Type::F32) if throwing => {}
-            _ => {
-                self.error(Error::new(
-                    format!(
-                        "cannot{}cast expression of type '{}' to '{}'",
-                        if !throwing { " infallibly " } else { " " },
-                        lhs.name(&self.scopes),
-                        rhs.name(&self.scopes),
-                    ),
-                    span,
-                ))
-            }
+            _ => self.error(Error::new(
+                format!(
+                    "cannot{}cast expression of type '{}' to '{}'",
+                    if !throwing { " infallibly " } else { " " },
+                    lhs.name(&self.scopes),
+                    rhs.name(&self.scopes),
+                ),
+                span,
+            )),
         }
     }
 
@@ -3927,7 +3915,7 @@ impl TypeChecker {
     fn resolve_use(&mut self, public: bool, all: bool, path: ResolvedPath, span: Span) -> bool {
         match path {
             ResolvedPath::UserType(ut) => {
-                let name = &self.scopes.get(ut.id).name;
+                let name = &self.scopes.get(ut.id).name.data;
                 if self
                     .scopes
                     .find_in::<FunctionId>(name, self.current)

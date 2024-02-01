@@ -73,7 +73,7 @@ impl ScopeId {
 }
 
 id!(FunctionId => Function, fns, name.data, func);
-id!(UserTypeId => UserType, types, name, user_type);
+id!(UserTypeId => UserType, types, name.data, user_type);
 id!(VariableId => Variable, vars, name, var);
 id!(ExtensionId => Extension, exts, name, ext);
 
@@ -109,7 +109,7 @@ impl ScopeKind {
     {
         match self {
             &ScopeKind::Function(id) => Some(&scopes.get(id).name.data),
-            &ScopeKind::UserType(id) => Some(&scopes.get(id).name),
+            &ScopeKind::UserType(id) => Some(&scopes.get(id).name.data),
             ScopeKind::Module(name, _) => Some(name),
             _ => None,
         }
@@ -228,7 +228,7 @@ impl UserTypeData {
 
 #[derive(Debug)]
 pub struct UserType {
-    pub name: String,
+    pub name: Located<String>,
     pub body_scope: ScopeId,
     pub data: UserTypeData,
     pub impls: Vec<Type>,

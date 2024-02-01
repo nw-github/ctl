@@ -11,7 +11,7 @@ use crate::{
         parsed::RangePattern,
         UnaryOp,
     },
-    error::Error,
+    error::{Diagnostics, Error},
     lexer::Span,
     sym::{
         CheckedMember, FunctionId, ParamPattern, ScopeId, ScopeKind, Scopes, UserTypeData,
@@ -65,24 +65,31 @@ impl std::hash::Hash for State {
     }
 }
 
-struct TypeGen {
-    structs: Option<HashSet<GenericUserType>>,
-    fnptrs: Option<HashSet<FnPtr>>,
+struct TypeGen<'a> {
+    structs: HashMap<GenericUserType, Vec<GenericUserType>>,
+    fnptrs: HashSet<FnPtr>,
     arrays: HashMap<Type, HashSet<usize>>,
+    scopes: &'a Scopes,
 }
 
-impl TypeGen {
-    fn finish(&mut self, buffer: &mut Buffer, scopes: &Scopes) -> Result<(), Error> {
-        let mut structs = HashMap::new();
-        for ut in self.structs.take().unwrap() {
-            Self::get_dependencies(scopes, ut, &mut structs);
+impl<'a> TypeGen<'a> {
+    fn new(scopes: &'a Scopes) -> Self {
+        Self {
+            scopes,
+            structs: Default::default(),
+            fnptrs: Default::default(),
+            arrays: Default::default(),
         }
+    }
 
+    fn finish(mut self, buffer: &mut Buffer, scopes: &Scopes) {
+        let structs = std::mem::take(&mut self.structs);
+        let fnptrs = std::mem::take(&mut self.fnptrs);
+        let mut arrays = std::mem::take(&mut self.arrays);
         let mut definitions = Buffer::default();
-        // FIXME: generating structs could cause more function pointers to need to be generated
-        for f in self.fnptrs.take().unwrap() {
+        for f in fnptrs {
             definitions.emit("typedef ");
-            definitions.emit_type(scopes, &f.ret, self);
+            definitions.emit_type(scopes, &f.ret, None);
             definitions.emit("(*");
             definitions.emit_fnptr_name(scopes, &f);
             definitions.emit(")(");
@@ -91,13 +98,13 @@ impl TypeGen {
                     definitions.emit(", ");
                 }
 
-                definitions.emit_type(scopes, param, self);
+                definitions.emit_type(scopes, param, None);
             }
             definitions.emit(");");
         }
 
         let mut emitted_arrays = HashSet::new();
-        for ut in Self::get_struct_order(scopes, &structs)? {
+        for ut in self.get_struct_order(&structs) {
             let union = scopes.get(ut.id).data.as_union();
             let unsafe_union = union.is_some_and(|union| union.is_unsafe);
             if unsafe_union {
@@ -118,63 +125,152 @@ impl TypeGen {
 
             let members = scopes.get(ut.id).members().unwrap();
             if let Some(union) = union.filter(|_| !unsafe_union) {
-                definitions.emit_type(scopes, &union.tag_type(), self);
+                definitions.emit_type(scopes, &union.tag_type(), None);
                 definitions.emit(format!(" {UNION_TAG_NAME};"));
 
                 for member in members.iter().filter(|m| m.shared) {
-                    self.emit_member(scopes, ut, member, &mut definitions);
+                    self.emit_member(ut, member, &mut definitions);
                 }
 
                 definitions.emit(" union {");
                 for member in members.iter().filter(|m| !m.shared) {
-                    self.emit_member(scopes, ut, member, &mut definitions);
+                    self.emit_member(ut, member, &mut definitions);
                 }
                 definitions.emit("};");
             } else {
                 for member in members {
-                    self.emit_member(scopes, ut, member, &mut definitions);
+                    self.emit_member(ut, member, &mut definitions);
                 }
             }
 
             definitions.emit("};");
 
             let ty = Type::User(ut.clone().into());
-            if let Some(sizes) = self.arrays.remove(&ty) {
+            if let Some(sizes) = arrays.remove(&ty) {
                 for size in sizes {
-                    self.emit_array(scopes, buffer, Some(&mut definitions), &ty, size);
+                    self.emit_array(buffer, Some(&mut definitions), &ty, size);
                 }
                 emitted_arrays.insert(ty);
             }
         }
 
-        for (ty, sizes) in std::mem::take(&mut self.arrays)
+        for (ty, sizes) in arrays
             .into_iter()
             .filter(|(ty, _)| !emitted_arrays.contains(ty))
         {
             for size in sizes {
-                self.emit_array(scopes, buffer, None, &ty, size);
+                self.emit_array(buffer, None, &ty, size);
             }
         }
 
         buffer.emit(definitions.0);
-        Ok(())
     }
 
-    fn get_struct_order<'a>(
-        scopes: &Scopes,
-        structs: &'a HashMap<GenericUserType, Vec<GenericUserType>>,
-    ) -> Result<Vec<&'a GenericUserType>, Error> {
-        fn dfs<'a>(
-            sid: &'a GenericUserType,
-            structs: &'a HashMap<GenericUserType, Vec<GenericUserType>>,
-            visited: &mut HashMap<&'a GenericUserType, bool>,
-            result: &mut Vec<&'a GenericUserType>,
-        ) -> Result<(), (&'a GenericUserType, &'a GenericUserType)> {
+    fn add_type(&mut self, diag: &mut Diagnostics, ty: &Type, adding: Option<&GenericUserType>) {
+        match &ty {
+            Type::FnPtr(ptr) => self.add_fnptr(diag, (**ptr).clone()),
+            Type::User(ut) => self.add_user_type(diag, (**ut).clone(), adding),
+            Type::Array(arr) => self.add_array(diag, arr.0.clone(), arr.1, adding),
+            _ => {}
+        }
+    }
+
+    fn add_fnptr(&mut self, diag: &mut Diagnostics, f: FnPtr) {
+        for param in f.params.iter() {
+            self.add_type(diag, param, None);
+        }
+
+        self.add_type(diag, &f.ret, None);
+        self.fnptrs.insert(f);
+    }
+
+    fn add_array(
+        &mut self,
+        diag: &mut Diagnostics,
+        ty: Type,
+        len: usize,
+        adding: Option<&GenericUserType>,
+    ) {
+        if let Entry::Occupied(mut entry) = self.arrays.entry(ty.clone()) {
+            entry.get_mut().insert(len);
+            return;
+        }
+
+        self.add_type(diag, &ty, adding);
+        self.arrays.insert(ty, [len].into());
+    }
+
+    fn add_user_type(
+        &mut self,
+        diag: &mut Diagnostics,
+        ut: GenericUserType,
+        adding: Option<&GenericUserType>,
+    ) {
+        if self.structs.contains_key(&ut) {
+            return;
+        }
+
+        let mut deps = Vec::new();
+        if let Some(members) = self.scopes.get(ut.id).members() {
+            for member in members.iter() {
+                let mut ty = member.ty.clone();
+                ty.fill_struct_templates(self.scopes, &ut);
+                match ty {
+                    Type::FnPtr(ptr) => self.add_fnptr(diag, *ptr),
+                    Type::User(dep) => {
+                        if matches!(adding, Some(ut) if ut == &*dep) {
+                            // ideally get the span of the instantiation that caused this
+                            diag.error(Error::cyclic(
+                                &dep.name(self.scopes),
+                                &ut.name(self.scopes),
+                                self.scopes.get(dep.id).name.span,
+                            ));
+                            diag.error(Error::cyclic(
+                                &ut.name(self.scopes),
+                                &dep.name(self.scopes),
+                                self.scopes.get(ut.id).name.span,
+                            ));
+                            return;
+                        }
+
+                        deps.push((*dep).clone());
+                        self.add_user_type(diag, *dep, Some(&ut));
+                    }
+                    Type::Array(arr) => {
+                        let mut inner = &arr.0;
+                        while let Type::Array(ty) = inner {
+                            inner = &ty.0;
+                        }
+
+                        if let Type::User(data) = inner {
+                            deps.push((**data).clone());
+                        }
+
+                        self.add_array(diag, arr.0, arr.1, Some(&ut));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        self.structs.insert(ut, deps);
+    }
+
+    fn get_struct_order<'b>(
+        &self,
+        structs: &'b HashMap<GenericUserType, Vec<GenericUserType>>,
+    ) -> Vec<&'b GenericUserType> {
+        fn dfs<'b>(
+            sid: &'b GenericUserType,
+            structs: &'b HashMap<GenericUserType, Vec<GenericUserType>>,
+            visited: &mut HashMap<&'b GenericUserType, bool>,
+            result: &mut Vec<&'b GenericUserType>,
+        ) -> Result<(), ()> {
             visited.insert(sid, true);
             if let Some(deps) = structs.get(sid) {
                 for dep in deps.iter() {
                     match visited.get(dep) {
-                        Some(true) => return Err((dep, sid)),
+                        Some(true) => return Err(()),
                         None => dfs(dep, structs, visited, result)?,
                         _ => {}
                     }
@@ -189,65 +285,20 @@ impl TypeGen {
         let mut state = HashMap::new();
         let mut result = Vec::new();
         for sid in structs.keys() {
-            if !state.contains_key(sid) {
-                dfs(sid, structs, &mut state, &mut result).map_err(|(a, b)| {
-                    // TODO: figure out a real span here
-                    Error::new(
-                        format!(
-                            "cyclic dependency detected between {} and {}.",
-                            a.name(scopes),
-                            b.name(scopes),
-                        ),
-                        Span::default(),
-                    )
-                })?;
+            if state.contains_key(sid) {
+                continue;
             }
+            _ = dfs(sid, structs, &mut state, &mut result);
         }
 
-        Ok(result)
+        result
     }
 
-    fn get_dependencies(
-        scopes: &Scopes,
-        ut: GenericUserType,
-        result: &mut HashMap<GenericUserType, Vec<GenericUserType>>,
-    ) {
-        if result.contains_key(&ut) {
-            return;
-        }
-
-        let mut deps = Vec::new();
-        for member in scopes.get(ut.id).members().unwrap().iter() {
-            let mut ty = member.ty.clone();
-            ty.fill_struct_templates(scopes, &ut);
-
-            while let Type::Array(inner) = ty {
-                ty = inner.0;
-            }
-
-            if let Type::User(data) = ty {
-                if !data.ty_args.is_empty() {
-                    Self::get_dependencies(scopes, (*data).clone(), result);
-                }
-
-                deps.push(*data);
-            }
-        }
-
-        result.insert(ut, deps);
-    }
-
-    fn emit_member(
-        &mut self,
-        scopes: &Scopes,
-        ut: &GenericUserType,
-        member: &CheckedMember,
-        buffer: &mut Buffer,
-    ) {
+    fn emit_member(&mut self, ut: &GenericUserType, member: &CheckedMember, buffer: &mut Buffer) {
         let mut ty = member.ty.clone();
-        ty.fill_struct_templates(scopes, ut);
+        ty.fill_struct_templates(self.scopes, ut);
         if !ty.is_void_like() {
-            buffer.emit_type(scopes, &ty, self);
+            buffer.emit_type(self.scopes, &ty, None);
             buffer.emit(format!(" {}", member.name));
             buffer.emit(";");
         }
@@ -255,34 +306,23 @@ impl TypeGen {
 
     fn emit_array(
         &mut self,
-        scopes: &Scopes,
         typedef: &mut Buffer,
         defs: Option<&mut Buffer>,
         ty: &Type,
         size: usize,
     ) {
         typedef.emit("typedef struct ");
-        typedef.emit_array_struct_name(scopes, ty, size);
+        typedef.emit_array_struct_name(self.scopes, ty, size);
         typedef.emit(" ");
-        typedef.emit_array_struct_name(scopes, ty, size);
+        typedef.emit_array_struct_name(self.scopes, ty, size);
         typedef.emit(";");
 
         let defs = defs.unwrap_or(typedef);
         defs.emit("struct ");
-        defs.emit_array_struct_name(scopes, ty, size);
+        defs.emit_array_struct_name(self.scopes, ty, size);
         defs.emit(" { ");
-        defs.emit_type(scopes, ty, self);
+        defs.emit_type(self.scopes, ty, None);
         defs.emit(format!(" {ARRAY_DATA_NAME}[{size}]; }};"));
-    }
-}
-
-impl Default for TypeGen {
-    fn default() -> Self {
-        Self {
-            structs: Some(HashSet::new()),
-            fnptrs: Some(HashSet::new()),
-            arrays: HashMap::new(),
-        }
     }
 }
 
@@ -294,7 +334,12 @@ impl Buffer {
         self.0.push_str(source.as_ref());
     }
 
-    fn emit_type(&mut self, scopes: &Scopes, id: &Type, tg: &mut TypeGen) {
+    fn emit_type(
+        &mut self,
+        scopes: &Scopes,
+        id: &Type,
+        tg: Option<(&mut Diagnostics, &mut TypeGen)>,
+    ) {
         match id {
             Type::Void | Type::Never | Type::CVoid => self.emit("void"),
             Type::Int(bits) | Type::Uint(bits) => {
@@ -323,9 +368,9 @@ impl Buffer {
             Type::Ptr(inner) | Type::MutPtr(inner) => {
                 if let Type::Array(value) = &**inner {
                     self.emit_type(scopes, &value.0, tg);
-                    self.emit("/*");
-                    self.emit_type(scopes, inner, tg);
-                    self.emit("*/");
+                    // self.emit("/*");
+                    // self.emit_type(diag, scopes, inner, tg);
+                    // self.emit("*/");
                 } else {
                     self.emit_type(scopes, inner, tg);
                 }
@@ -336,18 +381,18 @@ impl Buffer {
                 }
             }
             Type::FnPtr(f) => {
-                if let Some(fnptrs) = tg.fnptrs.as_mut() {
-                    fnptrs.insert((**f).clone());
-                }
                 self.emit_generic_mangled_name(scopes, id);
+                if let Some((diag, tg)) = tg {
+                    tg.add_fnptr(diag, (**f).clone());
+                }
             }
             Type::User(ut) => match &scopes.get(ut.id).data {
                 UserTypeData::Struct { .. } | UserTypeData::Union(_) => {
                     if is_opt_ptr(scopes, id) {
                         self.emit_type(scopes, &ut.ty_args[0], tg);
                     } else {
-                        if let Some(structs) = tg.structs.as_mut() {
-                            structs.insert((**ut).clone());
+                        if let Some((diag, tg)) = tg {
+                            tg.add_user_type(diag, (**ut).clone(), None);
                         }
                         self.emit_type_name(scopes, ut);
                     }
@@ -364,13 +409,8 @@ impl Buffer {
             },
             Type::Array(data) => {
                 self.emit_generic_mangled_name(scopes, id);
-                match tg.arrays.entry(data.0.clone()) {
-                    Entry::Occupied(mut entry) => {
-                        entry.get_mut().insert(data.1);
-                    }
-                    Entry::Vacant(entry) => {
-                        entry.insert([data.1].into());
-                    }
+                if let Some((diag, tg)) = tg {
+                    tg.add_array(diag, data.0.clone(), data.1, None);
                 }
             }
             Type::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
@@ -471,7 +511,7 @@ impl Buffer {
             panic!("ICE: Template type in emit_type_name");
         }
 
-        self.emit(scopes.full_name(ty.scope, &ty.name));
+        self.emit(scopes.full_name(ty.scope, &ty.name.data));
         if !ut.ty_args.is_empty() {
             self.emit("$");
             for ty in ut.ty_args.iter() {
@@ -484,6 +524,7 @@ impl Buffer {
 
     fn emit_prototype(
         &mut self,
+        diag: &mut Diagnostics,
         scopes: &Scopes,
         state: &mut State,
         is_prototype: bool,
@@ -503,7 +544,7 @@ impl Buffer {
             self.emit("_Noreturn ");
         }
 
-        self.emit_type(scopes, &ret, tg);
+        self.emit_type(scopes, &ret, Some((diag, tg)));
         self.emit(" ");
         self.emit_fn_name(scopes, state);
         self.emit("(");
@@ -519,12 +560,12 @@ impl Buffer {
             }
 
             if f.is_extern || is_prototype {
-                self.emit_type(scopes, &ty, tg);
+                self.emit_type(scopes, &ty, Some((diag, tg)));
             } else if let ParamPattern::Checked(IrrefutablePattern::Variable(id)) = &param.patt {
-                _ = self.emit_local_decl(scopes, *id, state, tg);
+                _ = self.emit_local_decl(diag, scopes, *id, state, tg);
                 continue;
             } else {
-                self.emit_type(scopes, &ty, tg);
+                self.emit_type(scopes, &ty, Some((diag, tg)));
                 self.emit(format!(" {}", param.label));
             }
         }
@@ -574,6 +615,7 @@ impl Buffer {
 
     fn emit_local_decl(
         &mut self,
+        diag: &mut Diagnostics,
         scopes: &Scopes,
         id: VariableId,
         state: &mut State,
@@ -587,7 +629,7 @@ impl Buffer {
                 self.emit("static ");
             }
 
-            self.emit_type(scopes, &ty, tg);
+            self.emit_type(scopes, &ty, Some((diag, tg)));
             if !var.mutable && !var.is_static {
                 self.emit(" const");
             }
@@ -689,9 +731,10 @@ macro_rules! hoist_point {
 
 pub struct Codegen<'a> {
     scopes: &'a Scopes,
+    diag: Diagnostics,
     buffer: Buffer,
     temporaries: Buffer,
-    type_gen: TypeGen,
+    type_gen: TypeGen<'a>,
     funcs: HashSet<State>,
     cur_block: String,
     cur_loop: String,
@@ -699,22 +742,28 @@ pub struct Codegen<'a> {
 }
 
 impl<'a> Codegen<'a> {
-    pub fn build(scope: ScopeId, scopes: &'a Scopes, leak: bool) -> Result<String, Error> {
-        let main = &mut State::new(
-            GenericFunc::new(
-                *scopes
-                    .find_in("main", scope)
-                    .ok_or(Error::new("no main function found", Span::default()))?,
-                Vec::new(),
-            ),
-            None,
-        );
+    pub fn build(
+        mut diag: Diagnostics,
+        scope: ScopeId,
+        scopes: &'a Scopes,
+        leak: bool,
+    ) -> Result<(Diagnostics, String), Diagnostics> {
+        if diag.has_errors() {
+            return Err(diag);
+        }
+
+        let Some(main) = scopes.find_in("main", scope) else {
+            diag.error(Error::new("no main function found", Span::default()));
+            return Err(diag);
+        };
+        let main = &mut State::new(GenericFunc::new(*main, Vec::new()), None);
         let mut this = Self {
             scopes,
+            diag,
             funcs: [main.clone()].into(),
             buffer: Default::default(),
             temporaries: Default::default(),
-            type_gen: Default::default(),
+            type_gen: TypeGen::new(scopes),
             cur_block: Default::default(),
             cur_loop: Default::default(),
             yielded: Default::default(),
@@ -750,7 +799,7 @@ impl<'a> Codegen<'a> {
         for (id, _) in scopes.vars().filter(|(_, v)| v.is_static) {
             if this
                 .buffer
-                .emit_local_decl(scopes, id, main, &mut this.type_gen)
+                .emit_local_decl(&mut this.diag, scopes, id, main, &mut this.type_gen)
                 .is_ok()
             {
                 this.buffer.emit(";");
@@ -761,14 +810,6 @@ impl<'a> Codegen<'a> {
         }
         let statics = std::mem::take(&mut this.buffer);
 
-        if leak {
-            this.buffer.emit("#define CTL_NOGC\n");
-        }
-        this.buffer.emit(include_str!("../ctl/ctl.h"));
-        this.type_gen.finish(&mut this.buffer, scopes)?;
-        this.buffer.emit(prototypes.0);
-        this.buffer.emit(statics.0);
-        this.buffer.emit(functions.0);
         this.buffer.emit("int main(int argc, char **argv) {");
         this.buffer.emit("ctl_init();");
         hoist_point!(this, {
@@ -809,8 +850,22 @@ impl<'a> Codegen<'a> {
                 this.buffer.emit("(); return 0; }");
             }
         }
+        let main = std::mem::take(&mut this.buffer);
 
-        Ok(this.buffer.0)
+        if leak {
+            this.buffer.emit("#define CTL_NOGC\n");
+        }
+        this.buffer.emit(include_str!("../ctl/ctl.h"));
+        if this.diag.has_errors() {
+            return Err(this.diag);
+        }
+        this.type_gen.finish(&mut this.buffer, scopes);
+        this.buffer.emit(prototypes.0);
+        this.buffer.emit(statics.0);
+        this.buffer.emit(functions.0);
+        this.buffer.emit(main.0);
+
+        Ok((this.diag, this.buffer.0))
     }
 
     fn gen_fn(&mut self, state: &mut State, prototypes: &mut Buffer) {
@@ -820,12 +875,17 @@ impl<'a> Codegen<'a> {
             return;
         }
 
-        prototypes.emit_prototype(self.scopes, state, true, &mut self.type_gen);
+        prototypes.emit_prototype(&mut self.diag, self.scopes, state, true, &mut self.type_gen);
         prototypes.emit(";");
 
         if let Some(body) = func.body.clone() {
-            self.buffer
-                .emit_prototype(self.scopes, state, false, &mut self.type_gen);
+            self.buffer.emit_prototype(
+                &mut self.diag,
+                self.scopes,
+                state,
+                false,
+                &mut self.type_gen,
+            );
             self.buffer.emit("{");
             for param in func.params.iter() {
                 let Some(patt) = param
@@ -858,10 +918,13 @@ impl<'a> Codegen<'a> {
             CheckedStmt::Let(id) => {
                 hoist_point!(self, {
                     let var = self.scopes.get(id);
-                    match self
-                        .buffer
-                        .emit_local_decl(self.scopes, id, state, &mut self.type_gen)
-                    {
+                    match self.buffer.emit_local_decl(
+                        &mut self.diag,
+                        self.scopes,
+                        id,
+                        state,
+                        &mut self.type_gen,
+                    ) {
                         Ok(ty) => {
                             if let Some(mut expr) = var.value.clone() {
                                 expr.ty = ty;
@@ -1790,7 +1853,13 @@ impl<'a> Codegen<'a> {
                     if id
                         .and_then(|id| {
                             self.buffer
-                                .emit_local_decl(self.scopes, id, state, &mut self.type_gen)
+                                .emit_local_decl(
+                                    &mut self.diag,
+                                    self.scopes,
+                                    id,
+                                    state,
+                                    &mut self.type_gen,
+                                )
                                 .ok()
                         })
                         .is_some()
@@ -1835,7 +1904,7 @@ impl<'a> Codegen<'a> {
             &IrrefutablePattern::Variable(id) => {
                 if self
                     .buffer
-                    .emit_local_decl(self.scopes, id, state, &mut self.type_gen)
+                    .emit_local_decl(&mut self.diag, self.scopes, id, state, &mut self.type_gen)
                     .is_ok()
                 {
                     self.buffer
@@ -1872,7 +1941,13 @@ impl<'a> Codegen<'a> {
                     if id
                         .and_then(|id| {
                             self.buffer
-                                .emit_local_decl(self.scopes, id, state, &mut self.type_gen)
+                                .emit_local_decl(
+                                    &mut self.diag,
+                                    self.scopes,
+                                    id,
+                                    state,
+                                    &mut self.type_gen,
+                                )
                                 .ok()
                         })
                         .is_some()
@@ -1921,7 +1996,8 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_type(&mut self, id: &Type) {
-        self.buffer.emit_type(self.scopes, id, &mut self.type_gen);
+        self.buffer
+            .emit_type(self.scopes, id, Some((&mut self.diag, &mut self.type_gen)));
     }
 
     fn emit_cast(&mut self, id: &Type) {

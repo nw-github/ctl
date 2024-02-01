@@ -153,4 +153,8 @@ impl Error {
             span,
         )
     }
+
+    pub fn cyclic(a: &str, b: &str, span: Span) -> Self {
+        Self::new(format!("cyclic dependency between {a} and {b}"), span)
+    }
 }

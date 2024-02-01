@@ -81,7 +81,7 @@ pub struct GenericUserType {
 
 impl GenericUserType {
     pub fn name(&self, scopes: &Scopes) -> String {
-        let mut result = scopes.get(self.id).name.clone();
+        let mut result = scopes.get(self.id).name.data.clone();
         if !self.ty_args.is_empty() {
             result.push('<');
             for (i, concrete) in self.ty_args.iter().enumerate() {
@@ -568,8 +568,8 @@ impl Type {
             (Some(a), Some(b), None, None) => Some(result(a * 10 + b)),
             (Some(a), Some(b), Some(c), None) => Some(result(a * 100 + b * 10 + c)),
             _ => match name {
-                "usize" => Some(Type::Usize),
-                "isize" => Some(Type::Isize),
+                "usize" | "u" => Some(Type::Usize),
+                "isize" | "i" => Some(Type::Isize),
                 _ => None,
             },
         }
