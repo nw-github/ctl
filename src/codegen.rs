@@ -474,37 +474,6 @@ impl Buffer {
         }
     }
 
-    fn emit_fn_name(&mut self, scopes: &Scopes, state: &State) {
-        let f = scopes.get(state.func.id);
-        if !f.is_extern {
-            if let Some(inst) = state.inst.as_ref() {
-                self.emit_generic_mangled_name(scopes, inst);
-                self.emit("_");
-                self.emit(&f.name.data);
-            } else {
-                self.emit(scopes.full_name(f.scope, &f.name.data));
-            }
-
-            if !state.func.ty_args.is_empty() {
-                self.emit("$");
-                for ty in state.func.ty_args.iter() {
-                    self.emit("$");
-                    self.emit_generic_mangled_name(scopes, ty);
-                }
-                self.emit("$$");
-            }
-        } else if let Some(attr) = f
-            .attrs
-            .iter()
-            .find(|attr| attr.name.data == "c_name" && !attr.props.is_empty())
-        {
-            // TODO: emit error when c_name is placed on a non-extern function
-            self.emit(&attr.props[0].name.data);
-        } else {
-            self.emit(&f.name.data);
-        }
-    }
-
     fn emit_type_name(&mut self, scopes: &Scopes, ut: &GenericUserType) {
         let ty = scopes.get(ut.id);
         if ty.data.is_template() {
@@ -519,125 +488,6 @@ impl Buffer {
                 self.emit_generic_mangled_name(scopes, ty);
             }
             self.emit("$$");
-        }
-    }
-
-    fn emit_prototype(
-        &mut self,
-        diag: &mut Diagnostics,
-        scopes: &Scopes,
-        state: &mut State,
-        is_prototype: bool,
-        tg: &mut TypeGen,
-    ) {
-        let f = scopes.get(state.func.id);
-        let mut ret = f.ret.clone();
-        state.fill_generics(scopes, &mut ret);
-
-        if f.is_extern {
-            self.emit("extern ");
-        } else {
-            self.emit("static ");
-        }
-
-        if ret.is_never() {
-            self.emit("_Noreturn ");
-        }
-
-        self.emit_type(scopes, &ret, Some((diag, tg)));
-        self.emit(" ");
-        self.emit_fn_name(scopes, state);
-        self.emit("(");
-        for (i, param) in f.params.iter().enumerate() {
-            let mut ty = param.ty.clone();
-            state.fill_generics(scopes, &mut ty);
-            if ty.is_void_like() {
-                continue;
-            }
-
-            if i > 0 {
-                self.emit(", ");
-            }
-
-            if f.is_extern || is_prototype {
-                self.emit_type(scopes, &ty, Some((diag, tg)));
-            } else if let ParamPattern::Checked(IrrefutablePattern::Variable(id)) = &param.patt {
-                _ = self.emit_local_decl(diag, scopes, *id, state, tg);
-                continue;
-            } else {
-                self.emit_type(scopes, &ty, Some((diag, tg)));
-                self.emit(format!(" {}", param.label));
-            }
-        }
-
-        if f.variadic {
-            if f.params.is_empty() {
-                self.emit("...)");
-            } else {
-                self.emit(", ...)");
-            }
-        } else if f.params.is_empty() {
-            self.emit("void)");
-        } else {
-            self.emit(")");
-        }
-    }
-
-    fn emit_var_name(&mut self, scopes: &Scopes, id: VariableId, state: &mut State) {
-        use std::collections::hash_map::*;
-
-        let var = scopes.get(id);
-        if var.is_static {
-            self.emit(scopes.full_name(var.scope, &var.name));
-        } else {
-            match state.emitted_names.entry(var.name.clone()) {
-                Entry::Occupied(entry) if *entry.get() == id => {
-                    self.emit("$");
-                    self.emit(&var.name);
-                }
-                Entry::Occupied(_) => {
-                    let len = state.renames.len();
-                    self.emit(
-                        state
-                            .renames
-                            .entry(id)
-                            .or_insert_with(|| format!("$r{len}")),
-                    );
-                }
-                Entry::Vacant(entry) => {
-                    entry.insert(id);
-                    self.emit("$");
-                    self.emit(&var.name);
-                }
-            }
-        }
-    }
-
-    fn emit_local_decl(
-        &mut self,
-        diag: &mut Diagnostics,
-        scopes: &Scopes,
-        id: VariableId,
-        state: &mut State,
-        tg: &mut TypeGen,
-    ) -> Result<Type, Type> {
-        let var = scopes.get(id);
-        let mut ty = var.ty.clone();
-        state.fill_generics(scopes, &mut ty);
-        if !ty.is_void_like() {
-            if var.is_static {
-                self.emit("static ");
-            }
-
-            self.emit_type(scopes, &ty, Some((diag, tg)));
-            if !var.mutable && !var.is_static {
-                self.emit(" const");
-            }
-            self.emit(" ");
-            self.emit_var_name(scopes, id, state);
-            Ok(ty)
-        } else {
-            Err(ty)
         }
     }
 
@@ -797,11 +647,7 @@ impl<'a> Codegen<'a> {
 
         let mut vars = Vec::new();
         for (id, _) in scopes.vars().filter(|(_, v)| v.is_static) {
-            if this
-                .buffer
-                .emit_local_decl(&mut this.diag, scopes, id, main, &mut this.type_gen)
-                .is_ok()
-            {
+            if this.emit_local_decl(id, main).is_ok() {
                 this.buffer.emit(";");
                 vars.push((id, false));
             } else {
@@ -815,7 +661,7 @@ impl<'a> Codegen<'a> {
         hoist_point!(this, {
             for (id, void) in vars {
                 if !void {
-                    this.buffer.emit_var_name(this.scopes, id, main);
+                    this.emit_var_name(id, main);
                     this.buffer.emit(" = ");
                 }
                 this.gen_expr(scopes.get(id).value.clone().unwrap(), main);
@@ -828,9 +674,9 @@ impl<'a> Codegen<'a> {
             if returns {
                 this.buffer.emit("return ");
             }
-            this.buffer.emit_fn_name(this.scopes, main);
+            this.emit_fn_name(main);
             this.buffer.emit("(");
-            this.buffer.emit_fn_name(this.scopes, &state);
+            this.emit_fn_name(&state);
             if returns {
                 this.buffer.emit("(argc, (const char **)argv)); }");
             } else {
@@ -843,7 +689,7 @@ impl<'a> Codegen<'a> {
             if returns {
                 this.buffer.emit("return ");
             }
-            this.buffer.emit_fn_name(this.scopes, main);
+            this.emit_fn_name(main);
             if returns {
                 this.buffer.emit("(); }");
             } else {
@@ -875,17 +721,13 @@ impl<'a> Codegen<'a> {
             return;
         }
 
-        prototypes.emit_prototype(&mut self.diag, self.scopes, state, true, &mut self.type_gen);
-        prototypes.emit(";");
+        std::mem::swap(&mut self.buffer, prototypes);
+        self.emit_prototype(state, true);
+        self.buffer.emit(";");
+        std::mem::swap(&mut self.buffer, prototypes);
 
         if let Some(body) = func.body.clone() {
-            self.buffer.emit_prototype(
-                &mut self.diag,
-                self.scopes,
-                state,
-                false,
-                &mut self.type_gen,
-            );
+            self.emit_prototype(state, false);
             self.buffer.emit("{");
             for param in func.params.iter() {
                 let Some(patt) = param
@@ -918,13 +760,7 @@ impl<'a> Codegen<'a> {
             CheckedStmt::Let(id) => {
                 hoist_point!(self, {
                     let var = self.scopes.get(id);
-                    match self.buffer.emit_local_decl(
-                        &mut self.diag,
-                        self.scopes,
-                        id,
-                        state,
-                        &mut self.type_gen,
-                    ) {
+                    match self.emit_local_decl(id, state) {
                         Ok(ty) => {
                             if let Some(mut expr) = var.value.clone() {
                                 expr.ty = ty;
@@ -1132,7 +968,7 @@ impl<'a> Codegen<'a> {
                 }
 
                 let next_state = State::new(func, inst);
-                self.buffer.emit_fn_name(self.scopes, &next_state);
+                self.emit_fn_name(&next_state);
                 self.buffer.emit("(");
                 self.scopes
                     .get(original_id)
@@ -1205,7 +1041,7 @@ impl<'a> Codegen<'a> {
 
                     self.emit_type(&expr.ty);
                     self.buffer.emit(format!(" {tmp} = "));
-                    self.buffer.emit_fn_name(self.scopes, &wc_state);
+                    self.emit_fn_name(&wc_state);
                     self.buffer.emit(
                         format!(
                             concat!(
@@ -1239,7 +1075,7 @@ impl<'a> Codegen<'a> {
 
                     self.emit_type(&expr.ty);
                     self.buffer.emit(format!(" {tmp} = "));
-                    self.buffer.emit_fn_name(self.scopes, &wc_state);
+                    self.emit_fn_name(&wc_state);
                     self.buffer
                         .emit(format!("({len}); for (usize i = 0; i < {len}; i++) {{ (("));
                     self.emit_type(inner);
@@ -1264,7 +1100,7 @@ impl<'a> Codegen<'a> {
 
                     self.emit_type(&expr.ty);
                     self.buffer.emit(format!(" {tmp} = "));
-                    self.buffer.emit_fn_name(self.scopes, &wc_state);
+                    self.emit_fn_name(&wc_state);
                     self.buffer.emit(format!("({});", exprs.len()));
                     let insert = State::new(
                         GenericFunc::new(*self.scopes.find_in("insert", body).unwrap(), vec![]),
@@ -1272,7 +1108,7 @@ impl<'a> Codegen<'a> {
                     );
 
                     for val in exprs {
-                        self.buffer.emit_fn_name(self.scopes, &insert);
+                        self.emit_fn_name(&insert);
                         self.buffer.emit(format!("(&{tmp}, "));
                         self.gen_expr(val, state);
                         self.buffer.emit(");");
@@ -1300,11 +1136,11 @@ impl<'a> Codegen<'a> {
 
                     self.emit_type(&expr.ty);
                     self.buffer.emit(format!(" {tmp} = "));
-                    self.buffer.emit_fn_name(self.scopes, &wc_state);
+                    self.emit_fn_name(&wc_state);
                     self.buffer.emit(format!("({});", exprs.len()));
 
                     for (key, val) in exprs {
-                        self.buffer.emit_fn_name(self.scopes, &insert);
+                        self.emit_fn_name(&insert);
                         self.buffer.emit(format!("(&{tmp}, "));
                         self.gen_expr(key, state);
                         self.buffer.emit(",");
@@ -1355,12 +1191,12 @@ impl<'a> Codegen<'a> {
             CheckedExprData::Symbol(symbol) => match symbol {
                 Symbol::Func(func) => {
                     let state = State::new(func, None);
-                    self.buffer.emit_fn_name(self.scopes, &state);
+                    self.emit_fn_name(&state);
                     self.funcs.insert(state);
                 }
                 Symbol::Var(id) => {
                     if !self.scopes.get(id).ty.is_void_like() {
-                        self.buffer.emit_var_name(self.scopes, id, state);
+                        self.emit_var_name(id, state);
                     }
                 }
             },
@@ -1546,7 +1382,7 @@ impl<'a> Codegen<'a> {
 
                     self.emit_type(&next_ty);
                     self.buffer.emit(format!(" {item} = "));
-                    self.buffer.emit_fn_name(self.scopes, &next_state);
+                    self.emit_fn_name(&next_state);
                     self.buffer.emit(format!("(&{iter_var});"));
                     self.gen_pattern(
                         state,
@@ -1707,7 +1543,7 @@ impl<'a> Codegen<'a> {
                     .expect("a panic handler should exist");
                 let panic = State::new(GenericFunc::new(id, vec![]), None);
 
-                self.buffer.emit_fn_name(self.scopes, &panic);
+                self.emit_fn_name(&panic);
                 self.buffer.emit("(");
                 for (i, (_, expr)) in args.into_iter().enumerate() {
                     if i > 0 {
@@ -1851,17 +1687,7 @@ impl<'a> Codegen<'a> {
                 ));
                 let pos = rest.map(|RestPattern { id, pos }| {
                     if id
-                        .and_then(|id| {
-                            self.buffer
-                                .emit_local_decl(
-                                    &mut self.diag,
-                                    self.scopes,
-                                    id,
-                                    state,
-                                    &mut self.type_gen,
-                                )
-                                .ok()
-                        })
+                        .and_then(|id| self.emit_local_decl(id, state).ok())
                         .is_some()
                     {
                         self.buffer.emit(format!(
@@ -1902,11 +1728,7 @@ impl<'a> Codegen<'a> {
     ) {
         match pattern {
             &IrrefutablePattern::Variable(id) => {
-                if self
-                    .buffer
-                    .emit_local_decl(&mut self.diag, self.scopes, id, state, &mut self.type_gen)
-                    .is_ok()
-                {
+                if self.emit_local_decl(id, state).is_ok() {
                     self.buffer
                         .emit(format!(" = {}{src};", if borrow { "&" } else { "" }));
                 }
@@ -1939,17 +1761,7 @@ impl<'a> Codegen<'a> {
                 let rest = rest.map(|RestPattern { id, pos }| {
                     let rest_len = arr_len - patterns.len();
                     if id
-                        .and_then(|id| {
-                            self.buffer
-                                .emit_local_decl(
-                                    &mut self.diag,
-                                    self.scopes,
-                                    id,
-                                    state,
-                                    &mut self.type_gen,
-                                )
-                                .ok()
-                        })
+                        .and_then(|id| self.emit_local_decl(id, state).ok())
                         .is_some()
                     {
                         if ty.is_any_ptr() {
@@ -2004,6 +1816,148 @@ impl<'a> Codegen<'a> {
         self.buffer.emit("(");
         self.emit_type(id);
         self.buffer.emit(")");
+    }
+
+    fn emit_prototype(
+        &mut self,
+        state: &mut State,
+        is_prototype: bool,
+    ) {
+        let f = self.scopes.get(state.func.id);
+        let mut ret = f.ret.clone();
+        state.fill_generics(self.scopes, &mut ret);
+
+        if f.is_extern {
+            self.buffer.emit("extern ");
+        } else {
+            self.buffer.emit("static ");
+        }
+
+        if ret.is_never() {
+            self.buffer.emit("_Noreturn ");
+        }
+
+        self.emit_type(&ret);
+        self.buffer.emit(" ");
+        self.emit_fn_name(state);
+        self.buffer.emit("(");
+        for (i, param) in f.params.iter().enumerate() {
+            let mut ty = param.ty.clone();
+            state.fill_generics(self.scopes, &mut ty);
+            if ty.is_void_like() {
+                continue;
+            }
+
+            if i > 0 {
+                self.buffer.emit(", ");
+            }
+
+            if f.is_extern || is_prototype {
+                self.emit_type(&ty);
+            } else if let ParamPattern::Checked(IrrefutablePattern::Variable(id)) = &param.patt {
+                _ = self.emit_local_decl(*id, state);
+                continue;
+            } else {
+                self.emit_type(&ty);
+                self.buffer.emit(format!(" {}", param.label));
+            }
+        }
+
+        if f.variadic {
+            if f.params.is_empty() {
+                self.buffer.emit("...)");
+            } else {
+                self.buffer.emit(", ...)");
+            }
+        } else if f.params.is_empty() {
+            self.buffer.emit("void)");
+        } else {
+            self.buffer.emit(")");
+        }
+    }
+
+    fn emit_var_name(&mut self, id: VariableId, state: &mut State) {
+        use std::collections::hash_map::*;
+
+        let var = self.scopes.get(id);
+        if var.is_static {
+            self.buffer
+                .emit(self.scopes.full_name(var.scope, &var.name));
+        } else {
+            match state.emitted_names.entry(var.name.clone()) {
+                Entry::Occupied(entry) if *entry.get() == id => {
+                    self.buffer.emit("$");
+                    self.buffer.emit(&var.name);
+                }
+                Entry::Occupied(_) => {
+                    let len = state.renames.len();
+                    self.buffer.emit(
+                        state
+                            .renames
+                            .entry(id)
+                            .or_insert_with(|| format!("$r{len}")),
+                    );
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(id);
+                    self.buffer.emit("$");
+                    self.buffer.emit(&var.name);
+                }
+            }
+        }
+    }
+
+    fn emit_local_decl(&mut self, id: VariableId, state: &mut State) -> Result<Type, Type> {
+        let var = self.scopes.get(id);
+        let mut ty = var.ty.clone();
+        state.fill_generics(self.scopes, &mut ty);
+        if !ty.is_void_like() {
+            if var.is_static {
+                self.buffer.emit("static ");
+            }
+
+            self.emit_type(&ty);
+            if !var.mutable && !var.is_static {
+                self.buffer.emit(" const");
+            }
+            self.buffer.emit(" ");
+            self.emit_var_name(id, state);
+            Ok(ty)
+        } else {
+            Err(ty)
+        }
+    }
+
+    fn emit_fn_name(&mut self, state: &State) {
+        let f = self.scopes.get(state.func.id);
+        if !f.is_extern {
+            if let Some(inst) = state.inst.as_ref() {
+                self.buffer.emit_generic_mangled_name(self.scopes, inst);
+                self.buffer.emit("_");
+                self.buffer.emit(&f.name.data);
+            } else {
+                self.buffer
+                    .emit(self.scopes.full_name(f.scope, &f.name.data));
+            }
+
+            if !state.func.ty_args.is_empty() {
+                self.buffer.emit("$");
+                for ty in state.func.ty_args.iter() {
+                    self.buffer.emit("$");
+                    self.buffer.emit_generic_mangled_name(self.scopes, ty);
+                }
+                self.buffer.emit("$$");
+            }
+        } else if let Some(attr) = f
+            .attrs
+            .iter()
+            .find(|attr| attr.name.data == "c_name" && !attr.props.is_empty())
+        {
+            // TODO: emit error when c_name is placed on a non-extern function
+            self.buffer.emit(&attr.props[0].name.data);
+        } else {
+            self.buffer.emit(&f.name.data);
+        }
     }
 
     fn has_side_effects(expr: &CheckedExpr) -> bool {
