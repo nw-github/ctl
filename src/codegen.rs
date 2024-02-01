@@ -632,6 +632,30 @@ impl<'a> Codegen<'a> {
             state
         });
 
+        let mut vars = Vec::new();
+        for (id, _) in scopes.vars().filter(|(_, v)| v.is_static) {
+            if this.emit_local_decl(id, main).is_ok() {
+                this.buffer.emit(";");
+                vars.push((id, false));
+            } else {
+                vars.push((id, true));
+            }
+        }
+        let static_defs = std::mem::take(&mut this.buffer);
+
+        this.buffer.emit("void $ctl_static_init(void) {");
+        hoist_point!(this, {
+            for (id, void) in vars {
+                if !void {
+                    this.emit_var_name(id, main);
+                    this.buffer.emit(" = ");
+                }
+                this.gen_expr(scopes.get(id).value.clone().unwrap(), main);
+                this.buffer.emit(";");
+            }
+        });
+        this.buffer.emit("}");
+
         let mut prototypes = Buffer::default();
         let mut emitted = HashSet::new();
         while !this.funcs.is_empty() {
@@ -645,29 +669,7 @@ impl<'a> Codegen<'a> {
 
         let functions = std::mem::take(&mut this.buffer);
 
-        let mut vars = Vec::new();
-        for (id, _) in scopes.vars().filter(|(_, v)| v.is_static) {
-            if this.emit_local_decl(id, main).is_ok() {
-                this.buffer.emit(";");
-                vars.push((id, false));
-            } else {
-                vars.push((id, true));
-            }
-        }
-        let statics = std::mem::take(&mut this.buffer);
-
-        this.buffer.emit("int main(int argc, char **argv) {");
-        this.buffer.emit("ctl_init();");
-        hoist_point!(this, {
-            for (id, void) in vars {
-                if !void {
-                    this.emit_var_name(id, main);
-                    this.buffer.emit(" = ");
-                }
-                this.gen_expr(scopes.get(id).value.clone().unwrap(), main);
-                this.buffer.emit(";");
-            }
-        });
+        this.buffer.emit("int main(int argc, char **argv) { $ctl_init(); $ctl_static_init(); ");
 
         let returns = scopes.get(main.func.id).ret != Type::Void;
         if let Some(state) = conv_argv {
@@ -707,7 +709,7 @@ impl<'a> Codegen<'a> {
         }
         this.type_gen.finish(&mut this.buffer);
         this.buffer.emit(prototypes.0);
-        this.buffer.emit(statics.0);
+        this.buffer.emit(static_defs.0);
         this.buffer.emit(functions.0);
         this.buffer.emit(main.0);
 
