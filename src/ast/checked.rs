@@ -70,9 +70,8 @@ pub enum CheckedStmt {
     Expr(CheckedExpr),
     Let(VariableId),
     LetPattern(IrrefutablePattern, CheckedExpr),
-    None,
     #[default]
-    Error,
+    None,
 }
 
 #[derive(Default, Debug, Clone)]
