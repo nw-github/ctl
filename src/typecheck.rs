@@ -2245,8 +2245,6 @@ impl TypeChecker {
             (a, b) if a == b => {}
             (Type::Char, Type::Uint(num)) if *num >= 32 => {}
             (Type::Char, Type::Int(num)) if *num >= 33 => {}
-            (Type::Char, Type::Isize) if std::mem::size_of::<isize>() >= 33 => {}
-            (Type::Char, Type::Usize) if std::mem::size_of::<usize>() >= 32 => {}
             (Type::F32, Type::F64) => {}
             (Type::Ptr(_) | Type::MutPtr(_), Type::Usize) => {}
             (
@@ -4465,12 +4463,14 @@ impl TypeChecker {
         span: Span,
     ) -> (Type, BigInt) {
         let ty = if let Some(width) = width {
-            Type::from_int_name(&width).unwrap_or_else(|| {
-                self.error(Error::new(
+            if let Some(ty) = Type::from_int_name(&width) {
+                ty
+            } else {
+                return self.error(Error::new(
                     format!("invalid integer literal type: {width}"),
                     span,
-                ))
-            })
+                ));
+            }
         } else {
             // FIXME: attempt to promote the literal if its too large for i32
             target
