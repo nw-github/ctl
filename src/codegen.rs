@@ -82,30 +82,30 @@ impl<'a> TypeGen<'a> {
         }
     }
 
-    fn finish(mut self, buffer: &mut Buffer, scopes: &Scopes) {
+    fn finish(mut self, buffer: &mut Buffer) {
         let structs = std::mem::take(&mut self.structs);
         let fnptrs = std::mem::take(&mut self.fnptrs);
         let mut arrays = std::mem::take(&mut self.arrays);
         let mut definitions = Buffer::default();
         for f in fnptrs {
             definitions.emit("typedef ");
-            definitions.emit_type(scopes, &f.ret, None);
+            definitions.emit_type(self.scopes, &f.ret, None);
             definitions.emit("(*");
-            definitions.emit_fnptr_name(scopes, &f);
+            definitions.emit_fnptr_name(self.scopes, &f);
             definitions.emit(")(");
             for (i, param) in f.params.iter().enumerate() {
                 if i > 0 {
                     definitions.emit(", ");
                 }
 
-                definitions.emit_type(scopes, param, None);
+                definitions.emit_type(self.scopes, param, None);
             }
             definitions.emit(");");
         }
 
         let mut emitted_arrays = HashSet::new();
         for ut in self.get_struct_order(&structs) {
-            let union = scopes.get(ut.id).data.as_union();
+            let union = self.scopes.get(ut.id).data.as_union();
             let unsafe_union = union.is_some_and(|union| union.is_unsafe);
             if unsafe_union {
                 buffer.emit("typedef union ");
@@ -115,17 +115,17 @@ impl<'a> TypeGen<'a> {
                 definitions.emit("struct ");
             }
 
-            buffer.emit_type_name(scopes, ut);
+            buffer.emit_type_name(self.scopes, ut);
             buffer.emit(" ");
-            buffer.emit_type_name(scopes, ut);
+            buffer.emit_type_name(self.scopes, ut);
             buffer.emit(";");
 
-            definitions.emit_type_name(scopes, ut);
+            definitions.emit_type_name(self.scopes, ut);
             definitions.emit("{");
 
-            let members = scopes.get(ut.id).members().unwrap();
+            let members = self.scopes.get(ut.id).members().unwrap();
             if let Some(union) = union.filter(|_| !unsafe_union) {
-                definitions.emit_type(scopes, &union.tag_type(), None);
+                definitions.emit_type(self.scopes, &union.tag_type(), None);
                 definitions.emit(format!(" {UNION_TAG_NAME};"));
 
                 for member in members.iter().filter(|m| m.shared) {
@@ -705,7 +705,7 @@ impl<'a> Codegen<'a> {
         if this.diag.has_errors() {
             return Err(this.diag);
         }
-        this.type_gen.finish(&mut this.buffer, scopes);
+        this.type_gen.finish(&mut this.buffer);
         this.buffer.emit(prototypes.0);
         this.buffer.emit(statics.0);
         this.buffer.emit(functions.0);
