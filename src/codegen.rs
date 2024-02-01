@@ -218,18 +218,20 @@ impl<'a> TypeGen<'a> {
                 match ty {
                     Type::FnPtr(ptr) => self.add_fnptr(diag, *ptr),
                     Type::User(dep) => {
-                        if matches!(adding, Some(ut) if ut == &*dep) {
+                        if matches!(adding, Some(adding) if adding == &*dep) {
                             // ideally get the span of the instantiation that caused this
                             diag.error(Error::cyclic(
                                 &dep.name(self.scopes),
                                 &ut.name(self.scopes),
                                 self.scopes.get(dep.id).name.span,
                             ));
-                            diag.error(Error::cyclic(
-                                &ut.name(self.scopes),
-                                &dep.name(self.scopes),
-                                self.scopes.get(ut.id).name.span,
-                            ));
+                            if !matches!(adding, Some(adding) if adding == &ut) {
+                                diag.error(Error::cyclic(
+                                    &ut.name(self.scopes),
+                                    &dep.name(self.scopes),
+                                    self.scopes.get(ut.id).name.span,
+                                ));
+                            }
                             return;
                         }
 
@@ -456,9 +458,9 @@ impl Buffer {
             Type::User(ut) => {
                 self.emit_type_name(scopes, ut);
             }
+            Type::Array(data) => self.emit_array_struct_name(scopes, &data.0, data.1),
             Type::Unknown => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
             Type::Unresolved(_) => panic!("ICE: TypeId::Unresolved in emit_generic_mangled_name"),
-            Type::Array(data) => self.emit_array_struct_name(scopes, &data.0, data.1),
             Type::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_generic_mangled_name"),
         }
     }
