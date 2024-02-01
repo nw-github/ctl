@@ -38,3 +38,4 @@ typedef UINT(32) CTL_char;
 typedef UINT(8) CTL_bool;
 typedef float f32;
 typedef double f64;
+typedef struct {} $void;
