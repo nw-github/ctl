@@ -167,42 +167,6 @@ impl TypeChecker {
         self.enter_id(id, f)
     }
 
-    fn enter_id<T>(&mut self, id: ScopeId, f: impl FnOnce(&mut Self) -> T) -> T {
-        let prev = self.current;
-        self.current = id;
-        let result = f(self);
-        self.current = prev;
-        result
-    }
-
-    fn enter_id_and_resolve<T>(&mut self, id: ScopeId, f: impl FnOnce(&mut Self) -> T) -> T {
-        self.enter_id(id, |this| {
-            for id in this
-                .scopes
-                .walk(this.current)
-                .map(|(id, _)| id)
-                .collect::<Vec<_>>()
-            {
-                this.enter_id(id, |this| {
-                    if this.scopes[this.current].kind.is_module() {
-                        this.include_universal();
-                    }
-
-                    for UnresolvedUse { public, path, all } in
-                        std::mem::take(&mut this.current().use_stmts)
-                    {
-                        let span = path.span;
-                        if let Some(path) = this.resolve_path(&path.data, span) {
-                            this.resolve_use(public, all, path, span);
-                        }
-                    }
-                });
-            }
-
-            f(this)
-        })
-    }
-
     fn find<T: ItemId>(&self, name: &str) -> Option<Vis<T>> {
         T::find(&self.scopes, self.current, name)
     }
@@ -497,6 +461,7 @@ impl TypeChecker {
                     let member_cons = base
                         .members
                         .into_iter()
+                        .filter(|m| !m.shared)
                         .map(|member| {
                             let mut params = params.clone();
                             if !matches!(member.ty, TypeHint::Void) {
@@ -898,7 +863,7 @@ impl TypeChecker {
     }
 
     fn declare_type_path(&self, path: Located<TypePath>) -> Type {
-        Type::Unresolved((TypeHint::Regular(path), self.current).into())
+        self.declare_type_hint(TypeHint::Regular(path))
     }
 
     fn typehint_for_struct(
@@ -919,6 +884,42 @@ impl TypeChecker {
 }
 
 impl TypeChecker {
+    fn enter_id<T>(&mut self, id: ScopeId, f: impl FnOnce(&mut Self) -> T) -> T {
+        let prev = self.current;
+        self.current = id;
+        let result = f(self);
+        self.current = prev;
+        result
+    }
+
+    fn enter_id_and_resolve<T>(&mut self, id: ScopeId, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.enter_id(id, |this| {
+            for id in this
+                .scopes
+                .walk(this.current)
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+            {
+                this.enter_id(id, |this| {
+                    if this.scopes[this.current].kind.is_module() {
+                        this.include_universal();
+                    }
+
+                    for UnresolvedUse { public, path, all } in
+                        std::mem::take(&mut this.current().use_stmts)
+                    {
+                        let span = path.span;
+                        if let Some(path) = this.resolve_path(&path.data, span) {
+                            this.resolve_use(public, all, path, span);
+                        }
+                    }
+                });
+            }
+
+            f(this)
+        })
+    }
+
     fn check_stmt(&mut self, stmt: DeclaredStmt) -> CheckedStmt {
         match stmt {
             DeclaredStmt::Module { id, body } => {
@@ -940,12 +941,7 @@ impl TypeChecker {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
                     this.resolve_impls(id);
                     this.check_impl_blocks(id, impl_blocks);
-                    for i in 0..this.scopes.get(id).data.as_struct().unwrap().0.len() {
-                        resolve_type!(
-                            this,
-                            this.scopes.get_mut(id).data.as_struct_mut().unwrap().0[i].ty
-                        );
-                    }
+                    this.resolve_members(id);
 
                     for f in functions {
                         this.check_fn(f);
@@ -961,18 +957,9 @@ impl TypeChecker {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
                     this.resolve_impls(id);
                     this.check_impl_blocks(id, impl_blocks);
-                    for (i, f) in member_cons.into_iter().enumerate() {
-                        resolve_type!(
-                            this,
-                            this.scopes
-                                .get_mut(id)
-                                .data
-                                .as_union_mut()
-                                .unwrap()
-                                .variants[i]
-                                .ty
-                        );
+                    this.resolve_members(id);
 
+                    for f in member_cons {
                         this.check_fn(f);
                     }
 
@@ -1032,13 +1019,13 @@ impl TypeChecker {
                     let ty = self.resolve_typehint(&ty);
                     if let Some(value) = value {
                         let value = self.type_check(value, &ty);
-                        return self.check_var_stmt(ty, Some(value), patt);
+                        return self.check_var_stmt(&ty, Some(value), patt);
                     } else {
-                        return self.check_var_stmt(ty, None, patt);
+                        return self.check_var_stmt(&ty, None, patt);
                     }
                 } else if let Some(value) = value {
                     let value = self.check_expr(value, None);
-                    return self.check_var_stmt(value.ty.clone(), Some(value), patt);
+                    return self.check_var_stmt(&value.ty.clone(), Some(value), patt);
                 } else {
                     return self.error(Error::new("cannot infer type", patt.span));
                 }
@@ -1047,11 +1034,8 @@ impl TypeChecker {
             DeclaredStmt::Static { id, value } => {
                 // FIXME: detect cycles like static X: usize = X;
                 // FIXME: non-const statics should be disallowed
-                let mut ty = self.scopes.get_mut(id).ty.clone();
-                self.resolve_type(&mut ty);
-                (self.scopes.get_mut(id).ty) = ty.clone();
-
-                let value = self.type_check(value, &ty);
+                resolve_type!(self, self.scopes.get_mut(id).ty);
+                let value = self.type_check(value, &self.scopes.get(id).ty.clone());
                 let var = self.scopes.get_mut(id);
                 var.value = Some(value);
             }
@@ -1063,12 +1047,12 @@ impl TypeChecker {
 
     fn check_var_stmt(
         &mut self,
-        ty: Type,
+        ty: &Type,
         value: Option<CheckedExpr>,
         patt: Located<Pattern>,
     ) -> CheckedStmt {
         let span = patt.span;
-        match self.check_pattern(true, &ty, false, patt) {
+        match self.check_pattern(true, ty, false, patt) {
             CheckedPattern::Irrefutable(IrrefutablePattern::Variable(id)) => {
                 self.scopes.get_mut(id).value = value;
                 CheckedStmt::Let(id)
@@ -3875,32 +3859,9 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_type(&mut self, mut ty: &mut Type) {
-        loop {
-            match ty {
-                Type::Array(t) => ty = &mut t.0,
-                Type::Ptr(t) | Type::MutPtr(t) => ty = t,
-                Type::User(ut) => {
-                    for ty in ut.ty_args.iter_mut() {
-                        self.resolve_type(ty);
-                    }
-
-                    break;
-                }
-                Type::Unresolved(hint) => {
-                    *ty = self.enter_id_and_resolve(hint.1, |this| this.resolve_typehint(&hint.0));
-                    break;
-                }
-                Type::FnPtr(f) => {
-                    for ty in f.params.iter_mut() {
-                        self.resolve_type(ty);
-                    }
-
-                    self.resolve_type(&mut f.ret);
-                    break;
-                }
-                _ => break,
-            }
+    fn resolve_type(&mut self, ty: &mut Type) {
+        if let Type::Unresolved(hint) = ty {
+            *ty = self.enter_id_and_resolve(hint.1, |this| this.resolve_typehint(&hint.0));
         }
     }
 
@@ -4050,6 +4011,12 @@ impl TypeChecker {
         }
 
         true
+    }
+
+    fn resolve_members(&mut self, id: UserTypeId) {
+        for i in 0..self.scopes.get(id).members().unwrap().len() {
+            resolve_type!(self, self.scopes.get_mut(id).members_mut().unwrap()[i].ty);
+        }
     }
 
     fn resolve_impls<T: ItemId + Copy>(&mut self, id: T)
