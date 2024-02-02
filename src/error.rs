@@ -157,4 +157,11 @@ impl Error {
     pub fn cyclic(a: &str, b: &str, span: Span) -> Self {
         Self::new(format!("cyclic dependency between {a} and {b}"), span)
     }
+
+    pub fn bad_destructure(ty: &str, span: Span) -> Self {
+        Self::new(
+            format!("cannot destructure value of non-struct type '{ty}'"),
+            span,
+        )
+    }
 }
