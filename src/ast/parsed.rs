@@ -1,4 +1,4 @@
-use crate::lexer::Located;
+use crate::{lexer::Located, THIS_TYPE};
 
 use super::{Attribute, BinaryOp, UnaryOp};
 
@@ -317,7 +317,6 @@ pub enum TypeHint {
     },
     Void,
     This,
-    MutThis,
     Error,
 }
 
@@ -359,8 +358,7 @@ impl std::fmt::Debug for TypeHint {
                 write!(f, ") {ret:?}")
             }
             TypeHint::Void => write!(f, "void"),
-            TypeHint::This => write!(f, "This"),
-            TypeHint::MutThis => write!(f, "mut This"),
+            TypeHint::This => write!(f, "{THIS_TYPE}"),
             TypeHint::Error => write!(f, "Error"),
         }
     }

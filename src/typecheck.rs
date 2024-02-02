@@ -10,7 +10,7 @@ use crate::{
     lexer::{Located, Span},
     sym::*,
     typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type},
-    Pipeline, THIS_PARAM, THIS_TYPE,
+    Pipeline, THIS_PARAM,
 };
 
 macro_rules! type_check_bail {
@@ -3794,7 +3794,6 @@ impl TypeChecker {
         match hint {
             TypeHint::Regular(path) => {
                 let res = path.data.as_identifier().and_then(|symbol| match symbol {
-                    symbol if symbol == THIS_TYPE => self.current_this_type(),
                     "void" => Some(Type::Void),
                     "never" => Some(Type::Never),
                     "f32" => Some(Type::F32),
@@ -3844,14 +3843,7 @@ impl TypeChecker {
             TypeHint::Void => Type::Void,
             TypeHint::Ptr(ty) => Type::Ptr(self.resolve_typehint(ty).into()),
             TypeHint::MutPtr(ty) => Type::MutPtr(self.resolve_typehint(ty).into()),
-            TypeHint::This => self
-                .current_this_type()
-                .map(|s| Type::Ptr(s.into()))
-                .unwrap_or_default(),
-            TypeHint::MutThis => self
-                .current_this_type()
-                .map(|s| Type::MutPtr(s.into()))
-                .unwrap_or_default(),
+            TypeHint::This => self.current_this_type().unwrap_or_default(),
             TypeHint::Array(ty, count) => {
                 let n = match Self::consteval(&self.scopes, count, Some(&Type::Usize)) {
                     Ok(n) => n,

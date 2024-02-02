@@ -7,10 +7,7 @@ use crate::{
             Pattern, RangePattern, Stmt, StmtData, Struct, TypeHint, TypePath, TypePathComponent,
         },
         Attribute, UnaryOp,
-    },
-    error::{Diagnostics, Error, FileId},
-    lexer::{Lexer, Located, Precedence, Span, Token},
-    THIS_PARAM, THIS_TYPE,
+    }, error::{Diagnostics, Error, FileId}, lexer::{Lexer, Located, Precedence, Span, Token}, THIS_PARAM, THIS_TYPE
 };
 
 #[derive(Clone, Copy)]
@@ -1600,9 +1597,9 @@ impl<'a, 'b> Parser<'a, 'b> {
                         Pattern::Path(TypePath::from(THIS_PARAM.to_string())),
                     ),
                     ty: if mutable {
-                        TypeHint::MutThis
+                        TypeHint::MutPtr(TypeHint::This.into())
                     } else {
-                        TypeHint::This
+                        TypeHint::Ptr(TypeHint::This.into())
                     },
                     default: None,
                 });
