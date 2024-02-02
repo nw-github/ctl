@@ -1258,7 +1258,7 @@ impl TypeChecker {
                     let name = func.name.data.clone();
                     let ret = func.ret.clone().name(&this.scopes);
                     this.error(Error::new(
-                        format!("function '{name}' must return a value of type '{ret}'"),
+                        format!("function '{name}' must return a value of type '{ret}' from all code paths"),
                         span,
                     ))
                 }
@@ -3245,8 +3245,8 @@ impl TypeChecker {
                 member,
                 generics,
             } => {
-                let this = self.check_expr(*source, None);
-                let id = this.ty.strip_references().clone();
+                let recv = self.check_expr(*source, None);
+                let id = recv.ty.strip_references().clone();
                 if id.is_unknown() {
                     return Default::default();
                 }
@@ -3281,8 +3281,8 @@ impl TypeChecker {
                 }
 
                 if this_param.ty.is_mut_ptr() {
-                    let mut ty = &this.ty;
-                    if !ty.is_ptr() && !ty.is_mut_ptr() && !this.can_addrmut(&self.scopes) {
+                    let mut ty = &recv.ty;
+                    if !ty.is_ptr() && !ty.is_mut_ptr() && !recv.can_addrmut(&self.scopes) {
                         return self.error(Error::new(
                             format!("cannot call method '{member}' with immutable receiver"),
                             span,
@@ -3303,26 +3303,26 @@ impl TypeChecker {
                     }
                 }
 
-                let this = if !matches!(this.ty, Type::Ptr(_) | Type::MutPtr(_)) {
+                let recv = if !matches!(recv.ty, Type::Ptr(_) | Type::MutPtr(_)) {
                     if matches!(this_param.ty, Type::Ptr(_)) {
                         CheckedExpr::new(
-                            Type::Ptr(this.ty.clone().into()),
+                            Type::Ptr(recv.ty.clone().into()),
                             CheckedExprData::Unary {
                                 op: UnaryOp::Addr,
-                                expr: this.into(),
+                                expr: recv.into(),
                             },
                         )
                     } else {
                         CheckedExpr::new(
-                            Type::MutPtr(this.ty.clone().into()),
+                            Type::MutPtr(recv.ty.clone().into()),
                             CheckedExprData::Unary {
                                 op: UnaryOp::AddrMut,
-                                expr: this.into(),
+                                expr: recv.into(),
                             },
                         )
                     }
                 } else {
-                    this.auto_deref(&this_param.ty)
+                    recv.auto_deref(&this_param.ty)
                 };
 
                 let mut func = GenericFunc::new(
@@ -3332,7 +3332,7 @@ impl TypeChecker {
                 let (args, ret) = self.check_fn_args(
                     tr.as_ref().or(id.as_user().map(|ut| &**ut)),
                     &mut func,
-                    Some(this),
+                    Some(recv),
                     args,
                     target,
                     span,
@@ -3507,12 +3507,11 @@ impl TypeChecker {
         self.type_check_checked(expr, &target, span)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn check_fn_args(
         &mut self,
         inst: Option<&GenericUserType>,
         func: &mut GenericFunc,
-        this: Option<CheckedExpr>,
+        recv: Option<CheckedExpr>,
         args: Vec<(Option<String>, Expr)>,
         target: Option<&Type>,
         span: Span,
@@ -3525,8 +3524,8 @@ impl TypeChecker {
 
         let mut result = IndexMap::with_capacity(args.len());
         let mut last_pos = 0;
-        if let Some(this) = this {
-            result.insert(THIS_PARAM.into(), this);
+        if let Some(recv) = recv {
+            result.insert(THIS_PARAM.into(), recv);
             last_pos += 1;
         }
 
