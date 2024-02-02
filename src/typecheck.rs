@@ -33,7 +33,9 @@ macro_rules! type_check_bail {
 macro_rules! resolve_type {
     ($self: expr, $ty: expr) => {
         let mut ty = std::mem::take(&mut $ty);
-        $self.resolve_type(&mut ty);
+        if let Type::Unresolved(hint) = ty {
+            ty = $self.enter_id_and_resolve(hint.1, |this| this.resolve_typehint(&hint.0));
+        }
         $ty = ty;
     };
 }
@@ -1836,7 +1838,7 @@ impl TypeChecker {
                     infinite: false,
                 };
                 self.enter(kind, false, |this| {
-                    let Some(ty) = this.get_trait_impl(&iter.ty, iter_id).cloned() else {
+                    let Some(ty) = this.get_trait_impl(&iter.ty, iter_id) else {
                         for stmt in body {
                             let stmt = this.declare_stmt(&mut vec![], stmt);
                             this.check_stmt(stmt);
@@ -2619,15 +2621,15 @@ impl TypeChecker {
             .as_user()
             .filter(|ut| self.scopes.get(ut.id).data.is_union())
         else {
-            return Err(Error::new("scrutinee is of non-union type", span));
+            return Err(Error::new(
+                format!(
+                    "cannot use union pattern on type '{}'",
+                    scrutinee.name(&self.scopes)
+                ),
+                span,
+            ));
         };
-
-        for i in 0..self.scopes.get_mut(ut.id).members_mut().unwrap().len() {
-            resolve_type!(
-                self,
-                self.scopes.get_mut(ut.id).members_mut().unwrap()[i].ty
-            );
-        }
+        self.resolve_members(ut.id);
 
         let mut variant = String::new();
         let Some((union, path_ut)) = path
@@ -2938,6 +2940,97 @@ impl TypeChecker {
         }
     }
 
+    fn check_struct_pattern(
+        &mut self,
+        scrutinee: &Type,
+        mutable: bool,
+        destructures: Vec<Destructure>,
+        span: Span,
+    ) -> CheckedPattern {
+        let (ut, members) = if let Some(ut) = scrutinee.strip_references().as_user() {
+            self.resolve_members(ut.id);
+            if let UserTypeData::Struct { members, .. } = &self.scopes.get(ut.id).data {
+                (ut, members)
+            } else {
+                return self.error(Error::bad_destructure(&scrutinee.name(&self.scopes), span));
+            }
+        } else {
+            return self.error(Error::bad_destructure(&scrutinee.name(&self.scopes), span));
+        };
+
+        let cap = self.can_access_privates(self.scopes.get(ut.id).scope);
+        let mut vars = Vec::new();
+        for Destructure {
+            name,
+            mutable: pm,
+            pattern,
+        } in destructures
+        {
+            let Some(member) = members.iter().find(|m| m.name == name.data) else {
+                self.diag.error(Error::no_member(
+                    &scrutinee.name(&self.scopes),
+                    &name.data,
+                    name.span,
+                ));
+                continue;
+            };
+
+            if !member.public && !cap {
+                self.diag.error(Error::private_member(
+                    &scrutinee.name(&self.scopes),
+                    &member.name,
+                    name.span,
+                ));
+                continue;
+            }
+
+            // TODO: duplicates
+            let mut ty = member.ty.clone();
+            ty.fill_struct_templates(&self.scopes, ut);
+            vars.push((name.data, mutable || pm, ty, pattern));
+        }
+
+        let mut had_refutable = false;
+        let checked: Vec<_> = vars
+            .into_iter()
+            .map(|(name, mutable, inner, patt)| {
+                let ty = scrutinee.matched_inner_type(inner.clone());
+                if let Some(patt) = patt {
+                    let patt = self.check_pattern(true, &ty, mutable, patt);
+                    if !matches!(patt, CheckedPattern::Irrefutable(_)) {
+                        had_refutable = true;
+                    }
+                    (name, inner, patt)
+                } else {
+                    (
+                        name.clone(),
+                        inner,
+                        CheckedPattern::Irrefutable(IrrefutablePattern::Variable(self.insert(
+                            Variable {
+                                name,
+                                ty,
+                                is_static: false,
+                                mutable,
+                                value: None,
+                            },
+                            false,
+                        ))),
+                    )
+                }
+            })
+            .collect();
+        if had_refutable {
+            CheckedPattern::Destrucure(checked)
+        } else {
+            CheckedPattern::Irrefutable(IrrefutablePattern::Destrucure(
+                checked
+                    .into_iter()
+                    .map(|(name, ty, patt)| (name, ty, patt.into_irrefutable().unwrap()))
+                    .collect(),
+            ))
+        }
+    }
+
     fn check_pattern(
         &mut self,
         binding: bool,
@@ -3042,93 +3135,7 @@ impl TypeChecker {
                 )))
             }
             Pattern::StructDestructure(destructures) => {
-                let Some((ut, (members, _))) = scrutinee
-                    .strip_references()
-                    .as_user()
-                    .and_then(|ut| Some(ut).zip(self.scopes.get(ut.id).data.as_struct()))
-                else {
-                    return self.error(Error::new(
-                        format!(
-                            "cannot destructure value of non-struct type '{}'",
-                            scrutinee.name(&self.scopes)
-                        ),
-                        pattern.span,
-                    ));
-                };
-
-                let cap = self.can_access_privates(self.scopes.get(ut.id).scope);
-                let mut vars = Vec::new();
-                for Destructure {
-                    name,
-                    mutable: pm,
-                    pattern,
-                } in destructures
-                {
-                    let Some(member) = members.iter().find(|m| m.name == name.data) else {
-                        self.diag.error(Error::no_member(
-                            &scrutinee.name(&self.scopes),
-                            &name.data,
-                            name.span,
-                        ));
-                        continue;
-                    };
-
-                    if !member.public && !cap {
-                        self.diag.error(Error::private_member(
-                            &scrutinee.name(&self.scopes),
-                            &member.name,
-                            name.span,
-                        ));
-                        continue;
-                    }
-
-                    // TODO: duplicates
-                    let mut ty = member.ty.clone();
-                    ty.fill_struct_templates(&self.scopes, ut);
-                    vars.push((name.data, mutable || pm, ty, pattern));
-                }
-
-                let mut had_refutable = false;
-                let checked: Vec<_> = vars
-                    .into_iter()
-                    .map(|(name, mutable, inner, patt)| {
-                        let ty = scrutinee.matched_inner_type(inner.clone());
-                        if let Some(patt) = patt {
-                            let patt = self.check_pattern(true, &ty, mutable, patt);
-                            if !matches!(patt, CheckedPattern::Irrefutable(_)) {
-                                had_refutable = true;
-                            }
-                            (name, inner, patt)
-                        } else {
-                            (
-                                name.clone(),
-                                inner,
-                                CheckedPattern::Irrefutable(IrrefutablePattern::Variable(
-                                    self.insert(
-                                        Variable {
-                                            name,
-                                            ty,
-                                            is_static: false,
-                                            mutable,
-                                            value: None,
-                                        },
-                                        false,
-                                    ),
-                                )),
-                            )
-                        }
-                    })
-                    .collect();
-                if had_refutable {
-                    CheckedPattern::Destrucure(checked)
-                } else {
-                    CheckedPattern::Irrefutable(IrrefutablePattern::Destrucure(
-                        checked
-                            .into_iter()
-                            .map(|(name, ty, patt)| (name, ty, patt.into_irrefutable().unwrap()))
-                            .collect(),
-                    ))
-                }
+                self.check_struct_pattern(scrutinee, mutable, destructures, span)
             }
             Pattern::String(value) => {
                 let string = self.scopes.make_lang_type("string", vec![]).unwrap();
@@ -3859,12 +3866,6 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_type(&mut self, ty: &mut Type) {
-        if let Type::Unresolved(hint) = ty {
-            *ty = self.enter_id_and_resolve(hint.1, |this| this.resolve_typehint(&hint.0));
-        }
-    }
-
     fn resolve_use(&mut self, public: bool, all: bool, path: ResolvedPath, span: Span) -> bool {
         match path {
             ResolvedPath::UserType(ut) => {
@@ -4338,26 +4339,44 @@ impl TypeChecker {
             .any(|ext| search(ty.as_user().map(|ty| &**ty), &ext.impls))
     }
 
-    fn get_trait_impl<'a, 'b>(&'a self, ty: &'b Type, id: UserTypeId) -> Option<&'b GenericUserType>
+    fn get_trait_impl_helper<Id: ItemId + Clone + Copy>(
+        &mut self,
+        id: Id,
+        target: UserTypeId,
+    ) -> Option<GenericUserType>
     where
-        'a: 'b,
+        Id::Value: HasImplsAndTypeParams,
     {
-        let search = |impls: &'a [Type]| {
-            impls
-                .iter()
-                .flat_map(|i| i.as_user().map(|ut| &**ut))
-                .find(|ut| ut.id == id)
-        };
-
-        if let Some(ty) = ty
-            .as_user()
-            .and_then(|ut| search(&self.scopes.get(ut.id).impls))
-        {
-            return Some(ty);
+        for i in 0..self.scopes.get(id).get_impls().len() {
+            resolve_type!(self, self.scopes.get_mut(id).get_impls_mut()[i]);
+            if let Some(ut) = self.scopes.get(id).get_impls()[i]
+                .as_user()
+                .map(|ut| &**ut)
+                .filter(|ut| ut.id == target)
+                .cloned()
+            {
+                return Some(ut);
+            }
         }
 
-        self.extensions_in_scope_for(ty)
-            .find_map(|ext| search(&ext.impls))
+        None
+    }
+
+    fn get_trait_impl(&mut self, ty: &Type, id: UserTypeId) -> Option<GenericUserType> {
+        if let Some(ut) = ty
+            .as_user()
+            .and_then(|ut| self.get_trait_impl_helper(ut.id, id))
+        {
+            Some(ut)
+        } else {
+            for ext in self.extension_ids_in_scope_for(ty).collect::<Vec<_>>() {
+                if let Some(ut) = self.get_trait_impl_helper(ext, id) {
+                    return Some(ut);
+                }
+            }
+
+            None
+        }
     }
 
     fn get_member_fn(
