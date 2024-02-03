@@ -70,6 +70,7 @@ struct TypeGen<'a> {
     structs: HashMap<GenericUserType, Vec<GenericUserType>>,
     fnptrs: HashSet<FnPtr>,
     arrays: HashMap<Type, HashSet<usize>>,
+    integers: HashSet<(u32, bool)>,
     scopes: &'a Scopes,
 }
 
@@ -80,14 +81,20 @@ impl<'a> TypeGen<'a> {
             structs: Default::default(),
             fnptrs: Default::default(),
             arrays: Default::default(),
+            integers: Default::default(),
         }
     }
 
     fn finish(mut self, buffer: &mut Buffer) {
+        let integers = std::mem::take(&mut self.integers);
         let structs = std::mem::take(&mut self.structs);
         let fnptrs = std::mem::take(&mut self.fnptrs);
         let mut arrays = std::mem::take(&mut self.arrays);
         let mut definitions = Buffer::default();
+        for (bits, signed) in integers {
+            let ch = if signed { 's' } else { 'u' };
+            buffer.emit(format!("typedef {}INT({bits}) {ch}{bits};", ch.to_uppercase()));
+        }
         for f in fnptrs {
             definitions.emit("typedef ");
             definitions.emit_type(self.scopes, &f.ret, None);
@@ -169,9 +176,16 @@ impl<'a> TypeGen<'a> {
 
     fn add_type(&mut self, diag: &mut Diagnostics, ty: &Type, adding: Option<&GenericUserType>) {
         match &ty {
+            Type::Ptr(inner) | Type::MutPtr(inner) => self.add_type(diag, inner, adding),
             Type::FnPtr(ptr) => self.add_fnptr(diag, (**ptr).clone()),
             Type::User(ut) => self.add_user_type(diag, (**ut).clone(), adding),
             Type::Array(arr) => self.add_array(diag, arr.0.clone(), arr.1, adding),
+            Type::Int(bits) => {
+                self.integers.insert((*bits, true));
+            }
+            Type::Uint(bits) => {
+                self.integers.insert((*bits, false));
+            }
             _ => {}
         }
     }
@@ -213,11 +227,14 @@ impl<'a> TypeGen<'a> {
 
         let mut deps = Vec::new();
         if let Some(members) = self.scopes.get(ut.id).members() {
+            if let Some(union) = self.scopes.get(ut.id).data.as_union() {
+                self.add_type(diag, &union.tag_type(), None);
+            }
+
             for member in members.iter() {
                 let mut ty = member.ty.clone();
                 ty.fill_struct_templates(self.scopes, &ut);
                 match ty {
-                    Type::FnPtr(ptr) => self.add_fnptr(diag, *ptr),
                     Type::User(dep) => {
                         if matches!(adding, Some(adding) if adding == &*dep) {
                             // ideally get the span of the instantiation that caused this
@@ -251,7 +268,7 @@ impl<'a> TypeGen<'a> {
 
                         self.add_array(diag, arr.0, arr.1, Some(&ut));
                     }
-                    _ => {}
+                    ty => self.add_type(diag, &ty, adding),
                 }
             }
         }
@@ -344,8 +361,11 @@ impl Buffer {
         match id {
             Type::Void | Type::Never | Type::CVoid => self.emit("$void"),
             Type::Int(bits) | Type::Uint(bits) => {
-                let signed = matches!(id, Type::Int(_));
-                self.emit(format!("{}INT({bits})", if signed { "S" } else { "U" }));
+                if let Some((diag, tg)) = tg {
+                    tg.add_type(diag, id, None);
+                }
+                let ch = if matches!(id, Type::Int(_)) { 's' } else { 'u' };
+                self.emit(format!("{ch}{bits}"));
             }
             Type::CInt(ty) | Type::CUint(ty) => {
                 if matches!(id, Type::CUint(_)) {
@@ -403,12 +423,8 @@ impl Buffer {
                 UserTypeData::Enum(backing) => {
                     self.emit_type(scopes, backing, tg);
                 }
-                UserTypeData::Template(_, _) => {
-                    panic!("ICE: Template type in emit_type");
-                }
-                UserTypeData::Trait => {
-                    panic!("ICE: Trait type in emit_type");
-                }
+                UserTypeData::Template(_, _) => panic!("ICE: Template type in emit_type"),
+                UserTypeData::Trait => panic!("ICE: Trait type in emit_type"),
             },
             Type::Array(data) => {
                 self.emit_generic_mangled_name(scopes, id);
