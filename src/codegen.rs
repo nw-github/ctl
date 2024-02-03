@@ -655,7 +655,9 @@ impl<'a> Codegen<'a> {
         }
         let static_defs = std::mem::take(&mut this.buffer);
 
-        this.buffer.emit("void $ctl_static_init(void) {");
+
+        this.buffer
+            .emit("int main(int argc, char **argv) { $ctl_init();");
         hoist_point!(this, {
             for (id, var) in scopes.vars().filter(|(_, v)| v.is_static) {
                 this.emit_var_name(id, main);
@@ -664,23 +666,6 @@ impl<'a> Codegen<'a> {
                 this.buffer.emit(";");
             }
         });
-        this.buffer.emit("}");
-
-        let mut prototypes = Buffer::default();
-        let mut emitted = HashSet::new();
-        while !this.funcs.is_empty() {
-            let diff = this.funcs.difference(&emitted).cloned().collect::<Vec<_>>();
-            emitted.extend(this.funcs.drain());
-
-            for mut state in diff {
-                this.gen_fn(&mut state, &mut prototypes);
-            }
-        }
-
-        let functions = std::mem::take(&mut this.buffer);
-
-        this.buffer
-            .emit("int main(int argc, char **argv) { $ctl_init(); $ctl_static_init(); ");
 
         let returns = scopes.get(main.func.id).ret != Type::Void;
         if let Some(state) = conv_argv {
@@ -710,6 +695,19 @@ impl<'a> Codegen<'a> {
             }
         }
         let main = std::mem::take(&mut this.buffer);
+        
+        let mut prototypes = Buffer::default();
+        let mut emitted = HashSet::new();
+        while !this.funcs.is_empty() {
+            let diff = this.funcs.difference(&emitted).cloned().collect::<Vec<_>>();
+            emitted.extend(this.funcs.drain());
+
+            for mut state in diff {
+                this.gen_fn(&mut state, &mut prototypes);
+            }
+        }
+
+        let functions = std::mem::take(&mut this.buffer);
 
         if leak {
             this.buffer.emit("#define CTL_NOGC\n");
