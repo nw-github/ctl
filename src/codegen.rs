@@ -8,7 +8,7 @@ use crate::{
             ArrayPattern, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt,
             IrrefutablePattern, RestPattern, Symbol,
         },
-        parsed::RangePattern,
+        parsed::{Linkage, RangePattern},
         UnaryOp,
     },
     error::{Diagnostics, Error},
@@ -1831,10 +1831,10 @@ impl<'a> Codegen<'a> {
         let mut ret = f.ret.clone();
         state.fill_generics(self.scopes, &mut ret);
 
-        if f.is_extern {
-            self.buffer.emit("extern ");
-        } else {
+        if f.linkage == Linkage::Internal {
             self.buffer.emit("static ");
+        } else {
+            self.buffer.emit("extern ");
         }
 
         if ret.is_never() {
@@ -1856,7 +1856,7 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit(", ");
             }
 
-            if f.is_extern || is_prototype {
+            if f.linkage == Linkage::Import || is_prototype {
                 self.emit_type(&ty);
             } else if let ParamPattern::Checked(IrrefutablePattern::Variable(id)) = &param.patt {
                 _ = self.emit_local_decl(*id, state);
@@ -1934,7 +1934,7 @@ impl<'a> Codegen<'a> {
 
     fn emit_fn_name(&mut self, state: &State) {
         let f = self.scopes.get(state.func.id);
-        if !f.is_extern {
+        if f.linkage == Linkage::Internal {
             if let Some(inst) = state.inst.as_ref() {
                 self.buffer.emit_generic_mangled_name(self.scopes, inst);
                 self.buffer.emit("_");

@@ -307,7 +307,7 @@ impl TypeChecker {
                             public: base.public && !base.members.iter().any(|m| !m.public),
                             name: base.name.clone(),
                             is_async: false,
-                            is_extern: false,
+                            linkage: Linkage::Internal,
                             variadic: false,
                             is_unsafe: false,
                             type_params: base.type_params.clone(),
@@ -484,8 +484,8 @@ impl TypeChecker {
                                 Fn {
                                     public: base.public,
                                     name: Located::new(Span::default(), member.name.data.clone()),
+                                    linkage: Linkage::Internal,
                                     is_async: false,
-                                    is_extern: false,
                                     variadic: false,
                                     is_unsafe: false,
                                     type_params: base.type_params.clone(),
@@ -687,9 +687,9 @@ impl TypeChecker {
         f: Fn,
         attrs: Vec<Attribute>,
     ) -> DeclaredFn {
-        if f.variadic && !f.is_extern {
+        if f.variadic && f.linkage != Linkage::Import {
             self.error(Error::new(
-                "only extern functions may be variadic",
+                "only import functions may be variadic",
                 f.name.span,
             ))
         }
@@ -710,8 +710,8 @@ impl TypeChecker {
             Function {
                 attrs,
                 name: f.name,
+                linkage: f.linkage,
                 is_async: f.is_async,
-                is_extern: f.is_extern,
                 is_unsafe: f.is_unsafe,
                 variadic: f.variadic,
                 type_params: Vec::new(),

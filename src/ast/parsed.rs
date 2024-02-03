@@ -2,6 +2,13 @@ use crate::{lexer::Located, THIS_TYPE};
 
 use super::{Attribute, BinaryOp, UnaryOp};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Linkage {
+    Import,
+    Export,
+    Internal,
+}
+
 #[derive(Debug, Clone)]
 pub struct Stmt {
     pub data: StmtData,
@@ -376,8 +383,8 @@ pub struct Param {
 pub struct Fn {
     pub public: bool,
     pub name: Located<String>,
+    pub linkage: Linkage,
     pub is_async: bool,
-    pub is_extern: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
     pub type_params: Vec<(String, Vec<Located<TypePath>>)>,

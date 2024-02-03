@@ -1,4 +1,4 @@
-pub extern fn printf(fmt: *c_char, ...): c_int;
+pub import fn printf(fmt: *c_char, ...): c_int;
 
 pub struct Repeat<T> {
     elem: T,
