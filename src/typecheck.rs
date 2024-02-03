@@ -92,6 +92,10 @@ impl TypeChecker {
 
     fn check_one(&mut self, path: &std::path::Path, module: Vec<Stmt>) -> ScopeId {
         let project = crate::derive_module_name(path);
+        let is_root_module = |name: &str| {
+            (path.is_file() && name == project) || name == "main"
+        };
+
         self.enter(
             ScopeKind::Module(project.clone(), Vec::new()),
             true,
@@ -102,7 +106,7 @@ impl TypeChecker {
                     .map(|ast| {
                         let mut declared = Vec::new();
                         match ast.data {
-                            StmtData::Module { name, body, .. } if name.data == project => {
+                            StmtData::Module { name, body, .. } if is_root_module(&name.data) => {
                                 declared.extend(
                                     body.into_iter()
                                         .map(|stmt| this.declare_stmt(&mut autouse, stmt)),
