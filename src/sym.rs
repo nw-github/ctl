@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::{
     ast::{
-        checked::{CheckedExpr, CheckedStmt, IrrefutablePattern},
+        checked::{CheckedExpr, CheckedPattern, CheckedStmt},
         parsed::{Expr, Linkage, Pattern, TypePath},
         Attribute,
     },
@@ -125,7 +125,7 @@ pub enum DefaultExpr {
 #[derive(Debug, Clone, EnumAsInner)]
 pub enum ParamPattern {
     Unchecked(Located<Pattern>),
-    Checked(IrrefutablePattern),
+    Checked(CheckedPattern),
 }
 
 #[derive(Debug, Clone)]

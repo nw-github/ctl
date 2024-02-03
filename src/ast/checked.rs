@@ -30,31 +30,24 @@ pub struct ArrayPattern<T> {
     pub inner: Type,
 }
 
-#[derive(Debug, Clone)]
-pub enum IrrefutablePattern {
-    Variable(VariableId),
-    Destrucure(Vec<(String, Type, IrrefutablePattern)>),
-    Array(ArrayPattern<IrrefutablePattern>),
-}
-
 #[derive(Debug, Clone, Default, EnumAsInner)]
 pub enum CheckedPattern {
     UnionMember {
-        pattern: Option<IrrefutablePattern>,
+        pattern: Option<Box<CheckedPattern>>,
         variant: String,
         inner: Type,
     },
     Destrucure(Vec<(String, Type, CheckedPattern)>),
     Array(ArrayPattern<CheckedPattern>),
-    Irrefutable(IrrefutablePattern),
     Int(BigInt),
     IntRange(RangePattern<BigInt>),
     String(String),
     Span {
-        patterns: Vec<IrrefutablePattern>,
+        patterns: Vec<CheckedPattern>,
         rest: Option<RestPattern>,
         inner: Type,
     },
+    Variable(VariableId),
     #[default]
     Error,
 }
@@ -68,8 +61,7 @@ pub enum Symbol {
 #[derive(Debug, Default, Clone)]
 pub enum CheckedStmt {
     Expr(CheckedExpr),
-    Let(VariableId),
-    LetPattern(IrrefutablePattern, CheckedExpr),
+    Let(CheckedPattern, Option<CheckedExpr>),
     #[default]
     None,
 }
@@ -138,7 +130,7 @@ pub enum CheckedExprData {
     },
     For {
         iter: Box<CheckedExpr>,
-        patt: IrrefutablePattern,
+        patt: CheckedPattern,
         body: Vec<CheckedStmt>,
         optional: bool,
     },

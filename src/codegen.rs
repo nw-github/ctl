@@ -5,8 +5,8 @@ use indexmap::IndexMap;
 use crate::{
     ast::{
         checked::{
-            ArrayPattern, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt,
-            IrrefutablePattern, RestPattern, Symbol,
+            ArrayPattern, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt, RestPattern,
+            Symbol,
         },
         parsed::{Linkage, RangePattern},
         UnaryOp,
@@ -93,7 +93,10 @@ impl<'a> TypeGen<'a> {
         let mut definitions = Buffer::default();
         for (bits, signed) in integers {
             let ch = if signed { 's' } else { 'u' };
-            buffer.emit(format!("typedef {}INT({bits}) {ch}{bits};", ch.to_uppercase()));
+            buffer.emit(format!(
+                "typedef {}INT({bits}) {ch}{bits};",
+                ch.to_uppercase()
+            ));
         }
         for f in fnptrs {
             definitions.emit("typedef ");
@@ -171,7 +174,7 @@ impl<'a> TypeGen<'a> {
             }
         }
 
-        buffer.emit(definitions.0);
+        buffer.emit(definitions.finish());
     }
 
     fn add_type(&mut self, diag: &mut Diagnostics, ty: &Type, adding: Option<&GenericUserType>) {
@@ -225,6 +228,8 @@ impl<'a> TypeGen<'a> {
             return;
         }
 
+        self.structs.insert(ut.clone(), Vec::new());
+
         let mut deps = Vec::new();
         if let Some(members) = self.scopes.get(ut.id).members() {
             if let Some(union) = self.scopes.get(ut.id).data.as_union() {
@@ -272,7 +277,6 @@ impl<'a> TypeGen<'a> {
                 }
             }
         }
-
         self.structs.insert(ut, deps);
     }
 
@@ -515,6 +519,37 @@ impl Buffer {
         self.emit_generic_mangled_name(scopes, ty);
         self.emit(format!("_{}", size));
     }
+
+    fn finish(self) -> String {
+        self.0
+    }
+}
+
+#[derive(Default)]
+struct ConditionBuilder(Buffer);
+
+impl ConditionBuilder {
+    pub fn next(&mut self, f: impl FnOnce(&mut Buffer)) {
+        if !self.0 .0.is_empty() {
+            self.0.emit("&&");
+        }
+        f(&mut self.0);
+    }
+
+    pub fn next_str(&mut self, s: impl AsRef<str>) {
+        if !self.0 .0.is_empty() {
+            self.0.emit("&&");
+        }
+        self.0.emit(s);
+    }
+
+    pub fn finish(self) -> String {
+        if self.0.0.is_empty() {
+            "1".into()
+        } else {
+            self.0.finish()
+        }
+    }
 }
 
 macro_rules! hoist {
@@ -523,7 +558,7 @@ macro_rules! hoist {
         let result = $body;
         $self
             .temporaries
-            .emit(std::mem::replace(&mut $self.buffer, buffer).0);
+            .emit(std::mem::replace(&mut $self.buffer, buffer).finish());
         result
     }};
 }
@@ -588,11 +623,19 @@ macro_rules! hoist_point {
         let old_tmp = std::mem::take(&mut $self.temporaries);
         let old_buf = std::mem::take(&mut $self.buffer);
         $body;
-        let written = std::mem::replace(&mut $self.buffer, old_buf).0;
+        let written = std::mem::replace(&mut $self.buffer, old_buf).finish();
         $self
             .buffer
-            .emit(std::mem::replace(&mut $self.temporaries, old_tmp).0);
+            .emit(std::mem::replace(&mut $self.temporaries, old_tmp).finish());
         $self.buffer.emit(written);
+    };
+}
+
+macro_rules! usebuf {
+    ($self: expr, $buf: expr,  $body: expr) => {
+        std::mem::swap(&mut $self.buffer, $buf);
+        $body
+        std::mem::swap(&mut $self.buffer, $buf);
     };
 }
 
@@ -653,8 +696,7 @@ impl<'a> Codegen<'a> {
             this.emit_local_decl(id, main);
             this.buffer.emit(";");
         }
-        let static_defs = std::mem::take(&mut this.buffer);
-
+        let static_defs = std::mem::take(&mut this.buffer).finish();
 
         this.buffer
             .emit("int main(int argc, char **argv) { $ctl_init();");
@@ -694,8 +736,8 @@ impl<'a> Codegen<'a> {
                 this.buffer.emit("(); return 0; }");
             }
         }
-        let main = std::mem::take(&mut this.buffer);
-        
+        let main = std::mem::take(&mut this.buffer).finish();
+
         let mut prototypes = Buffer::default();
         let mut emitted = HashSet::new();
         while !this.funcs.is_empty() {
@@ -706,8 +748,7 @@ impl<'a> Codegen<'a> {
                 this.gen_fn(&mut state, &mut prototypes);
             }
         }
-
-        let functions = std::mem::take(&mut this.buffer);
+        let functions = std::mem::take(&mut this.buffer).finish();
 
         if leak {
             this.buffer.emit("#define CTL_NOGC\n");
@@ -717,12 +758,12 @@ impl<'a> Codegen<'a> {
             return Err(this.diag);
         }
         this.type_gen.finish(&mut this.buffer);
-        this.buffer.emit(prototypes.0);
-        this.buffer.emit(static_defs.0);
-        this.buffer.emit(functions.0);
-        this.buffer.emit(main.0);
+        this.buffer.emit(prototypes.finish());
+        this.buffer.emit(static_defs);
+        this.buffer.emit(functions);
+        this.buffer.emit(main);
 
-        Ok((this.diag, this.buffer.0))
+        Ok((this.diag, this.buffer.finish()))
     }
 
     fn gen_fn(&mut self, state: &mut State, prototypes: &mut Buffer) {
@@ -733,35 +774,35 @@ impl<'a> Codegen<'a> {
         }
 
         if Self::needs_fn_wrapper(func) {
-            std::mem::swap(&mut self.buffer, prototypes);
-            self.emit_prototype(state, false, false);
+            usebuf!(self, prototypes, {
+                self.emit_prototype(state, false, false);
 
-            self.buffer.emit("{");
-            self.emit_prototype(state, true, true);
-            self.buffer.emit(";");
-            self.emit_fn_name_2(state, true);
-            self.buffer.emit("(");
-            for i in 0..func.params.len() {
-                if i > 0 {
-                    self.buffer.emit(", ");
+                self.buffer.emit("{");
+                self.emit_prototype(state, true, true);
+                self.buffer.emit(";");
+                self.emit_fn_name_2(state, true);
+                self.buffer.emit("(");
+                for i in 0..func.params.len() {
+                    if i > 0 {
+                        self.buffer.emit(", ");
+                    }
+                    self.buffer.emit(format!("$param{i}"));
                 }
-                self.buffer.emit(format!("$param{i}"));
-            }
 
-            self.buffer.emit("); ");
-            if func.ret.is_never() {
-                self.buffer.emit("UNREACHABLE(); }");
-            } else {
-                self.buffer.emit(format!("return {VOID_INSTANCE}; }}"));
-            }
-            std::mem::swap(&mut self.buffer, prototypes);
+                self.buffer.emit("); ");
+                if func.ret.is_never() {
+                    self.buffer.emit("UNREACHABLE(); }");
+                } else {
+                    self.buffer.emit(format!("return {VOID_INSTANCE}; }}"));
+                }
+            });
             return;
         }
 
-        std::mem::swap(&mut self.buffer, prototypes);
-        self.emit_prototype(state, true, false);
-        self.buffer.emit(";");
-        std::mem::swap(&mut self.buffer, prototypes);
+        usebuf!(self, prototypes, {
+            self.emit_prototype(state, true, false);
+            self.buffer.emit(";");
+        });
         if let Some(body) = func.body.clone() {
             self.emit_prototype(state, false, false);
             self.buffer.emit("{");
@@ -769,12 +810,12 @@ impl<'a> Codegen<'a> {
                 let Some(patt) = param
                     .patt
                     .as_checked()
-                    .filter(|patt| !matches!(patt, IrrefutablePattern::Variable(_)))
+                    .filter(|patt| !matches!(patt, CheckedPattern::Variable(_)))
                 else {
                     continue;
                 };
 
-                self.gen_irrefutable_pattern(state, patt, &param.label, &param.ty, false);
+                self.gen_pattern_bindings(state, patt, &param.label, &param.ty);
             }
 
             for stmt in body.into_iter() {
@@ -796,25 +837,23 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit(";");
                 });
             }
-            CheckedStmt::Let(id) => {
+            CheckedStmt::Let(pattern, value) => {
                 hoist_point!(self, {
-                    let var = self.scopes.get(id);
-                    let ty = self.emit_local_decl(id, state);
-                    if let Some(mut expr) = var.value.clone() {
-                        expr.ty = ty;
-                        self.buffer.emit(" = ");
-                        self.gen_expr_inner(expr, state);
+                    if let CheckedPattern::Variable(id) = pattern {
+                        let ty = self.emit_local_decl(id, state);
+                        if let Some(mut expr) = value {
+                            expr.ty = ty;
+                            self.buffer.emit(" = ");
+                            self.gen_expr_inner(expr, state);
+                        }
+    
+                        self.buffer.emit(";");
+                    } else if let Some(mut value) = value {
+                        state.fill_generics(self.scopes, &mut value.ty);
+                        let ty = value.ty.clone();
+                        let tmp = self.gen_tmpvar(value, state);
+                        self.gen_pattern_bindings(state, &pattern, &tmp, &ty);
                     }
-
-                    self.buffer.emit(";");
-                });
-            }
-            CheckedStmt::LetPattern(pattern, mut value) => {
-                hoist_point!(self, {
-                    state.fill_generics(self.scopes, &mut value.ty);
-                    let ty = value.ty.clone();
-                    let tmp = self.gen_tmpvar(value, state);
-                    self.gen_irrefutable_pattern(state, &pattern, &tmp, &ty, false);
                 });
             }
             CheckedStmt::None => {}
@@ -906,7 +945,7 @@ impl<'a> Codegen<'a> {
                         state.fill_generics(self.scopes, &mut inner.ty);
                         let inner_ty = inner.ty.clone();
                         let inner_tmp = self.gen_tmpvar(*inner, state);
-                        self.gen_pattern(
+                        self.gen_pattern_test(
                             state,
                             &CheckedPattern::UnionMember {
                                 pattern: None,
@@ -1290,7 +1329,7 @@ impl<'a> Codegen<'a> {
                         state.fill_generics(self.scopes, &mut expr.ty);
                         let ty = expr.ty.clone();
                         let tmp = self.gen_tmpvar(*expr, state);
-                        self.gen_pattern(state, &patt, &tmp, &ty);
+                        self.gen_pattern_test(state, &patt, &tmp, &ty);
                     } else {
                         self.buffer.emit("if (");
                         self.gen_expr(*cond, state);
@@ -1338,7 +1377,7 @@ impl<'a> Codegen<'a> {
                                 state.fill_generics(self.scopes, &mut cond.ty);
                                 let ty = cond.ty.clone();
                                 let tmp = self.gen_tmpvar(*cond, state);
-                                self.gen_pattern(state, &patt, &tmp, &ty);
+                                self.gen_pattern_test(state, &patt, &tmp, &ty);
                                 self.emit_block(body.body, state);
                                 self.buffer.emit("} else {");
                                 if optional {
@@ -1389,10 +1428,10 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit(format!(" {item} = "));
                     self.emit_fn_name(&next_state);
                     self.buffer.emit(format!("(&{iter_var});"));
-                    self.gen_pattern(
+                    self.gen_pattern_test(
                         state,
                         &CheckedPattern::UnionMember {
-                            pattern: Some(patt),
+                            pattern: Some(patt.into()),
                             variant: "Some".into(),
                             inner: next_ty.as_option_inner(self.scopes).unwrap().clone(),
                         },
@@ -1491,7 +1530,7 @@ impl<'a> Codegen<'a> {
                             self.buffer.emit("else ");
                         }
 
-                        self.gen_pattern(state, &pattern, &tmp, &ty);
+                        self.gen_pattern_test(state, &pattern, &tmp, &ty);
 
                         hoist_point!(self, {
                             self.gen_expr(expr, state);
@@ -1518,7 +1557,7 @@ impl<'a> Codegen<'a> {
                     let inner_tmp = self.gen_tmpvar(*inner, state);
 
                     // TODO: pattern condition
-                    self.gen_pattern(state, &patt, &inner_tmp, &ty);
+                    self.gen_pattern_test(state, &patt, &inner_tmp, &ty);
                     self.buffer
                         .emit(format!("{tmp} = 1; }} else {{ {tmp} = 0; }}"));
                 });
@@ -1605,8 +1644,62 @@ impl<'a> Codegen<'a> {
         tmp
     }
 
-    fn gen_pattern(&mut self, state: &mut State, pattern: &CheckedPattern, src: &str, ty: &Type) {
+    #[allow(clippy::too_many_arguments)]
+    fn gen_pattern(
+        &mut self,
+        state: &mut State,
+        pattern: &CheckedPattern,
+        src: &str,
+        ty: &Type,
+        borrow: bool,
+        bindings: &mut Buffer,
+        conditions: &mut ConditionBuilder,
+    ) {
         match pattern {
+            CheckedPattern::Int(value) => {
+                conditions.next(|buffer| {
+                    usebuf!(self, buffer, {
+                        self.buffer.emit(format!("({} == ", deref(src, ty)));
+                        self.emit_cast(ty.strip_references());
+                        self.buffer.emit(format!("{value})"));
+                    });
+                });
+            }
+            CheckedPattern::IntRange(RangePattern {
+                inclusive,
+                start,
+                end,
+            }) => {
+                let src = deref(src, ty);
+                let base = ty.strip_references();
+                conditions.next(|buffer| {
+                    usebuf!(self, buffer, {
+                        self.buffer.emit(format!("({src} >= "));
+                        self.emit_cast(base);
+                        self.buffer.emit(format!(
+                            "{start} && {src} {} ",
+                            if *inclusive { "<=" } else { "<" }
+                        ));
+                        self.emit_cast(base);
+                        self.buffer.emit(format!("{end})"));
+                    });
+                });
+            }
+            CheckedPattern::String(value) => {
+                conditions.next(|buffer| {
+                    usebuf!(self, buffer, {
+                        self.buffer.emit(format!(
+                            "({0}.span.len == {1} && __builtin_memcmp({0}.span.ptr, \"",
+                            deref(src, ty),
+                            value.len()
+                        ));
+                        for byte in value.as_bytes() {
+                            self.buffer.emit(format!("\\x{byte:x}"));
+                        }
+                        self.buffer.emit(format!("\", {}) == 0)", value.len()));
+                    });
+                });
+            }
             CheckedPattern::UnionMember {
                 pattern,
                 variant,
@@ -1619,18 +1712,20 @@ impl<'a> Codegen<'a> {
                     .filter(|inner| matches!(inner, Type::Ptr(_) | Type::MutPtr(_)))
                 {
                     if variant == "Some" {
-                        self.buffer.emit(format!("if ({src} != NULL) {{"));
+                        conditions.next_str(format!("({src} != NULL)"));
                         if let Some(pattern) = pattern {
-                            self.gen_irrefutable_pattern(
+                            self.gen_pattern(
                                 state,
                                 pattern,
                                 &src,
                                 inner,
                                 ty.is_any_ptr(),
+                                bindings,
+                                conditions,
                             );
                         }
                     } else {
-                        self.buffer.emit(format!("if ({src} == NULL) {{"));
+                        conditions.next_str(format!("({src} == NULL)"));
                     }
                 } else {
                     let tag = base
@@ -1638,55 +1733,20 @@ impl<'a> Codegen<'a> {
                         .and_then(|ut| self.scopes.get(ut.id).data.as_union())
                         .and_then(|union| union.variant_tag(variant))
                         .unwrap();
-                    self.buffer
-                        .emit(format!("if ({src}.{UNION_TAG_NAME} == {tag}) {{"));
+                    conditions.next_str(format!("({src}.{UNION_TAG_NAME} == {tag})"));
 
                     if let Some(pattern) = pattern {
-                        self.gen_irrefutable_pattern(
+                        self.gen_pattern(
                             state,
                             pattern,
                             &format!("{src}.{variant}"),
                             inner,
                             ty.is_any_ptr(),
+                            bindings,
+                            conditions,
                         );
                     }
                 }
-            }
-            CheckedPattern::Irrefutable(pattern) => {
-                self.buffer.emit("if (1) {");
-                self.gen_irrefutable_pattern(state, pattern, src, ty, false);
-            }
-            CheckedPattern::Int(value) => {
-                self.buffer.emit(format!("if ({} == ", deref(src, ty)));
-                self.emit_cast(ty.strip_references());
-                self.buffer.emit(format!("{value}) {{"));
-            }
-            CheckedPattern::IntRange(RangePattern {
-                inclusive,
-                start,
-                end,
-            }) => {
-                let src = deref(src, ty);
-                let base = ty.strip_references();
-                self.buffer.emit(format!("if ({src} >= "));
-                self.emit_cast(base);
-                self.buffer.emit(format!(
-                    "{start} && {src} {} ",
-                    if *inclusive { "<=" } else { "<" }
-                ));
-                self.emit_cast(base);
-                self.buffer.emit(format!("{end}) {{"));
-            }
-            CheckedPattern::String(value) => {
-                let src = deref(src, ty);
-                self.buffer.emit(format!(
-                    "if ({src}.span.len == {} && __builtin_memcmp({src}.span.ptr, \"",
-                    value.len()
-                ));
-                for byte in value.as_bytes() {
-                    self.buffer.emit(format!("\\x{byte:x}"));
-                }
-                self.buffer.emit(format!("\", {}) == 0) {{", value.len()));
             }
             CheckedPattern::Span {
                 patterns,
@@ -1694,24 +1754,30 @@ impl<'a> Codegen<'a> {
                 inner,
             } => {
                 let src = deref(src, ty);
-                self.buffer.emit(format!(
-                    "if ({src}.len {} {}) {{",
-                    if rest.is_some() { ">=" } else { "==" },
-                    patterns.len()
-                ));
-                let pos = rest.map(|RestPattern { id, pos }| {
-                    if let Some(id) = id {
-                        self.emit_local_decl(id, state);
+                conditions.next(|buffer| {
+                    usebuf!(self, buffer, {
                         self.buffer.emit(format!(
-                            " = {{ .ptr = {src}.ptr + {pos}, .len = {src}.len - {} }};",
+                            "({src}.len {} {})",
+                            if rest.is_some() { ">=" } else { "==" },
                             patterns.len()
                         ));
+                    });
+                });
+
+                let pos = rest.map(|RestPattern { id, pos }| {
+                    if let Some(id) = id {
+                        usebuf!(self, bindings, {
+                            self.emit_local_decl(id, state);
+                            self.buffer.emit(format!(
+                                " = {{ .ptr = {src}.ptr + {pos}, .len = {src}.len - {} }};",
+                                patterns.len()
+                            ));
+                        });
                     }
                     pos
                 });
-
                 for (i, patt) in patterns.iter().enumerate() {
-                    self.gen_irrefutable_pattern(
+                    self.gen_pattern(
                         state,
                         patt,
                         &if pos.is_some_and(|pos| i >= pos) {
@@ -1721,43 +1787,27 @@ impl<'a> Codegen<'a> {
                         },
                         inner,
                         true,
+                        bindings,
+                        conditions,
                     );
                 }
             }
-            CheckedPattern::Destrucure(_) => todo!(),
-            CheckedPattern::Array(_) => todo!(),
-            CheckedPattern::Error => panic!("ICE: CheckedPattern::Error in gen_pattern"),
-        }
-    }
-
-    fn gen_irrefutable_pattern(
-        &mut self,
-        state: &mut State,
-        pattern: &IrrefutablePattern,
-        src: &str,
-        ty: &Type,
-        borrow: bool,
-    ) {
-        match pattern {
-            &IrrefutablePattern::Variable(id) => {
-                self.emit_local_decl(id, state);
-                self.buffer
-                    .emit(format!(" = {}{src};", if borrow { "&" } else { "" }));
-            }
-            IrrefutablePattern::Destrucure(patterns) => {
+            CheckedPattern::Destrucure(patterns) => {
                 let deref = "*".repeat(ty.indirection());
                 let borrow = borrow || ty.is_any_ptr();
                 for (member, inner, patt) in patterns {
-                    self.gen_irrefutable_pattern(
+                    self.gen_pattern(
                         state,
                         patt,
                         &format!("({deref}{src}).{member}"),
                         inner,
                         borrow || inner.is_any_ptr(),
+                        bindings,
+                        conditions,
                     );
                 }
             }
-            IrrefutablePattern::Array(ArrayPattern {
+            CheckedPattern::Array(ArrayPattern {
                 patterns,
                 rest,
                 arr_len,
@@ -1772,16 +1822,18 @@ impl<'a> Codegen<'a> {
                 let rest = rest.map(|RestPattern { id, pos }| {
                     let rest_len = arr_len - patterns.len();
                     if let Some(id) = id {
-                        self.emit_local_decl(id, state);
-                        if ty.is_any_ptr() {
-                            self.buffer.emit(format!(" = {src} + {pos};"));
-                        } else {
-                            self.buffer.emit(format!(" = {{ .{ARRAY_DATA_NAME} = {{"));
-                            for i in 0..rest_len {
-                                self.buffer.emit(format!("{src}[{}],", pos + i));
+                        usebuf!(self, bindings, {
+                            self.emit_local_decl(id, state);
+                            if ty.is_any_ptr() {
+                                self.buffer.emit(format!(" = {src} + {pos};"));
+                            } else {
+                                self.buffer.emit(format!(" = {{ .{ARRAY_DATA_NAME} = {{"));
+                                for i in 0..rest_len {
+                                    self.buffer.emit(format!("{src}[{}],", pos + i));
+                                }
+                                self.buffer.emit("}};");
                             }
-                            self.buffer.emit("}};");
-                        }
+                        });
                     }
 
                     (pos, rest_len)
@@ -1791,16 +1843,69 @@ impl<'a> Codegen<'a> {
                     if let Some((_, rest_len)) = rest.filter(|&(pos, _)| i >= pos) {
                         i += rest_len;
                     }
-                    self.gen_irrefutable_pattern(
+                    self.gen_pattern(
                         state,
                         patt,
                         &format!("{src}[{i}]"),
                         inner,
                         borrow || inner.is_any_ptr(),
+                        bindings,
+                        conditions,
                     );
                 }
             }
+            &CheckedPattern::Variable(id) => {
+                usebuf!(self, bindings, {
+                    self.emit_local_decl(id, state);
+                    self.buffer
+                        .emit(format!(" = {}{src};", if borrow { "&" } else { "" }));
+                });
+            }
+            CheckedPattern::Error => panic!("ICE: CheckedPattern::Error in gen_pattern"),
         }
+    }
+
+    fn gen_pattern_test(
+        &mut self,
+        state: &mut State,
+        pattern: &CheckedPattern,
+        src: &str,
+        ty: &Type,
+    ) {
+        let mut bindings = Buffer::default();
+        let mut conditions = ConditionBuilder::default();
+        self.gen_pattern(
+            state,
+            pattern,
+            src,
+            ty,
+            false,
+            &mut bindings,
+            &mut conditions,
+        );
+        self.buffer.emit(format!("if ({}) {{", conditions.finish()));
+        self.buffer.emit(bindings.finish());
+    }
+
+    fn gen_pattern_bindings(
+        &mut self,
+        state: &mut State,
+        pattern: &CheckedPattern,
+        src: &str,
+        ty: &Type,
+    ) {
+        let mut bindings = Buffer::default();
+        let mut conditions = ConditionBuilder::default();
+        self.gen_pattern(
+            state,
+            pattern,
+            src,
+            ty,
+            false,
+            &mut bindings,
+            &mut conditions,
+        );
+        self.buffer.emit(bindings.finish());
     }
 
     fn emit_block(&mut self, block: Vec<CheckedStmt>, state: &mut State) {
@@ -1862,7 +1967,7 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit(format!(" $param{i}"));
             } else if f.linkage == Linkage::Import || is_prototype {
                 self.emit_type(&ty);
-            } else if let ParamPattern::Checked(IrrefutablePattern::Variable(id)) = &param.patt {
+            } else if let ParamPattern::Checked(CheckedPattern::Variable(id)) = &param.patt {
                 _ = self.emit_local_decl(*id, state);
                 continue;
             } else {

@@ -1055,22 +1055,17 @@ impl TypeChecker {
         patt: Located<Pattern>,
     ) -> CheckedStmt {
         let span = patt.span;
-        match self.check_pattern(true, ty, false, patt) {
-            CheckedPattern::Irrefutable(IrrefutablePattern::Variable(id)) => {
-                self.scopes.get_mut(id).value = value;
-                CheckedStmt::Let(id)
+        if let (true, patt) = self.check_pattern(true, ty, false, patt) {
+            if value.is_none() && !matches!(patt, CheckedPattern::Variable(_)) {
+                return self.error(Error::new(
+                    "must provide a value with a destructuring assignment",
+                    span,
+                ));
             }
-            CheckedPattern::Irrefutable(pattern) => {
-                let Some(value) = value else {
-                    return self.error(Error::new(
-                        "must provide a value with a destructuring assignment",
-                        span,
-                    ));
-                };
 
-                CheckedStmt::LetPattern(pattern, value)
-            }
-            _ => self.error(Error::must_be_irrefutable("variable binding pattern", span)),
+            CheckedStmt::Let(patt, value)
+        } else {
+            self.error(Error::must_be_irrefutable("variable binding pattern", span))
         }
     }
 
@@ -1236,16 +1231,16 @@ impl TypeChecker {
                     this.scopes.get_mut(id).params[i].patt.clone()
                 {
                     let span = patt.span;
-                    let CheckedPattern::Irrefutable(patt) = this.check_pattern(
+                    if let (true, patt) = this.check_pattern(
                         true,
                         &this.scopes.get(id).params[i].ty.clone(),
                         false,
                         patt,
-                    ) else {
-                        this.error::<()>(Error::must_be_irrefutable("parameter patterns", span));
-                        continue;
-                    };
-                    this.scopes.get_mut(id).params[i].patt = ParamPattern::Checked(patt);
+                    ) {
+                        this.scopes.get_mut(id).params[i].patt = ParamPattern::Checked(patt);
+                    } else {
+                        this.error(Error::must_be_irrefutable("parameter patterns", span))
+                    }
                 }
             }
 
@@ -1859,7 +1854,7 @@ impl TypeChecker {
 
                     let patt_span = patt.span;
                     let patt = match this.check_pattern(true, &next_ty, false, patt) {
-                        CheckedPattern::Irrefutable(patt) => Some(patt),
+                        (true, patt) => Some(patt),
                         _ => this.error(Error::must_be_irrefutable("for patterns", patt_span)),
                     };
                     let body = body
@@ -2085,7 +2080,7 @@ impl TypeChecker {
                     target.unwrap_or(Type::Void),
                     CheckedExprData::Match {
                         expr: scrutinee.into(),
-                        body: result,
+                        body: result.into_iter().map(|(a, b)| (a.1, b)).collect(),
                     },
                 )
             }
@@ -2301,7 +2296,7 @@ impl TypeChecker {
             let patt = this.check_full_pattern(&expr.ty, patt);
             f(
                 this,
-                CheckedExpr::new(Type::Bool, CheckedExprData::Is(expr.into(), patt)),
+                CheckedExpr::new(Type::Bool, CheckedExprData::Is(expr.into(), patt.1)),
             )
         })
     }
@@ -2309,7 +2304,7 @@ impl TypeChecker {
     fn check_match_coverage<'a>(
         &mut self,
         ty: &Type,
-        mut patterns: impl Iterator<Item = &'a CheckedPattern> + Clone,
+        mut patterns: impl Iterator<Item = &'a (bool, CheckedPattern)> + Clone,
         span: Span,
     ) {
         let ty = ty.strip_references();
@@ -2326,7 +2321,11 @@ impl TypeChecker {
                     value = 0xe000.into();
                 }
 
-                for pattern in patterns.clone() {
+                for (irrefutable, pattern) in patterns.clone() {
+                    if *irrefutable {
+                        return;
+                    }
+
                     match pattern {
                         CheckedPattern::Int(i) if i == &value => {
                             value += 1;
@@ -2343,7 +2342,6 @@ impl TypeChecker {
                                 continue 'outer;
                             }
                         }
-                        CheckedPattern::Irrefutable(_) => return,
                         _ => {}
                     }
                 }
@@ -2354,19 +2352,21 @@ impl TypeChecker {
             .as_user()
             .is_some_and(|ut| Some(&ut.id) == self.scopes.lang_types.get("string"))
         {
-            if !patterns.any(|patt| patt.is_irrefutable()) {
+            if !patterns.any(|(irrefutable, _)| *irrefutable) {
                 self.error(Error::match_statement("", span))
             }
         } else if ty.as_user().is_some_and(|ut| {
             Some(&ut.id) == self.scopes.lang_types.get("span")
                 || Some(&ut.id) == self.scopes.lang_types.get("span_mut")
         }) {
-            if !patterns.any(|patt| match patt {
-                CheckedPattern::Irrefutable(_) => true,
-                CheckedPattern::Span { patterns, rest, .. } => {
-                    patterns.is_empty() && rest.is_some()
-                }
-                _ => false,
+            if !patterns.any(|(irrefutable, patt)| {
+                *irrefutable
+                    || match patt {
+                        CheckedPattern::Span { patterns, rest, .. } => {
+                            patterns.is_empty() && rest.is_some()
+                        }
+                        _ => false,
+                    }
             }) {
                 self.error(Error::match_statement("", span))
             }
@@ -2376,13 +2376,14 @@ impl TypeChecker {
         {
             let mut missing = vec![];
             'outer: for v in ut.variants.iter().filter(|variant| !variant.shared) {
-                for patt in patterns.clone() {
-                    match patt {
-                        CheckedPattern::Irrefutable(_) => return,
-                        CheckedPattern::UnionMember { variant, .. } if &v.name == variant => {
-                            continue 'outer;
-                        }
-                        _ => {}
+                for (irrefutable, patt) in patterns.clone() {
+                    if *irrefutable {
+                        return;
+                    } else if patt
+                        .as_union_member()
+                        .is_some_and(|(_, variant, _)| &v.name == variant)
+                    {
+                        continue 'outer;
                     }
                 }
 
@@ -2691,19 +2692,15 @@ impl TypeChecker {
 
         let mut ty = member.ty.clone();
         ty.fill_struct_templates(&self.scopes, ut);
-        if let Some(pattern) = subpatterns.into_iter().next() {
-            let inner = ty.clone();
-            let span = pattern.span;
-            let CheckedPattern::Irrefutable(pattern) =
-                self.check_pattern(true, &scrutinee.matched_inner_type(ty), false, pattern)
-            else {
-                return Ok(self.error(Error::must_be_irrefutable("union subpatterns", span)));
-            };
-
+        if let Some(patt) = subpatterns.into_iter().next() {
             Ok(CheckedPattern::UnionMember {
-                pattern: Some(pattern),
                 variant,
-                inner,
+                inner: ty.clone(),
+                pattern: Some(
+                    self.check_pattern(true, &scrutinee.matched_inner_type(ty), false, patt)
+                        .1
+                        .into(),
+                ),
             })
         } else if ty.is_void() {
             Ok(CheckedPattern::UnionMember {
@@ -2772,7 +2769,7 @@ impl TypeChecker {
         span_inner: Type,
         patterns: Vec<Located<Pattern>>,
         span_id: UserTypeId,
-    ) -> CheckedPattern {
+    ) -> (bool, CheckedPattern) {
         let mut rest = None;
         let mut result = Vec::new();
         for (i, patt) in patterns.into_iter().enumerate() {
@@ -2799,15 +2796,7 @@ impl TypeChecker {
                     rest = Some(RestPattern { id, pos: i });
                 }
             } else {
-                let span = patt.span;
-                let CheckedPattern::Irrefutable(pattern) =
-                    self.check_pattern(true, &inner_ptr, false, patt)
-                else {
-                    self.error::<()>(Error::must_be_irrefutable("span subpattterns", span));
-                    continue;
-                };
-
-                result.push(pattern);
+                result.push(self.check_pattern(true, &inner_ptr, false, patt).1);
             }
         }
 
@@ -2816,11 +2805,14 @@ impl TypeChecker {
                 Type::User(GenericUserType::new(span_id, vec![span_inner.clone()]).into());
         }
 
-        CheckedPattern::Span {
-            patterns: result,
-            rest,
-            inner: span_inner,
-        }
+        (
+            false,
+            CheckedPattern::Span {
+                patterns: result,
+                rest,
+                inner: span_inner,
+            },
+        )
     }
 
     fn check_array_pattern(
@@ -2828,7 +2820,7 @@ impl TypeChecker {
         target: &Type,
         patterns: Vec<Located<Pattern>>,
         span: Span,
-    ) -> CheckedPattern {
+    ) -> (bool, CheckedPattern) {
         let span_id = self.scopes.lang_types.get("span").copied();
         let span_mut_id = self.scopes.lang_types.get("span_mut").copied();
         let (real_inner, arr_len) = match target.strip_references() {
@@ -2875,7 +2867,7 @@ impl TypeChecker {
         let inner = target.matched_inner_type(real_inner.clone());
 
         let mut rest = None;
-        let mut had_refutable = false;
+        let mut irrefutable = true;
         let mut result = Vec::new();
         for (i, patt) in patterns.into_iter().enumerate() {
             if let Pattern::Rest(var) = patt.data {
@@ -2901,9 +2893,9 @@ impl TypeChecker {
                     rest = Some(RestPattern { id, pos: i });
                 }
             } else {
-                let patt = self.check_pattern(true, &inner, false, patt);
-                if !matches!(patt, CheckedPattern::Irrefutable(_)) {
-                    had_refutable = true;
+                let (irf, patt) = self.check_pattern(true, &inner, false, patt);
+                if !irf {
+                    irrefutable = false;
                 }
                 result.push(patt);
             }
@@ -2921,24 +2913,16 @@ impl TypeChecker {
                 (real_inner.clone(), arr_len - result.len()).into(),
             ));
         }
-        if had_refutable {
+
+        (
+            irrefutable,
             CheckedPattern::Array(ArrayPattern {
                 rest,
                 arr_len,
                 inner: real_inner.clone(),
                 patterns: result,
-            })
-        } else {
-            CheckedPattern::Irrefutable(IrrefutablePattern::Array(ArrayPattern {
-                rest,
-                arr_len,
-                inner: real_inner.clone(),
-                patterns: result
-                    .into_iter()
-                    .map(|patt| patt.into_irrefutable().unwrap())
-                    .collect(),
-            }))
-        }
+            }),
+        )
     }
 
     fn check_struct_pattern(
@@ -2947,7 +2931,7 @@ impl TypeChecker {
         mutable: bool,
         destructures: Vec<Destructure>,
         span: Span,
-    ) -> CheckedPattern {
+    ) -> (bool, CheckedPattern) {
         let (ut, members) = if let Some(ut) = scrutinee.strip_references().as_user() {
             self.resolve_members(ut.id);
             if let UserTypeData::Struct { members, .. } = &self.scopes.get(ut.id).data {
@@ -2991,22 +2975,22 @@ impl TypeChecker {
             vars.push((name.data, mutable || pm, ty, pattern));
         }
 
-        let mut had_refutable = false;
+        let mut irrefutable = true;
         let checked: Vec<_> = vars
             .into_iter()
             .map(|(name, mutable, inner, patt)| {
                 let ty = scrutinee.matched_inner_type(inner.clone());
                 if let Some(patt) = patt {
-                    let patt = self.check_pattern(true, &ty, mutable, patt);
-                    if !matches!(patt, CheckedPattern::Irrefutable(_)) {
-                        had_refutable = true;
+                    let (irf, patt) = self.check_pattern(true, &ty, mutable, patt);
+                    if !irf {
+                        irrefutable = false;
                     }
                     (name, inner, patt)
                 } else {
                     (
                         name.clone(),
                         inner,
-                        CheckedPattern::Irrefutable(IrrefutablePattern::Variable(self.insert(
+                        CheckedPattern::Variable(self.insert(
                             Variable {
                                 name,
                                 ty,
@@ -3015,21 +2999,12 @@ impl TypeChecker {
                                 value: None,
                             },
                             false,
-                        ))),
+                        )),
                     )
                 }
             })
             .collect();
-        if had_refutable {
-            CheckedPattern::Destrucure(checked)
-        } else {
-            CheckedPattern::Irrefutable(IrrefutablePattern::Destrucure(
-                checked
-                    .into_iter()
-                    .map(|(name, ty, patt)| (name, ty, patt.into_irrefutable().unwrap()))
-                    .collect(),
-            ))
-        }
+        (irrefutable, CheckedPattern::Destrucure(checked))
     }
 
     fn check_pattern(
@@ -3038,7 +3013,7 @@ impl TypeChecker {
         scrutinee: &Type,
         mutable: bool,
         pattern: Located<Pattern>,
-    ) -> CheckedPattern {
+    ) -> (bool, CheckedPattern) {
         let span = pattern.span;
         match pattern.data {
             Pattern::TupleLike { path, subpatterns } => {
@@ -3047,7 +3022,7 @@ impl TypeChecker {
                 };
 
                 match self.check_union_pattern(scrutinee, resolved, subpatterns, span) {
-                    Ok(pattern) => pattern,
+                    Ok(pattern) => (false, pattern),
                     Err(err) => self.error(err),
                 }
             }
@@ -3063,9 +3038,10 @@ impl TypeChecker {
                             "cannot create binding that shadows union variant",
                             span,
                         )),
-                        Ok(pattern) => pattern,
-                        Err(_) => {
-                            CheckedPattern::Irrefutable(IrrefutablePattern::Variable(self.insert(
+                        Ok(pattern) => (false, pattern),
+                        Err(_) => (
+                            true,
+                            CheckedPattern::Variable(self.insert(
                                 Variable {
                                     name: ident.into(),
                                     ty: scrutinee.clone(),
@@ -3074,12 +3050,12 @@ impl TypeChecker {
                                     value: None,
                                 },
                                 false,
-                            )))
-                        }
+                            )),
+                        ),
                     }
                 } else if let Some(resolved) = resolved {
                     match self.check_union_pattern(scrutinee, resolved, vec![], span) {
-                        Ok(pattern) => pattern,
+                        Ok(pattern) => (false, pattern),
                         Err(err) => self.error(err),
                     }
                 } else {
@@ -3103,7 +3079,7 @@ impl TypeChecker {
                     vec![Located::new(pattern.span, *patt)],
                     pattern.span,
                 ) {
-                    Ok(pattern) => pattern,
+                    Ok(pattern) => (false, pattern),
                     Err(err) => self.error(err),
                 }
             }
@@ -3119,12 +3095,13 @@ impl TypeChecker {
                 };
 
                 match self.check_union_pattern(scrutinee, path, vec![], pattern.span) {
-                    Ok(pattern) => pattern,
+                    Ok(pattern) => (false, pattern),
                     Err(err) => self.error(err),
                 }
             }
-            Pattern::MutBinding(name) => {
-                CheckedPattern::Irrefutable(IrrefutablePattern::Variable(self.insert(
+            Pattern::MutBinding(name) => (
+                true,
+                CheckedPattern::Variable(self.insert(
                     Variable {
                         name,
                         ty: scrutinee.clone(),
@@ -3133,8 +3110,8 @@ impl TypeChecker {
                         value: None,
                     },
                     false,
-                )))
-            }
+                )),
+            ),
             Pattern::StructDestructure(destructures) => {
                 self.check_struct_pattern(scrutinee, mutable, destructures, span)
             }
@@ -3148,12 +3125,14 @@ impl TypeChecker {
                     ));
                 }
 
-                CheckedPattern::String(value)
+                (false, CheckedPattern::String(value))
             }
-            Pattern::Int(patt) => self
-                .check_int_pattern(scrutinee, patt, span)
-                .map(CheckedPattern::Int)
-                .unwrap_or_default(),
+            Pattern::Int(patt) => (
+                false,
+                self.check_int_pattern(scrutinee, patt, span)
+                    .map(CheckedPattern::Int)
+                    .unwrap_or_default(),
+            ),
             Pattern::IntRange(RangePattern {
                 inclusive,
                 start,
@@ -3173,11 +3152,14 @@ impl TypeChecker {
                     ));
                 }
 
-                CheckedPattern::IntRange(RangePattern {
-                    inclusive,
-                    start,
-                    end,
-                })
+                (
+                    false,
+                    CheckedPattern::IntRange(RangePattern {
+                        inclusive,
+                        start,
+                        end,
+                    }),
+                )
             }
             Pattern::Char(ch) => {
                 if scrutinee.strip_references() != &Type::Char {
@@ -3188,7 +3170,7 @@ impl TypeChecker {
                     ));
                 }
 
-                CheckedPattern::Int(BigInt::from(ch as u32))
+                (false, CheckedPattern::Int(BigInt::from(ch as u32)))
             }
             Pattern::CharRange(RangePattern {
                 inclusive,
@@ -3210,11 +3192,14 @@ impl TypeChecker {
                     ));
                 }
 
-                CheckedPattern::IntRange(RangePattern {
-                    inclusive,
-                    start: BigInt::from(start as u32),
-                    end: BigInt::from(end as u32),
-                })
+                (
+                    false,
+                    CheckedPattern::IntRange(RangePattern {
+                        inclusive,
+                        start: BigInt::from(start as u32),
+                        end: BigInt::from(end as u32),
+                    }),
+                )
             }
             Pattern::Rest { .. } => self.error(Error::new(
                 "rest patterns are only valid inside array or span patterns",
@@ -3229,7 +3214,7 @@ impl TypeChecker {
         &mut self,
         scrutinee: &Type,
         pattern: Located<FullPattern>,
-    ) -> CheckedPattern {
+    ) -> (bool, CheckedPattern) {
         self.check_pattern(false, scrutinee, false, pattern.map(|inner| inner.data))
     }
 
@@ -3722,13 +3707,11 @@ impl TypeChecker {
     ) -> CheckedExpr {
         match source.coerce_to(&self.scopes, target) {
             Ok(expr) => expr,
-            Err(expr) => {
-                self.error(Error::type_mismatch(
-                    &target.name(&self.scopes),
-                    &expr.ty.name(&self.scopes),
-                    span,
-                ))
-            }
+            Err(expr) => self.error(Error::type_mismatch(
+                &target.name(&self.scopes),
+                &expr.ty.name(&self.scopes),
+                span,
+            )),
         }
     }
 
