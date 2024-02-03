@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use crate::{
     ast::{
         parsed::{
-            Destructure, Expr, ExprData, Fn, FullPattern, ImplBlock, IntPattern, Linkage, Member, Param, Pattern, RangePattern, Stmt, StmtData, Struct, TypeHint, TypePath, TypePathComponent
+            Destructure, Expr, ExprData, Fn, FullPattern, ImplBlock, IntPattern, Linkage, Member,
+            Param, Pattern, RangePattern, Stmt, StmtData, Struct, TypeHint, TypePath,
+            TypePathComponent,
         },
         Attribute, UnaryOp,
     },
@@ -1301,7 +1303,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 functions.push(func.data);
             } else if let Some(token) = this.next_if_kind(Token::Impl) {
                 if let Some(token) = public {
-                    this.error(Error::not_valid_here(&token));
+                    this.error_no_sync(Error::not_valid_here(&token));
                 }
 
                 impls.push(this.impl_block(token.span));
@@ -1601,7 +1603,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             let mutable = self.next_if_kind(Token::Mut).is_some();
             if let Some(token) = self.next_if_kind(Token::This) {
                 if !allow_method || count != 0 {
-                    self.error(Error::not_valid_here(&token));
+                    self.error_no_sync(Error::not_valid_here(&token));
                 }
 
                 params.push(Param {
@@ -1698,7 +1700,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 match token.data {
                     Token::Extern | Token::Fn | Token::Async => break,
                     Token::Eof => {
-                        self.error(Error::new("expected function", token.span));
+                        self.error_no_sync(Error::new("expected function", token.span));
                         return Err(());
                     }
                     _ => {}
