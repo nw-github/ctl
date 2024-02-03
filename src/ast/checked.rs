@@ -160,6 +160,7 @@ pub enum CheckedExprData {
     Yield(Box<CheckedExpr>),
     Break(Option<Box<CheckedExpr>>),
     Lambda(Vec<CheckedStmt>),
+    NeverCoerce(Box<CheckedExpr>),
     Continue,
     #[default]
     Error,
@@ -206,31 +207,43 @@ impl CheckedExpr {
         }
     }
 
-    pub fn coerce_to(mut self, target: &Type, scopes: &Scopes) -> CheckedExpr {
+    pub fn coerce_to(mut self, scopes: &Scopes, target: &Type) -> Result<CheckedExpr, CheckedExpr> {
         match (&self.ty, target) {
-            (Type::Never | Type::Unknown, _) | (_, Type::Unknown) => {
+            (Type::Never, rhs) => {
+                Ok(CheckedExpr::new(rhs.clone(), CheckedExprData::NeverCoerce(self.into())))
+            }
+            (Type::Unknown, _) | (_, Type::Unknown) => {
                 self.ty = target.clone();
-                self
+                Ok(self)
             }
-            (Type::MutPtr(lhs), Type::Ptr(rhs)) if lhs == rhs => {
+            (lhs, rhs) if lhs.may_ptr_coerce(rhs) => {
                 self.ty = target.clone();
-                self
+                Ok(self)
             }
-            (ty, target)
-                if target
-                    .as_option_inner(scopes)
-                    .is_some_and(|inner| ty.coercible_to(scopes, inner)) =>
-            {
-                let expr = self.coerce_to(target.as_option_inner(scopes).unwrap(), scopes);
-                CheckedExpr::new(
-                    target.clone(),
-                    CheckedExprData::Instance {
-                        members: [("Some".into(), expr)].into(),
-                        variant: Some("Some".into()),
-                    },
-                )
+            (src, rhs) if src != rhs => {
+                if let Some(inner) = rhs.as_option_inner(scopes) {
+                    match self.coerce_to(scopes, inner) {
+                        Ok(expr) => Ok(CheckedExpr::new(
+                            rhs.clone(),
+                            CheckedExprData::Instance {
+                                members: [("Some".into(), expr)].into(),
+                                variant: Some("Some".into()),
+                            },
+                        )),
+                        Err(expr) => Err(expr),
+                    }
+                } else {
+                    Err(self)
+                }
             }
-            _ => self,
+            _ => Ok(self)
+        }
+    }
+
+    pub fn try_coerce_to(self, scopes: &Scopes, target: &Type) -> CheckedExpr {
+        match self.coerce_to(scopes, target) {
+            Ok(expr) => expr,
+            Err(expr) => expr,
         }
     }
 

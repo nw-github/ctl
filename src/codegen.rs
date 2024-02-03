@@ -22,6 +22,7 @@ use crate::{
 
 const UNION_TAG_NAME: &str = "$tag";
 const ARRAY_DATA_NAME: &str = "$data";
+const VOID_INSTANCE: &str = "($void){}";
 
 #[derive(PartialEq, Eq, Clone)]
 struct State {
@@ -500,17 +501,23 @@ impl Buffer {
     }
 }
 
-macro_rules! tmpbuf {
-    ($self: expr, $state: expr, |$tmp: ident| $body: block) => {{
+macro_rules! hoist {
+    ($self: expr, $state: expr, $body: block) => {{
         let buffer = std::mem::take(&mut $self.buffer);
-        let result = {
-            let $tmp = $state.tmpvar();
-            $body
-        };
+        let result = $body;
         $self
             .temporaries
             .emit(std::mem::replace(&mut $self.buffer, buffer).0);
         result
+    }};
+}
+
+macro_rules! tmpbuf {
+    ($self: expr, $state: expr, |$tmp: ident| $body: block) => {{
+        hoist!($self, $state, {
+            let $tmp = $state.tmpvar();
+            $body
+        })
     }};
 }
 
@@ -731,7 +738,7 @@ impl<'a> Codegen<'a> {
             if func.ret.is_never() {
                 self.buffer.emit("UNREACHABLE(); }");
             } else {
-                self.buffer.emit("return ($void){}; }");
+                self.buffer.emit(format!("return {VOID_INSTANCE}; }}"));
             }
             std::mem::swap(&mut self.buffer, prototypes);
             return;
@@ -760,7 +767,7 @@ impl<'a> Codegen<'a> {
                 self.gen_stmt(stmt, state);
             }
             if !func.returns {
-                self.buffer.emit("return ($void){};");
+                self.buffer.emit(format!("return {VOID_INSTANCE};"));
             }
             self.buffer.emit("}");
         }
@@ -1189,7 +1196,7 @@ impl<'a> Codegen<'a> {
                 self.emit_cast(&expr.ty);
                 self.buffer.emit(format!("0x{:x}", value as u32));
             }
-            CheckedExprData::Void => self.buffer.emit("($void){}"),
+            CheckedExprData::Void => self.buffer.emit(VOID_INSTANCE),
             CheckedExprData::Symbol(symbol) => match symbol {
                 Symbol::Func(func) => {
                     let state = State::new(func, None);
@@ -1419,31 +1426,40 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit("]");
             }
             CheckedExprData::Return(expr) => {
-                // TODO: when return is used as anything except a StmtExpr, we will have to change
-                // the generated code to accomodate it
-                self.buffer.emit("return ");
-                self.gen_expr(*expr, state);
+                hoist!(self, state, {
+                    self.buffer.emit("return ");
+                    self.gen_expr(*expr, state);
+                    self.buffer.emit(";");
+                });
+                self.buffer.emit(VOID_INSTANCE);
                 //self.yielded = true;
             }
             CheckedExprData::Yield(expr) => {
-                self.buffer.emit(format!("{} = ", self.cur_block));
-                self.gen_expr(*expr, state);
-                self.buffer.emit(";");
+                hoist!(self, state, {
+                    self.buffer.emit(format!("{} = ", self.cur_block));
+                    self.gen_expr(*expr, state);
+                    self.buffer.emit(";");
+                });
+                self.buffer.emit(VOID_INSTANCE);
                 //self.yielded = true;
             }
             CheckedExprData::Break(expr) => {
-                if let Some(expr) = expr {
-                    self.buffer.emit(format!("{} = ", self.cur_loop));
-                    self.gen_expr(*expr, state);
-                    self.buffer.emit("; break;");
-                } else {
-                    self.buffer.emit("break;");
-                }
-
+                hoist!(self, state, {
+                    if let Some(expr) = expr {
+                        self.buffer.emit(format!("{} = ", self.cur_loop));
+                        self.gen_expr(*expr, state);
+                        self.buffer.emit("; break;");
+                    } else {
+                        self.buffer.emit("break;");
+                    }
+                });
+                self.buffer.emit(VOID_INSTANCE);
                 //self.yielded = true;
             }
             CheckedExprData::Continue => {
-                self.buffer.emit("continue;");
+                hoist!(self, state, {
+                    self.buffer.emit("continue;");
+                });
                 //self.yielded = true;
             }
             CheckedExprData::Match {
@@ -1494,6 +1510,15 @@ impl<'a> Codegen<'a> {
                 });
             }
             CheckedExprData::Lambda(_) => todo!(),
+            CheckedExprData::NeverCoerce(mut inner) => {
+                state.fill_generics(self.scopes, &mut inner.ty);
+
+                self.buffer.emit("/*never*/ ((");
+                self.gen_expr_inner(*inner, state);
+                self.buffer.emit("), *(");
+                self.emit_type(&expr.ty);
+                self.buffer.emit(" *)(NULL))");
+            }
             CheckedExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }
     }
@@ -1918,37 +1943,33 @@ impl<'a> Codegen<'a> {
                 }
                 self.buffer.emit("$$");
             }
-        } else if let Some(attr) = f
-            .attrs
-            .iter()
-            .find(|attr| attr.name.data == "c_name" && !attr.props.is_empty())
-        {
-            if !is_macro && !real {
-                self.buffer.emit("$");
-            }
-            // TODO: emit error when c_name is placed on a non-extern function
-            self.buffer.emit(&attr.props[0].name.data);
         } else {
-            if !is_macro && !real {
+            let name = f
+                .attrs
+                .iter()
+                .find(|attr| attr.name.data == "c_name" && !attr.props.is_empty())
+                .map(|attr| &attr.props[0].name.data)
+                .unwrap_or(&f.name.data);
+
+            if !is_macro && !real && Self::needs_fn_wrapper(f) {
                 self.buffer.emit("$");
             }
-            self.buffer.emit(&f.name.data);
+            self.buffer.emit(name);
         }
     }
 
     fn has_side_effects(expr: &CheckedExpr) -> bool {
-        match &expr.data {
-            CheckedExprData::Unary { op, .. } => matches!(
-                op,
-                UnaryOp::PostIncrement
+        matches!(
+            &expr.data,
+            CheckedExprData::Unary {
+                op: UnaryOp::PostIncrement
                     | UnaryOp::PostDecrement
                     | UnaryOp::PreIncrement
-                    | UnaryOp::PreDecrement
-            ),
-            CheckedExprData::Call { .. } => true,
-            CheckedExprData::Assign { .. } => true,
-            _ => false,
-        }
+                    | UnaryOp::PreDecrement,
+                ..
+            } | CheckedExprData::Call { .. }
+                | CheckedExprData::Assign { .. }
+        )
     }
 
     fn is_lvalue(expr: &CheckedExpr) -> bool {
@@ -2002,8 +2023,7 @@ impl<'a> Codegen<'a> {
 
 fn is_opt_ptr(scopes: &Scopes, ty: &Type) -> bool {
     ty.as_option_inner(scopes)
-        .map(|inner| inner.is_ptr() || inner.is_mut_ptr() || inner.is_fn_ptr())
-        .unwrap_or(false)
+        .is_some_and(|inner| inner.is_ptr() || inner.is_mut_ptr() || inner.is_fn_ptr())
 }
 
 fn deref(src: &str, ty: &Type) -> String {

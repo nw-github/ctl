@@ -18,15 +18,16 @@ macro_rules! type_check_bail {
         let source = $source;
         let span = source.span;
         let source = $self.check_expr(source, Some($target));
-        if !source.ty.coercible_to(&$self.scopes, $target) {
-            return $self.error(Error::type_mismatch(
-                &$target.name(&$self.scopes),
-                &source.ty.name(&$self.scopes),
-                span,
-            ));
+        match source.coerce_to(&$self.scopes, $target) {
+            Ok(expr) => expr,
+            Err(expr) => {
+                return $self.error(Error::type_mismatch(
+                    &$target.name(&$self.scopes),
+                    &expr.ty.name(&$self.scopes),
+                    span,
+                ));
+            }
         }
-
-        source.coerce_to($target, &$self.scopes)
     }};
 }
 
@@ -1746,7 +1747,7 @@ impl TypeChecker {
                                 .scopes
                                 .make_lang_type("option", vec![out_type])
                                 .unwrap();
-                            if_branch = if_branch.coerce_to(&out_type, &self.scopes);
+                            if_branch = if_branch.try_coerce_to(&self.scopes, &out_type);
                             Some(self.check_expr_inner(
                                 Located::new(span, ExprData::None),
                                 Some(&out_type),
@@ -1990,7 +1991,6 @@ impl TypeChecker {
                 }
             }
             ExprData::Return(expr) => self.check_return(*expr),
-            // ExprData::Yield(expr) => self.check_yield( *expr),
             ExprData::Tail(expr) => match &self.current().kind {
                 ScopeKind::Function(_) | ScopeKind::Lambda(_, _) => self.check_return(*expr),
                 ScopeKind::Loop { .. } => self.type_check(*expr, &Type::Void),
@@ -2028,7 +2028,7 @@ impl TypeChecker {
 
                     let (target, opt) = Self::loop_out_type(&self.scopes, &self.scopes[id].kind);
                     if opt {
-                        Some(expr.coerce_to(&target, &self.scopes).into())
+                        Some(expr.try_coerce_to(&self.scopes, &target).into())
                     } else {
                         Some(expr.into())
                     }
@@ -2092,11 +2092,12 @@ impl TypeChecker {
             ExprData::As { expr, ty, throwing } => {
                 let expr = self.check_expr(*expr, None);
                 let ty = self.resolve_typehint(&ty);
-                if !expr.ty.coercible_to(&self.scopes, &ty) {
-                    self.check_cast(&expr.ty, &ty, throwing, span);
-                    CheckedExpr::new(ty, CheckedExprData::As(expr.into(), throwing))
-                } else {
-                    expr.coerce_to(&ty, &self.scopes)
+                match expr.coerce_to(&self.scopes, &ty) {
+                    Ok(expr) => expr,
+                    Err(expr) => {
+                        self.check_cast(&expr.ty, &ty, throwing, span);
+                        CheckedExpr::new(ty, CheckedExprData::As(expr.into(), throwing))
+                    }
                 }
             }
             ExprData::Error => CheckedExpr::default(),
@@ -3719,15 +3720,16 @@ impl TypeChecker {
         target: &Type,
         span: Span,
     ) -> CheckedExpr {
-        if !source.ty.coercible_to(&self.scopes, target) {
-            self.error(Error::type_mismatch(
-                &target.name(&self.scopes),
-                &source.ty.name(&self.scopes),
-                span,
-            ))
+        match source.coerce_to(&self.scopes, target) {
+            Ok(expr) => expr,
+            Err(expr) => {
+                self.error(Error::type_mismatch(
+                    &target.name(&self.scopes),
+                    &expr.ty.name(&self.scopes),
+                    span,
+                ))
+            }
         }
-
-        source.coerce_to(target, &self.scopes)
     }
 
     fn resolve_lang_type(&mut self, name: &str, ty_args: &[TypeHint]) -> Type {

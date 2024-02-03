@@ -471,10 +471,6 @@ impl Type {
         matches!(self, Type::Ptr(_) | Type::MutPtr(_))
     }
 
-    pub fn is_void_like(&self) -> bool {
-        matches!(self, Type::Void | Type::Never | Type::CVoid)
-    }
-
     pub fn is_any_int(&self) -> bool {
         matches!(
             self,
@@ -511,22 +507,6 @@ impl Type {
             bits: bytes * 8,
             signed,
         })
-    }
-
-    pub fn coercible_to(&self, scopes: &Scopes, target: &Type) -> bool {
-        match (self, target) {
-            (Type::Never | Type::Unknown, _) => true,
-            (_, Type::Unknown) => true,
-            (ty, target)
-                if target
-                    .as_option_inner(scopes)
-                    .is_some_and(|inner| ty.coercible_to(scopes, inner)) =>
-            {
-                true
-            }
-            (ty, target) if ty.may_ptr_coerce(target) => true,
-            (ty, target) => ty == target,
-        }
     }
 
     pub fn indirection(&self) -> usize {
