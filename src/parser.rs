@@ -3,18 +3,20 @@ use std::path::PathBuf;
 use crate::{
     ast::{
         parsed::{
-            Destructure, Expr, ExprData, Fn, FullPattern, ImplBlock, IntPattern, Member, Param,
-            Pattern, RangePattern, Stmt, StmtData, Struct, TypeHint, TypePath, TypePathComponent,
+            Destructure, Expr, ExprData, Fn, FullPattern, ImplBlock, IntPattern, Linkage, Member, Param, Pattern, RangePattern, Stmt, StmtData, Struct, TypeHint, TypePath, TypePathComponent
         },
         Attribute, UnaryOp,
-    }, error::{Diagnostics, Error, FileId}, lexer::{Lexer, Located, Precedence, Span, Token}, THIS_PARAM, THIS_TYPE
+    },
+    error::{Diagnostics, Error, FileId},
+    lexer::{Lexer, Located, Precedence, Span, Token},
+    THIS_PARAM, THIS_TYPE,
 };
 
 #[derive(Clone, Copy)]
 struct FnConfig {
     allow_method: bool,
+    linkage: Linkage,
     is_public: bool,
-    is_extern: bool,
     is_unsafe: bool,
     body: bool,
 }
@@ -72,13 +74,25 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         let public = self.next_if_kind(Token::Pub);
         let is_unsafe = self.next_if_kind(Token::Unsafe);
-        let is_extern = self.next_if_kind(Token::Extern);
+        let is_import = self.next_if_kind(Token::Import);
+        let is_export = self.next_if_kind(Token::Export);
+        if let Some((_, export)) = is_import.as_ref().zip(is_export.as_ref()) {
+            self.error_no_sync(Error::new(
+                "cannot combine 'import' and 'export' modifiers",
+                export.span,
+            ));
+        }
+
         if let Some(func) = self.try_function(FnConfig {
             allow_method: false,
+            linkage: match (&is_export, &is_import) {
+                (Some(_), None) => Linkage::Export,
+                (None, Some(_)) => Linkage::Import,
+                _ => Linkage::Internal,
+            },
             is_public: public.is_some(),
-            is_extern: is_extern.is_some(),
             is_unsafe: is_unsafe.is_some(),
-            body: is_extern.is_none(),
+            body: is_import.is_none(),
         }) {
             Ok(Stmt {
                 attrs,
@@ -86,11 +100,11 @@ impl<'a, 'b> Parser<'a, 'b> {
             })
         } else if let Some(token) = self.next_if_kind(Token::Struct) {
             if let Some(token) = is_unsafe {
-                self.error_unconditional(Error::not_valid_here("unsafe", token.span));
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
-            if let Some(token) = is_extern {
-                self.error_unconditional(Error::not_valid_here("extern", token.span));
+            if let Some(token) = is_import.or(is_export) {
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
             Ok(Stmt {
@@ -98,8 +112,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 data: self.structure(public.is_some(), token.span),
             })
         } else if let Some(token) = self.next_if_kind(Token::Union) {
-            if let Some(token) = is_extern {
-                self.error(Error::not_valid_here("extern", token.span));
+            if let Some(token) = is_import.or(is_export) {
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
             Ok(Stmt {
@@ -107,8 +121,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 data: self.union(public.is_some(), token.span, is_unsafe.is_some()),
             })
         } else if let Some(token) = self.next_if_kind(Token::Trait) {
-            if let Some(token) = is_extern {
-                self.error_unconditional(Error::not_valid_here("extern", token.span));
+            if let Some(token) = is_import.or(is_export) {
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
             Ok(Stmt {
@@ -117,11 +131,11 @@ impl<'a, 'b> Parser<'a, 'b> {
             })
         } else if let Some(token) = self.next_if_kind(Token::Enum) {
             if let Some(token) = is_unsafe {
-                self.error_unconditional(Error::not_valid_here("unsafe", token.span));
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
-            if let Some(token) = is_extern {
-                self.error_unconditional(Error::not_valid_here("extern", token.span));
+            if let Some(token) = is_import.or(is_export) {
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
             Ok(Stmt {
@@ -130,11 +144,11 @@ impl<'a, 'b> Parser<'a, 'b> {
             })
         } else if let Some(token) = self.next_if_kind(Token::Extension) {
             if let Some(token) = is_unsafe {
-                self.error_unconditional(Error::not_valid_here("unsafe", token.span));
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
-            if let Some(token) = is_extern {
-                self.error_unconditional(Error::not_valid_here("extern", token.span));
+            if let Some(token) = is_import.or(is_export) {
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
             Ok(Stmt {
@@ -143,11 +157,11 @@ impl<'a, 'b> Parser<'a, 'b> {
             })
         } else if let Some(token) = self.next_if_kind(Token::Mod) {
             if let Some(token) = is_unsafe {
-                self.error_unconditional(Error::not_valid_here("unsafe", token.span));
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
-            if let Some(token) = is_extern {
-                self.error_unconditional(Error::not_valid_here("extern", token.span));
+            if let Some(token) = is_import.or(is_export) {
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
             let name = self.expect_id_l("expected name");
@@ -164,11 +178,11 @@ impl<'a, 'b> Parser<'a, 'b> {
             })
         } else if let Some(token) = self.next_if_kind(Token::Use) {
             if let Some(token) = is_unsafe {
-                self.error_unconditional(Error::not_valid_here("unsafe", token.span));
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
-            if let Some(token) = is_extern {
-                self.error_unconditional(Error::not_valid_here("extern", token.span));
+            if let Some(token) = is_import.or(is_export) {
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
             let root = self.next_if_kind(Token::ScopeRes);
@@ -218,11 +232,11 @@ impl<'a, 'b> Parser<'a, 'b> {
             })
         } else if self.next_if_kind(Token::Static).is_some() {
             if let Some(token) = is_unsafe {
-                self.error_unconditional(Error::not_valid_here("unsafe", token.span));
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
-            if let Some(token) = is_extern {
-                self.error_unconditional(Error::not_valid_here("extern", token.span));
+            if let Some(token) = is_import.or(is_export) {
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
             let name = self.expect_id("expected name");
@@ -241,8 +255,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 attrs,
             })
         } else {
-            if let Some(public) = public.or(is_extern) {
-                self.error_unconditional(Error::new("expected item", public.span));
+            if let Some(token) = is_import.or(is_export) {
+                self.error_no_sync(Error::not_valid_here(&token));
             }
 
             Err((is_unsafe, attrs))
@@ -266,7 +280,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             Err((is_unsafe, attrs)) => {
                 if let Some(token) = self.next_if(|t| matches!(t, Token::Let | Token::Mut)) {
                     if let Some(is_unsafe) = is_unsafe {
-                        self.error_unconditional(Error::not_valid_here("unsafe", is_unsafe.span));
+                        self.error_no_sync(Error::not_valid_here(&is_unsafe));
                     }
 
                     let patt = self.pattern(matches!(token.data, Token::Mut));
@@ -1275,7 +1289,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             let config = FnConfig {
                 allow_method: true,
                 is_public: public.is_some(),
-                is_extern: false,
+                linkage: Linkage::Internal,
                 is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
                 body: true,
             };
@@ -1287,7 +1301,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 functions.push(func.data);
             } else if let Some(token) = this.next_if_kind(Token::Impl) {
                 if let Some(token) = public {
-                    this.error(Error::not_valid_here("pub", token.span));
+                    this.error(Error::not_valid_here(&token));
                 }
 
                 impls.push(this.impl_block(token.span));
@@ -1332,8 +1346,8 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.next_until(Token::RCurly, span, |this| {
             let config = FnConfig {
                 allow_method: true,
+                linkage: Linkage::Internal,
                 is_public: this.next_if_kind(Token::Pub).is_some(),
-                is_extern: false,
                 is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
                 body: true,
             };
@@ -1412,8 +1426,8 @@ impl<'a, 'b> Parser<'a, 'b> {
             if let Ok(proto) = this.expect_fn(FnConfig {
                 body: false,
                 allow_method: true,
+                linkage: Linkage::Internal,
                 is_public: true,
-                is_extern: false,
                 is_unsafe,
             }) {
                 functions.push(proto.data);
@@ -1441,9 +1455,9 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.next_until(Token::RCurly, span, |this| {
             let config = FnConfig {
                 allow_method: true,
-                is_public: this.next_if_kind(Token::Pub).is_some(),
-                is_extern: false,
                 body: true,
+                linkage: Linkage::Internal,
+                is_public: this.next_if_kind(Token::Pub).is_some(),
                 is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
             };
             if config.is_public || config.is_unsafe {
@@ -1496,10 +1510,10 @@ impl<'a, 'b> Parser<'a, 'b> {
             } else {
                 let config = FnConfig {
                     allow_method: true,
-                    is_public: this.next_if_kind(Token::Pub).is_some(),
-                    is_extern: false,
-                    is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
                     body: true,
+                    linkage: Linkage::Internal,
+                    is_public: this.next_if_kind(Token::Pub).is_some(),
+                    is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
                 };
                 if let Ok(func) = this.expect_fn(config) {
                     functions.push(func.data);
@@ -1525,15 +1539,15 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut functions = Vec::new();
         self.next_until(Token::RCurly, span, |this| {
             if let Some(token) = this.next_if_kind(Token::Pub) {
-                this.error_unconditional(Error::not_valid_here("pub", token.span));
+                this.error_no_sync(Error::not_valid_here(&token));
             }
 
             let is_unsafe = this.next_if_kind(Token::Unsafe).is_some();
             if let Ok(func) = this.expect_fn(FnConfig {
                 allow_method: true,
                 is_public: true,
-                is_extern: false,
                 body: true,
+                linkage: Linkage::Internal,
                 is_unsafe,
             }) {
                 functions.push(func.data);
@@ -1552,8 +1566,8 @@ impl<'a, 'b> Parser<'a, 'b> {
         FnConfig {
             allow_method,
             is_public,
-            is_extern,
             is_unsafe,
+            linkage,
             body,
         }: FnConfig,
     ) -> Option<Located<Fn>> {
@@ -1587,7 +1601,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             let mutable = self.next_if_kind(Token::Mut).is_some();
             if let Some(token) = self.next_if_kind(Token::This) {
                 if !allow_method || count != 0 {
-                    self.error(Error::not_valid_here("this", token.span));
+                    self.error(Error::not_valid_here(&token));
                 }
 
                 params.push(Param {
@@ -1619,7 +1633,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     Some(self.expression())
                 } else {
                     if !keyword && has_default {
-                        self.error_unconditional(Error::new(
+                        self.error_no_sync(Error::new(
                             "positional parameters must not follow a default parameter",
                             name.span,
                         ));
@@ -1661,8 +1675,8 @@ impl<'a, 'b> Parser<'a, 'b> {
             Fn {
                 name,
                 public: is_public,
+                linkage,
                 is_async,
-                is_extern,
                 is_unsafe,
                 variadic,
                 type_params,
@@ -1803,7 +1817,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
     }
 
-    fn error_unconditional(&mut self, err: Error) {
+    fn error_no_sync(&mut self, err: Error) {
         self.diag.error(err);
     }
 

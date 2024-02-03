@@ -1,0 +1,1121 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "CTL",
+  "scopeName": "source.ctl",
+  "patterns": [
+    {
+      "comment": "boxed slice literal",
+      "begin": "(<)(\\[)",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.brackets.angle.ctl"
+        },
+        "2": {
+          "name": "punctuation.brackets.square.ctl"
+        }
+      },
+      "end": ">",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.brackets.angle.ctl"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#block-comments"
+        },
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#gtypes"
+        },
+        {
+          "include": "#lvariables"
+        },
+        {
+          "include": "#lifetimes"
+        },
+        {
+          "include": "#punctuation"
+        },
+        {
+          "include": "#types"
+        }
+      ]
+    },
+    {
+      "comment": "macro metavariables",
+      "name": "meta.macro.metavariable.ctl",
+      "match": "(\\$)([a-z][A-Za-z0-9_]*)((:)(block|expr|ident|item|lifetime|literal|meta|path?|stmt|tt|ty|vis))?",
+      "captures": {
+        "1": {
+          "name": "keyword.operator.macro.dollar.ctl"
+        },
+        "2": {
+          "name": "variable.other.metavariable.name.ctl"
+        },
+        "4": {
+          "name": "keyword.operator.key-value.ctl"
+        },
+        "5": {
+          "name": "variable.other.metavariable.specifier.ctl"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#keywords"
+        }
+      ]
+    },
+    {
+      "comment": "attributes",
+      "name": "meta.attribute.ctl",
+      "begin": "(#)(\\!?)(\\[)",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.definition.attribute.ctl"
+        },
+        "2": {
+          "name": "keyword.operator.attribute.inner.ctl"
+        },
+        "3": {
+          "name": "punctuation.brackets.attribute.ctl"
+        }
+      },
+      "end": "\\]",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.brackets.attribute.ctl"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#block-comments"
+        },
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#keywords"
+        },
+        {
+          "include": "#lifetimes"
+        },
+        {
+          "include": "#punctuation"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#gtypes"
+        },
+        {
+          "include": "#types"
+        }
+      ]
+    },
+    {
+      "comment": "modules",
+      "match": "(mod)\\s+((?:r#(?!crate|[Tt]his|super))?[a-z][A-Za-z0-9_]*)",
+      "captures": {
+        "1": {
+          "name": "storage.type.ctl"
+        },
+        "2": {
+          "name": "entity.name.module.ctl"
+        }
+      }
+    },
+    {
+      "comment": "external crate imports",
+      "name": "meta.import.ctl",
+      "begin": "\\b(extern)\\s+(crate)",
+      "beginCaptures": {
+        "1": {
+          "name": "storage.type.ctl"
+        },
+        "2": {
+          "name": "keyword.other.crate.ctl"
+        }
+      },
+      "end": ";",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.semi.ctl"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#block-comments"
+        },
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#keywords"
+        },
+        {
+          "include": "#punctuation"
+        }
+      ]
+    },
+    {
+      "comment": "use statements",
+      "name": "meta.use.ctl",
+      "begin": "\\b(use)\\s",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.other.ctl"
+        }
+      },
+      "end": ";",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.semi.ctl"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#block-comments"
+        },
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#keywords"
+        },
+        {
+          "include": "#namespaces"
+        },
+        {
+          "include": "#punctuation"
+        },
+        {
+          "include": "#types"
+        },
+        {
+          "include": "#lvariables"
+        }
+      ]
+    },
+    {
+      "include": "#block-comments"
+    },
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#lvariables"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#gtypes"
+    },
+    {
+      "include": "#functions"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#lifetimes"
+    },
+    {
+      "include": "#macros"
+    },
+    {
+      "include": "#namespaces"
+    },
+    {
+      "include": "#punctuation"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#variables"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "comment": "documentation comments",
+          "name": "comment.line.documentation.ctl",
+          "match": "^\\s*///.*"
+        },
+        {
+          "comment": "line comments",
+          "name": "comment.line.double-slash.ctl",
+          "match": "\\s*//.*"
+        }
+      ]
+    },
+    "block-comments": {
+      "patterns": [
+        {
+          "comment": "empty block comments",
+          "name": "comment.block.ctl",
+          "match": "/\\*\\*/"
+        },
+        {
+          "comment": "block documentation comments",
+          "name": "comment.block.documentation.ctl",
+          "begin": "/\\*\\*",
+          "end": "\\*/",
+          "patterns": [
+            {
+              "include": "#block-comments"
+            }
+          ]
+        },
+        {
+          "comment": "block comments",
+          "name": "comment.block.ctl",
+          "begin": "/\\*(?!\\*)",
+          "end": "\\*/",
+          "patterns": [
+            {
+              "include": "#block-comments"
+            }
+          ]
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "comment": "ALL CAPS constants",
+          "name": "constant.other.caps.ctl",
+          "match": "\\b[A-Z]{2}[A-Z0-9_]*\\b"
+        },
+        {
+          "comment": "constant declarations",
+          "match": "\\b(const)\\s+([A-Z][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "storage.type.ctl"
+            },
+            "2": {
+              "name": "constant.other.caps.ctl"
+            }
+          }
+        },
+        {
+          "comment": "decimal integers and floats",
+          "name": "constant.numeric.decimal.ctl",
+          "match": "\\b\\d[\\d_]*(\\.?)[\\d_]*(?:(E)([+-])([\\d_]+))?(f32|f64|u\\d+|i\\d+|isize|usize|u|i)?\\b",
+          "captures": {
+            "1": {
+              "name": "punctuation.separator.dot.decimal.ctl"
+            },
+            "2": {
+              "name": "keyword.operator.exponent.ctl"
+            },
+            "3": {
+              "name": "keyword.operator.exponent.sign.ctl"
+            },
+            "4": {
+              "name": "constant.numeric.decimal.exponent.mantissa.ctl"
+            },
+            "5": {
+              "name": "entity.name.type.numeric.ctl"
+            }
+          }
+        },
+        {
+          "comment": "hexadecimal integers",
+          "name": "constant.numeric.hex.ctl",
+          "match": "\\b0x[\\da-fA-F_]+(u\\d+|i\\d+|isize|usize|u|i)?\\b",
+          "captures": {
+            "1": {
+              "name": "entity.name.type.numeric.ctl"
+            }
+          }
+        },
+        {
+          "comment": "octal integers",
+          "name": "constant.numeric.oct.ctl",
+          "match": "\\b0o[0-7_]+(u\\d+|i\\d+|isize|usize|u|i)?\\b",
+          "captures": {
+            "1": {
+              "name": "entity.name.type.numeric.ctl"
+            }
+          }
+        },
+        {
+          "comment": "binary integers",
+          "name": "constant.numeric.bin.ctl",
+          "match": "\\b0b[01_]+(u\\d+|i\\d+|isize|usize)?\\b",
+          "captures": {
+            "1": {
+              "name": "entity.name.type.numeric.ctl"
+            }
+          }
+        },
+        {
+          "comment": "booleans",
+          "name": "constant.language.bool.ctl",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "escapes": {
+      "comment": "escapes: ASCII, byte, Unicode, quote, regex",
+      "name": "constant.character.escape.ctl",
+      "match": "(\\\\)(?:(?:(x[0-9a-fA-F]{2})|(u(\\{)[\\da-fA-F]{1,6}(\\}))|.))",
+      "captures": {
+        "1": {
+          "name": "constant.character.escape.backslash.ctl"
+        },
+        "2": {
+          "name": "constant.character.escape.bit.ctl"
+        },
+        "3": {
+          "name": "constant.character.escape.unicode.ctl"
+        },
+        "4": {
+          "name": "constant.character.escape.unicode.punctuation.ctl"
+        },
+        "5": {
+          "name": "constant.character.escape.unicode.punctuation.ctl"
+        }
+      }
+    },
+    "functions": {
+      "patterns": [
+        {
+          "comment": "pub as a function",
+          "match": "\\b(pub)(\\()",
+          "captures": {
+            "1": {
+              "name": "keyword.other.ctl"
+            },
+            "2": {
+              "name": "punctuation.brackets.round.ctl"
+            }
+          }
+        },
+        {
+          "comment": "function definition",
+          "name": "meta.function.definition.ctl",
+          "begin": "\\b(fn)\\s+((?:r#(?!crate|[Tt]his|super))?[A-Za-z0-9_]+)((\\()|(<))",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.other.fn.ctl"
+            },
+            "2": {
+              "name": "entity.name.function.ctl"
+            },
+            "4": {
+              "name": "punctuation.brackets.round.ctl"
+            },
+            "5": {
+              "name": "punctuation.brackets.angle.ctl"
+            }
+          },
+          "end": "\\{|;",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.brackets.curly.ctl"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#block-comments"
+            },
+            {
+              "include": "#comments"
+            },
+            {
+              "include": "#keywords"
+            },
+            {
+              "include": "#lvariables"
+            },
+            {
+              "include": "#constants"
+            },
+            {
+              "include": "#gtypes"
+            },
+            {
+              "include": "#functions"
+            },
+            {
+              "include": "#lifetimes"
+            },
+            {
+              "include": "#macros"
+            },
+            {
+              "include": "#namespaces"
+            },
+            {
+              "include": "#punctuation"
+            },
+            {
+              "include": "#strings"
+            },
+            {
+              "include": "#types"
+            },
+            {
+              "include": "#variables"
+            }
+          ]
+        },
+        {
+          "comment": "function/method calls, chaining",
+          "name": "meta.function.call.ctl",
+          "begin": "((?:r#(?!crate|[Tt]his|super))?[A-Za-z0-9_]+)(\\()",
+          "beginCaptures": {
+            "1": {
+              "name": "entity.name.function.ctl"
+            },
+            "2": {
+              "name": "punctuation.brackets.round.ctl"
+            }
+          },
+          "end": "\\)",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.brackets.round.ctl"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#block-comments"
+            },
+            {
+              "include": "#comments"
+            },
+            {
+              "include": "#keywords"
+            },
+            {
+              "include": "#lvariables"
+            },
+            {
+              "include": "#constants"
+            },
+            {
+              "include": "#gtypes"
+            },
+            {
+              "include": "#functions"
+            },
+            {
+              "include": "#lifetimes"
+            },
+            {
+              "include": "#macros"
+            },
+            {
+              "include": "#namespaces"
+            },
+            {
+              "include": "#punctuation"
+            },
+            {
+              "include": "#strings"
+            },
+            {
+              "include": "#types"
+            },
+            {
+              "include": "#variables"
+            }
+          ]
+        },
+        {
+          "comment": "function/method calls with turbofish",
+          "name": "meta.function.call.ctl",
+          "begin": "((?:r#(?!crate|[Tt]his|super))?[A-Za-z0-9_]+)(?=::<.*>\\()",
+          "beginCaptures": {
+            "1": {
+              "name": "entity.name.function.ctl"
+            }
+          },
+          "end": "\\)",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.brackets.round.ctl"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#block-comments"
+            },
+            {
+              "include": "#comments"
+            },
+            {
+              "include": "#keywords"
+            },
+            {
+              "include": "#lvariables"
+            },
+            {
+              "include": "#constants"
+            },
+            {
+              "include": "#gtypes"
+            },
+            {
+              "include": "#functions"
+            },
+            {
+              "include": "#lifetimes"
+            },
+            {
+              "include": "#macros"
+            },
+            {
+              "include": "#namespaces"
+            },
+            {
+              "include": "#punctuation"
+            },
+            {
+              "include": "#strings"
+            },
+            {
+              "include": "#types"
+            },
+            {
+              "include": "#variables"
+            }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "comment": "control flow keywords",
+          "name": "keyword.control.ctl",
+          "match": "\\b(await|break|continue|do|else|for|if|loop|match|return|try|while|yield)\\b"
+        },
+        {
+          "comment": "storage keywords",
+          "name": "keyword.other.ctl storage.type.ctl",
+          "match": "\\b(import|export|let|mod)\\b"
+        },
+        {
+          "comment": "const keyword",
+          "name": "storage.modifier.ctl",
+          "match": "\\b(const)\\b"
+        },
+        {
+          "comment": "type keyword",
+          "name": "keyword.declaration.type.ctl storage.type.ctl",
+          "match": "\\b(type)\\b"
+        },
+        {
+          "comment": "enum keyword",
+          "name": "keyword.declaration.enum.ctl storage.type.ctl",
+          "match": "\\b(enum)\\b"
+        },
+        {
+          "comment": "trait keyword",
+          "name": "keyword.declaration.trait.ctl storage.type.ctl",
+          "match": "\\b(trait)\\b"
+        },
+        {
+          "comment": "struct keyword",
+          "name": "keyword.declaration.struct.ctl storage.type.ctl",
+          "match": "\\b(struct)\\b"
+        },
+        {
+          "comment": "extension keyword",
+          "name": "keyword.declaration.extension.ctl storage.type.ctl",
+          "match": "\\b(extension)\\b"
+        },
+        {
+          "comment": "storage modifiers",
+          "name": "storage.modifier.ctl",
+          "match": "\\b(static|shared)\\b"
+        },
+        {
+          "comment": "other keywords",
+          "name": "keyword.other.ctl",
+          "match": "\\b(as|async|bitfield|dyn|move|null|impl|in|is|pub|ref|sealed|typeof|union|unsafe|use|where)\\b"
+        },
+        {
+          "comment": "fn",
+          "name": "keyword.other.fn.ctl",
+          "match": "\\bfn\\b"
+        },
+        {
+          "comment": "crate",
+          "name": "keyword.other.crate.ctl",
+          "match": "\\bcrate\\b"
+        },
+        {
+          "comment": "mut",
+          "name": "storage.modifier.mut.ctl",
+          "match": "\\bmut\\b"
+        },
+        {
+          "comment": "keyword",
+          "name": "storage.modifier.kw.ctl",
+          "match": "\\bkw\\b"
+        },
+        {
+          "comment": "logical operators",
+          "name": "keyword.operator.logical.ctl",
+          "match": "(\\^|\\||\\|\\||&&|<<|>>|!)(?!=)"
+        },
+        {
+          "comment": "logical AND, borrow references",
+          "name": "keyword.operator.borrow.and.ctl",
+          "match": "&(?![&=])"
+        },
+        {
+          "comment": "assignment operators",
+          "name": "keyword.operator.assignment.ctl",
+          "match": "(\\+=|-=|\\*=|/=|%=|\\^=|&=|\\|=|<<=|>>=)"
+        },
+        {
+          "comment": "single equal",
+          "name": "keyword.operator.assignment.equal.ctl",
+          "match": "(?<![<>])=(?!=|>)"
+        },
+        {
+          "comment": "comparison operators",
+          "name": "keyword.operator.comparison.ctl",
+          "match": "(=(=)?(?!>)|!=|<=|(?<!=)>=)"
+        },
+        {
+          "comment": "math operators",
+          "name": "keyword.operator.math.ctl",
+          "match": "(([+%]|(\\*(?!\\w)))(?!=))|(-(?!>))|(/(?!/))"
+        },
+        {
+          "comment": "increment",
+          "name": "keyword.operator.increment.ctl",
+          "match": "(\\+\\+)"
+        },
+        {
+          "comment": "decrement",
+          "name": "keyword.operator.decrement.ctl",
+          "match": "(--)"
+        },
+        {
+          "comment": "less than, greater than (special case)",
+          "match": "(?:\\b|(?:(\\))|(\\])|(\\})))[ \\t]+([<>])[ \\t]+(?:\\b|(?:(\\()|(\\[)|(\\{)))",
+          "captures": {
+            "1": {
+              "name": "punctuation.brackets.round.ctl"
+            },
+            "2": {
+              "name": "punctuation.brackets.square.ctl"
+            },
+            "3": {
+              "name": "punctuation.brackets.curly.ctl"
+            },
+            "4": {
+              "name": "keyword.operator.comparison.ctl"
+            },
+            "5": {
+              "name": "punctuation.brackets.round.ctl"
+            },
+            "6": {
+              "name": "punctuation.brackets.square.ctl"
+            },
+            "7": {
+              "name": "punctuation.brackets.curly.ctl"
+            }
+          }
+        },
+        {
+          "comment": "namespace operator",
+          "name": "keyword.operator.namespace.ctl",
+          "match": "::"
+        },
+        {
+          "comment": "dereference asterisk",
+          "match": "(\\*)(?=\\w+)",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.dereference.ctl"
+            }
+          }
+        },
+        {
+          "comment": "subpattern binding",
+          "name": "keyword.operator.subpattern.ctl",
+          "match": "@"
+        },
+        {
+          "comment": "dot access",
+          "name": "keyword.operator.access.dot.ctl",
+          "match": "\\.(?!\\.)"
+        },
+        {
+          "comment": "ranges, range patterns",
+          "name": "keyword.operator.range.ctl",
+          "match": "\\.{2}(=|\\.)?"
+        },
+        {
+          "comment": "colon",
+          "name": "keyword.operator.key-value.ctl",
+          "match": ":(?!:)"
+        },
+        {
+          "comment": "fat arrow",
+          "name": "keyword.operator.arrow.fat.ctl",
+          "match": "=>"
+        },
+        {
+          "comment": "question mark operator, questionably sized, macro kleene matcher",
+          "name": "keyword.operator.question.ctl",
+          "match": "\\?"
+        }
+      ]
+    },
+    "interpolations": {
+      "comment": "curly brace interpolations",
+      "name": "meta.interpolation.ctl",
+      "match": "({)[^\"{}]*(})",
+      "captures": {
+        "1": {
+          "name": "punctuation.definition.interpolation.ctl"
+        },
+        "2": {
+          "name": "punctuation.definition.interpolation.ctl"
+        }
+      }
+    },
+    "lifetimes": {
+      "patterns": [
+        {
+          "comment": "named lifetime parameters",
+          "match": "(['])([a-zA-Z_][0-9a-zA-Z_]*)(?!['])\\b",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.lifetime.ctl"
+            },
+            "2": {
+              "name": "entity.name.type.lifetime.ctl"
+            }
+          }
+        },
+        {
+          "comment": "borrowing references to named lifetimes",
+          "match": "(\\&)(['])([a-zA-Z_][0-9a-zA-Z_]*)(?!['])\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.borrow.ctl"
+            },
+            "2": {
+              "name": "punctuation.definition.lifetime.ctl"
+            },
+            "3": {
+              "name": "entity.name.type.lifetime.ctl"
+            }
+          }
+        }
+      ]
+    },
+    "namespaces": {
+      "patterns": [
+        {
+          "comment": "namespace (non-type, non-function path segment)",
+          "match": "(?<![A-Za-z0-9_])([a-z0-9_]+)((?<!super)::)",
+          "captures": {
+            "1": {
+              "name": "entity.name.namespace.ctl"
+            },
+            "2": {
+              "name": "keyword.operator.namespace.ctl"
+            }
+          }
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "comment": "numeric types",
+          "match": "(?<![A-Za-z])(f32|f64|u\\d+|i\\d+|isize|usize)\\b",
+          "captures": {
+            "1": {
+              "name": "entity.name.type.numeric.ctl"
+            }
+          }
+        },
+        {
+          "comment": "c types",
+          "match": "\\b(c_char|c_uchar|c_short|c_ushort|c_int|c_uint|c_long|c_ulong|c_longlong|c_ulonglong|c_void)\\b",
+          "captures": {
+            "1": {
+              "name": "entity.name.type.c.ctl"
+            }
+          }
+        },
+        {
+          "comment": "parameterized types",
+          "begin": "\\b([A-Z][A-Za-z0-9]*)(<)",
+          "beginCaptures": {
+            "1": {
+              "name": "entity.name.type.ctl"
+            },
+            "2": {
+              "name": "punctuation.brackets.angle.ctl"
+            }
+          },
+          "end": ">",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.brackets.angle.ctl"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#block-comments"
+            },
+            {
+              "include": "#comments"
+            },
+            {
+              "include": "#keywords"
+            },
+            {
+              "include": "#lvariables"
+            },
+            {
+              "include": "#lifetimes"
+            },
+            {
+              "include": "#punctuation"
+            },
+            {
+              "include": "#types"
+            },
+            {
+              "include": "#variables"
+            }
+          ]
+        },
+        {
+          "comment": "primitive types",
+          "name": "entity.name.type.primitive.ctl",
+          "match": "\\b(bool|char|str|void|never)\\b"
+        },
+        {
+          "comment": "trait declarations",
+          "match": "\\b(trait)\\s+([A-Z][A-Za-z0-9]*)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.trait.ctl storage.type.ctl"
+            },
+            "2": {
+              "name": "entity.name.type.trait.ctl"
+            }
+          }
+        },
+        {
+          "comment": "struct declarations",
+          "match": "\\b(struct)\\s+([A-Z][A-Za-z0-9]*)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.struct.ctl storage.type.ctl"
+            },
+            "2": {
+              "name": "entity.name.type.struct.ctl"
+            }
+          }
+        },
+        {
+          "comment": "enum declarations",
+          "match": "\\b(enum)\\s+([A-Z][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.enum.ctl storage.type.ctl"
+            },
+            "2": {
+              "name": "entity.name.type.enum.ctl"
+            }
+          }
+        },
+        {
+          "comment": "type declarations",
+          "match": "\\b(type)\\s+([A-Z][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.type.ctl storage.type.ctl"
+            },
+            "2": {
+              "name": "entity.name.type.declaration.ctl"
+            }
+          }
+        },
+        {
+          "comment": "types",
+          "name": "entity.name.type.ctl",
+          "match": "\\b[A-Z][A-Za-z0-9]*\\b(?!!)"
+        }
+      ]
+    },
+    "gtypes": {
+      "patterns": [
+        {
+          "comment": "option types",
+          "name": "entity.name.type.option.ctl",
+          "match": "\\b(Some|None)\\b"
+        },
+        {
+          "comment": "result types",
+          "name": "entity.name.type.result.ctl",
+          "match": "\\b(Ok|Err)\\b"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "comment": "comma",
+          "name": "punctuation.comma.ctl",
+          "match": ","
+        },
+        {
+          "comment": "curly braces",
+          "name": "punctuation.brackets.curly.ctl",
+          "match": "[{}]"
+        },
+        {
+          "comment": "parentheses, round brackets",
+          "name": "punctuation.brackets.round.ctl",
+          "match": "[()]"
+        },
+        {
+          "comment": "semicolon",
+          "name": "punctuation.semi.ctl",
+          "match": ";"
+        },
+        {
+          "comment": "square brackets",
+          "name": "punctuation.brackets.square.ctl",
+          "match": "[\\[\\]]"
+        },
+        {
+          "comment": "angle brackets",
+          "name": "punctuation.brackets.angle.ctl",
+          "match": "(?<!=)[<>]"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "comment": "double-quoted strings and byte strings",
+          "name": "string.quoted.double.ctl",
+          "begin": "(b?)(\")",
+          "beginCaptures": {
+            "1": {
+              "name": "string.quoted.byte.raw.ctl"
+            },
+            "2": {
+              "name": "punctuation.definition.string.ctl"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.ctl"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#escapes"
+            },
+            {
+              "include": "#interpolations"
+            }
+          ]
+        },
+        {
+          "comment": "double-quoted raw strings and raw byte strings",
+          "name": "string.quoted.double.ctl",
+          "begin": "(b?r)(#*)(\")",
+          "beginCaptures": {
+            "1": {
+              "name": "string.quoted.byte.raw.ctl"
+            },
+            "2": {
+              "name": "punctuation.definition.string.raw.ctl"
+            },
+            "3": {
+              "name": "punctuation.definition.string.ctl"
+            }
+          },
+          "end": "(\")(\\2)",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.string.ctl"
+            },
+            "2": {
+              "name": "punctuation.definition.string.raw.ctl"
+            }
+          }
+        },
+        {
+          "comment": "characters and bytes",
+          "name": "string.quoted.single.char.ctl",
+          "begin": "(b)?(')",
+          "beginCaptures": {
+            "1": {
+              "name": "string.quoted.byte.raw.ctl"
+            },
+            "2": {
+              "name": "punctuation.definition.char.ctl"
+            }
+          },
+          "end": "'",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.char.ctl"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#escapes"
+            }
+          ]
+        }
+      ]
+    },
+    "lvariables": {
+      "patterns": [
+        {
+          "comment": "this",
+          "name": "variable.language.this.ctl",
+          "match": "\\b[Tt]his\\b"
+        },
+        {
+          "comment": "super",
+          "name": "variable.language.super.ctl",
+          "match": "\\bsuper\\b"
+        }
+      ]
+    },
+    "variables": {
+      "patterns": [
+        {
+          "comment": "variables",
+          "name": "variable.other.ctl",
+          "match": "\\b(?<!(?<!\\.)\\.)(?:r#(?!(crate|[Tt]his|super)))?[a-z0-9_]+\\b"
+        }
+      ]
+    }
+  }
+}

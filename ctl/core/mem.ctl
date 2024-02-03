@@ -1,5 +1,5 @@
 #{intrinsic(size_of)}
-pub extern fn size_of<T>(): usize;
+pub import fn size_of<T>(): usize;
 
 pub fn size_of_val<T>(_: *T): usize {
     size_of::<T>()
@@ -7,13 +7,13 @@ pub fn size_of_val<T>(_: *T): usize {
 
 mod builtin {
     #{c_macro, c_name(__builtin_memcpy)}
-    pub extern fn memcpy(dst: *mut c_void, src: *c_void, len: usize): *mut c_void;
+    pub import fn memcpy(dst: *mut c_void, src: *c_void, len: usize): *mut c_void;
 
     #{c_macro, c_name(__builtin_memmove)}
-    pub extern fn memmove(dst: *mut c_void, src: *c_void, len: usize): *mut c_void;
+    pub import fn memmove(dst: *mut c_void, src: *c_void, len: usize): *mut c_void;
 
     #{c_macro, c_name(__builtin_memcmp)}
-    pub extern fn memcmp(dst: *c_void, src: *c_void, len: usize): c_int;
+    pub import fn memcmp(dst: *c_void, src: *c_void, len: usize): c_int;
 }
 
 /// Copies `num` T's from `src` to `dst` without destroying the contents in `dst`.

@@ -9,7 +9,7 @@ use core::unreachable;
 
 mod builtin {
     #{c_macro, c_name(__builtin_strlen)}
-    pub extern fn strlen(ptr: *c_char): usize;
+    pub import fn strlen(ptr: *c_char): usize;
 }
 
 #{lang(string)}

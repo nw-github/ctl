@@ -8,7 +8,7 @@ use crate::{
             ArrayPattern, CheckedExpr, CheckedExprData, CheckedPattern, CheckedStmt,
             IrrefutablePattern, RestPattern, Symbol,
         },
-        parsed::RangePattern,
+        parsed::{Linkage, RangePattern},
         UnaryOp,
     },
     error::{Diagnostics, Error},
@@ -1793,10 +1793,10 @@ impl<'a> Codegen<'a> {
         let mut ret = f.ret.clone();
         state.fill_generics(self.scopes, &mut ret);
 
-        if f.is_extern {
-            self.buffer.emit("extern ");
-        } else {
+        if f.linkage == Linkage::Internal {
             self.buffer.emit("static ");
+        } else {
+            self.buffer.emit("extern ");
         }
 
         if ret.is_never() {
@@ -1821,7 +1821,7 @@ impl<'a> Codegen<'a> {
             if !is_prototype && Self::needs_fn_wrapper(f) {
                 self.emit_type(&ty);
                 self.buffer.emit(format!(" $param{i}"));
-            } else if f.is_extern || is_prototype {
+            } else if f.linkage == Linkage::Import || is_prototype {
                 self.emit_type(&ty);
             } else if let ParamPattern::Checked(IrrefutablePattern::Variable(id)) = &param.patt {
                 _ = self.emit_local_decl(*id, state);
@@ -1900,7 +1900,7 @@ impl<'a> Codegen<'a> {
     fn emit_fn_name_2(&mut self, state: &State, real: bool) {
         let f = self.scopes.get(state.func.id);
         let is_macro = f.attrs.iter().any(|attr| attr.name.data == "c_macro");
-        if !f.is_extern {
+        if f.linkage == Linkage::Internal {
             if let Some(inst) = state.inst.as_ref() {
                 self.buffer.emit_generic_mangled_name(self.scopes, inst);
                 self.buffer.emit("_");
@@ -1994,7 +1994,9 @@ impl<'a> Codegen<'a> {
     }
 
     fn needs_fn_wrapper(f: &Function) -> bool {
-        f.is_extern && f.body.is_none() && matches!(f.ret, Type::Void | Type::Never | Type::CVoid)
+        f.linkage == Linkage::Import
+            && f.body.is_none()
+            && matches!(f.ret, Type::Void | Type::Never | Type::CVoid)
     }
 }
 

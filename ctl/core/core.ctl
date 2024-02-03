@@ -1,5 +1,5 @@
 #{intrinsic(panic)}
-pub extern fn panic(s: string::str): never;
+pub import fn panic(s: string::str): never;
 
 pub fn unreachable(): never {
     panic("entered unreachable code");

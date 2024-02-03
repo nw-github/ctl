@@ -1,5 +1,5 @@
-extern fn write(fd: c_int, buf: *c_void, count: usize): isize;
-extern fn abort(): never;
+import fn write(fd: c_int, buf: *c_void, count: usize): isize;
+import fn abort(): never;
 
 pub fn println(s: str) {
     print(s);

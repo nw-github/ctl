@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::lexer::Span;
+use crate::lexer::{Located, Span, Token};
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 pub struct FileId(usize);
@@ -90,8 +90,8 @@ impl Error {
         )
     }
 
-    pub fn not_valid_here(token: &str, span: Span) -> Self {
-        Self::new(format!("'{token}' is not valid here"), span)
+    pub fn not_valid_here(token: &Located<Token>) -> Self {
+        Self::new(format!("'{}' is not valid here", token.data), token.span)
     }
 
     pub fn type_mismatch(expected: &str, received: &str, span: Span) -> Self {

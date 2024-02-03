@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::{
     ast::{
         checked::{CheckedExpr, CheckedStmt, IrrefutablePattern},
-        parsed::{Expr, Pattern, TypePath},
+        parsed::{Expr, Linkage, Pattern, TypePath},
         Attribute,
     },
     error::Error,
@@ -150,8 +150,8 @@ pub struct Variable {
 pub struct Function {
     pub attrs: Vec<Attribute>,
     pub name: Located<String>,
+    pub linkage: Linkage,
     pub is_async: bool,
-    pub is_extern: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
     pub type_params: Vec<UserTypeId>,
