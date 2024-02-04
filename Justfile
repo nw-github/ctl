@@ -1,12 +1,3 @@
-run path *ARGS:
-    cargo -q r -- {{path}} | clang -Wall -Wextra -std=c11 -lgc -lm -x c - 2> /dev/null && ./a.out {{ARGS}}
-
-runv path *ARGS:
-    cargo -q r -- {{path}} | clang -Wall -Wextra -std=c11 -lgc -lm -x c - && ./a.out {{ARGS}}
-
-print path *ARGS:
-    cargo -q r -- {{path}} {{ARGS}} | clang-format
-
 clean:
     rm main.c
     rm a.out

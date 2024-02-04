@@ -54,7 +54,5 @@ fn main(): c_int {
 
 ### Build
 ```
-cargo r -r -- main.ctl > main.c
-clang -std=c11 -lgc -lm main.c
-./a.out
+cargo r -r -- run main.ctl
 ```
