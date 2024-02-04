@@ -31,7 +31,7 @@ pub struct ArrayPattern<T> {
 }
 
 #[derive(Debug, Clone, Default, EnumAsInner)]
-pub enum CheckedPattern {
+pub enum CheckedPatternData {
     UnionMember {
         pattern: Option<Box<CheckedPattern>>,
         variant: String,
@@ -50,6 +50,34 @@ pub enum CheckedPattern {
     Variable(VariableId),
     #[default]
     Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedPattern {
+    pub irrefutable: bool,
+    pub data: CheckedPatternData,
+}
+
+impl CheckedPattern {
+    pub fn irrefutable(data: CheckedPatternData) -> Self {
+        Self {
+            irrefutable: true,
+            data,
+        }
+    }
+
+    pub fn refutable(data: CheckedPatternData) -> Self {
+        Self {
+            irrefutable: false,
+            data,
+        }
+    }
+}
+
+impl Default for CheckedPattern {
+    fn default() -> Self {
+        Self::irrefutable(Default::default())
+    }
 }
 
 #[derive(Debug, Clone, EnumAsInner)]
