@@ -2398,6 +2398,9 @@ impl TypeChecker {
                     span,
                 ));
             }
+        } else if !patterns.any(|patt| patt.irrefutable) {
+            // covers structs and array patterns
+            self.error(Error::match_statement("", span))
         }
     }
 

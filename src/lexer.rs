@@ -156,6 +156,7 @@ impl std::fmt::Display for Token<'_> {
             Token::Export => write!(f, "export"),
             Token::Unsafe => write!(f, "unsafe"),
             Token::Pub => write!(f, "pub"),
+            Token::Mut => write!(f, "mut"),
             _ => write!(f, "FIXME: {self:?}"),
         }
     }
