@@ -1114,8 +1114,6 @@ impl TypeChecker {
             b.fill_this(this);
 
             if a != &b {
-                eprintln!("{a:?}\n{b:?}");
-                eprintln!("{ty_args:?}");
                 Err(format!(
                     "expected '{}', got '{}'",
                     a.name(scopes),
@@ -1538,9 +1536,7 @@ impl TypeChecker {
                         "range"
                     };
                     CheckedExpr::new(
-                        self.scopes
-                            .make_lang_type(item, [start.ty.clone()])
-                            .unwrap(),
+                        self.make_lang_type_by_name(item, [start.ty.clone()], span),
                         CheckedExprData::Instance {
                             members: [("start".into(), start), ("end".into(), end)].into(),
                             variant: None,
@@ -1555,7 +1551,7 @@ impl TypeChecker {
                         "range_to"
                     };
                     CheckedExpr::new(
-                        self.scopes.make_lang_type(item, [end.ty.clone()]).unwrap(),
+                        self.make_lang_type_by_name(item, [end.ty.clone()], span),
                         CheckedExprData::Instance {
                             members: [("end".into(), end)].into(),
                             variant: None,
@@ -1565,19 +1561,17 @@ impl TypeChecker {
                 (Some(start), None) => {
                     let start = self.check_expr(*start, None);
                     CheckedExpr::new(
-                        self.scopes
-                            .make_lang_type("range_from", [start.ty.clone()])
-                            .unwrap(),
+                        self.make_lang_type_by_name("range_from", [start.ty.clone()], span),
                         CheckedExprData::Instance {
                             members: [("start".into(), start)].into(),
                             variant: None,
                         },
                     )
                 }
-                (None, None) => todo!(),
+                (None, None) => todo!("full range is blocked until impl<T> is supported"),
             },
             ExprData::String(s) => CheckedExpr::new(
-                self.scopes.make_lang_type("string", []).unwrap(),
+                self.make_lang_type_by_name("string", [], span),
                 CheckedExprData::String(s),
             ),
             ExprData::ByteString(s) => CheckedExpr::new(
@@ -1591,11 +1585,11 @@ impl TypeChecker {
             ExprData::None => {
                 if let Some(inner) = target.and_then(|target| target.as_option_inner(&self.scopes))
                 {
-                    CheckedExpr::option_null(
-                        self.scopes
-                            .make_lang_type("option", [inner.clone()])
-                            .unwrap(),
-                    )
+                    CheckedExpr::option_null(self.make_lang_type_by_name(
+                        "option",
+                        [inner.clone()],
+                        span,
+                    ))
                 } else {
                     self.error(Error::new("cannot infer type of option null literal", span))
                 }
@@ -1757,7 +1751,7 @@ impl TypeChecker {
                             out_type = Type::Void;
                             Some(CheckedExpr::new(Type::Void, CheckedExprData::Void))
                         } else {
-                            out_type = self.scopes.make_lang_type("option", [out_type]).unwrap();
+                            out_type = self.make_lang_type_by_name("option", [out_type], span);
                             if_branch = if_branch.try_coerce_to(&self.scopes, &out_type);
                             Some(self.check_expr_inner(
                                 Located::new(span, ExprData::None),
@@ -1829,7 +1823,7 @@ impl TypeChecker {
                 };
 
                 let (out_type, optional) =
-                    Self::loop_out_type(&self.scopes, &self.scopes[body.scope].kind);
+                    self.loop_out_type(&self.scopes[body.scope].kind.clone(), span);
                 CheckedExpr::new(
                     out_type,
                     CheckedExprData::Loop {
@@ -1882,7 +1876,7 @@ impl TypeChecker {
                         .collect();
 
                     let (out, optional) =
-                        Self::loop_out_type(&this.scopes, &this.scopes[this.current].kind);
+                        this.loop_out_type(&this.scopes[this.current].kind.clone(), span);
                     CheckedExpr::new(
                         out,
                         CheckedExprData::For {
@@ -2034,7 +2028,7 @@ impl TypeChecker {
                         };
                     }
 
-                    let (target, opt) = Self::loop_out_type(&self.scopes, &self.scopes[id].kind);
+                    let (target, opt) = self.loop_out_type(&self.scopes[id].kind.clone(), span);
                     if opt {
                         Some(expr.try_coerce_to(&self.scopes, &target).into())
                     } else {
@@ -3142,7 +3136,7 @@ impl TypeChecker {
                 self.check_struct_pattern(scrutinee, mutable, destructures, span)
             }
             Pattern::String(value) => {
-                let string = self.scopes.make_lang_type("string", []).unwrap();
+                let string = self.make_lang_type_by_name("string", [], span);
                 if scrutinee.strip_references() != &string {
                     return self.error(Error::type_mismatch(
                         &scrutinee.name(&self.scopes),
@@ -3690,9 +3684,9 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_lang_type(&mut self, name: &str, ty_args: &[TypeHint]) -> Type {
+    fn resolve_lang_type(&mut self, name: &str, args: &[TypeHint]) -> Type {
         if let Some(id) = self.scopes.lang_types.get(name).copied() {
-            let args: Vec<_> = ty_args.iter().map(|ty| self.resolve_typehint(ty)).collect();
+            let args: Vec<_> = args.iter().map(|ty| self.resolve_typehint(ty)).collect();
             Type::User(GenericUserType::from_type_args(&self.scopes, id, args).into())
         } else {
             self.error(Error::no_lang_item(name, Span::default()))
@@ -3702,10 +3696,10 @@ impl TypeChecker {
     fn make_lang_type(
         &mut self,
         id: UserTypeId,
-        ty_args: impl IntoIterator<Item = Type>,
+        args: impl IntoIterator<Item = Type>,
         span: Span,
     ) -> GenericUserType {
-        let ty = GenericUserType::from_type_args(&self.scopes, id, ty_args);
+        let ty = GenericUserType::from_type_args(&self.scopes, id, args);
         for (id, param) in ty.ty_args.iter() {
             for j in 0..self.scopes.get(*id).impls.len() {
                 resolve_type!(self, self.scopes.get_mut(*id).impls[j]);
@@ -3714,6 +3708,19 @@ impl TypeChecker {
             self.check_bounds(&ty.ty_args, param, self.scopes.get(*id).impls.clone(), span);
         }
         ty
+    }
+
+    fn make_lang_type_by_name(
+        &mut self,
+        name: &str,
+        args: impl IntoIterator<Item = Type>,
+        span: Span,
+    ) -> Type {
+        let Some(id) = self.scopes.lang_types.get(name).copied() else {
+            return self.error(Error::no_lang_item(name, span));
+        };
+
+        Type::User(GenericUserType::from_type_args(&self.scopes, id, args).into())
     }
 
     fn resolve_typehint(&mut self, hint: &TypeHint) -> Type {
@@ -4467,7 +4474,7 @@ impl TypeChecker {
         }
     }
 
-    fn loop_out_type(scopes: &Scopes, kind: &ScopeKind) -> (Type, bool) {
+    fn loop_out_type(&mut self, kind: &ScopeKind, span: Span) -> (Type, bool) {
         let ScopeKind::Loop {
             target,
             breaks,
@@ -4485,9 +4492,7 @@ impl TypeChecker {
         } else {
             match breaks {
                 Some(true) => (
-                    scopes
-                        .make_lang_type("option", [target.clone().unwrap()])
-                        .unwrap(),
+                    self.make_lang_type_by_name("option", [target.clone().unwrap()], span),
                     true,
                 ),
                 _ => (Type::Void, false),

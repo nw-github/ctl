@@ -458,12 +458,6 @@ impl Scopes {
         self.lang_types.get("option").copied()
     }
 
-    pub fn make_lang_type(&self, name: &str, args: impl IntoIterator<Item = Type>) -> Option<Type> {
-        Some(Type::User(
-            GenericUserType::from_type_args(self, self.lang_types.get(name).copied()?, args).into(),
-        ))
-    }
-
     pub fn intrinsic_name(&self, id: FunctionId) -> Option<&str> {
         self.intrinsics.get(&id).map(|s| s.as_str())
     }
