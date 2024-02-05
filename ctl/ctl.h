@@ -1,6 +1,4 @@
 #include <locale.h>
-#include <stddef.h>
-#include <stdint.h>
 
 #ifndef CTL_NOGC
 #include <gc.h>

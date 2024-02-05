@@ -104,7 +104,7 @@ fn compile_results(src: &str, leak: bool, output: &Path, build: BuildOrRun) -> a
         .arg("-std=c11")
         .arg(if leak { "" } else { "-lgc" })
         .args(if build.verbose { &warnings[..] } else { &[] })
-        .args(["-lm", "-x", "c", "-"])
+        .args(["-x", "c", "-"])
         .args(build.ccargs.unwrap_or_default().split(' '))
         .stdin(Stdio::piped())
         .stdout(if build.verbose {
