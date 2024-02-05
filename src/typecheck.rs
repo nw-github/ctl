@@ -9,7 +9,7 @@ use crate::{
     error::{Diagnostics, Error},
     lexer::{Located, Span},
     sym::*,
-    typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type},
+    typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type, TypeArgs},
     Pipeline, THIS_PARAM,
 };
 
@@ -350,7 +350,7 @@ impl TypeChecker {
                 self.enter(ScopeKind::UserType(id), base.public, |this| {
                     this.scopes.get_mut(id).body_scope = this.current;
                     this.scopes.get_mut(id).type_params =
-                        this.declare_type_params(TT::Struct, base.type_params);
+                        this.declare_type_params(base.type_params);
 
                     let mut members = Vec::with_capacity(base.members.len());
                     for member in base.members {
@@ -413,7 +413,7 @@ impl TypeChecker {
                 );
                 self.enter(ScopeKind::UserType(id), base.public, |this| {
                     this.scopes.get_mut(id).body_scope = this.current;
-                    this.scopes.get_mut(id).type_params = this.declare_type_params(TT::Struct, tp);
+                    this.scopes.get_mut(id).type_params = this.declare_type_params(tp);
 
                     let mut variants = Vec::with_capacity(base.members.len());
                     let mut params = Vec::with_capacity(base.members.len());
@@ -534,8 +534,7 @@ impl TypeChecker {
                 );
                 self.enter(ScopeKind::UserType(id), public, |this| {
                     this.scopes.get_mut(id).body_scope = this.current;
-                    this.scopes.get_mut(id).type_params =
-                        this.declare_type_params(TT::Struct, type_params);
+                    this.scopes.get_mut(id).type_params = this.declare_type_params(type_params);
                     this.scopes.get_mut(id).impls = impls
                         .into_iter()
                         .map(|path| this.declare_type_path(path))
@@ -588,7 +587,9 @@ impl TypeChecker {
                             this.insert(
                                 Variable {
                                     name: name.data.clone(),
-                                    ty: Type::User(GenericUserType::new(id, vec![]).into()),
+                                    ty: Type::User(
+                                        GenericUserType::from_id(&this.scopes, id).into(),
+                                    ),
                                     is_static: true,
                                     mutable: false,
                                     value: Some(CheckedExpr::new(
@@ -635,8 +636,7 @@ impl TypeChecker {
                 );
                 self.enter(ScopeKind::Extension(id), false, |this| {
                     this.scopes.get_mut(id).body_scope = this.current;
-                    this.scopes.get_mut(id).type_params =
-                        this.declare_type_params(TT::Struct, type_params);
+                    this.scopes.get_mut(id).type_params = this.declare_type_params(type_params);
                     this.scopes.get_mut(id).ty = this.declare_type_hint(ty);
 
                     let (impls, impl_blocks) = this.declare_impl_blocks(autouse, impls);
@@ -753,7 +753,7 @@ impl TypeChecker {
 
         self.enter(ScopeKind::Function(id), false, |this| {
             this.scopes.get_mut(id).body_scope = this.current;
-            this.scopes.get_mut(id).type_params = this.declare_type_params(TT::Func, f.type_params);
+            this.scopes.get_mut(id).type_params = this.declare_type_params(f.type_params);
             this.scopes.get_mut(id).params = f
                 .params
                 .into_iter()
@@ -788,18 +788,16 @@ impl TypeChecker {
 
     fn declare_type_params(
         &mut self,
-        tt: TT,
         type_params: Vec<(String, Vec<Located<TypePath>>)>,
     ) -> Vec<UserTypeId> {
         type_params
             .into_iter()
-            .enumerate()
-            .map(|(i, (name, impls))| {
+            .map(|(name, impls)| {
                 self.insert(
                     UserType {
                         name: Located::new(Span::default(), name),
                         body_scope: self.current,
-                        data: UserTypeData::Template(tt, i),
+                        data: UserTypeData::Template,
                         type_params: Vec::new(),
                         impls: impls
                             .into_iter()
@@ -1079,25 +1077,25 @@ impl TypeChecker {
     ) -> Result<(), String> {
         let lhs = scopes.get(lhs_id);
         let rhs = scopes.get(rhs_id);
-        let compare_types = |a: &Type, mut b: Type| {
-            b.fill_func_template(
-                scopes,
-                &GenericFunc::new(
-                    lhs_id,
-                    lhs.type_params
-                        .iter()
-                        .map(|&id| Type::User(GenericUserType::new(id, vec![]).into()))
-                        .collect(),
-                ),
+        let mut ty_args = rhs_ty.ty_args.clone();
+        for (i, &id) in rhs.type_params.iter().enumerate() {
+            ty_args.insert(
+                id,
+                Type::User(GenericUserType::from_id(scopes, lhs.type_params[i]).into()),
             );
-            b.fill_struct_templates(scopes, rhs_ty);
+        }
+
+        let compare_types = |a: &Type, mut b: Type| {
+            b.fill_templates(&ty_args);
             b.fill_this(this);
 
             if a != &b {
+                eprintln!("{a:?}\n{b:?}");
+                eprintln!("{ty_args:?}");
                 Err(format!(
                     "expected '{}', got '{}'",
-                    rhs.ret.name(scopes),
-                    lhs.ret.name(scopes)
+                    a.name(scopes),
+                    b.name(scopes)
                 ))
             } else {
                 Ok(())
@@ -1125,8 +1123,8 @@ impl TypeChecker {
                 .flat_map(|tr| tr.as_user())
                 .zip(t.impls.iter().flat_map(|tr| tr.as_user()))
             {
-                for (s, t) in s.ty_args.iter().zip(t.ty_args.clone().into_iter()) {
-                    if let Err(err) = compare_types(s, t) {
+                for (s, t) in s.ty_args.values().zip(t.ty_args.values()) {
+                    if let Err(err) = compare_types(s, t.clone()) {
                         return Err(format!("type parameter '{name}' is incorrect: {err}"));
                     }
                 }
@@ -1369,7 +1367,7 @@ impl TypeChecker {
                 let ty = if let Some(ty) = target
                     .and_then(|target| target.as_user())
                     .filter(|ut| ut.id == vec)
-                    .map(|ut| ut.ty_args[0].clone())
+                    .and_then(|ut| ut.first_type_arg().cloned())
                 {
                     ty
                 } else if let Some(expr) = elements.next() {
@@ -1383,7 +1381,7 @@ impl TypeChecker {
 
                 checked.extend(elements.map(|e| self.type_check(e, &ty)));
                 CheckedExpr::new(
-                    Type::User(self.make_lang_type(vec, vec![ty], span).into()),
+                    Type::User(self.make_lang_type(vec, [ty], span).into()),
                     CheckedExprData::Vec(checked),
                 )
             }
@@ -1397,7 +1395,7 @@ impl TypeChecker {
                 let ty = if let Some(ty) = target
                     .and_then(|target| target.as_user())
                     .filter(|ut| ut.id == set)
-                    .map(|ut| ut.ty_args[0].clone())
+                    .and_then(|ut| ut.first_type_arg().cloned())
                 {
                     ty
                 } else if let Some(expr) = elements.next() {
@@ -1411,7 +1409,7 @@ impl TypeChecker {
 
                 checked.extend(elements.map(|e| self.type_check(e, &ty)));
                 CheckedExpr::new(
-                    Type::User(self.make_lang_type(set, vec![ty], span).into()),
+                    Type::User(self.make_lang_type(set, [ty], span).into()),
                     CheckedExprData::Set(checked),
                 )
             }
@@ -1450,7 +1448,7 @@ impl TypeChecker {
                 let (init, ty) = if let Some(ty) = target
                     .and_then(|target| target.as_user())
                     .filter(|ut| ut.id == vec)
-                    .map(|ut| ut.ty_args[0].clone())
+                    .and_then(|ut| ut.first_type_arg().cloned())
                 {
                     (self.type_check(*init, &ty), ty)
                 } else {
@@ -1460,7 +1458,7 @@ impl TypeChecker {
                 };
 
                 CheckedExpr::new(
-                    Type::User(self.make_lang_type(vec, vec![ty], span).into()),
+                    Type::User(self.make_lang_type(vec, [ty], span).into()),
                     CheckedExprData::VecWithInit {
                         init: init.into(),
                         count: self.type_check(*count, &Type::Usize).into(),
@@ -1475,12 +1473,12 @@ impl TypeChecker {
 
                 let mut result = Vec::with_capacity(elements.len());
                 let mut elements = elements.into_iter();
-                let (k, v) = if let Some((k, v)) = target
+                let (k, v) = if let Some(ut) = target
                     .and_then(|target| target.as_user())
                     .filter(|ut| ut.id == map)
-                    .map(|ut| (ut.ty_args[0].clone(), ut.ty_args[1].clone()))
                 {
-                    (k, v)
+                    let mut args = ut.ty_args.values().cloned();
+                    (args.next().unwrap(), args.next().unwrap())
                 } else if let Some((key, val)) = elements.next() {
                     let key = self.check_expr(key, None);
                     let val = self.check_expr(val, None);
@@ -1497,7 +1495,7 @@ impl TypeChecker {
                     elements.map(|(key, val)| (self.type_check(key, &k), self.type_check(val, &v))),
                 );
                 CheckedExpr::new(
-                    Type::User(self.make_lang_type(map, vec![k, v], span).into()),
+                    Type::User(self.make_lang_type(map, [k, v], span).into()),
                     CheckedExprData::Map(result),
                 )
             }
@@ -1517,7 +1515,7 @@ impl TypeChecker {
                     };
                     CheckedExpr::new(
                         self.scopes
-                            .make_lang_type(item, vec![start.ty.clone()])
+                            .make_lang_type(item, [start.ty.clone()])
                             .unwrap(),
                         CheckedExprData::Instance {
                             members: [("start".into(), start), ("end".into(), end)].into(),
@@ -1533,9 +1531,7 @@ impl TypeChecker {
                         "range_to"
                     };
                     CheckedExpr::new(
-                        self.scopes
-                            .make_lang_type(item, vec![end.ty.clone()])
-                            .unwrap(),
+                        self.scopes.make_lang_type(item, [end.ty.clone()]).unwrap(),
                         CheckedExprData::Instance {
                             members: [("end".into(), end)].into(),
                             variant: None,
@@ -1546,7 +1542,7 @@ impl TypeChecker {
                     let start = self.check_expr(*start, None);
                     CheckedExpr::new(
                         self.scopes
-                            .make_lang_type("range_from", vec![start.ty.clone()])
+                            .make_lang_type("range_from", [start.ty.clone()])
                             .unwrap(),
                         CheckedExprData::Instance {
                             members: [("start".into(), start)].into(),
@@ -1557,7 +1553,7 @@ impl TypeChecker {
                 (None, None) => todo!(),
             },
             ExprData::String(s) => CheckedExpr::new(
-                self.scopes.make_lang_type("string", vec![]).unwrap(),
+                self.scopes.make_lang_type("string", []).unwrap(),
                 CheckedExprData::String(s),
             ),
             ExprData::ByteString(s) => CheckedExpr::new(
@@ -1573,7 +1569,7 @@ impl TypeChecker {
                 {
                     CheckedExpr::option_null(
                         self.scopes
-                            .make_lang_type("option", vec![inner.clone()])
+                            .make_lang_type("option", [inner.clone()])
                             .unwrap(),
                     )
                 } else {
@@ -1740,10 +1736,7 @@ impl TypeChecker {
                             out_type = Type::Void;
                             Some(CheckedExpr::new(Type::Void, CheckedExprData::Void))
                         } else {
-                            out_type = self
-                                .scopes
-                                .make_lang_type("option", vec![out_type])
-                                .unwrap();
+                            out_type = self.scopes.make_lang_type("option", [out_type]).unwrap();
                             if_branch = if_branch.try_coerce_to(&self.scopes, &out_type);
                             Some(self.check_expr_inner(
                                 Located::new(span, ExprData::None),
@@ -1836,7 +1829,7 @@ impl TypeChecker {
                     infinite: false,
                 };
                 self.enter(kind, false, |this| {
-                    let Some(ty) = this.get_trait_impl(&iter.ty, iter_id) else {
+                    let Some(ut) = this.get_trait_impl(&iter.ty, iter_id) else {
                         for stmt in body {
                             let stmt = this.declare_stmt(&mut vec![], stmt);
                             this.check_stmt(stmt);
@@ -1849,9 +1842,9 @@ impl TypeChecker {
                         ));
                     };
 
-                    let mut next_ty = ty.ty_args[0].clone();
+                    let mut next_ty = ut.first_type_arg().unwrap().clone();
                     if let Some(ut) = iter.ty.as_user() {
-                        next_ty.fill_struct_templates(&this.scopes, ut);
+                        next_ty.fill_templates(&ut.ty_args);
                     }
 
                     let patt_span = patt.span;
@@ -1941,7 +1934,7 @@ impl TypeChecker {
 
                     let mut ty = member.ty.clone();
                     if let Some(instance) = id.as_user() {
-                        ty.fill_struct_templates(&self.scopes, instance);
+                        ty.fill_templates(&instance.ty_args);
                     }
 
                     let id = id.clone();
@@ -2271,8 +2264,8 @@ impl TypeChecker {
         } else {
             target
                 .and_then(|t| t.as_user())
-                .filter(|t| t.id == self.scopes.get_option_id().unwrap())
-                .map(|target| &target.ty_args[0])
+                .filter(|t| Some(t.id) == self.scopes.get_option_id())
+                .and_then(|target| target.first_type_arg())
         };
 
         let if_span = expr.span;
@@ -2571,7 +2564,7 @@ impl TypeChecker {
                                     },
                                 ),
                             )]),
-                            func: GenericFunc::new(*func.unwrap(), vec![]),
+                            func: GenericFunc::from_id(&self.scopes, *func.unwrap()),
                             trait_id: None,
                         },
                     );
@@ -2693,10 +2686,14 @@ impl TypeChecker {
             )));
         }
 
-        let member = union.variants.iter().find(|m| m.name == variant).unwrap();
-
-        let mut ty = member.ty.clone();
-        ty.fill_struct_templates(&self.scopes, ut);
+        let mut ty = union
+            .variants
+            .iter()
+            .find(|m| m.name == variant)
+            .unwrap()
+            .ty
+            .clone();
+        ty.fill_templates(&ut.ty_args);
         if let Some(patt) = subpatterns.into_iter().next() {
             Ok(CheckedPattern::refutable(CheckedPatternData::UnionMember {
                 variant,
@@ -2805,8 +2802,9 @@ impl TypeChecker {
         }
 
         if let Some(RestPattern { id: Some(id), .. }) = &mut rest {
-            self.scopes.get_mut(*id).item.ty =
-                Type::User(GenericUserType::new(span_id, vec![span_inner.clone()]).into());
+            self.scopes.get_mut(*id).item.ty = Type::User(
+                GenericUserType::from_type_args(&self.scopes, span_id, [span_inner.clone()]).into(),
+            );
         }
 
         CheckedPattern::refutable(CheckedPatternData::Span {
@@ -2827,7 +2825,7 @@ impl TypeChecker {
         let (real_inner, arr_len) = match target.strip_references() {
             Type::Array(inner) => (&inner.0, inner.1),
             Type::User(ut) if Some(ut.id) == span_id => {
-                let inner = ut.ty_args[0].clone();
+                let inner = ut.first_type_arg().unwrap().clone();
                 return self.check_slice_pattern(
                     Type::Ptr(inner.clone().into()),
                     inner,
@@ -2836,7 +2834,7 @@ impl TypeChecker {
                 );
             }
             Type::User(ut) if Some(ut.id) == span_mut_id => {
-                let inner = ut.ty_args[0].clone();
+                let inner = ut.first_type_arg().unwrap().clone();
                 if target.is_ptr() || target.is_mut_ptr() {
                     let ptr = target.matched_inner_type(inner.clone());
                     let id = if ptr.is_ptr() {
@@ -2972,7 +2970,7 @@ impl TypeChecker {
 
             // TODO: duplicates
             let mut ty = member.ty.clone();
-            ty.fill_struct_templates(&self.scopes, ut);
+            ty.fill_templates(&ut.ty_args);
             vars.push((name.data, mutable || pm, ty, pattern));
         }
 
@@ -3121,7 +3119,7 @@ impl TypeChecker {
                 self.check_struct_pattern(scrutinee, mutable, destructures, span)
             }
             Pattern::String(value) => {
-                let string = self.scopes.make_lang_type("string", vec![]).unwrap();
+                let string = self.scopes.make_lang_type("string", []).unwrap();
                 if scrutinee.strip_references() != &string {
                     return self.error(Error::type_mismatch(
                         &scrutinee.name(&self.scopes),
@@ -3311,17 +3309,13 @@ impl TypeChecker {
 
                 let mut func = GenericFunc::new(
                     *func,
-                    self.resolve_type_args(f.type_params.len(), &generics, span),
+                    self.resolve_type_args(&f.type_params.clone(), &generics, span),
                 );
-                let (args, ret) = self.check_fn_args(
-                    tr.as_ref().or(id.as_user().map(|ut| &**ut)),
-                    &mut func,
-                    Some(recv),
-                    args,
-                    target,
-                    span,
-                );
+                if let Some(inst) = tr.as_ref().or(id.as_user().map(|ut| &**ut)) {
+                    func.ty_args.copy_args(&inst.ty_args);
+                }
 
+                let (args, ret) = self.check_fn_args(&mut func, Some(recv), args, target, span);
                 return CheckedExpr::new(
                     ret,
                     CheckedExprData::Call {
@@ -3345,8 +3339,11 @@ impl TypeChecker {
 
                         // TODO: check privacy
                         let (args, ret) = self.check_fn_args(
-                            None,
-                            &mut GenericFunc::new(*constructor, ty.ty_args),
+                            &mut GenericFunc::from_type_args(
+                                &self.scopes,
+                                *constructor,
+                                ty.ty_args.values().cloned(),
+                            ),
                             None,
                             args,
                             target,
@@ -3365,9 +3362,7 @@ impl TypeChecker {
                         let f = self.scopes.get(func.id);
                         let constructor = f.constructor;
                         let variant = constructor.then(|| f.name.data.clone());
-                        let (args, ret) =
-                            self.check_fn_args(None, &mut func, None, args, target, span);
-
+                        let (args, ret) = self.check_fn_args(&mut func, None, args, target, span);
                         return CheckedExpr::new(
                             ret,
                             if constructor {
@@ -3467,25 +3462,15 @@ impl TypeChecker {
         )
     }
 
-    fn check_arg(
-        &mut self,
-        func: &mut GenericFunc,
-        expr: Expr,
-        param: &CheckedParam,
-        inst: Option<&GenericUserType>,
-    ) -> CheckedExpr {
-        let mut target = param.ty.clone();
-        target.fill_func_template(&self.scopes, func);
-
-        if let Some(inst) = inst {
-            target.fill_struct_templates(&self.scopes, inst);
-        }
+    fn check_arg(&mut self, func: &mut GenericFunc, expr: Expr, ty: &Type) -> CheckedExpr {
+        let mut target = ty.clone();
+        target.fill_templates(&func.ty_args);
 
         let span = expr.span;
         let expr = self.check_expr(expr, Some(&target));
         if !func.ty_args.is_empty() {
-            func.infer_type_args(&param.ty, &expr.ty, &self.scopes);
-            target.fill_func_template(&self.scopes, func);
+            func.infer_type_args(ty, &expr.ty);
+            target.fill_templates(&func.ty_args);
         }
 
         self.type_check_checked(expr, &target, span)
@@ -3493,7 +3478,6 @@ impl TypeChecker {
 
     fn check_fn_args(
         &mut self,
-        inst: Option<&GenericUserType>,
         func: &mut GenericFunc,
         recv: Option<CheckedExpr>,
         args: Vec<(Option<String>, Expr)>,
@@ -3503,7 +3487,7 @@ impl TypeChecker {
         self.resolve_proto(func.id);
 
         if let Some(target) = target {
-            func.infer_type_args(&self.scopes.get(func.id).ret, target, &self.scopes);
+            func.infer_type_args(&self.scopes.get(func.id).ret, target);
         }
 
         let mut result = IndexMap::with_capacity(args.len());
@@ -3532,7 +3516,7 @@ impl TypeChecker {
                             .iter()
                             .find(|p| p.label == name)
                         {
-                            entry.insert(self.check_arg(func, expr, &param.clone(), inst));
+                            entry.insert(self.check_arg(func, expr, &param.ty.clone()));
                         } else {
                             self.error::<()>(Error::new(
                                 format!("unknown parameter: '{name}'"),
@@ -3552,7 +3536,7 @@ impl TypeChecker {
             {
                 result.insert(
                     param.label.clone(),
-                    self.check_arg(func, expr, &param.clone(), inst),
+                    self.check_arg(func, expr, &param.ty.clone()),
                 );
                 last_pos = i + 1;
             } else if !variadic {
@@ -3593,31 +3577,25 @@ impl TypeChecker {
                 missing.push_str(&param.label);
             }
 
-            self.error::<()>(Error::new(
+            self.error(Error::new(
                 format!(
                     "expected {} argument(s), found {} (missing {missing})",
                     self.scopes.get(func.id).params.len(),
                     result.len()
                 ),
                 span,
-            ));
+            ))
         }
 
         let mut ret = self.scopes.get(func.id).ret.clone();
         if !func.ty_args.is_empty() {
-            if let Some(target) = target {
-                func.infer_type_args(&ret, target, &self.scopes);
-            }
-
-            ret.fill_func_template(&self.scopes, func);
-            for (i, ty) in func.ty_args.iter().enumerate() {
+            ret.fill_templates(&func.ty_args);
+            for (id, ty) in func.ty_args.iter() {
                 if ty.is_unknown() {
                     self.error::<()>(Error::new(
                         format!(
                             "cannot infer type for type parameter '{}'",
-                            self.scopes
-                                .get(self.scopes.get(func.id).type_params[i])
-                                .name
+                            self.scopes.get(*id).name
                         ),
                         span,
                     ));
@@ -3625,19 +3603,8 @@ impl TypeChecker {
                     continue;
                 }
 
-                let f = self.scopes.get(func.id);
-                self.check_bounds(
-                    Some(func),
-                    ty,
-                    self.scopes.get(f.type_params[i]).impls.clone(),
-                    inst,
-                    span,
-                );
+                self.check_bounds(&func.ty_args, ty, self.scopes.get(*id).impls.clone(), span);
             }
-        }
-
-        if let Some(inst) = inst {
-            ret.fill_struct_templates(&self.scopes, inst);
         }
 
         if self.scopes.get(func.id).is_unsafe && self.safety != Safety::Unsafe {
@@ -3647,25 +3614,10 @@ impl TypeChecker {
         (result, ret)
     }
 
-    fn check_bounds(
-        &mut self,
-        func: Option<&GenericFunc>,
-        ty: &Type,
-        bounds: Vec<Type>,
-        inst: Option<&GenericUserType>,
-        span: Span,
-    ) {
+    fn check_bounds(&mut self, ty_args: &TypeArgs, ty: &Type, bounds: Vec<Type>, span: Span) {
         for mut bound in bounds.iter().flat_map(|bound| bound.as_user().cloned()) {
-            if let Some(func) = func {
-                for bty in bound.ty_args.iter_mut() {
-                    bty.fill_func_template(&self.scopes, func);
-                }
-            }
-
-            if let Some(inst) = inst {
-                for bty in bound.ty_args.iter_mut() {
-                    bty.fill_struct_templates(&self.scopes, inst);
-                }
+            for bty in bound.ty_args.values_mut() {
+                bty.fill_templates(ty_args);
             }
 
             if !self.implements_trait_and_resolve(ty, &bound) {
@@ -3714,14 +3666,9 @@ impl TypeChecker {
     }
 
     fn resolve_lang_type(&mut self, name: &str, ty_args: &[TypeHint]) -> Type {
-        if let Some(ty) = self.scopes.lang_types.get(name).copied() {
-            Type::User(
-                GenericUserType::new(
-                    ty,
-                    self.resolve_type_args(ty_args.len(), ty_args, Span::default()),
-                )
-                .into(),
-            )
+        if let Some(id) = self.scopes.lang_types.get(name).copied() {
+            let args: Vec<_> = ty_args.iter().map(|ty| self.resolve_typehint(ty)).collect();
+            Type::User(GenericUserType::from_type_args(&self.scopes, id, args).into())
         } else {
             self.error(Error::no_lang_item(name, Span::default()))
         }
@@ -3730,35 +3677,16 @@ impl TypeChecker {
     fn make_lang_type(
         &mut self,
         id: UserTypeId,
-        ty_args: Vec<Type>,
+        ty_args: impl IntoIterator<Item = Type>,
         span: Span,
     ) -> GenericUserType {
-        let ty = GenericUserType::new(id, ty_args);
-        for (i, param) in ty.ty_args.iter().enumerate() {
-            for j in 0..self
-                .scopes
-                .get(self.scopes.get(id).type_params[i])
-                .impls
-                .len()
-            {
-                resolve_type!(
-                    self,
-                    self.scopes
-                        .get_mut(self.scopes.get(id).type_params[i])
-                        .impls[j]
-                );
+        let ty = GenericUserType::from_type_args(&self.scopes, id, ty_args);
+        for (id, param) in ty.ty_args.iter() {
+            for j in 0..self.scopes.get(*id).impls.len() {
+                resolve_type!(self, self.scopes.get_mut(*id).impls[j]);
             }
 
-            self.check_bounds(
-                None,
-                param,
-                self.scopes
-                    .get(self.scopes.get(id).type_params[i])
-                    .impls
-                    .clone(),
-                Some(&ty),
-                span,
-            );
+            self.check_bounds(&ty.ty_args, param, self.scopes.get(*id).impls.clone(), span);
         }
         ty
     }
@@ -4079,7 +4007,7 @@ impl TypeChecker {
                         let ut = GenericUserType::new(
                             *id,
                             self.resolve_type_args(
-                                self.scopes.get(*id).type_params.len(),
+                                &self.scopes.get(*id).type_params.clone(),
                                 ty_args,
                                 span,
                             ),
@@ -4095,7 +4023,7 @@ impl TypeChecker {
                         let f = self.scopes.get(*id);
                         return Some(ResolvedPath::Func(GenericFunc::new(
                             *id,
-                            self.resolve_type_args(f.type_params.len(), ty_args, span),
+                            self.resolve_type_args(&f.type_params.clone(), ty_args, span),
                         )));
                     }
 
@@ -4161,7 +4089,7 @@ impl TypeChecker {
                 if is_end {
                     return Some(ResolvedPath::UserType(GenericUserType::new(
                         *id,
-                        self.resolve_type_args(ty.type_params.len(), ty_args, span),
+                        self.resolve_type_args(&ty.type_params.clone(), ty_args, span),
                     )));
                 }
 
@@ -4175,7 +4103,7 @@ impl TypeChecker {
                     return Some(ResolvedPath::Func(GenericFunc::new(
                         *id,
                         self.resolve_type_args(
-                            self.scopes.get(*id).type_params.len(),
+                            &self.scopes.get(*id).type_params.clone(),
                             ty_args,
                             span,
                         ),
@@ -4218,21 +4146,38 @@ impl TypeChecker {
         unreachable!()
     }
 
-    fn resolve_type_args(&mut self, params: usize, args: &[TypeHint], span: Span) -> Vec<Type> {
-        if args.is_empty() {
-            vec![Type::Unknown; params]
-        } else if args.len() != params {
+    fn resolve_type_args(
+        &mut self,
+        params: &[UserTypeId],
+        args: &[TypeHint],
+        span: Span,
+    ) -> TypeArgs {
+        if !args.is_empty() && args.len() != params.len() {
             self.error(Error::new(
                 format!(
                     "expected {} type arguments, received {}",
-                    params,
+                    params.len(),
                     args.len()
                 ),
                 span,
             ))
-        } else {
-            args.iter().map(|ty| self.resolve_typehint(ty)).collect()
         }
+
+        TypeArgs(
+            params
+                .iter()
+                .cloned()
+                .zip(
+                    args.iter()
+                        .map(|ty| self.resolve_typehint(ty))
+                        .take(params.len())
+                        .chain(
+                            std::iter::repeat(Type::Unknown)
+                                .take(params.len().checked_sub(args.len()).unwrap_or_default()),
+                        ),
+                )
+                .collect(),
+        )
     }
 
     fn include_universal(&mut self) {
@@ -4246,15 +4191,10 @@ impl TypeChecker {
             return true;
         }
 
-        fn check(
-            scopes: &Scopes,
-            this: Option<&GenericUserType>,
-            tr: &Type,
-            bound: &GenericUserType,
-        ) -> bool {
+        fn check(this: Option<&GenericUserType>, tr: &Type, bound: &GenericUserType) -> bool {
             let mut tr = tr.clone();
             if let Some(this) = this {
-                tr.fill_struct_templates(scopes, this);
+                tr.fill_templates(&this.ty_args);
             }
             tr.as_user().is_some_and(|tr| &**tr == bound)
         }
@@ -4262,12 +4202,7 @@ impl TypeChecker {
         let has_impl = ty.as_user().is_some_and(|this| {
             for i in 0..self.scopes.get(this.id).impls.len() {
                 resolve_type!(self, self.scopes.get_mut(this.id).impls[i]);
-                if check(
-                    &self.scopes,
-                    Some(this),
-                    &self.scopes.get(this.id).impls[i],
-                    bound,
-                ) {
+                if check(Some(this), &self.scopes.get(this.id).impls[i], bound) {
                     return true;
                 }
             }
@@ -4282,7 +4217,6 @@ impl TypeChecker {
             for i in 0..self.scopes.get(id).impls.len() {
                 resolve_type!(self, self.scopes.get_mut(id).impls[i]);
                 if check(
-                    &self.scopes,
                     ty.as_user().map(|ty| &**ty),
                     &self.scopes.get(id).impls[i],
                     bound,
@@ -4300,11 +4234,11 @@ impl TypeChecker {
             return true;
         }
 
-        let search = |this, impls: &[Type]| {
+        let search = |this: Option<&GenericUserType>, impls: &[Type]| {
             impls.iter().any(|tr| {
                 let mut tr = tr.clone();
                 if let Some(this) = this {
-                    tr.fill_struct_templates(&self.scopes, this);
+                    tr.fill_templates(&this.ty_args);
                 }
                 tr.as_user().is_some_and(|tr| &**tr == bound)
             })
@@ -4502,8 +4436,8 @@ impl TypeChecker {
         } else {
             target
                 .and_then(|t| t.as_user())
-                .filter(|t| t.id == scopes.get_option_id().unwrap())
-                .map(|target| &target.ty_args[0])
+                .filter(|t| Some(t.id) == scopes.get_option_id())
+                .and_then(|target| target.first_type_arg())
         }
     }
 
@@ -4526,7 +4460,7 @@ impl TypeChecker {
             match breaks {
                 Some(true) => (
                     scopes
-                        .make_lang_type("option", vec![target.clone().unwrap()])
+                        .make_lang_type("option", [target.clone().unwrap()])
                         .unwrap(),
                     true,
                 ),

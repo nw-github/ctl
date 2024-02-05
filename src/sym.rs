@@ -190,12 +190,6 @@ impl Union {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TT {
-    Struct,
-    Func,
-}
-
 #[derive(Debug, EnumAsInner)]
 pub enum UserTypeData {
     Struct {
@@ -204,26 +198,8 @@ pub enum UserTypeData {
     },
     Union(Union),
     Enum(Type),
-    Template(TT, usize),
+    Template,
     Trait,
-}
-
-impl UserTypeData {
-    pub fn as_func_template(&self) -> Option<&usize> {
-        if let Some((TT::Func, i)) = self.as_template() {
-            Some(i)
-        } else {
-            None
-        }
-    }
-
-    pub fn as_struct_template(&self) -> Option<&usize> {
-        if let Some((TT::Struct, i)) = self.as_template() {
-            Some(i)
-        } else {
-            None
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -253,17 +229,34 @@ impl UserType {
     }
 }
 
-pub trait HasImplsAndTypeParams {
+pub trait HasTypeParams {
     fn get_type_params(&self) -> &[UserTypeId];
+}
+
+impl HasTypeParams for UserType {
+    fn get_type_params(&self) -> &[UserTypeId] {
+        &self.type_params
+    }
+}
+
+impl HasTypeParams for Extension {
+    fn get_type_params(&self) -> &[UserTypeId] {
+        &self.type_params
+    }
+}
+
+impl HasTypeParams for Function {
+    fn get_type_params(&self) -> &[UserTypeId] {
+        &self.type_params
+    }
+}
+
+pub trait HasImplsAndTypeParams: HasTypeParams {
     fn get_impls(&self) -> &Vec<Type>;
     fn get_impls_mut(&mut self) -> &mut Vec<Type>;
 }
 
 impl HasImplsAndTypeParams for UserType {
-    fn get_type_params(&self) -> &[UserTypeId] {
-        &self.type_params
-    }
-
     fn get_impls(&self) -> &Vec<Type> {
         &self.impls
     }
@@ -274,10 +267,6 @@ impl HasImplsAndTypeParams for UserType {
 }
 
 impl HasImplsAndTypeParams for Extension {
-    fn get_type_params(&self) -> &[UserTypeId] {
-        &self.type_params
-    }
-
     fn get_impls(&self) -> &Vec<Type> {
         &self.impls
     }
@@ -429,17 +418,7 @@ impl Scopes {
     }
 
     pub fn this_type_of(&self, id: UserTypeId) -> Type {
-        Type::User(
-            GenericUserType::new(
-                id,
-                self.get(id)
-                    .type_params
-                    .iter()
-                    .map(|&id| Type::User(GenericUserType::new(id, vec![]).into()))
-                    .collect(),
-            )
-            .into(),
-        )
+        Type::User(GenericUserType::from_id(self, id).into())
     }
 
     pub fn function_of(&self, scope: ScopeId) -> Option<FunctionId> {
@@ -480,9 +459,9 @@ impl Scopes {
         self.lang_types.get("option").copied()
     }
 
-    pub fn make_lang_type(&self, name: &str, ty_args: Vec<Type>) -> Option<Type> {
+    pub fn make_lang_type(&self, name: &str, args: impl IntoIterator<Item = Type>) -> Option<Type> {
         Some(Type::User(
-            GenericUserType::new(self.lang_types.get(name).copied()?, ty_args).into(),
+            GenericUserType::from_type_args(self, self.lang_types.get(name).copied()?, args).into(),
         ))
     }
 

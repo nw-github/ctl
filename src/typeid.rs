@@ -1,19 +1,63 @@
 use crate::{
     ast::{parsed::TypeHint, BinaryOp},
-    sym::{FunctionId, ScopeId, Scopes, UserTypeId},
+    sym::{FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, UserTypeId},
 };
-use derive_more::Constructor;
+use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
+use indexmap::{map::Entry, IndexMap};
 use num_bigint::BigInt;
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, Constructor)]
-pub struct GenericFunc {
-    pub id: FunctionId,
-    pub ty_args: Vec<Type>,
+#[derive(Default, Debug, PartialEq, Eq, Clone, Deref, DerefMut)]
+pub struct TypeArgs(pub IndexMap<UserTypeId, Type>);
+
+impl std::hash::Hash for TypeArgs {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for entry in self.0.iter() {
+            entry.hash(state);
+        }
+    }
 }
 
+impl TypeArgs {
+    pub fn copy_args(&mut self, rhs: &TypeArgs) {
+        self.extend(rhs.iter().map(|(x, y)| (*x, y.clone())));
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash, Constructor)]
+pub struct WithTypeArgs<T> {
+    pub id: T,
+    pub ty_args: TypeArgs,
+}
+
+impl<T: ItemId + Clone + Copy> WithTypeArgs<T>
+where
+    T::Value: HasTypeParams,
+{
+    pub fn first_type_arg(&self) -> Option<&Type> {
+        self.ty_args.values().next()
+    }
+
+    pub fn from_type_args(scopes: &Scopes, id: T, types: impl IntoIterator<Item = Type>) -> Self {
+        Self::new(
+            id,
+            TypeArgs(
+                scopes
+                    .get(id)
+                    .get_type_params()
+                    .iter()
+                    .copied()
+                    .zip(types)
+                    .collect(),
+            ),
+        )
+    }
+}
+
+pub type GenericFunc = WithTypeArgs<FunctionId>;
+
 impl GenericFunc {
-    pub fn infer_type_args(&mut self, mut src: &Type, mut target: &Type, scopes: &Scopes) {
+    pub fn infer_type_args(&mut self, mut src: &Type, mut target: &Type) {
         loop {
             match (src, target) {
                 (Type::Ptr(gi), Type::Ptr(ti)) => {
@@ -30,38 +74,25 @@ impl GenericFunc {
                 }
                 (Type::FnPtr(src), Type::FnPtr(target)) => {
                     for (src, target) in src.params.iter().zip(target.params.iter()) {
-                        self.infer_type_args(src, target, scopes);
+                        self.infer_type_args(src, target);
                     }
 
-                    self.infer_type_args(&src.ret, &target.ret, scopes);
+                    self.infer_type_args(&src.ret, &target.ret);
                     break;
                 }
                 (Type::User(src), target) => {
-                    if let Some(t) = target.as_user() {
-                        if src.id != t.id {
-                            if let Some(inner) =
-                                target.as_option_inner(scopes).and_then(|i| i.as_user())
-                            {
-                                for (src, target) in src.ty_args.iter().zip(inner.ty_args.iter()) {
-                                    self.infer_type_args(src, target, scopes);
-                                }
-
-                                break;
-                            }
+                    // TODO: T => ?T
+                    if let Entry::Occupied(mut entry) = self.ty_args.entry(src.id) {
+                        if !entry.get().is_unknown() {
+                            return;
                         }
 
-                        if !src.ty_args.is_empty() && !t.ty_args.is_empty() {
-                            for (src, target) in src.ty_args.iter().zip(t.ty_args.iter()) {
-                                self.infer_type_args(src, target, scopes);
+                        entry.insert(target.clone());
+                    } else if let Some(target) = target.as_user() {
+                        if src.id == target.id {
+                            for (src, target) in src.ty_args.values().zip(target.ty_args.values()) {
+                                self.infer_type_args(src, target);
                             }
-
-                            break;
-                        }
-                    }
-
-                    if let Some(&index) = scopes.get(src.id).data.as_func_template() {
-                        if self.ty_args[index].is_unknown() {
-                            self.ty_args[index] = target.clone();
                         }
                     }
 
@@ -71,20 +102,30 @@ impl GenericFunc {
             }
         }
     }
+
+    pub fn from_id(scopes: &Scopes, id: FunctionId) -> Self {
+        Self::new(
+            id,
+            TypeArgs(
+                scopes
+                    .get(id)
+                    .type_params
+                    .iter()
+                    .map(|&id| (id, Type::Unknown))
+                    .collect(),
+            ),
+        )
+    }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Hash, Constructor)]
-pub struct GenericUserType {
-    pub id: UserTypeId,
-    pub ty_args: Vec<Type>,
-}
+pub type GenericUserType = WithTypeArgs<UserTypeId>;
 
 impl GenericUserType {
     pub fn name(&self, scopes: &Scopes) -> String {
         let mut result = scopes.get(self.id).name.data.clone();
         if !self.ty_args.is_empty() {
             result.push('<');
-            for (i, concrete) in self.ty_args.iter().enumerate() {
+            for (i, concrete) in self.ty_args.values().enumerate() {
                 if i > 0 {
                     result.push_str(", ");
                 }
@@ -94,6 +135,20 @@ impl GenericUserType {
         }
 
         result
+    }
+
+    pub fn from_id(scopes: &Scopes, id: UserTypeId) -> Self {
+        Self::new(
+            id,
+            TypeArgs(
+                scopes
+                    .get(id)
+                    .type_params
+                    .iter()
+                    .map(|&id| (id, Type::User(Self::new(id, Default::default()).into())))
+                    .collect(),
+            ),
+        )
     }
 }
 
@@ -301,76 +356,6 @@ impl Type {
         }
     }
 
-    pub fn fill_struct_templates(&mut self, scopes: &Scopes, inst: &GenericUserType) {
-        if inst.ty_args.is_empty() {
-            return;
-        }
-
-        let mut src = self;
-        loop {
-            match src {
-                Type::Array(t) => src = &mut t.0,
-                Type::Ptr(t) | Type::MutPtr(t) => src = t,
-                Type::User(ty) => {
-                    if !ty.ty_args.is_empty() {
-                        for ty in ty.ty_args.iter_mut() {
-                            ty.fill_struct_templates(scopes, inst);
-                        }
-                    } else if let Some(&index) = scopes.get(ty.id).data.as_struct_template() {
-                        *src = inst.ty_args[index].clone();
-                    }
-
-                    break;
-                }
-                Type::FnPtr(f) => {
-                    for ty in f.params.iter_mut() {
-                        ty.fill_struct_templates(scopes, inst);
-                    }
-
-                    f.ret.fill_struct_templates(scopes, inst);
-                    break;
-                }
-                _ => break,
-            }
-        }
-    }
-
-    pub fn fill_func_template(&mut self, scopes: &Scopes, func: &GenericFunc) {
-        if func.ty_args.is_empty() {
-            return;
-        }
-
-        let mut src = self;
-        loop {
-            match src {
-                Type::Array(t) => src = &mut t.0,
-                Type::Ptr(t) | Type::MutPtr(t) => src = t,
-                Type::User(ty) => {
-                    if !ty.ty_args.is_empty() {
-                        for ty in ty.ty_args.iter_mut() {
-                            ty.fill_func_template(scopes, func);
-                        }
-                    } else if let Some(&index) = scopes.get(ty.id).data.as_func_template() {
-                        if !func.ty_args[index].is_unknown() {
-                            *src = func.ty_args[index].clone();
-                        }
-                    }
-
-                    break;
-                }
-                Type::FnPtr(f) => {
-                    for ty in f.params.iter_mut() {
-                        ty.fill_func_template(scopes, func);
-                    }
-
-                    f.ret.fill_func_template(scopes, func);
-                    break;
-                }
-                _ => break,
-            }
-        }
-    }
-
     pub fn fill_this(&mut self, this: &Type) {
         let mut src = self;
         loop {
@@ -378,7 +363,7 @@ impl Type {
                 Type::Array(t) => src = &mut t.0,
                 Type::Ptr(t) | Type::MutPtr(t) => src = t,
                 Type::User(ty) => {
-                    for ty in ty.ty_args.iter_mut() {
+                    for ty in ty.ty_args.values_mut() {
                         ty.fill_this(this);
                     }
 
@@ -394,6 +379,41 @@ impl Type {
                     }
 
                     f.ret.fill_this(this);
+                    break;
+                }
+                _ => break,
+            }
+        }
+    }
+
+    pub fn fill_templates(&mut self, map: &TypeArgs) {
+        if map.is_empty() {
+            return;
+        }
+
+        let mut src = self;
+        loop {
+            match src {
+                Type::Array(t) => src = &mut t.0,
+                Type::Ptr(t) | Type::MutPtr(t) => src = t,
+                Type::User(ut) => {
+                    if let Some(ty) = map.get(&ut.id) {
+                        if !ty.is_unknown() {
+                            *src = ty.clone();
+                        }
+                    } else if !ut.ty_args.is_empty() {
+                        for ty in ut.ty_args.values_mut() {
+                            ty.fill_templates(map);
+                        }
+                    }
+                    break;
+                }
+                Type::FnPtr(f) => {
+                    for ty in f.params.iter_mut() {
+                        ty.fill_templates(map);
+                    }
+
+                    f.ret.fill_templates(map);
                     break;
                 }
                 _ => break,
@@ -559,7 +579,7 @@ impl Type {
         scopes.get_option_id().and_then(|opt| {
             self.as_user()
                 .filter(|ut| ut.id == opt)
-                .map(|ut| &ut.ty_args[0])
+                .and_then(|ut| ut.first_type_arg())
         })
     }
 }
