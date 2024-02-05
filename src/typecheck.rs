@@ -2701,14 +2701,13 @@ impl TypeChecker {
             )));
         }
 
-        let mut ty = union
+        let ty = union
             .variants
             .iter()
             .find(|m| m.name == variant)
             .unwrap()
             .ty
-            .clone();
-        ty.fill_templates(&ut.ty_args);
+            .with_templates(&ut.ty_args);
         if let Some(patt) = subpatterns.into_iter().next() {
             Ok(CheckedPattern::refutable(CheckedPatternData::UnionMember {
                 variant,
@@ -2984,9 +2983,12 @@ impl TypeChecker {
             }
 
             // TODO: duplicates
-            let mut ty = member.ty.clone();
-            ty.fill_templates(&ut.ty_args);
-            vars.push((name.data, mutable || pm, ty, pattern));
+            vars.push((
+                name.data,
+                mutable || pm,
+                member.ty.with_templates(&ut.ty_args),
+                pattern,
+            ));
         }
 
         let mut irrefutable = true;
@@ -3482,9 +3484,7 @@ impl TypeChecker {
     }
 
     fn check_arg(&mut self, func: &mut GenericFunc, expr: Expr, ty: &Type) -> CheckedExpr {
-        let mut target = ty.clone();
-        target.fill_templates(&func.ty_args);
-
+        let mut target = ty.with_templates(&func.ty_args);
         let span = expr.span;
         let expr = self.check_expr(expr, Some(&target));
         if !func.ty_args.is_empty() {
@@ -3606,31 +3606,27 @@ impl TypeChecker {
             ))
         }
 
-        let mut ret = self.scopes.get(func.id).ret.clone();
-        if !func.ty_args.is_empty() {
-            ret.fill_templates(&func.ty_args);
-            for (id, ty) in func.ty_args.iter() {
-                if ty.is_unknown() {
-                    self.error::<()>(Error::new(
-                        format!(
-                            "cannot infer type for type parameter '{}'",
-                            self.scopes.get(*id).name
-                        ),
-                        span,
-                    ));
+        for (id, ty) in func.ty_args.iter() {
+            if ty.is_unknown() {
+                self.error::<()>(Error::new(
+                    format!(
+                        "cannot infer type for type parameter '{}'",
+                        self.scopes.get(*id).name
+                    ),
+                    span,
+                ));
 
-                    continue;
-                }
-
-                self.check_bounds(&func.ty_args, ty, self.scopes.get(*id).impls.clone(), span);
+                continue;
             }
+
+            self.check_bounds(&func.ty_args, ty, self.scopes.get(*id).impls.clone(), span);
         }
 
         if self.scopes.get(func.id).is_unsafe && self.safety != Safety::Unsafe {
             self.error(Error::is_unsafe(span))
         }
 
-        (result, ret)
+        (result, self.scopes.get(func.id).ret.with_templates(&func.ty_args))
     }
 
     fn check_bounds(&mut self, ty_args: &TypeArgs, ty: &Type, bounds: Vec<Type>, span: Span) {

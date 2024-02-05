@@ -582,4 +582,10 @@ impl Type {
                 .and_then(|ut| ut.first_type_arg())
         })
     }
+
+    pub fn with_templates(&self, args: &TypeArgs) -> Type {
+        let mut ty = self.clone();
+        ty.fill_templates(args);
+        ty
+    }
 }

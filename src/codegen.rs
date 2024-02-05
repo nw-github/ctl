@@ -238,9 +238,7 @@ impl<'a> TypeGen<'a> {
             }
 
             for member in members.iter() {
-                let mut ty = member.ty.clone();
-                ty.fill_templates(&ut.ty_args);
-                match ty {
+                match member.ty.with_templates(&ut.ty_args) {
                     Type::User(dep) => {
                         if matches!(adding, Some(adding) if adding == &*dep) {
                             // ideally get the span of the instantiation that caused this
@@ -320,8 +318,7 @@ impl<'a> TypeGen<'a> {
     }
 
     fn emit_member(&mut self, ut: &GenericUserType, member: &CheckedMember, buffer: &mut Buffer) {
-        let mut ty = member.ty.clone();
-        ty.fill_templates(&ut.ty_args);
+        let ty = member.ty.with_templates(&ut.ty_args);
         buffer.emit_type(self.scopes, &ty, None);
         buffer.emit(format!(" {};", member.name));
     }
