@@ -10,18 +10,18 @@ pub struct Vec<T> {
     len: usize,
     cap: usize,
 
-    pub fn new<U>(): Vec<U> {
-        Vec::<U>(ptr: RawMut::dangling(), len: 0, cap: 0)
+    pub fn new(): Vec<T> {
+        Vec(ptr: RawMut::dangling(), len: 0, cap: 0)
     }
 
-    pub fn with_capacity<U>(cap: usize): Vec<U> {
-        mut self: Vec<U> = Vec::new();
+    pub fn with_capacity(cap: usize): Vec<T> {
+        mut self: Vec<T> = Vec::new();
         self.reserve(cap);
         self
     }
 
-    pub fn from_span<U>(span: [U..]): Vec<U> {
-        mut self: [U] = Vec::with_capacity(span.len());
+    pub fn from_span(span: [T..]): Vec<T> {
+        mut self: [T] = Vec::with_capacity(span.len());
         unsafe {
             mem::copy(
                 dst: self.as_raw_mut().as_mut_ptr(),

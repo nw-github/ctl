@@ -26,11 +26,11 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     buckets: [Bucket<K, V>],
     len:     usize,
 
-    pub fn new<K: Hash + Eq<K>, V>(): Map<K, V> {
+    pub fn new(): Map<K, V> {
         Map(buckets: @[], len: 0)
     }
 
-    pub fn with_capacity<K: Hash + Eq<K>, V>(cap: usize): Map<K, V> {
+    pub fn with_capacity(cap: usize): Map<K, V> {
         mut self: Map<K, V> = Map::new();
         self.adjust_cap(cap);
         self
@@ -54,7 +54,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         }
 
         match this.buckets.get_mut(this.entry_pos(&key))! {
-            Bucket::Some(entry) => core::mem::replace(&mut entry.val, val),
+            Bucket::Some(entry) => core::mem::replace(&mut entry.val, val) as V,
             entry => {
                 if !(entry is Bucket::Tombstone) {
                     this.len++;

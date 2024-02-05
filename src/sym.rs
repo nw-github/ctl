@@ -9,9 +9,8 @@ use crate::{
         parsed::{Expr, Linkage, Pattern, TypePath},
         Attribute,
     },
-    error::Error,
     lexer::Located,
-    typeid::{GenericFunc, GenericUserType, Type},
+    typeid::{GenericUserType, Type},
 };
 
 macro_rules! id {
@@ -158,7 +157,7 @@ pub struct Function {
     pub params: Vec<CheckedParam>,
     pub ret: Type,
     pub body: Option<Vec<CheckedStmt>>,
-    pub constructor: bool,
+    pub constructor: Option<UserTypeId>,
     pub body_scope: ScopeId,
     pub returns: bool,
 }
@@ -480,16 +479,6 @@ impl Scopes {
     pub fn find_in<T: ItemId>(&self, name: &str, scope: ScopeId) -> Option<Vis<T>> {
         T::find_in(self, name, scope)
     }
-}
-
-#[derive(Debug, EnumAsInner)]
-pub enum ResolvedPath {
-    UserType(GenericUserType),
-    Func(GenericFunc),
-    Var(VariableId),
-    Module(ScopeId),
-    Extension(ExtensionId),
-    None(Error),
 }
 
 impl std::ops::Index<ScopeId> for Scopes {

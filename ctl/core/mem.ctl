@@ -60,5 +60,5 @@ pub unsafe fn transmute<In, Out>(i: In): Out {
         Out(U),
     }
 
-    unsafe Transmuter::In::<In, Out>(i).Out
+    unsafe Transmuter::<In, Out>::In(i).Out
 }

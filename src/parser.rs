@@ -1197,80 +1197,91 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn type_hint(&mut self) -> TypeHint {
-        if self.next_if_kind(Token::Asterisk).is_some() {
-            if self.next_if_kind(Token::Mut).is_some() {
-                return TypeHint::MutPtr(self.type_hint().into());
-            } else {
-                return TypeHint::Ptr(self.type_hint().into());
-            }
-        } else if self.next_if_kind(Token::Question).is_some() {
-            return TypeHint::Option(self.type_hint().into());
-        } else if self.next_if_kind(Token::NoneCoalesce).is_some() {
-            // special case for ??
-            return TypeHint::Option(TypeHint::Option(self.type_hint().into()).into());
-        }
-
-        if self.next_if_kind(Token::LBrace).is_some() {
-            if self.next_if_kind(Token::Mut).is_some() {
-                let inner = self.type_hint();
-                self.expect_kind(Token::Range);
-                self.expect_kind(Token::RBrace);
-                TypeHint::SliceMut(inner.into())
-            } else {
-                let inner = self.type_hint();
-                if self.next_if_kind(Token::RBrace).is_some() {
-                    TypeHint::Vec(inner.into())
-                } else if self.next_if_kind(Token::Range).is_some() {
-                    self.expect_kind(Token::RBrace);
-                    TypeHint::Slice(inner.into())
-                } else if self.next_if_kind(Token::Semicolon).is_some() {
-                    let count = self.expression();
-                    self.expect_kind(Token::RBrace);
-                    TypeHint::Array(inner.into(), count.into())
-                } else if self.next_if_kind(Token::Colon).is_some() {
-                    let value = self.type_hint();
-                    self.expect_kind(Token::RBrace);
-                    TypeHint::Map(inner.into(), value.into())
+        match self.peek().data {
+            Token::Asterisk => {
+                self.next();
+                if self.next_if_kind(Token::Mut).is_some() {
+                    TypeHint::MutPtr(self.type_hint().into())
                 } else {
-                    let span = self.next().span;
-                    self.error(Error::new("expected ']', ';', or ':'", span));
-                    return TypeHint::Error;
+                    TypeHint::Ptr(self.type_hint().into())
                 }
             }
-        } else if self.next_if_kind(Token::LCurly).is_some() {
-            let inner = self.type_hint().into();
-            self.expect_kind(Token::RCurly);
-            TypeHint::Set(inner)
-        } else if self.next_if_kind(Token::LParen).is_some() {
-            TypeHint::Tuple(
-                self.csv_one(Token::RParen, Span::default(), Self::type_hint)
-                    .data,
-            )
-        } else if self.next_if_kind(Token::Void).is_some() {
-            TypeHint::Void
-        } else if let Some(this) = self.next_if_kind(Token::ThisType) {
-            TypeHint::Regular(Located::new(
-                this.span,
-                TypePath::from(THIS_TYPE.to_owned()),
-            ))
-        } else if self.next_if_kind(Token::Fn).is_some() {
-            self.expect_kind(Token::LParen);
-            let params = self
-                .csv(Vec::new(), Token::RParen, Span::default(), Self::type_hint)
-                .data;
-            let ret = if self.next_if_kind(Token::FatArrow).is_some() {
-                self.type_hint()
-            } else {
-                TypeHint::Void
-            };
-
-            TypeHint::Fn {
-                is_extern: false,
-                params,
-                ret: ret.into(),
+            Token::Question => {
+                self.next();
+                TypeHint::Option(self.type_hint().into())
             }
-        } else {
-            TypeHint::Regular(self.type_path())
+            Token::NoneCoalesce => {
+                self.next();
+                TypeHint::Option(TypeHint::Option(self.type_hint().into()).into())
+            }
+            Token::LBrace => {
+                self.next();
+                if self.next_if_kind(Token::Mut).is_some() {
+                    let inner = self.type_hint();
+                    self.expect_kind(Token::Range);
+                    self.expect_kind(Token::RBrace);
+                    TypeHint::SliceMut(inner.into())
+                } else {
+                    let inner = self.type_hint();
+                    if self.next_if_kind(Token::RBrace).is_some() {
+                        TypeHint::Vec(inner.into())
+                    } else if self.next_if_kind(Token::Range).is_some() {
+                        self.expect_kind(Token::RBrace);
+                        TypeHint::Slice(inner.into())
+                    } else if self.next_if_kind(Token::Semicolon).is_some() {
+                        let count = self.expression();
+                        self.expect_kind(Token::RBrace);
+                        TypeHint::Array(inner.into(), count.into())
+                    } else if self.next_if_kind(Token::Colon).is_some() {
+                        let value = self.type_hint();
+                        self.expect_kind(Token::RBrace);
+                        TypeHint::Map(inner.into(), value.into())
+                    } else {
+                        let span = self.next().span;
+                        self.error(Error::new("expected ']', ';', or ':'", span));
+                        TypeHint::Error
+                    }
+                }
+            }
+            Token::LCurly => {
+                self.next();
+                let inner = self.type_hint().into();
+                self.expect_kind(Token::RCurly);
+                TypeHint::Set(inner)
+            }
+            Token::LParen => {
+                self.next();
+                TypeHint::Tuple(
+                    self.csv_one(Token::RParen, Span::default(), Self::type_hint)
+                        .data,
+                )
+            }
+            Token::Void => {
+                self.next();
+                TypeHint::Void
+            }
+            Token::ThisType => {
+                TypeHint::This(self.next().span)
+            }
+            Token::Fn => {
+                self.next();
+                self.expect_kind(Token::LParen);
+                let params = self
+                    .csv(Vec::new(), Token::RParen, Span::default(), Self::type_hint)
+                    .data;
+                let ret = if self.next_if_kind(Token::FatArrow).is_some() {
+                    self.type_hint()
+                } else {
+                    TypeHint::Void
+                };
+
+                TypeHint::Fn {
+                    is_extern: false,
+                    params,
+                    ret: ret.into(),
+                }
+            }
+            _ => TypeHint::Regular(self.type_path()),
         }
     }
 
@@ -1619,9 +1630,9 @@ impl<'a, 'b> Parser<'a, 'b> {
                         Pattern::Path(TypePath::from(THIS_PARAM.to_string())),
                     ),
                     ty: if mutable {
-                        TypeHint::MutPtr(TypeHint::This.into())
+                        TypeHint::MutPtr(TypeHint::This(token.span).into())
                     } else {
-                        TypeHint::Ptr(TypeHint::This.into())
+                        TypeHint::Ptr(TypeHint::This(token.span).into())
                     },
                     default: None,
                 });

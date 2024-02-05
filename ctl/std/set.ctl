@@ -5,11 +5,11 @@ use core::ops::Eq;
 pub struct Set<T: Hash + Eq<T>> {
     inner: [T: void],
 
-    pub fn new<U: Hash + Eq<U>>(): Set<U> {
+    pub fn new(): Set<T> {
         Set(inner: [:])
     }
 
-    pub fn with_capacity<U: Hash + Eq<U>>(cap: usize): Set<U> {
+    pub fn with_capacity(cap: usize): Set<T> {
         Set(inner: std::map::Map::with_capacity(cap:))
     }
 

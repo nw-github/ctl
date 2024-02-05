@@ -11,3 +11,10 @@ pub fn repeat(s: str, n: usize): str {
     }
     unsafe str::from_utf8_unchecked(buf.as_span())
 }
+
+fn something_opt<T>(t: ?T) {}
+
+fn main() {
+    // should be able to infer T = i32, since T is implicitly convertible to ?T
+    something_opt(10);
+}

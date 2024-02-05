@@ -10,7 +10,7 @@ pub struct Span<T> {
     ptr: *T,
     len: usize,
 
-    pub unsafe fn new<U>(ptr: *U, len: usize): [U..] {
+    pub unsafe fn new(ptr: *T, len: usize): [T..] {
         Span(ptr:, len:)
     }
 
@@ -72,8 +72,8 @@ pub struct SpanMut<T> {
     ptr: *mut T,
     len: usize,
 
-    pub unsafe fn new<U>(ptr: *mut U, len: usize): [mut U..] {
-        SpanMut::<U>(ptr:, len:)
+    pub unsafe fn new(ptr: *mut T, len: usize): [mut T..] {
+        SpanMut(ptr:, len:)
     }
 
     pub fn len(this): usize {

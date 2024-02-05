@@ -15,21 +15,21 @@ pub fn eq<T>(lhs: *T, rhs: *T): bool {
 pub struct Raw<T> {
     addr: usize,
 
-    pub fn from_ptr<U>(ptr: *U): Raw<U> {
+    pub fn from_ptr(ptr: *T): Raw<T> {
         Raw(addr: ptr as usize)
     }
 
-    pub fn from_addr<U>(addr: usize): ?Raw<U> {
+    pub fn from_addr(addr: usize): ?Raw<T> {
         if addr > 0 {
-            Raw::<U>(addr:)
+            Raw::<T>(addr:)
         }
     }
 
-    pub fn from_mut<U>(ptr: RawMut<U>): Raw<U> {
+    pub fn from_mut(ptr: RawMut<T>): Raw<T> {
         Raw::from_ptr(unsafe ptr.as_ptr())
     }
 
-    pub fn dangling<U>(): Raw<U> {
+    pub fn dangling(): Raw<T> {
         Raw(addr: 0xDEADBEEF)
     }
 
@@ -59,17 +59,17 @@ pub struct Raw<T> {
 pub struct RawMut<T> {
     addr: usize,
 
-    pub fn from_ptr<U>(ptr: *U): RawMut<U> {
+    pub fn from_ptr(ptr: *T): RawMut<T> {
         RawMut(addr: ptr as usize)
     }
 
-    pub fn from_addr<U>(addr: usize): ?RawMut<U> {
+    pub fn from_addr(addr: usize): ?RawMut<T> {
         if addr > 0 {
-            RawMut::<U>(addr:)
+            RawMut::<T>(addr:)
         }
     }
 
-    pub fn dangling<U>(): RawMut<U> {
+    pub fn dangling(): RawMut<T> {
         RawMut(addr: 0xDEADBEEF)
     }
 

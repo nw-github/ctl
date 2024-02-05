@@ -1087,9 +1087,8 @@ impl<'a> Codegen<'a> {
                     let arr = state.tmpvar();
                     let len = exprs.len();
                     let ut = (**expr.ty.as_user().unwrap()).clone();
-                    let inner = ut.first_type_arg().unwrap();
 
-                    self.emit_type(inner);
+                    self.emit_type(ut.first_type_arg().unwrap());
                     self.buffer.emit(format!(" {arr}[{len}]={{"));
                     for expr in exprs {
                         self.gen_expr(expr, state);
@@ -1097,13 +1096,12 @@ impl<'a> Codegen<'a> {
                     }
                     self.buffer.emit("};");
 
-                    let wc_state = State::new(GenericFunc::from_type_args(
-                        self.scopes,
+                    let wc_state = State::new(GenericFunc::new(
                         *self
                             .scopes
                             .find_in("with_capacity", self.scopes.get(ut.id).body_scope)
                             .unwrap(),
-                        [inner.clone()],
+                        ut.ty_args.clone(),
                     ));
 
                     self.emit_type(&expr.ty);
@@ -1118,15 +1116,13 @@ impl<'a> Codegen<'a> {
             CheckedExprData::VecWithInit { init, count } => {
                 tmpbuf_emit!(self, state, |tmp| {
                     let ut = (**expr.ty.as_user().unwrap()).clone();
-                    let inner = ut.first_type_arg().unwrap();
                     let len = self.gen_tmpvar(*count, state);
-                    let wc_state = State::new(GenericFunc::from_type_args(
-                        self.scopes,
+                    let wc_state = State::new(GenericFunc::new(
                         *self
                             .scopes
                             .find_in("with_capacity", self.scopes.get(ut.id).body_scope)
                             .unwrap(),
-                        [inner.clone()],
+                        ut.ty_args.clone(),
                     ));
 
                     self.emit_type(&expr.ty);
@@ -1134,7 +1130,7 @@ impl<'a> Codegen<'a> {
                     self.emit_fn_name(&wc_state);
                     self.buffer
                         .emit(format!("({len}); for(usize i=0;i<{len};i++){{(("));
-                    self.emit_type(inner);
+                    self.emit_type(ut.first_type_arg().unwrap());
                     self.buffer.emit(format!("*){tmp}.ptr.addr)[i]="));
                     self.gen_expr(*init, state);
                     self.buffer.emit(format!(";}}{tmp}.len={len};"));
@@ -1146,10 +1142,9 @@ impl<'a> Codegen<'a> {
                 tmpbuf_emit!(self, state, |tmp| {
                     let ut = (**expr.ty.as_user().unwrap()).clone();
                     let body = self.scopes.get(ut.id).body_scope;
-                    let wc_state = State::new(GenericFunc::from_type_args(
-                        self.scopes,
+                    let wc_state = State::new(GenericFunc::new(
                         *self.scopes.find_in("with_capacity", body).unwrap(),
-                        ut.ty_args.values().cloned(),
+                        ut.ty_args.clone(),
                     ));
 
                     self.emit_type(&expr.ty);
@@ -1178,10 +1173,9 @@ impl<'a> Codegen<'a> {
                 tmpbuf_emit!(self, state, |tmp| {
                     let ut = (**expr.ty.as_user().unwrap()).clone();
                     let body = self.scopes.get(ut.id).body_scope;
-                    let wc_state = State::new(GenericFunc::from_type_args(
-                        self.scopes,
+                    let wc_state = State::new(GenericFunc::new(
                         *self.scopes.find_in("with_capacity", body).unwrap(),
-                        ut.ty_args.values().cloned(),
+                        ut.ty_args.clone(),
                     ));
 
                     let insert = State::with_instance(
