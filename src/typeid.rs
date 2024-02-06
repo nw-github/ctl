@@ -259,18 +259,8 @@ impl Type {
 
     pub fn supports_binop(&self, _scopes: &Scopes, op: BinaryOp) -> bool {
         match op {
-            BinaryOp::Add => matches!(
-                self,
-                Type::Int(_)
-                    | Type::Isize
-                    | Type::Uint(_)
-                    | Type::Usize
-                    | Type::F32
-                    | Type::F64
-                    | Type::CInt(_)
-                    | Type::CUint(_)
-            ),
-            BinaryOp::Sub
+            BinaryOp::Add
+            | BinaryOp::Sub
             | BinaryOp::Mul
             | BinaryOp::Div
             | BinaryOp::Rem
@@ -316,9 +306,7 @@ impl Type {
                         | Type::Char
                 )
             }
-            BinaryOp::LogicalOr | BinaryOp::LogicalAnd => {
-                matches!(self, Type::Bool)
-            }
+            BinaryOp::LogicalOr | BinaryOp::LogicalAnd => matches!(self, Type::Bool),
             BinaryOp::NoneCoalesce => todo!(),
         }
     }

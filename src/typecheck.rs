@@ -47,6 +47,14 @@ pub struct Module {
     pub scope: ScopeId,
 }
 
+pub struct MemberFn {
+    pub tr: Option<GenericUserType>,
+    pub func: Vis<FunctionId>,
+    pub src_scope: ScopeId,
+    pub body_scope: ScopeId,
+    pub ext: Option<ExtensionId>,
+}
+
 #[derive(Debug, EnumAsInner)]
 pub enum ResolvedPath {
     UserType(GenericUserType),
@@ -234,10 +242,30 @@ impl TypeChecker {
         self.scopes.walk(self.current).any(|(id, _)| id == target)
     }
 
+    fn extension_applies_to(&self, ext: &Extension, rhs: &Type) -> bool {
+        match &ext.ty {
+            Type::User(ut) if self.scopes.get(ut.id).data.is_template() => {
+                for bound in self
+                    .scopes
+                    .get(ut.id)
+                    .impls
+                    .iter()
+                    .flat_map(|bound| bound.as_user())
+                {
+                    if !self.implements_trait(rhs, bound) {
+                        return false;
+                    }
+                }
+                true
+            }
+            ty => ty == rhs,
+        }
+    }
+
     fn extensions_in_scope_for<'a, 'b>(
         &'a self,
         ty: &'b Type,
-    ) -> impl Iterator<Item = &Scoped<Extension>> + 'b
+    ) -> impl Iterator<Item = (ExtensionId, &Scoped<Extension>)> + 'b
     where
         'a: 'b,
     {
@@ -245,24 +273,8 @@ impl TypeChecker {
             scope
                 .exts
                 .iter()
-                .map(|ext| self.scopes.get(ext.id))
-                .filter(|ext| ext.matches_type(ty))
-        })
-    }
-
-    fn extension_ids_in_scope_for<'a, 'b>(
-        &'a self,
-        ty: &'b Type,
-    ) -> impl Iterator<Item = ExtensionId> + 'b
-    where
-        'a: 'b,
-    {
-        self.scopes.walk(self.current).flat_map(|(_, scope)| {
-            scope
-                .exts
-                .iter()
-                .map(|ext| ext.id)
-                .filter(|&id| self.scopes.get(id).matches_type(ty))
+                .map(|ext| (ext.id, self.scopes.get(ext.id)))
+                .filter(|(_, ext)| self.extension_applies_to(ext, ty))
         })
     }
 }
@@ -1818,11 +1830,12 @@ impl TypeChecker {
                 let id = source.ty.strip_references();
                 let ut_id = match &id {
                     Type::User(data) => data.id,
+                    Type::Unknown => return Default::default(),
                     _ => {
                         return self.error(Error::new(
                             format!("cannot get member of type '{}'", id.name(&self.scopes)),
                             span,
-                        ));
+                        ))
                     }
                 };
 
@@ -3166,7 +3179,7 @@ impl TypeChecker {
                     return Default::default();
                 }
 
-                let Some((tr, func, ty_scope)) = self.get_member_fn(&id, &member) else {
+                let Some(memfn) = self.get_member_fn(&id, &member) else {
                     return self.error(Error::new(
                         format!(
                             "no method '{member}' found on type '{}'",
@@ -3175,9 +3188,9 @@ impl TypeChecker {
                         span,
                     ));
                 };
-                self.resolve_proto(func.id);
+                self.resolve_proto(memfn.func.id);
 
-                let f = self.scopes.get(*func);
+                let f = self.scopes.get(*memfn.func);
                 let Some(this_param) = f.params.first().filter(|p| p.label == THIS_PARAM) else {
                     return self.error(Error::new(
                         format!("associated function '{member}' cannot be used as a method"),
@@ -3185,7 +3198,7 @@ impl TypeChecker {
                     ));
                 };
 
-                if !func.public && !self.can_access_privates(ty_scope) {
+                if !memfn.func.public && !self.can_access_privates(memfn.src_scope) {
                     return self.error(Error::new(
                         format!(
                             "cannot access private method '{member}' of type '{}'",
@@ -3241,11 +3254,17 @@ impl TypeChecker {
                 };
 
                 let mut func = GenericFunc::new(
-                    *func,
+                    *memfn.func,
                     self.resolve_type_args(&f.type_params.clone(), &generics, span),
                 );
-                if let Some(inst) = tr.as_ref().or(id.as_user().map(|ut| &**ut)) {
+                if let Some(inst) = memfn.tr.as_ref().or(id.as_user().map(|ut| &**ut)) {
                     func.ty_args.copy_args(&inst.ty_args);
+                    if let Some(id) = memfn
+                        .ext
+                        .and_then(|id| self.scopes.get(id).type_params.first())
+                    {
+                        func.ty_args.insert(*id, Type::User(inst.clone().into()));
+                    }
                 }
 
                 let (args, ret) = self.check_fn_args(&mut func, Some(recv), args, target, span);
@@ -3255,7 +3274,7 @@ impl TypeChecker {
                         func,
                         inst: Some(id),
                         args,
-                        trait_id: tr.map(|ut| ut.id),
+                        trait_id: memfn.tr.map(|ut| ut.id),
                     },
                 );
             }
@@ -3435,12 +3454,10 @@ impl TypeChecker {
         for (name, expr) in args {
             if let Some(name) = name {
                 match result.entry(name.clone()) {
-                    Entry::Occupied(_) => {
-                        self.error::<()>(Error::new(
-                            format!("parameter '{name}' has already been specified"),
-                            expr.span,
-                        ));
-                    }
+                    Entry::Occupied(_) => self.error(Error::new(
+                        format!("duplicate arguments for for parameter '{name}'"),
+                        expr.span,
+                    )),
                     Entry::Vacant(entry) => {
                         if let Some(param) = self
                             .scopes
@@ -3451,10 +3468,10 @@ impl TypeChecker {
                         {
                             entry.insert(self.check_arg(func, expr, &param.ty.clone()));
                         } else {
-                            self.error::<()>(Error::new(
+                            self.error(Error::new(
                                 format!("unknown parameter: '{name}'"),
                                 expr.span,
-                            ));
+                            ))
                         }
                     }
                 }
@@ -3474,7 +3491,7 @@ impl TypeChecker {
                 last_pos = i + 1;
             } else if !variadic {
                 // TODO: a better error here would be nice
-                self.error::<()>(Error::new("too many positional arguments", expr.span));
+                self.error(Error::new("too many positional arguments", expr.span))
             } else {
                 num += 1;
                 result.insert(format!("${num}"), self.check_expr(expr, None));
@@ -4159,7 +4176,11 @@ impl TypeChecker {
             return true;
         }
 
-        for id in self.extension_ids_in_scope_for(ty).collect::<Vec<_>>() {
+        for id in self
+            .extensions_in_scope_for(ty)
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>()
+        {
             for i in 0..self.scopes.get(id).impls.len() {
                 resolve_type!(self, self.scopes.get_mut(id).impls[i]);
                 if check(
@@ -4198,7 +4219,7 @@ impl TypeChecker {
         }
 
         self.extensions_in_scope_for(ty)
-            .any(|ext| search(ty.as_user().map(|ty| &**ty), &ext.impls))
+            .any(|(_, ext)| search(ty.as_user().map(|ty| &**ty), &ext.impls))
     }
 
     fn get_trait_impl_helper<Id: ItemId + Clone + Copy>(
@@ -4231,7 +4252,11 @@ impl TypeChecker {
         {
             Some(ut)
         } else {
-            for ext in self.extension_ids_in_scope_for(ty).collect::<Vec<_>>() {
+            for ext in self
+                .extensions_in_scope_for(ty)
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+            {
                 if let Some(ut) = self.get_trait_impl_helper(ext, id) {
                     return Some(ut);
                 }
@@ -4241,20 +4266,22 @@ impl TypeChecker {
         }
     }
 
-    fn get_member_fn(
-        &self,
-        ty: &Type,
-        member: &str,
-    ) -> Option<(Option<GenericUserType>, Vis<FunctionId>, ScopeId)> {
-        let search = |src_scope: ScopeId, scope: ScopeId| {
+    fn get_member_fn(&self, ty: &Type, member: &str) -> Option<MemberFn> {
+        let search = |src_scope: ScopeId, scope: ScopeId, ext: Option<ExtensionId>| {
             // TODO: trait implement overload ie.
             // impl Eq<f32> { ... } impl Eq<i32> { ... }
             std::iter::once(scope)
                 .chain(self.scopes[scope].children.iter().map(|s| s.id))
-                .find_map(|scope| {
+                .find_map(|body_scope| {
                     self.scopes
-                        .find_in(member, scope)
-                        .map(|func| (None, func, src_scope))
+                        .find_in(member, body_scope)
+                        .map(|func| MemberFn {
+                            tr: None,
+                            func,
+                            src_scope,
+                            body_scope,
+                            ext,
+                        })
                 })
         };
 
@@ -4266,20 +4293,26 @@ impl TypeChecker {
                         .scopes
                         .find_in(member, self.scopes.get(ut.id).body_scope)
                     {
-                        return Some((Some((**ut).clone()), func, src_scope));
+                        return Some(MemberFn {
+                            tr: Some((**ut).clone()),
+                            func,
+                            src_scope,
+                            body_scope: self.scopes.get(ut.id).body_scope,
+                            ext: None,
+                        });
                     }
                 }
 
                 return None;
             }
 
-            if let Some(result) = search(src_scope, ut.body_scope) {
+            if let Some(result) = search(src_scope, ut.body_scope, None) {
                 return Some(result);
             }
         }
 
         self.extensions_in_scope_for(ty)
-            .find_map(|ext| search(ext.scope, ext.body_scope))
+            .find_map(|(id, ext)| search(ext.scope, ext.body_scope, Some(id)))
     }
 
     fn get_int_type_and_val(
