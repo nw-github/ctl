@@ -11,7 +11,7 @@ use crate::{
     lexer::{Located, Span},
     sym::*,
     typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type, TypeArgs},
-    Pipeline, THIS_PARAM,
+    Compiler, THIS_PARAM,
 };
 
 macro_rules! type_check_bail {
@@ -87,7 +87,7 @@ impl TypeChecker {
             diag,
         };
         for lib in libs {
-            let parsed = Pipeline::new(lib, this.diag).parse()?;
+            let parsed = Compiler::new(lib, this.diag).parse()?;
             this.diag = parsed.diag;
             this.check_one(&parsed.path, parsed.state.0);
         }
@@ -364,9 +364,9 @@ impl TypeChecker {
                         },
                         type_params: Vec::new(),
                         impls: Vec::new(),
+                        attrs: stmt.attrs,
                     },
                     base.public,
-                    stmt.attrs,
                 );
                 self.enter_id(body_scope, |this| {
                     this.current().kind = ScopeKind::UserType(id);
@@ -430,9 +430,9 @@ impl TypeChecker {
                         }),
                         type_params: Vec::new(),
                         impls: Vec::new(),
+                        attrs: stmt.attrs,
                     },
                     base.public,
-                    stmt.attrs,
                 );
                 self.enter(ScopeKind::UserType(id), base.public, |this| {
                     this.scopes.get_mut(id).body_scope = this.current;
@@ -552,9 +552,9 @@ impl TypeChecker {
                         data: UserTypeData::Trait,
                         impls: Vec::new(),
                         type_params: Vec::new(),
+                        attrs: stmt.attrs,
                     },
                     public,
-                    stmt.attrs,
                 );
                 self.enter(ScopeKind::UserType(id), public, |this| {
                     this.scopes.get_mut(id).body_scope = this.current;
@@ -590,9 +590,9 @@ impl TypeChecker {
                         data: UserTypeData::Enum(backing.clone()),
                         type_params: Vec::new(),
                         impls: Vec::new(),
+                        attrs: stmt.attrs,
                     },
                     public,
-                    stmt.attrs,
                 );
 
                 self.enter(ScopeKind::UserType(id), public, |this| {
@@ -733,6 +733,13 @@ impl TypeChecker {
             ))
         }
 
+        if f.linkage == Linkage::Export && !f.type_params.is_empty() {
+            self.error(Error::new(
+                "generic functions cannot be declared 'export'",
+                f.name.span,
+            ))
+        }
+
         let id = self.insert(
             Function {
                 attrs,
@@ -827,6 +834,7 @@ impl TypeChecker {
                             .into_iter()
                             .map(|path| self.declare_type_path(path))
                             .collect(),
+                        attrs: vec![],
                     },
                     false,
                 )
@@ -863,7 +871,7 @@ impl TypeChecker {
         (impls, declared_blocks)
     }
 
-    fn declare_type(&mut self, ty: UserType, public: bool, attrs: Vec<Attribute>) -> UserTypeId {
+    fn declare_type(&mut self, ty: UserType, public: bool) -> UserTypeId {
         if self
             .scopes
             .find_in::<UserTypeId>(&ty.name.data, self.current)
@@ -872,8 +880,14 @@ impl TypeChecker {
             self.error(Error::redefinition("type", &ty.name.data, ty.name.span))
         }
 
-        let id = self.insert(ty, public);
-        if let Some(attr) = attrs.iter().find(|attr| attr.name.data == "lang") {
+        let id: UserTypeId = self.insert(ty, public);
+        if let Some(attr) = self
+            .scopes
+            .get(id)
+            .attrs
+            .iter()
+            .find(|attr| attr.name.data == "lang")
+        {
             let Some(name) = attr.props.first() else {
                 self.error::<()>(Error::new("language item must have name", attr.name.span));
                 return id;
@@ -3626,7 +3640,10 @@ impl TypeChecker {
             self.error(Error::is_unsafe(span))
         }
 
-        (result, self.scopes.get(func.id).ret.with_templates(&func.ty_args))
+        (
+            result,
+            self.scopes.get(func.id).ret.with_templates(&func.ty_args),
+        )
     }
 
     fn check_bounds(&mut self, ty_args: &TypeArgs, ty: &Type, bounds: Vec<Type>, span: Span) {

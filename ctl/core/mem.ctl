@@ -6,13 +6,13 @@ pub fn size_of_val<T>(_: *T): usize {
 }
 
 mod builtin {
-    #{c_macro, c_name(__builtin_memcpy)}
+    #{c_opaque, c_name(__builtin_memcpy)}
     pub import fn memcpy(dst: *mut c_void, src: *c_void, len: usize): *mut c_void;
 
-    #{c_macro, c_name(__builtin_memmove)}
+    #{c_opaque, c_name(__builtin_memmove)}
     pub import fn memmove(dst: *mut c_void, src: *c_void, len: usize): *mut c_void;
 
-    #{c_macro, c_name(__builtin_memcmp)}
+    #{c_opaque, c_name(__builtin_memcmp)}
     pub import fn memcmp(dst: *c_void, src: *c_void, len: usize): c_int;
 }
 

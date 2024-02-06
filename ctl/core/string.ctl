@@ -8,7 +8,7 @@ use core::panic;
 use core::unreachable;
 
 mod builtin {
-    #{c_macro, c_name(__builtin_strlen)}
+    #{c_opaque, c_name(__builtin_strlen)}
     pub import fn strlen(ptr: *c_char): usize;
 }
 

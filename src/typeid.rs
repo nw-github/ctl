@@ -179,7 +179,7 @@ impl IntStats {
         if self.signed {
             (BigInt::from(1) << (self.bits - 1)) - 1
         } else {
-            (BigInt::from(1u8) << self.bits) - 1u8
+            (BigInt::from(1) << self.bits) - 1u8
         }
     }
 }
@@ -506,27 +506,24 @@ impl Type {
     pub fn integer_stats(&self) -> Option<IntStats> {
         use std::ffi::*;
 
-        let (bytes, signed) = match self {
-            Type::Int(bits) | Type::Uint(bits) => (*bits / 8, matches!(self, Type::Int(_))),
+        let (bits, signed) = match self {
+            Type::Int(bits) | Type::Uint(bits) => (*bits, matches!(self, Type::Int(_))),
             Type::CInt(cint) | Type::CUint(cint) => {
-                let bits = match cint {
+                let bytes = match cint {
                     CInt::Char => std::mem::size_of::<c_char>(),
                     CInt::Short => std::mem::size_of::<c_short>(),
                     CInt::Int => std::mem::size_of::<c_int>(),
                     CInt::Long => std::mem::size_of::<c_long>(),
                     CInt::LongLong => std::mem::size_of::<c_longlong>(),
                 };
-                (bits as u32, matches!(self, Type::CInt(_)))
+                (bytes as u32 * 8, matches!(self, Type::CInt(_)))
             }
-            Type::Isize => (std::mem::size_of::<isize>() as u32, true),
-            Type::Usize => (std::mem::size_of::<usize>() as u32, false),
+            Type::Isize => (std::mem::size_of::<isize>() as u32 * 8, true),
+            Type::Usize => (std::mem::size_of::<usize>() as u32 * 8, false),
             _ => return None,
         };
 
-        Some(IntStats {
-            bits: bytes * 8,
-            signed,
-        })
+        Some(IntStats { bits, signed })
     }
 
     pub fn indirection(&self) -> usize {

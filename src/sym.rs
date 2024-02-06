@@ -208,6 +208,7 @@ pub struct UserType {
     pub data: UserTypeData,
     pub impls: Vec<Type>,
     pub type_params: Vec<UserTypeId>,
+    pub attrs: Vec<Attribute>,
 }
 
 impl UserType {
@@ -444,6 +445,13 @@ impl Scopes {
 
     pub fn extensions(&self) -> &[Scoped<Extension>] {
         &self.exts
+    }
+
+    pub fn functions(&self) -> impl Iterator<Item = (FunctionId, &Scoped<Function>)> {
+        self.fns
+            .iter()
+            .enumerate()
+            .map(|(i, var)| (FunctionId(i), var))
     }
 
     pub fn find_module_in(&self, name: &str, scope: ScopeId) -> Option<Vis<ScopeId>> {

@@ -18,11 +18,14 @@ use crate::{
         UserTypeData, UserTypeId, VariableId,
     },
     typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type, TypeArgs},
+    CodegenFlags,
 };
 
 const UNION_TAG_NAME: &str = "$tag";
 const ARRAY_DATA_NAME: &str = "$data";
 const VOID_INSTANCE: &str = "($void){}";
+const ATTR_NOGEN: &str = "c_opaque";
+const ATTR_LINKNAME: &str = "c_name";
 
 #[derive(PartialEq, Eq, Clone)]
 struct State {
@@ -86,18 +89,27 @@ impl<'a> TypeGen<'a> {
         }
     }
 
-    fn finish(mut self, buffer: &mut Buffer) {
+    fn finish(mut self, buffer: &mut Buffer, no_bit_int: bool) {
         let integers = std::mem::take(&mut self.integers);
         let structs = std::mem::take(&mut self.structs);
         let fnptrs = std::mem::take(&mut self.fnptrs);
         let mut arrays = std::mem::take(&mut self.arrays);
         let mut definitions = Buffer::default();
         for (bits, signed) in integers {
-            let ch = if signed { 's' } else { 'u' };
-            buffer.emit(format!(
-                "typedef {}INT({bits}) {ch}{bits};",
-                ch.to_uppercase()
-            ));
+            if no_bit_int {
+                buffer.emit(format!(
+                    "typedef {}int{}_t {}{bits};",
+                    if signed { "" } else { "u" },
+                    2usize.pow((bits as f64).log2().ceil() as u32).max(8),
+                    if signed { 's' } else { 'u' },
+                ));
+            } else {
+                let ch = if signed { 's' } else { 'u' };
+                buffer.emit(format!(
+                    "typedef {}INT({bits}) {ch}{bits};",
+                    ch.to_uppercase(),
+                ));
+            }
         }
         for f in fnptrs {
             definitions.emit("typedef ");
@@ -119,19 +131,26 @@ impl<'a> TypeGen<'a> {
         for ut in self.get_struct_order(&structs) {
             let union = self.scopes.get(ut.id).data.as_union();
             let unsafe_union = union.is_some_and(|union| union.is_unsafe);
-            if unsafe_union {
-                buffer.emit("typedef union ");
-                definitions.emit("union ");
+            buffer.emit(if unsafe_union {
+                "typedef union "
             } else {
-                buffer.emit("typedef struct ");
-                definitions.emit("struct ");
-            }
-
+                "typedef struct "
+            });
             buffer.emit_type_name(self.scopes, ut);
             buffer.emit(" ");
             buffer.emit_type_name(self.scopes, ut);
             buffer.emit(";");
+            if self
+                .scopes
+                .get(ut.id)
+                .attrs
+                .iter()
+                .any(|attr| attr.name.data == ATTR_NOGEN)
+            {
+                continue;
+            }
 
+            definitions.emit(if unsafe_union { "union " } else { "struct " });
             definitions.emit_type_name(self.scopes, ut);
             definitions.emit("{");
 
@@ -503,14 +522,24 @@ impl Buffer {
             panic!("ICE: Template type in emit_type_name");
         }
 
-        self.emit(scopes.full_name(ty.scope, &ty.name.data));
-        if !ut.ty_args.is_empty() {
-            self.emit("$");
-            for ty in ut.ty_args.values() {
+        if let Some(name) = scopes
+            .get(ut.id)
+            .attrs
+            .iter()
+            .find(|attr| attr.name.data == ATTR_LINKNAME && !attr.props.is_empty())
+            .map(|attr| &attr.props[0].name.data)
+        {
+            self.emit(name);
+        } else {
+            self.emit(scopes.full_name(ty.scope, &ty.name.data));
+            if !ut.ty_args.is_empty() {
                 self.emit("$");
-                self.emit_generic_mangled_name(scopes, ty);
+                for ty in ut.ty_args.values() {
+                    self.emit("$");
+                    self.emit_generic_mangled_name(scopes, ty);
+                }
+                self.emit("$$");
             }
-            self.emit("$$");
         }
     }
 
@@ -652,90 +681,59 @@ pub struct Codegen<'a> {
 }
 
 impl<'a> Codegen<'a> {
-    pub fn build(
-        mut diag: Diagnostics,
-        scope: ScopeId,
-        scopes: &'a Scopes,
-        leak: bool,
-    ) -> Result<(Diagnostics, String), Diagnostics> {
-        if diag.has_errors() {
-            return Err(diag);
-        }
-
-        let Some(main) = scopes.find_in("main", scope) else {
-            diag.error(Error::new("no main function found", Span::default()));
-            return Err(diag);
-        };
-        let main = &mut State::new(GenericFunc::from_id(scopes, *main));
-        let mut this = Self {
+    fn new(scopes: &'a Scopes, diag: Diagnostics, funcs: HashSet<State>) -> Self {
+        Self {
             scopes,
             diag,
-            funcs: [main.clone()].into(),
+            funcs,
             buffer: Default::default(),
             temporaries: Default::default(),
             type_gen: TypeGen::new(scopes),
             cur_block: Default::default(),
             cur_loop: Default::default(),
             yielded: Default::default(),
+        }
+    }
+
+    pub fn build(
+        mut diag: Diagnostics,
+        scope: ScopeId,
+        scopes: &'a Scopes,
+        flags: CodegenFlags,
+    ) -> Result<(Diagnostics, String), Diagnostics> {
+        if diag.has_errors() {
+            return Err(diag);
+        }
+
+        let exports = scopes
+            .functions()
+            .filter(|(_, f)| f.linkage == Linkage::Export)
+            .map(|(id, _)| State::new(GenericFunc::from_id(scopes, id)));
+        let (mut this, main) = if flags.lib {
+            (Self::new(scopes, diag, exports.collect()), None)
+        } else {
+            let Some(main) = scopes.find_in("main", scope) else {
+                diag.error(Error::new("no main function found", Span::default()));
+                return Err(diag);
+            };
+            let main = State::new(GenericFunc::from_id(scopes, *main));
+            (
+                Self::new(
+                    scopes,
+                    diag,
+                    exports.chain(std::iter::once(main.clone())).collect(),
+                ),
+                Some(main),
+            )
         };
 
-        let conv_argv = (scopes.get(main.func.id).params.len() == 1).then(|| {
-            let id = scopes
-                .find_in(
-                    "convert_argv",
-                    *scopes.find_module_in("std", ScopeId::ROOT).unwrap(),
-                )
-                .unwrap();
-
-            let state = State::new(GenericFunc::from_id(scopes, *id));
-            this.funcs.insert(state.clone());
-            state
-        });
-
+        let static_dummy_state = &mut this.find_function("core", "panic").unwrap();
         for (id, _) in scopes.vars().filter(|(_, v)| v.is_static) {
-            this.emit_local_decl(id, main);
+            this.emit_local_decl(id, static_dummy_state);
             this.buffer.emit(";");
         }
         let static_defs = std::mem::take(&mut this.buffer).finish();
-
-        this.buffer
-            .emit("int main(int argc, char **argv) { $ctl_init();");
-        hoist_point!(this, {
-            for (id, var) in scopes.vars().filter(|(_, v)| v.is_static) {
-                this.emit_var_name(id, main);
-                this.buffer.emit("=");
-                this.gen_expr(var.value.clone().unwrap(), main);
-                this.buffer.emit(";");
-            }
-        });
-
-        let returns = scopes.get(main.func.id).ret != Type::Void;
-        if let Some(state) = conv_argv {
-            if returns {
-                this.buffer.emit("return ");
-            }
-            this.emit_fn_name(main);
-            this.buffer.emit("(");
-            this.emit_fn_name(&state);
-            if returns {
-                this.buffer.emit("(argc, (const char **)argv));}");
-            } else {
-                this.buffer.emit("(argc, (const char **)argv));return 0;}");
-            }
-        } else {
-            this.buffer.emit("(void)argc;");
-            this.buffer.emit("(void)argv;");
-            if returns {
-                this.buffer.emit("return ");
-            }
-            this.emit_fn_name(main);
-            if returns {
-                this.buffer.emit("();}");
-            } else {
-                this.buffer.emit("();return 0;}");
-            }
-        }
-        let main = std::mem::take(&mut this.buffer).finish();
+        let main = main.map(|mut main| this.gen_c_main(&mut main));
 
         let mut prototypes = Buffer::default();
         let mut emitted = HashSet::new();
@@ -748,27 +746,91 @@ impl<'a> Codegen<'a> {
             }
         }
         let functions = std::mem::take(&mut this.buffer).finish();
+        let init = this.gen_ctl_init(static_dummy_state);
 
-        if leak {
+        if flags.leak {
             this.buffer.emit("#define CTL_NOGC\n");
+        }
+        if flags.no_bit_int {
+            this.buffer.emit("#define CTL_NOBITINT\n");
         }
         this.buffer.emit(include_str!("../ctl/ctl.h"));
         if this.diag.has_errors() {
             return Err(this.diag);
         }
-        this.type_gen.finish(&mut this.buffer);
+        this.type_gen.finish(&mut this.buffer, flags.no_bit_int);
         this.buffer.emit(prototypes.finish());
         this.buffer.emit(static_defs);
         this.buffer.emit(functions);
-        this.buffer.emit(main);
+        this.buffer.emit(init);
+        if let Some(main) = main {
+            this.buffer.emit(main);
+        }
 
         Ok((this.diag, this.buffer.finish()))
+    }
+
+    fn gen_ctl_init(&mut self, state: &mut State) -> String {
+        // TODO: on linux x64 this works fine for static libraries and executables, test other
+        // platforms
+        self.buffer
+            .emit("static CTL_INIT void $ctl_static_init(){$ctl_runtime_init();");
+
+        hoist_point!(self, {
+            for (id, var) in self.scopes.vars().filter(|(_, v)| v.is_static) {
+                self.emit_var_name(id, state);
+                self.buffer.emit("=");
+                self.gen_expr(var.value.clone().unwrap(), state);
+                self.buffer.emit(";");
+            }
+        });
+
+        self.buffer
+            .emit("}static CTL_DEINIT void $ctl_static_deinit(){$ctl_runtime_deinit();}");
+
+        std::mem::take(&mut self.buffer).finish()
+    }
+
+    fn gen_c_main(&mut self, main: &mut State) -> String {
+        self.buffer.emit("int main(int argc, char **argv) {");
+        let returns = self.scopes.get(main.func.id).ret != Type::Void;
+        if let Some(state) = self
+            .find_function("std", "convert_argv")
+            .filter(|_| self.scopes.get(main.func.id).params.len() == 1)
+        {
+            if returns {
+                self.buffer.emit("return ");
+            }
+            self.emit_fn_name(main);
+            self.buffer.emit("(");
+            self.emit_fn_name(&state);
+            if returns {
+                self.buffer.emit("(argc, (const char **)argv));}");
+            } else {
+                self.buffer.emit("(argc, (const char **)argv));return 0;}");
+            }
+
+            self.funcs.insert(state);
+        } else {
+            self.buffer.emit("(void)argc;");
+            self.buffer.emit("(void)argv;");
+            if returns {
+                self.buffer.emit("return ");
+            }
+            self.emit_fn_name(main);
+            if returns {
+                self.buffer.emit("();}");
+            } else {
+                self.buffer.emit("();return 0;}");
+            }
+        }
+        std::mem::take(&mut self.buffer).finish()
     }
 
     fn gen_fn(&mut self, state: &mut State, prototypes: &mut Buffer) {
         // TODO: emit an error if a function has the c_macro attribute and a body
         let func = self.scopes.get(state.func.id);
-        if func.attrs.iter().any(|attr| attr.name.data == "c_macro") {
+        if func.attrs.iter().any(|attr| attr.name.data == ATTR_NOGEN) {
             return;
         }
 
@@ -2035,7 +2097,7 @@ impl<'a> Codegen<'a> {
 
     fn emit_fn_name_inner(&mut self, state: &State, real: bool) {
         let f = self.scopes.get(state.func.id);
-        let is_macro = f.attrs.iter().any(|attr| attr.name.data == "c_macro");
+        let is_macro = f.attrs.iter().any(|attr| attr.name.data == ATTR_NOGEN);
         if f.linkage == Linkage::Internal {
             self.buffer
                 .emit(self.scopes.full_name(f.scope, &f.name.data));
@@ -2051,7 +2113,7 @@ impl<'a> Codegen<'a> {
             let name = f
                 .attrs
                 .iter()
-                .find(|attr| attr.name.data == "c_name" && !attr.props.is_empty())
+                .find(|attr| attr.name.data == ATTR_LINKNAME && !attr.props.is_empty())
                 .map(|attr| &attr.props[0].name.data)
                 .unwrap_or(&f.name.data);
 
@@ -2133,6 +2195,14 @@ impl<'a> Codegen<'a> {
         } else {
             src.into()
         }
+    }
+
+    fn find_function(&self, module: &str, name: &str) -> Option<State> {
+        let id = self
+            .scopes
+            .find_in(name, *self.scopes.find_module_in(module, ScopeId::ROOT)?)?;
+
+        Some(State::new(GenericFunc::from_id(self.scopes, *id)))
     }
 }
 

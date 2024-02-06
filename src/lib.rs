@@ -35,22 +35,22 @@ impl CompileState for Source {}
 impl CompileState for Parsed {}
 impl CompileState for Checked {}
 
-pub struct Pipeline<S: CompileState> {
+pub struct Compiler<S: CompileState> {
     path: PathBuf,
     diag: Diagnostics,
     state: S,
 }
 
-impl Pipeline<Source> {
+impl Compiler<Source> {
     pub fn new(path: PathBuf, diag: Diagnostics) -> Self {
-        Pipeline {
+        Compiler {
             path,
             diag,
             state: Source,
         }
     }
 
-    pub fn parse(mut self) -> anyhow::Result<Pipeline<Parsed>> {
+    pub fn parse(mut self) -> anyhow::Result<Compiler<Parsed>> {
         let mut sources = Vec::new();
         if self.path.is_dir() {
             for file in self
@@ -71,7 +71,7 @@ impl Pipeline<Source> {
             sources.push(Parser::parse(&buffer, &mut self.diag, self.path.clone()));
         }
 
-        Ok(Pipeline {
+        Ok(Compiler {
             path: self.path,
             state: Parsed(sources),
             diag: self.diag,
@@ -79,16 +79,16 @@ impl Pipeline<Source> {
     }
 }
 
-impl Pipeline<Parsed> {
+impl Compiler<Parsed> {
     pub fn dump(&self) {
         for source in self.state.0.iter() {
             pretty::print_stmt(source, 0);
         }
     }
 
-    pub fn typecheck(self, libs: Vec<PathBuf>) -> anyhow::Result<Pipeline<Checked>> {
+    pub fn typecheck(self, libs: Vec<PathBuf>) -> anyhow::Result<Compiler<Checked>> {
         let (module, diag) = TypeChecker::check(&self.path, self.state.0, libs, self.diag)?;
-        Ok(Pipeline {
+        Ok(Compiler {
             state: Checked(module),
             path: self.path,
             diag,
@@ -96,18 +96,24 @@ impl Pipeline<Parsed> {
     }
 }
 
-impl Pipeline<Checked> {
-    pub fn codegen(self, leak: bool) -> Result<(Diagnostics, String), Diagnostics> {
+impl Compiler<Checked> {
+    pub fn codegen(self, flags: CodegenFlags) -> Result<(Diagnostics, String), Diagnostics> {
         let module = self.state.0;
-        Codegen::build(self.diag, module.scope, &module.scopes, leak)
+        Codegen::build(self.diag, module.scope, &module.scopes, flags)
     }
 }
 
-impl<T: CompileState> Pipeline<T> {
+impl<T: CompileState> Compiler<T> {
     pub fn inspect(self, f: impl FnOnce(&Self)) -> Self {
         f(&self);
         self
     }
+}
+
+pub struct CodegenFlags {
+    pub leak: bool,
+    pub no_bit_int: bool,
+    pub lib: bool,
 }
 
 pub(crate) fn derive_module_name(path: &Path) -> String {

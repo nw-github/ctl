@@ -1,6 +1,6 @@
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueHint};
-use ctl::Pipeline;
+use ctl::{CodegenFlags, Compiler};
 use std::{
     ffi::OsString,
     fs::File,
@@ -34,6 +34,17 @@ struct Arguments {
     #[clap(action, long)]
     #[arg(global = true)]
     leak: bool,
+
+    /// Compile without using _BitInt/_ExtInt. All integer types will use the type with the nearest
+    /// power of two bit count. TODO: proper arithmetic wrapping in this mode
+    #[clap(action, long)]
+    #[arg(global = true)]
+    no_bit_int: bool,
+
+    /// Compile as a library
+    #[clap(action, short, long)]
+    #[arg(global = true)]
+    lib: bool,
 }
 
 #[derive(Args)]
@@ -174,7 +185,7 @@ fn main() -> anyhow::Result<()> {
         libs.push(root.join("ctl/std"));
     }
 
-    let result = Pipeline::new(args.command.input().to_owned(), Default::default())
+    let result = Compiler::new(args.command.input().to_owned(), Default::default())
         .parse()?
         .inspect(|ast| {
             if args.dump_ast {
@@ -182,7 +193,11 @@ fn main() -> anyhow::Result<()> {
             }
         })
         .typecheck(libs)?
-        .codegen(args.leak);
+        .codegen(CodegenFlags {
+            leak: args.leak,
+            no_bit_int: args.no_bit_int,
+            lib: args.lib,
+        });
 
     match result {
         Ok((diagnostics, result)) => {
