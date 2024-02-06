@@ -268,6 +268,221 @@ impl TypeChecker {
 }
 
 impl TypeChecker {
+    fn declare_struct(
+        &mut self,
+        autouse: &mut Vec<ScopeId>,
+        base: Struct,
+        attrs: Vec<Attribute>,
+    ) -> DeclaredStmt {
+        let public = base.public;
+        let (ut, init, fns, impl_blocks) = self.enter(ScopeKind::None, public, |this| {
+            let init = this.enter(ScopeKind::None, false, |this| {
+                this.declare_fn(
+                    autouse,
+                    None,
+                    Fn {
+                        public: base.public && !base.members.iter().any(|m| !m.public),
+                        name: base.name.clone(),
+                        is_async: false,
+                        linkage: Linkage::Internal,
+                        variadic: false,
+                        is_unsafe: false,
+                        type_params: vec![],
+                        params: base
+                            .members
+                            .iter()
+                            .map(|member| Param {
+                                keyword: true,
+                                patt: Located::new(
+                                    member.name.span,
+                                    Pattern::Path(TypePath::from(member.name.data.clone())),
+                                ),
+                                ty: member.ty.clone(),
+                                default: member.default.clone(),
+                            })
+                            .collect(),
+                        ret: Self::typehint_for_struct(&base.name, &base.type_params),
+                        body: None,
+                    },
+                    vec![],
+                )
+            });
+            let mut members = Vec::with_capacity(base.members.len());
+            for member in base.members {
+                if members
+                    .iter()
+                    .any(|m: &CheckedMember| m.name == member.name.data)
+                {
+                    this.error(Error::redefinition(
+                        "member variable",
+                        &member.name.data,
+                        member.name.span,
+                    ))
+                }
+
+                members.push(CheckedMember {
+                    public: member.public,
+                    name: member.name.data,
+                    shared: member.shared,
+                    ty: this.declare_type_hint(member.ty),
+                });
+            }
+
+            let (impls, impl_blocks) = this.declare_impl_blocks(autouse, base.impls);
+            let ut = UserType {
+                body_scope: this.current,
+                name: base.name,
+                data: UserTypeData::Struct {
+                    members,
+                    init: init.id,
+                },
+                type_params: this.declare_type_params(base.type_params),
+                impls,
+                attrs,
+            };
+            let fns = base
+                .functions
+                .into_iter()
+                .map(|f| this.declare_fn(autouse, None, f, vec![]))
+                .collect();
+
+            (ut, init, fns, impl_blocks)
+        });
+
+        let scope = ut.body_scope;
+        let id = self.declare_type(ut, public);
+        self.scopes[scope].kind = ScopeKind::UserType(id);
+        self.scopes.get_mut(init.id).constructor = Some(id);
+
+        DeclaredStmt::Struct {
+            init,
+            id,
+            impl_blocks,
+            functions: fns,
+        }
+    }
+
+    fn declare_union(
+        &mut self,
+        autouse: &mut Vec<ScopeId>,
+        base: Struct,
+        attrs: Vec<Attribute>,
+        is_unsafe: bool,
+    ) -> DeclaredStmt {
+        let (ut, impl_blocks, cons, fns) = self.enter(ScopeKind::None, base.public, |this| {
+            let mut variants = Vec::with_capacity(base.members.len());
+            let mut params = Vec::with_capacity(base.members.len());
+            for member in base.members.iter() {
+                if variants
+                    .iter()
+                    .any(|m: &CheckedMember| m.name == member.name.data)
+                {
+                    this.error(Error::redefinition(
+                        "member",
+                        &member.name.data,
+                        member.name.span,
+                    ))
+                }
+
+                variants.push(CheckedMember {
+                    public: member.public,
+                    name: member.name.data.clone(),
+                    shared: member.shared,
+                    ty: this.declare_type_hint(member.ty.clone()),
+                });
+
+                if member.shared && is_unsafe {
+                    this.error(Error::new(
+                        "cannot have shared members in an unsafe union",
+                        member.name.span,
+                    ))
+                } else if member.shared {
+                    params.push(Param {
+                        keyword: true,
+                        patt: Located::new(
+                            member.name.span,
+                            Pattern::Path(TypePath::from(member.name.data.clone())),
+                        ),
+                        ty: member.ty.clone(),
+                        default: member.default.clone(),
+                    });
+                }
+            }
+
+            let (impls, impl_blocks) = this.declare_impl_blocks(autouse, base.impls);
+            let ret = Self::typehint_for_struct(&base.name, &base.type_params);
+            let member_cons: Vec<_> = base
+                .members
+                .into_iter()
+                .filter(|m| !m.shared)
+                .map(|member| {
+                    let mut params = params.clone();
+                    if !matches!(member.ty, TypeHint::Void) {
+                        params.push(Param {
+                            keyword: false,
+                            patt: Located::new(
+                                member.name.span,
+                                Pattern::Path(TypePath::from(member.name.data.clone())),
+                            ),
+                            ty: member.ty,
+                            default: member.default,
+                        });
+                    }
+
+                    this.declare_fn(
+                        autouse,
+                        None,
+                        Fn {
+                            public: base.public,
+                            name: Located::new(Span::default(), member.name.data.clone()),
+                            linkage: Linkage::Internal,
+                            is_async: false,
+                            variadic: false,
+                            is_unsafe: false,
+                            type_params: vec![],
+                            params,
+                            ret: ret.clone(),
+                            body: None,
+                        },
+                        vec![],
+                    )
+                })
+                .collect();
+
+            let ut = UserType {
+                name: base.name,
+                body_scope: this.current,
+                type_params: this.declare_type_params(base.type_params),
+                data: UserTypeData::Union(Union {
+                    variants,
+                    is_unsafe,
+                }),
+                impls,
+                attrs,
+            };
+            let fns = base
+                .functions
+                .into_iter()
+                .map(|f| this.declare_fn(autouse, None, f, vec![]))
+                .collect();
+
+            (ut, impl_blocks, member_cons, fns)
+        });
+        let scope = ut.body_scope;
+        let id = self.declare_type(ut, base.public);
+        self.scopes[scope].kind = ScopeKind::UserType(id);
+        for c in cons.iter() {
+            self.scopes.get_mut(c.id).constructor = Some(id);
+        }
+
+        DeclaredStmt::Union {
+            member_cons: cons,
+            id,
+            impl_blocks,
+            functions: fns,
+        }
+    }
+
     fn declare_stmt(&mut self, autouse: &mut Vec<ScopeId>, stmt: Stmt) -> DeclaredStmt {
         match stmt.data {
             StmtData::Module { public, name, body } => {
@@ -315,228 +530,12 @@ impl TypeChecker {
                     }
                 })
             }
-            StmtData::Struct(base) => {
-                let (body_scope, init) = self.enter(ScopeKind::None, base.public, |this| {
-                    (
-                        this.current,
-                        this.enter(ScopeKind::None, false, |this| {
-                            this.declare_fn(
-                                autouse,
-                                None,
-                                Fn {
-                                    public: base.public && !base.members.iter().any(|m| !m.public),
-                                    name: base.name.clone(),
-                                    is_async: false,
-                                    linkage: Linkage::Internal,
-                                    variadic: false,
-                                    is_unsafe: false,
-                                    type_params: vec![],
-                                    params: base
-                                        .members
-                                        .iter()
-                                        .map(|member| Param {
-                                            keyword: true,
-                                            patt: Located::new(
-                                                member.name.span,
-                                                Pattern::Path(TypePath::from(
-                                                    member.name.data.clone(),
-                                                )),
-                                            ),
-                                            ty: member.ty.clone(),
-                                            default: member.default.clone(),
-                                        })
-                                        .collect(),
-                                    ret: Self::typehint_for_struct(&base.name, &base.type_params),
-                                    body: None,
-                                },
-                                vec![],
-                            )
-                        }),
-                    )
-                });
-                let id = self.declare_type(
-                    UserType {
-                        name: base.name,
-                        body_scope,
-                        data: UserTypeData::Struct {
-                            members: Vec::new(),
-                            init: init.id,
-                        },
-                        type_params: Vec::new(),
-                        impls: Vec::new(),
-                        attrs: stmt.attrs,
-                    },
-                    base.public,
-                );
-                self.enter_id(body_scope, |this| {
-                    this.current().kind = ScopeKind::UserType(id);
-                    this.scopes.get_mut(init.id).constructor = Some(id);
-
-                    this.scopes.get_mut(id).body_scope = this.current;
-                    this.scopes.get_mut(id).type_params =
-                        this.declare_type_params(base.type_params);
-
-                    let mut members = Vec::with_capacity(base.members.len());
-                    for member in base.members {
-                        if members
-                            .iter()
-                            .any(|m: &CheckedMember| m.name == member.name.data)
-                        {
-                            this.error(Error::redefinition(
-                                "member variable",
-                                &member.name.data,
-                                member.name.span,
-                            ))
-                        }
-
-                        members.push(CheckedMember {
-                            public: member.public,
-                            name: member.name.data,
-                            shared: member.shared,
-                            ty: this.declare_type_hint(member.ty),
-                        });
-                    }
-
-                    *this.scopes.get_mut(id).data.as_struct_mut().unwrap().0 = members;
-
-                    let (impls, impl_blocks) = this.declare_impl_blocks(autouse, base.impls);
-                    this.scopes.get_mut(id).impls = impls;
-
-                    DeclaredStmt::Struct {
-                        init,
-                        id,
-                        impl_blocks,
-                        functions: base
-                            .functions
-                            .into_iter()
-                            .map(|f| this.declare_fn(autouse, None, f, vec![]))
-                            .collect(),
-                    }
-                })
-            }
+            StmtData::Struct(base) => self.declare_struct(autouse, base, stmt.attrs),
             StmtData::Union {
                 tag: _,
                 base,
                 is_unsafe,
-            } => {
-                let ret = Self::typehint_for_struct(&base.name, &base.type_params);
-                let id = self.declare_type(
-                    UserType {
-                        name: base.name,
-                        body_scope: ScopeId::ROOT,
-                        data: UserTypeData::Union(Union {
-                            variants: Vec::new(),
-                            is_unsafe,
-                        }),
-                        type_params: Vec::new(),
-                        impls: Vec::new(),
-                        attrs: stmt.attrs,
-                    },
-                    base.public,
-                );
-                self.enter(ScopeKind::UserType(id), base.public, |this| {
-                    this.scopes.get_mut(id).body_scope = this.current;
-                    this.scopes.get_mut(id).type_params =
-                        this.declare_type_params(base.type_params);
-
-                    let mut variants = Vec::with_capacity(base.members.len());
-                    let mut params = Vec::with_capacity(base.members.len());
-                    for member in base.members.iter() {
-                        if variants
-                            .iter()
-                            .any(|m: &CheckedMember| m.name == member.name.data)
-                        {
-                            this.error(Error::redefinition(
-                                "member",
-                                &member.name.data,
-                                member.name.span,
-                            ))
-                        }
-
-                        variants.push(CheckedMember {
-                            public: member.public,
-                            name: member.name.data.clone(),
-                            shared: member.shared,
-                            ty: this.declare_type_hint(member.ty.clone()),
-                        });
-
-                        if member.shared && is_unsafe {
-                            this.error(Error::new(
-                                "cannot have shared members in an unsafe union",
-                                member.name.span,
-                            ))
-                        } else if member.shared {
-                            params.push(Param {
-                                keyword: true,
-                                patt: Located::new(
-                                    member.name.span,
-                                    Pattern::Path(TypePath::from(member.name.data.clone())),
-                                ),
-                                ty: member.ty.clone(),
-                                default: member.default.clone(),
-                            });
-                        }
-                    }
-
-                    this.scopes
-                        .get_mut(id)
-                        .data
-                        .as_union_mut()
-                        .unwrap()
-                        .variants = variants;
-
-                    let (impls, impl_blocks) = this.declare_impl_blocks(autouse, base.impls);
-                    this.scopes.get_mut(id).impls = impls;
-                    let member_cons = base
-                        .members
-                        .into_iter()
-                        .filter(|m| !m.shared)
-                        .map(|member| {
-                            let mut params = params.clone();
-                            if !matches!(member.ty, TypeHint::Void) {
-                                params.push(Param {
-                                    keyword: false,
-                                    patt: Located::new(
-                                        member.name.span,
-                                        Pattern::Path(TypePath::from(member.name.data.clone())),
-                                    ),
-                                    ty: member.ty,
-                                    default: member.default,
-                                });
-                            }
-
-                            this.declare_fn(
-                                autouse,
-                                Some(id),
-                                Fn {
-                                    public: base.public,
-                                    name: Located::new(Span::default(), member.name.data.clone()),
-                                    linkage: Linkage::Internal,
-                                    is_async: false,
-                                    variadic: false,
-                                    is_unsafe: false,
-                                    type_params: vec![],
-                                    params,
-                                    ret: ret.clone(),
-                                    body: None,
-                                },
-                                vec![],
-                            )
-                        })
-                        .collect();
-
-                    DeclaredStmt::Union {
-                        member_cons,
-                        id,
-                        impl_blocks,
-                        functions: base
-                            .functions
-                            .into_iter()
-                            .map(|f| this.declare_fn(autouse, None, f, vec![]))
-                            .collect(),
-                    }
-                })
-            }
+            } => self.declare_union(autouse, base, stmt.attrs, is_unsafe),
             StmtData::Trait {
                 public,
                 name,
@@ -545,100 +544,29 @@ impl TypeChecker {
                 functions,
                 is_unsafe: _,
             } => {
-                let id = self.declare_type(
-                    UserType {
+                let (ut, functions) = self.enter(ScopeKind::None, public, |this| {
+                    let ut = UserType {
                         name,
-                        body_scope: ScopeId::ROOT,
+                        body_scope: this.current,
                         data: UserTypeData::Trait,
-                        impls: Vec::new(),
-                        type_params: Vec::new(),
+                        type_params: this.declare_type_params(type_params),
+                        impls: impls
+                            .into_iter()
+                            .map(|path| this.declare_type_path(path))
+                            .collect(),
                         attrs: stmt.attrs,
-                    },
-                    public,
-                );
-                self.enter(ScopeKind::UserType(id), public, |this| {
-                    this.scopes.get_mut(id).body_scope = this.current;
-                    this.scopes.get_mut(id).type_params = this.declare_type_params(type_params);
-                    this.scopes.get_mut(id).impls = impls
+                    };
+                    let functions = functions
                         .into_iter()
-                        .map(|path| this.declare_type_path(path))
+                        .map(|f| this.declare_fn(autouse, None, f, vec![]))
                         .collect();
+                    (ut, functions)
+                });
 
-                    DeclaredStmt::Trait {
-                        id,
-                        functions: functions
-                            .into_iter()
-                            .map(|f| this.declare_fn(autouse, None, f, vec![]))
-                            .collect(),
-                    }
-                })
-            }
-            StmtData::Enum {
-                public,
-                name,
-                impls,
-                variants,
-                functions,
-                base_ty: _,
-            } => {
-                // TODO: should be the largest variant
-                let backing = Type::discriminant_for(variants.len());
-                let id = self.declare_type(
-                    UserType {
-                        name,
-                        body_scope: ScopeId::ROOT,
-                        data: UserTypeData::Enum(backing.clone()),
-                        type_params: Vec::new(),
-                        impls: Vec::new(),
-                        attrs: stmt.attrs,
-                    },
-                    public,
-                );
-
-                self.enter(ScopeKind::UserType(id), public, |this| {
-                    this.scopes.get_mut(id).body_scope = this.current;
-                    let mut n_variants: Vec<(VariableId, Option<Located<ExprData>>)> =
-                        Vec::with_capacity(variants.len());
-                    for (i, (name, expr)) in variants.into_iter().enumerate() {
-                        if n_variants
-                            .iter()
-                            .any(|(id, _)| this.scopes.get(*id).name == name.data)
-                        {
-                            this.error(Error::redefinition("variant", &name.data, name.span))
-                        }
-
-                        n_variants.push((
-                            this.insert(
-                                Variable {
-                                    name: name.data.clone(),
-                                    ty: Type::User(
-                                        GenericUserType::from_id(&this.scopes, id).into(),
-                                    ),
-                                    is_static: true,
-                                    mutable: false,
-                                    value: Some(CheckedExpr::new(
-                                        backing.clone(),
-                                        CheckedExprData::Integer(BigInt::from(i)),
-                                    )),
-                                },
-                                true,
-                            ),
-                            expr,
-                        ));
-                    }
-
-                    let (impls, impl_blocks) = this.declare_impl_blocks(autouse, impls);
-                    this.scopes.get_mut(id).impls = impls;
-                    DeclaredStmt::Enum {
-                        id,
-                        variants: n_variants,
-                        impl_blocks,
-                        functions: functions
-                            .into_iter()
-                            .map(|f| this.declare_fn(autouse, None, f, vec![]))
-                            .collect(),
-                    }
-                })
+                let scope = ut.body_scope;
+                let id = self.declare_type(ut, public);
+                self.scopes[scope].kind = ScopeKind::UserType(id);
+                DeclaredStmt::Trait { id, functions }
             }
             StmtData::Extension {
                 public,
@@ -648,33 +576,30 @@ impl TypeChecker {
                 impls,
                 functions,
             } => {
-                let id = self.insert(
-                    Extension {
-                        name,
-                        ty: Type::Unknown,
-                        impls: Vec::new(),
-                        type_params: Vec::new(),
-                        body_scope: ScopeId::ROOT,
-                    },
-                    public,
-                );
-                self.enter(ScopeKind::Extension(id), false, |this| {
-                    this.scopes.get_mut(id).body_scope = this.current;
-                    this.scopes.get_mut(id).type_params = this.declare_type_params(type_params);
-                    this.scopes.get_mut(id).ty = this.declare_type_hint(ty);
-
+                let (ext, impl_blocks, functions) = self.enter(ScopeKind::None, false, |this| {
                     let (impls, impl_blocks) = this.declare_impl_blocks(autouse, impls);
-                    this.scopes.get_mut(id).impls = impls;
+                    let ext = Extension {
+                        name,
+                        ty: this.declare_type_hint(ty),
+                        impls,
+                        type_params: this.declare_type_params(type_params),
+                        body_scope: this.current,
+                    };
+                    let functions = functions
+                        .into_iter()
+                        .map(|f| this.declare_fn(autouse, None, f, vec![]))
+                        .collect();
+                    (ext, impl_blocks, functions)
+                });
 
-                    DeclaredStmt::Extension {
-                        id,
-                        impl_blocks,
-                        functions: functions
-                            .into_iter()
-                            .map(|f| this.declare_fn(autouse, None, f, vec![]))
-                            .collect(),
-                    }
-                })
+                let scope = ext.body_scope;
+                let id = self.insert(ext, public);
+                self.scopes[scope].kind = ScopeKind::Extension(id);
+                DeclaredStmt::Extension {
+                    id,
+                    impl_blocks,
+                    functions,
+                }
             }
             StmtData::Fn(f) => DeclaredStmt::Fn(self.declare_fn(autouse, None, f, stmt.attrs)),
             StmtData::Static {
@@ -695,10 +620,8 @@ impl TypeChecker {
                 ),
                 value,
             },
-            StmtData::Use { path, public, all } => {
-                self.current()
-                    .use_stmts
-                    .push(UnresolvedUse { path, public, all });
+            StmtData::Use(stmt) => {
+                self.current().use_stmts.push(stmt);
                 DeclaredStmt::None
             }
             StmtData::Let { ty, value, patt } => DeclaredStmt::Let { ty, value, patt },
@@ -946,7 +869,7 @@ impl TypeChecker {
                         this.include_universal();
                     }
 
-                    for UnresolvedUse { public, path, all } in
+                    for UseStmt { public, path, all } in
                         std::mem::take(&mut this.current().use_stmts)
                     {
                         let span = path.span;
@@ -1012,29 +935,6 @@ impl TypeChecker {
             DeclaredStmt::Trait { id, functions } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
                     this.resolve_impls(id);
-                    for f in functions {
-                        this.check_fn(f);
-                    }
-                });
-            }
-            DeclaredStmt::Enum {
-                id,
-                variants,
-                functions,
-                impl_blocks,
-            } => {
-                self.enter_id(self.scopes.get(id).body_scope, |this| {
-                    this.resolve_impls(id);
-                    this.check_impl_blocks(id, impl_blocks);
-
-                    for (var, expr) in variants {
-                        // TODO: these should be constant expressions only
-                        if let Some(expr) = expr {
-                            this.scopes.get_mut(var).value =
-                                Some(this.check_expr(expr, Some(&Type::Usize)));
-                        }
-                    }
-
                     for f in functions {
                         this.check_fn(f);
                     }

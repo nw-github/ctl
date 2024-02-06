@@ -40,12 +40,6 @@ pub enum DeclaredStmt {
         id: UserTypeId,
         functions: Vec<DeclaredFn>,
     },
-    Enum {
-        id: UserTypeId,
-        impl_blocks: Vec<DeclaredImplBlock>,
-        variants: Vec<(VariableId, Option<Expr>)>,
-        functions: Vec<DeclaredFn>,
-    },
     Extension {
         id: ExtensionId,
         impl_blocks: Vec<DeclaredImplBlock>,

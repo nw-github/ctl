@@ -257,7 +257,7 @@ impl Type {
         Type::Uint((max as f64).log2().ceil() as u32)
     }
 
-    pub fn supports_binop(&self, scopes: &Scopes, op: BinaryOp) -> bool {
+    pub fn supports_binop(&self, _scopes: &Scopes, op: BinaryOp) -> bool {
         match op {
             BinaryOp::Add => matches!(
                 self,
@@ -314,7 +314,7 @@ impl Type {
                         | Type::CInt(_)
                         | Type::CUint(_)
                         | Type::Char
-                ) || matches!(self, Type::User(ut) if scopes.get(ut.id).data.is_enum())
+                )
             }
             BinaryOp::LogicalOr | BinaryOp::LogicalAnd => {
                 matches!(self, Type::Bool)

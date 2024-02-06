@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::{
     ast::{
         checked::{CheckedExpr, CheckedPattern, CheckedStmt},
-        parsed::{Expr, Linkage, Pattern, TypePath},
+        parsed::{Expr, Linkage, Pattern, UseStmt},
         Attribute,
     },
     lexer::Located,
@@ -76,13 +76,6 @@ id!(UserTypeId => UserType, types, name.data, user_type);
 id!(VariableId => Variable, vars, name, var);
 id!(ExtensionId => Extension, exts, name, ext);
 
-#[derive(Debug, Clone)]
-pub struct UnresolvedUse {
-    pub public: bool,
-    pub path: Located<TypePath>,
-    pub all: bool,
-}
-
 #[derive(Default, Debug, Clone, EnumAsInner)]
 pub enum ScopeKind {
     Block(Option<Type>, bool),
@@ -94,7 +87,7 @@ pub enum ScopeKind {
     Lambda(Option<Type>, bool),
     Function(FunctionId),
     UserType(UserTypeId),
-    Module(String, Vec<UnresolvedUse>),
+    Module(String, Vec<UseStmt>),
     Impl(UserTypeId),
     Extension(ExtensionId),
     #[default]
@@ -196,7 +189,6 @@ pub enum UserTypeData {
         init: FunctionId,
     },
     Union(Union),
-    Enum(Type),
     Template,
     Trait,
 }
@@ -343,7 +335,7 @@ pub struct Scope {
     pub vars: IndexSet<Vis<VariableId>>,
     pub exts: IndexSet<Vis<ExtensionId>>,
     pub children: IndexSet<Vis<ScopeId>>,
-    pub use_stmts: Vec<UnresolvedUse>,
+    pub use_stmts: Vec<UseStmt>,
 }
 
 pub struct Scopes {

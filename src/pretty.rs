@@ -1,4 +1,4 @@
-use crate::ast::parsed::{Expr, ExprData, Fn, ImplBlock, Linkage, Stmt, StmtData, Struct};
+use crate::ast::parsed::{Expr, ExprData, Fn, ImplBlock, Linkage, Stmt, StmtData, Struct, UseStmt};
 
 const INDENT: &str = "  ";
 
@@ -74,37 +74,6 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
                 print_fn(f, indent + 1);
             }
         }
-        StmtData::Enum {
-            name,
-            impls,
-            variants,
-            functions,
-            public,
-            base_ty,
-        } => {
-            if let Some(base_ty) = base_ty {
-                eprint!("{tabs}Enum({name}{base_ty:?})");
-            } else {
-                eprint!("{tabs}Enum({name})");
-            }
-            print_bool!(public);
-            eprintln!();
-
-            print_impls(indent, impls);
-
-            let plus_1 = INDENT.repeat(indent + 1);
-            eprintln!("{tabs}Variants:");
-            for (name, expr) in variants {
-                eprintln!("{plus_1}{name}");
-                if let Some(expr) = expr {
-                    print_expr(expr, indent + 2);
-                }
-            }
-
-            for f in functions {
-                print_fn(f, indent + 1);
-            }
-        }
         StmtData::Extension {
             public,
             name,
@@ -153,7 +122,7 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
 
             print_stmts(body, indent + 1);
         }
-        StmtData::Use { public, path, all } => {
+        StmtData::Use(UseStmt { public, path, all }) => {
             eprintln!("{tabs}Use[{path:?}]");
             print_bool!(public);
             print_bool!(all);

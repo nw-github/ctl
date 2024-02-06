@@ -3,9 +3,7 @@ use std::path::PathBuf;
 use crate::{
     ast::{
         parsed::{
-            Destructure, Expr, ExprData, Fn, FullPattern, ImplBlock, IntPattern, Linkage, Member,
-            Param, Pattern, RangePattern, Stmt, StmtData, Struct, TypeHint, TypePath,
-            TypePathComponent,
+            Destructure, Expr, ExprData, Fn, FullPattern, ImplBlock, IntPattern, Linkage, Member, Param, Pattern, RangePattern, Stmt, StmtData, Struct, TypeHint, TypePath, TypePathComponent, UseStmt
         },
         Attribute, UnaryOp,
     },
@@ -131,19 +129,6 @@ impl<'a, 'b> Parser<'a, 'b> {
                 attrs,
                 data: self.r#trait(public.is_some(), token.span, is_unsafe.is_some()),
             })
-        } else if let Some(token) = self.next_if_kind(Token::Enum) {
-            if let Some(token) = is_unsafe {
-                self.error_no_sync(Error::not_valid_here(&token));
-            }
-
-            if let Some(token) = is_import.or(is_export) {
-                self.error_no_sync(Error::not_valid_here(&token));
-            }
-
-            Ok(Stmt {
-                attrs,
-                data: self.enumeration(public.is_some(), token.span),
-            })
         } else if let Some(token) = self.next_if_kind(Token::Extension) {
             if let Some(token) = is_unsafe {
                 self.error_no_sync(Error::not_valid_here(&token));
@@ -216,7 +201,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
             let semi = self.expect_kind(Token::Semicolon);
             Ok(Stmt {
-                data: StmtData::Use {
+                data: StmtData::Use(UseStmt {
                     public: public.is_some(),
                     path: Located::new(
                         token.span.extended_to(semi.span),
@@ -229,7 +214,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         },
                     ),
                     all,
-                },
+                }),
                 attrs,
             })
         } else if self.next_if_kind(Token::Static).is_some() {
@@ -1459,56 +1444,6 @@ impl<'a, 'b> Parser<'a, 'b> {
             name,
             type_params,
             impls,
-            functions,
-        }
-    }
-
-    fn enumeration(&mut self, public: bool, span: Span) -> StmtData {
-        let name = self.expect_id_l("expected name");
-        let base_ty = self.next_if_kind(Token::Colon).map(|_| self.type_path());
-        self.expect_kind(Token::LCurly);
-
-        let mut functions = Vec::new();
-        let mut variants = Vec::new();
-        let mut impls = Vec::new();
-        self.next_until(Token::RCurly, span, |this| {
-            let config = FnConfig {
-                allow_method: true,
-                body: true,
-                linkage: Linkage::Internal,
-                is_public: this.next_if_kind(Token::Pub).is_some(),
-                is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
-            };
-            if config.is_public || config.is_unsafe {
-                if let Ok(func) = this.expect_fn(config) {
-                    functions.push(func.data);
-                }
-            } else if let Some(func) = this.try_function(config) {
-                functions.push(func.data);
-            } else if let Some(token) = this.next_if_kind(Token::Impl) {
-                impls.push(this.impl_block(token.span));
-            } else {
-                variants.push((
-                    this.expect_id_l("expected variant name"),
-                    if this.next_if_kind(Token::Assign).is_some() {
-                        Some(this.expression())
-                    } else {
-                        None
-                    },
-                ));
-
-                if !this.matches_kind(Token::RCurly) {
-                    this.expect_kind(Token::Comma);
-                }
-            }
-        });
-
-        StmtData::Enum {
-            public,
-            base_ty,
-            name,
-            impls,
-            variants,
             functions,
         }
     }

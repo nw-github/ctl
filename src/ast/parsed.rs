@@ -10,6 +10,13 @@ pub enum Linkage {
 }
 
 #[derive(Debug, Clone)]
+pub struct UseStmt {
+    pub public: bool,
+    pub path: Located<TypePath>,
+    pub all: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct Stmt {
     pub data: StmtData,
     pub attrs: Vec<Attribute>,
@@ -18,11 +25,7 @@ pub struct Stmt {
 #[derive(Debug, Clone)]
 pub enum StmtData {
     Expr(Expr),
-    Use {
-        public: bool,
-        path: Located<TypePath>,
-        all: bool,
-    },
+    Use(UseStmt),
     Let {
         patt: Located<Pattern>,
         ty: Option<TypeHint>,
@@ -41,14 +44,6 @@ pub enum StmtData {
         is_unsafe: bool,
         type_params: Vec<(String, Vec<Located<TypePath>>)>,
         impls: Vec<Located<TypePath>>,
-        functions: Vec<Fn>,
-    },
-    Enum {
-        public: bool,
-        base_ty: Option<Located<TypePath>>,
-        name: Located<String>,
-        impls: Vec<ImplBlock>,
-        variants: Vec<(Located<String>, Option<Expr>)>,
         functions: Vec<Fn>,
     },
     Extension {
