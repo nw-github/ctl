@@ -21,7 +21,7 @@ union Bucket<K, V> {
     }
 }
 
-#{lang(map)}
+#(lang(map))
 pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     buckets: [Bucket<K, V>],
     len:     usize,

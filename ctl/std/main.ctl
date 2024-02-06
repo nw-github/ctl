@@ -27,14 +27,14 @@ fn convert_argv(argc: c_int, argv: **c_char): [str..] {
     result.as_span()
 }
 
-#{panic_handler}
+#(panic_handler)
 fn panic_handler(s: str): never {
     eprint("fatal error: ");
     eprintln(s);
     abort();
 }
 
-#{autouse}
+#(autouse)
 mod prelude {
     pub use super::vec::Vec;
     pub use super::map::Map;

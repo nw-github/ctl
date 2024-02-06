@@ -29,7 +29,7 @@ pub enum Token<'a> {
     Colon,
     Semicolon,
     Hash,
-    HashLCurly,
+    HashLParen,
     At,
 
     Plus,
@@ -149,7 +149,7 @@ impl std::fmt::Display for Token<'_> {
             Token::Colon => write!(f, ":"),
             Token::Semicolon => write!(f, ";"),
             Token::Hash => write!(f, "#"),
-            Token::HashLCurly => write!(f, "#{{"),
+            Token::HashLParen => write!(f, "#("),
             Token::Assign => write!(f, "="),
             Token::Fn => write!(f, "fn"),
             Token::Import => write!(f, "import"),
@@ -670,8 +670,8 @@ impl<'a> Lexer<'a> {
             ';' => Token::Semicolon,
             '@' => Token::At,
             '#' => {
-                if self.advance_if('{') {
-                    Token::HashLCurly
+                if self.advance_if('(') {
+                    Token::HashLParen
                 } else {
                     Token::Hash
                 }

@@ -69,8 +69,8 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn try_item(&mut self) -> Result<Stmt, (Option<Located<Token<'a>>>, Vec<Attribute>)> {
         let mut attrs = vec![];
-        while let Some(token) = self.next_if_kind(Token::HashLCurly) {
-            let attr = self.csv_one(Token::RCurly, token.span, Self::attribute);
+        while let Some(token) = self.next_if_kind(Token::HashLParen) {
+            let attr = self.csv_one(Token::RParen, token.span, Self::attribute);
             attrs.extend(attr.data);
         }
 

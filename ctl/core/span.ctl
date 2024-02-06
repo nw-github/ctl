@@ -5,7 +5,7 @@ use core::range::Bound;
 use core::iter::Iterator;
 use core::panic;
 
-#{lang(span)}
+#(lang(span))
 pub struct Span<T> {
     ptr: *T,
     len: usize,
@@ -67,7 +67,7 @@ pub struct Span<T> {
     }
 }
 
-#{lang(span_mut)}
+#(lang(span_mut))
 pub struct SpanMut<T> {
     ptr: *mut T,
     len: usize,

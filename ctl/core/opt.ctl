@@ -1,6 +1,6 @@
 use core::panic;
 
-#{lang(option)}
+#(lang(option))
 pub union Option<T> {
     Some(T),
     None,

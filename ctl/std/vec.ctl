@@ -4,7 +4,7 @@ use core::mem;
 use core::iter::Iterator;
 use core::span::*;
 
-#{lang(vec)}
+#(lang(vec))
 pub struct Vec<T> {
     ptr: RawMut<T>,
     len: usize,

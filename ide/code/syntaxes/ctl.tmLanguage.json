@@ -71,7 +71,7 @@
     {
       "comment": "attributes",
       "name": "meta.attribute.ctl",
-      "begin": "(#)(\\!?)(\\[)",
+      "begin": "(#)(\\!?)(\\()",
       "beginCaptures": {
         "1": {
           "name": "punctuation.definition.attribute.ctl"
@@ -83,7 +83,7 @@
           "name": "punctuation.brackets.attribute.ctl"
         }
       },
-      "end": "\\]",
+      "end": "\\)",
       "endCaptures": {
         "0": {
           "name": "punctuation.brackets.attribute.ctl"

@@ -1,7 +1,7 @@
 use core::hash::Hash;
 use core::ops::Eq;
 
-#{lang(set)}
+#(lang(set))
 pub struct Set<T: Hash + Eq<T>> {
     inner: [T: void],
 

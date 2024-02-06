@@ -2,10 +2,10 @@ use core::ptr::RawMut;
 use core::mem::size_of;
 
 mod builtin {
-    #{c_opaque, c_name(CTL_MALLOC)}
+    #(c_opaque, c_name(CTL_MALLOC))
     pub import fn malloc(size: usize): ?*mut c_void;
 
-    #{c_opaque, c_name(CTL_REALLOC)}
+    #(c_opaque, c_name(CTL_REALLOC))
     pub import fn realloc(addr: *mut c_void, size: usize): ?*mut c_void;
 }
 
