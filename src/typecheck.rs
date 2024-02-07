@@ -1987,27 +1987,25 @@ impl TypeChecker {
             ExprData::Match { expr, body } => {
                 let scrutinee = self.check_expr(*expr, None);
                 let mut target = target.cloned();
-                let mut result = Vec::new();
-                for (pattern, expr) in body.into_iter() {
-                    let span = expr.span;
-                    let (pattern, mut expr) = self.enter(ScopeKind::None, false, |this| {
-                        (
-                            this.check_full_pattern(&scrutinee.ty, pattern),
-                            this.check_expr(expr, target.as_ref()),
-                        )
-                    });
+                let result: Vec<_> = body
+                    .into_iter()
+                    .map(|(patt, expr)| {
+                        let span = expr.span;
+                        let (patt, expr) = self.enter(ScopeKind::None, false, |this| {
+                            (
+                                this.check_full_pattern(&scrutinee.ty, patt),
+                                this.check_expr(expr, target.as_ref()),
+                            )
+                        });
 
-                    if let Some(target) = &target {
-                        expr = self.type_check_checked(expr, target, span);
-                    } else {
-                        target = Some(expr.ty.clone());
-                    }
-
-                    result.push((
-                        pattern,
-                        CheckedExpr::new(Type::Never, CheckedExprData::Yield(expr.into())),
-                    ));
-                }
+                        if let Some(target) = &target {
+                            (patt, self.type_check_checked(expr, target, span))
+                        } else {
+                            target = Some(expr.ty.clone());
+                            (patt, expr)
+                        }
+                    })
+                    .collect();
 
                 self.check_match_coverage(&scrutinee.ty, result.iter().map(|it| &it.0), span);
                 CheckedExpr::new(

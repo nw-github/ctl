@@ -1169,7 +1169,7 @@ impl<'a> Codegen<'a> {
                     self.emit_fn_name(&wc_state);
                     self.buffer.emit(format!("({len});"));
                     self.buffer.emit(format!(
-                        "CTL_MEMCPY((void *){tmp}.ptr.addr,(const void *){arr},{len}*"
+                        "CTL_MEMCPY((void*){tmp}.ptr.addr,(const void*){arr},{len}*"
                     ));
                     self.gen_size_of_type(inner);
                     self.buffer.emit(format!(");{tmp}.len={len};"));
@@ -1192,7 +1192,7 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit(format!(" {tmp}="));
                     self.emit_fn_name(&wc_state);
                     self.buffer
-                        .emit(format!("({len}); for(usize i=0;i<{len};i++){{(("));
+                        .emit(format!("({len});for(usize i=0;i<{len};i++){{(("));
                     self.emit_type(ut.first_type_arg().unwrap());
                     self.buffer.emit(format!("*){tmp}.ptr.addr)[i]="));
                     self.gen_expr(*init, state);
@@ -1376,7 +1376,12 @@ impl<'a> Codegen<'a> {
                 self.gen_expr(*value, state);
             }
             CheckedExprData::Block(block) => {
-                enter_block!(self, state, &expr.ty, self.emit_block(block.body, state));
+                enter_block!(self, state, &expr.ty, {
+                    self.emit_block(block.body, state);
+                    if matches!(self.scopes[block.scope].kind, ScopeKind::Block(_, yields) if !yields) {
+                        self.buffer.emit(format!("{}={VOID_INSTANCE};", self.cur_block));
+                    }
+                });
             }
             CheckedExprData::If {
                 cond,
@@ -1592,6 +1597,7 @@ impl<'a> Codegen<'a> {
                         self.gen_pattern_if_stmt(state, &patt.data, &tmp, &ty);
 
                         hoist_point!(self, {
+                            self.buffer.emit(format!("{}=", self.cur_block));
                             self.gen_expr(expr, state);
                             self.buffer.emit(";}");
                         });
