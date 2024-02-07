@@ -89,8 +89,11 @@ typedef struct {
 
 const char *oldlocale;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wundefined-internal"
 static void $ctl_static_init(void);
 static void $ctl_static_deinit(void);
+#pragma GCC diagnostic pop
 
 CTL_DEINIT($ctl_runtime_deinit) {
     $ctl_static_deinit();

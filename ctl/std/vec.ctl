@@ -201,7 +201,7 @@ pub struct Vec<T> {
     }
 
     fn grow(mut this) {
-        this._reserve(if this.cap > 0 { this.cap } else { 1 });
+        this._reserve(if this.cap > 0 { this.cap * 2 } else { 1 });
     }
 
     fn can_insert(this, count: usize): bool {
@@ -213,7 +213,7 @@ pub struct Vec<T> {
             return;
         }
 
-        let ptr = if this.len == 0 {
+        let ptr = if this.cap == 0 {
             std::alloc::alloc::<T>(cap)
         } else {
             std::alloc::realloc(unsafe this.ptr.as_mut_ptr(), cap)
