@@ -1139,12 +1139,16 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit("}}");
             }
             CheckedExprData::Vec(exprs) => {
+                let ut = (**expr.ty.as_user().unwrap()).clone();
+                if exprs.is_empty() {
+                    return self.gen_new(&ut);
+                }
+
                 tmpbuf_emit!(self, state, |tmp| {
                     let arr = state.tmpvar();
                     let len = exprs.len();
-                    let ut = (**expr.ty.as_user().unwrap()).clone();
-
-                    self.emit_type(ut.first_type_arg().unwrap());
+                    let inner = ut.first_type_arg().unwrap();
+                    self.emit_type(inner);
                     self.buffer.emit(format!(" {arr}[{len}]={{"));
                     for expr in exprs {
                         self.gen_expr(expr, state);
@@ -1164,8 +1168,11 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit(format!(" {tmp}="));
                     self.emit_fn_name(&wc_state);
                     self.buffer.emit(format!("({len});"));
-                    self.buffer.emit(format!("__builtin_memcpy((void *){tmp}.ptr.addr,(const void *){arr},{len}*sizeof {arr}[0]);"));
-                    self.buffer.emit(format!("{tmp}.len={len};"));
+                    self.buffer.emit(format!(
+                        "CTL_MEMCPY((void *){tmp}.ptr.addr,(const void *){arr},{len}*"
+                    ));
+                    self.gen_size_of_type(inner);
+                    self.buffer.emit(format!(");{tmp}.len={len};"));
                     self.funcs.insert(wc_state);
                 });
             }
@@ -1195,8 +1202,12 @@ impl<'a> Codegen<'a> {
                 });
             }
             CheckedExprData::Set(exprs) => {
+                let ut = (**expr.ty.as_user().unwrap()).clone();
+                if exprs.is_empty() {
+                    return self.gen_new(&ut);
+                }
+
                 tmpbuf_emit!(self, state, |tmp| {
-                    let ut = (**expr.ty.as_user().unwrap()).clone();
                     let body = self.scopes.get(ut.id).body_scope;
                     let wc_state = State::new(GenericFunc::new(
                         *self.scopes.find_in("with_capacity", body).unwrap(),
@@ -1226,8 +1237,12 @@ impl<'a> Codegen<'a> {
                 });
             }
             CheckedExprData::Map(exprs) => {
+                let ut = (**expr.ty.as_user().unwrap()).clone();
+                if exprs.is_empty() {
+                    return self.gen_new(&ut);
+                }
+
                 tmpbuf_emit!(self, state, |tmp| {
-                    let ut = (**expr.ty.as_user().unwrap()).clone();
                     let body = self.scopes.get(ut.id).body_scope;
                     let wc_state = State::new(GenericFunc::new(
                         *self.scopes.find_in("with_capacity", body).unwrap(),
@@ -1628,6 +1643,32 @@ impl<'a> Codegen<'a> {
         self.buffer.emit(";");
     }
 
+    fn gen_size_of_type(&mut self, ty: &Type) {
+        // MSVC doesn't let you get zero size things, so emit 0 manually...
+        if matches!(ty, Type::Void | Type::CVoid | Type::Never)
+            || matches!(ty, Type::Array(v) if v.1 == 0)
+        {
+            self.buffer.emit("0");
+        } else {
+            self.buffer.emit("(usize)sizeof");
+            self.emit_cast(ty);
+        }
+    }
+
+    fn gen_new(&mut self, ut: &GenericUserType) {
+        let new_state = State::new(GenericFunc::new(
+            *self
+                .scopes
+                .find_in("new", self.scopes.get(ut.id).body_scope)
+                .unwrap(),
+            ut.ty_args.clone(),
+        ));
+
+        self.emit_fn_name(&new_state);
+        self.buffer.emit("()");
+        self.funcs.insert(new_state);
+    }
+
     fn gen_intrinsic(
         &mut self,
         name: &str,
@@ -1637,8 +1678,7 @@ impl<'a> Codegen<'a> {
     ) {
         match name {
             "size_of" => {
-                self.buffer.emit("(usize)sizeof");
-                self.emit_cast(func.first_type_arg().unwrap());
+                self.gen_size_of_type(func.first_type_arg().unwrap());
             }
             "panic" => {
                 let panic = State::new(GenericFunc::from_id(
@@ -1736,7 +1776,7 @@ impl<'a> Codegen<'a> {
                 conditions.next(|buffer| {
                     usebuf!(self, buffer, {
                         self.buffer.emit(format!(
-                            "({0}.span.len=={1}&&__builtin_memcmp({0}.span.ptr,\"",
+                            "({0}.span.len=={1}&&CTL_MEMCMP({0}.span.ptr,\"",
                             Self::deref(src, ty),
                             value.len()
                         ));
@@ -1984,17 +2024,21 @@ impl<'a> Codegen<'a> {
         let mut ret = f.ret.clone();
         state.fill_generics(&mut ret);
 
-        if f.linkage == Linkage::Internal {
+        let needs_wrapper = Self::needs_fn_wrapper(f);
+        if f.linkage == Linkage::Internal || (needs_wrapper && !real) {
             self.buffer.emit("static ");
+            if needs_wrapper {
+                self.buffer.emit("CTL_FORCEINLINE ");
+            }
         } else {
             self.buffer.emit("extern ");
         }
 
-        if ret.is_never() {
-            self.buffer.emit("_Noreturn ");
+        if ret.is_never() && (!needs_wrapper || real) {
+            self.buffer.emit("CTL_NORETURN ");
         }
 
-        if real && Self::needs_fn_wrapper(f) {
+        if real && needs_wrapper {
             self.buffer.emit("void ");
         } else {
             self.emit_type(&ret);
@@ -2009,7 +2053,7 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit(",");
             }
 
-            if !is_prototype && Self::needs_fn_wrapper(f) {
+            if !is_prototype && needs_wrapper {
                 self.emit_type(&ty);
                 self.buffer.emit(format!(" $param{i}"));
             } else if f.linkage == Linkage::Import || is_prototype {
