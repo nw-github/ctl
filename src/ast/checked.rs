@@ -229,9 +229,10 @@ impl CheckedExpr {
 
     pub fn coerce_to(mut self, scopes: &Scopes, target: &Type) -> Result<CheckedExpr, CheckedExpr> {
         match (&self.ty, target) {
-            (Type::Never, rhs) => {
-                Ok(CheckedExpr::new(rhs.clone(), CheckedExprData::NeverCoerce(self.into())))
-            }
+            (Type::Never, rhs) => Ok(CheckedExpr::new(
+                rhs.clone(),
+                CheckedExprData::NeverCoerce(self.into()),
+            )),
             (Type::Unknown, _) | (_, Type::Unknown) => {
                 self.ty = target.clone();
                 Ok(self)
@@ -256,7 +257,7 @@ impl CheckedExpr {
                     Err(self)
                 }
             }
-            _ => Ok(self)
+            _ => Ok(self),
         }
     }
 

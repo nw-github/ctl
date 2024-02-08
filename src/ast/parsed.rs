@@ -1,4 +1,7 @@
-use crate::{lexer::{Located, Span}, THIS_TYPE};
+use crate::{
+    lexer::{Located, Span},
+    THIS_TYPE,
+};
 
 use super::{Attribute, BinaryOp, UnaryOp};
 

@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use crate::{
     ast::{
         parsed::{
-            Destructure, Expr, ExprData, Fn, FullPattern, ImplBlock, IntPattern, Linkage, Member, Param, Pattern, RangePattern, Stmt, StmtData, Struct, TypeHint, TypePath, TypePathComponent, UseStmt
+            Destructure, Expr, ExprData, Fn, FullPattern, ImplBlock, IntPattern, Linkage, Member,
+            Param, Pattern, RangePattern, Stmt, StmtData, Struct, TypeHint, TypePath,
+            TypePathComponent, UseStmt,
         },
         Attribute, UnaryOp,
     },
@@ -1245,9 +1247,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.next();
                 TypeHint::Void
             }
-            Token::ThisType => {
-                TypeHint::This(self.next().span)
-            }
+            Token::ThisType => TypeHint::This(self.next().span),
             Token::Fn => {
                 self.next();
                 self.expect_kind(Token::LParen);
