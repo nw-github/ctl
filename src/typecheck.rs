@@ -2019,8 +2019,8 @@ impl TypeChecker {
                 )
             }
             ExprData::As { expr, ty, throwing } => {
-                let expr = self.check_expr(*expr, None);
                 let ty = self.resolve_typehint(&ty);
+                let expr = self.check_expr(*expr, Some(&ty));
                 match expr.coerce_to(&self.scopes, &ty) {
                     Ok(expr) => expr,
                     Err(expr) => {
