@@ -242,7 +242,7 @@ impl TypeChecker {
         self.scopes.walk(self.current).any(|(id, _)| id == target)
     }
 
-    fn extension_applies_to(&self, ext: &Extension, rhs: &Type) -> bool {
+    fn extension_applies_to(&self, id: ExtensionId, ext: &Extension, rhs: &Type) -> bool {
         match &ext.ty {
             Type::User(ut) if self.scopes.get(ut.id).data.is_template() => {
                 for bound in self
@@ -252,7 +252,7 @@ impl TypeChecker {
                     .iter()
                     .flat_map(|bound| bound.as_user())
                 {
-                    if !self.implements_trait(rhs, bound) {
+                    if !self.implements_trait(rhs, bound, Some(id)) {
                         return false;
                     }
                 }
@@ -265,16 +265,18 @@ impl TypeChecker {
     fn extensions_in_scope_for<'a, 'b>(
         &'a self,
         ty: &'b Type,
+        excl: Option<ExtensionId>,
     ) -> impl Iterator<Item = (ExtensionId, &Scoped<Extension>)> + 'b
     where
         'a: 'b,
     {
-        self.scopes.walk(self.current).flat_map(|(_, scope)| {
+        self.scopes.walk(self.current).flat_map(move |(_, scope)| {
             scope
                 .exts
                 .iter()
                 .map(|ext| (ext.id, self.scopes.get(ext.id)))
-                .filter(|(_, ext)| self.extension_applies_to(ext, ty))
+                .filter(move |(id, _)| Some(*id) != excl)
+                .filter(|(id, ext)| self.extension_applies_to(*id, ext, ty))
         })
     }
 }
@@ -1108,7 +1110,7 @@ impl TypeChecker {
         //  - default implementations
         let tr = self.scopes.get(tr_ut.id);
         for dep in tr.impls.iter().flat_map(|tr| tr.as_user()) {
-            if !self.implements_trait(this, dep) {
+            if !self.implements_trait(this, dep, None) {
                 self.diag.error(Error::new(
                     format!(
                         "trait '{}' requires implementation of trait '{}'",
@@ -4175,7 +4177,7 @@ impl TypeChecker {
         }
 
         for id in self
-            .extensions_in_scope_for(ty)
+            .extensions_in_scope_for(ty, None)
             .map(|(id, _)| id)
             .collect::<Vec<_>>()
         {
@@ -4194,7 +4196,12 @@ impl TypeChecker {
         false
     }
 
-    fn implements_trait(&self, ty: &Type, bound: &GenericUserType) -> bool {
+    fn implements_trait(
+        &self,
+        ty: &Type,
+        bound: &GenericUserType,
+        excl: Option<ExtensionId>,
+    ) -> bool {
         if ty.is_unknown() {
             return true;
         }
@@ -4216,7 +4223,7 @@ impl TypeChecker {
             return true;
         }
 
-        self.extensions_in_scope_for(ty)
+        self.extensions_in_scope_for(ty, excl)
             .any(|(_, ext)| search(ty.as_user().map(|ty| &**ty), &ext.impls))
     }
 
@@ -4251,7 +4258,7 @@ impl TypeChecker {
             Some(ut)
         } else {
             for ext in self
-                .extensions_in_scope_for(ty)
+                .extensions_in_scope_for(ty, None)
                 .map(|(id, _)| id)
                 .collect::<Vec<_>>()
             {
@@ -4309,7 +4316,7 @@ impl TypeChecker {
             }
         }
 
-        self.extensions_in_scope_for(ty)
+        self.extensions_in_scope_for(ty, None)
             .find_map(|(id, ext)| search(ext.scope, ext.body_scope, Some(id)))
     }
 
