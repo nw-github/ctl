@@ -13,6 +13,7 @@ use crate::{
     },
     error::{Diagnostics, Error},
     lexer::Span,
+    nearest_pow_of_two,
     sym::{
         CheckedMember, Function, FunctionId, ParamPattern, ScopeId, ScopeKind, Scopes,
         UserTypeData, UserTypeId, VariableId,
@@ -100,7 +101,7 @@ impl<'a> TypeGen<'a> {
                 buffer.emit(format!(
                     "typedef {}int{}_t {}{bits};",
                     if signed { "" } else { "u" },
-                    2usize.pow((bits as f64).log2().ceil() as u32).max(8),
+                    nearest_pow_of_two(bits),
                     if signed { 's' } else { 'u' },
                 ));
             } else {
@@ -155,6 +156,10 @@ impl<'a> TypeGen<'a> {
             definitions.emit("{");
 
             let members = self.scopes.get(ut.id).members().unwrap();
+            if members.is_empty() && self.scopes.get(ut.id).data.is_struct() {
+                definitions.emit("CTL_DUMMY_MEMBER;");
+            }
+
             if let Some(union) = union.filter(|_| !unsafe_union) {
                 definitions.emit_type(self.scopes, &union.tag_type(), None);
                 definitions.emit(format!(" {UNION_TAG_NAME};"));
@@ -338,6 +343,10 @@ impl<'a> TypeGen<'a> {
 
     fn emit_member(&mut self, ut: &GenericUserType, member: &CheckedMember, buffer: &mut Buffer) {
         let ty = member.ty.with_templates(&ut.ty_args);
+        if ty.size_of(self.scopes) == 0 {
+            buffer.emit("CTL_ZST ");
+        }
+
         buffer.emit_type(self.scopes, &ty, None);
         buffer.emit(format!(" {};", member.name));
     }
@@ -849,7 +858,7 @@ impl<'a> Codegen<'a> {
 
                 self.buffer.emit(");");
                 if func.ret.is_never() {
-                    self.buffer.emit("UNREACHABLE();}");
+                    self.buffer.emit("CTL_UNREACHABLE();}");
                 } else {
                     self.buffer.emit(format!("return {VOID_INSTANCE};}}"));
                 }
@@ -1343,11 +1352,10 @@ impl<'a> Codegen<'a> {
                 } else {
                     self.emit_cast(&expr.ty);
                     self.buffer.emit("{");
-                    if let Some((name, union)) = variant.zip(
-                        expr.ty
-                            .as_user()
-                            .and_then(|ut| self.scopes.get(ut.id).data.as_union()),
-                    ) {
+                    let ut = expr.ty.as_user();
+                    if let Some((name, union)) =
+                        variant.zip(ut.and_then(|ut| self.scopes.get(ut.id).data.as_union()))
+                    {
                         if !union.is_unsafe
                             && union.variants.iter().any(|m| m.name == name && !m.shared)
                         {
@@ -1356,6 +1364,10 @@ impl<'a> Codegen<'a> {
                                 union.variant_tag(&name).unwrap()
                             ));
                         }
+                    } else if members.is_empty()
+                        && ut.is_some_and(|ut| self.scopes.get(ut.id).data.is_struct())
+                    {
+                        self.buffer.emit("CTL_DUMMY_INIT");
                     }
 
                     for (name, mut value) in members {
@@ -1387,8 +1399,10 @@ impl<'a> Codegen<'a> {
             CheckedExprData::Block(block) => {
                 enter_block!(self, state, &expr.ty, {
                     self.emit_block(block.body, state);
-                    if matches!(self.scopes[block.scope].kind, ScopeKind::Block(_, yields) if !yields) {
-                        self.buffer.emit(format!("{}={VOID_INSTANCE};", self.cur_block));
+                    if matches!(self.scopes[block.scope].kind, ScopeKind::Block(_, yields) if !yields)
+                    {
+                        self.buffer
+                            .emit(format!("{}={VOID_INSTANCE};", self.cur_block));
                     }
                 });
             }
@@ -1612,7 +1626,7 @@ impl<'a> Codegen<'a> {
                         });
                     }
 
-                    self.buffer.emit("else{UNREACHABLE();}");
+                    self.buffer.emit("else{CTL_UNREACHABLE();}");
                 })
             }
             CheckedExprData::As(inner, _) => {
@@ -1659,10 +1673,8 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_size_of_type(&mut self, ty: &Type) {
-        // MSVC doesn't let you get zero size things, so emit 0 manually...
-        if matches!(ty, Type::Void | Type::CVoid | Type::Never)
-            || matches!(ty, Type::Array(v) if v.1 == 0)
-        {
+        // TODO: just emit ty.size_of when the padding stuff is fixed
+        if ty.size_of(self.scopes) == 0 {
             self.buffer.emit("0");
         } else {
             self.buffer.emit("(usize)sizeof");

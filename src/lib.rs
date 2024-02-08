@@ -135,3 +135,7 @@ pub(crate) fn derive_module_name(path: &Path) -> String {
         })
         .collect()
 }
+
+fn nearest_pow_of_two(bits: u32) -> usize {
+    2usize.pow((bits as f64).log2().ceil() as u32).max(8)
+}

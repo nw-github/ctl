@@ -1,5 +1,6 @@
 use crate::{
     ast::{parsed::TypeHint, BinaryOp},
+    nearest_pow_of_two,
     sym::{FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, UserTypeId},
 };
 use derive_more::{Constructor, Deref, DerefMut};
@@ -572,5 +573,60 @@ impl Type {
         let mut ty = self.clone();
         ty.fill_templates(args);
         ty
+    }
+
+    pub fn size_of(&self, scopes: &Scopes) -> usize {
+        use std::ffi::*;
+
+        match self {
+            Type::Int(bits) | Type::Uint(bits) => nearest_pow_of_two(*bits),
+            Type::CInt(inner) | Type::CUint(inner) => match inner {
+                CInt::Char => std::mem::size_of::<c_char>(),
+                CInt::Short => std::mem::size_of::<c_short>(),
+                CInt::Int => std::mem::size_of::<c_int>(),
+                CInt::Long => std::mem::size_of::<c_long>(),
+                CInt::LongLong => std::mem::size_of::<c_longlong>(),
+            },
+            Type::Ptr(_) | Type::MutPtr(_) => std::mem::size_of::<*const ()>(),
+            Type::Isize => std::mem::size_of::<isize>(),
+            Type::Usize => std::mem::size_of::<usize>(),
+            Type::F32 => 4,
+            Type::F64 => 8,
+            Type::Bool => 1,
+            Type::Char => 4,
+            Type::FnPtr(_) => std::mem::size_of::<fn()>(),
+            Type::User(ut) => {
+                // TODO: padding and alignment
+                let item = scopes.get(ut.id);
+                match &item.data {
+                    crate::sym::UserTypeData::Struct { members, .. } => members
+                        .iter()
+                        .map(|m| m.ty.with_templates(&ut.ty_args).size_of(scopes))
+                        .sum(),
+                    crate::sym::UserTypeData::Union(union) => {
+                        let shared: usize = union
+                            .variants
+                            .iter()
+                            .filter(|v| v.shared)
+                            .map(|m| m.ty.with_templates(&ut.ty_args).size_of(scopes))
+                            .sum();
+                        let unshared = union
+                            .variants
+                            .iter()
+                            .filter(|v| !v.shared)
+                            .map(|m| m.ty.with_templates(&ut.ty_args).size_of(scopes))
+                            .max()
+                            .unwrap_or(0);
+                        shared + unshared
+                    }
+                    _ => 0,
+                }
+            }
+            Type::Array(data) => data.0.size_of(scopes) * data.1,
+            Type::Void | Type::CVoid | Type::Never => 0,
+            Type::Unknown => todo!(),
+            Type::Unresolved(_) => todo!(),
+            Type::TraitSelf => todo!(),
+        }
     }
 }
