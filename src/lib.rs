@@ -114,6 +114,7 @@ pub struct CodegenFlags {
     pub leak: bool,
     pub no_bit_int: bool,
     pub lib: bool,
+    pub minify: bool,
 }
 
 pub(crate) fn derive_module_name(path: &Path) -> String {

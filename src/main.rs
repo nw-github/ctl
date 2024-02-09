@@ -76,6 +76,10 @@ enum SubCommand {
         /// The output path for the compilation result. If omitted, the output will be written to
         /// stdout.
         output: Option<PathBuf>,
+
+        /// Minify the resulting C code
+        #[clap(action, short, long)]
+        minify: bool,
     },
     #[clap(alias = "b")]
     Build {
@@ -197,6 +201,7 @@ fn main() -> anyhow::Result<()> {
             leak: args.leak,
             no_bit_int: args.no_bit_int,
             lib: args.lib,
+            minify: !matches!(args.command, SubCommand::Print { minify: false, .. }),
         });
 
     match result {

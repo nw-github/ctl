@@ -90,14 +90,14 @@ impl<'a> TypeGen<'a> {
         }
     }
 
-    fn finish(mut self, buffer: &mut Buffer, no_bit_int: bool) {
+    fn finish(mut self, buffer: &mut Buffer, flags: &CodegenFlags) {
         let integers = std::mem::take(&mut self.integers);
         let structs = std::mem::take(&mut self.structs);
         let fnptrs = std::mem::take(&mut self.fnptrs);
         let mut arrays = std::mem::take(&mut self.arrays);
         let mut definitions = Buffer::default();
         for (bits, signed) in integers {
-            if no_bit_int {
+            if flags.no_bit_int {
                 buffer.emit(format!(
                     "typedef {}int{}_t {}{bits};",
                     if signed { "" } else { "u" },
@@ -114,16 +114,16 @@ impl<'a> TypeGen<'a> {
         }
         for f in fnptrs {
             definitions.emit("typedef ");
-            definitions.emit_type(self.scopes, &f.ret, None);
+            definitions.emit_type(self.scopes, &f.ret, None, flags.minify);
             definitions.emit("(*");
-            definitions.emit_fnptr_name(self.scopes, &f);
+            definitions.emit_fnptr_name(self.scopes, &f, flags.minify);
             definitions.emit(")(");
             for (i, param) in f.params.iter().enumerate() {
                 if i > 0 {
                     definitions.emit(",");
                 }
 
-                definitions.emit_type(self.scopes, param, None);
+                definitions.emit_type(self.scopes, param, None, flags.minify);
             }
             definitions.emit(");");
         }
@@ -137,9 +137,9 @@ impl<'a> TypeGen<'a> {
             } else {
                 "typedef struct "
             });
-            buffer.emit_type_name(self.scopes, ut);
+            buffer.emit_type_name(self.scopes, ut, flags.minify);
             buffer.emit(" ");
-            buffer.emit_type_name(self.scopes, ut);
+            buffer.emit_type_name(self.scopes, ut, flags.minify);
             buffer.emit(";");
             if self
                 .scopes
@@ -152,7 +152,7 @@ impl<'a> TypeGen<'a> {
             }
 
             definitions.emit(if unsafe_union { "union " } else { "struct " });
-            definitions.emit_type_name(self.scopes, ut);
+            definitions.emit_type_name(self.scopes, ut, flags.minify);
             definitions.emit("{");
 
             let members = self.scopes.get(ut.id).members().unwrap();
@@ -161,21 +161,21 @@ impl<'a> TypeGen<'a> {
             }
 
             if let Some(union) = union.filter(|_| !unsafe_union) {
-                definitions.emit_type(self.scopes, &union.tag_type(), None);
+                definitions.emit_type(self.scopes, &union.tag_type(), None, flags.minify);
                 definitions.emit(format!(" {UNION_TAG_NAME};"));
 
                 for member in members.iter().filter(|m| m.shared) {
-                    self.emit_member(ut, member, &mut definitions);
+                    self.emit_member(ut, member, &mut definitions, flags.minify);
                 }
 
                 definitions.emit(" union{");
                 for member in members.iter().filter(|m| !m.shared) {
-                    self.emit_member(ut, member, &mut definitions);
+                    self.emit_member(ut, member, &mut definitions, flags.minify);
                 }
                 definitions.emit("};");
             } else {
                 for member in members {
-                    self.emit_member(ut, member, &mut definitions);
+                    self.emit_member(ut, member, &mut definitions, flags.minify);
                 }
             }
 
@@ -184,7 +184,7 @@ impl<'a> TypeGen<'a> {
             let ty = Type::User(ut.clone().into());
             if let Some(sizes) = arrays.remove(&ty) {
                 for size in sizes {
-                    self.emit_array(buffer, Some(&mut definitions), &ty, size);
+                    self.emit_array(buffer, Some(&mut definitions), &ty, size, flags.minify);
                 }
                 emitted_arrays.insert(ty);
             }
@@ -195,7 +195,7 @@ impl<'a> TypeGen<'a> {
             .filter(|(ty, _)| !emitted_arrays.contains(ty))
         {
             for size in sizes {
-                self.emit_array(buffer, None, &ty, size);
+                self.emit_array(buffer, None, &ty, size, flags.minify);
             }
         }
 
@@ -341,13 +341,19 @@ impl<'a> TypeGen<'a> {
         result
     }
 
-    fn emit_member(&mut self, ut: &GenericUserType, member: &CheckedMember, buffer: &mut Buffer) {
+    fn emit_member(
+        &mut self,
+        ut: &GenericUserType,
+        member: &CheckedMember,
+        buffer: &mut Buffer,
+        min: bool,
+    ) {
         let ty = member.ty.with_templates(&ut.ty_args);
         if ty.size_of(self.scopes) == 0 {
             buffer.emit("CTL_ZST ");
         }
 
-        buffer.emit_type(self.scopes, &ty, None);
+        buffer.emit_type(self.scopes, &ty, None, min);
         buffer.emit(format!(" {};", member.name));
     }
 
@@ -357,18 +363,19 @@ impl<'a> TypeGen<'a> {
         defs: Option<&mut Buffer>,
         ty: &Type,
         size: usize,
+        min: bool,
     ) {
         typedef.emit("typedef struct ");
-        typedef.emit_array_struct_name(self.scopes, ty, size);
+        typedef.emit_array_struct_name(self.scopes, ty, size, min);
         typedef.emit(" ");
-        typedef.emit_array_struct_name(self.scopes, ty, size);
+        typedef.emit_array_struct_name(self.scopes, ty, size, min);
         typedef.emit(";");
 
         let defs = defs.unwrap_or(typedef);
         defs.emit("struct ");
-        defs.emit_array_struct_name(self.scopes, ty, size);
+        defs.emit_array_struct_name(self.scopes, ty, size, min);
         defs.emit("{");
-        defs.emit_type(self.scopes, ty, None);
+        defs.emit_type(self.scopes, ty, None, min);
         defs.emit(format!(" {ARRAY_DATA_NAME}[{size}];}};"));
     }
 }
@@ -386,6 +393,7 @@ impl Buffer {
         scopes: &Scopes,
         id: &Type,
         tg: Option<(&mut Diagnostics, &mut TypeGen)>,
+        min: bool,
     ) {
         match id {
             Type::Void | Type::Never | Type::CVoid => self.emit("$void"),
@@ -417,14 +425,14 @@ impl Buffer {
             Type::Char => self.emit("CTL_char"),
             Type::Ptr(inner) | Type::MutPtr(inner) => {
                 if let Type::Array(value) = &**inner {
-                    self.emit_type(scopes, &value.0, tg);
+                    self.emit_type(scopes, &value.0, tg, min);
                     // self.emit("/*");
                     // self.emit_type(diag, scopes, inner, tg);
                     // self.emit("*/");
                 } else if inner.is_c_void() {
                     self.emit("void");
                 } else {
-                    self.emit_type(scopes, inner, tg);
+                    self.emit_type(scopes, inner, tg, min);
                 }
                 if id.is_ptr() {
                     self.emit(" const*");
@@ -433,7 +441,7 @@ impl Buffer {
                 }
             }
             Type::FnPtr(f) => {
-                self.emit_generic_mangled_name(scopes, id);
+                self.emit_generic_mangled_name(scopes, id, min);
                 if let Some((diag, tg)) = tg {
                     tg.add_fnptr(diag, (**f).clone());
                 }
@@ -444,12 +452,12 @@ impl Buffer {
                         .as_option_inner(scopes)
                         .filter(|_| is_opt_ptr(scopes, id))
                     {
-                        self.emit_type(scopes, ty, tg);
+                        self.emit_type(scopes, ty, tg, min);
                     } else {
                         if let Some((diag, tg)) = tg {
                             tg.add_user_type(diag, (**ut).clone(), None);
                         }
-                        self.emit_type_name(scopes, ut);
+                        self.emit_type_name(scopes, ut, min);
                     }
                 }
                 UserTypeData::Template => {
@@ -458,11 +466,11 @@ impl Buffer {
                     }
 
                     self.emit(&scopes.get(ut.id).name.data);
-                },
+                }
                 UserTypeData::Trait => panic!("ICE: Trait type in emit_type"),
             },
             Type::Array(data) => {
-                self.emit_generic_mangled_name(scopes, id);
+                self.emit_generic_mangled_name(scopes, id, min);
                 if let Some((diag, tg)) = tg {
                     tg.add_array(diag, data.0.clone(), data.1, None);
                 }
@@ -473,7 +481,7 @@ impl Buffer {
         }
     }
 
-    fn emit_generic_mangled_name(&mut self, scopes: &Scopes, id: &Type) {
+    fn emit_generic_mangled_name(&mut self, scopes: &Scopes, id: &Type, min: bool) {
         match id {
             Type::Void => self.emit("void"),
             Type::CVoid => self.emit("c_void"),
@@ -500,35 +508,35 @@ impl Buffer {
             Type::Char => self.emit("char"),
             Type::Ptr(inner) => {
                 self.emit("ptr_");
-                self.emit_generic_mangled_name(scopes, inner);
+                self.emit_generic_mangled_name(scopes, inner, min);
             }
             Type::MutPtr(inner) => {
                 self.emit("mutptr_");
-                self.emit_generic_mangled_name(scopes, inner);
+                self.emit_generic_mangled_name(scopes, inner, min);
             }
-            Type::FnPtr(f) => self.emit_fnptr_name(scopes, f),
+            Type::FnPtr(f) => self.emit_fnptr_name(scopes, f, min),
             Type::User(ut) => {
-                self.emit_type_name(scopes, ut);
+                self.emit_type_name(scopes, ut, min);
             }
-            Type::Array(data) => self.emit_array_struct_name(scopes, &data.0, data.1),
+            Type::Array(data) => self.emit_array_struct_name(scopes, &data.0, data.1, min),
             Type::Unknown => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
             Type::Unresolved(_) => panic!("ICE: TypeId::Unresolved in emit_generic_mangled_name"),
             Type::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_generic_mangled_name"),
         }
     }
 
-    fn emit_fnptr_name(&mut self, scopes: &Scopes, f: &FnPtr) {
+    fn emit_fnptr_name(&mut self, scopes: &Scopes, f: &FnPtr, min: bool) {
         self.emit("fn");
-        self.emit_generic_mangled_name(scopes, &f.ret);
+        self.emit_generic_mangled_name(scopes, &f.ret, min);
         for (i, param) in f.params.iter().enumerate() {
-            if i > 0 {
+            if i > 0 && !min {
                 self.emit("_");
             }
-            self.emit_generic_mangled_name(scopes, param);
+            self.emit_generic_mangled_name(scopes, param, min);
         }
     }
 
-    fn emit_type_name(&mut self, scopes: &Scopes, ut: &GenericUserType) {
+    fn emit_type_name(&mut self, scopes: &Scopes, ut: &GenericUserType, min: bool) {
         let ty = scopes.get(ut.id);
         if ty.data.is_template() && !cfg!(debug_assertions) {
             panic!("ICE: Template type in emit_type_name")
@@ -542,23 +550,34 @@ impl Buffer {
             .map(|attr| &attr.props[0].name.data)
         {
             self.emit(name);
+        } else if min {
+            self.emit(format!("t{}", ut.id));
+            for ty in ut.ty_args.values() {
+                self.emit_generic_mangled_name(scopes, ty, min);
+            }
         } else {
             self.emit(scopes.full_name(ty.scope, &ty.name.data));
             if !ut.ty_args.is_empty() {
                 self.emit("$");
                 for ty in ut.ty_args.values() {
                     self.emit("$");
-                    self.emit_generic_mangled_name(scopes, ty);
+                    self.emit_generic_mangled_name(scopes, ty, min);
                 }
                 self.emit("$$");
             }
         }
     }
 
-    fn emit_array_struct_name(&mut self, scopes: &Scopes, ty: &Type, size: usize) {
-        self.emit("Array_");
-        self.emit_generic_mangled_name(scopes, ty);
-        self.emit(format!("_{size}"));
+    fn emit_array_struct_name(&mut self, scopes: &Scopes, ty: &Type, size: usize, min: bool) {
+        if min {
+            self.emit("a");
+            self.emit_generic_mangled_name(scopes, ty, min);
+            self.emit(format!("{size}"));
+        } else {
+            self.emit("Array_");
+            self.emit_generic_mangled_name(scopes, ty, min);
+            self.emit(format!("_{size}"));
+        }
     }
 
     fn finish(self) -> String {
@@ -690,14 +709,21 @@ pub struct Codegen<'a> {
     cur_block: String,
     cur_loop: String,
     yielded: bool,
+    flags: CodegenFlags,
 }
 
 impl<'a> Codegen<'a> {
-    fn new(scopes: &'a Scopes, diag: Diagnostics, funcs: HashSet<State>) -> Self {
+    fn new(
+        scopes: &'a Scopes,
+        diag: Diagnostics,
+        funcs: HashSet<State>,
+        flags: CodegenFlags,
+    ) -> Self {
         Self {
             scopes,
             diag,
             funcs,
+            flags,
             buffer: Default::default(),
             temporaries: Default::default(),
             type_gen: TypeGen::new(scopes),
@@ -722,7 +748,7 @@ impl<'a> Codegen<'a> {
             .filter(|(_, f)| f.linkage == Linkage::Export)
             .map(|(id, _)| State::new(GenericFunc::from_id(scopes, id)));
         let (mut this, main) = if flags.lib {
-            (Self::new(scopes, diag, exports.collect()), None)
+            (Self::new(scopes, diag, exports.collect(), flags), None)
         } else {
             let Some(main) = scopes.find_in("main", scope) else {
                 diag.error(Error::new("no main function found", Span::default()));
@@ -734,6 +760,7 @@ impl<'a> Codegen<'a> {
                     scopes,
                     diag,
                     exports.chain(std::iter::once(main.clone())).collect(),
+                    flags,
                 ),
                 Some(main),
             )
@@ -754,17 +781,17 @@ impl<'a> Codegen<'a> {
         }
         let functions = std::mem::take(&mut this.buffer).finish();
 
-        if flags.leak {
+        if this.flags.leak {
             this.buffer.emit("#define CTL_NOGC\n");
         }
-        if flags.no_bit_int {
+        if this.flags.no_bit_int {
             this.buffer.emit("#define CTL_NOBITINT\n");
         }
         this.buffer.emit(include_str!("../ctl/ctl.h"));
         if this.diag.has_errors() {
             return Err(this.diag);
         }
-        this.type_gen.finish(&mut this.buffer, flags.no_bit_int);
+        this.type_gen.finish(&mut this.buffer, &this.flags);
         this.buffer.emit(prototypes.finish());
         this.buffer.emit(static_defs);
         this.buffer.emit(functions);
@@ -859,7 +886,7 @@ impl<'a> Codegen<'a> {
                     if i > 0 {
                         self.buffer.emit(",");
                     }
-                    self.buffer.emit(format!("$param{i}"));
+                    self.buffer.emit(format!("$p{i}"));
                 }
 
                 self.buffer.emit(");");
@@ -2033,8 +2060,12 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_type(&mut self, id: &Type) {
-        self.buffer
-            .emit_type(self.scopes, id, Some((&mut self.diag, &mut self.type_gen)));
+        self.buffer.emit_type(
+            self.scopes,
+            id,
+            Some((&mut self.diag, &mut self.type_gen)),
+            self.flags.minify,
+        );
     }
 
     fn emit_cast(&mut self, id: &Type) {
@@ -2079,7 +2110,7 @@ impl<'a> Codegen<'a> {
 
             if !is_prototype && needs_wrapper {
                 self.emit_type(&ty);
-                self.buffer.emit(format!(" $param{i}"));
+                self.buffer.emit(format!(" $p{i}"));
             } else if f.linkage == Linkage::Import || is_prototype {
                 self.emit_type(&ty);
             } else if let ParamPattern::Checked(CheckedPattern {
@@ -2110,6 +2141,10 @@ impl<'a> Codegen<'a> {
 
     fn emit_var_name(&mut self, id: VariableId, state: &mut State) {
         use std::collections::hash_map::*;
+
+        if self.flags.minify {
+            return self.buffer.emit(format!("v{id}"));
+        }
 
         let var = self.scopes.get(id);
         if var.is_static {
@@ -2164,15 +2199,22 @@ impl<'a> Codegen<'a> {
         let f = self.scopes.get(state.func.id);
         let is_macro = f.attrs.iter().any(|attr| attr.name.data == ATTR_NOGEN);
         if f.linkage == Linkage::Internal {
-            self.buffer
-                .emit(self.scopes.full_name(f.scope, &f.name.data));
-            if !state.func.ty_args.is_empty() {
-                self.buffer.emit("$");
+            if self.flags.minify {
+                self.buffer.emit(format!("f{}", state.func.id));
                 for ty in state.func.ty_args.values() {
-                    self.buffer.emit("$");
-                    self.buffer.emit_generic_mangled_name(self.scopes, ty);
+                    self.buffer.emit_generic_mangled_name(self.scopes, ty, self.flags.minify);
                 }
-                self.buffer.emit("$$");
+            } else {
+                self.buffer
+                    .emit(self.scopes.full_name(f.scope, &f.name.data));
+                if !state.func.ty_args.is_empty() {
+                    self.buffer.emit("$");
+                    for ty in state.func.ty_args.values() {
+                        self.buffer.emit("$");
+                        self.buffer.emit_generic_mangled_name(self.scopes, ty, self.flags.minify);
+                    }
+                    self.buffer.emit("$$");
+                }
             }
         } else {
             let name = f
@@ -2183,7 +2225,11 @@ impl<'a> Codegen<'a> {
                 .unwrap_or(&f.name.data);
 
             if !is_macro && !real && Self::needs_fn_wrapper(f) {
-                self.buffer.emit("$");
+                if self.flags.minify {
+                    return self.buffer.emit(format!("f{}", state.func.id));
+                } else {
+                    self.buffer.emit("$");
+                }
             }
             self.buffer.emit(name);
         }
