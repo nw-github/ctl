@@ -5,10 +5,11 @@ use crate::{
 
 use super::{Attribute, BinaryOp, UnaryOp};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Linkage {
     Import,
     Export,
+    #[default]
     Internal,
 }
 

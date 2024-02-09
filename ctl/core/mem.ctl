@@ -27,7 +27,7 @@ pub unsafe fn move<T>(kw dst: *mut T, kw src: *T, kw num: usize) {
     unsafe builtin::memmove(dst as *mut c_void, src as *c_void, num * size_of::<T>());
 }
 
-pub fn compare<T>(lhs: *T, rhs: *T, num: usize): bool {
+pub unsafe fn compare<T>(lhs: *T, rhs: *T, num: usize): bool {
     unsafe builtin::memcmp(lhs as *c_void, rhs as *c_void, num * size_of::<T>()) == 0
 }
 

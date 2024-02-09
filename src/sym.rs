@@ -64,7 +64,7 @@ macro_rules! id {
     };
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct ScopeId(pub usize);
 
 impl ScopeId {
@@ -102,6 +102,7 @@ impl ScopeKind {
         match self {
             &ScopeKind::Function(id) => Some(&scopes.get(id).name.data),
             &ScopeKind::UserType(id) => Some(&scopes.get(id).name.data),
+            &ScopeKind::Extension(id) => Some(&scopes.get(id).name),
             ScopeKind::Module(name, _) => Some(name),
             _ => None,
         }
@@ -138,7 +139,7 @@ pub struct Variable {
     pub value: Option<CheckedExpr>,
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct Function {
     pub attrs: Vec<Attribute>,
     pub name: Located<String>,
@@ -153,6 +154,10 @@ pub struct Function {
     pub constructor: Option<UserTypeId>,
     pub body_scope: ScopeId,
     pub returns: bool,
+}
+
+impl FunctionId {
+    pub const RESERVED: FunctionId = FunctionId(0);
 }
 
 #[derive(Debug, Clone)]
@@ -353,7 +358,7 @@ impl Scopes {
     pub fn new() -> Self {
         Self {
             scopes: vec![Scope::default()],
-            fns: Vec::new(),
+            fns: vec![Scoped::new(Function::default(), ScopeId::ROOT)],
             types: Vec::new(),
             vars: Vec::new(),
             exts: Vec::new(),

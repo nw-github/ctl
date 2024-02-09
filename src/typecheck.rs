@@ -3259,12 +3259,13 @@ impl TypeChecker {
                 );
                 if let Some(inst) = memfn.tr.as_ref().or(id.as_user().map(|ut| &**ut)) {
                     func.ty_args.copy_args(&inst.ty_args);
-                    if let Some(id) = memfn
-                        .ext
-                        .and_then(|id| self.scopes.get(id).type_params.first())
-                    {
-                        func.ty_args.insert(*id, Type::User(inst.clone().into()));
-                    }
+                }
+
+                if let Some(etempl) = memfn
+                    .ext
+                    .and_then(|id| self.scopes.get(id).type_params.first())
+                {
+                    func.ty_args.insert(*etempl, id.clone());
                 }
 
                 let (args, ret) = self.check_fn_args(&mut func, Some(recv), args, target, span);
@@ -4307,11 +4308,7 @@ impl TypeChecker {
                         });
                     }
                 }
-
-                return None;
-            }
-
-            if let Some(result) = search(src_scope, ut.body_scope, None) {
+            } else if let Some(result) = search(src_scope, ut.body_scope, None) {
                 return Some(result);
             }
         }

@@ -72,11 +72,7 @@ pub struct str {
 
     impl Eq<str> {
         fn eq(this, rhs: *str): bool {
-            if this.len() != rhs.len() {
-                false
-            } else {
-                core::mem::compare(this.as_ptr(), rhs.as_ptr(), this.len())
-            }
+            core::span::compare(this.as_bytes(), rhs.as_bytes())
         }
     }
 }

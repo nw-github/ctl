@@ -236,7 +236,7 @@ impl Span {
     }
 }
 
-#[derive(Clone, derive_more::Constructor)]
+#[derive(Default, Clone, derive_more::Constructor)]
 pub struct Located<T> {
     pub span: Span,
     pub data: T,
