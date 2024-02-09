@@ -37,13 +37,13 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     }
 
     pub fn get(this, key: *K): ?*V {
-        if this.buckets.get(this.entry_pos(key))! is Bucket::Some(entry) {
+        if this.buckets.get(this.entry_pos(key)?)? is Bucket::Some(entry) {
             &entry.val
         }
     }
 
     pub fn get_mut(mut this, key: *K): ?*mut V {
-        if this.buckets.get_mut(this.entry_pos(key))! is Bucket::Some(entry) {
+        if this.buckets.get_mut(this.entry_pos(key)?)? is Bucket::Some(entry) {
             &mut entry.val
         }
     }
@@ -53,7 +53,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
             this.adjust_cap(this.buckets.len() * 2);
         }
 
-        match this.buckets.get_mut(this.entry_pos(&key))! {
+        match this.buckets.get_mut(this.entry_pos(&key)?)? {
             Bucket::Some(entry) => core::mem::replace(&mut entry.val, val) as V,
             entry => {
                 if !(entry is Bucket::Tombstone) {
@@ -67,7 +67,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     }
 
     pub fn remove(mut this, key: *K): ?V {
-        match this.buckets.get_mut(this.entry_pos(key))! {
+        match this.buckets.get_mut(this.entry_pos(key)?)? {
             Bucket::None => null,
             Bucket::Tombstone => null,
             entry => {
@@ -90,14 +90,22 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     }
 
     pub fn contains(this, key: *K): bool {
-        this.buckets.get(this.entry_pos(key))! is Bucket::Some(_)
+        if this.entry_pos(key) is ?idx {
+            this.buckets.get(idx)! is Bucket::Some(_)
+        } else {
+            false
+        }
     }
 
     pub fn len(this): usize {
         this.len
     }
 
-    fn entry_pos(this, key: *K): usize {
+    fn entry_pos(this, key: *K): ?usize {
+        if this.buckets.is_empty() {
+            return null;
+        }
+
         mut idx = {
             mut h = Fnv1a::new();
             key.hash(&mut h);
@@ -139,7 +147,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         while i < old {
             if this.buckets.get(i)! is Bucket::Some(entry) {
                 this.len++;
-                let j = this.entry_pos(&entry.key);
+                let j = this.entry_pos(&entry.key)!;
                 if i != j {
                     core::mem::swap(
                         this.buckets.get_mut(i)!,
