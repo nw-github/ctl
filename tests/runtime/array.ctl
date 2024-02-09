@@ -1,6 +1,6 @@
 use super::assert;
 
-pub fn subscript(a: [i32; 4], b: *mut [i32; 4]) {
+pub fn subscript(a: [int; 4], b: *mut [int; 4]) {
     b[0] = a[0];
     b[1] = a[1];
     b[2] = a[2];
@@ -8,21 +8,21 @@ pub fn subscript(a: [i32; 4], b: *mut [i32; 4]) {
 }
 
 mod val {
-    pub fn end([x, y, ...end]: [i32; 4], b: *mut [i32; 4]) {
+    pub fn end([x, y, ...end]: [int; 4], b: *mut [int; 4]) {
         b[0] = x;
         b[1] = y;
         b[2] = end[0];
         b[3] = end[1];
     }
 
-    pub fn start([...start, x, y]: [i32; 4], b: *mut [i32; 4]) {
+    pub fn start([...start, x, y]: [int; 4], b: *mut [int; 4]) {
         b[0] = start[0];
         b[1] = start[1];
         b[2] = x;
         b[3] = y;
     }
 
-    pub fn mid([x, ...mid, y]: [i32; 4], b: *mut [i32; 4]) {
+    pub fn mid([x, ...mid, y]: [int; 4], b: *mut [int; 4]) {
         b[0] = x;
         b[1] = mid[0];
         b[2] = mid[1];
@@ -31,28 +31,28 @@ mod val {
 }
 
 mod ptr {
-    pub fn regular([a, b, c, d]: [i32; 4], [x, y, z, w]: *mut [i32; 4]) {
+    pub fn regular([a, b, c, d]: [int; 4], [x, y, z, w]: *mut [int; 4]) {
         *x = a;
         *y = b;
         *z = c;
         *w = d;
     }
 
-    pub fn end([a, b, c, d]: [i32; 4], [x, y, ...end]: *mut [i32; 4]) {
+    pub fn end([a, b, c, d]: [int; 4], [x, y, ...end]: *mut [int; 4]) {
         *x = a;
         *y = b;
         end[0] = c;
         end[1] = d;
     }
 
-    pub fn start([a, b, c, d]: [i32; 4], [...start, x, y]: *mut [i32; 4]) {
+    pub fn start([a, b, c, d]: [int; 4], [...start, x, y]: *mut [int; 4]) {
         start[0] = a;
         start[1] = b;
         *x = c;
         *y = d;
     }
 
-    pub fn mid([a, b, c, d]: [i32; 4], [x, ...mid, y]: *mut [i32; 4]) {
+    pub fn mid([a, b, c, d]: [int; 4], [x, ...mid, y]: *mut [int; 4]) {
         *x = a;
         mid[0] = b;
         mid[1] = c;
@@ -61,8 +61,8 @@ mod ptr {
 }
 
 struct Foo {
-    a: i32,
-    b: i32,
+    a: int,
+    b: int,
 }
 
 pub fn pattern_stuff() {
@@ -91,7 +91,7 @@ pub fn pattern_stuff() {
 pub fn nested_ptr() {
     union Baz {
         A(*mut Foo),
-        B(*mut [i32; 2]),
+        B(*mut [int; 2]),
     }
 
     fn by_val(x: Baz) {

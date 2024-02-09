@@ -9,7 +9,7 @@ use core::unreachable;
 
 mod builtin {
     #(c_opaque, c_name(CTL_STRLEN))
-    pub import fn strlen(ptr: *c_char): usize;
+    pub import fn strlen(ptr: *c_char): uint;
 }
 
 #(lang(string))
@@ -25,7 +25,7 @@ pub struct str {
         str(span:)
     }
 
-    pub fn len(this): usize {
+    pub fn len(this): uint {
         this.span.len()
     }
 
@@ -49,7 +49,7 @@ pub struct str {
         Chars(s: this.as_bytes())
     }
 
-    pub fn substr<R: RangeBounds<usize>>(this, range: R): str {
+    pub fn substr<R: RangeBounds<uint>>(this, range: R): str {
         let span = this.span.subspan(range);
         if span.get(0) is ?ch {
             if !is_char_boundary(*ch) {
@@ -85,17 +85,17 @@ pub struct Chars {
             unsafe if this.s.get(0) is ?cp {
                 mut cp = *cp as u32 & 0xff;
                 if cp < 0x80 {
-                    this.s = this.s.subspan(1usize..);
+                    this.s = this.s.subspan(1u..);
                 } else if cp >> 5 == 0x6 {
                     cp = ((cp << 6) & 0x7ff) + (*this.s.get_unchecked(1) as u32 & 0x3f);
-                    this.s = this.s.subspan(2usize..);
+                    this.s = this.s.subspan(2u..);
                 } else if cp >> 4 == 0xe {
                     cp = (
                         (cp << 12) & 0xffff) + 
                         (((*this.s.get_unchecked(1) as u32 & 0xff) << 6) & 0xfff
                     );
                     cp += *this.s.get_unchecked(2) as u32 & 0x3f;
-                    this.s = this.s.subspan(3usize..);
+                    this.s = this.s.subspan(3u..);
                 } else if cp >> 4 == 0x1e {
                     cp = (
                         (cp << 18) & 0x1fffff) + 
@@ -103,7 +103,7 @@ pub struct Chars {
                     );
                     cp += ((*this.s.get_unchecked(2) as u32 & 0xff) << 6) & 0xfff;
                     cp += *this.s.get_unchecked(3) as u32 & 0x3f;
-                    this.s = this.s.subspan(4usize..);
+                    this.s = this.s.subspan(4u..);
                 } else {
                     unreachable();
                 }

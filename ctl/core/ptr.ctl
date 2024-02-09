@@ -1,25 +1,25 @@
 use core::mem;
 
-pub unsafe fn offset<T>(ptr: *T, count: usize): *T {
-    unsafe ((ptr as usize) + count * mem::size_of::<T>()) as *T
+pub unsafe fn offset<T>(ptr: *T, count: uint): *T {
+    unsafe ((ptr as uint) + count * mem::size_of::<T>()) as *T
 }
 
-pub unsafe fn offset_mut<T>(ptr: *mut T, count: usize): *mut T {
-    unsafe ((ptr as usize) + count * mem::size_of::<T>()) as *mut T
+pub unsafe fn offset_mut<T>(ptr: *mut T, count: uint): *mut T {
+    unsafe ((ptr as uint) + count * mem::size_of::<T>()) as *mut T
 }
 
 pub fn eq<T>(lhs: *T, rhs: *T): bool {
-    lhs as usize == rhs as usize
+    lhs as uint == rhs as uint
 }
 
 pub struct Raw<T> {
-    addr: usize,
+    addr: uint,
 
     pub fn from_ptr(ptr: *T): Raw<T> {
-        Raw(addr: ptr as usize)
+        Raw(addr: ptr as uint)
     }
 
-    pub fn from_addr(addr: usize): ?Raw<T> {
+    pub fn from_addr(addr: uint): ?Raw<T> {
         if addr > 0 {
             Raw::<T>(addr:)
         }
@@ -33,11 +33,11 @@ pub struct Raw<T> {
         Raw(addr: 0xDEADBEEF)
     }
 
-    pub fn add(this, count: usize): Raw<T> {
+    pub fn add(this, count: uint): Raw<T> {
         Raw(addr: this.addr + count * mem::size_of::<T>())
     }
 
-    pub fn sub(this, count: usize): Raw<T> {
+    pub fn sub(this, count: uint): Raw<T> {
         Raw(addr: this.addr - count * mem::size_of::<T>())
     }
 
@@ -57,13 +57,13 @@ pub struct Raw<T> {
 }
 
 pub struct RawMut<T> {
-    addr: usize,
+    addr: uint,
 
     pub fn from_ptr(ptr: *T): RawMut<T> {
-        RawMut(addr: ptr as usize)
+        RawMut(addr: ptr as uint)
     }
 
-    pub fn from_addr(addr: usize): ?RawMut<T> {
+    pub fn from_addr(addr: uint): ?RawMut<T> {
         if addr > 0 {
             RawMut::<T>(addr:)
         }
@@ -73,11 +73,11 @@ pub struct RawMut<T> {
         RawMut(addr: 0xDEADBEEF)
     }
 
-    pub fn add(this, count: usize): RawMut<T> {
+    pub fn add(this, count: uint): RawMut<T> {
         RawMut(addr: this.addr + count * mem::size_of::<T>())
     }
 
-    pub fn sub(this, count: usize): RawMut<T> {
+    pub fn sub(this, count: uint): RawMut<T> {
         RawMut(addr: this.addr - count * mem::size_of::<T>())
     }
 

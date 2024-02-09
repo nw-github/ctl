@@ -438,8 +438,8 @@ impl Type {
             }
             Type::User(ty) => ty.name(scopes),
             Type::Array(inner) => format!("[{}; {}]", inner.0.name(scopes), inner.1),
-            Type::Isize => "isize".into(),
-            Type::Usize => "usize".into(),
+            Type::Isize => "int".into(),
+            Type::Usize => "uint".into(),
             Type::CInt(ty) | Type::CUint(ty) => {
                 let name = match ty {
                     CInt::Char => "char",
@@ -536,7 +536,7 @@ impl Type {
         }
     }
 
-    pub fn from_int_name(name: &str) -> Option<Type> {
+    pub fn from_int_name(name: &str, ty: bool) -> Option<Type> {
         let mut chars = name.chars();
         let (i, result): (_, fn(u32) -> Type) = match chars.next()? {
             'i' => (true, Type::Int),
@@ -554,8 +554,10 @@ impl Type {
             (Some(a), Some(b), None, None) => Some(result(a * 10 + b)),
             (Some(a), Some(b), Some(c), None) => Some(result(a * 100 + b * 10 + c)),
             _ => match name {
-                "usize" | "u" => Some(Type::Usize),
-                "isize" | "i" => Some(Type::Isize),
+                "u" if !ty => Some(Type::Usize),
+                "i" if !ty => Some(Type::Isize),
+                "uint" if ty => Some(Type::Usize),
+                "int" if ty => Some(Type::Isize),
                 _ => None,
             },
         }

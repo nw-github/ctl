@@ -24,13 +24,13 @@ union Bucket<K, V> {
 #(lang(map))
 pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     buckets: [Bucket<K, V>],
-    len:     usize,
+    len:     uint,
 
     pub fn new(): Map<K, V> {
         Map(buckets: @[], len: 0)
     }
 
-    pub fn with_capacity(cap: usize): Map<K, V> {
+    pub fn with_capacity(cap: uint): Map<K, V> {
         mut self: Map<K, V> = Map::new();
         self.adjust_cap(cap);
         self
@@ -97,11 +97,11 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         }
     }
 
-    pub fn len(this): usize {
+    pub fn len(this): uint {
         this.len
     }
 
-    fn entry_pos(this, key: *K): ?usize {
+    fn entry_pos(this, key: *K): ?uint {
         if this.buckets.is_empty() {
             return null;
         }
@@ -109,10 +109,10 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         mut idx = {
             mut h = Fnv1a::new();
             key.hash(&mut h);
-            h.finish() as! usize
+            h.finish() as! uint
         } % this.buckets.len();
 
-        mut tombstone: ?usize = null;
+        mut tombstone: ?uint = null;
         loop {
             match this.buckets.get(idx)! {
                 Bucket::Some(entry) => if key.eq(&entry.key) {
@@ -129,7 +129,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         }
     }
 
-    fn adjust_cap(mut this, cap: usize) {
+    fn adjust_cap(mut this, cap: uint) {
         let cap = if cap > 8 { cap } else { 8 };
         if cap <= this.buckets.len() {
             return;
@@ -143,7 +143,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
 
         this.len = 0;
 
-        mut i = 0usize;
+        mut i = 0u;
         while i < old {
             if this.buckets.get(i)! is Bucket::Some(entry) {
                 this.len++;

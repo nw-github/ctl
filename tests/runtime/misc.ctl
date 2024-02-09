@@ -1,11 +1,11 @@
 use super::assert;
 
-static OUTER: i32 = 10;
+static OUTER: int = 10;
 
-fn func(): i32 { OUTER }
+fn func(): int { OUTER }
 
 pub fn statics() {
-    static INNER: i32 = 20;
+    static INNER: int = 20;
     assert(func() + INNER == 30, "INNER + OUTER != 30");
 }
 

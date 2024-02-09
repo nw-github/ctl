@@ -311,7 +311,7 @@
         {
           "comment": "decimal integers and floats",
           "name": "constant.numeric.decimal.ctl",
-          "match": "\\b\\d[\\d_]*(\\.?)[\\d_]*(?:(E)([+-])([\\d_]+))?(f32|f64|u\\d+|i\\d+|isize|usize|u|i)?\\b",
+          "match": "\\b\\d[\\d_]*(\\.?)[\\d_]*(?:(E)([+-])([\\d_]+))?(f32|f64|u\\d+|i\\d+|u|i)?\\b",
           "captures": {
             "1": {
               "name": "punctuation.separator.dot.decimal.ctl"
@@ -333,7 +333,7 @@
         {
           "comment": "hexadecimal integers",
           "name": "constant.numeric.hex.ctl",
-          "match": "\\b0x[\\da-fA-F_]+(u\\d+|i\\d+|isize|usize|u|i)?\\b",
+          "match": "\\b0x[\\da-fA-F_]+(u\\d+|i\\d+|u|i)?\\b",
           "captures": {
             "1": {
               "name": "entity.name.type.numeric.ctl"
@@ -343,7 +343,7 @@
         {
           "comment": "octal integers",
           "name": "constant.numeric.oct.ctl",
-          "match": "\\b0o[0-7_]+(u\\d+|i\\d+|isize|usize|u|i)?\\b",
+          "match": "\\b0o[0-7_]+(u\\d+|i\\d+|u|i)?\\b",
           "captures": {
             "1": {
               "name": "entity.name.type.numeric.ctl"
@@ -353,7 +353,7 @@
         {
           "comment": "binary integers",
           "name": "constant.numeric.bin.ctl",
-          "match": "\\b0b[01_]+(u\\d+|i\\d+|isize|usize)?\\b",
+          "match": "\\b0b[01_]+(u\\d+|i\\d+|int|uint)?\\b",
           "captures": {
             "1": {
               "name": "entity.name.type.numeric.ctl"
@@ -846,7 +846,7 @@
       "patterns": [
         {
           "comment": "numeric types",
-          "match": "(?<![A-Za-z])(f32|f64|u\\d+|i\\d+|isize|usize)\\b",
+          "match": "(?<![A-Za-z])(f32|f64|u\\d+|i\\d+|int|uint)\\b",
           "captures": {
             "1": {
               "name": "entity.name.type.numeric.ctl"

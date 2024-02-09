@@ -12,7 +12,7 @@ pub struct Repeat<T> {
 
 pub struct Take<T, It: Iterator<T> > {
     iter: It,
-    count: usize,
+    count: uint,
 
     impl Iterator<T> {
         fn next(mut this): ?T {
@@ -30,7 +30,7 @@ pub fn repeat<T>(elem: T): Repeat<T> {
     Repeat(elem:)
 }
 
-pub fn take<T, It: Iterator<T> >(iter: It, count: usize): Take<T, It> {
+pub fn take<T, It: Iterator<T> >(iter: It, count: uint): Take<T, It> {
     Take(iter:, count:)
 }
 

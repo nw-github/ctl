@@ -1,6 +1,6 @@
 use super::assert;
 
-fn hello(x: i32, kw y: i32, z: i32) {
+fn hello(x: int, kw y: int, z: int) {
     assert(x == 10, "x != 10");
     assert(y == 11, "y != 11");
     assert(z == 12, "z != 12");

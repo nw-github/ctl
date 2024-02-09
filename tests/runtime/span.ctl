@@ -3,17 +3,17 @@ use core::range::RangeFull;
 use core::span;
 
 struct Foo {
-    a: i32,
-    b: i32,
+    a: int,
+    b: int,
 }
 
 pub fn ranges() {
     mut x = @[1, 2, 3, 4].as_span();
-    assert(span::compare(x.subspan(1usize..2), @[2].as_span()), "x[1..2] != [2, 3]");
-    assert(span::compare(x.subspan(1usize..=2), @[2, 3].as_span()), "x[1..=2] != [2, 3]");
-    assert(span::compare(x.subspan(..2usize), @[1, 2].as_span()), "x[..2] != [1, 2]");
-    assert(span::compare(x.subspan(..=2usize), @[1, 2, 3].as_span()), "x[..=2] != [1, 2, 3]");
-    assert(span::compare(x.subspan(RangeFull::<usize>()), x), "x[..] != [1, 2, 3, 4]");
+    assert(span::compare(x.subspan(1u..2), @[2].as_span()), "x[1..2] != [2, 3]");
+    assert(span::compare(x.subspan(1u..=2), @[2, 3].as_span()), "x[1..=2] != [2, 3]");
+    assert(span::compare(x.subspan(..2u), @[1, 2].as_span()), "x[..2] != [1, 2]");
+    assert(span::compare(x.subspan(..=2u), @[1, 2, 3].as_span()), "x[..=2] != [1, 2, 3]");
+    assert(span::compare(x.subspan(RangeFull::<uint>()), x), "x[..] != [1, 2, 3, 4]");
 }
 
 pub fn pattern() {

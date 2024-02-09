@@ -7,14 +7,14 @@ use core::span::*;
 #(lang(vec))
 pub struct Vec<T> {
     ptr: RawMut<T>,
-    len: usize,
-    cap: usize,
+    len: uint,
+    cap: uint,
 
     pub fn new(): Vec<T> {
         Vec(ptr: RawMut::dangling(), len: 0, cap: 0)
     }
 
-    pub fn with_capacity(cap: usize): Vec<T> {
+    pub fn with_capacity(cap: uint): Vec<T> {
         mut self: Vec<T> = Vec::new();
         self.reserve(cap);
         self
@@ -33,7 +33,7 @@ pub struct Vec<T> {
         self
     }
 
-    pub fn len(this): usize {
+    pub fn len(this): uint {
         this.len
     }
 
@@ -41,7 +41,7 @@ pub struct Vec<T> {
         this.len == 0
     }
 
-    pub fn capacity(this): usize {
+    pub fn capacity(this): uint {
         this.cap
     }
 
@@ -108,7 +108,7 @@ pub struct Vec<T> {
         this.len = 0;
     }
 
-    pub fn insert(mut this, kw idx: usize, t: T) {
+    pub fn insert(mut this, kw idx: uint, t: T) {
         if idx > this.len {
             panic("Vec::insert(): index > len!");
         }
@@ -130,7 +130,7 @@ pub struct Vec<T> {
         this.len++;
     }
 
-    pub fn remove(mut this, idx: usize): T {
+    pub fn remove(mut this, idx: uint): T {
         if idx >= this.len {
             panic("Vec::remove(): index out of bounds!");
         }
@@ -151,7 +151,7 @@ pub struct Vec<T> {
         }
     }
 
-    pub fn swap_remove(mut this, idx: usize): T {
+    pub fn swap_remove(mut this, idx: uint): T {
         if idx >= this.len {
             panic("Vec::swap_remove(): index out of bounds!");
         }
@@ -166,23 +166,23 @@ pub struct Vec<T> {
         }
     }
 
-    pub fn truncate(mut this, len: usize) {
+    pub fn truncate(mut this, len: uint) {
         if len < this.len {
             this.len = len;
         }
     }
 
-    pub fn reserve(mut this, add: usize) {
+    pub fn reserve(mut this, add: uint) {
         this._reserve(this.len + add);
     }
 
-    pub fn get(this, idx: usize): ?*T {
+    pub fn get(this, idx: uint): ?*T {
         if idx < this.len {
             unsafe this.ptr.add(idx).as_ptr()
         }
     }
 
-    pub fn get_mut(mut this, idx: usize): ?*mut T {
+    pub fn get_mut(mut this, idx: uint): ?*mut T {
         if idx < this.len {
             unsafe this.ptr.add(idx).as_mut_ptr()
         }
@@ -196,7 +196,7 @@ pub struct Vec<T> {
         this.ptr
     }
 
-    pub unsafe fn set_len(mut this, len: usize) {
+    pub unsafe fn set_len(mut this, len: uint) {
         this.len = len;
     }
 
@@ -204,11 +204,11 @@ pub struct Vec<T> {
         this._reserve(if this.cap > 0 { this.cap * 2 } else { 1 });
     }
 
-    fn can_insert(this, count: usize): bool {
+    fn can_insert(this, count: uint): bool {
         this.len + count <= this.cap
     }
 
-    fn _reserve(mut this, cap: usize) {
+    fn _reserve(mut this, cap: uint) {
         if cap <= this.cap {
             return;
         }

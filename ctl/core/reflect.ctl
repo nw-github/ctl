@@ -1,2 +1,2 @@
-// i***, u***, f32, f64, isize, usize
+// i***, u***, f32, f64, int, uint
 pub trait Numeric {}

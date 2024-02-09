@@ -3675,7 +3675,7 @@ impl TypeChecker {
                     "c_uint" => Some(Type::CUint(CInt::Int)),
                     "c_ulong" => Some(Type::CUint(CInt::Long)),
                     "c_ulonglong" => Some(Type::CUint(CInt::LongLong)),
-                    _ => Type::from_int_name(symbol),
+                    _ => Type::from_int_name(symbol, true),
                 });
 
                 if let Some(res) = res {
@@ -4326,7 +4326,7 @@ impl TypeChecker {
         span: Span,
     ) -> (Type, BigInt) {
         let ty = if let Some(width) = width {
-            if let Some(ty) = Type::from_int_name(&width) {
+            if let Some(ty) = Type::from_int_name(&width, false) {
                 ty
             } else {
                 return self.error(Error::new(
@@ -4350,7 +4350,7 @@ impl TypeChecker {
                     )
                 })
                 .cloned()
-                .unwrap_or(Type::Int(32))
+                .unwrap_or(Type::Isize)
         };
 
         let stats = ty.integer_stats().unwrap();
@@ -4385,7 +4385,10 @@ impl TypeChecker {
     fn consteval(scopes: &Scopes, expr: &Expr, target: Option<&Type>) -> Result<usize, Error> {
         match &expr.data {
             ExprData::Integer { base, value, width } => {
-                if let Some(width) = width.as_ref().and_then(|width| Type::from_int_name(width)) {
+                if let Some(width) = width
+                    .as_ref()
+                    .and_then(|width| Type::from_int_name(width, false))
+                {
                     if let Some(target) = target.filter(|&target| target != &width) {
                         return Err(Error::type_mismatch(
                             &target.name(scopes),
@@ -4397,7 +4400,7 @@ impl TypeChecker {
 
                 match usize::from_str_radix(value, *base as u32) {
                     Ok(value) => Ok(value),
-                    Err(_) => Err(Error::new("value cannot be converted to usize", expr.span)),
+                    Err(_) => Err(Error::new("value cannot be converted to uint", expr.span)),
                 }
             }
             _ => Err(Error::new(

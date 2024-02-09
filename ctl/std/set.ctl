@@ -9,7 +9,7 @@ pub struct Set<T: Hash + Eq<T>> {
         Set(inner: [:])
     }
 
-    pub fn with_capacity(cap: usize): Set<T> {
+    pub fn with_capacity(cap: uint): Set<T> {
         Set(inner: std::map::Map::with_capacity(cap:))
     }
 
@@ -37,7 +37,7 @@ pub struct Set<T: Hash + Eq<T>> {
         this.inner.get(key) is ?_
     }
 
-    pub fn len(this): usize {
+    pub fn len(this): uint {
         this.inner.len()
     }
 }

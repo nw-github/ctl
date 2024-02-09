@@ -21,7 +21,7 @@ pub fn init2() {
 }
 
 pub fn push_pop() {
-    mut x: [i32] = @[];
+    mut x: [int] = @[];
     x.push(1);
     x.push(2);
     x.push(3);

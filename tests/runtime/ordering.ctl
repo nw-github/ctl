@@ -1,12 +1,12 @@
 use super::assert;
 
-fn double(n: *mut i32): i32 {
+fn double(n: *mut int): int {
     let old = *n;
     *n *= 2;
     old
 }
 
-fn add(a: i32, b: i32): i32 {
+fn add(a: int, b: int): int {
     a + b
 }
 
@@ -53,8 +53,8 @@ pub fn increment() {
 
 pub fn instance_ordering() {
     struct A {
-        x: i32,
-        y: i32,
+        x: int,
+        y: int,
     }
 
     mut x = 1;
@@ -70,7 +70,7 @@ pub fn instance_ordering() {
 }
 
 pub fn keyword_call() {
-    fn test(a: i32, b: i32, c: i32) {
+    fn test(a: int, b: int, c: int) {
         assert(a == 2, "a != 2");
         assert(b == 2, "b != 2");
         assert(c == 3, "c != 3");

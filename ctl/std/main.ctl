@@ -1,4 +1,4 @@
-import fn write(fd: c_int, buf: *c_void, count: usize): isize;
+import fn write(fd: c_int, buf: *c_void, count: uint): int;
 import fn abort(): never;
 
 pub fn println(s: str) {
@@ -20,8 +20,8 @@ pub fn eprint(s: str) {
 }
 
 fn convert_argv(argc: c_int, argv: **c_char): [str..] {
-    mut result: [str] = std::vec::Vec::with_capacity(argc as! usize);
-    for arg in (unsafe core::span::Span::new(ptr: argv, len: argc as! usize)).iter() {
+    mut result: [str] = std::vec::Vec::with_capacity(argc as! uint);
+    for arg in (unsafe core::span::Span::new(ptr: argv, len: argc as! uint)).iter() {
         result.push(str::from_c_str(*arg));
     }
     result.as_span()

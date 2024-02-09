@@ -1,8 +1,8 @@
 use super::assert;
 
 struct Foo {
-    a: i32,
-    b: i32,
+    a: int,
+    b: int,
 }
 
 pub fn struct_pattern() {
@@ -26,7 +26,7 @@ pub fn struct_pattern() {
 
 union Bar {
     A,
-    B(i32),
+    B(int),
 }
 
 pub fn union_pattern() {

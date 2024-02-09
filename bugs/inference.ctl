@@ -1,6 +1,6 @@
-pub fn repeat(s: str, n: usize): str {
+pub fn repeat(s: str, n: uint): str {
     mut buf: [u8] = Vec::with_capacity(s.len() * n);
-    mut i = 0usize;
+    mut i = 0u;
     while i < n {
         unsafe core::mem::copy(
             // type mismatch: expected type '*mut T', got '*mut u8'
@@ -15,6 +15,6 @@ pub fn repeat(s: str, n: usize): str {
 fn something_opt<T>(t: ?T) {}
 
 fn main() {
-    // should be able to infer T = i32, since T is implicitly convertible to ?T
+    // should be able to infer T = int, since T is implicitly convertible to ?T
     something_opt(10);
 }

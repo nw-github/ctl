@@ -5,7 +5,7 @@ struct A {
     pub y: B,
     pub z: B,
 
-    fn get(this): i32 {
+    fn get(this): int {
         this.x.get() + this.y.get() + this.z.get()
     }
 }
@@ -13,7 +13,7 @@ struct A {
 struct B {
     pub d: D,
 
-    fn get(this): i32 {
+    fn get(this): int {
         this.d.get()
     }
 }
@@ -21,7 +21,7 @@ struct B {
 struct C {
     pub a: A,
 
-    fn get(this): i32 {
+    fn get(this): int {
         this.a.get()
     }
 }
@@ -29,15 +29,15 @@ struct C {
 struct D {
     pub e: E,
 
-    fn get(this): i32 {
+    fn get(this): int {
         this.e.get()
     }
 }
 
 struct E {
-    pub x: i32,
+    pub x: int,
 
-    fn get(this): i32 {
+    fn get(this): int {
         this.x
     }
 }
