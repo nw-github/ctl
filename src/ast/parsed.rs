@@ -294,6 +294,8 @@ pub enum Pattern {
     CharRange(RangePattern<char>),
     Array(Vec<Located<Pattern>>),
     Rest(Option<(bool, String)>),
+    Bool(bool),
+    Void,
     Error,
 }
 

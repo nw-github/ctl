@@ -2249,6 +2249,10 @@ impl TypeChecker {
                 ty.is_char()
                     .then(|| (BigInt::default(), BigInt::from(char::MAX as u32)))
             })
+            .or_else(|| {
+                ty.is_bool()
+                    .then(|| (BigInt::default(), BigInt::from(1)))
+            })
         {
             'outer: while value <= max {
                 if ty.is_char() && (0xd800.into()..=0xe000.into()).contains(&value) {
@@ -2334,7 +2338,7 @@ impl TypeChecker {
                 ));
             }
         } else if !patterns.any(|patt| patt.irrefutable) {
-            // covers structs and array patterns
+            // covers struct/array/void
             self.error(Error::match_statement("", span))
         }
     }
@@ -3148,6 +3152,28 @@ impl TypeChecker {
                 span,
             )),
             Pattern::Array(subpatterns) => self.check_array_pattern(scrutinee, subpatterns, span),
+            Pattern::Bool(val) => {
+                if scrutinee.strip_references() != &Type::Bool {
+                    return self.error(Error::type_mismatch(
+                        &scrutinee.name(&self.scopes),
+                        &Type::Bool.name(&self.scopes),
+                        span,
+                    ));
+                }
+
+                CheckedPattern::refutable(CheckedPatternData::Int(BigInt::from(val as u32)))
+            }
+            Pattern::Void => {
+                if scrutinee.strip_references() != &Type::Void {
+                    return self.error(Error::type_mismatch(
+                        &scrutinee.name(&self.scopes),
+                        &Type::Void.name(&self.scopes),
+                        span,
+                    ));
+                }
+
+                CheckedPattern::irrefutable(CheckedPatternData::Void)
+            }
             Pattern::Error => Default::default(),
         }
     }

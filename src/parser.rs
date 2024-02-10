@@ -996,6 +996,14 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn literal_pattern(&mut self) -> Option<Located<Pattern>> {
+        if let Some(token) = self.next_if_kind(Token::True) {
+            return Some(token.map(|_| Pattern::Bool(true)));
+        } else if let Some(token) = self.next_if_kind(Token::False) {
+            return Some(token.map(|_| Pattern::Bool(false)));
+        } else if let Some(token) = self.next_if_kind(Token::Void) {
+            return Some(token.map(|_| Pattern::Void));
+        }
+
         let string = self.next_if_map(|t| {
             t.data
                 .as_string()

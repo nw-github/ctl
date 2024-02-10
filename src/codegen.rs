@@ -1999,6 +1999,9 @@ impl<'a> Codegen<'a> {
                         .emit(format!("={}{src};", if borrow { "&" } else { "" }));
                 });
             }
+            CheckedPatternData::Void => {
+                conditions.next(|buffer| buffer.emit("1"));
+            }
             CheckedPatternData::Error => panic!("ICE: CheckedPatternData::Error in gen_pattern"),
         }
     }
@@ -2202,7 +2205,8 @@ impl<'a> Codegen<'a> {
             if self.flags.minify {
                 self.buffer.emit(format!("f{}", state.func.id));
                 for ty in state.func.ty_args.values() {
-                    self.buffer.emit_generic_mangled_name(self.scopes, ty, self.flags.minify);
+                    self.buffer
+                        .emit_generic_mangled_name(self.scopes, ty, self.flags.minify);
                 }
             } else {
                 self.buffer
@@ -2211,7 +2215,8 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit("$");
                     for ty in state.func.ty_args.values() {
                         self.buffer.emit("$");
-                        self.buffer.emit_generic_mangled_name(self.scopes, ty, self.flags.minify);
+                        self.buffer
+                            .emit_generic_mangled_name(self.scopes, ty, self.flags.minify);
                     }
                     self.buffer.emit("$$");
                 }

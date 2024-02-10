@@ -48,6 +48,7 @@ pub enum CheckedPatternData {
         inner: Type,
     },
     Variable(VariableId),
+    Void,
     #[default]
     Error,
 }
