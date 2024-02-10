@@ -77,6 +77,10 @@ enum SubCommand {
         /// stdout.
         output: Option<PathBuf>,
 
+        /// Run clang-format on the resulting C code
+        #[clap(action, short, long)]
+        pretty: bool,
+
         /// Minify the resulting C code
         #[clap(action, short, long)]
         minify: bool,
@@ -149,14 +153,42 @@ fn compile_results(src: &str, leak: bool, output: &Path, build: BuildOrRun) -> a
     Ok(())
 }
 
+fn print_results(src: &[u8], pretty: bool, output: &mut impl Write) -> anyhow::Result<()> {
+    if pretty {
+        let mut cc = Command::new("clang-format")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("Couldn't invoke clang-format")?;
+        cc.stdin
+            .as_mut()
+            .context("clang-format closed stdin")?
+            .write_all(src)?;
+        let result = cc.wait_with_output()?;
+        if !result.status.success() {
+            anyhow::bail!(
+                "clang-format returned non-zero exit code {:?}",
+                result.status.code().unwrap_or_default()
+            );
+        }
+
+        output.write_all(&result.stdout)?;
+    } else {
+        output.write_all(src)?;
+    }
+
+    Ok(())
+}
+
 fn handle_results(args: Arguments, result: &str) -> anyhow::Result<()> {
     match args.command {
-        SubCommand::Print { output, .. } => {
+        SubCommand::Print { output, pretty, .. } => {
             if let Some(output) = output {
                 let mut output = File::create(output)?;
-                output.write_all(result.as_bytes())?;
+                print_results(result.as_bytes(), pretty, &mut output)?;
             } else {
-                println!("{result}");
+                print_results(result.as_bytes(), pretty, &mut std::io::stdout().lock())?;
             }
         }
         SubCommand::Build { build, output } => {
