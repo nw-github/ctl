@@ -365,9 +365,10 @@ pub fn print_expr(expr: &Expr, indent: usize) {
             }
         }
         ExprData::Error => {}
-        ExprData::Lambda { params, ret, body } => {
+        ExprData::Lambda { params, ret, body, moves } => {
             eprintln!("{tabs}Lambda");
-            eprintln!("{tabs}Return: {ret:?}");
+            print_bool!(moves);
+            eprintln!("\n{tabs}Return: {ret:?}");
             if !params.is_empty() {
                 eprintln!("{tabs}Params:");
                 let plus_1 = INDENT.repeat(indent + 1);

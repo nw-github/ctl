@@ -526,29 +526,16 @@ impl<'a, 'b> Parser<'a, 'b> {
                         }
                     })
             }
-            Token::Fn => {
-                self.expect_kind(Token::LParen);
-                let params = self
-                    .csv(Vec::new(), Token::RParen, span, |this| {
-                        (
-                            this.expect_id_l("expected parameter name"),
-                            this.next_if_kind(Token::Colon).map(|_| this.type_hint()),
-                        )
-                    })
-                    .data;
-                let ret = self.next_if_kind(Token::Colon).map(|_| self.type_hint());
-                self.expect_kind(Token::FatArrow);
+            Token::Move => {
+                let token = self.next();
+                if !matches!(token.data, Token::Or | Token::LogicalOr) {
+                    self.error_no_sync(Error::new("expected '|'", token.span));
+                }
 
-                let body = self.expression();
-                Expr::new(
-                    span.extended_to(body.span),
-                    ExprData::Lambda {
-                        params,
-                        ret,
-                        body: body.into(),
-                    },
-                )
+                self.lambda_expr(token, true)
             }
+            Token::Or => self.lambda_expr(Located::new(span, data), false),
+            Token::LogicalOr => self.lambda_expr(Located::new(span, data), false),
             Token::Return => {
                 let (span, expr) = if !self.is_range_end() {
                     let expr = self.expression();
@@ -870,6 +857,38 @@ impl<'a, 'b> Parser<'a, 'b> {
             stmts.push(this.statement());
         });
         Expr::new(span, ExprData::Block(stmts))
+    }
+
+    fn lambda_expr(&mut self, head: Located<Token>, moves: bool) -> Expr {
+        let params = if head.data == Token::Or {
+            self.csv(Vec::new(), Token::Or, head.span, |this| {
+                (
+                    this.expect_id_l("expected parameter name"),
+                    this.next_if_kind(Token::Colon).map(|_| this.type_hint()),
+                )
+            })
+            .data
+        } else {
+            Vec::new()
+        };
+
+        let ret = self.next_if_kind(Token::Colon).map(|_| self.type_hint());
+        let body = if ret.is_none() {
+            self.expression()
+        } else {
+            let token = self.expect_kind(Token::LCurly);
+            self.block_expr(token.span)
+        };
+
+        Expr::new(
+            head.span.extended_to(body.span),
+            ExprData::Lambda {
+                params,
+                ret,
+                moves,
+                body: body.into(),
+            },
+        )
     }
 
     //

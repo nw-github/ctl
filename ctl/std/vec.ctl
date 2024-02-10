@@ -119,7 +119,7 @@ pub struct Vec<T> {
 
         let src = this.ptr.add(idx);
         if idx < this.len {
-            unsafe mem::move(
+            unsafe mem::copy_overlapping(
                 dst: this.ptr.add(idx + 1).as_mut_ptr(), 
                 src: src.as_ptr(), 
                 num: this.len - idx,
@@ -139,7 +139,7 @@ pub struct Vec<T> {
             let ptr = this.ptr.add(idx);
             let t   = ptr.read();
             if idx + 1 < this.len {
-                mem::move(
+                mem::copy_overlapping(
                     dst: ptr.as_mut_ptr(),
                     src: ptr.add(1).as_ptr(),
                     num: this.len - idx,

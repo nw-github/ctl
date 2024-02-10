@@ -173,6 +173,7 @@ pub enum ExprData {
         params: Vec<(Located<String>, Option<TypeHint>)>,
         ret: Option<TypeHint>,
         body: Box<Expr>,
+        moves: bool,
     },
     Error,
 }

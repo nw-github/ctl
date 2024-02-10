@@ -31,6 +31,7 @@ pub enum Token<'a> {
     Hash,
     HashLParen,
     At,
+    Move,
 
     Plus,
     AddAssign,
@@ -553,6 +554,7 @@ impl<'a> Lexer<'a> {
             "loop" => Token::Loop,
             "match" => Token::Match,
             "mod" => Token::Mod,
+            "move" => Token::Move,
             "mut" => Token::Mut,
             "null" => Token::None,
             "pub" => Token::Pub,

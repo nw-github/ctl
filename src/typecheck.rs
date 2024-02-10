@@ -2030,7 +2030,7 @@ impl TypeChecker {
                 }
             }
             ExprData::Error => CheckedExpr::default(),
-            ExprData::Lambda { params, ret, body } => {
+            ExprData::Lambda { params, ret, body, moves: _ } => {
                 let ty_is_generic = |scopes: &Scopes, ty: &Type| {
                     !ty.as_user()
                         .is_some_and(|ut| scopes.get(ut.id).data.is_template())

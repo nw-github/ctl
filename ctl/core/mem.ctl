@@ -23,7 +23,7 @@ pub unsafe fn copy<T>(kw dst: *mut T, kw src: *T, kw num: uint) {
 
 /// Copies `num` T's from `src` to `dst` without destroying the contents in `dst`. Behaves as if
 /// `src` is first copied to a temporary buffer, then copied to dst.
-pub unsafe fn move<T>(kw dst: *mut T, kw src: *T, kw num: uint) {
+pub unsafe fn copy_overlapping<T>(kw dst: *mut T, kw src: *T, kw num: uint) {
     unsafe builtin::memmove(dst as *mut c_void, src as *c_void, num * size_of::<T>());
 }
 
