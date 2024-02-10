@@ -22,7 +22,7 @@ pub struct Set<T: Hash + Eq<T>> {
     }
 
     pub fn insert(mut this, key: T): bool {
-        this.inner.insert(key, {}) is ?_
+        this.inner.insert(key, {}) is null
     }
 
     pub fn remove(mut this, key: *T): bool {

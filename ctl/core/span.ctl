@@ -177,9 +177,9 @@ pub struct IterMut<T> {
 }
 
 pub fn compare<T>(lhs: [T..], rhs: [T..]): bool {
-    unsafe core::mem::compare(
-        lhs.as_raw().as_ptr() as *c_void, 
-        rhs.as_raw().as_ptr() as *c_void, 
-        lhs.len()
-    )
+    if lhs.len() != rhs.len() {
+        return false;
+    }
+
+    unsafe core::mem::compare(lhs.as_raw().as_ptr(), rhs.as_raw().as_ptr(), lhs.len())
 }

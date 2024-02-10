@@ -37,14 +37,14 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     }
 
     pub fn get(this, key: *K): ?*V {
-        if this.buckets.get(this.entry_pos(key)?)? is Bucket::Some(entry) {
-            &entry.val
+        if this.buckets.get(this.entry_pos(key)) is ?Bucket::Some({val}) {
+            val
         }
     }
 
     pub fn get_mut(mut this, key: *K): ?*mut V {
-        if this.buckets.get_mut(this.entry_pos(key)?)? is Bucket::Some(entry) {
-            &mut entry.val
+        if this.buckets.get_mut(this.entry_pos(key)) is ?Bucket::Some({val}) {
+            val
         }
     }
 
@@ -53,8 +53,8 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
             this.adjust_cap(this.buckets.len() * 2);
         }
 
-        match this.buckets.get_mut(this.entry_pos(&key)?)? {
-            Bucket::Some(entry) => core::mem::replace(&mut entry.val, val) as V,
+        match this.buckets.get_mut(this.entry_pos(&key))? {
+            Bucket::Some({val: prev}) => core::mem::replace(prev, val) as V,
             entry => {
                 if !(entry is Bucket::Tombstone) {
                     this.len++;
@@ -67,7 +67,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     }
 
     pub fn remove(mut this, key: *K): ?V {
-        match this.buckets.get_mut(this.entry_pos(key)?)? {
+        match this.buckets.get_mut(this.entry_pos(key))? {
             Bucket::None => null,
             Bucket::Tombstone => null,
             entry => {
@@ -90,32 +90,28 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     }
 
     pub fn contains(this, key: *K): bool {
-        if this.entry_pos(key) is ?idx {
-            this.buckets.get(idx)! is Bucket::Some(_)
-        } else {
-            false
-        }
+        this.buckets.get(this.entry_pos(key)) is ?Bucket::Some(_)
     }
 
     pub fn len(this): uint {
         this.len
     }
 
-    fn entry_pos(this, key: *K): ?uint {
+    fn entry_pos(this, k: *K): uint {
         if this.buckets.is_empty() {
-            return null;
+            return 0;
         }
 
         mut idx = {
             mut h = Fnv1a::new();
-            key.hash(&mut h);
+            k.hash(&mut h);
             h.finish() as! uint
         } % this.buckets.len();
 
         mut tombstone: ?uint = null;
         loop {
             match this.buckets.get(idx)! {
-                Bucket::Some(entry) => if key.eq(&entry.key) {
+                Bucket::Some({key}) => if k.eq(key) {
                     break idx;
                 }
                 //break tombstone ?? idx;
@@ -145,14 +141,11 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
 
         mut i = 0u;
         while i < old {
-            if this.buckets.get(i)! is Bucket::Some(entry) {
+            if this.buckets.get(i)! is Bucket::Some({key}) {
                 this.len++;
-                let j = this.entry_pos(&entry.key)!;
+                let j = this.entry_pos(key);
                 if i != j {
-                    core::mem::swap(
-                        this.buckets.get_mut(i)!,
-                        this.buckets.get_mut(j)!,
-                    );
+                    core::mem::swap(this.buckets.get_mut(i)!, this.buckets.get_mut(j)!);
                 }
             }
 
