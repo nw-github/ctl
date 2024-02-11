@@ -246,7 +246,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
-            let name = self.expect_id("expected name");
+            let name = self.expect_id_l("expected name");
             self.expect_kind(Token::Colon);
             let ty = self.type_hint();
             self.expect_kind(Token::Assign);
@@ -1481,7 +1481,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn extension(&mut self, public: bool, span: Span) -> StmtData {
         let type_params = self.type_params();
-        let name = self.expect_id("expected name");
+        let name = self.expect_id_l("expected name");
 
         self.expect_kind(Token::For);
         let ty = self.type_hint();

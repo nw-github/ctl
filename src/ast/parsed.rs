@@ -76,7 +76,7 @@ pub enum StmtData {
     },
     Extension {
         public: bool,
-        name: String,
+        name: Located<String>,
         ty: TypeHint,
         type_params: Vec<(String, Vec<Located<Path>>)>,
         impls: Vec<ImplBlock>,
@@ -84,7 +84,7 @@ pub enum StmtData {
     },
     Static {
         public: bool,
-        name: String,
+        name: Located<String>,
         ty: TypeHint,
         value: Expr,
     },

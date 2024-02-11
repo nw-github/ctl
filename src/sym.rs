@@ -1,6 +1,5 @@
-use derive_more::{Constructor, Deref, DerefMut};
+use derive_more::{Constructor, Deref, DerefMut, From};
 use enum_as_inner::EnumAsInner;
-use indexmap::IndexSet;
 use std::collections::HashMap;
 
 use crate::{
@@ -16,8 +15,8 @@ use crate::{
 macro_rules! id {
     ($name: ident => $output: ident,
      $vec: ident,
-     $($parts:ident).+,
-     $suffix: ident) => {
+     $namespace: ident,
+     $($parts:ident).+) => {
         #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
         pub struct $name(usize);
 
@@ -32,33 +31,13 @@ macro_rules! id {
                 &mut scopes.$vec[self.0]
             }
 
-            fn find(scopes: &Scopes, current: ScopeId, name: &str) -> Option<Vis<Self>> {
-                for (id, scope) in scopes.walk(current) {
-                    if let Some(item) = Self::find_in(scopes, name, id) {
-                        return Some(item);
-                    }
-
-                    if matches!(scope.kind, ScopeKind::Module(_, _)) {
-                        break;
-                    }
-                }
-
-                None
-            }
-
-            fn find_in(scopes: &Scopes, name: &str, scope: ScopeId) -> Option<Vis<Self>> {
-                scopes[scope].$vec
-                    .iter()
-                    .rev()
-                    .find_map(|id| (scopes.$vec[id.0].$($parts).+ == name).then_some(*id))
-            }
-
-            fn insert_in(scopes: &mut Scopes, value: Self::Value, public: bool, scope: ScopeId) -> Self {
+            fn insert_in(scopes: &mut Scopes, value: Self::Value, public: bool, scope: ScopeId) -> (Self, bool) {
                 let index = scopes.$vec.len();
                 scopes.$vec.push(Scoped::new(value, scope));
                 let id = $name(index);
-                scopes[scope].$vec.insert(Vis { id, public });
-                id
+                let name = (scopes.$vec[id.0].$($parts).+).clone();
+                let res = scopes[scope].$namespace.insert(name, Vis { id: id.into(), public });
+                (id, res.is_some())
             }
         }
 
@@ -77,10 +56,10 @@ impl ScopeId {
     pub const ROOT: ScopeId = ScopeId(0);
 }
 
-id!(FunctionId => Function, fns, name.data, func);
-id!(UserTypeId => UserType, types, name.data, user_type);
-id!(VariableId => Variable, vars, name, var);
-id!(ExtensionId => Extension, exts, name, ext);
+id!(FunctionId => Function, fns, vns, name.data);
+id!(UserTypeId => UserType, types, tns, name.data);
+id!(VariableId => Variable, vars, vns, name);
+id!(ExtensionId => Extension, exts, tns, name);
 
 #[derive(Default, Debug, Clone, EnumAsInner)]
 pub enum ScopeKind {
@@ -93,7 +72,7 @@ pub enum ScopeKind {
     Lambda(Option<Type>, bool),
     Function(FunctionId),
     UserType(UserTypeId),
-    Module(String, Vec<UsePath>),
+    Module(String),
     Impl(UserTypeId),
     Extension(ExtensionId),
     #[default]
@@ -109,7 +88,7 @@ impl ScopeKind {
             &ScopeKind::Function(id) => Some(&scopes.get(id).name.data),
             &ScopeKind::UserType(id) => Some(&scopes.get(id).name.data),
             &ScopeKind::Extension(id) => Some(&scopes.get(id).name),
-            ScopeKind::Module(name, _) => Some(name),
+            ScopeKind::Module(name) => Some(name),
             _ => None,
         }
     }
@@ -212,6 +191,7 @@ pub struct UserType {
     pub impls: Vec<Type>,
     pub type_params: Vec<UserTypeId>,
     pub attrs: Vec<Attribute>,
+    pub fns: Vec<Vis<FunctionId>>,
 }
 
 impl UserType {
@@ -229,6 +209,13 @@ impl UserType {
             UserTypeData::Union(union) => &mut union.variants,
             _ => &mut [],
         }
+    }
+
+    pub fn find_associated_fn(&self, scopes: &Scopes, name: &str) -> Option<FunctionId> {
+        self.fns
+            .iter()
+            .map(|f| f.id)
+            .find(|&id| scopes.get(id).name.data == name)
     }
 }
 
@@ -286,6 +273,7 @@ pub struct Extension {
     pub impls: Vec<Type>,
     pub type_params: Vec<UserTypeId>,
     pub body_scope: ScopeId,
+    pub fns: Vec<Vis<FunctionId>>,
 }
 
 impl Extension {
@@ -311,42 +299,54 @@ pub struct Vis<T> {
     pub public: bool,
 }
 
-impl<T: std::hash::Hash> std::hash::Hash for Vis<T> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-
-impl<T: PartialEq> PartialEq for Vis<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.id.eq(other)
-    }
-}
-
-impl<T: Eq> Eq for Vis<T> {}
-
 pub trait ItemId: Sized {
     type Value;
 
     fn get(self, scopes: &Scopes) -> &Scoped<Self::Value>;
     fn get_mut(self, scopes: &mut Scopes) -> &mut Scoped<Self::Value>;
+    fn insert_in(
+        scopes: &mut Scopes,
+        value: Self::Value,
+        public: bool,
+        scope: ScopeId,
+    ) -> (Self, bool);
+}
 
-    fn find(scopes: &Scopes, current: ScopeId, name: &str) -> Option<Vis<Self>>;
-    fn find_in(scopes: &Scopes, name: &str, scope: ScopeId) -> Option<Vis<Self>>;
+#[derive(Debug, Clone, Copy, EnumAsInner, From)]
+pub enum TypeItem {
+    Type(UserTypeId),
+    Extension(ExtensionId),
+    Module(ScopeId),
+}
 
-    fn insert_in(scopes: &mut Scopes, value: Self::Value, public: bool, scope: ScopeId) -> Self;
+#[derive(Debug, Clone, Copy, EnumAsInner, From)]
+pub enum ValueItem {
+    Fn(FunctionId),
+    Var(VariableId),
 }
 
 #[derive(Default, Debug)]
 pub struct Scope {
     pub kind: ScopeKind,
     pub parent: Option<ScopeId>,
-    pub fns: IndexSet<Vis<FunctionId>>,
-    pub types: IndexSet<Vis<UserTypeId>>,
-    pub vars: IndexSet<Vis<VariableId>>,
-    pub exts: IndexSet<Vis<ExtensionId>>,
-    pub children: IndexSet<Vis<ScopeId>>,
+    pub tns: HashMap<String, Vis<TypeItem>>,
+    pub vns: HashMap<String, Vis<ValueItem>>,
     pub use_stmts: Vec<UsePath>,
+}
+
+impl Scope {
+    pub fn find_in_tns(&self, name: &str) -> Option<Vis<TypeItem>> {
+        self.tns.get(name).copied()
+    }
+
+    pub fn find_in_vns(&self, name: &str) -> Option<Vis<ValueItem>> {
+        self.vns.get(name).copied()
+    }
+
+    pub fn find_module(&self, name: &str) -> Option<ScopeId> {
+        self.find_in_tns(name)
+            .and_then(|inner| inner.as_module().copied())
+    }
 }
 
 pub struct Scopes {
@@ -449,14 +449,6 @@ impl Scopes {
             .map(|(i, var)| (FunctionId(i), var))
     }
 
-    pub fn find_module_in(&self, name: &str, scope: ScopeId) -> Option<Vis<ScopeId>> {
-        self[scope]
-            .children
-            .iter()
-            .find(|&&id| matches!(&self[*id].kind, ScopeKind::Module(mn, _) if name == mn))
-            .copied()
-    }
-
     pub fn get_option_id(&self) -> Option<UserTypeId> {
         self.lang_types.get("option").copied()
     }
@@ -471,10 +463,6 @@ impl Scopes {
 
     pub fn get_mut<T: ItemId>(&mut self, id: T) -> &mut Scoped<T::Value> {
         id.get_mut(self)
-    }
-
-    pub fn find_in<T: ItemId>(&self, name: &str, scope: ScopeId) -> Option<Vis<T>> {
-        T::find_in(self, name, scope)
     }
 }
 

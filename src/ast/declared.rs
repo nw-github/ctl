@@ -5,6 +5,7 @@ use crate::{
 };
 
 pub struct DeclaredFn {
+    pub public: bool,
     pub id: FunctionId,
     pub body: Option<Vec<DeclaredStmt>>,
 }
@@ -23,6 +24,10 @@ pub enum DeclaredStmt {
         ty: Option<TypeHint>,
         value: Option<Expr>,
     },
+    Static {
+        id: VariableId,
+        value: Expr,
+    },
     Fn(DeclaredFn),
     Struct {
         id: UserTypeId,
@@ -34,7 +39,6 @@ pub enum DeclaredStmt {
         id: UserTypeId,
         impl_blocks: Vec<DeclaredImplBlock>,
         functions: Vec<DeclaredFn>,
-        member_cons: Vec<DeclaredFn>,
     },
     Trait {
         id: UserTypeId,
@@ -44,10 +48,6 @@ pub enum DeclaredStmt {
         id: ExtensionId,
         impl_blocks: Vec<DeclaredImplBlock>,
         functions: Vec<DeclaredFn>,
-    },
-    Static {
-        id: VariableId,
-        value: Expr,
     },
     Module {
         id: ScopeId,

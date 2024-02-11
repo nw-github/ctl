@@ -16,7 +16,7 @@ use crate::{
     nearest_pow_of_two,
     sym::{
         CheckedMember, Function, FunctionId, ParamPattern, ScopeId, ScopeKind, Scopes,
-        UserTypeData, UserTypeId, VariableId,
+        UserTypeData, UserTypeId, VariableId, Vis,
     },
     typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type, TypeArgs},
     CodegenFlags,
@@ -749,7 +749,7 @@ impl<'a> Codegen<'a> {
         let (mut this, main) = if flags.lib {
             (Self::new(scopes, diag, exports.collect(), flags), None)
         } else {
-            let Some(main) = scopes.find_in("main", scope) else {
+            let Some(main) = scopes[scope].vns.get("main").and_then(|id| id.as_fn()) else {
                 diag.error(Error::new("no main function found", Span::default()));
                 return Err(diag);
             };
@@ -1206,49 +1206,24 @@ impl<'a> Codegen<'a> {
                     }
                     self.buffer.emit("};");
 
-                    let wc_state = State::new(GenericFunc::new(
-                        *self
-                            .scopes
-                            .find_in("with_capacity", self.scopes.get(ut.id).body_scope)
-                            .unwrap(),
-                        ut.ty_args.clone(),
-                    ));
-
-                    self.emit_type(&expr.ty);
-                    self.buffer.emit(format!(" {tmp}="));
-                    self.emit_fn_name(&wc_state);
-                    self.buffer.emit(format!("({len});"));
+                    self.emit_with_capacity(&expr.ty, &tmp, &ut, len);
                     self.buffer.emit(format!(
                         "CTL_MEMCPY((void*){tmp}.ptr.addr,(const void*){arr},{len}*{}",
                         inner.size_and_align(self.scopes).0
                     ));
                     self.buffer.emit(format!(");{tmp}.len={len};"));
-                    self.funcs.insert(wc_state);
                 });
             }
             CheckedExprData::VecWithInit { init, count } => {
                 tmpbuf_emit!(self, state, |tmp| {
                     let ut = (**expr.ty.as_user().unwrap()).clone();
                     let len = self.emit_tmpvar(*count, state);
-                    let wc_state = State::new(GenericFunc::new(
-                        *self
-                            .scopes
-                            .find_in("with_capacity", self.scopes.get(ut.id).body_scope)
-                            .unwrap(),
-                        ut.ty_args.clone(),
-                    ));
-
-                    self.emit_type(&expr.ty);
-                    self.buffer.emit(format!(" {tmp}="));
-                    self.emit_fn_name(&wc_state);
-                    self.buffer
-                        .emit(format!("({len});for(usize i=0;i<{len};i++){{(("));
+                    self.emit_with_capacity(&expr.ty, &tmp, &ut, &len);
+                    self.buffer.emit(format!("for(usize i=0;i<{len};i++){{(("));
                     self.emit_type(ut.first_type_arg().unwrap());
                     self.buffer.emit(format!("*){tmp}.ptr.addr)[i]="));
                     self.emit_expr(*init, state);
                     self.buffer.emit(format!(";}}{tmp}.len={len};"));
-
-                    self.funcs.insert(wc_state);
                 });
             }
             CheckedExprData::Set(exprs) => {
@@ -1258,20 +1233,14 @@ impl<'a> Codegen<'a> {
                 }
 
                 tmpbuf_emit!(self, state, |tmp| {
-                    let body = self.scopes.get(ut.id).body_scope;
-                    let wc_state = State::new(GenericFunc::new(
-                        *self.scopes.find_in("with_capacity", body).unwrap(),
-                        ut.ty_args.clone(),
-                    ));
-
-                    self.emit_type(&expr.ty);
-                    self.buffer.emit(format!(" {tmp}="));
-                    self.emit_fn_name(&wc_state);
-                    self.buffer.emit(format!("({});", exprs.len()));
+                    self.emit_with_capacity(&expr.ty, &tmp, &ut, exprs.len());
                     let insert = State::with_instance(
                         GenericFunc::from_id(
                             self.scopes,
-                            *self.scopes.find_in("insert", body).unwrap(),
+                            self.scopes
+                                .get(ut.id)
+                                .find_associated_fn(self.scopes, "insert")
+                                .unwrap(),
                         ),
                         Some(&expr.ty),
                     );
@@ -1282,7 +1251,6 @@ impl<'a> Codegen<'a> {
                         self.emit_expr(val, state);
                         self.buffer.emit(");");
                     }
-                    self.funcs.insert(wc_state);
                     self.funcs.insert(insert);
                 });
             }
@@ -1293,25 +1261,18 @@ impl<'a> Codegen<'a> {
                 }
 
                 tmpbuf_emit!(self, state, |tmp| {
-                    let body = self.scopes.get(ut.id).body_scope;
-                    let wc_state = State::new(GenericFunc::new(
-                        *self.scopes.find_in("with_capacity", body).unwrap(),
-                        ut.ty_args.clone(),
-                    ));
-
                     let insert = State::with_instance(
                         GenericFunc::from_id(
                             self.scopes,
-                            *self.scopes.find_in("insert", body).unwrap(),
+                            self.scopes
+                                .get(ut.id)
+                                .find_associated_fn(self.scopes, "insert")
+                                .unwrap(),
                         ),
                         Some(&expr.ty),
                     );
 
-                    self.emit_type(&expr.ty);
-                    self.buffer.emit(format!(" {tmp}="));
-                    self.emit_fn_name(&wc_state);
-                    self.buffer.emit(format!("({});", exprs.len()));
-
+                    self.emit_with_capacity(&expr.ty, &tmp, &ut, exprs.len());
                     for (key, val) in exprs {
                         self.emit_fn_name(&insert);
                         self.buffer.emit(format!("(&{tmp},"));
@@ -1320,7 +1281,6 @@ impl<'a> Codegen<'a> {
                         self.emit_expr(val, state);
                         self.buffer.emit(");");
                     }
-                    self.funcs.insert(wc_state);
                     self.funcs.insert(insert);
                 });
             }
@@ -1706,9 +1666,9 @@ impl<'a> Codegen<'a> {
 
     fn emit_new(&mut self, ut: &GenericUserType) {
         let new_state = State::new(GenericFunc::new(
-            *self
-                .scopes
-                .find_in("new", self.scopes.get(ut.id).body_scope)
+            self.scopes
+                .get(ut.id)
+                .find_associated_fn(self.scopes, "new")
                 .unwrap(),
             ut.ty_args.clone(),
         ));
@@ -1716,6 +1676,28 @@ impl<'a> Codegen<'a> {
         self.emit_fn_name(&new_state);
         self.buffer.emit("()");
         self.funcs.insert(new_state);
+    }
+
+    fn emit_with_capacity(
+        &mut self,
+        ty: &Type,
+        tmp: &str,
+        ut: &GenericUserType,
+        len: impl std::fmt::Display,
+    ) {
+        self.emit_type(ty);
+        self.buffer.emit(format!(" {tmp}="));
+        let state = State::new(GenericFunc::new(
+            self.scopes
+                .get(ut.id)
+                .find_associated_fn(self.scopes, "with_capacity")
+                .unwrap(),
+            ut.ty_args.clone(),
+        ));
+
+        self.emit_fn_name(&state);
+        self.buffer.emit(format!("({len});"));
+        self.funcs.insert(state);
     }
 
     fn emit_intrinsic(
@@ -2264,19 +2246,14 @@ impl<'a> Codegen<'a> {
         trait_id: UserTypeId,
         fn_name: &str,
     ) -> Option<FunctionId> {
-        let search = |scope: ScopeId| {
-            scopes[scope]
-                .children
-                .iter()
-                .find(|s| matches!(scopes[s.id].kind, ScopeKind::Impl(id) if id == trait_id))
-                .and_then(|scope| scopes.find_in(fn_name, scope.id))
-                .map(|f| f.id)
+        // FIXME: search by trait id
+        let search = |fns: &[Vis<FunctionId>]| {
+            fns.iter()
+                .find(|f| scopes.get(f.id).name.data == fn_name)
+                .map(|f| **f)
         };
 
-        if let Some(f) = ty
-            .as_user()
-            .and_then(|ut| search(scopes.get(ut.id).body_scope))
-        {
+        if let Some(f) = ty.as_user().and_then(|ut| search(&scopes.get(ut.id).fns)) {
             return Some(f);
         }
 
@@ -2285,12 +2262,11 @@ impl<'a> Codegen<'a> {
             .extensions()
             .iter()
             .filter(|ext| ext.matches_type(ty))
-            .find_map(|ext| search(ext.body_scope))
+            .find_map(|ext| search(&ext.fns))
     }
 
     fn needs_fn_wrapper(f: &Function) -> bool {
         f.linkage == Linkage::Import
-            && f.body.is_none()
             && matches!(f.ret, Type::Void | Type::Never | Type::CVoid)
     }
 
@@ -2307,10 +2283,11 @@ impl<'a> Codegen<'a> {
     }
 
     fn find_function(&self, module: &str, name: &str) -> Option<State> {
-        let id = self
-            .scopes
-            .find_in(name, *self.scopes.find_module_in(module, ScopeId::ROOT)?)?;
-
+        let id = self.scopes[self.scopes[ScopeId::ROOT].find_module(module)?]
+            .vns
+            .get(name)?
+            .id
+            .as_fn()?;
         Some(State::new(GenericFunc::from_id(self.scopes, *id)))
     }
 }
