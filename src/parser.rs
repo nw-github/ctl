@@ -1354,7 +1354,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     ty,
                     name,
                     default: value,
-                    shared: false,
+                    shared: true,
                 });
             }
         });

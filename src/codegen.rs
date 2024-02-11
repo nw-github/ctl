@@ -155,7 +155,7 @@ impl<'a> TypeGen<'a> {
             definitions.emit_type_name(self.scopes, ut, flags.minify);
             definitions.emit("{");
 
-            let members = self.scopes.get(ut.id).members().unwrap();
+            let members = self.scopes.get(ut.id).members();
             if members.is_empty() && self.scopes.get(ut.id).data.is_struct() {
                 definitions.emit("CTL_DUMMY_MEMBER;");
             }
@@ -256,50 +256,49 @@ impl<'a> TypeGen<'a> {
         self.structs.insert(ut.clone(), Vec::new());
 
         let mut deps = Vec::new();
-        if let Some(members) = self.scopes.get(ut.id).members() {
-            if let Some(union) = self.scopes.get(ut.id).data.as_union() {
-                self.add_type(diag, &union.tag_type(), None);
-            }
+        if let Some(union) = self.scopes.get(ut.id).data.as_union() {
+            self.add_type(diag, &union.tag_type(), None);
+        }
 
-            for member in members.iter() {
-                match member.ty.with_templates(&ut.ty_args) {
-                    Type::User(dep) => {
-                        if matches!(adding, Some(adding) if adding == &*dep) {
-                            // ideally get the span of the instantiation that caused this
+        for member in self.scopes.get(ut.id).members().iter() {
+            match member.ty.with_templates(&ut.ty_args) {
+                Type::User(dep) => {
+                    if matches!(adding, Some(adding) if adding == &*dep) {
+                        // ideally get the span of the instantiation that caused this
+                        diag.error(Error::cyclic(
+                            &dep.name(self.scopes),
+                            &ut.name(self.scopes),
+                            self.scopes.get(dep.id).name.span,
+                        ));
+                        if !matches!(adding, Some(adding) if adding == &ut) {
                             diag.error(Error::cyclic(
-                                &dep.name(self.scopes),
                                 &ut.name(self.scopes),
-                                self.scopes.get(dep.id).name.span,
+                                &dep.name(self.scopes),
+                                self.scopes.get(ut.id).name.span,
                             ));
-                            if !matches!(adding, Some(adding) if adding == &ut) {
-                                diag.error(Error::cyclic(
-                                    &ut.name(self.scopes),
-                                    &dep.name(self.scopes),
-                                    self.scopes.get(ut.id).name.span,
-                                ));
-                            }
-                            return;
                         }
-
-                        deps.push((*dep).clone());
-                        self.add_user_type(diag, *dep, Some(&ut));
+                        return;
                     }
-                    Type::Array(arr) => {
-                        let mut inner = &arr.0;
-                        while let Type::Array(ty) = inner {
-                            inner = &ty.0;
-                        }
 
-                        if let Type::User(data) = inner {
-                            deps.push((**data).clone());
-                        }
-
-                        self.add_array(diag, arr.0, arr.1, Some(&ut));
-                    }
-                    ty => self.add_type(diag, &ty, adding),
+                    deps.push((*dep).clone());
+                    self.add_user_type(diag, *dep, Some(&ut));
                 }
+                Type::Array(arr) => {
+                    let mut inner = &arr.0;
+                    while let Type::Array(ty) = inner {
+                        inner = &ty.0;
+                    }
+
+                    if let Type::User(data) = inner {
+                        deps.push((**data).clone());
+                    }
+
+                    self.add_array(diag, arr.0, arr.1, Some(&ut));
+                }
+                ty => self.add_type(diag, &ty, adding),
             }
         }
+
         self.structs.insert(ut, deps);
     }
 

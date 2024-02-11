@@ -1193,7 +1193,11 @@ impl TypeChecker {
     }
 
     fn check_impl_blocks(&mut self, id: UserTypeId, impls: Vec<DeclaredImplBlock>) {
-        self.check_impl_blocks_inner(self.scopes.this_type_of(id), id, impls)
+        self.check_impl_blocks_inner(
+            Type::User(GenericUserType::from_id(&self.scopes, id).into()),
+            id,
+            impls,
+        )
     }
 
     fn check_impl_blocks_inner<T: ItemId + Copy>(
@@ -1797,57 +1801,53 @@ impl TypeChecker {
                     }
                 };
 
-                if let Some(ut) = self.scopes.get(ut_id).members() {
-                    for i in 0..ut.len() {
-                        resolve_type!(
-                            self,
-                            self.scopes.get_mut(ut_id).members_mut().unwrap()[i].ty
-                        );
-                    }
+                for i in 0..self.scopes.get(ut_id).members().len() {
+                    resolve_type!(self, self.scopes.get_mut(ut_id).members_mut()[i].ty);
                 }
 
                 let ty = self.scopes.get(ut_id);
-                if let Some(member) = ty
-                    .members()
-                    .and_then(|members| members.iter().find(|m| m.name == name))
-                {
-                    if let Some(union) = ty.data.as_union() {
-                        if !member.shared && !union.is_unsafe {
-                            return self.error(Error::new(
-                                "cannot access union variant with '.' (only shared members)",
-                                span,
-                            ));
-                        }
+                let Some(member) = ty.members().iter().find(|m| m.name == name) else {
+                    return self.error(Error::no_member(
+                        &source.ty.name(&self.scopes),
+                        &name,
+                        span,
+                    ));
+                };
 
-                        if !member.shared && union.is_unsafe && self.safety != Safety::Unsafe {
-                            self.diag.error(Error::is_unsafe(span));
-                        }
-                    }
-
-                    if !member.public && !self.can_access_privates(ty.scope) {
-                        self.diag.error(Error::private_member(
-                            &id.name(&self.scopes),
-                            &member.name,
+                if let Some(union) = ty.data.as_union() {
+                    if !member.shared && !union.is_unsafe {
+                        return self.error(Error::new(
+                            "cannot access union variant with '.' (only shared members)",
                             span,
                         ));
                     }
 
-                    let mut ty = member.ty.clone();
-                    if let Some(instance) = id.as_user() {
-                        ty.fill_templates(&instance.ty_args);
+                    if !member.shared && union.is_unsafe && self.safety != Safety::Unsafe {
+                        self.diag.error(Error::is_unsafe(span));
                     }
-
-                    let id = id.clone();
-                    return CheckedExpr::new(
-                        ty,
-                        CheckedExprData::Member {
-                            source: source.auto_deref(&id).into(),
-                            member: name,
-                        },
-                    );
                 }
 
-                self.error(Error::no_member(&source.ty.name(&self.scopes), &name, span))
+                if !member.public && !self.can_access_privates(ty.scope) {
+                    self.diag.error(Error::private_member(
+                        &id.name(&self.scopes),
+                        &member.name,
+                        span,
+                    ));
+                }
+
+                let mut ty = member.ty.clone();
+                if let Some(instance) = id.as_user() {
+                    ty.fill_templates(&instance.ty_args);
+                }
+
+                let id = id.clone();
+                CheckedExpr::new(
+                    ty,
+                    CheckedExprData::Member {
+                        source: source.auto_deref(&id).into(),
+                        member: name,
+                    },
+                )
             }
             ExprData::Subscript { callee, args } => {
                 if args.len() > 1 {
@@ -2955,15 +2955,15 @@ impl TypeChecker {
                 }
             }
             Pattern::Option(patt) => {
-                let Some(path) = self.resolve_path_in(
-                    &[("Some".into(), vec![])],
-                    Default::default(),
-                    self.scopes
-                        .get(self.scopes.get_option_id().unwrap())
-                        .body_scope,
-                    false,
-                    pattern.span,
-                ) else {
+                let Some(path) = self.scopes.get_option_id().and_then(|id| {
+                    self.resolve_path_in(
+                        &[("Some".into(), vec![])],
+                        Default::default(),
+                        self.scopes.get(id).body_scope,
+                        false,
+                        pattern.span,
+                    )
+                }) else {
                     return self.error(Error::no_lang_item("option", pattern.span));
                 };
 
@@ -2978,15 +2978,15 @@ impl TypeChecker {
                 }
             }
             Pattern::Null => {
-                let Some(path) = self.resolve_path_in(
-                    &[("None".into(), vec![])],
-                    Default::default(),
-                    self.scopes
-                        .get(self.scopes.get_option_id().unwrap())
-                        .body_scope,
-                    false,
-                    pattern.span,
-                ) else {
+                let Some(path) = self.scopes.get_option_id().and_then(|id| {
+                    self.resolve_path_in(
+                        &[("None".into(), vec![])],
+                        Default::default(),
+                        self.scopes.get(id).body_scope,
+                        false,
+                        pattern.span,
+                    )
+                }) else {
                     return self.error(Error::no_lang_item("option", pattern.span));
                 };
 
@@ -3661,11 +3661,9 @@ impl TypeChecker {
                             if self.scopes.get(id).data.is_trait() {
                                 return Type::TraitSelf;
                             }
-                            return self.scopes.this_type_of(id);
+                            return Type::User(GenericUserType::from_id(&self.scopes, id).into());
                         }
-                        ScopeKind::Extension(id) => {
-                            return self.scopes.get(id).ty.clone();
-                        }
+                        ScopeKind::Extension(id) => return self.scopes.get(id).ty.clone(),
                         ScopeKind::Function(f) if Some(f) != current => break,
                         _ => {}
                     }
@@ -3704,8 +3702,8 @@ impl TypeChecker {
     }
 
     fn resolve_members(&mut self, id: UserTypeId) {
-        for i in 0..self.scopes.get(id).members().unwrap().len() {
-            resolve_type!(self, self.scopes.get_mut(id).members_mut().unwrap()[i].ty);
+        for i in 0..self.scopes.get(id).members().len() {
+            resolve_type!(self, self.scopes.get_mut(id).members_mut()[i].ty);
         }
     }
 

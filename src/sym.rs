@@ -10,7 +10,7 @@ use crate::{
         Attribute,
     },
     lexer::Located,
-    typeid::{GenericUserType, Type},
+    typeid::Type,
 };
 
 macro_rules! id {
@@ -215,19 +215,19 @@ pub struct UserType {
 }
 
 impl UserType {
-    pub fn members(&self) -> Option<&[CheckedMember]> {
+    pub fn members(&self) -> &[CheckedMember] {
         match &self.data {
-            UserTypeData::Struct { members, .. } => Some(members),
-            UserTypeData::Union(union) => Some(&union.variants),
-            _ => None,
+            UserTypeData::Struct { members, .. } => members,
+            UserTypeData::Union(union) => &union.variants,
+            _ => &[],
         }
     }
 
-    pub fn members_mut(&mut self) -> Option<&mut [CheckedMember]> {
+    pub fn members_mut(&mut self) -> &mut [CheckedMember] {
         match &mut self.data {
-            UserTypeData::Struct { members, .. } => Some(members),
-            UserTypeData::Union(union) => Some(&mut union.variants),
-            _ => None,
+            UserTypeData::Struct { members, .. } => members,
+            UserTypeData::Union(union) => &mut union.variants,
+            _ => &mut [],
         }
     }
 }
@@ -420,23 +420,15 @@ impl Scopes {
         name.chars().rev().collect::<String>()
     }
 
-    pub fn this_type_of(&self, id: UserTypeId) -> Type {
-        Type::User(GenericUserType::from_id(self, id).into())
-    }
-
     pub fn function_of(&self, scope: ScopeId) -> Option<FunctionId> {
         self.walk(scope)
             .find_map(|(_, scope)| scope.kind.as_function().copied())
     }
 
     pub fn module_of(&self, id: ScopeId) -> Option<ScopeId> {
-        for (id, current) in self.walk(id) {
-            if matches!(current.kind, ScopeKind::Module(_, _)) {
-                return Some(id);
-            }
-        }
-
-        None
+        self.walk(id)
+            .find(|(_, current)| current.kind.is_module())
+            .map(|(id, _)| id)
     }
 
     pub fn vars(&self) -> impl Iterator<Item = (VariableId, &Scoped<Variable>)> {
