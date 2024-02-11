@@ -1,6 +1,6 @@
 use super::assert;
-use core::range::RangeFull;
-use core::span;
+use std::range::RangeFull;
+use std::span;
 
 struct Foo {
     a: int,

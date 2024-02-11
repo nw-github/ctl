@@ -1,8 +1,7 @@
-use core::ptr::Raw;
-use core::ptr::RawMut;
-use core::mem;
-use core::iter::Iterator;
-use core::span::*;
+use std::ptr::Raw;
+use std::ptr::RawMut;
+use std::mem;
+use std::span::*;
 
 #(lang(vec))
 pub struct Vec<T> {

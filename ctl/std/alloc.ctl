@@ -1,5 +1,5 @@
-use core::ptr::RawMut;
-use core::mem::size_of;
+use std::ptr::RawMut;
+use std::mem::size_of;
 
 mod builtin {
     #(c_opaque, c_name(CTL_MALLOC))

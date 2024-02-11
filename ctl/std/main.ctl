@@ -21,7 +21,7 @@ pub fn eprint(s: str) {
 
 fn convert_argv(argc: c_int, argv: **c_char): [str..] {
     mut result: [str] = std::vec::Vec::with_capacity(argc as! uint);
-    for arg in (unsafe core::span::Span::new(ptr: argv, len: argc as! uint)).iter() {
+    for arg in (unsafe std::span::Span::new(ptr: argv, len: argc as! uint)).iter() {
         result.push(str::from_c_str(*arg));
     }
     result.as_span()
@@ -39,5 +39,7 @@ mod prelude {
     pub use super::vec::Vec;
     pub use super::map::Map;
     pub use super::set::Set;
-    pub use super::string::StringExt;
+    pub use super::str::StringExt;
 }
+
+pub use core::*;

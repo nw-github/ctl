@@ -1,5 +1,5 @@
-use core::hash::Hash;
-use core::ops::Eq;
+use std::hash::*;
+use std::ops::Eq;
 use std::vec::Vec;
 
 struct SomeBucket<K, V> {
@@ -54,7 +54,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         }
 
         match this.buckets.get_mut(this.entry_pos(&key))? {
-            Bucket::Some({val: prev}) => core::mem::replace(prev, val) as V,
+            Bucket::Some({val: prev}) => std::mem::replace(prev, val) as V,
             entry => {
                 if !(entry is Bucket::Tombstone) {
                     this.len++;
@@ -72,7 +72,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
             Bucket::Tombstone => null,
             entry => {
                 this.len--;
-                core::mem::replace(entry, Bucket::Tombstone()).unwrap().val
+                std::mem::replace(entry, Bucket::Tombstone()).unwrap().val
             }
         }
     }
@@ -145,7 +145,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
                 this.len++;
                 let j = this.entry_pos(key);
                 if i != j {
-                    core::mem::swap(this.buckets.get_mut(i)!, this.buckets.get_mut(j)!);
+                    std::mem::swap(this.buckets.get_mut(i)!, this.buckets.get_mut(j)!);
                 }
             }
 
@@ -161,7 +161,7 @@ struct Fnv1a {
         Fnv1a()
     }
 
-    impl core::hash::Hasher {
+    impl Hasher {
         fn hash(mut this, data: [u8..]) {
             for byte in data.iter() {
                 this.val *= 0x100000001b3;

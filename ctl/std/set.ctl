@@ -1,5 +1,5 @@
-use core::hash::Hash;
-use core::ops::Eq;
+use std::hash::Hash;
+use std::ops::Eq;
 
 #(lang(set))
 pub struct Set<T: Hash + Eq<T>> {
@@ -13,7 +13,7 @@ pub struct Set<T: Hash + Eq<T>> {
         Set(inner: std::map::Map::with_capacity(cap:))
     }
 
-    pub fn from_iter<I: core::iter::Iterator<T>>(iter: I): Set<T> {
+    pub fn from_iter<I: Iterator<T>>(iter: I): Set<T> {
         mut self: {T} = #[]; // TODO: size hint
         for i in iter {
             self.insert(i);

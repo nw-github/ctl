@@ -11,6 +11,7 @@ mod prelude {
     pub use super::unreachable;
     pub use super::string::str;
     pub use super::opt::Option;
+    pub use super::iter::Iterator;
 
     pub use super::ext::CharExt;
     pub use super::ext::NumberExt;
