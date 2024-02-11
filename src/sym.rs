@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::{
     ast::{
         checked::{CheckedExpr, CheckedPattern, CheckedStmt},
-        parsed::{Expr, Linkage, Pattern, UseStmt},
+        parsed::{Expr, Linkage, Pattern, UsePath},
         Attribute,
     },
     lexer::Located,
@@ -61,7 +61,7 @@ macro_rules! id {
                 id
             }
         }
-    
+
         impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                 write!(f, "{}", self.0)
@@ -93,7 +93,7 @@ pub enum ScopeKind {
     Lambda(Option<Type>, bool),
     Function(FunctionId),
     UserType(UserTypeId),
-    Module(String, Vec<UseStmt>),
+    Module(String, Vec<UsePath>),
     Impl(UserTypeId),
     Extension(ExtensionId),
     #[default]
@@ -346,7 +346,7 @@ pub struct Scope {
     pub vars: IndexSet<Vis<VariableId>>,
     pub exts: IndexSet<Vis<ExtensionId>>,
     pub children: IndexSet<Vis<ScopeId>>,
-    pub use_stmts: Vec<UseStmt>,
+    pub use_stmts: Vec<UsePath>,
 }
 
 pub struct Scopes {

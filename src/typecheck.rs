@@ -60,8 +60,6 @@ pub enum ResolvedPath {
     UserType(GenericUserType),
     Func(GenericFunc),
     Var(VariableId),
-    Module(ScopeId),
-    Extension(ExtensionId),
     None(Error),
 }
 
@@ -281,6 +279,7 @@ impl TypeChecker {
     }
 }
 
+/// Forward declaration pass routines
 impl TypeChecker {
     fn declare_struct(
         &mut self,
@@ -309,7 +308,7 @@ impl TypeChecker {
                                 keyword: true,
                                 patt: Located::new(
                                     member.name.span,
-                                    Pattern::Path(TypePath::from(member.name.data.clone())),
+                                    Pattern::Path(Path::from(member.name.data.clone())),
                                 ),
                                 ty: member.ty.clone(),
                                 default: member.default.clone(),
@@ -415,7 +414,7 @@ impl TypeChecker {
                         keyword: true,
                         patt: Located::new(
                             member.name.span,
-                            Pattern::Path(TypePath::from(member.name.data.clone())),
+                            Pattern::Path(Path::from(member.name.data.clone())),
                         ),
                         ty: member.ty.clone(),
                         default: member.default.clone(),
@@ -436,7 +435,7 @@ impl TypeChecker {
                             keyword: false,
                             patt: Located::new(
                                 member.name.span,
-                                Pattern::Path(TypePath::from(member.name.data.clone())),
+                                Pattern::Path(Path::from(member.name.data.clone())),
                             ),
                             ty: member.ty,
                             default: member.default,
@@ -756,7 +755,7 @@ impl TypeChecker {
 
     fn declare_type_params(
         &mut self,
-        type_params: Vec<(String, Vec<Located<TypePath>>)>,
+        type_params: Vec<(String, Vec<Located<Path>>)>,
     ) -> Vec<UserTypeId> {
         type_params
             .into_iter()
@@ -840,27 +839,31 @@ impl TypeChecker {
         Type::Unresolved((hint, self.current).into())
     }
 
-    fn declare_type_path(&self, path: Located<TypePath>) -> Type {
+    fn declare_type_path(&self, path: Located<Path>) -> Type {
         self.declare_type_hint(TypeHint::Regular(path))
     }
 
     fn typehint_for_struct(
         Located { span, data }: &Located<String>,
-        type_params: &[(String, Vec<Located<TypePath>>)],
+        type_params: &[(String, Vec<Located<Path>>)],
     ) -> TypeHint {
         TypeHint::Regular(Located::new(
             *span,
-            TypePath::Normal(vec![TypePathComponent(
-                data.into(),
-                type_params
-                    .iter()
-                    .map(|(n, _)| TypeHint::Regular(Located::new(*span, TypePath::from(n.clone()))))
-                    .collect(),
-            )]),
+            Path::new(
+                PathOrigin::Normal,
+                vec![(
+                    data.into(),
+                    type_params
+                        .iter()
+                        .map(|(n, _)| TypeHint::Regular(Located::new(*span, Path::from(n.clone()))))
+                        .collect(),
+                )],
+            ),
         ))
     }
 }
 
+/// Typechecking pass routines
 impl TypeChecker {
     fn enter_id<T>(&mut self, id: ScopeId, f: impl FnOnce(&mut Self) -> T) -> T {
         let prev = self.current;
@@ -883,13 +886,8 @@ impl TypeChecker {
                         this.include_universal();
                     }
 
-                    for UseStmt { public, path, all } in
-                        std::mem::take(&mut this.current().use_stmts)
-                    {
-                        let span = path.span;
-                        if let Some(path) = this.resolve_path(&path.data, span) {
-                            this.resolve_use(public, all, path, span);
-                        }
+                    for stmt in std::mem::take(&mut this.current().use_stmts) {
+                        this.resolve_use(&stmt);
                     }
                 });
             }
@@ -1571,19 +1569,6 @@ impl TypeChecker {
                     &format!("type '{}'", ut.name(&self.scopes)),
                     span,
                 )),
-                Some(ResolvedPath::Extension(id)) => self.error(Error::expected_found(
-                    "expression",
-                    &format!("extension '{}'", self.scopes.get(id).name),
-                    span,
-                )),
-                Some(ResolvedPath::Module(id)) => self.error(Error::expected_found(
-                    "expression",
-                    &format!(
-                        "module '{}'",
-                        self.scopes[id].kind.name(&self.scopes).unwrap()
-                    ),
-                    span,
-                )),
                 Some(ResolvedPath::None(err)) => self.error(err),
                 None => Default::default(),
             },
@@ -2030,7 +2015,12 @@ impl TypeChecker {
                 }
             }
             ExprData::Error => CheckedExpr::default(),
-            ExprData::Lambda { params, ret, body, moves: _ } => {
+            ExprData::Lambda {
+                params,
+                ret,
+                body,
+                moves: _,
+            } => {
                 let ty_is_generic = |scopes: &Scopes, ty: &Type| {
                     !ty.as_user()
                         .is_some_and(|ut| scopes.get(ut.id).data.is_template())
@@ -2249,10 +2239,7 @@ impl TypeChecker {
                 ty.is_char()
                     .then(|| (BigInt::default(), BigInt::from(char::MAX as u32)))
             })
-            .or_else(|| {
-                ty.is_bool()
-                    .then(|| (BigInt::default(), BigInt::from(1)))
-            })
+            .or_else(|| ty.is_bool().then(|| (BigInt::default(), BigInt::from(1))))
         {
             'outer: while value <= max {
                 if ty.is_char() && (0xd800.into()..=0xe000.into()).contains(&value) {
@@ -2605,16 +2592,6 @@ impl TypeChecker {
                 ),
                 ResolvedPath::Var(id) => format!(
                     "expected '{}', got variable '{}'",
-                    scrutinee.name(&self.scopes),
-                    self.scopes.get(id).name
-                ),
-                ResolvedPath::Module(id) => format!(
-                    "expected '{}', got module '{}'",
-                    scrutinee.name(&self.scopes),
-                    self.scopes[id].kind.name(&self.scopes).unwrap()
-                ),
-                ResolvedPath::Extension(id) => format!(
-                    "expected '{}', got extension '{}'",
                     scrutinee.name(&self.scopes),
                     self.scopes.get(id).name
                 ),
@@ -3016,7 +2993,7 @@ impl TypeChecker {
             }
             Pattern::Option(patt) => {
                 let Some(path) = self.resolve_path_in(
-                    &[TypePathComponent("Some".into(), vec![])],
+                    &[("Some".into(), vec![])],
                     Default::default(),
                     self.scopes
                         .get(self.scopes.get_option_id().unwrap())
@@ -3038,7 +3015,7 @@ impl TypeChecker {
             }
             Pattern::Null => {
                 let Some(path) = self.resolve_path_in(
-                    &[TypePathComponent("None".into(), vec![])],
+                    &[("None".into(), vec![])],
                     Default::default(),
                     self.scopes
                         .get(self.scopes.get_option_id().unwrap())
@@ -3362,24 +3339,6 @@ impl TypeChecker {
                         );
                     }
                     Some(ResolvedPath::Var(_)) => {}
-                    Some(ResolvedPath::Extension(id)) => {
-                        return self.error(Error::new(
-                            format!(
-                                "expected callable, found extension '{}'",
-                                self.scopes.get(id).name
-                            ),
-                            span,
-                        ))
-                    }
-                    Some(ResolvedPath::Module(scope)) => {
-                        return self.error(Error::new(
-                            format!(
-                                "expected callable, found module '{}'",
-                                self.scopes[scope].kind.name(&self.scopes).unwrap()
-                            ),
-                            span,
-                        ))
-                    }
                     Some(ResolvedPath::None(err)) => return self.error(err),
                     None => return Default::default(),
                 }
@@ -3716,16 +3675,6 @@ impl TypeChecker {
                     Some(ResolvedPath::Var(_)) => {
                         self.error(Error::new("expected type, got variable", path.span))
                     }
-                    Some(ResolvedPath::Extension(_)) => {
-                        self.error(Error::new("expected type, got extension", path.span))
-                    }
-                    Some(ResolvedPath::Module(id)) => self.error(Error::new(
-                        format!(
-                            "expected type, got module '{}'",
-                            self.scopes[id].kind.name(&self.scopes).unwrap()
-                        ),
-                        path.span,
-                    )),
                     Some(ResolvedPath::None(err)) => self.error(err),
                     None => Type::Unknown,
                 }
@@ -3765,154 +3714,6 @@ impl TypeChecker {
             ),
             TypeHint::Error => Type::Unknown,
         }
-    }
-
-    fn resolve_use(&mut self, public: bool, all: bool, path: ResolvedPath, span: Span) -> bool {
-        match path {
-            ResolvedPath::UserType(ut) => {
-                let name = &self.scopes.get(ut.id).name.data;
-                if self
-                    .scopes
-                    .find_in::<FunctionId>(name, self.current)
-                    .is_some()
-                    || self
-                        .scopes
-                        .find_in::<UserTypeId>(name, self.current)
-                        .is_some()
-                {
-                    self.error(Error::redefinition("name", name, span))
-                }
-
-                if all {
-                    self.error(Error::wildcard_import(span))
-                }
-
-                self.current().types.insert(Vis { id: ut.id, public });
-            }
-            ResolvedPath::Func(func) => {
-                let name = &self.scopes.get(func.id).name.data;
-                if self
-                    .scopes
-                    .find_in::<UserTypeId>(name, self.current)
-                    .is_some()
-                    || self
-                        .scopes
-                        .find_in::<FunctionId>(name, self.current)
-                        .is_some()
-                    || self
-                        .scopes
-                        .find_in::<VariableId>(name, self.current)
-                        .is_some()
-                {
-                    self.error(Error::redefinition("name", name, span))
-                }
-                if all {
-                    self.error(Error::wildcard_import(span))
-                }
-
-                self.current().fns.insert(Vis {
-                    id: func.id,
-                    public,
-                });
-            }
-            ResolvedPath::Var(id) => {
-                let name = &self.scopes.get(id).name;
-                if !self.scopes.get(id).is_static {
-                    self.diag.error(Error::new(
-                        format!(
-                            "cannot import local variable '{}'",
-                            self.scopes.get(id).name
-                        ),
-                        span,
-                    ));
-                }
-
-                if self
-                    .scopes
-                    .find_in::<FunctionId>(name, self.current)
-                    .is_some()
-                    || self
-                        .scopes
-                        .find_in::<VariableId>(name, self.current)
-                        .is_some()
-                {
-                    self.error(Error::redefinition("name", name, span))
-                }
-
-                if all {
-                    self.error(Error::wildcard_import(span))
-                }
-
-                self.current().vars.insert(Vis { id, public });
-            }
-            ResolvedPath::Extension(id) => {
-                let name = &self.scopes.get(id).name;
-                if self
-                    .scopes
-                    .find_in::<ExtensionId>(name, self.current)
-                    .is_some()
-                {
-                    self.error(Error::new(
-                        format!("redefinition of extension {name}"),
-                        span,
-                    ))
-                }
-
-                if all {
-                    self.error(Error::wildcard_import(span))
-                }
-
-                self.current().exts.insert(Vis { id, public });
-            }
-            ResolvedPath::Module(id) => {
-                if !all {
-                    let name = &self.scopes[id].kind.name(&self.scopes).unwrap();
-                    if self.scopes.find_module_in(name, self.current).is_some() {
-                        self.error(Error::new(format!("redefinition of module {name}"), span))
-                    }
-
-                    self.current().children.insert(Vis { id, public });
-                } else {
-                    for child in self.scopes[id].children.clone() {
-                        if self.scopes[child.id].kind.is_module() && child.public {
-                            self.current().children.insert(Vis {
-                                id: child.id,
-                                public,
-                            });
-                        }
-                    }
-
-                    for f in self.scopes[id].fns.clone() {
-                        if f.public {
-                            self.current().fns.insert(Vis { id: f.id, public });
-                        }
-                    }
-
-                    for ut in self.scopes[id].types.clone() {
-                        if ut.public {
-                            self.current().types.insert(Vis { id: ut.id, public });
-                        }
-                    }
-
-                    for var in self.scopes[id].vars.clone() {
-                        if var.public {
-                            self.current().vars.insert(Vis { id: var.id, public });
-                        }
-                    }
-
-                    for ext in self.scopes[id].exts.clone() {
-                        if ext.public {
-                            self.current().exts.insert(Vis { id: ext.id, public });
-                        }
-                    }
-                }
-            }
-            ResolvedPath::None(err) => {
-                return self.error(err);
-            }
-        }
-
-        true
     }
 
     fn resolve_members(&mut self, id: UserTypeId) {
@@ -3964,215 +3765,9 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_path(&mut self, path: &TypePath, span: Span) -> Option<ResolvedPath> {
-        match path {
-            TypePath::Root(data) => {
-                self.resolve_path_in(data, Default::default(), ScopeId::ROOT, span)
-            }
-            TypePath::Super(data) => {
-                if let Some(module) = self.scopes.module_of(
-                    self.scopes[self.scopes.module_of(self.current).unwrap()]
-                        .parent
-                        .unwrap(),
-                ) {
-                    self.resolve_path_in(data, Default::default(), module, span)
-                } else {
-                    self.error(Error::new("cannot use super here", span))
-                }
-            }
-            TypePath::Normal(data) => {
-                let TypePathComponent(name, ty_args) = data.first().unwrap();
-                let is_end = data.len() == 1;
-                if let Some(id) = self.find(name) {
-                    resolve_type!(self, self.scopes.get_mut::<VariableId>(*id).ty);
-                    if is_end {
-                        return Some(ResolvedPath::Var(*id));
-                    }
-
-                    if !ty_args.is_empty() {
-                        return self
-                            .error(Error::new("variables cannot have type arguments", span));
-                    }
-
-                    self.error(Error::new(format!("'{name}' is a variable"), span))
-                } else if let Some(id) = self.find::<UserTypeId>(name) {
-                    let ty_args = self.resolve_type_args(
-                        &self.scopes.get(*id).type_params.clone(),
-                        ty_args,
-                        span,
-                    );
-                    if is_end {
-                        let ut = GenericUserType::new(*id, ty_args);
-                        //self.resolve_impls( id);
-                        //self.check_bounds( None, &ut, &scopes.get(id).impls, span);
-                        return Some(ResolvedPath::UserType(ut));
-                    }
-
-                    self.resolve_path_in(&data[1..], ty_args, self.scopes.get(*id).body_scope, span)
-                } else if let Some(id) = self.find_free_fn(name) {
-                    if is_end {
-                        let f = self.scopes.get(*id);
-                        return Some(ResolvedPath::Func(GenericFunc::new(
-                            *id,
-                            self.resolve_type_args(&f.type_params.clone(), ty_args, span),
-                        )));
-                    }
-
-                    self.error(Error::new(format!("'{name}' is a function"), span))
-                } else if let Some(id) = self.find(name) {
-                    if is_end {
-                        return Some(ResolvedPath::Extension(*id));
-                    }
-
-                    self.error(Error::no_symbol(name, span))
-                } else if let Some(id) = self.find_module(name) {
-                    if is_end {
-                        return Some(ResolvedPath::Module(*id));
-                    }
-
-                    if !ty_args.is_empty() {
-                        return self.error(Error::new(
-                            "modules cannot be parameterized with type arguments",
-                            span,
-                        ));
-                    }
-
-                    self.resolve_path_in(&data[1..], Default::default(), *id, span)
-                } else {
-                    self.resolve_path_in(data, Default::default(), ScopeId::ROOT, span)
-                }
-            }
-        }
-    }
-
-    fn resolve_path_in(
-        &mut self,
-        data: &[TypePathComponent],
-        mut ty_args: TypeArgs,
-        mut scope: ScopeId,
-        span: Span,
-    ) -> Option<ResolvedPath> {
-        for (i, TypePathComponent(name, args)) in data.iter().enumerate() {
-            let is_end = i + 1 == data.len();
-            if let Some(id) = self.scopes.find_in::<VariableId>(name, scope) {
-                resolve_type!(self, self.scopes.get_mut(*id).ty);
-                if !id.public && !self.can_access_privates(scope) {
-                    self.error(Error::new(format!("variable '{name}' is private"), span))
-                }
-
-                if !args.is_empty() {
-                    self.error(Error::new(
-                        "variables cannot be parameterized with type arguments",
-                        span,
-                    ))
-                }
-
-                if is_end {
-                    return Some(ResolvedPath::Var(*id));
-                }
-
-                return self.error(Error::new(format!("'{name}' is a variable"), span));
-            } else if let Some(id) = self.scopes.find_in::<UserTypeId>(name, scope) {
-                if !id.public && !self.can_access_privates(scope) {
-                    self.error(Error::new(format!("type '{name}' is private"), span))
-                }
-
-                let ty = self.scopes.get(*id);
-                scope = ty.body_scope;
-
-                let args = self.resolve_type_args(&ty.type_params.clone(), args, span);
-                if is_end {
-                    return Some(ResolvedPath::UserType(GenericUserType::new(*id, args)));
-                }
-
-                ty_args.copy_args(&args);
-            } else if let Some(id) = self.scopes.find_in::<FunctionId>(name, scope) {
-                if !id.public && !self.can_access_privates(scope) {
-                    self.error(Error::new(format!("function '{name}' is private"), span))
-                }
-
-                ty_args.copy_args(&self.resolve_type_args(
-                    &self.scopes.get(*id).type_params.clone(),
-                    args,
-                    span,
-                ));
-                if is_end {
-                    return Some(ResolvedPath::Func(GenericFunc::new(*id, ty_args)));
-                }
-
-                return self.error(Error::new(format!("'{name}' is a function"), span));
-            } else if let Some(id) = self.scopes.find_in(name, scope) {
-                if !id.public && !self.can_access_privates(scope) {
-                    self.error(Error::new(format!("extension '{name}' is private"), span))
-                }
-
-                if is_end {
-                    return Some(ResolvedPath::Extension(*id));
-                }
-
-                return Some(ResolvedPath::None(Error::no_symbol(name, span)));
-            } else if let Some(id) = self.scopes.find_module_in(name, scope) {
-                if !id.public && !self.can_access_privates(*id) {
-                    self.error(Error::new(format!("module '{name}' is private"), span))
-                }
-
-                if !args.is_empty() {
-                    return self.error(Error::new(
-                        "modules cannot be parameterized with type arguments",
-                        span,
-                    ));
-                }
-
-                if is_end {
-                    return Some(ResolvedPath::Module(*id));
-                }
-
-                scope = *id;
-            } else {
-                return Some(ResolvedPath::None(Error::no_symbol(name, span)));
-            }
-        }
-
-        unreachable!()
-    }
-
-    fn resolve_type_args(
-        &mut self,
-        params: &[UserTypeId],
-        args: &[TypeHint],
-        span: Span,
-    ) -> TypeArgs {
-        if !args.is_empty() && args.len() != params.len() {
-            self.error(Error::new(
-                format!(
-                    "expected {} type arguments, received {}",
-                    params.len(),
-                    args.len()
-                ),
-                span,
-            ))
-        }
-
-        TypeArgs(
-            params
-                .iter()
-                .cloned()
-                .zip(
-                    args.iter()
-                        .map(|ty| self.resolve_typehint(ty))
-                        .take(params.len())
-                        .chain(
-                            std::iter::repeat(Type::Unknown)
-                                .take(params.len().checked_sub(args.len()).unwrap_or_default()),
-                        ),
-                )
-                .collect(),
-        )
-    }
-
     fn include_universal(&mut self) {
         for scope in self.universal.clone() {
-            self.resolve_use(false, true, ResolvedPath::Module(scope), Span::default());
+            self.use_all(scope, false);
         }
     }
 
@@ -4475,5 +4070,418 @@ impl TypeChecker {
                 _ => (Type::Void, false),
             }
         }
+    }
+}
+
+/// Path resolution routines
+impl TypeChecker {
+    fn resolve_use(
+        &mut self,
+        UsePath {
+            public,
+            origin,
+            components,
+            tail,
+        }: &UsePath,
+    ) {
+        match origin {
+            PathOrigin::Root => self.resolve_use_in(ScopeId::ROOT, *public, components, tail),
+            PathOrigin::Super(span) => {
+                if let Some(module) = self.scopes.module_of(
+                    self.scopes[self.scopes.module_of(self.current).unwrap()]
+                        .parent
+                        .unwrap(),
+                ) {
+                    self.resolve_use_in(module, *public, components, tail);
+                } else {
+                    self.error(Error::new("cannot use super here", *span))
+                }
+            }
+            PathOrigin::Normal => {
+                let (first, rest) = components.split_first().unwrap();
+                if let Some(next) = self.find_module(&first.data) {
+                    self.resolve_use_in(*next, *public, rest, tail);
+                } else if let Some(id) = self.find::<UserTypeId>(&first.data) {
+                    if rest.is_empty() {
+                        self.resolve_use_union(*public, *id, first, tail);
+                    }
+
+                    self.error(Error::new("expected module name", first.span))
+                } else {
+                    self.resolve_use_in(ScopeId::ROOT, *public, components, tail);
+                }
+            }
+        };
+    }
+
+    fn resolve_use_in(
+        &mut self,
+        mut scope: ScopeId,
+        public: bool,
+        components: &[Located<String>],
+        tail: &UsePathTail,
+    ) {
+        for (i, comp) in components.iter().enumerate() {
+            if let Some(next) = self.scopes.find_module_in(&comp.data, scope) {
+                scope = *next;
+            } else if let Some(id) = self.scopes.find_in::<UserTypeId>(&comp.data, scope) {
+                if i != components.len() - 1 {
+                    return self.error(Error::new("expected module name", comp.span));
+                }
+
+                self.resolve_use_union(public, *id, comp, tail);
+            } else {
+                return self.error(Error::no_symbol(&comp.data, comp.span));
+            }
+        }
+
+        if let UsePathTail::Ident(tail) = tail {
+            if let Some(id) = self.scopes.find_in::<UserTypeId>(&tail.data, scope) {
+                let name = &self.scopes.get(*id).name.data;
+                if self
+                    .scopes
+                    .find_in::<FunctionId>(name, self.current)
+                    .is_some()
+                    || self
+                        .scopes
+                        .find_in::<UserTypeId>(name, self.current)
+                        .is_some()
+                {
+                    self.error(Error::redefinition("name", name, tail.span))
+                }
+
+                self.current().types.insert(Vis { id: *id, public });
+            } else if let Some(id) = self.scopes.find_in::<FunctionId>(&tail.data, scope) {
+                let name = &self.scopes.get(*id).name.data;
+                if self
+                    .scopes
+                    .find_in::<UserTypeId>(name, self.current)
+                    .is_some()
+                    || self
+                        .scopes
+                        .find_in::<FunctionId>(name, self.current)
+                        .is_some()
+                    || self
+                        .scopes
+                        .find_in::<VariableId>(name, self.current)
+                        .is_some()
+                {
+                    self.error(Error::redefinition("name", name, tail.span))
+                }
+
+                self.current().fns.insert(Vis { id: *id, public });
+            } else if let Some(id) = self.scopes.find_in::<VariableId>(&tail.data, scope) {
+                let var = self.scopes.get(*id);
+                let name = &var.name;
+                if !var.is_static {
+                    self.diag.error(Error::new(
+                        format!("cannot import local variable '{}'", var.name),
+                        tail.span,
+                    ));
+                }
+
+                if self
+                    .scopes
+                    .find_in::<FunctionId>(name, self.current)
+                    .is_some()
+                    || self
+                        .scopes
+                        .find_in::<VariableId>(name, self.current)
+                        .is_some()
+                {
+                    self.error(Error::redefinition("name", name, tail.span))
+                }
+
+                self.current().vars.insert(Vis { id: *id, public });
+            } else if let Some(id) = self.scopes.find_in::<ExtensionId>(&tail.data, scope) {
+                let name = &self.scopes.get(*id).name;
+                if self
+                    .scopes
+                    .find_in::<ExtensionId>(name, self.current)
+                    .is_some()
+                {
+                    self.error(Error::new(
+                        format!("redefinition of extension {name}"),
+                        tail.span,
+                    ))
+                }
+
+                self.current().exts.insert(Vis { id: *id, public });
+            } else if let Some(id) = self.scopes.find_module_in(&tail.data, scope) {
+                let name = &self.scopes[*id].kind.name(&self.scopes).unwrap();
+                if self.scopes.find_module_in(name, self.current).is_some() {
+                    self.error(Error::new(
+                        format!("redefinition of module {name}"),
+                        tail.span,
+                    ))
+                }
+
+                self.current().children.insert(Vis { id: *id, public });
+            } else {
+                return self.error(Error::new(
+                    format!("no symbol '{}' found in this module", tail.data),
+                    tail.span,
+                ));
+            }
+        } else {
+            self.use_all(scope, public);
+        }
+    }
+
+    fn use_all(&mut self, scope: ScopeId, public: bool) {
+        for child in self.scopes[scope].children.clone() {
+            if self.scopes[child.id].kind.is_module() && child.public {
+                self.current().children.insert(Vis {
+                    id: child.id,
+                    public,
+                });
+            }
+        }
+
+        for f in self.scopes[scope].fns.clone() {
+            if f.public {
+                self.current().fns.insert(Vis { id: f.id, public });
+            }
+        }
+
+        for ut in self.scopes[scope].types.clone() {
+            if ut.public {
+                self.current().types.insert(Vis { id: ut.id, public });
+            }
+        }
+
+        for var in self.scopes[scope].vars.clone() {
+            if var.public {
+                self.current().vars.insert(Vis { id: var.id, public });
+            }
+        }
+
+        for ext in self.scopes[scope].exts.clone() {
+            if ext.public {
+                self.current().exts.insert(Vis { id: ext.id, public });
+            }
+        }
+    }
+
+    fn resolve_use_union(
+        &mut self,
+        public: bool,
+        id: UserTypeId,
+        comp: &Located<String>,
+        tail: &UsePathTail,
+    ) {
+        let ut = self.scopes.get(id);
+        if !ut.data.is_union() {
+            return self.error(Error::new(
+                format!("expected module or union type, found '{}'", comp.data),
+                comp.span,
+            ));
+        }
+
+        let mut constructors = self.scopes[ut.body_scope]
+            .fns
+            .iter()
+            .filter(|&&id| self.scopes.get(*id).constructor.is_some());
+        if let UsePathTail::Ident(tail) = tail {
+            let Some(&id) = constructors.find(|&&id| self.scopes.get(*id).name.data == tail.data)
+            else {
+                return self.error(Error::new("expected variant name", comp.span));
+            };
+
+            self.current().fns.insert(Vis { id: *id, public });
+        } else {
+            for id in constructors.copied().collect::<Vec<_>>() {
+                self.current().fns.insert(Vis { id: *id, public });
+            }
+        }
+    }
+
+    fn resolve_path(&mut self, path: &Path, span: Span) -> Option<ResolvedPath> {
+        match path.origin {
+            PathOrigin::Root => {
+                self.resolve_path_in(&path.components, Default::default(), ScopeId::ROOT, span)
+            }
+            PathOrigin::Super(_) => {
+                if let Some(module) = self.scopes.module_of(
+                    self.scopes[self.scopes.module_of(self.current).unwrap()]
+                        .parent
+                        .unwrap(),
+                ) {
+                    self.resolve_path_in(&path.components, Default::default(), module, span)
+                } else {
+                    self.error(Error::new("cannot use super here", span))
+                }
+            }
+            PathOrigin::Normal => {
+                let ((name, ty_args), rest) = path.components.split_first().unwrap();
+                if let Some(id) = self.find(name) {
+                    resolve_type!(self, self.scopes.get_mut::<VariableId>(*id).ty);
+                    if rest.is_empty() {
+                        return Some(ResolvedPath::Var(*id));
+                    }
+
+                    if !ty_args.is_empty() {
+                        return self
+                            .error(Error::new("variables cannot have type arguments", span));
+                    }
+
+                    self.error(Error::new(format!("'{name}' is a variable"), span))
+                } else if let Some(id) = self.find::<UserTypeId>(name) {
+                    let ty_args = self.resolve_type_args(
+                        &self.scopes.get(*id).type_params.clone(),
+                        ty_args,
+                        span,
+                    );
+                    if rest.is_empty() {
+                        let ut = GenericUserType::new(*id, ty_args);
+                        //self.resolve_impls( id);
+                        //self.check_bounds( None, &ut, &scopes.get(id).impls, span);
+                        return Some(ResolvedPath::UserType(ut));
+                    }
+
+                    self.resolve_path_in(rest, ty_args, self.scopes.get(*id).body_scope, span)
+                } else if let Some(id) = self.find_free_fn(name) {
+                    if rest.is_empty() {
+                        let f = self.scopes.get(*id);
+                        return Some(ResolvedPath::Func(GenericFunc::new(
+                            *id,
+                            self.resolve_type_args(&f.type_params.clone(), ty_args, span),
+                        )));
+                    }
+
+                    self.error(Error::new(format!("'{name}' is a function"), span))
+                } else if let Some(id) = self.find_module(name) {
+                    if rest.is_empty() {
+                        return Some(ResolvedPath::None(Error::no_symbol(name, span)));
+                    }
+
+                    if !ty_args.is_empty() {
+                        return self.error(Error::new(
+                            "modules cannot be parameterized with type arguments",
+                            span,
+                        ));
+                    }
+
+                    self.resolve_path_in(rest, Default::default(), *id, span)
+                } else {
+                    self.resolve_path_in(&path.components, Default::default(), ScopeId::ROOT, span)
+                }
+            }
+        }
+    }
+
+    fn resolve_path_in(
+        &mut self,
+        data: &[PathComponent],
+        mut ty_args: TypeArgs,
+        mut scope: ScopeId,
+        span: Span,
+    ) -> Option<ResolvedPath> {
+        for (i, (name, args)) in data.iter().enumerate() {
+            let is_end = i + 1 == data.len();
+            if let Some(id) = self.scopes.find_in::<VariableId>(name, scope) {
+                resolve_type!(self, self.scopes.get_mut(*id).ty);
+                if !id.public && !self.can_access_privates(scope) {
+                    self.error(Error::new(format!("variable '{name}' is private"), span))
+                }
+
+                if !args.is_empty() {
+                    self.error(Error::new(
+                        "variables cannot be parameterized with type arguments",
+                        span,
+                    ))
+                }
+
+                if is_end {
+                    return Some(ResolvedPath::Var(*id));
+                }
+
+                return self.error(Error::new(format!("'{name}' is a variable"), span));
+            } else if let Some(id) = self.scopes.find_in::<UserTypeId>(name, scope) {
+                if !id.public && !self.can_access_privates(scope) {
+                    self.error(Error::new(format!("type '{name}' is private"), span))
+                }
+
+                let ty = self.scopes.get(*id);
+                scope = ty.body_scope;
+
+                let args = self.resolve_type_args(&ty.type_params.clone(), args, span);
+                if is_end {
+                    return Some(ResolvedPath::UserType(GenericUserType::new(*id, args)));
+                }
+
+                ty_args.copy_args(&args);
+            } else if let Some(id) = self.scopes.find_in::<FunctionId>(name, scope) {
+                if !id.public && !self.can_access_privates(scope) {
+                    self.error(Error::new(format!("function '{name}' is private"), span))
+                }
+
+                ty_args.copy_args(&self.resolve_type_args(
+                    &self.scopes.get(*id).type_params.clone(),
+                    args,
+                    span,
+                ));
+                if is_end {
+                    return Some(ResolvedPath::Func(GenericFunc::new(*id, ty_args)));
+                }
+
+                return self.error(Error::new(format!("'{name}' is a function"), span));
+            } else if let Some(id) = self.scopes.find_module_in(name, scope) {
+                if is_end {
+                    return Some(ResolvedPath::None(Error::no_symbol(name, span)));
+                }
+
+                if !id.public && !self.can_access_privates(*id) {
+                    self.error(Error::new(format!("module '{name}' is private"), span))
+                }
+
+                if !args.is_empty() {
+                    return self.error(Error::new(
+                        "modules cannot be parameterized with type arguments",
+                        span,
+                    ));
+                }
+
+                scope = *id;
+            } else {
+                return Some(ResolvedPath::None(Error::no_symbol(name, span)));
+            }
+        }
+
+        unreachable!()
+    }
+
+    fn resolve_type_args(
+        &mut self,
+        params: &[UserTypeId],
+        args: &[TypeHint],
+        span: Span,
+    ) -> TypeArgs {
+        if !args.is_empty() && args.len() != params.len() {
+            self.error(Error::new(
+                format!(
+                    "expected {} type arguments, received {}",
+                    params.len(),
+                    args.len()
+                ),
+                span,
+            ))
+        }
+
+        TypeArgs(
+            params
+                .iter()
+                .cloned()
+                .zip(
+                    args.iter()
+                        .map(|ty| self.resolve_typehint(ty))
+                        .take(params.len())
+                        .chain(
+                            std::iter::repeat(Type::Unknown)
+                                .take(params.len().checked_sub(args.len()).unwrap_or_default()),
+                        ),
+                )
+                .collect(),
+        )
     }
 }

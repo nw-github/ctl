@@ -1,4 +1,6 @@
-use crate::ast::parsed::{Expr, ExprData, Fn, ImplBlock, Linkage, Stmt, StmtData, Struct, UseStmt};
+use crate::ast::parsed::{
+    Expr, ExprData, Fn, ImplBlock, Linkage, Stmt, StmtData, Struct, UsePath, UsePathTail,
+};
 
 const INDENT: &str = "  ";
 
@@ -122,10 +124,28 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
 
             print_stmts(body, indent + 1);
         }
-        StmtData::Use(UseStmt { public, path, all }) => {
-            eprintln!("{tabs}Use[{path:?}]");
+        StmtData::Use(UsePath {
+            public,
+            origin,
+            components,
+            tail,
+        }) => {
+            eprintln!("{tabs}Use");
             print_bool!(public);
-            print_bool!(all);
+            eprintln!("\n{tabs}From = {origin:?}");
+            eprintln!(
+                "\n{tabs}Path = {}::{}",
+                components
+                    .iter()
+                    .map(|x| &x.data[..])
+                    .collect::<Vec<_>>()
+                    .join("::"),
+                if let UsePathTail::Ident(ident) = tail {
+                    &ident.data
+                } else {
+                    "*"
+                }
+            );
         }
         StmtData::Error => {}
     }
@@ -365,7 +385,12 @@ pub fn print_expr(expr: &Expr, indent: usize) {
             }
         }
         ExprData::Error => {}
-        ExprData::Lambda { params, ret, body, moves } => {
+        ExprData::Lambda {
+            params,
+            ret,
+            body,
+            moves,
+        } => {
             eprintln!("{tabs}Lambda");
             print_bool!(moves);
             eprintln!("\n{tabs}Return: {ret:?}");

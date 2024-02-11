@@ -1,14 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{
-    ast::{
-        parsed::{
-            Destructure, Expr, ExprData, Fn, FullPattern, ImplBlock, IntPattern, Linkage, Member,
-            Param, Pattern, RangePattern, Stmt, StmtData, Struct, TypeHint, TypePath,
-            TypePathComponent, UseStmt,
-        },
-        Attribute, UnaryOp,
-    },
+    ast::{parsed::*, Attribute, UnaryOp},
     error::{Diagnostics, Error, FileId},
     lexer::{Lexer, Located, Precedence, Span, Token},
     THIS_PARAM, THIS_TYPE,
@@ -165,7 +158,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 },
                 attrs,
             })
-        } else if let Some(token) = self.next_if_kind(Token::Use) {
+        } else if self.next_if_kind(Token::Use).is_some() {
             if let Some(token) = is_unsafe {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
@@ -174,51 +167,76 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
-            let root = self.next_if_kind(Token::ScopeRes);
-            let sup = root
-                .is_none()
-                .then(|| self.next_if_kind(Token::Super))
-                .flatten()
-                .is_some();
-            if sup {
-                self.expect_kind(Token::ScopeRes);
-            }
-
             let mut components = Vec::new();
-            let mut all = false;
-            loop {
-                if (sup || !components.is_empty()) && self.next_if_kind(Token::Asterisk).is_some() {
-                    all = true;
-                    break;
-                }
-
-                components.push(TypePathComponent(
-                    self.expect_id("expected path component"),
-                    Vec::new(),
-                ));
+            let origin = if self.next_if_kind(Token::ScopeRes).is_some() {
+                let ident = self.expect_id_l("expected path component");
                 if self.next_if_kind(Token::ScopeRes).is_none() {
-                    break;
+                    self.expect_kind(Token::Semicolon);
+                    return Ok(Stmt {
+                        data: StmtData::Use(UsePath {
+                            components,
+                            origin: PathOrigin::Root,
+                            public: public.is_some(),
+                            tail: UsePathTail::Ident(ident),
+                        }),
+                        attrs,
+                    });
                 }
-            }
 
-            let semi = self.expect_kind(Token::Semicolon);
-            Ok(Stmt {
-                data: StmtData::Use(UseStmt {
-                    public: public.is_some(),
-                    path: Located::new(
-                        token.span.extended_to(semi.span),
-                        if root.is_some() {
-                            TypePath::Root(components)
-                        } else if sup {
-                            TypePath::Super(components)
-                        } else {
-                            TypePath::Normal(components)
-                        },
-                    ),
-                    all,
-                }),
-                attrs,
-            })
+                components.push(ident);
+                PathOrigin::Root
+            } else if let Some(token) = self.next_if_kind(Token::Super) {
+                self.expect_kind(Token::ScopeRes);
+                PathOrigin::Super(token.span)
+            } else {
+                let ident = self.expect_id_l("expected path component");
+                if self.next_if_kind(Token::ScopeRes).is_none() {
+                    self.expect_kind(Token::Semicolon);
+                    return Ok(Stmt {
+                        data: StmtData::Use(UsePath {
+                            components,
+                            origin: PathOrigin::Normal,
+                            public: public.is_some(),
+                            tail: UsePathTail::Ident(ident),
+                        }),
+                        attrs,
+                    });
+                }
+
+                components.push(ident);
+                PathOrigin::Normal
+            };
+
+            loop {
+                if self.next_if_kind(Token::Asterisk).is_some() {
+                    self.expect_kind(Token::Semicolon);
+                    return Ok(Stmt {
+                        data: StmtData::Use(UsePath {
+                            components,
+                            origin,
+                            public: public.is_some(),
+                            tail: UsePathTail::All,
+                        }),
+                        attrs,
+                    });
+                }
+
+                let ident = self.expect_id_l("expected path component or '*'");
+                if self.next_if_kind(Token::ScopeRes).is_none() {
+                    self.expect_kind(Token::Semicolon);
+                    return Ok(Stmt {
+                        data: StmtData::Use(UsePath {
+                            components,
+                            origin,
+                            public: public.is_some(),
+                            tail: UsePathTail::Ident(ident),
+                        }),
+                        attrs,
+                    });
+                }
+
+                components.push(ident);
+            }
         } else if self.next_if_kind(Token::Static).is_some() {
             if let Some(token) = is_unsafe {
                 self.error_no_sync(Error::not_valid_here(&token));
@@ -349,18 +367,19 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::ByteChar(value) => Expr::new(span, ExprData::ByteChar(value)),
             Token::Ident(ident) => {
                 let data = self.path_components(Some(ident), &mut span);
-                Expr::new(span, ExprData::Path(TypePath::Normal(data)))
+                Expr::new(span, ExprData::Path(Path::new(PathOrigin::Normal, data)))
             }
             Token::This => Expr::new(span, ExprData::Path(THIS_PARAM.to_owned().into())),
             Token::ThisType => Expr::new(span, ExprData::Path(THIS_TYPE.to_owned().into())),
             Token::ScopeRes => {
                 let ident = self.expect_id("expected name");
                 let data = self.path_components(Some(&ident), &mut span);
-                Expr::new(span, ExprData::Path(TypePath::Root(data)))
+                Expr::new(span, ExprData::Path(Path::new(PathOrigin::Root, data)))
             }
             Token::Super => {
+                let original = span;
                 let data = self.path_components(None, &mut span);
-                Expr::new(span, ExprData::Path(TypePath::Super(data)))
+                Expr::new(span, ExprData::Path(Path::new(PathOrigin::Super(original), data)))
             }
             // prefix operators
             Token::Plus
@@ -893,13 +912,9 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     //
 
-    fn path_components(
-        &mut self,
-        first: Option<&str>,
-        outspan: &mut Span,
-    ) -> Vec<TypePathComponent> {
+    fn path_components(&mut self, first: Option<&str>, outspan: &mut Span) -> Vec<PathComponent> {
         let mut data = first
-            .map(|s| vec![TypePathComponent(s.into(), Vec::new())])
+            .map(|s| vec![(s.into(), Vec::new())])
             .unwrap_or_default();
         while self.next_if_kind(Token::ScopeRes).is_some() {
             if self.next_if_kind(Token::LAngle).is_some() {
@@ -908,7 +923,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 *outspan = params.span;
             } else {
                 let name = self.expect_id_l("expected name");
-                data.push(TypePathComponent(name.data.to_owned(), Vec::new()));
+                data.push((name.data.to_owned(), Vec::new()));
                 outspan.extend_to(name.span);
             }
         }
@@ -916,31 +931,29 @@ impl<'a, 'b> Parser<'a, 'b> {
         data
     }
 
-    fn type_path(&mut self) -> Located<TypePath> {
-        let root = self.next_if_kind(Token::ScopeRes);
-        let sup = root
-            .is_none()
-            .then(|| self.next_if_kind(Token::Super))
-            .flatten();
-        if sup.is_some() {
-            self.expect_kind(Token::ScopeRes);
-        }
-
+    fn type_path(&mut self) -> Located<Path> {
+        let (origin, mut span) = match self.peek().data {
+            Token::ScopeRes => {
+                let span = self.next().span;
+                (PathOrigin::Root, span)
+            }
+            Token::Super => {
+                let span = self.next().span;
+                self.expect_kind(Token::ScopeRes);
+                (PathOrigin::Super(span), span)
+            }
+            _ => (PathOrigin::Normal, self.peek().span),
+        };
         let mut data = Vec::new();
-        let mut span = root.as_ref().or(sup.as_ref()).map(|t| t.span);
         loop {
             let ident = self.expect_id_l("expected type name");
-            if let Some(span) = &mut span {
-                span.extend_to(ident.span);
-            } else {
-                span = Some(ident.span);
-            }
+            span.extend_to(ident.span);
             if self.next_if_kind(Token::LAngle).is_some() {
-                let params = self.rangle_csv_one(span.unwrap(), Self::type_hint);
-                data.push(TypePathComponent(ident.data, params.data));
-                span = Some(params.span);
+                let params = self.rangle_csv_one(span, Self::type_hint);
+                data.push((ident.data, params.data));
+                span = params.span;
             } else {
-                data.push(TypePathComponent(ident.data, Vec::new()));
+                data.push((ident.data, Vec::new()));
             }
 
             if self.next_if_kind(Token::ScopeRes).is_none() {
@@ -948,16 +961,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
         }
 
-        Located::new(
-            span.unwrap(),
-            if root.is_some() {
-                TypePath::Root(data)
-            } else if sup.is_some() {
-                TypePath::Super(data)
-            } else {
-                TypePath::Normal(data)
-            },
-        )
+        Located::new(span, Path::new(origin, data))
     }
 
     //
@@ -1186,7 +1190,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     //
 
-    fn type_params(&mut self) -> Vec<(String, Vec<Located<TypePath>>)> {
+    fn type_params(&mut self) -> Vec<(String, Vec<Located<Path>>)> {
         self.next_if_kind(Token::LAngle)
             .map(|_| {
                 self.rangle_csv_one(Span::default(), |this| {
@@ -1197,7 +1201,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             .unwrap_or_default()
     }
 
-    fn trait_impls(&mut self) -> Vec<Located<TypePath>> {
+    fn trait_impls(&mut self) -> Vec<Located<Path>> {
         let mut impls = Vec::new();
         if self.next_if_kind(Token::Colon).is_some() {
             loop {
@@ -1589,7 +1593,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     keyword,
                     patt: Located::new(
                         token.span,
-                        Pattern::Path(TypePath::from(THIS_PARAM.to_string())),
+                        Pattern::Path(Path::from(THIS_PARAM.to_string())),
                     ),
                     ty: if mutable {
                         TypeHint::MutPtr(TypeHint::This(token.span).into())
@@ -1603,7 +1607,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     self.expect_id_l("expected name").map(Pattern::MutBinding)
                 } else if keyword {
                     self.expect_id_l("expected name")
-                        .map(|name| Pattern::Path(TypePath::from(name)))
+                        .map(|name| Pattern::Path(Path::from(name)))
                 } else {
                     self.pattern(false)
                 };
@@ -1782,6 +1786,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 | T::Return
                 | T::Yield
                 | T::Break
+                | T::Use
                 | T::Eof => break,
                 _ => {
                     self.next();

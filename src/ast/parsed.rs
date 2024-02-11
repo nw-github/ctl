@@ -13,11 +13,35 @@ pub enum Linkage {
     Internal,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum PathOrigin {
+    Root,
+    Super(Span),
+    Normal,
+}
+
+impl std::fmt::Display for PathOrigin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Root => write!(f, "::"),
+            Self::Super(_) => write!(f, "super::"),
+            _ => Ok(()),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-pub struct UseStmt {
+pub enum UsePathTail {
+    All,
+    Ident(Located<String>),
+}
+
+#[derive(Debug, Clone)]
+pub struct UsePath {
     pub public: bool,
-    pub path: Located<TypePath>,
-    pub all: bool,
+    pub origin: PathOrigin,
+    pub components: Vec<Located<String>>,
+    pub tail: UsePathTail,
 }
 
 #[derive(Debug, Clone)]
@@ -29,7 +53,7 @@ pub struct Stmt {
 #[derive(Debug, Clone)]
 pub enum StmtData {
     Expr(Expr),
-    Use(UseStmt),
+    Use(UsePath),
     Let {
         patt: Located<Pattern>,
         ty: Option<TypeHint>,
@@ -38,7 +62,7 @@ pub enum StmtData {
     Fn(Fn),
     Struct(Struct),
     Union {
-        tag: Option<Located<TypePath>>,
+        tag: Option<Located<Path>>,
         base: Struct,
         is_unsafe: bool,
     },
@@ -46,15 +70,15 @@ pub enum StmtData {
         public: bool,
         name: Located<String>,
         is_unsafe: bool,
-        type_params: Vec<(String, Vec<Located<TypePath>>)>,
-        impls: Vec<Located<TypePath>>,
+        type_params: Vec<(String, Vec<Located<Path>>)>,
+        impls: Vec<Located<Path>>,
         functions: Vec<Fn>,
     },
     Extension {
         public: bool,
         name: String,
         ty: TypeHint,
-        type_params: Vec<(String, Vec<Located<TypePath>>)>,
+        type_params: Vec<(String, Vec<Located<Path>>)>,
         impls: Vec<ImplBlock>,
         functions: Vec<Fn>,
     },
@@ -122,7 +146,7 @@ pub enum ExprData {
     Char(char),
     ByteString(Vec<u8>),
     ByteChar(u8),
-    Path(TypePath),
+    Path(Path),
     Void,
     None,
     Assign {
@@ -178,70 +202,51 @@ pub enum ExprData {
     Error,
 }
 
-pub type TypePath = Path<TypePathComponent>;
+pub type PathComponent = (String, Vec<TypeHint>);
 
-impl From<String> for TypePath {
-    fn from(value: String) -> Self {
-        Self::Normal(vec![TypePathComponent(value, Vec::new())])
-    }
+#[derive(Clone, derive_more::Constructor)]
+pub struct Path {
+    pub origin: PathOrigin,
+    pub components: Vec<PathComponent>,
 }
 
-impl TypePath {
+impl Path {
     pub fn as_identifier(&self) -> Option<&str> {
-        self.as_normal().and_then(|comps| {
-            (comps.len() == 1 && comps[0].1.is_empty()).then_some(comps[0].0.as_str())
-        })
+        self.components
+            .first()
+            .filter(|_| matches!(self.origin, PathOrigin::Normal) && self.components.len() == 1)
+            .filter(|(_, generics)| generics.is_empty())
+            .map(|(path, _)| path.as_str())
     }
 }
 
-#[derive(Clone)]
-pub struct TypePathComponent(pub String, pub Vec<TypeHint>);
-
-impl std::fmt::Debug for TypePathComponent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)?;
-        if self.1.is_empty() {
-            return Ok(());
-        }
-
-        write!(f, "::<")?;
-        for (i, generic) in self.1.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{generic:?}")?;
-        }
-        write!(f, ">")
+impl From<String> for Path {
+    fn from(value: String) -> Self {
+        Self::new(PathOrigin::Normal, vec![(value, Vec::new())])
     }
 }
 
-#[derive(Clone, enum_as_inner::EnumAsInner)]
-pub enum Path<C> {
-    Root(Vec<C>),
-    Super(Vec<C>),
-    Normal(Vec<C>),
-}
-
-impl<C: std::fmt::Debug> std::fmt::Debug for Path<C> {
+impl std::fmt::Debug for Path {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let res = match self {
-            Path::Root(r) => {
-                write!(f, "::")?;
-                r
-            }
-            Path::Super(r) => {
-                write!(f, "super::")?;
-                r
-            }
-            Path::Normal(r) => r,
-        };
-
-        for (i, component) in res.iter().enumerate() {
+        write!(f, "{}", self.origin)?;
+        for (i, (zero, one)) in self.components.iter().enumerate() {
             if i > 0 {
                 write!(f, "::")?;
             }
 
-            write!(f, "{component:?}")?;
+            write!(f, "{}", zero)?;
+            if one.is_empty() {
+                return Ok(());
+            }
+
+            write!(f, "::<")?;
+            for (i, generic) in one.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{generic:?}")?;
+            }
+            write!(f, ">")?;
         }
 
         Ok(())
@@ -274,12 +279,12 @@ pub struct RangePattern<T> {
 pub enum Pattern {
     // x is ::core::opt::Option::Some(mut y)
     TupleLike {
-        path: Located<TypePath>,
+        path: Located<Path>,
         subpatterns: Vec<Located<Pattern>>,
     },
     // x is ::core::opt::Option::None
     // x is y
-    Path(TypePath),
+    Path(Path),
     // x is mut y
     MutBinding(String),
     // x is ?mut y
@@ -308,7 +313,7 @@ pub struct FullPattern {
 
 #[derive(Clone)]
 pub enum TypeHint {
-    Regular(Located<TypePath>),
+    Regular(Located<Path>),
     Array(Box<TypeHint>, Box<Expr>),
     Vec(Box<TypeHint>),
     Slice(Box<TypeHint>),
@@ -389,7 +394,7 @@ pub struct Fn {
     pub is_async: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
-    pub type_params: Vec<(String, Vec<Located<TypePath>>)>,
+    pub type_params: Vec<(String, Vec<Located<Path>>)>,
     pub params: Vec<Param>,
     pub ret: TypeHint,
     pub body: Option<Vec<Stmt>>,
@@ -408,7 +413,7 @@ pub struct Member {
 pub struct Struct {
     pub public: bool,
     pub name: Located<String>,
-    pub type_params: Vec<(String, Vec<Located<TypePath>>)>,
+    pub type_params: Vec<(String, Vec<Located<Path>>)>,
     pub members: Vec<Member>,
     pub impls: Vec<ImplBlock>,
     pub functions: Vec<Fn>,
@@ -416,7 +421,7 @@ pub struct Struct {
 
 #[derive(Debug, Clone)]
 pub struct ImplBlock {
-    pub type_params: Vec<(String, Vec<Located<TypePath>>)>,
-    pub path: Located<TypePath>,
+    pub type_params: Vec<(String, Vec<Located<Path>>)>,
+    pub path: Located<Path>,
     pub functions: Vec<Fn>,
 }
