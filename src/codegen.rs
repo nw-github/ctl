@@ -1924,13 +1924,13 @@ impl<'a> Codegen<'a> {
                 }
             }
             CheckedPatternData::Destrucure(patterns) => {
-                let deref = "*".repeat(ty.indirection());
+                let src = Self::deref(src, ty);
                 let borrow = borrow || ty.is_any_ptr();
                 for (member, inner, patt) in patterns {
                     self.emit_pattern(
                         state,
                         &patt.data,
-                        &format!("({deref}{src}).{member}"),
+                        &format!("{src}.{member}"),
                         inner,
                         borrow || inner.is_any_ptr(),
                         bindings,
@@ -2298,8 +2298,9 @@ impl<'a> Codegen<'a> {
     fn deref(src: &str, ty: &Type) -> String {
         if ty.is_ptr() || ty.is_mut_ptr() {
             format!(
-                "({}{src})",
-                "*".repeat(ty.indirection() - usize::from(ty.strip_references().is_array()))
+                "({:*<1$}{src})",
+                "",
+                ty.indirection() - usize::from(ty.strip_references().is_array())
             )
         } else {
             src.into()

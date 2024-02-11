@@ -610,7 +610,9 @@ impl TypeChecker {
                 value,
             },
             StmtData::Use(stmt) => {
-                self.current().use_stmts.push(stmt);
+                if self.resolve_use(&stmt).is_err() {
+                    self.current().use_stmts.push(stmt);
+                }
                 DeclaredStmt::None
             }
             StmtData::Let { ty, value, patt } => DeclaredStmt::Let { ty, value, patt },
@@ -863,7 +865,9 @@ impl TypeChecker {
                     }
 
                     for stmt in std::mem::take(&mut this.current().use_stmts) {
-                        this.resolve_use(&stmt);
+                        if let Err(err) = this.resolve_use(&stmt) {
+                            this.error(err)
+                        }
                     }
                 });
             }
@@ -4062,7 +4066,7 @@ impl TypeChecker {
             components,
             tail,
         }: &UsePath,
-    ) {
+    ) -> Result<(), Error> {
         match origin {
             PathOrigin::Root => self.resolve_use_in(ScopeId::ROOT, *public, components, tail),
             PathOrigin::Super(span) => {
@@ -4071,26 +4075,28 @@ impl TypeChecker {
                         .parent
                         .unwrap(),
                 ) {
-                    self.resolve_use_in(module, *public, components, tail);
+                    self.resolve_use_in(module, *public, components, tail)
                 } else {
-                    self.error(Error::new("cannot use super here", *span))
+                    self.error::<()>(Error::new("cannot use super here", *span));
+                    Ok(())
                 }
             }
             PathOrigin::Normal => {
                 let (first, rest) = components.split_first().unwrap();
                 if let Some(next) = self.find_module(&first.data) {
-                    self.resolve_use_in(*next, *public, rest, tail);
+                    self.resolve_use_in(*next, *public, rest, tail)
                 } else if let Some(id) = self.find::<UserTypeId>(&first.data) {
                     if rest.is_empty() {
                         self.resolve_use_union(*public, *id, first, tail);
+                    } else {
+                        self.error(Error::new("expected module name", first.span))
                     }
-
-                    self.error(Error::new("expected module name", first.span))
+                    Ok(())
                 } else {
-                    self.resolve_use_in(ScopeId::ROOT, *public, components, tail);
+                    self.resolve_use_in(ScopeId::ROOT, *public, components, tail)
                 }
             }
-        };
+        }
     }
 
     fn resolve_use_in(
@@ -4099,18 +4105,19 @@ impl TypeChecker {
         public: bool,
         components: &[Located<String>],
         tail: &UsePathTail,
-    ) {
+    ) -> Result<(), Error> {
         for (i, comp) in components.iter().enumerate() {
             if let Some(next) = self.scopes.find_module_in(&comp.data, scope) {
                 scope = *next;
             } else if let Some(id) = self.scopes.find_in::<UserTypeId>(&comp.data, scope) {
                 if i != components.len() - 1 {
-                    return self.error(Error::new("expected module name", comp.span));
+                    self.error::<()>(Error::new("expected module name", comp.span));
+                    return Ok(());
                 }
 
                 self.resolve_use_union(public, *id, comp, tail);
             } else {
-                return self.error(Error::no_symbol(&comp.data, comp.span));
+                return Err(Error::no_symbol(&comp.data, comp.span));
             }
         }
 
@@ -4197,7 +4204,7 @@ impl TypeChecker {
 
                 self.current().children.insert(Vis { id: *id, public });
             } else {
-                return self.error(Error::new(
+                return Err(Error::new(
                     format!("no symbol '{}' found in this module", tail.data),
                     tail.span,
                 ));
@@ -4205,6 +4212,8 @@ impl TypeChecker {
         } else {
             self.use_all(scope, public);
         }
+
+        Ok(())
     }
 
     fn use_all(&mut self, scope: ScopeId, public: bool) {
@@ -4251,7 +4260,11 @@ impl TypeChecker {
     ) {
         let ut = self.scopes.get(id);
         if !ut.data.is_union() {
-            return self.error(Error::expected_found("module or union type", &comp.data, comp.span));
+            return self.error(Error::expected_found(
+                "module or union type",
+                &comp.data,
+                comp.span,
+            ));
         }
 
         let mut constructors = self.scopes[ut.body_scope]
