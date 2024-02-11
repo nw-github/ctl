@@ -11,7 +11,7 @@ use crate::{
     lexer::{Located, Span},
     sym::*,
     typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type, TypeArgs},
-    Compiler, THIS_PARAM,
+    Compiler, THIS_PARAM, THIS_TYPE,
 };
 
 macro_rules! type_check_bail {
@@ -154,31 +154,6 @@ impl TypeChecker {
 
     fn current_function(&self) -> Option<FunctionId> {
         self.scopes.function_of(self.current)
-    }
-
-    fn current_this_type(&self) -> Option<Type> {
-        let current = self.current_function();
-        for (_, scope) in self.scopes.walk(self.current) {
-            match scope.kind {
-                ScopeKind::UserType(id) => {
-                    let ty = self.scopes.get(id);
-                    if !ty.data.is_template() {
-                        if ty.data.is_trait() {
-                            return Some(Type::TraitSelf);
-                        }
-
-                        return Some(self.scopes.this_type_of(id));
-                    }
-                }
-                ScopeKind::Extension(id) => {
-                    return Some(self.scopes.get(id).ty.clone());
-                }
-                ScopeKind::Function(f) if Some(f) != current => return None,
-                _ => {}
-            }
-        }
-
-        None
     }
 
     fn current(&mut self) -> &mut Scope {
@@ -1552,12 +1527,10 @@ impl TypeChecker {
 
                     CheckedExpr::new(var.ty.clone(), CheckedExprData::Symbol(Symbol::Var(id)))
                 }
-                Some(ResolvedPath::Func(func)) => {
-                    CheckedExpr::new(
-                        Type::FnPtr(func.as_fn_ptr(&self.scopes).into()),
-                        CheckedExprData::Symbol(Symbol::Func(func)),
-                    )
-                }
+                Some(ResolvedPath::Func(func)) => CheckedExpr::new(
+                    Type::FnPtr(func.as_fn_ptr(&self.scopes).into()),
+                    CheckedExprData::Symbol(Symbol::Func(func)),
+                ),
                 Some(ResolvedPath::UserType(ut)) => self.error(Error::expected_found(
                     "expression",
                     &format!("type '{}'", ut.name(&self.scopes)),
@@ -2416,7 +2389,7 @@ impl TypeChecker {
                 let expr = self.check_expr(expr, target);
                 if expr.ty.is_any_int() {
                     if !expr.is_assignable(&self.scopes) {
-                        self.error::<()>(Error::new("expression is not assignable", span));
+                        self.error(Error::new("expression is not assignable", span))
                     }
                 } else {
                     invalid!(expr.ty)
@@ -3664,10 +3637,10 @@ impl TypeChecker {
                 match self.resolve_path(&path.data, path.span, true) {
                     Some(ResolvedPath::UserType(ut)) => Type::User(ut.into()),
                     Some(ResolvedPath::Func(_)) => {
-                        self.error(Error::new("expected type, got function", path.span))
+                        self.error(Error::expected_found("type", "function", path.span))
                     }
                     Some(ResolvedPath::Var(_)) => {
-                        self.error(Error::new("expected type, got variable", path.span))
+                        self.error(Error::expected_found("type", "variable", path.span))
                     }
                     Some(ResolvedPath::None(err)) => self.error(err),
                     None => Type::Unknown,
@@ -3676,9 +3649,25 @@ impl TypeChecker {
             TypeHint::Void => Type::Void,
             TypeHint::Ptr(ty) => Type::Ptr(self.resolve_typehint(ty).into()),
             TypeHint::MutPtr(ty) => Type::MutPtr(self.resolve_typehint(ty).into()),
-            TypeHint::This(span) => self
-                .current_this_type()
-                .unwrap_or_else(|| self.error(Error::new("'This' outside of type", *span))),
+            TypeHint::This(span) => {
+                let current = self.current_function();
+                for (_, scope) in self.scopes.walk(self.current) {
+                    match scope.kind {
+                        ScopeKind::UserType(id) => {
+                            if self.scopes.get(id).data.is_trait() {
+                                return Type::TraitSelf;
+                            }
+                            return self.scopes.this_type_of(id);
+                        }
+                        ScopeKind::Extension(id) => {
+                            return self.scopes.get(id).ty.clone();
+                        }
+                        ScopeKind::Function(f) if Some(f) != current => break,
+                        _ => {}
+                    }
+                }
+                self.error(Error::new(format!("'{THIS_TYPE}' outside of type"), *span))
+            }
             TypeHint::Array(ty, count) => {
                 let n = match Self::consteval(&self.scopes, count, Some(&Type::Usize)) {
                     Ok(n) => n,
@@ -4262,10 +4251,7 @@ impl TypeChecker {
     ) {
         let ut = self.scopes.get(id);
         if !ut.data.is_union() {
-            return self.error(Error::new(
-                format!("expected module or union type, found '{}'", comp.data),
-                comp.span,
-            ));
+            return self.error(Error::expected_found("module or union type", &comp.data, comp.span));
         }
 
         let mut constructors = self.scopes[ut.body_scope]
@@ -4473,7 +4459,7 @@ impl TypeChecker {
         if (typehint || !args.is_empty()) && args.len() != params.len() {
             self.error(Error::new(
                 format!(
-                    "expected {} type arguments, received {}",
+                    "expected {} type argument(s), received {}",
                     params.len(),
                     args.len()
                 ),
