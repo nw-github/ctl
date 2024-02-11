@@ -4,13 +4,6 @@ struct Hello<T, U> {
     }
 }
 
-// should say: expected 2 type params
-fn foo(x: Hello) {}
-
-fn main() {
-    let a = Hello::something; // should say: needs type annotations
-}
-
 struct A {}
 
 // doesn't complain A is not Hash + Eq<A>

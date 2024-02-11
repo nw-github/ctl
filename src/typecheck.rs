@@ -23,8 +23,9 @@ macro_rules! type_check_bail {
             Ok(expr) => expr,
             Err(expr) => {
                 return $self.error(Error::type_mismatch(
-                    &$target.name(&$self.scopes),
-                    &expr.ty.name(&$self.scopes),
+                    &$target,
+                    &expr.ty,
+                    &$self.scopes,
                     span,
                 ));
             }
@@ -1537,7 +1538,7 @@ impl TypeChecker {
                     .unwrap_or(Type::F64),
                 CheckedExprData::Float(value),
             ),
-            ExprData::Path(path) => match self.resolve_path(&path, span) {
+            ExprData::Path(path) => match self.resolve_path(&path, span, true) {
                 Some(ResolvedPath::Var(id)) => {
                     let var = self.scopes.get(id);
                     if !var.is_static
@@ -1552,15 +1553,8 @@ impl TypeChecker {
                     CheckedExpr::new(var.ty.clone(), CheckedExprData::Symbol(Symbol::Var(id)))
                 }
                 Some(ResolvedPath::Func(func)) => {
-                    let f = self.scopes.get(func.id);
                     CheckedExpr::new(
-                        Type::FnPtr(
-                            FnPtr {
-                                params: f.params.iter().map(|p| p.ty.clone()).collect(),
-                                ret: f.ret.clone(),
-                            }
-                            .into(),
-                        ),
+                        Type::FnPtr(func.as_fn_ptr(&self.scopes).into()),
                         CheckedExprData::Symbol(Symbol::Func(func)),
                     )
                 }
@@ -2602,7 +2596,7 @@ impl TypeChecker {
         };
 
         if ut.id != path_ut.id {
-            return Ok(self.error(Error::type_mismatch(
+            return Ok(self.error(Error::type_mismatch_s(
                 &scrutinee.name(&self.scopes),
                 &path_ut.name(&self.scopes),
                 span,
@@ -2657,20 +2651,12 @@ impl TypeChecker {
                 return None;
             }
 
-            return self.error(Error::type_mismatch(
-                &target.name(&self.scopes),
-                &ty.name(&self.scopes),
-                span,
-            ));
+            return self.error(Error::type_mismatch(target, &ty, &self.scopes, span));
         };
 
         let (ty, value) = self.get_int_type_and_val(Some(inner), base, width, value, span);
         if &ty != inner {
-            return self.error(Error::type_mismatch(
-                &inner.name(&self.scopes),
-                &ty.name(&self.scopes),
-                span,
-            ));
+            return self.error(Error::type_mismatch(inner, &ty, &self.scopes, span));
         }
 
         if !stats.signed && negative {
@@ -2944,7 +2930,7 @@ impl TypeChecker {
         let span = pattern.span;
         match pattern.data {
             Pattern::TupleLike { path, subpatterns } => {
-                let Some(resolved) = self.resolve_path(&path.data, path.span) else {
+                let Some(resolved) = self.resolve_path(&path.data, path.span, false) else {
                     return Default::default();
                 };
 
@@ -2954,7 +2940,7 @@ impl TypeChecker {
                 }
             }
             Pattern::Path(path) => {
-                let resolved = self.resolve_path(&path, span);
+                let resolved = self.resolve_path(&path, span, false);
                 if let Some(ident) = path.as_identifier() {
                     match resolved
                         .ok_or(Error::new("", span))
@@ -2998,6 +2984,7 @@ impl TypeChecker {
                     self.scopes
                         .get(self.scopes.get_option_id().unwrap())
                         .body_scope,
+                    false,
                     pattern.span,
                 ) else {
                     return self.error(Error::no_lang_item("option", pattern.span));
@@ -3020,6 +3007,7 @@ impl TypeChecker {
                     self.scopes
                         .get(self.scopes.get_option_id().unwrap())
                         .body_scope,
+                    false,
                     pattern.span,
                 ) else {
                     return self.error(Error::no_lang_item("option", pattern.span));
@@ -3046,13 +3034,9 @@ impl TypeChecker {
                 self.check_struct_pattern(scrutinee, mutable, destructures, span)
             }
             Pattern::String(value) => {
-                let string = self.make_lang_type_by_name("string", [], span);
-                if scrutinee.strip_references() != &string {
-                    return self.error(Error::type_mismatch(
-                        &scrutinee.name(&self.scopes),
-                        &string.name(&self.scopes),
-                        span,
-                    ));
+                let string = &self.make_lang_type_by_name("string", [], span);
+                if scrutinee.strip_references() != string {
+                    return self.error(Error::type_mismatch(scrutinee, string, &self.scopes, span));
                 }
 
                 CheckedPattern::refutable(CheckedPatternData::String(value))
@@ -3090,8 +3074,9 @@ impl TypeChecker {
             Pattern::Char(ch) => {
                 if scrutinee.strip_references() != &Type::Char {
                     return self.error(Error::type_mismatch(
-                        &scrutinee.name(&self.scopes),
-                        &Type::Char.name(&self.scopes),
+                        scrutinee,
+                        &Type::Char,
+                        &self.scopes,
                         span,
                     ));
                 }
@@ -3105,8 +3090,9 @@ impl TypeChecker {
             }) => {
                 if scrutinee.strip_references() != &Type::Char {
                     return self.error(Error::type_mismatch(
-                        &scrutinee.name(&self.scopes),
-                        &Type::Char.name(&self.scopes),
+                        scrutinee,
+                        &Type::Char,
+                        &self.scopes,
                         span,
                     ));
                 }
@@ -3132,8 +3118,9 @@ impl TypeChecker {
             Pattern::Bool(val) => {
                 if scrutinee.strip_references() != &Type::Bool {
                     return self.error(Error::type_mismatch(
-                        &scrutinee.name(&self.scopes),
-                        &Type::Bool.name(&self.scopes),
+                        scrutinee,
+                        &Type::Bool,
+                        &self.scopes,
                         span,
                     ));
                 }
@@ -3143,8 +3130,9 @@ impl TypeChecker {
             Pattern::Void => {
                 if scrutinee.strip_references() != &Type::Void {
                     return self.error(Error::type_mismatch(
-                        &scrutinee.name(&self.scopes),
-                        &Type::Void.name(&self.scopes),
+                        scrutinee,
+                        &Type::Void,
+                        &self.scopes,
                         span,
                     ));
                 }
@@ -3258,7 +3246,7 @@ impl TypeChecker {
 
                 let mut func = GenericFunc::new(
                     *memfn.func,
-                    self.resolve_type_args(&f.type_params.clone(), &generics, span),
+                    self.resolve_type_args(&f.type_params.clone(), &generics, false, span),
                 );
                 if let Some(inst) = memfn.tr.as_ref().or(id.as_user().map(|ut| &**ut)) {
                     func.ty_args.copy_args(&inst.ty_args);
@@ -3283,7 +3271,7 @@ impl TypeChecker {
                 );
             }
             ExprData::Path(ref path) => {
-                match self.resolve_path(path, callee.span) {
+                match self.resolve_path(path, callee.span, false) {
                     Some(ResolvedPath::UserType(ty)) => {
                         let ut = self.scopes.get(ty.id);
                         let Some((_, constructor)) = ut.data.as_struct() else {
@@ -3592,18 +3580,24 @@ impl TypeChecker {
     ) -> CheckedExpr {
         match source.coerce_to(&self.scopes, target) {
             Ok(expr) => expr,
-            Err(expr) => self.error(Error::type_mismatch(
-                &target.name(&self.scopes),
-                &expr.ty.name(&self.scopes),
-                span,
-            )),
+            Err(expr) => self.error(Error::type_mismatch(target, &expr.ty, &self.scopes, span)),
         }
     }
 
     fn resolve_lang_type(&mut self, name: &str, args: &[TypeHint]) -> Type {
         if let Some(id) = self.scopes.lang_types.get(name).copied() {
-            let args: Vec<_> = args.iter().map(|ty| self.resolve_typehint(ty)).collect();
-            Type::User(GenericUserType::from_type_args(&self.scopes, id, args).into())
+            Type::User(
+                GenericUserType::new(
+                    id,
+                    self.resolve_type_args(
+                        &self.scopes.get(id).type_params.clone(),
+                        args,
+                        true,
+                        Span::default(),
+                    ),
+                )
+                .into(),
+            )
         } else {
             self.error(Error::no_lang_item(name, Span::default()))
         }
@@ -3667,7 +3661,7 @@ impl TypeChecker {
                     return res;
                 }
 
-                match self.resolve_path(&path.data, path.span) {
+                match self.resolve_path(&path.data, path.span, true) {
                     Some(ResolvedPath::UserType(ut)) => Type::User(ut.into()),
                     Some(ResolvedPath::Func(_)) => {
                         self.error(Error::new("expected type, got function", path.span))
@@ -4011,11 +4005,7 @@ impl TypeChecker {
                     .and_then(|width| Type::from_int_name(width, false))
                 {
                     if let Some(target) = target.filter(|&target| target != &width) {
-                        return Err(Error::type_mismatch(
-                            &target.name(scopes),
-                            &width.name(scopes),
-                            expr.span,
-                        ));
+                        return Err(Error::type_mismatch(target, &width, scopes, expr.span));
                     }
                 }
 
@@ -4296,18 +4286,28 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_path(&mut self, path: &Path, span: Span) -> Option<ResolvedPath> {
+    fn resolve_path(&mut self, path: &Path, span: Span, typehint: bool) -> Option<ResolvedPath> {
         match path.origin {
-            PathOrigin::Root => {
-                self.resolve_path_in(&path.components, Default::default(), ScopeId::ROOT, span)
-            }
+            PathOrigin::Root => self.resolve_path_in(
+                &path.components,
+                Default::default(),
+                ScopeId::ROOT,
+                typehint,
+                span,
+            ),
             PathOrigin::Super(_) => {
                 if let Some(module) = self.scopes.module_of(
                     self.scopes[self.scopes.module_of(self.current).unwrap()]
                         .parent
                         .unwrap(),
                 ) {
-                    self.resolve_path_in(&path.components, Default::default(), module, span)
+                    self.resolve_path_in(
+                        &path.components,
+                        Default::default(),
+                        module,
+                        typehint,
+                        span,
+                    )
                 } else {
                     self.error(Error::new("cannot use super here", span))
                 }
@@ -4330,22 +4330,26 @@ impl TypeChecker {
                     let ty_args = self.resolve_type_args(
                         &self.scopes.get(*id).type_params.clone(),
                         ty_args,
+                        typehint,
                         span,
                     );
                     if rest.is_empty() {
-                        let ut = GenericUserType::new(*id, ty_args);
-                        //self.resolve_impls( id);
-                        //self.check_bounds( None, &ut, &scopes.get(id).impls, span);
-                        return Some(ResolvedPath::UserType(ut));
+                        return Some(ResolvedPath::UserType(GenericUserType::new(*id, ty_args)));
                     }
 
-                    self.resolve_path_in(rest, ty_args, self.scopes.get(*id).body_scope, span)
+                    self.resolve_path_in(
+                        rest,
+                        ty_args,
+                        self.scopes.get(*id).body_scope,
+                        typehint,
+                        span,
+                    )
                 } else if let Some(id) = self.find_free_fn(name) {
                     if rest.is_empty() {
                         let f = self.scopes.get(*id);
                         return Some(ResolvedPath::Func(GenericFunc::new(
                             *id,
-                            self.resolve_type_args(&f.type_params.clone(), ty_args, span),
+                            self.resolve_type_args(&f.type_params.clone(), ty_args, typehint, span),
                         )));
                     }
 
@@ -4362,9 +4366,15 @@ impl TypeChecker {
                         ));
                     }
 
-                    self.resolve_path_in(rest, Default::default(), *id, span)
+                    self.resolve_path_in(rest, Default::default(), *id, typehint, span)
                 } else {
-                    self.resolve_path_in(&path.components, Default::default(), ScopeId::ROOT, span)
+                    self.resolve_path_in(
+                        &path.components,
+                        Default::default(),
+                        ScopeId::ROOT,
+                        typehint,
+                        span,
+                    )
                 }
             }
         }
@@ -4375,6 +4385,7 @@ impl TypeChecker {
         data: &[PathComponent],
         mut ty_args: TypeArgs,
         mut scope: ScopeId,
+        typehint: bool,
         span: Span,
     ) -> Option<ResolvedPath> {
         for (i, (name, args)) in data.iter().enumerate() {
@@ -4405,7 +4416,7 @@ impl TypeChecker {
                 let ty = self.scopes.get(*id);
                 scope = ty.body_scope;
 
-                let args = self.resolve_type_args(&ty.type_params.clone(), args, span);
+                let args = self.resolve_type_args(&ty.type_params.clone(), args, typehint, span);
                 if is_end {
                     return Some(ResolvedPath::UserType(GenericUserType::new(*id, args)));
                 }
@@ -4419,6 +4430,7 @@ impl TypeChecker {
                 ty_args.copy_args(&self.resolve_type_args(
                     &self.scopes.get(*id).type_params.clone(),
                     args,
+                    typehint,
                     span,
                 ));
                 if is_end {
@@ -4455,9 +4467,10 @@ impl TypeChecker {
         &mut self,
         params: &[UserTypeId],
         args: &[TypeHint],
+        typehint: bool,
         span: Span,
     ) -> TypeArgs {
-        if !args.is_empty() && args.len() != params.len() {
+        if (typehint || !args.is_empty()) && args.len() != params.len() {
             self.error(Error::new(
                 format!(
                     "expected {} type arguments, received {}",

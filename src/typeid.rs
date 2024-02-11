@@ -117,6 +117,18 @@ impl GenericFunc {
             ),
         )
     }
+
+    pub fn as_fn_ptr(&self, scopes: &Scopes) -> FnPtr {
+        let f = scopes.get(self.id);
+        FnPtr {
+            params: f
+                .params
+                .iter()
+                .map(|p| p.ty.with_templates(&self.ty_args))
+                .collect(),
+            ret: f.ret.with_templates(&self.ty_args),
+        }
+    }
 }
 
 pub type GenericUserType = WithTypeArgs<UserTypeId>;

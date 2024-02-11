@@ -1,6 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use crate::lexer::{Located, Span, Token};
+use crate::{
+    lexer::{Located, Span, Token},
+    sym::Scopes,
+    typeid::Type,
+};
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 pub struct FileId(usize);
@@ -94,7 +98,18 @@ impl Error {
         Self::new(format!("'{}' is not valid here", token.data), token.span)
     }
 
-    pub fn type_mismatch(expected: &str, received: &str, span: Span) -> Self {
+    pub fn type_mismatch(expected: &Type, received: &Type, scopes: &Scopes, span: Span) -> Self {
+        Self::new(
+            format!(
+                "type mismatch: expected type '{}', found '{}'",
+                expected.name(scopes),
+                received.name(scopes)
+            ),
+            span,
+        )
+    }
+
+    pub fn type_mismatch_s(expected: &str, received: &str, span: Span) -> Self {
         Self::new(
             format!("type mismatch: expected type '{expected}', found '{received}'"),
             span,
