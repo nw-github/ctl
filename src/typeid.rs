@@ -589,11 +589,11 @@ impl Type {
         ty
     }
 
-    pub fn size_of(&self, scopes: &Scopes) -> usize {
+    pub fn size_and_align(&self, scopes: &Scopes) -> (usize, usize) {
         use std::ffi::*;
 
-        match self {
-            Type::Int(bits) | Type::Uint(bits) => nearest_pow_of_two(*bits),
+        let sz = match self {
+            Type::Int(bits) | Type::Uint(bits) => nearest_pow_of_two(*bits) / 8,
             Type::CInt(inner) | Type::CUint(inner) => match inner {
                 CInt::Char => std::mem::size_of::<c_char>(),
                 CInt::Short => std::mem::size_of::<c_short>(),
@@ -604,43 +604,63 @@ impl Type {
             Type::Ptr(_) | Type::MutPtr(_) => std::mem::size_of::<*const ()>(),
             Type::Isize => std::mem::size_of::<isize>(),
             Type::Usize => std::mem::size_of::<usize>(),
-            Type::F32 => 4,
-            Type::F64 => 8,
-            Type::Bool => 1,
-            Type::Char => 4,
+            Type::F32 => std::mem::size_of::<f32>(),
+            Type::F64 => std::mem::size_of::<f64>(),
+            Type::Bool => std::mem::size_of::<bool>(),
+            Type::Char => std::mem::size_of::<char>(),
             Type::FnPtr(_) => std::mem::size_of::<fn()>(),
             Type::User(ut) => {
-                // TODO: padding and alignment
-                let item = scopes.get(ut.id);
-                match &item.data {
-                    crate::sym::UserTypeData::Struct { members, .. } => members
-                        .iter()
-                        .map(|m| m.ty.with_templates(&ut.ty_args).size_of(scopes))
-                        .sum(),
+                fn padding(offset: usize, align: usize) -> usize {
+                    (align - offset % align) % align
+                }
+
+                match &scopes.get(ut.id).data {
+                    crate::sym::UserTypeData::Struct { members, .. } => {
+                        return members.iter().fold((0, 1), |(sz, align), m| {
+                            let (s, a) = m.ty.with_templates(&ut.ty_args).size_and_align(scopes);
+                            (sz + padding(sz, a) + s, align.max(a))
+                        });
+                    }
                     crate::sym::UserTypeData::Union(union) => {
-                        let shared: usize = union
-                            .variants
-                            .iter()
-                            .filter(|v| v.shared)
-                            .map(|m| m.ty.with_templates(&ut.ty_args).size_of(scopes))
-                            .sum();
-                        let unshared = union
-                            .variants
-                            .iter()
-                            .filter(|v| !v.shared)
-                            .map(|m| m.ty.with_templates(&ut.ty_args).size_of(scopes))
-                            .max()
-                            .unwrap_or(0);
-                        shared + unshared
+                        let (mut sz, mut unshared_sz) =
+                            if self.can_omit_tag(scopes) || union.is_unsafe {
+                                (0, 1)
+                            } else {
+                                union.tag_type().size_and_align(scopes)
+                            };
+
+                        let (mut align, mut unshared_align) = (0, 1);
+                        for m in union.variants.iter() {
+                            let (s, a) = m.ty.with_templates(&ut.ty_args).size_and_align(scopes);
+                            if m.shared {
+                                sz += padding(sz, a) + s;
+                            } else {
+                                unshared_sz = unshared_sz.max(s);
+                                unshared_align = unshared_align.max(a);
+                            }
+                            align = align.max(a);
+                        }
+                        return (
+                            sz + padding(sz, unshared_align) + unshared_sz,
+                            align.max(unshared_align),
+                        );
                     }
                     _ => 0,
                 }
             }
-            Type::Array(data) => data.0.size_of(scopes) * data.1,
-            Type::Void | Type::CVoid | Type::Never => 0,
-            Type::Unknown => todo!(),
-            Type::Unresolved(_) => todo!(),
-            Type::TraitSelf => todo!(),
-        }
+            Type::Array(data) => {
+                let (s, a) = data.0.size_and_align(scopes);
+                return (s * data.1, a);
+            }
+            _ => 0,
+        };
+
+        // assume self-alignment or 1 for 0 size types
+        (sz, sz.max(1))
+    }
+
+    pub fn can_omit_tag(&self, scopes: &Scopes) -> bool {
+        self.as_option_inner(scopes)
+            .is_some_and(|inner| inner.is_ptr() || inner.is_mut_ptr() || inner.is_fn_ptr())
     }
 }

@@ -198,11 +198,21 @@ fn handle_results(args: Arguments, result: &str) -> anyhow::Result<()> {
             // TODO: safe?
             let output = Path::new("./a.out");
             compile_results(result, args.leak, output, build)?;
-            Command::new(output)
-                .args(targs)
-                .spawn()
-                .context("Couldn't invoke the generated program")?
-                .wait()?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                return Err(Command::new(output).args(targs).exec().into());
+            }
+
+            #[cfg(not(unix))]
+            {
+                let status = Command::new(output)
+                    .args(targs)
+                    .spawn()
+                    .context("Couldn't invoke the generated program")?
+                    .wait()?;
+                std::process::exit(status.code().unwrap_or_default());
+            }
         }
     }
 

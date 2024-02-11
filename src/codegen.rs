@@ -349,7 +349,7 @@ impl<'a> TypeGen<'a> {
         min: bool,
     ) {
         let ty = member.ty.with_templates(&ut.ty_args);
-        if ty.size_of(self.scopes) == 0 {
+        if ty.size_and_align(self.scopes).0 == 0 {
             buffer.emit("CTL_ZST ");
         }
 
@@ -450,7 +450,7 @@ impl Buffer {
                 UserTypeData::Struct { .. } | UserTypeData::Union(_) => {
                     if let Some(ty) = id
                         .as_option_inner(scopes)
-                        .filter(|_| is_opt_ptr(scopes, id))
+                        .filter(|_| id.can_omit_tag(scopes))
                     {
                         self.emit_type(scopes, ty, tg, min);
                     } else {
@@ -1069,7 +1069,7 @@ impl<'a> Codegen<'a> {
                         state.fill_generics(&mut ret_type);
                         self.emit_expr_inner(CheckedExpr::option_null(ret_type), state);
                         self.buffer.emit(format!(";}}{tmp}="));
-                        if is_opt_ptr(self.scopes, &inner_ty) {
+                        if inner_ty.can_omit_tag(self.scopes) {
                             self.buffer.emit(format!("{inner_tmp};"));
                         } else {
                             self.buffer.emit(format!("{inner_tmp}.Some;"));
@@ -1220,9 +1220,9 @@ impl<'a> Codegen<'a> {
                     self.emit_fn_name(&wc_state);
                     self.buffer.emit(format!("({len});"));
                     self.buffer.emit(format!(
-                        "CTL_MEMCPY((void*){tmp}.ptr.addr,(const void*){arr},{len}*"
+                        "CTL_MEMCPY((void*){tmp}.ptr.addr,(const void*){arr},{len}*{}",
+                        inner.size_and_align(self.scopes).0
                     ));
-                    self.emit_size_of_type(inner);
                     self.buffer.emit(format!(");{tmp}.len={len};"));
                     self.funcs.insert(wc_state);
                 });
@@ -1376,7 +1376,7 @@ impl<'a> Codegen<'a> {
                 mut members,
                 variant,
             } => {
-                if is_opt_ptr(self.scopes, &expr.ty) {
+                if expr.ty.can_omit_tag(self.scopes) {
                     if let Some(some) = members.remove("Some") {
                         self.emit_expr(some, state);
                     } else {
@@ -1705,16 +1705,6 @@ impl<'a> Codegen<'a> {
         self.buffer.emit(";");
     }
 
-    fn emit_size_of_type(&mut self, ty: &Type) {
-        // TODO: just emit ty.size_of when the padding stuff is fixed
-        if ty.size_of(self.scopes) == 0 {
-            self.buffer.emit("0");
-        } else {
-            self.buffer.emit("(usize)sizeof");
-            self.emit_cast(ty);
-        }
-    }
-
     fn emit_new(&mut self, ut: &GenericUserType) {
         let new_state = State::new(GenericFunc::new(
             *self
@@ -1738,7 +1728,10 @@ impl<'a> Codegen<'a> {
     ) {
         match name {
             "size_of" => {
-                self.emit_size_of_type(func.first_type_arg().unwrap());
+                self.buffer.emit(format!(
+                    "{}",
+                    func.first_type_arg().unwrap().size_and_align(self.scopes).0
+                ));
             }
             "panic" => {
                 let panic = State::new(GenericFunc::from_id(
@@ -2320,9 +2313,4 @@ impl<'a> Codegen<'a> {
 
         Some(State::new(GenericFunc::from_id(self.scopes, *id)))
     }
-}
-
-fn is_opt_ptr(scopes: &Scopes, ty: &Type) -> bool {
-    ty.as_option_inner(scopes)
-        .is_some_and(|inner| inner.is_ptr() || inner.is_mut_ptr() || inner.is_fn_ptr())
 }
