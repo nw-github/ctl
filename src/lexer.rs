@@ -397,6 +397,7 @@ impl<'a> Lexer<'a> {
                             len: chars.len(),
                         },
                     ));
+                    self.expect(diag, '}');
                     '\0'
                 }
             }

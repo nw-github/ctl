@@ -1,5 +1,3 @@
-#define CTL_NOGC
-#define CTL_NOBITINT
 #include <locale.h>
 
 #if !defined(CTL_NOGC)

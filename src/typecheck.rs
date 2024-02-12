@@ -3850,10 +3850,10 @@ impl TypeChecker {
 
         self.scopes
             .extensions_in_scope_for(ty, None, self.current)
-            .find_map(|(_, ext)| {
+            .find_map(|(id, ext)| {
                 search(&ext.fns).map(|func| MemberFn {
                     tr: None,
-                    ext: None,
+                    ext: Some(id),
                     func,
                     src_scope: ext.scope,
                 })
