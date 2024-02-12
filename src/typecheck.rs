@@ -264,25 +264,22 @@ impl TypeChecker {
                     vec![],
                 )
             });
-            let mut members = Vec::with_capacity(base.members.len());
+            let mut members = IndexMap::with_capacity(base.members.len());
             for member in base.members {
-                if members
-                    .iter()
-                    .any(|m: &CheckedMember| m.name == member.name.data)
-                {
+                let prev = members.insert(
+                    member.name.data.clone(),
+                    CheckedMember {
+                        public: member.public,
+                        ty: this.declare_type_hint(member.ty),
+                    },
+                );
+                if prev.is_some() {
                     this.error(Error::redefinition_k(
                         "member variable",
                         &member.name.data,
                         member.name.span,
                     ))
                 }
-
-                members.push(CheckedMember {
-                    public: member.public,
-                    name: member.name.data,
-                    shared: member.shared,
-                    ty: this.declare_type_hint(member.ty),
-                });
             }
 
             let (impls, impl_blocks) = this.declare_impl_blocks(autouse, base.impls);
@@ -292,9 +289,10 @@ impl TypeChecker {
                 .map(|f| this.declare_fn(autouse, None, f, vec![]))
                 .collect();
             let ut = UserType {
+                members,
                 body_scope: this.current,
                 name: base.name,
-                data: UserTypeData::Struct(members),
+                data: UserTypeData::Struct,
                 type_params: this.declare_type_params(base.type_params),
                 impls,
                 attrs,
@@ -330,26 +328,36 @@ impl TypeChecker {
         is_unsafe: bool,
     ) -> DeclaredStmt {
         let (ut, impl_blocks, fns, member_cons_len) = self.enter(ScopeKind::None, |this| {
-            let mut variants = Vec::with_capacity(base.members.len());
+            let mut variants = IndexMap::with_capacity(base.members.len());
+            let mut members = IndexMap::with_capacity(base.members.len());
             let mut params = Vec::with_capacity(base.members.len());
             for member in base.members.iter() {
-                if variants
-                    .iter()
-                    .any(|m: &CheckedMember| m.name == member.name.data)
-                {
+                let prev = if member.shared {
+                    members
+                        .insert(
+                            member.name.data.clone(),
+                            CheckedMember {
+                                public: member.public,
+                                ty: this.declare_type_hint(member.ty.clone()),
+                            },
+                        )
+                        .is_some()
+                } else {
+                    variants
+                        .insert(
+                            member.name.data.clone(),
+                            this.declare_type_hint(member.ty.clone()),
+                        )
+                        .is_some()
+                };
+
+                if prev {
                     this.error(Error::redefinition_k(
                         "member",
                         &member.name.data,
                         member.name.span,
                     ))
                 }
-
-                variants.push(CheckedMember {
-                    public: member.public,
-                    name: member.name.data.clone(),
-                    shared: member.shared,
-                    ty: this.declare_type_hint(member.ty.clone()),
-                });
 
                 if member.shared && !is_unsafe {
                     params.push(Param {
@@ -411,6 +419,7 @@ impl TypeChecker {
             );
 
             let ut = UserType {
+                members,
                 name: base.name,
                 body_scope: this.current,
                 type_params: this.declare_type_params(base.type_params),
@@ -503,6 +512,7 @@ impl TypeChecker {
                             .collect(),
                         attrs: stmt.attrs,
                         fns: fns.iter().map(|f| Vis::new(f.id, f.public)).collect(),
+                        members: Default::default(),
                     };
 
                     (ut, fns)
@@ -706,6 +716,7 @@ impl TypeChecker {
                             .collect(),
                         attrs: vec![],
                         fns: vec![],
+                        members: Default::default(),
                     },
                     false,
                 )
@@ -1746,13 +1757,10 @@ impl TypeChecker {
                         ))
                     }
                 };
+                self.resolve_members(ut_id);
 
-                for i in 0..self.scopes.get(ut_id).members().len() {
-                    resolve_type!(self, self.scopes.get_mut(ut_id).members_mut()[i].ty);
-                }
-
-                let ty = self.scopes.get(ut_id);
-                let Some(member) = ty.members().iter().find(|m| m.name == name) else {
+                let ut = self.scopes.get(ut_id);
+                let Some(member) = ut.members.get(&name) else {
                     return self.error(Error::no_member(
                         &source.ty.name(&self.scopes),
                         &name,
@@ -1760,30 +1768,19 @@ impl TypeChecker {
                     ));
                 };
 
-                if let Some(union) = ty.data.as_union() {
-                    if !member.shared {
-                        return self.error(Error::new(
-                            "cannot access union variant with '.' (only shared members)",
-                            span,
-                        ));
-                    }
-
+                if let Some(union) = ut.data.as_union() {
                     if union.is_unsafe && self.safety != Safety::Unsafe {
                         self.diag.error(Error::is_unsafe(span));
                     }
                 }
 
-                if !member.public && !self.can_access_privates(ty.scope) {
-                    self.diag.error(Error::private_member(
-                        &id.name(&self.scopes),
-                        &member.name,
-                        span,
-                    ));
-                }
-
                 let mut ty = member.ty.clone();
                 if let Some(instance) = id.as_user() {
                     ty.fill_templates(&instance.ty_args);
+                }
+
+                if !member.public && !self.can_access_privates(ut.scope) {
+                    self.error(Error::private_member(&id.name(&self.scopes), &name, span))
                 }
 
                 let id = id.clone();
@@ -2217,7 +2214,7 @@ impl TypeChecker {
             .and_then(|ut| self.scopes.get(ut.id).data.as_union())
         {
             let mut missing = vec![];
-            'outer: for v in ut.variants.iter().filter(|variant| !variant.shared) {
+            'outer: for (name, _) in ut.variants.iter() {
                 for patt in patterns.clone() {
                     if patt.irrefutable {
                         return;
@@ -2225,14 +2222,14 @@ impl TypeChecker {
                         .data
                         .as_union_member()
                         .is_some_and(|(sub, variant, _)| {
-                            &v.name == variant && sub.as_ref().map_or(true, |sub| sub.irrefutable)
+                            name == variant && sub.as_ref().map_or(true, |sub| sub.irrefutable)
                         })
                     {
                         continue 'outer;
                     }
                 }
 
-                missing.push(&v.name[..]);
+                missing.push(&name[..]);
             }
 
             if !missing.is_empty() {
@@ -2531,10 +2528,8 @@ impl TypeChecker {
 
         let ty = union
             .variants
-            .iter()
-            .find(|m| m.name == variant)
+            .get(&variant)
             .unwrap()
-            .ty
             .with_templates(&ut.ty_args);
         if let Some(patt) = subpatterns.into_iter().next() {
             Ok(CheckedPattern::refutable(CheckedPatternData::UnionMember {
@@ -2553,7 +2548,10 @@ impl TypeChecker {
             }))
         } else {
             Ok(self.error(Error::new(
-                format!("union variant '{variant}' has data that must be bound"),
+                format!(
+                    "union variant '{variant}' has data of type '{}' that must be bound",
+                    ty.name(&self.scopes)
+                ),
                 span,
             )))
         }
@@ -2767,16 +2765,10 @@ impl TypeChecker {
         destructures: Vec<Destructure>,
         span: Span,
     ) -> CheckedPattern {
-        let (ut, members) = if let Some(ut) = scrutinee.strip_references().as_user() {
-            self.resolve_members(ut.id);
-            if let UserTypeData::Struct(members) = &self.scopes.get(ut.id).data {
-                (ut, members)
-            } else {
-                return self.error(Error::bad_destructure(&scrutinee.name(&self.scopes), span));
-            }
-        } else {
+        let Some(ut) = scrutinee.strip_references().as_user() else {
             return self.error(Error::bad_destructure(&scrutinee.name(&self.scopes), span));
         };
+        self.resolve_members(ut.id);
 
         let cap = self.can_access_privates(self.scopes.get(ut.id).scope);
         let mut vars = Vec::new();
@@ -2786,7 +2778,7 @@ impl TypeChecker {
             pattern,
         } in destructures
         {
-            let Some(member) = members.iter().find(|m| m.name == name.data) else {
+            let Some(member) = self.scopes.get(ut.id).members.get(&name.data) else {
                 self.diag.error(Error::no_member(
                     &scrutinee.name(&self.scopes),
                     &name.data,
@@ -2798,7 +2790,7 @@ impl TypeChecker {
             if !member.public && !cap {
                 self.diag.error(Error::private_member(
                     &scrutinee.name(&self.scopes),
-                    &member.name,
+                    &name.data,
                     name.span,
                 ));
                 continue;
@@ -3668,8 +3660,14 @@ impl TypeChecker {
     }
 
     fn resolve_members(&mut self, id: UserTypeId) {
-        for i in 0..self.scopes.get(id).members().len() {
-            resolve_type!(self, self.scopes.get_mut(id).members_mut()[i].ty);
+        for i in 0..self.scopes.get(id).members.len() {
+            resolve_type!(self, self.scopes.get_mut(id).members[i].ty);
+        }
+
+        if self.scopes.get(id).data.as_union().is_some() {
+            for i in 0..self.scopes.get(id).data.as_union().unwrap().variants.len() {
+                resolve_type!(self, self.scopes.get_mut(id).data.as_union_mut().unwrap().variants[i]);
+            }
         }
     }
 

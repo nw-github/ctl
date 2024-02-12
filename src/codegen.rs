@@ -169,7 +169,7 @@ impl<'a> TypeGen<'a> {
             definitions.emit_type_name(self.scopes, ut, flags.minify);
             definitions.emit("{");
 
-            let members = self.scopes.get(ut.id).members();
+            let members = &self.scopes.get(ut.id).members;
             if members.is_empty() && self.scopes.get(ut.id).data.is_struct() {
                 definitions.emit("CTL_DUMMY_MEMBER;");
             }
@@ -178,18 +178,18 @@ impl<'a> TypeGen<'a> {
                 definitions.emit_type(self.scopes, &union.tag_type(), None, flags.minify);
                 definitions.emit(format!(" {UNION_TAG_NAME};"));
 
-                for member in members.iter().filter(|m| m.shared) {
-                    self.emit_member(ut, member, &mut definitions, flags.minify);
+                for (name, member) in members {
+                    self.emit_member(ut, name, &member.ty, &mut definitions, flags.minify);
                 }
 
                 definitions.emit(" union{");
-                for member in members.iter().filter(|m| !m.shared) {
-                    self.emit_member(ut, member, &mut definitions, flags.minify);
+                for (name, ty) in union.variants.iter() {
+                    self.emit_member(ut, name, ty, &mut definitions, flags.minify);
                 }
                 definitions.emit("};");
             } else {
-                for member in members {
-                    self.emit_member(ut, member, &mut definitions, flags.minify);
+                for (name, member) in members {
+                    self.emit_member(ut, name, &member.ty, &mut definitions, flags.minify);
                 }
             }
 
@@ -268,14 +268,18 @@ impl<'a> TypeGen<'a> {
         }
 
         self.structs.insert(ut.clone(), Vec::new());
+        let sty = self.scopes.get(ut.id);
 
         let mut deps = Vec::new();
-        if let Some(union) = self.scopes.get(ut.id).data.as_union() {
+        let iter = if let Some(union) = sty.data.as_union() {
             self.add_type(diag, &union.tag_type(), None);
-        }
+            Some(union.variants.values())
+        } else {
+            None
+        };
 
-        for member in self.scopes.get(ut.id).members().iter() {
-            match member.ty.with_templates(&ut.ty_args) {
+        for ty in sty.members.values().map(|m| &m.ty).chain(iter.into_iter().flatten()) {
+            match ty.with_templates(&ut.ty_args) {
                 Type::User(dep) => {
                     if matches!(adding, Some(adding) if adding == &*dep) {
                         // ideally get the span of the instantiation that caused this
@@ -288,7 +292,7 @@ impl<'a> TypeGen<'a> {
                             diag.error(Error::cyclic(
                                 &ut.name(self.scopes),
                                 &dep.name(self.scopes),
-                                self.scopes.get(ut.id).name.span,
+                                sty.name.span,
                             ));
                         }
                         return;
@@ -357,17 +361,18 @@ impl<'a> TypeGen<'a> {
     fn emit_member(
         &mut self,
         ut: &GenericUserType,
-        member: &CheckedMember,
+        name: &String,
+        ty: &Type,
         buffer: &mut Buffer,
         min: bool,
     ) {
-        let ty = member.ty.with_templates(&ut.ty_args);
+        let ty = ty.with_templates(&ut.ty_args);
         if ty.size_and_align(self.scopes).0 == 0 {
             buffer.emit("CTL_ZST ");
         }
 
         buffer.emit_type(self.scopes, &ty, None, min);
-        buffer.emit(format!(" {};", member.name));
+        buffer.emit(format!(" {name};"));
     }
 
     fn emit_array(
@@ -460,7 +465,7 @@ impl Buffer {
                 }
             }
             Type::User(ut) => match &scopes.get(ut.id).data {
-                UserTypeData::Struct { .. } | UserTypeData::Union(_) => {
+                UserTypeData::Struct { .. } | UserTypeData::Union(_) | UserTypeData::Tuple => {
                     if let Some(ty) = id
                         .as_option_inner(scopes)
                         .filter(|_| id.can_omit_tag(scopes))
@@ -1364,13 +1369,8 @@ impl<'a> Codegen<'a> {
                     if let Some((name, union)) =
                         variant.zip(ut.and_then(|ut| self.scopes.get(ut.id).data.as_union()))
                     {
-                        if !union.is_unsafe
-                            && union.variants.iter().any(|m| m.name == name && !m.shared)
-                        {
-                            self.buffer.emit(format!(
-                                ".{UNION_TAG_NAME}={},",
-                                union.variant_tag(&name).unwrap()
-                            ));
+                        if let Some(variant) = union.variant_tag(&name) {
+                            self.buffer.emit(format!(".{UNION_TAG_NAME}={variant},",));
                         }
                     } else if members.is_empty()
                         && ut.is_some_and(|ut| self.scopes.get(ut.id).data.is_struct())

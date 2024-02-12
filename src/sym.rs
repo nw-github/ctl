@@ -1,5 +1,6 @@
 use derive_more::{Constructor, Deref, DerefMut, From};
 use enum_as_inner::EnumAsInner;
+use indexmap::IndexMap;
 use std::collections::HashMap;
 
 use crate::{
@@ -148,14 +149,12 @@ impl FunctionId {
 #[derive(Debug, Clone)]
 pub struct CheckedMember {
     pub public: bool,
-    pub name: String,
-    pub shared: bool,
     pub ty: Type,
 }
 
 #[derive(Debug, Clone)]
 pub struct Union {
-    pub variants: Vec<CheckedMember>,
+    pub variants: IndexMap<String, Type>,
     pub is_unsafe: bool,
 }
 
@@ -165,19 +164,17 @@ impl Union {
     }
 
     pub fn variant_tag(&self, name: &str) -> Option<usize> {
-        self.variants
-            .iter()
-            .filter(|m| !m.shared)
-            .position(|m| m.name == name)
+        self.variants.get_index_of(name)
     }
 }
 
 #[derive(Debug, EnumAsInner)]
 pub enum UserTypeData {
-    Struct(Vec<CheckedMember>),
+    Struct,
     Union(Union),
     Template,
     Trait,
+    Tuple,
 }
 
 #[derive(Debug)]
@@ -189,25 +186,10 @@ pub struct UserType {
     pub type_params: Vec<UserTypeId>,
     pub attrs: Vec<Attribute>,
     pub fns: Vec<Vis<FunctionId>>,
+    pub members: IndexMap<String, CheckedMember>,
 }
 
 impl UserType {
-    pub fn members(&self) -> &[CheckedMember] {
-        match &self.data {
-            UserTypeData::Struct(members) => members,
-            UserTypeData::Union(union) => &union.variants,
-            _ => &[],
-        }
-    }
-
-    pub fn members_mut(&mut self) -> &mut [CheckedMember] {
-        match &mut self.data {
-            UserTypeData::Struct(members) => members,
-            UserTypeData::Union(union) => &mut union.variants,
-            _ => &mut [],
-        }
-    }
-
     pub fn find_associated_fn(&self, scopes: &Scopes, name: &str) -> Option<FunctionId> {
         self.fns
             .iter()
@@ -270,7 +252,7 @@ pub struct Extension {
     pub impls: Vec<Type>,
     pub type_params: Vec<UserTypeId>,
     pub body_scope: ScopeId,
-    pub fns: Vec<Vis<FunctionId>>,    
+    pub fns: Vec<Vis<FunctionId>>,
 }
 
 #[derive(Deref, DerefMut, Constructor)]

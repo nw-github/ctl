@@ -610,42 +610,45 @@ impl Type {
             Type::Char => std::mem::size_of::<char>(),
             Type::FnPtr(_) => std::mem::size_of::<fn()>(),
             Type::User(ut) => {
-                fn padding(offset: usize, align: usize) -> usize {
-                    (align - offset % align) % align
+                struct SizeAndAlign {
+                    size: usize,
+                    align: usize,
                 }
 
-                match &scopes.get(ut.id).data {
-                    crate::sym::UserTypeData::Struct(members) => {
-                        return members.iter().fold((0, 1), |(sz, align), m| {
-                            let (s, a) = m.ty.with_templates(&ut.ty_args).size_and_align(scopes);
-                            (sz + padding(sz, a) + s, align.max(a))
-                        });
+                impl SizeAndAlign {
+                    fn new() -> Self {
+                        Self { size: 0, align: 1}
                     }
-                    crate::sym::UserTypeData::Union(union) => {
-                        let (mut sz, mut unshared_sz) =
-                            if self.can_omit_tag(scopes) || union.is_unsafe {
-                                (0, 1)
-                            } else {
-                                union.tag_type().size_and_align(scopes)
-                            };
 
-                        let (mut align, mut unshared_align) = (0, 1);
-                        for m in union.variants.iter() {
-                            let (s, a) = m.ty.with_templates(&ut.ty_args).size_and_align(scopes);
-                            if m.shared {
-                                sz += padding(sz, a) + s;
-                            } else {
-                                unshared_sz = unshared_sz.max(s);
-                                unshared_align = unshared_align.max(a);
-                            }
-                            align = align.max(a);
-                        }
-                        return (
-                            sz + padding(sz, unshared_align) + unshared_sz,
-                            align.max(unshared_align),
-                        );
+                    fn next(&mut self, (s, a): (usize, usize)) {
+                        self.size += (a - self.size % a) % a + s;
+                        self.align = self.align.max(a);
                     }
-                    _ => 0,
+                }
+
+                let ty = scopes.get(ut.id);
+                if let Some(union) = ty.data.as_union().filter(|u| !u.is_unsafe) {
+                    let mut sa = SizeAndAlign::new();
+                    if !union.is_unsafe {
+                        sa.next(union.tag_type().size_and_align(scopes));
+                    }
+
+                    for member in ty.members.values() {
+                        sa.next(member.ty.with_templates(&ut.ty_args).size_and_align(scopes));
+                    }
+
+                    sa.next(union.variants.values().fold((0, 1), |(sz, align), ty| {
+                        let (s, a) = ty.with_templates(&ut.ty_args).size_and_align(scopes);
+                        (sz.max(s), align.max(a))
+                    }));
+
+                    return (sa.size, sa.align);
+                } else {
+                    let mut sa = SizeAndAlign::new();
+                    for member in ty.members.values() {
+                        sa.next(member.ty.with_templates(&ut.ty_args).size_and_align(scopes));
+                    }
+                    return (sa.size, sa.align);
                 }
             }
             Type::Array(data) => {
