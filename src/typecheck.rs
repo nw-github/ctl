@@ -2797,7 +2797,9 @@ impl TypeChecker {
         self.resolve_members(ut.id);
 
         let cap = self.can_access_privates(self.scopes.get(ut.id).scope);
-        let mut vars = Vec::new();
+        let mut irrefutable = true;
+        let mut checked = Vec::new();
+
         for Destructure {
             name,
             mutable: pm,
@@ -2819,50 +2821,88 @@ impl TypeChecker {
                     &name.data,
                     name.span,
                 ));
-                continue;
             }
 
             // TODO: duplicates
-            vars.push((
-                name.data,
-                mutable || pm,
-                member.ty.with_templates(&ut.ty_args),
-                pattern,
+            let mutable = mutable || pm;
+            let inner = member.ty.with_templates(&ut.ty_args);
+            let ty = scrutinee.matched_inner_type(inner.clone());
+            if let Some(patt) = pattern {
+                let patt = self.check_pattern(true, &ty, mutable, patt);
+                if !patt.irrefutable {
+                    irrefutable = false;
+                }
+                checked.push((name.data, inner, patt))
+            } else {
+                checked.push((
+                    name.data.clone(),
+                    inner,
+                    CheckedPattern::irrefutable(CheckedPatternData::Variable(
+                        self.insert(
+                            Variable {
+                                name: name.data,
+                                ty,
+                                is_static: false,
+                                mutable,
+                                value: None,
+                            },
+                            false,
+                        )
+                        .0,
+                    )),
+                ))
+            }
+        }
+
+        CheckedPattern {
+            irrefutable,
+            data: CheckedPatternData::Destrucure(checked),
+        }
+    }
+
+    fn check_tuple_pattern(
+        &mut self,
+        scrutinee: &Type,
+        mutable: bool,
+        subpatterns: Vec<Located<Pattern>>,
+        span: Span,
+    ) -> CheckedPattern {
+        let Some(ut) = scrutinee
+            .strip_references()
+            .as_user()
+            .filter(|ut| self.scopes.get(ut.id).data.is_tuple())
+        else {
+            return self.error(Error::expected_found(
+                &scrutinee.name(&self.scopes),
+                &format!("({})", ["_"].repeat(subpatterns.len()).join(", ")),
+                span,
             ));
+        };
+
+        if ut.ty_args.len() != subpatterns.len() {
+            self.error(Error::expected_found(
+                &scrutinee.name(&self.scopes),
+                &format!("({})", ["_"].repeat(subpatterns.len()).join(", ")),
+                span,
+            ))
         }
 
         let mut irrefutable = true;
-        let checked: Vec<_> = vars
-            .into_iter()
-            .map(|(name, mutable, inner, patt)| {
-                let ty = scrutinee.matched_inner_type(inner.clone());
-                if let Some(patt) = patt {
-                    let patt = self.check_pattern(true, &ty, mutable, patt);
-                    if !patt.irrefutable {
-                        irrefutable = false;
-                    }
-                    (name, inner, patt)
-                } else {
-                    (
-                        name.clone(),
-                        inner,
-                        CheckedPattern::irrefutable(CheckedPatternData::Variable(
-                            self.insert(
-                                Variable {
-                                    name,
-                                    ty,
-                                    is_static: false,
-                                    mutable,
-                                    value: None,
-                                },
-                                false,
-                            )
-                            .0,
-                        )),
-                    )
-                }
-            })
-            .collect();
+        let mut checked = Vec::new();
+        for (i, patt) in subpatterns.into_iter().enumerate() {
+            let (inner, ty) = if let Some((_, ty)) = ut.ty_args.get_index(i) {
+                (ty.clone(), scrutinee.matched_inner_type(ty.clone()))
+            } else {
+                (Type::Unknown, Type::Unknown)
+            };
+
+            let patt = self.check_pattern(true, &ty, mutable, patt);
+            if !patt.irrefutable {
+                irrefutable = false;
+            }
+            checked.push((format!("{i}"), inner, patt));
+        }
+
         CheckedPattern {
             irrefutable,
             data: CheckedPatternData::Destrucure(checked),
@@ -2981,7 +3021,7 @@ impl TypeChecker {
                 )
                 .0,
             )),
-            Pattern::StructDestructure(destructures) => {
+            Pattern::Struct(destructures) => {
                 self.check_struct_pattern(scrutinee, mutable, destructures, span)
             }
             Pattern::String(value) => {
@@ -3077,6 +3117,9 @@ impl TypeChecker {
                 }
 
                 CheckedPattern::refutable(CheckedPatternData::Int(BigInt::from(val as u32)))
+            }
+            Pattern::Tuple(subpatterns) => {
+                self.check_tuple_pattern(scrutinee, mutable, subpatterns, span)
             }
             Pattern::Void => {
                 if scrutinee.strip_references() != &Type::Void {

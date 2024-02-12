@@ -1111,58 +1111,81 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn pattern(&mut self, mut_var: bool) -> Located<Pattern> {
-        if self.next_if_kind(Token::Question).is_some() {
-            return self
-                .pattern(false)
-                .map(|inner| Pattern::Option(inner.into()));
-        } else if let Some(token) = self.next_if_kind(Token::None) {
-            return Located::new(token.span, Pattern::Null);
-        } else if let Some(token) = self.next_if_kind(Token::LCurly) {
-            return self
-                .csv_one(Token::RCurly, token.span, |this| {
-                    let mutable = this.next_if_kind(Token::Mut);
-                    if let Some(token) = mutable.clone().filter(|_| mut_var) {
-                        this.diag.warn(Error::new(
-                            format!("redundant '{}'", Token::Mut),
-                            token.span,
-                        ));
-                    }
-                    let mutable = mutable.is_some();
-                    let name = this.expect_id_l("expected name");
-                    if mutable {
-                        Destructure {
-                            name,
-                            mutable,
-                            pattern: None,
+        match self.peek().data {
+            Token::Question => {
+                self.next();
+                return self
+                    .pattern(false)
+                    .map(|inner| Pattern::Option(inner.into()));
+            }
+            Token::None => {
+                let span = self.next().span;
+                return Located::new(span, Pattern::Null);
+            }
+            Token::LCurly => {
+                let span = self.next().span;
+                return self
+                    .csv_one(Token::RCurly, span, |this| {
+                        let mutable = this.next_if_kind(Token::Mut);
+                        if let Some(token) = mutable.clone().filter(|_| mut_var) {
+                            this.diag.warn(Error::new(
+                                format!("redundant '{}'", Token::Mut),
+                                token.span,
+                            ));
                         }
-                    } else {
-                        Destructure {
-                            name,
-                            mutable: mutable || mut_var,
-                            pattern: this.next_if_kind(Token::Colon).map(|_| this.pattern(false)),
-                        }
-                    }
-                })
-                .map(Pattern::StructDestructure);
-        } else if let Some(token) = self.next_if_kind(Token::LBrace) {
-            return self
-                .csv(Vec::new(), Token::RBrace, token.span, |this| {
-                    if let Some(token) = this.next_if_kind(Token::Ellipses) {
-                        let pattern = if this.next_if_kind(Token::Mut).is_some() {
-                            let ident = this.expect_id("expected name");
-                            Some((true, ident))
+                        let mutable = mutable.is_some();
+                        let name = this.expect_id_l("expected name");
+                        if mutable {
+                            Destructure {
+                                name,
+                                mutable,
+                                pattern: None,
+                            }
                         } else {
-                            let ident = this.next_if_map(|t| t.data.as_ident().map(|&i| i.into()));
-                            Some(false).zip(ident)
-                        };
+                            Destructure {
+                                name,
+                                mutable: mutable || mut_var,
+                                pattern: this
+                                    .next_if_kind(Token::Colon)
+                                    .map(|_| this.pattern(false)),
+                            }
+                        }
+                    })
+                    .map(Pattern::Struct);
+            }
+            Token::LBrace => {
+                let span = self.next().span;
+                return self
+                    .csv(Vec::new(), Token::RBrace, span, |this| {
+                        if let Some(token) = this.next_if_kind(Token::Ellipses) {
+                            let pattern = if this.next_if_kind(Token::Mut).is_some() {
+                                let ident = this.expect_id("expected name");
+                                Some((true, ident))
+                            } else {
+                                let ident =
+                                    this.next_if_map(|t| t.data.as_ident().map(|&i| i.into()));
+                                Some(false).zip(ident)
+                            };
 
-                        Located::new(token.span, Pattern::Rest(pattern))
-                    } else {
+                            Located::new(token.span, Pattern::Rest(pattern))
+                        } else {
+                            this.pattern(mut_var)
+                        }
+                    })
+                    .map(Pattern::Array);
+            }
+            Token::LParen => {
+                let span = self.next().span;
+                return self
+                    .csv(Vec::new(), Token::RParen, span, |this| {
                         this.pattern(mut_var)
-                    }
-                })
-                .map(Pattern::Array);
-        } else if mut_var || self.next_if_kind(Token::Mut).is_some() {
+                    })
+                    .map(Pattern::Tuple);
+            }
+            _ => {}
+        }
+
+        if mut_var || self.next_if_kind(Token::Mut).is_some() {
             return self.expect_id_l("expected name").map(Pattern::MutBinding);
         }
 

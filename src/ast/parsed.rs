@@ -292,7 +292,8 @@ pub enum Pattern {
     // x is null
     Null,
     // let {x, y} = z;
-    StructDestructure(Vec<Destructure>),
+    Struct(Vec<Destructure>),
+    Tuple(Vec<Located<Pattern>>),
     Int(IntPattern),
     IntRange(RangePattern<IntPattern>),
     String(String),
