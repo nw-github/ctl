@@ -9,7 +9,7 @@ use crate::{
         Attribute,
     },
     lexer::Located,
-    typeid::Type,
+    typeid::{GenericUserType, Type},
 };
 
 macro_rules! id {
@@ -273,14 +273,7 @@ pub struct Extension {
     pub impls: Vec<Type>,
     pub type_params: Vec<UserTypeId>,
     pub body_scope: ScopeId,
-    pub fns: Vec<Vis<FunctionId>>,
-}
-
-impl Extension {
-    pub fn matches_type(&self, ty: &Type) -> bool {
-        // TODO: templates
-        &self.ty == ty
-    }
+    pub fns: Vec<Vis<FunctionId>>,    
 }
 
 #[derive(Deref, DerefMut, Constructor)]
@@ -331,6 +324,7 @@ pub struct Scope {
     pub parent: Option<ScopeId>,
     pub tns: HashMap<String, Vis<TypeItem>>,
     pub vns: HashMap<String, Vis<ValueItem>>,
+    pub children: Vec<ScopeId>,
     pub use_stmts: Vec<UsePath>,
 }
 
@@ -438,8 +432,11 @@ impl Scopes {
             .map(|(i, var)| (VariableId(i), var))
     }
 
-    pub fn extensions(&self) -> &[Scoped<Extension>] {
-        &self.exts
+    pub fn extensions(&self) -> impl Iterator<Item = (ExtensionId, &Scoped<Extension>)> {
+        self.exts
+            .iter()
+            .enumerate()
+            .map(|(i, var)| (ExtensionId(i), var))
     }
 
     pub fn functions(&self) -> impl Iterator<Item = (FunctionId, &Scoped<Function>)> {
@@ -463,6 +460,84 @@ impl Scopes {
 
     pub fn get_mut<T: ItemId>(&mut self, id: T) -> &mut Scoped<T::Value> {
         id.get_mut(self)
+    }
+
+    pub fn implements_trait(
+        &self,
+        ty: &Type,
+        bound: &GenericUserType,
+        excl: Option<ExtensionId>,
+        scope: ScopeId,
+    ) -> bool {
+        if ty.is_unknown() {
+            return true;
+        }
+
+        let search = |this: Option<&GenericUserType>, impls: &[Type]| {
+            impls.iter().any(|tr| {
+                let mut tr = tr.clone();
+                if let Some(this) = this {
+                    tr.fill_templates(&this.ty_args);
+                }
+                tr.as_user().is_some_and(|tr| &**tr == bound)
+            })
+        };
+
+        if ty
+            .as_user()
+            .is_some_and(|this| search(Some(this), &self.get(this.id).impls))
+        {
+            return true;
+        }
+
+        self.extensions_in_scope_for(ty, excl, scope)
+            .any(|(_, ext)| search(ty.as_user().map(|ty| &**ty), &ext.impls))
+    }
+
+    pub fn extension_applies_to(
+        &self,
+        id: ExtensionId,
+        ext: &Extension,
+        rhs: &Type,
+        scope: ScopeId,
+    ) -> bool {
+        match &ext.ty {
+            Type::User(ut) if self.get(ut.id).data.is_template() => {
+                for bound in self
+                    .get(ut.id)
+                    .impls
+                    .iter()
+                    .flat_map(|bound| bound.as_user())
+                {
+                    if !self.implements_trait(rhs, bound, Some(id), scope) {
+                        return false;
+                    }
+                }
+                true
+            }
+            ty => ty == rhs,
+        }
+    }
+
+    pub fn extensions_in_scope_for<'a, 'b>(
+        &'a self,
+        ty: &'b Type,
+        excl: Option<ExtensionId>,
+        current: ScopeId,
+    ) -> impl Iterator<Item = (ExtensionId, &Scoped<Extension>)> + 'b
+    where
+        'a: 'b,
+    {
+        self.walk(current).flat_map(move |(_, scope)| {
+            // TODO: maybe keep an extensions field to make this lookup faster
+            scope
+                .tns
+                .iter()
+                .filter_map(|id| id.1.as_extension())
+                .map(|ext| (*ext, self.get(*ext)))
+                .filter(move |(id, _)| Some(*id) != excl)
+                .filter(move |(id, ext)| self.extension_applies_to(*id, ext, ty, current))
+        })
     }
 }
 

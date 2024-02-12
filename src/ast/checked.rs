@@ -111,6 +111,7 @@ pub enum CheckedExprData {
         args: IndexMap<String, CheckedExpr>,
         inst: Option<Type>,
         trait_id: Option<UserTypeId>,
+        scope: ScopeId,
     },
     CallFnPtr {
         expr: Box<CheckedExpr>,
@@ -139,7 +140,7 @@ pub enum CheckedExprData {
     ByteString(Vec<u8>),
     Char(char),
     Void,
-    Symbol(Symbol),
+    Symbol(Symbol, ScopeId),
     Assign {
         target: Box<CheckedExpr>,
         binary: Option<BinaryOp>,
@@ -162,6 +163,7 @@ pub enum CheckedExprData {
         patt: CheckedPattern,
         body: Vec<CheckedStmt>,
         optional: bool,
+        scope: ScopeId,
     },
     Match {
         expr: Box<CheckedExpr>,
@@ -199,9 +201,11 @@ impl CheckedExpr {
             CheckedExprData::Unary { op, expr } => {
                 matches!(op, UnaryOp::Deref) && matches!(expr.ty, Type::MutPtr(_))
             }
-            CheckedExprData::Symbol(_) | CheckedExprData::Member { .. } => self.can_addrmut(scopes),
+            CheckedExprData::Symbol(_, _) | CheckedExprData::Member { .. } => {
+                self.can_addrmut(scopes)
+            }
             CheckedExprData::Subscript { callee, .. } => match &callee.data {
-                CheckedExprData::Symbol(Symbol::Var(id)) => {
+                CheckedExprData::Symbol(Symbol::Var(id), _) => {
                     callee.ty.is_mut_ptr() || scopes.get(*id).mutable
                 }
                 CheckedExprData::Member { source, .. } => source.is_assignable(scopes),
@@ -216,7 +220,7 @@ impl CheckedExpr {
             CheckedExprData::Unary { op, expr } => {
                 !matches!(op, UnaryOp::Deref) || matches!(expr.ty, Type::MutPtr(_))
             }
-            CheckedExprData::Symbol(symbol) => match symbol {
+            CheckedExprData::Symbol(symbol, _) => match symbol {
                 Symbol::Func(_) => false,
                 Symbol::Var(var) => scopes.get(*var).mutable,
             },

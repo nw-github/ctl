@@ -4,20 +4,14 @@ use indexmap::IndexMap;
 
 use crate::{
     ast::{
-        checked::{
-            ArrayPattern, CheckedExpr, CheckedExprData, CheckedPattern, CheckedPatternData,
-            CheckedStmt, RestPattern, Symbol,
-        },
+        checked::*,
         parsed::{Linkage, RangePattern},
         UnaryOp,
     },
     error::{Diagnostics, Error},
     lexer::Span,
     nearest_pow_of_two,
-    sym::{
-        CheckedMember, Function, FunctionId, ParamPattern, ScopeId, ScopeKind, Scopes,
-        UserTypeData, UserTypeId, VariableId, Vis,
-    },
+    sym::*,
     typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type, TypeArgs},
     CodegenFlags,
 };
@@ -28,30 +22,44 @@ const VOID_INSTANCE: &str = "CTL_VOID";
 const ATTR_NOGEN: &str = "c_opaque";
 const ATTR_LINKNAME: &str = "c_name";
 
-#[derive(PartialEq, Eq, Clone)]
+#[derive(Eq, Clone)]
 struct State {
     func: GenericFunc,
     tmpvar: usize,
+    caller: ScopeId,
     emitted_names: HashMap<String, VariableId>,
     renames: HashMap<VariableId, String>,
 }
 
 impl State {
     pub fn new(func: GenericFunc) -> Self {
+        Self::new_with_caller(func, ScopeId::ROOT)
+    }
+
+    pub fn new_with_caller(func: GenericFunc, caller: ScopeId) -> Self {
         Self {
             func,
+            caller,
             tmpvar: 0,
             emitted_names: Default::default(),
             renames: Default::default(),
         }
     }
 
-    pub fn with_instance(mut func: GenericFunc, inst: Option<&Type>) -> Self {
+    pub fn with_instance(func: GenericFunc, inst: Option<&Type>) -> Self {
+        Self::with_instance_and_caller(func, inst, ScopeId::ROOT)
+    }
+
+    pub fn with_instance_and_caller(
+        mut func: GenericFunc,
+        inst: Option<&Type>,
+        caller: ScopeId,
+    ) -> Self {
         if let Some(ut) = inst.and_then(|inst| inst.as_user()) {
             func.ty_args.copy_args(&ut.ty_args);
         }
 
-        Self::new(func)
+        Self::new_with_caller(func, caller)
     }
 
     pub fn fill_generics(&self, ty: &mut Type) {
@@ -68,6 +76,12 @@ impl State {
 impl std::hash::Hash for State {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.func.hash(state);
+    }
+}
+
+impl PartialEq for State {
+    fn eq(&self, other: &Self) -> bool {
+        self.func == other.func
     }
 }
 
@@ -1082,6 +1096,7 @@ impl<'a> Codegen<'a> {
                 args,
                 mut inst,
                 trait_id,
+                scope,
             } => {
                 if let Some(inst) = inst.as_mut() {
                     state.fill_generics(inst);
@@ -1093,7 +1108,8 @@ impl<'a> Codegen<'a> {
                     let inst = inst
                         .as_ref()
                         .expect("generating trait function with no instance");
-                    func.id = Self::find_implementation(inst, self.scopes, trait_id, &f.name.data)
+                    func.id = self
+                        .find_implementation(inst, trait_id, &f.name.data, state.caller)
                         .expect(
                             "generating trait fn with no corresponding implementation in instance",
                         );
@@ -1142,7 +1158,7 @@ impl<'a> Codegen<'a> {
                     }};
                 }
 
-                let next_state = State::with_instance(func, inst.as_ref());
+                let next_state = State::with_instance_and_caller(func, inst.as_ref(), scope);
                 self.emit_fn_name(&next_state);
                 self.buffer.emit("(");
                 self.scopes
@@ -1321,9 +1337,9 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit(format!("0x{:x}", value as u32));
             }
             CheckedExprData::Void => self.buffer.emit(VOID_INSTANCE),
-            CheckedExprData::Symbol(symbol) => match symbol {
+            CheckedExprData::Symbol(symbol, scope) => match symbol {
                 Symbol::Func(func) => {
-                    let state = State::new(func);
+                    let state = State::new_with_caller(func, scope);
                     self.emit_fn_name(&state);
                     self.funcs.insert(state);
                 }
@@ -1482,6 +1498,7 @@ impl<'a> Codegen<'a> {
                 patt,
                 body,
                 optional,
+                scope,
             } => {
                 enter_loop!(self, state, &expr.ty, {
                     state.fill_generics(&mut iter.ty);
@@ -1490,7 +1507,7 @@ impl<'a> Codegen<'a> {
                         .lang_types
                         .get("iter")
                         .copied()
-                        .and_then(|id| Self::find_implementation(&iter.ty, self.scopes, id, "next"))
+                        .and_then(|id| self.find_implementation(&iter.ty, id, "next", scope))
                         .expect("for iterator should actually implement Iterator");
 
                     let next_state = State::with_instance(
@@ -2234,40 +2251,46 @@ impl<'a> Codegen<'a> {
             CheckedExprData::Unary {
                 op: UnaryOp::Deref,
                 ..
-            } | CheckedExprData::Symbol(_)
+            } | CheckedExprData::Symbol(_, _)
                 | CheckedExprData::Member { .. }
                 | CheckedExprData::Subscript { .. }
         )
     }
 
     fn find_implementation(
+        &self,
         ty: &Type,
-        scopes: &Scopes,
         trait_id: UserTypeId,
         fn_name: &str,
+        scope: ScopeId,
     ) -> Option<FunctionId> {
-        // FIXME: search by trait id
-        let search = |fns: &[Vis<FunctionId>]| {
-            fns.iter()
-                .find(|f| scopes.get(f.id).name.data == fn_name)
-                .map(|f| **f)
+        // FIXME: in the very specific case where two extensions exist for the same type that
+        // implement the same trait, and they are both used to call the trait in two different
+        // places, this function will pick the wrong one for one of them. either fix this lookup or
+        // reject duplicate trait implementation in extensions
+        let search = |scope: ScopeId| {
+            self.scopes[scope]
+                .children
+                .iter()
+                .find(|&&id| matches!(self.scopes[id].kind, ScopeKind::Impl(id) if id == trait_id))
+                .and_then(|&id| self.scopes[id].find_in_vns(fn_name))
+                .and_then(|f| f.as_fn().copied())
         };
 
-        if let Some(f) = ty.as_user().and_then(|ut| search(&scopes.get(ut.id).fns)) {
+        if let Some(f) = ty
+            .as_user()
+            .and_then(|ut| search(self.scopes.get(ut.id).body_scope))
+        {
             return Some(f);
         }
 
-        // FIXME: this sucks
-        scopes
-            .extensions()
-            .iter()
-            .filter(|ext| ext.matches_type(ty))
-            .find_map(|ext| search(&ext.fns))
+        self.scopes
+            .extensions_in_scope_for(ty, None, scope)
+            .find_map(|(_, ext)| search(ext.body_scope))
     }
 
     fn needs_fn_wrapper(f: &Function) -> bool {
-        f.linkage == Linkage::Import
-            && matches!(f.ret, Type::Void | Type::Never | Type::CVoid)
+        f.linkage == Linkage::Import && matches!(f.ret, Type::Void | Type::Never | Type::CVoid)
     }
 
     fn deref(src: &str, ty: &Type) -> String {
