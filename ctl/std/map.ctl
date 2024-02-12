@@ -97,6 +97,14 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         this.len
     }
 
+    pub fn iter(this): Iter<K, V> {
+        Iter(buckets: this.buckets.as_span())
+    }
+
+    pub fn iter_mut(this): IterMut<K, V> {
+        IterMut(buckets: this.buckets.as_span_mut())
+    }
+
     fn entry_pos(this, k: *K): uint {
         if this.buckets.is_empty() {
             return 0;
@@ -150,6 +158,40 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
             }
 
             i++;
+        }
+    }
+}
+
+pub struct Iter<K, V> {
+    buckets: [Bucket<K, V>..],
+
+    impl Iterator<(*K, *V)> {
+        fn next(mut this): ?(*K, *V) {
+            let mut pos = 0u;
+            for bucket in this.buckets.iter() {
+                pos++;
+                if bucket is Bucket::Some({key, val}) {
+                    this.buckets = this.buckets.subspan(pos..);
+                    break (key, val);
+                }
+            }
+        }
+    }
+}
+
+pub struct IterMut<K, V> {
+    buckets: [mut Bucket<K, V>..],
+
+    impl Iterator<(*K, *mut V)> {
+        fn next(mut this): ?(*K, *mut V) {
+            let mut pos = 0u;
+            for bucket in this.buckets.iter_mut() {
+                pos++;
+                if bucket is Bucket::Some({key, val}) {
+                    this.buckets = this.buckets.subspan(pos..);
+                    break (key, val);
+                }
+            }
         }
     }
 }

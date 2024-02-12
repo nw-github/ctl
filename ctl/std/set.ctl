@@ -40,4 +40,20 @@ pub struct Set<T: Hash + Eq<T>> {
     pub fn len(this): uint {
         this.inner.len()
     }
+
+    pub fn iter(this): Iter<T> {
+        Iter(iter: this.inner.iter())
+    }
+}
+
+pub struct Iter<T> {
+    iter: std::map::Iter<T, void>,
+
+    impl Iterator<*T> {
+        fn next(mut this): ?*T {
+            if this.iter.next() is ?item {
+                item.0
+            }
+        }
+    }
 }
