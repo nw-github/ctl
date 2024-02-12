@@ -104,7 +104,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
             Ok(Stmt {
                 attrs,
-                data: self.structure(public.is_some(), token.span),
+                data: StmtData::Struct(self.structure(public.is_some(), token.span)),
             })
         } else if let Some(token) = self.next_if_kind(Token::Union) {
             if let Some(token) = is_import.or(is_export) {
@@ -1310,7 +1310,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         Located::new(span, stmts)
     }
 
-    fn structure(&mut self, public: bool, span: Span) -> StmtData {
+    fn structure(&mut self, public: bool, span: Span) -> Struct {
         let name = self.expect_id_l("expected name");
         let type_params = self.type_params();
 
@@ -1359,17 +1359,25 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
         });
 
-        StmtData::Struct(Struct {
+        Struct {
             public,
             name,
             type_params,
             members,
             impls,
             functions,
-        })
+        }
     }
 
     fn union(&mut self, public: bool, span: Span, is_unsafe: bool) -> StmtData {
+        if is_unsafe {
+            return StmtData::Union {
+                tag: None,
+                base: self.structure(public, span),
+                is_unsafe,
+            };
+        }
+
         let name = self.expect_id_l("expected name");
         let type_params = self.type_params();
         let tag = self.next_if_kind(Token::Colon).map(|_| self.type_path());

@@ -47,18 +47,14 @@ pub unsafe fn transmute<In, Out>(i: In): Out {
     // TODO: this is fine since we transpile to c, but whenever a spec gets written this usage of 
     // unions in CTL code should be considered UB
 
-    // TODO: uncomment when the syntax is fixed
-    // unsafe union Trasmuter<T, U> {
-    //     t: T,
-    //     u: U,
-    // }
-    // static_assert(size_of::<In>() == size_of::<Out>());
-    // return unsafe Trasmuter::<_, Out>(t: i).u;
-
     unsafe union Transmuter<T, U> {
-        In(T),
-        Out(U),
+        t: T,
+        u: U,
     }
+    // static_assert(size_of::<In>() == size_of::<Out>());
 
-    unsafe Transmuter::<In, Out>::In(i).Out
+    // TODO: uncomment when the syntax is fixed
+    // unsafe Trasmuter::<_, Out>(t: i).u
+
+    unsafe Transmuter::<In, Out>::t(i).u
 }

@@ -351,12 +351,7 @@ impl TypeChecker {
                     ty: this.declare_type_hint(member.ty.clone()),
                 });
 
-                if member.shared && is_unsafe {
-                    this.error(Error::new(
-                        "cannot have shared members in an unsafe union",
-                        member.name.span,
-                    ))
-                } else if member.shared {
+                if member.shared && !is_unsafe {
                     params.push(Param {
                         keyword: true,
                         patt: Located::new(
@@ -374,7 +369,7 @@ impl TypeChecker {
             let mut fns: Vec<_> = base
                 .members
                 .into_iter()
-                .filter(|m| !m.shared)
+                .filter(|m| !m.shared || is_unsafe)
                 .map(|member| {
                     let mut params = params.clone();
                     if !matches!(member.ty, TypeHint::Void) {
@@ -1766,14 +1761,14 @@ impl TypeChecker {
                 };
 
                 if let Some(union) = ty.data.as_union() {
-                    if !member.shared && !union.is_unsafe {
+                    if !member.shared {
                         return self.error(Error::new(
                             "cannot access union variant with '.' (only shared members)",
                             span,
                         ));
                     }
 
-                    if !member.shared && union.is_unsafe && self.safety != Safety::Unsafe {
+                    if union.is_unsafe && self.safety != Safety::Unsafe {
                         self.diag.error(Error::is_unsafe(span));
                     }
                 }
