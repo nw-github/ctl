@@ -2243,7 +2243,7 @@ impl TypeChecker {
                     } else if patt
                         .data
                         .as_union_member()
-                        .is_some_and(|(sub, variant, _)| {
+                        .is_some_and(|(sub, variant, _, _)| {
                             name == variant && sub.as_ref().map_or(true, |sub| sub.irrefutable)
                         })
                     {
@@ -2561,12 +2561,14 @@ impl TypeChecker {
                     self.check_pattern(true, &scrutinee.matched_inner_type(ty), false, patt)
                         .into(),
                 ),
+                borrows: scrutinee.is_any_ptr(),
             }))
         } else if ty.is_void() {
             Ok(CheckedPattern::refutable(CheckedPatternData::UnionMember {
                 pattern: None,
                 variant,
                 inner: Type::Void,
+                borrows: scrutinee.is_any_ptr(),
             }))
         } else {
             Ok(self.error(Error::new(
@@ -2771,12 +2773,15 @@ impl TypeChecker {
 
         CheckedPattern {
             irrefutable,
-            data: CheckedPatternData::Array(ArrayPattern {
-                rest,
-                arr_len,
-                inner: real_inner.clone(),
-                patterns: result,
-            }),
+            data: CheckedPatternData::Array {
+                patterns: ArrayPattern {
+                    rest,
+                    arr_len,
+                    inner: real_inner.clone(),
+                    patterns: result,
+                },
+                borrows: target.is_any_ptr(),
+            },
         }
     }
 
@@ -2856,7 +2861,10 @@ impl TypeChecker {
 
         CheckedPattern {
             irrefutable,
-            data: CheckedPatternData::Destrucure(checked),
+            data: CheckedPatternData::Destrucure {
+                patterns: checked,
+                borrows: scrutinee.is_any_ptr(),
+            },
         }
     }
 
@@ -2905,7 +2913,10 @@ impl TypeChecker {
 
         CheckedPattern {
             irrefutable,
-            data: CheckedPatternData::Destrucure(checked),
+            data: CheckedPatternData::Destrucure {
+                patterns: checked,
+                borrows: scrutinee.is_any_ptr(),
+            },
         }
     }
 

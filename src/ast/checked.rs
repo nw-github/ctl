@@ -36,9 +36,16 @@ pub enum CheckedPatternData {
         pattern: Option<Box<CheckedPattern>>,
         variant: String,
         inner: Type,
+        borrows: bool,
     },
-    Destrucure(Vec<(String, Type, CheckedPattern)>),
-    Array(ArrayPattern<CheckedPattern>),
+    Destrucure {
+        patterns: Vec<(String, Type, CheckedPattern)>,
+        borrows: bool,
+    },
+    Array {
+        patterns: ArrayPattern<CheckedPattern>,
+        borrows: bool,
+    },
     Int(BigInt),
     IntRange(RangePattern<BigInt>),
     String(String),

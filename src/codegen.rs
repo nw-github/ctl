@@ -1078,6 +1078,7 @@ impl<'a> Codegen<'a> {
                                 pattern: None,
                                 variant: "None".into(),
                                 inner: expr.ty.clone(),
+                                borrows: false,
                             },
                             &inner_tmp,
                             &inner_ty,
@@ -1533,6 +1534,7 @@ impl<'a> Codegen<'a> {
                             pattern: Some(patt.into()),
                             variant: "Some".into(),
                             inner: next_ty.as_option_inner(self.scopes).unwrap().clone(),
+                            borrows: false,
                         },
                         &item,
                         &next_ty,
@@ -1833,6 +1835,7 @@ impl<'a> Codegen<'a> {
                 pattern: patt,
                 variant,
                 inner,
+                borrows,
             } => {
                 let src = Self::deref(src, ty);
                 let base = ty.strip_references();
@@ -1848,7 +1851,7 @@ impl<'a> Codegen<'a> {
                                 &patt.data,
                                 &src,
                                 inner,
-                                ty.is_any_ptr(),
+                                borrow || *borrows,
                                 bindings,
                                 conditions,
                             );
@@ -1870,7 +1873,7 @@ impl<'a> Codegen<'a> {
                             &patt.data,
                             &format!("{src}.${variant}"),
                             inner,
-                            ty.is_any_ptr(),
+                            borrow || *borrows,
                             bindings,
                             conditions,
                         );
@@ -1921,33 +1924,34 @@ impl<'a> Codegen<'a> {
                     );
                 }
             }
-            CheckedPatternData::Destrucure(patterns) => {
+            CheckedPatternData::Destrucure { patterns, borrows } => {
                 let src = Self::deref(src, ty);
-                let borrow = borrow || ty.is_any_ptr();
                 for (member, inner, patt) in patterns {
                     self.emit_pattern(
                         state,
                         &patt.data,
                         &format!("{src}.${member}"),
                         inner,
-                        borrow || inner.is_any_ptr(),
+                        borrow || *borrows,
                         bindings,
                         conditions,
                     );
                 }
             }
-            CheckedPatternData::Array(ArrayPattern {
-                patterns,
-                rest,
-                arr_len,
-                inner,
-            }) => {
+            CheckedPatternData::Array {
+                patterns: ArrayPattern {
+                    patterns,
+                    rest,
+                    arr_len,
+                    inner,
+                },
+                borrows,
+            } => {
                 let src = if ty.is_any_ptr() {
                     src.into()
                 } else {
                     format!("{src}.{ARRAY_DATA_NAME}")
                 };
-                let borrow = borrow || ty.is_any_ptr();
                 let rest = rest.map(|RestPattern { id, pos }| {
                     let rest_len = arr_len - patterns.len();
                     if let Some(id) = id {
@@ -1977,7 +1981,7 @@ impl<'a> Codegen<'a> {
                         &patt.data,
                         &format!("{src}[{i}]"),
                         inner,
-                        borrow || inner.is_any_ptr(),
+                        borrow || *borrows,
                         bindings,
                         conditions,
                     );
