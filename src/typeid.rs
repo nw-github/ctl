@@ -615,7 +615,7 @@ impl Type {
                 }
 
                 match &scopes.get(ut.id).data {
-                    crate::sym::UserTypeData::Struct { members, .. } => {
+                    crate::sym::UserTypeData::Struct(members) => {
                         return members.iter().fold((0, 1), |(sz, align), m| {
                             let (s, a) = m.ty.with_templates(&ut.ty_args).size_and_align(scopes);
                             (sz + padding(sz, a) + s, align.max(a))

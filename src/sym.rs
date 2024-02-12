@@ -174,10 +174,7 @@ impl Union {
 
 #[derive(Debug, EnumAsInner)]
 pub enum UserTypeData {
-    Struct {
-        members: Vec<CheckedMember>,
-        init: FunctionId,
-    },
+    Struct(Vec<CheckedMember>),
     Union(Union),
     Template,
     Trait,
@@ -197,7 +194,7 @@ pub struct UserType {
 impl UserType {
     pub fn members(&self) -> &[CheckedMember] {
         match &self.data {
-            UserTypeData::Struct { members, .. } => members,
+            UserTypeData::Struct(members) => members,
             UserTypeData::Union(union) => &union.variants,
             _ => &[],
         }
@@ -205,7 +202,7 @@ impl UserType {
 
     pub fn members_mut(&mut self) -> &mut [CheckedMember] {
         match &mut self.data {
-            UserTypeData::Struct { members, .. } => members,
+            UserTypeData::Struct(members) => members,
             UserTypeData::Union(union) => &mut union.variants,
             _ => &mut [],
         }

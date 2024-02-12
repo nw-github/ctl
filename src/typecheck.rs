@@ -294,16 +294,14 @@ impl TypeChecker {
             let ut = UserType {
                 body_scope: this.current,
                 name: base.name,
-                data: UserTypeData::Struct {
-                    members,
-                    init: init.id,
-                },
+                data: UserTypeData::Struct(members),
                 type_params: this.declare_type_params(base.type_params),
                 impls,
                 attrs,
                 fns: fns
                     .iter()
                     .chain(impl_blocks.iter().flat_map(|block| block.functions.iter()))
+                    .chain(std::iter::once(&init))
                     .map(|f| Vis::new(f.id, f.public))
                     .collect(),
             };
@@ -2776,7 +2774,7 @@ impl TypeChecker {
     ) -> CheckedPattern {
         let (ut, members) = if let Some(ut) = scrutinee.strip_references().as_user() {
             self.resolve_members(ut.id);
-            if let UserTypeData::Struct { members, .. } = &self.scopes.get(ut.id).data {
+            if let UserTypeData::Struct(members) = &self.scopes.get(ut.id).data {
                 (ut, members)
             } else {
                 return self.error(Error::bad_destructure(&scrutinee.name(&self.scopes), span));
@@ -3211,68 +3209,76 @@ impl TypeChecker {
                     },
                 );
             }
-            ExprData::Path(ref path) => {
-                match self.resolve_path(path, callee.span, false) {
-                    Some(ResolvedPath::UserType(ty)) => {
-                        let ut = self.scopes.get(ty.id);
-                        let Some((_, constructor)) = ut.data.as_struct() else {
-                            return self.error(Error::new(
-                                format!("cannot construct type '{}'", ut.name),
-                                span,
-                            ));
-                        };
-
-                        // TODO: check privacy
-                        let (args, ret) = self.check_fn_args(
-                            &mut GenericFunc::new(*constructor, ty.ty_args),
-                            None,
-                            args,
-                            target,
+            ExprData::Path(ref path) => match self.resolve_path(path, callee.span, false) {
+                Some(ResolvedPath::UserType(ty)) => {
+                    let ut = self.scopes.get(ty.id);
+                    let Some(&init) = ut
+                        .fns
+                        .iter()
+                        .find(|f| self.scopes.get(f.id).constructor == Some(ty.id))
+                    else {
+                        return self.error(Error::new(
+                            format!("cannot construct type '{}'", ut.name),
                             span,
-                        );
+                        ));
+                    };
 
-                        return CheckedExpr::new(
-                            ret,
+                    if !init.public && !self.can_access_privates(ut.scope) {
+                        self.error(Error::new(
+                            format!("constructor for type '{}' is private", ut.name),
+                            callee.span,
+                        ))
+                    }
+
+                    let (args, ret) = self.check_fn_args(
+                        &mut GenericFunc::new(*init, ty.ty_args),
+                        None,
+                        args,
+                        target,
+                        span,
+                    );
+
+                    return CheckedExpr::new(
+                        ret,
+                        CheckedExprData::Instance {
+                            members: args,
+                            variant: None,
+                        },
+                    );
+                }
+                Some(ResolvedPath::Func(mut func)) => {
+                    let f = self.scopes.get(func.id);
+                    let constructor = f.constructor;
+                    if let Some(id) = constructor {
+                        for id in self.scopes.get(id).type_params.iter() {
+                            func.ty_args.entry(*id).or_insert(Type::Unknown);
+                        }
+                    }
+
+                    let variant = constructor.is_some().then(|| f.name.data.clone());
+                    let (args, ret) = self.check_fn_args(&mut func, None, args, target, span);
+                    return CheckedExpr::new(
+                        ret,
+                        if constructor.is_some() {
                             CheckedExprData::Instance {
                                 members: args,
-                                variant: None,
-                            },
-                        );
-                    }
-                    Some(ResolvedPath::Func(mut func)) => {
-                        let f = self.scopes.get(func.id);
-                        let constructor = f.constructor;
-                        if let Some(id) = constructor {
-                            for id in self.scopes.get(id).type_params.iter() {
-                                func.ty_args.entry(*id).or_insert(Type::Unknown);
+                                variant,
                             }
-                        }
-
-                        let variant = constructor.is_some().then(|| f.name.data.clone());
-                        let (args, ret) = self.check_fn_args(&mut func, None, args, target, span);
-                        return CheckedExpr::new(
-                            ret,
-                            if constructor.is_some() {
-                                CheckedExprData::Instance {
-                                    members: args,
-                                    variant,
-                                }
-                            } else {
-                                CheckedExprData::Call {
-                                    func,
-                                    args,
-                                    inst: None,
-                                    trait_id: None,
-                                    scope: self.current,
-                                }
-                            },
-                        );
-                    }
-                    Some(ResolvedPath::Var(_)) => {}
-                    Some(ResolvedPath::None(err)) => return self.error(err),
-                    None => return Default::default(),
+                        } else {
+                            CheckedExprData::Call {
+                                func,
+                                args,
+                                inst: None,
+                                trait_id: None,
+                                scope: self.current,
+                            }
+                        },
+                    );
                 }
-            }
+                Some(ResolvedPath::Var(_)) => {}
+                Some(ResolvedPath::None(err)) => return self.error(err),
+                None => return Default::default(),
+            },
             _ => {}
         }
 
