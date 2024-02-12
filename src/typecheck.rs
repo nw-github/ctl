@@ -1354,15 +1354,16 @@ impl TypeChecker {
                 let mut result_ty = Vec::with_capacity(elements.len());
                 let mut result_elems = IndexMap::with_capacity(elements.len());
                 for (i, expr) in elements.into_iter().enumerate() {
-                    let result = self.check_expr(
-                        expr,
-                        target
-                            .and_then(|t| {
-                                t.as_user()
-                                    .filter(|t| self.scopes.get(t.id).data.is_tuple())
-                            })
-                            .and_then(|ut| ut.ty_args.get_index(i).map(|(_, v)| v)),
-                    );
+                    let result = if let Some(target) = target
+                        .and_then(|t| t.as_user())
+                        .filter(|t| self.scopes.get(t.id).data.is_tuple())
+                        .and_then(|ut| ut.ty_args.get_index(i).map(|(_, v)| v))
+                    {
+                        self.type_check(expr, target)
+                    } else {
+                        self.check_expr(expr, None)
+                    };
+
                     result_ty.push(result.ty.clone());
                     result_elems.insert(format!("{i}"), result);
                 }
@@ -1775,10 +1776,7 @@ impl TypeChecker {
                     Type::User(data) => data.id,
                     Type::Unknown => return Default::default(),
                     _ => {
-                        return self.error(Error::new(
-                            format!("cannot get member of type '{}'", id.name(&self.scopes)),
-                            span,
-                        ))
+                        return self.error(Error::no_member(&id.name(&self.scopes), &name, span));
                     }
                 };
                 self.resolve_members(ut_id);
