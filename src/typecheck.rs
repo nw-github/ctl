@@ -1350,7 +1350,31 @@ impl TypeChecker {
                     },
                 )
             }
-            ExprData::Tuple(_) => todo!(),
+            ExprData::Tuple(elements) => {
+                let mut result_ty = Vec::with_capacity(elements.len());
+                let mut result_elems = IndexMap::with_capacity(elements.len());
+                for (i, expr) in elements.into_iter().enumerate() {
+                    let result = self.check_expr(
+                        expr,
+                        target
+                            .and_then(|t| {
+                                t.as_user()
+                                    .filter(|t| self.scopes.get(t.id).data.is_tuple())
+                            })
+                            .and_then(|ut| ut.ty_args.get_index(i).map(|(_, v)| v)),
+                    );
+                    result_ty.push(result.ty.clone());
+                    result_elems.insert(format!("{i}"), result);
+                }
+
+                CheckedExpr::new(
+                    self.scopes.get_tuple(result_ty),
+                    CheckedExprData::Instance {
+                        members: result_elems,
+                        variant: None,
+                    },
+                )
+            }
             ExprData::Map(elements) => {
                 let Some(map) = self.scopes.lang_types.get("map").copied() else {
                     return self.error(Error::no_lang_item("map", expr.span));
@@ -2765,7 +2789,11 @@ impl TypeChecker {
         destructures: Vec<Destructure>,
         span: Span,
     ) -> CheckedPattern {
-        let Some(ut) = scrutinee.strip_references().as_user() else {
+        let Some(ut) = scrutinee
+            .strip_references()
+            .as_user()
+            .filter(|ut| !self.scopes.get(ut.id).data.is_tuple())
+        else {
             return self.error(Error::bad_destructure(&scrutinee.name(&self.scopes), span));
         };
         self.resolve_members(ut.id);
@@ -3643,7 +3671,10 @@ impl TypeChecker {
             TypeHint::Set(ty) => self.resolve_lang_type("set", &[(**ty).clone()]),
             TypeHint::Slice(ty) => self.resolve_lang_type("span", &[(**ty).clone()]),
             TypeHint::SliceMut(ty) => self.resolve_lang_type("span_mut", &[(**ty).clone()]),
-            TypeHint::Tuple(_) => todo!(),
+            TypeHint::Tuple(params) => {
+                let params = params.iter().map(|p| self.resolve_typehint(p)).collect();
+                self.scopes.get_tuple(params)
+            }
             TypeHint::Fn {
                 is_extern: _,
                 params,
@@ -3666,7 +3697,15 @@ impl TypeChecker {
 
         if self.scopes.get(id).data.as_union().is_some() {
             for i in 0..self.scopes.get(id).data.as_union().unwrap().variants.len() {
-                resolve_type!(self, self.scopes.get_mut(id).data.as_union_mut().unwrap().variants[i]);
+                resolve_type!(
+                    self,
+                    self.scopes
+                        .get_mut(id)
+                        .data
+                        .as_union_mut()
+                        .unwrap()
+                        .variants[i]
+                );
             }
         }
     }

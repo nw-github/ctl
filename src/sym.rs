@@ -9,7 +9,7 @@ use crate::{
         parsed::{Expr, Linkage, Pattern, UsePath},
         Attribute,
     },
-    lexer::Located,
+    lexer::{Located, Span},
     typeid::{GenericUserType, Type},
 };
 
@@ -328,6 +328,7 @@ pub struct Scopes {
     types: Vec<Scoped<UserType>>,
     vars: Vec<Scoped<Variable>>,
     exts: Vec<Scoped<Extension>>,
+    tuples: HashMap<usize, UserTypeId>,
     pub lang_types: HashMap<String, UserTypeId>,
     pub intrinsics: HashMap<FunctionId, String>,
     pub panic_handler: Option<FunctionId>,
@@ -341,6 +342,7 @@ impl Scopes {
             types: Vec::new(),
             vars: Vec::new(),
             exts: Vec::new(),
+            tuples: HashMap::new(),
             lang_types: HashMap::new(),
             intrinsics: HashMap::new(),
             panic_handler: None,
@@ -517,6 +519,64 @@ impl Scopes {
                 .filter(move |(id, _)| Some(*id) != excl)
                 .filter(move |(id, ext)| self.extension_applies_to(*id, ext, ty, current))
         })
+    }
+
+    pub fn get_tuple(&mut self, ty_args: Vec<Type>) -> Type {
+        let id = if let Some(id) = self.tuples.get(&ty_args.len()) {
+            *id
+        } else {
+            let type_params: Vec<_> = (0..ty_args.len())
+                .map(|_| {
+                    UserTypeId::insert_in(
+                        self,
+                        UserType {
+                            name: Default::default(),
+                            body_scope: ScopeId::ROOT,
+                            data: UserTypeData::Template,
+                            impls: Vec::new(),
+                            type_params: Vec::new(),
+                            attrs: Vec::new(),
+                            fns: Vec::new(),
+                            members: IndexMap::new(),
+                        },
+                        false,
+                        ScopeId::ROOT,
+                    )
+                    .0
+                })
+                .collect();
+            let (id, _) = UserTypeId::insert_in(
+                self,
+                UserType {
+                    members: type_params
+                        .iter()
+                        .enumerate()
+                        .map(|(i, id)| {
+                            (
+                                format!("{i}"),
+                                CheckedMember {
+                                    public: true,
+                                    ty: Type::User(GenericUserType::from_id(self, *id).into()),
+                                },
+                            )
+                        })
+                        .collect(),
+                    name: Located::new(Span::default(), "$tuple".into()),
+                    body_scope: ScopeId::ROOT,
+                    type_params,
+                    data: UserTypeData::Tuple,
+                    impls: vec![],
+                    attrs: vec![],
+                    fns: vec![],
+                },
+                false,
+                ScopeId::ROOT,
+            );
+
+            self.tuples.insert(ty_args.len(), id);
+            id
+        };
+        Type::User(GenericUserType::from_type_args(self, id, ty_args).into())
     }
 }
 

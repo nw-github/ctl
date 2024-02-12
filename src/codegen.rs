@@ -16,8 +16,8 @@ use crate::{
     CodegenFlags,
 };
 
-const UNION_TAG_NAME: &str = "$tag";
-const ARRAY_DATA_NAME: &str = "$data";
+const UNION_TAG_NAME: &str = "tag";
+const ARRAY_DATA_NAME: &str = "data";
 const VOID_INSTANCE: &str = "CTL_VOID";
 const ATTR_NOGEN: &str = "c_opaque";
 const ATTR_LINKNAME: &str = "c_name";
@@ -372,7 +372,7 @@ impl<'a> TypeGen<'a> {
         }
 
         buffer.emit_type(self.scopes, &ty, None, min);
-        buffer.emit(format!(" {name};"));
+        buffer.emit(format!(" ${name};"));
     }
 
     fn emit_array(
@@ -1090,7 +1090,7 @@ impl<'a> Codegen<'a> {
                         if inner_ty.can_omit_tag(self.scopes) {
                             self.buffer.emit(format!("{inner_tmp};"));
                         } else {
-                            self.buffer.emit(format!("{inner_tmp}.Some;"));
+                            self.buffer.emit(format!("{inner_tmp}.$Some;"));
                         }
                     });
                 }
@@ -1229,10 +1229,10 @@ impl<'a> Codegen<'a> {
 
                     self.emit_with_capacity(&expr.ty, &tmp, &ut, len);
                     self.buffer.emit(format!(
-                        "CTL_MEMCPY((void*){tmp}.ptr.addr,(const void*){arr},{len}*{}",
+                        "CTL_MEMCPY((void*){tmp}.$ptr.$addr,(const void*){arr},{len}*{}",
                         inner.size_and_align(self.scopes).0
                     ));
-                    self.buffer.emit(format!(");{tmp}.len={len};"));
+                    self.buffer.emit(format!(");{tmp}.$len={len};"));
                 });
             }
             CheckedExprData::VecWithInit { init, count } => {
@@ -1242,9 +1242,9 @@ impl<'a> Codegen<'a> {
                     self.emit_with_capacity(&expr.ty, &tmp, &ut, &len);
                     self.buffer.emit(format!("for(usize i=0;i<{len};i++){{(("));
                     self.emit_type(ut.first_type_arg().unwrap());
-                    self.buffer.emit(format!("*){tmp}.ptr.addr)[i]="));
+                    self.buffer.emit(format!("*){tmp}.$ptr.$addr)[i]="));
                     self.emit_expr(*init, state);
-                    self.buffer.emit(format!(";}}{tmp}.len={len};"));
+                    self.buffer.emit(format!(";}}{tmp}.$len={len};"));
                 });
             }
             CheckedExprData::Set(exprs) => {
@@ -1319,13 +1319,13 @@ impl<'a> Codegen<'a> {
             }
             CheckedExprData::String(value) => {
                 self.emit_cast(&expr.ty);
-                self.buffer.emit("{.span={.ptr=");
+                self.buffer.emit("{.$span={.$ptr=");
                 self.emit_cast(&Type::Ptr(Type::Uint(8).into()));
                 self.buffer.emit("\"");
                 for byte in value.as_bytes() {
                     self.buffer.emit(format!("\\x{byte:x}"));
                 }
-                self.buffer.emit("\",.len=");
+                self.buffer.emit("\",.$len=");
                 self.emit_cast(&Type::Usize);
                 self.buffer.emit(format!("{}}}}}", value.len()));
             }
@@ -1380,7 +1380,7 @@ impl<'a> Codegen<'a> {
 
                     for (name, mut value) in members {
                         state.fill_generics(&mut value.ty);
-                        self.buffer.emit(format!(".{name}="));
+                        self.buffer.emit(format!(".${name}="));
                         self.emit_expr(value, state);
                         self.buffer.emit(",");
                     }
@@ -1389,7 +1389,7 @@ impl<'a> Codegen<'a> {
             }
             CheckedExprData::Member { source, member } => {
                 self.emit_expr(*source, state);
-                self.buffer.emit(format!(".{member}"));
+                self.buffer.emit(format!(".${member}"));
             }
             CheckedExprData::Assign {
                 target,
@@ -1818,7 +1818,7 @@ impl<'a> Codegen<'a> {
                 conditions.next(|buffer| {
                     usebuf!(self, buffer, {
                         self.buffer.emit(format!(
-                            "({0}.span.len=={1}&&CTL_MEMCMP({0}.span.ptr,\"",
+                            "({0}.$span.$len=={1}&&CTL_MEMCMP({0}.$span.$ptr,\"",
                             Self::deref(src, ty),
                             value.len()
                         ));
@@ -1868,7 +1868,7 @@ impl<'a> Codegen<'a> {
                         self.emit_pattern(
                             state,
                             &patt.data,
-                            &format!("{src}.{variant}"),
+                            &format!("{src}.${variant}"),
                             inner,
                             ty.is_any_ptr(),
                             bindings,
@@ -1886,7 +1886,7 @@ impl<'a> Codegen<'a> {
                 conditions.next(|buffer| {
                     usebuf!(self, buffer, {
                         self.buffer.emit(format!(
-                            "({src}.len{}{})",
+                            "({src}.$len{}{})",
                             if rest.is_some() { ">=" } else { "==" },
                             patterns.len()
                         ));
@@ -1898,7 +1898,7 @@ impl<'a> Codegen<'a> {
                         usebuf!(self, bindings, {
                             self.emit_local_decl(id, state);
                             self.buffer.emit(format!(
-                                "={{.ptr={src}.ptr+{pos},.len={src}.len-{}}};",
+                                "={{.$ptr={src}.$ptr+{pos},.$len={src}.$len-{}}};",
                                 patterns.len()
                             ));
                         });
@@ -1910,9 +1910,9 @@ impl<'a> Codegen<'a> {
                         state,
                         &patt.data,
                         &if pos.is_some_and(|pos| i >= pos) {
-                            format!("{src}.ptr[{src}.len-{}+{i}]", patterns.len())
+                            format!("{src}.$ptr[{src}.$len-{}+{i}]", patterns.len())
                         } else {
-                            format!("{src}.ptr[{i}]")
+                            format!("{src}.$ptr[{i}]")
                         },
                         inner,
                         true,
@@ -1928,7 +1928,7 @@ impl<'a> Codegen<'a> {
                     self.emit_pattern(
                         state,
                         &patt.data,
-                        &format!("{src}.{member}"),
+                        &format!("{src}.${member}"),
                         inner,
                         borrow || inner.is_any_ptr(),
                         bindings,

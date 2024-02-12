@@ -135,19 +135,31 @@ pub type GenericUserType = WithTypeArgs<UserTypeId>;
 
 impl GenericUserType {
     pub fn name(&self, scopes: &Scopes) -> String {
-        let mut result = scopes.get(self.id).name.data.clone();
-        if !self.ty_args.is_empty() {
-            result.push('<');
+        if scopes.get(self.id).data.is_tuple() {
+            let mut result = "(".to_string();
             for (i, concrete) in self.ty_args.values().enumerate() {
                 if i > 0 {
                     result.push_str(", ");
                 }
                 result.push_str(&concrete.name(scopes));
             }
-            result.push('>');
+            format!("{result})")
+        } else {
+            let mut result = scopes.get(self.id).name.data.clone();
+            if !self.ty_args.is_empty() {
+                result.push('<');
+                for (i, concrete) in self.ty_args.values().enumerate() {
+                    if i > 0 {
+                        result.push_str(", ");
+                    }
+                    result.push_str(&concrete.name(scopes));
+                }
+                result.push('>');
+            }
+    
+            result
         }
-
-        result
+        
     }
 
     pub fn from_id(scopes: &Scopes, id: UserTypeId) -> Self {

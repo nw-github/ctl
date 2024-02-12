@@ -379,7 +379,10 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::Super => {
                 let original = span;
                 let data = self.path_components(None, &mut span);
-                Expr::new(span, ExprData::Path(Path::new(PathOrigin::Super(original), data)))
+                Expr::new(
+                    span,
+                    ExprData::Path(Path::new(PathOrigin::Super(original), data)),
+                )
             }
             // prefix operators
             Token::Plus
@@ -692,6 +695,29 @@ impl<'a, 'b> Parser<'a, 'b> {
                 )
             }
             Token::Dot => {
+                let token = self.peek();
+                if let Token::Int { base, value, width } = token.data {
+                    if base != 10 || width.is_some() || (value.starts_with('0') && value.len() > 1)
+                    {
+                        let span = token.span;
+                        self.error(Error::new(
+                            "tuple member access must be an integer with no prefix or suffix",
+                            span,
+                        ));
+                    }
+                    let value = value.into();
+                    let span = self.next().span;
+
+                    return Expr::new(
+                        left.span.extended_to(span),
+                        ExprData::Member {
+                            source: left.into(),
+                            member: value,
+                            generics: Vec::new(),
+                        },
+                    );
+                }
+
                 let member = self.expect_id_l("expected member name");
                 let generics = if self.next_if_kind(Token::ScopeRes).is_some() {
                     self.expect_kind(Token::LAngle);

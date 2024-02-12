@@ -179,7 +179,7 @@ impl Error {
 
     pub fn bad_destructure(ty: &str, span: Span) -> Self {
         Self::new(
-            format!("cannot destructure value of non-struct type '{ty}'"),
+            format!("cannot destructure value of type '{ty}'"),
             span,
         )
     }
