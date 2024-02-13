@@ -55,9 +55,7 @@ where
     }
 }
 
-pub type GenericFunc = WithTypeArgs<FunctionId>;
-
-impl GenericFunc {
+impl<T> WithTypeArgs<T> {
     pub fn infer_type_args(&mut self, mut src: &Type, mut target: &Type) {
         loop {
             match (src, target) {
@@ -103,7 +101,11 @@ impl GenericFunc {
             }
         }
     }
+}
 
+pub type GenericFunc = WithTypeArgs<FunctionId>;
+
+impl GenericFunc {
     pub fn from_id(scopes: &Scopes, id: FunctionId) -> Self {
         Self::new(
             id,
@@ -638,28 +640,20 @@ impl Type {
                 }
 
                 let ty = scopes.get(ut.id);
-                if let Some(union) = ty.data.as_union().filter(|u| !u.is_unsafe) {
+                if let Some(union) = ty.data.as_union() {
                     let mut sa = SizeAndAlign::new();
-                    if !union.is_unsafe {
-                        sa.next(union.tag_type().size_and_align(scopes));
-                    }
-
+                    sa.next(union.tag_type().size_and_align(scopes));
                     for member in ty.members.values() {
                         sa.next(member.ty.with_templates(&ut.ty_args).size_and_align(scopes));
                     }
 
-                    sa.next(
-                        union
-                            .variants
-                            .values()
-                            .fold((0, 1), |(sz, align), variant| {
-                                let mut sa = SizeAndAlign::new();
-                                for ty in variant.member_types() {
-                                    sa.next(ty.with_templates(&ut.ty_args).size_and_align(scopes));
-                                }
-                                (sz.max(sa.size), align.max(sa.align))
-                            }),
-                    );
+                    sa.next(union.values().fold((0, 1), |(sz, align), variant| {
+                        let mut sa = SizeAndAlign::new();
+                        for ty in variant.member_types() {
+                            sa.next(ty.with_templates(&ut.ty_args).size_and_align(scopes));
+                        }
+                        (sz.max(sa.size), align.max(sa.align))
+                    }));
 
                     return (sa.size, sa.align);
                 } else {

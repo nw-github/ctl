@@ -144,9 +144,8 @@ impl<'a> TypeGen<'a> {
 
         let mut emitted_arrays = HashSet::new();
         for ut in self.get_struct_order(&structs) {
-            let union = self.scopes.get(ut.id).data.as_union();
-            let unsafe_union = union.is_some_and(|union| union.is_unsafe);
-            buffer.emit(if unsafe_union {
+            let ut_data = self.scopes.get(ut.id);
+            buffer.emit(if ut_data.data.is_unsafe_union() {
                 "typedef union "
             } else {
                 "typedef struct "
@@ -165,12 +164,12 @@ impl<'a> TypeGen<'a> {
                 continue;
             }
 
-            definitions.emit(if unsafe_union { "union " } else { "struct " });
+            definitions.emit(if ut_data.data.is_unsafe_union() { "union " } else { "struct " });
             definitions.emit_type_name(self.scopes, ut, flags.minify);
             definitions.emit("{");
 
             let members = &self.scopes.get(ut.id).members;
-            if let Some(union) = union.filter(|_| !unsafe_union) {
+            if let UserTypeData::Union(union) = &ut_data.data {
                 definitions.emit_type(self.scopes, &union.tag_type(), None, flags.minify);
                 definitions.emit(format!(" {UNION_TAG_NAME};"));
 
@@ -179,7 +178,7 @@ impl<'a> TypeGen<'a> {
                 }
 
                 definitions.emit(" union{");
-                for (name, ty) in union.variants.iter() {
+                for (name, ty) in union.iter() {
                     definitions.emit("struct{");
                     match ty {
                         CheckedVariant::Empty => {}
@@ -303,7 +302,7 @@ impl<'a> TypeGen<'a> {
 
         if let Some(union) = sty.data.as_union() {
             self.add_type(diag, &union.tag_type(), None);
-            for ty in union.variants.values().flat_map(|f| f.member_types()) {
+            for ty in union.values().flat_map(|f| f.member_types()) {
                 self.check_member_dep(diag, &ut, ty, adding, &mut deps, sty.name.span);
             }
         }
@@ -503,7 +502,15 @@ impl Buffer {
                 }
             }
             Type::User(ut) => match &scopes.get(ut.id).data {
-                UserTypeData::Struct { .. } | UserTypeData::Union(_) | UserTypeData::Tuple => {
+                UserTypeData::Template => {
+                    if !cfg!(debug_assertions) {
+                        panic!("ICE: Template type in emit_type")
+                    }
+
+                    self.emit(&scopes.get(ut.id).name.data);
+                }
+                UserTypeData::Trait => panic!("ICE: Trait type in emit_type"),
+                _ => {
                     if let Some(ty) = id.can_omit_tag(scopes) {
                         self.emit_type(scopes, ty, tg, min);
                     } else {
@@ -513,14 +520,6 @@ impl Buffer {
                         self.emit_type_name(scopes, ut, min);
                     }
                 }
-                UserTypeData::Template => {
-                    if !cfg!(debug_assertions) {
-                        panic!("ICE: Template type in emit_type")
-                    }
-
-                    self.emit(&scopes.get(ut.id).name.data);
-                }
-                UserTypeData::Trait => panic!("ICE: Trait type in emit_type"),
             },
             Type::Array(data) => {
                 self.emit_generic_mangled_name(scopes, id, min);

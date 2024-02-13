@@ -10,7 +10,7 @@ use crate::{
     error::{Diagnostics, Error},
     lexer::{Located, Span},
     sym::*,
-    typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type, TypeArgs},
+    typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type, TypeArgs, WithTypeArgs},
     Compiler, THIS_PARAM, THIS_TYPE,
 };
 
@@ -454,10 +454,7 @@ impl TypeChecker {
                 name: base.name,
                 body_scope: this.current,
                 type_params: this.declare_type_params(base.type_params),
-                data: UserTypeData::Union(Union {
-                    variants: rvariants,
-                    is_unsafe: false,
-                }),
+                data: UserTypeData::Union(Union(rvariants)),
                 impls,
                 attrs,
                 fns: fns
@@ -475,6 +472,67 @@ impl TypeChecker {
         for c in fns.iter().take(member_cons_len) {
             self.scopes.get_mut(c.id).constructor = Some(id);
         }
+
+        DeclaredStmt::Union {
+            id,
+            impl_blocks,
+            functions: fns,
+        }
+    }
+
+    fn declare_unsafe_union(
+        &mut self,
+        autouse: &mut Vec<ScopeId>,
+        base: Struct,
+        attrs: Vec<Attribute>,
+    ) -> DeclaredStmt {
+        let public = base.public;
+        let (ut, fns, impl_blocks) = self.enter(ScopeKind::None, |this| {
+            let mut members = IndexMap::with_capacity(base.members.len());
+            for member in base.members {
+                let prev = members.insert(
+                    member.name.data.clone(),
+                    CheckedMember {
+                        public: member.public,
+                        ty: this.declare_type_hint(member.ty),
+                    },
+                );
+                if prev.is_some() {
+                    this.error(Error::redefinition_k(
+                        "member variable",
+                        &member.name.data,
+                        member.name.span,
+                    ))
+                }
+            }
+
+            let (impls, impl_blocks) = this.declare_impl_blocks(autouse, base.impls);
+            let fns: Vec<_> = base
+                .functions
+                .into_iter()
+                .map(|f| this.declare_fn(autouse, None, f, vec![]))
+                .collect();
+            let ut = UserType {
+                members,
+                body_scope: this.current,
+                name: base.name,
+                data: UserTypeData::UnsafeUnion,
+                type_params: this.declare_type_params(base.type_params),
+                impls,
+                attrs,
+                fns: fns
+                    .iter()
+                    .chain(impl_blocks.iter().flat_map(|block| block.functions.iter()))
+                    .map(|f| Vis::new(f.id, f.public))
+                    .collect(),
+            };
+
+            (ut, fns, impl_blocks)
+        });
+
+        let scope = ut.body_scope;
+        let id = self.declare_type(ut, public);
+        self.scopes[scope].kind = ScopeKind::UserType(id);
 
         DeclaredStmt::Union {
             id,
@@ -521,7 +579,7 @@ impl TypeChecker {
                 variants,
             } => {
                 if is_unsafe {
-                    todo!("unsafe unions")
+                    self.declare_unsafe_union(autouse, base, stmt.attrs)
                 } else {
                     self.declare_union(autouse, base, variants, stmt.attrs)
                 }
@@ -1828,10 +1886,8 @@ impl TypeChecker {
                     ));
                 };
 
-                if let Some(union) = ut.data.as_union() {
-                    if union.is_unsafe && self.safety != Safety::Unsafe {
-                        self.diag.error(Error::is_unsafe(span));
-                    }
+                if ut.data.is_unsafe_union() && self.safety != Safety::Unsafe {
+                    self.diag.error(Error::is_unsafe(span));
                 }
 
                 let mut ty = member.ty.clone();
@@ -2274,7 +2330,7 @@ impl TypeChecker {
             .and_then(|ut| self.scopes.get(ut.id).data.as_union())
         {
             let mut missing = vec![];
-            'outer: for (name, _) in ut.variants.iter() {
+            'outer: for (name, _) in ut.iter() {
                 for patt in patterns.clone() {
                     if patt.irrefutable {
                         return;
@@ -2574,10 +2630,7 @@ impl TypeChecker {
         };
 
         if ut.id == path_ut.id {
-            Ok(Some((
-                union.variants.get(&variant).unwrap().clone(),
-                variant,
-            )))
+            Ok(Some((union.get(&variant).unwrap().clone(), variant)))
         } else {
             self.error::<()>(Error::type_mismatch_s(
                 &scrutinee.name(&self.scopes),
@@ -2799,11 +2852,12 @@ impl TypeChecker {
         destructures: Vec<Destructure>,
         span: Span,
     ) -> CheckedPattern {
-        let Some(ut) = scrutinee
-            .strip_references()
-            .as_user()
-            .filter(|ut| !self.scopes.get(ut.id).data.is_tuple())
-        else {
+        let Some(ut) = scrutinee.strip_references().as_user().filter(|ut| {
+            matches!(
+                self.scopes.get(ut.id).data,
+                UserTypeData::Struct | UserTypeData::Union(_)
+            )
+        }) else {
             return self.error(Error::bad_destructure(&scrutinee.name(&self.scopes), span));
         };
         self.resolve_members(ut.id);
@@ -3321,6 +3375,78 @@ impl TypeChecker {
         self.check_pattern(false, scrutinee, false, pattern.map(|inner| inner.data))
     }
 
+    fn check_unsafe_union_constructor(
+        &mut self,
+        target: Option<&Type>,
+        mut ut: GenericUserType,
+        args: Vec<(Option<String>, Expr)>,
+        span: Span,
+    ) -> CheckedExpr {
+        self.resolve_members(ut.id);
+
+        if let Some(target) = target.and_then(|t| t.as_user()).filter(|t| t.id == ut.id) {
+            for (id, ty) in target.ty_args.iter() {
+                if ut.ty_args.get(id).is_some_and(|id| !id.is_unknown()) {
+                    continue;
+                }
+
+                ut.ty_args.insert(*id, ty.clone());
+            }
+        }
+
+        let mut members = IndexMap::new();
+        if !self.scopes.get(ut.id).members.is_empty() {
+            let mut args = args.into_iter();
+            let Some((name, expr)) = args.next() else {
+                return self.error(Error::new("expected 1 variant argument", span));
+            };
+
+            let Some(name) = name else {
+                return self.error(Error::new("expected 0 positional arguments", span));
+            };
+
+            if args.next().is_some() {
+                self.error(Error::new("too many variant arguments", span))
+            }
+
+            let Some(ty) = self
+                .scopes
+                .get(ut.id)
+                .members
+                .get(&name)
+                .map(|m| m.ty.with_templates(&ut.ty_args))
+            else {
+                return self.error(Error::new(format!("unknown variant '{name}'"), span));
+            };
+
+            members.insert(name, self.check_arg(&mut ut, expr, &ty));
+        } else if !args.is_empty() {
+            self.error(Error::new("expected 0 arguments", span))
+        }
+
+        for (id, ty) in ut.ty_args.iter() {
+            if ty.is_unknown() {
+                self.error(Error::new(
+                    format!(
+                        "cannot infer type for type parameter '{}'",
+                        self.scopes.get(*id).name
+                    ),
+                    span,
+                ))
+            } else {
+                self.check_bounds(&ut.ty_args, ty, self.scopes.get(*id).impls.clone(), span);
+            }
+        }
+
+        CheckedExpr::new(
+            Type::User(ut.into()),
+            CheckedExprData::Instance {
+                members,
+                variant: None,
+            },
+        )
+    }
+
     fn check_call(
         &mut self,
         target: Option<&Type>,
@@ -3444,6 +3570,10 @@ impl TypeChecker {
             ExprData::Path(ref path) => match self.resolve_path(path, callee.span, false) {
                 Some(ResolvedPath::UserType(ty)) => {
                     let ut = self.scopes.get(ty.id);
+                    if ut.data.is_unsafe_union() {
+                        return self.check_unsafe_union_constructor(target, ty, args, span);
+                    }
+
                     let Some(&init) = ut
                         .fns
                         .iter()
@@ -3570,7 +3700,7 @@ impl TypeChecker {
         )
     }
 
-    fn check_arg(&mut self, func: &mut GenericFunc, expr: Expr, ty: &Type) -> CheckedExpr {
+    fn check_arg<T>(&mut self, func: &mut WithTypeArgs<T>, expr: Expr, ty: &Type) -> CheckedExpr {
         let mut target = ty.with_templates(&func.ty_args);
         let span = expr.span;
         let expr = self.check_expr(expr, Some(&target));
@@ -3693,18 +3823,16 @@ impl TypeChecker {
 
         for (id, ty) in func.ty_args.iter() {
             if ty.is_unknown() {
-                self.error::<()>(Error::new(
+                self.error(Error::new(
                     format!(
                         "cannot infer type for type parameter '{}'",
                         self.scopes.get(*id).name
                     ),
                     span,
-                ));
-
-                continue;
+                ))
+            } else {
+                self.check_bounds(&func.ty_args, ty, self.scopes.get(*id).impls.clone(), span);
             }
-
-            self.check_bounds(&func.ty_args, ty, self.scopes.get(*id).impls.clone(), span);
         }
 
         if self.scopes.get(func.id).is_unsafe && self.safety != Safety::Unsafe {
@@ -3913,7 +4041,7 @@ impl TypeChecker {
         }
 
         if let Some(mut union) = self.scopes.get(id).data.as_union().cloned() {
-            for variant in union.variants.values_mut() {
+            for variant in union.values_mut() {
                 match variant {
                     CheckedVariant::Empty => {}
                     CheckedVariant::StructLike(members) => {

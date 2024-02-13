@@ -169,19 +169,16 @@ impl CheckedVariant {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Union {
-    pub variants: IndexMap<String, CheckedVariant>,
-    pub is_unsafe: bool,
-}
+#[derive(Debug, Clone, Deref, DerefMut)]
+pub struct Union(pub IndexMap<String, CheckedVariant>);
 
 impl Union {
     pub fn tag_type(&self) -> Type {
-        Type::discriminant_for(self.variants.len())
+        Type::discriminant_for(self.0.len())
     }
 
     pub fn variant_tag(&self, name: &str) -> Option<usize> {
-        self.variants.get_index_of(name)
+        self.0.get_index_of(name)
     }
 }
 
@@ -189,6 +186,7 @@ impl Union {
 pub enum UserTypeData {
     Struct,
     Union(Union),
+    UnsafeUnion,
     Template,
     Trait,
     Tuple,
