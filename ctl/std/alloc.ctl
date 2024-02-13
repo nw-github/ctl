@@ -10,13 +10,13 @@ mod builtin {
 }
 
 pub fn alloc<T>(count: uint): ?RawMut<T> {
-    if builtin::malloc(size_of::<T>() * count) is ?ptr {
+    if (builtin::malloc(size_of::<T>() * count) is ?ptr) {
         RawMut::from_ptr(unsafe ptr as *mut T)
     }
 }
 
 pub fn realloc<T>(addr: *mut T, count: uint): ?RawMut<T> {
-    if builtin::realloc(unsafe addr as *mut c_void, size_of::<T>() * count) is ?ptr {
+    if (builtin::realloc(unsafe addr as *mut c_void, size_of::<T>() * count) is ?ptr) {
         RawMut::from_ptr(unsafe ptr as *mut T)
     }
 }

@@ -64,6 +64,7 @@ pub enum StmtData {
     Union {
         tag: Option<Located<Path>>,
         base: Struct,
+        variants: Vec<Variant>,
         is_unsafe: bool,
     },
     Trait {
@@ -257,7 +258,7 @@ impl std::fmt::Debug for Path {
 pub struct Destructure {
     pub name: Located<String>,
     pub mutable: bool,
-    pub pattern: Option<Located<Pattern>>,
+    pub pattern: Located<Pattern>,
 }
 
 #[derive(Debug, Clone)]
@@ -281,6 +282,10 @@ pub enum Pattern {
     TupleLike {
         path: Located<Path>,
         subpatterns: Vec<Located<Pattern>>,
+    },
+    StructLike {
+        path: Located<Path>,
+        subpatterns: Vec<Destructure>,
     },
     // x is ::core::opt::Option::None
     // x is y
@@ -405,9 +410,21 @@ pub struct Fn {
 pub struct Member {
     pub public: bool,
     pub name: Located<String>,
-    pub shared: bool,
     pub ty: TypeHint,
     pub default: Option<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub enum VariantData {
+    Empty,
+    StructLike(Vec<Member>),
+    TupleLike(Vec<(TypeHint, Option<Expr>)>),
+}
+
+#[derive(Debug, Clone)]
+pub struct Variant {
+    pub name: Located<String>,
+    pub data: VariantData,
 }
 
 #[derive(Debug, Clone)]

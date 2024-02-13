@@ -153,8 +153,25 @@ pub struct CheckedMember {
 }
 
 #[derive(Debug, Clone)]
+pub enum CheckedVariant {
+    Empty,
+    StructLike(IndexMap<String, Type>),
+    TupleLike(Vec<Type>),
+}
+
+impl CheckedVariant {
+    pub fn member_types<'a>(&'a self) -> Box<dyn Iterator<Item = &Type> + 'a> {
+        match self {
+            CheckedVariant::Empty => Box::new(std::iter::empty()),
+            CheckedVariant::StructLike(members) => Box::new(members.values()),
+            CheckedVariant::TupleLike(members) => Box::new(members.iter()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Union {
-    pub variants: IndexMap<String, Type>,
+    pub variants: IndexMap<String, CheckedVariant>,
     pub is_unsafe: bool,
 }
 

@@ -60,7 +60,7 @@ pub enum CheckedPatternData {
     Error,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, derive_more::Constructor)]
 pub struct CheckedPattern {
     pub irrefutable: bool,
     pub data: CheckedPatternData,
@@ -259,7 +259,7 @@ impl CheckedExpr {
                         Ok(expr) => Ok(CheckedExpr::new(
                             rhs.clone(),
                             CheckedExprData::Instance {
-                                members: [("Some".into(), expr)].into(),
+                                members: [("0".into(), expr)].into(),
                                 variant: Some("Some".into()),
                             },
                         )),
@@ -315,11 +315,7 @@ impl CheckedExpr {
         CheckedExpr::new(
             opt,
             CheckedExprData::Instance {
-                members: [(
-                    "None".into(),
-                    CheckedExpr::new(Type::Void, CheckedExprData::Void),
-                )]
-                .into(),
+                members: Default::default(),
                 variant: Some("None".into()),
             },
         )

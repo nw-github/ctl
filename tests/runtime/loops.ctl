@@ -27,7 +27,7 @@ pub fn while_loop() {
         let x = @[1, 2, 3, 4];
         mut total = 0;
         mut iter = x.iter();
-        while iter.next() is ?item {
+        while (iter.next() is ?item) {
             total += *item;
         }
 

@@ -51,7 +51,7 @@ pub struct Iter<T> {
 
     impl Iterator<*T> {
         fn next(mut this): ?*T {
-            if this.iter.next() is ?item {
+            if (this.iter.next() is ?item) {
                 item.0
             }
         }

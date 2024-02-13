@@ -170,10 +170,6 @@ impl<'a> TypeGen<'a> {
             definitions.emit("{");
 
             let members = &self.scopes.get(ut.id).members;
-            if members.is_empty() && self.scopes.get(ut.id).data.is_struct() {
-                definitions.emit("CTL_DUMMY_MEMBER;");
-            }
-
             if let Some(union) = union.filter(|_| !unsafe_union) {
                 definitions.emit_type(self.scopes, &union.tag_type(), None, flags.minify);
                 definitions.emit(format!(" {UNION_TAG_NAME};"));
@@ -184,10 +180,40 @@ impl<'a> TypeGen<'a> {
 
                 definitions.emit(" union{");
                 for (name, ty) in union.variants.iter() {
-                    self.emit_member(ut, name, ty, &mut definitions, flags.minify);
+                    definitions.emit("struct{");
+                    match ty {
+                        CheckedVariant::Empty => {}
+                        CheckedVariant::StructLike(types) => {
+                            if types.is_empty() {
+                                definitions.emit("CTL_DUMMY_MEMBER;");
+                            }
+                            for (name, ty) in types {
+                                self.emit_member(ut, name, ty, &mut definitions, flags.minify);
+                            }
+                        }
+                        CheckedVariant::TupleLike(types) => {
+                            if types.is_empty() {
+                                definitions.emit("CTL_DUMMY_MEMBER;");
+                            }
+                            for (i, ty) in types.iter().enumerate() {
+                                self.emit_member(
+                                    ut,
+                                    &format!("{i}"),
+                                    ty,
+                                    &mut definitions,
+                                    flags.minify,
+                                );
+                            }
+                        }
+                    }
+                    definitions.emit(format!("}}${name};"));
                 }
                 definitions.emit("};");
             } else {
+                if members.is_empty() {
+                    definitions.emit("CTL_DUMMY_MEMBER;");
+                }
+
                 for (name, member) in members {
                     self.emit_member(ut, name, &member.ty, &mut definitions, flags.minify);
                 }
@@ -271,53 +297,65 @@ impl<'a> TypeGen<'a> {
         let sty = self.scopes.get(ut.id);
 
         let mut deps = Vec::new();
-        let iter = if let Some(union) = sty.data.as_union() {
+        for m in sty.members.values() {
+            self.check_member_dep(diag, &ut, &m.ty, adding, &mut deps, sty.name.span);
+        }
+
+        if let Some(union) = sty.data.as_union() {
             self.add_type(diag, &union.tag_type(), None);
-            Some(union.variants.values())
-        } else {
-            None
-        };
-
-        for ty in sty.members.values().map(|m| &m.ty).chain(iter.into_iter().flatten()) {
-            match ty.with_templates(&ut.ty_args) {
-                Type::User(dep) => {
-                    if matches!(adding, Some(adding) if adding == &*dep) {
-                        // ideally get the span of the instantiation that caused this
-                        diag.error(Error::cyclic(
-                            &dep.name(self.scopes),
-                            &ut.name(self.scopes),
-                            self.scopes.get(dep.id).name.span,
-                        ));
-                        if !matches!(adding, Some(adding) if adding == &ut) {
-                            diag.error(Error::cyclic(
-                                &ut.name(self.scopes),
-                                &dep.name(self.scopes),
-                                sty.name.span,
-                            ));
-                        }
-                        return;
-                    }
-
-                    deps.push((*dep).clone());
-                    self.add_user_type(diag, *dep, Some(&ut));
-                }
-                Type::Array(arr) => {
-                    let mut inner = &arr.0;
-                    while let Type::Array(ty) = inner {
-                        inner = &ty.0;
-                    }
-
-                    if let Type::User(data) = inner {
-                        deps.push((**data).clone());
-                    }
-
-                    self.add_array(diag, arr.0, arr.1, Some(&ut));
-                }
-                ty => self.add_type(diag, &ty, adding),
+            for ty in union.variants.values().flat_map(|f| f.member_types()) {
+                self.check_member_dep(diag, &ut, ty, adding, &mut deps, sty.name.span);
             }
         }
 
         self.structs.insert(ut, deps);
+    }
+
+    fn check_member_dep(
+        &mut self,
+        diag: &mut Diagnostics,
+        ut: &GenericUserType,
+        ty: &Type,
+        adding: Option<&GenericUserType>,
+        deps: &mut Vec<GenericUserType>,
+        span: Span,
+    ) {
+        match ty.with_templates(&ut.ty_args) {
+            Type::User(dep) => {
+                if matches!(adding, Some(adding) if adding == &*dep) {
+                    // ideally get the span of the instantiation that caused this
+                    diag.error(Error::cyclic(
+                        &dep.name(self.scopes),
+                        &ut.name(self.scopes),
+                        self.scopes.get(dep.id).name.span,
+                    ));
+                    if !matches!(adding, Some(adding) if adding == ut) {
+                        diag.error(Error::cyclic(
+                            &ut.name(self.scopes),
+                            &dep.name(self.scopes),
+                            span,
+                        ));
+                    }
+                    return;
+                }
+
+                deps.push((*dep).clone());
+                self.add_user_type(diag, *dep, Some(ut));
+            }
+            Type::Array(arr) => {
+                let mut inner = &arr.0;
+                while let Type::Array(ty) = inner {
+                    inner = &ty.0;
+                }
+
+                if let Type::User(data) = inner {
+                    deps.push((**data).clone());
+                }
+
+                self.add_array(diag, arr.0, arr.1, Some(ut));
+            }
+            ty => self.add_type(diag, &ty, adding),
+        }
     }
 
     fn get_struct_order<'b>(
@@ -361,7 +399,7 @@ impl<'a> TypeGen<'a> {
     fn emit_member(
         &mut self,
         ut: &GenericUserType,
-        name: &String,
+        name: &str,
         ty: &Type,
         buffer: &mut Buffer,
         min: bool,
@@ -466,10 +504,7 @@ impl Buffer {
             }
             Type::User(ut) => match &scopes.get(ut.id).data {
                 UserTypeData::Struct { .. } | UserTypeData::Union(_) | UserTypeData::Tuple => {
-                    if let Some(ty) = id
-                        .as_option_inner(scopes)
-                        .filter(|_| id.can_omit_tag(scopes))
-                    {
+                    if let Some(ty) = id.can_omit_tag(scopes) {
                         self.emit_type(scopes, ty, tg, min);
                     } else {
                         if let Some((diag, tg)) = tg {
@@ -1088,10 +1123,10 @@ impl<'a> Codegen<'a> {
                         state.fill_generics(&mut ret_type);
                         self.emit_expr_inner(CheckedExpr::option_null(ret_type), state);
                         self.buffer.emit(format!(";}}{tmp}="));
-                        if inner_ty.can_omit_tag(self.scopes) {
+                        if inner_ty.can_omit_tag(self.scopes).is_some() {
                             self.buffer.emit(format!("{inner_tmp};"));
                         } else {
-                            self.buffer.emit(format!("{inner_tmp}.$Some;"));
+                            self.buffer.emit(format!("{inner_tmp}.$Some.$0;"));
                         }
                     });
                 }
@@ -1357,8 +1392,8 @@ impl<'a> Codegen<'a> {
                 mut members,
                 variant,
             } => {
-                if expr.ty.can_omit_tag(self.scopes) {
-                    if let Some(some) = members.remove("Some") {
+                if expr.ty.can_omit_tag(self.scopes).is_some() {
+                    if let Some(some) = members.remove("0") {
                         self.emit_expr(some, state);
                     } else {
                         self.buffer.emit(" NULL");
@@ -1367,15 +1402,18 @@ impl<'a> Codegen<'a> {
                     self.emit_cast(&expr.ty);
                     self.buffer.emit("{");
                     let ut = expr.ty.as_user();
+                    let mut emit_close = false;
                     if let Some((name, union)) =
                         variant.zip(ut.and_then(|ut| self.scopes.get(ut.id).data.as_union()))
                     {
                         if let Some(variant) = union.variant_tag(&name) {
-                            self.buffer.emit(format!(".{UNION_TAG_NAME}={variant},",));
+                            self.buffer
+                                .emit(format!(".{UNION_TAG_NAME}={variant},.${name}={{"));
+                            emit_close = true;
                         }
-                    } else if members.is_empty()
-                        && ut.is_some_and(|ut| self.scopes.get(ut.id).data.is_struct())
-                    {
+                    }
+
+                    if members.is_empty() {
                         self.buffer.emit("CTL_DUMMY_INIT");
                     }
 
@@ -1386,6 +1424,9 @@ impl<'a> Codegen<'a> {
                         self.buffer.emit(",");
                     }
                     self.buffer.emit("}");
+                    if emit_close {
+                        self.buffer.emit("}");
+                    }
                 }
             }
             CheckedExprData::Member { source, member } => {
@@ -1528,12 +1569,22 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit(format!(" {item}="));
                     self.emit_fn_name(&next_state);
                     self.buffer.emit(format!("(&{iter_var});"));
+                    let inner = next_ty.as_option_inner(self.scopes).unwrap().clone();
                     self.emit_pattern_if_stmt(
                         state,
                         &CheckedPatternData::UnionMember {
-                            pattern: Some(patt.into()),
+                            pattern: Some(
+                                CheckedPattern::new(
+                                    true,
+                                    CheckedPatternData::Destrucure {
+                                        patterns: vec![("0".into(), inner.clone(), patt)],
+                                        borrows: false,
+                                    },
+                                )
+                                .into(),
+                            ),
                             variant: "Some".into(),
-                            inner: next_ty.as_option_inner(self.scopes).unwrap().clone(),
+                            inner,
                             borrows: false,
                         },
                         &item,
@@ -1839,18 +1890,17 @@ impl<'a> Codegen<'a> {
             } => {
                 let src = Self::deref(src, ty);
                 let base = ty.strip_references();
-                if let Some(inner) = base
-                    .as_option_inner(self.scopes)
-                    .filter(|inner| matches!(inner, Type::Ptr(_) | Type::MutPtr(_)))
-                {
+                if base.can_omit_tag(self.scopes).is_some() {
                     if variant == "Some" {
                         conditions.next_str(format!("({src}!=NULL)"));
-                        if let Some(patt) = patt {
+                        if let Some((patt, borrows)) =
+                            patt.as_ref().and_then(|patt| patt.data.as_destrucure())
+                        {
                             self.emit_pattern(
                                 state,
-                                &patt.data,
+                                &patt[0].2.data,
                                 &src,
-                                inner,
+                                &patt[0].1,
                                 borrow || *borrows,
                                 bindings,
                                 conditions,
@@ -1939,12 +1989,13 @@ impl<'a> Codegen<'a> {
                 }
             }
             CheckedPatternData::Array {
-                patterns: ArrayPattern {
-                    patterns,
-                    rest,
-                    arr_len,
-                    inner,
-                },
+                patterns:
+                    ArrayPattern {
+                        patterns,
+                        rest,
+                        arr_len,
+                        inner,
+                    },
                 borrows,
             } => {
                 let src = if ty.is_any_ptr() {

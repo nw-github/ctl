@@ -1110,99 +1110,97 @@ impl<'a, 'b> Parser<'a, 'b> {
         None
     }
 
+    fn struct_like(&mut self, span: Span, mut_var: bool) -> Located<Vec<Destructure>> {
+        self.csv_one(Token::RCurly, span, |this| {
+            let mutable = this.next_if_kind(Token::Mut);
+            if let Some(token) = mutable.clone().filter(|_| mut_var) {
+                this.diag.warn(Error::new(
+                    format!("redundant '{}'", Token::Mut),
+                    token.span,
+                ));
+            }
+            let mutable = mutable.is_some();
+            let name = this.expect_id_l("expected name");
+            if mutable || this.next_if_kind(Token::Colon).is_none() {
+                Destructure {
+                    name: name.clone(),
+                    mutable,
+                    pattern: name.map(|name| Pattern::Path(Path::from(name))),
+                }
+            } else {
+                Destructure {
+                    name,
+                    mutable: mutable || mut_var,
+                    pattern: this.pattern(false),
+                }
+            }
+        })
+    }
+
+    fn tuple_like(&mut self, span: Span, mut_var: bool) -> Located<Vec<Located<Pattern>>> {
+        self.csv_one(Token::RParen, span, |this| this.pattern(mut_var))
+    }
+
     fn pattern(&mut self, mut_var: bool) -> Located<Pattern> {
         match self.peek().data {
             Token::Question => {
                 self.next();
-                return self
-                    .pattern(false)
-                    .map(|inner| Pattern::Option(inner.into()));
+                self.pattern(false)
+                    .map(|inner| Pattern::Option(inner.into()))
             }
-            Token::None => {
+            Token::None => Located::new(self.next().span, Pattern::Null),
+            Token::LParen => {
                 let span = self.next().span;
-                return Located::new(span, Pattern::Null);
+                self.tuple_like(span, mut_var).map(Pattern::Tuple)
             }
             Token::LCurly => {
                 let span = self.next().span;
-                return self
-                    .csv_one(Token::RCurly, span, |this| {
-                        let mutable = this.next_if_kind(Token::Mut);
-                        if let Some(token) = mutable.clone().filter(|_| mut_var) {
-                            this.diag.warn(Error::new(
-                                format!("redundant '{}'", Token::Mut),
-                                token.span,
-                            ));
-                        }
-                        let mutable = mutable.is_some();
-                        let name = this.expect_id_l("expected name");
-                        if mutable {
-                            Destructure {
-                                name,
-                                mutable,
-                                pattern: None,
-                            }
-                        } else {
-                            Destructure {
-                                name,
-                                mutable: mutable || mut_var,
-                                pattern: this
-                                    .next_if_kind(Token::Colon)
-                                    .map(|_| this.pattern(false)),
-                            }
-                        }
-                    })
-                    .map(Pattern::Struct);
+                self.struct_like(span, mut_var).map(Pattern::Struct)
             }
             Token::LBrace => {
                 let span = self.next().span;
-                return self
-                    .csv(Vec::new(), Token::RBrace, span, |this| {
-                        if let Some(token) = this.next_if_kind(Token::Ellipses) {
-                            let pattern = if this.next_if_kind(Token::Mut).is_some() {
-                                let ident = this.expect_id("expected name");
-                                Some((true, ident))
-                            } else {
-                                let ident =
-                                    this.next_if_map(|t| t.data.as_ident().map(|&i| i.into()));
-                                Some(false).zip(ident)
-                            };
-
-                            Located::new(token.span, Pattern::Rest(pattern))
+                self.csv_one(Token::RBrace, span, |this| {
+                    if let Some(token) = this.next_if_kind(Token::Ellipses) {
+                        let pattern = if this.next_if_kind(Token::Mut).is_some() {
+                            let ident = this.expect_id("expected name");
+                            Some((true, ident))
                         } else {
-                            this.pattern(mut_var)
-                        }
-                    })
-                    .map(Pattern::Array);
-            }
-            Token::LParen => {
-                let span = self.next().span;
-                return self
-                    .csv(Vec::new(), Token::RParen, span, |this| {
+                            let ident = this.next_if_map(|t| t.data.as_ident().map(|&i| i.into()));
+                            Some(false).zip(ident)
+                        };
+
+                        Located::new(token.span, Pattern::Rest(pattern))
+                    } else {
                         this.pattern(mut_var)
-                    })
-                    .map(Pattern::Tuple);
+                    }
+                })
+                .map(Pattern::Array)
             }
-            _ => {}
-        }
+            _ => {
+                if mut_var || self.next_if_kind(Token::Mut).is_some() {
+                    return self.expect_id_l("expected name").map(Pattern::MutBinding);
+                }
+                if !mut_var {
+                    if let Some(pattern) = self.literal_pattern() {
+                        return pattern;
+                    }
+                }
 
-        if mut_var || self.next_if_kind(Token::Mut).is_some() {
-            return self.expect_id_l("expected name").map(Pattern::MutBinding);
-        }
-
-        if !mut_var {
-            if let Some(pattern) = self.literal_pattern() {
-                return pattern;
+                let path = self.type_path();
+                match self.peek().data {
+                    Token::LParen => {
+                        let span = self.next().span;
+                        self.tuple_like(span, mut_var)
+                            .map(|subpatterns| Pattern::TupleLike { path, subpatterns })
+                    }
+                    Token::LCurly => {
+                        let span = self.next().span;
+                        self.struct_like(span, mut_var)
+                            .map(|subpatterns| Pattern::StructLike { path, subpatterns })
+                    }
+                    _ => path.map(Pattern::Path),
+                }
             }
-        }
-
-        let path = self.type_path();
-        if self.next_if_kind(Token::LParen).is_some() {
-            self.csv(Vec::new(), Token::RParen, path.span, |this| {
-                this.pattern(false)
-            })
-            .map(|subpatterns| Pattern::TupleLike { path, subpatterns })
-        } else {
-            path.map(Pattern::Path)
         }
     }
 
@@ -1403,7 +1401,6 @@ impl<'a, 'b> Parser<'a, 'b> {
                     ty,
                     name,
                     default: value,
-                    shared: true,
                 });
             }
         });
@@ -1421,9 +1418,10 @@ impl<'a, 'b> Parser<'a, 'b> {
     fn union(&mut self, public: bool, span: Span, is_unsafe: bool) -> StmtData {
         if is_unsafe {
             return StmtData::Union {
+                is_unsafe,
                 tag: None,
                 base: self.structure(public, span),
-                is_unsafe,
+                variants: Vec::new(),
             };
         }
 
@@ -1433,6 +1431,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut functions = Vec::new();
         let mut members = Vec::new();
         let mut impls = Vec::new();
+        let mut variants = Vec::new();
 
         self.expect_kind(Token::LCurly);
         self.next_until(Token::RCurly, span, |this| {
@@ -1460,7 +1459,6 @@ impl<'a, 'b> Parser<'a, 'b> {
                 members.push(Member {
                     public: true,
                     name,
-                    shared: true,
                     ty,
                     default: value,
                 });
@@ -1468,32 +1466,55 @@ impl<'a, 'b> Parser<'a, 'b> {
                 impls.push(this.impl_block(token.span));
             } else {
                 let name = this.expect_id_l("expected variant name");
-                let (ty, value) = if this.next_if_kind(Token::LParen).is_some() {
-                    let ty = this.type_hint();
-                    this.expect_kind(Token::RParen);
-                    (
-                        ty,
-                        this.next_if_kind(Token::Assign).map(|_| this.expression()),
-                    )
-                } else {
-                    (TypeHint::Void, None)
+                let data = match this.peek().data {
+                    Token::LParen => {
+                        let span = this.next().span;
+                        VariantData::TupleLike(
+                            this.csv_one(Token::RParen, span, |this| {
+                                (
+                                    this.type_hint(),
+                                    this.next_if_kind(Token::Assign).map(|_| this.expression()),
+                                )
+                            })
+                            .data,
+                        )
+                    }
+                    Token::LCurly => {
+                        let span = this.next().span;
+                        VariantData::StructLike(
+                            this.csv_one(Token::RCurly, span, |this| {
+                                if let Some(token) = this.next_if_kind(Token::Pub) {
+                                    this.error_no_sync(Error::not_valid_here(&token));
+                                }
+
+                                let name = this.expect_id_l("expected name");
+                                this.expect_kind(Token::Colon);
+                                Member {
+                                    public: true,
+                                    name,
+                                    ty: this.type_hint(),
+                                    default: this
+                                        .next_if_kind(Token::Assign)
+                                        .map(|_| this.expression()),
+                                }
+                            })
+                            .data,
+                        )
+                    }
+                    _ => VariantData::Empty,
                 };
 
                 if !this.matches_kind(Token::RCurly) {
                     this.expect_kind(Token::Comma);
                 }
-                members.push(Member {
-                    public: config.is_public,
-                    name,
-                    shared: false,
-                    ty,
-                    default: value,
-                });
+                variants.push(Variant { name, data });
             }
         });
 
         StmtData::Union {
             tag,
+            is_unsafe,
+            variants,
             base: Struct {
                 public,
                 name,
@@ -1502,7 +1523,6 @@ impl<'a, 'b> Parser<'a, 'b> {
                 functions,
                 impls,
             },
-            is_unsafe,
         }
     }
 

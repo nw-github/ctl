@@ -156,10 +156,9 @@ impl GenericUserType {
                 }
                 result.push('>');
             }
-    
+
             result
         }
-        
     }
 
     pub fn from_id(scopes: &Scopes, id: UserTypeId) -> Self {
@@ -629,7 +628,7 @@ impl Type {
 
                 impl SizeAndAlign {
                     fn new() -> Self {
-                        Self { size: 0, align: 1}
+                        Self { size: 0, align: 1 }
                     }
 
                     fn next(&mut self, (s, a): (usize, usize)) {
@@ -649,10 +648,18 @@ impl Type {
                         sa.next(member.ty.with_templates(&ut.ty_args).size_and_align(scopes));
                     }
 
-                    sa.next(union.variants.values().fold((0, 1), |(sz, align), ty| {
-                        let (s, a) = ty.with_templates(&ut.ty_args).size_and_align(scopes);
-                        (sz.max(s), align.max(a))
-                    }));
+                    sa.next(
+                        union
+                            .variants
+                            .values()
+                            .fold((0, 1), |(sz, align), variant| {
+                                let mut sa = SizeAndAlign::new();
+                                for ty in variant.member_types() {
+                                    sa.next(ty.with_templates(&ut.ty_args).size_and_align(scopes));
+                                }
+                                (sz.max(sa.size), align.max(sa.align))
+                            }),
+                    );
 
                     return (sa.size, sa.align);
                 } else {
@@ -674,8 +681,8 @@ impl Type {
         (sz, sz.max(1))
     }
 
-    pub fn can_omit_tag(&self, scopes: &Scopes) -> bool {
+    pub fn can_omit_tag(&self, scopes: &Scopes) -> Option<&Type> {
         self.as_option_inner(scopes)
-            .is_some_and(|inner| inner.is_ptr() || inner.is_mut_ptr() || inner.is_fn_ptr())
+            .filter(|inner| inner.is_ptr() || inner.is_mut_ptr() || inner.is_fn_ptr())
     }
 }
