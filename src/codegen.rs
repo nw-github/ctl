@@ -164,7 +164,11 @@ impl<'a> TypeGen<'a> {
                 continue;
             }
 
-            definitions.emit(if ut_data.data.is_unsafe_union() { "union " } else { "struct " });
+            definitions.emit(if ut_data.data.is_unsafe_union() {
+                "union "
+            } else {
+                "struct "
+            });
             definitions.emit_type_name(self.scopes, ut, flags.minify);
             definitions.emit("{");
 
@@ -181,7 +185,9 @@ impl<'a> TypeGen<'a> {
                 for (name, ty) in union.iter() {
                     definitions.emit("struct{");
                     match ty {
-                        CheckedVariant::Empty => {}
+                        CheckedVariant::Empty => {
+                            definitions.emit("CTL_DUMMY_MEMBER;");
+                        }
                         CheckedVariant::StructLike(types) => {
                             if types.is_empty() {
                                 definitions.emit("CTL_DUMMY_MEMBER;");
@@ -1400,30 +1406,58 @@ impl<'a> Codegen<'a> {
                 } else {
                     self.emit_cast(&expr.ty);
                     self.buffer.emit("{");
-                    let ut = expr.ty.as_user();
-                    let mut emit_close = false;
-                    if let Some((name, union)) =
-                        variant.zip(ut.and_then(|ut| self.scopes.get(ut.id).data.as_union()))
-                    {
-                        if let Some(variant) = union.variant_tag(&name) {
-                            self.buffer
-                                .emit(format!(".{UNION_TAG_NAME}={variant},.${name}={{"));
-                            emit_close = true;
+                    let ut = self.scopes.get(expr.ty.as_user().unwrap().id);
+                    if let Some((variant, union)) = variant.zip(ut.data.as_union()) {
+                        let members: Vec<_> = members
+                            .into_iter()
+                            .map(|(name, mut expr)| {
+                                state.fill_generics(&mut expr.ty);
+                                // TODO: dont emit temporaries for expressions that cant have side effects
+                                tmpbuf!(self, state, |tmp| {
+                                    self.emit_type(&expr.ty);
+                                    self.buffer.emit(format!(" {tmp}="));
+                                    self.emit_expr_inner(expr, state);
+                                    self.buffer.emit(";");
+                                    (name, tmp)
+                                })
+                            })
+                            .collect();
+                        self.buffer.emit(format!(
+                            ".{UNION_TAG_NAME}={},",
+                            union.variant_tag(&variant).unwrap()
+                        ));
+
+                        for (name, value) in members
+                            .iter()
+                            .filter(|(name, _)| ut.members.contains_key(name))
+                        {
+                            self.buffer.emit(format!(".${name}={value},"));
                         }
-                    }
 
-                    if members.is_empty() {
-                        self.buffer.emit("CTL_DUMMY_INIT");
-                    }
+                        self.buffer.emit(format!(".${variant}={{"));
+                        let mut emitted = false;
+                        for (name, value) in members
+                            .iter()
+                            .filter(|(name, _)| !ut.members.contains_key(name))
+                        {
+                            self.buffer.emit(format!(".${name}={value},"));
+                            emitted = true;
+                        }
+                        if !emitted {
+                            self.buffer.emit("CTL_DUMMY_INIT");
+                        }
+                        self.buffer.emit("}}");
+                    } else {
+                        if members.is_empty() {
+                            self.buffer.emit("CTL_DUMMY_INIT");
+                        }
 
-                    for (name, mut value) in members {
-                        state.fill_generics(&mut value.ty);
-                        self.buffer.emit(format!(".${name}="));
-                        self.emit_expr(value, state);
-                        self.buffer.emit(",");
-                    }
-                    self.buffer.emit("}");
-                    if emit_close {
+                        for (name, mut value) in members {
+                            state.fill_generics(&mut value.ty);
+                            self.buffer.emit(format!(".${name}="));
+                            self.emit_expr(value, state);
+                            self.buffer.emit(",");
+                        }
                         self.buffer.emit("}");
                     }
                 }

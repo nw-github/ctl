@@ -331,6 +331,7 @@ impl TypeChecker {
             let mut rvariants = IndexMap::with_capacity(base.members.len());
             let mut members = IndexMap::with_capacity(base.members.len());
             let mut params = Vec::with_capacity(base.members.len());
+            let mut fns = Vec::with_capacity(base.members.len());
             for member in base.members {
                 if members
                     .insert(
@@ -362,86 +363,87 @@ impl TypeChecker {
 
             let (impls, impl_blocks) = this.declare_impl_blocks(autouse, base.impls);
             let ret = Self::typehint_for_struct(&base.name, &base.type_params);
-            let mut fns: Vec<_> = variants
-                .into_iter()
-                .map(|variant| {
-                    let mut params = params.clone();
-                    match variant.data {
-                        VariantData::Empty => {
-                            rvariants.insert(variant.name.data.clone(), CheckedVariant::Empty);
-                        }
-                        VariantData::StructLike(members) => {
-                            rvariants.insert(
-                                variant.name.data.clone(),
-                                CheckedVariant::StructLike(
-                                    members
-                                        .iter()
-                                        .map(|m| {
-                                            (
-                                                m.name.data.clone(),
-                                                this.declare_type_hint(m.ty.clone()),
-                                            )
-                                        })
-                                        .collect(),
-                                ),
-                            );
+            for variant in variants {
+                let mut params = params.clone();
+                match variant.data {
+                    VariantData::Empty => {
+                        rvariants.insert(variant.name.data.clone(), CheckedVariant::Empty);
+                    }
+                    VariantData::StructLike(smembers) => {
+                        rvariants.insert(
+                            variant.name.data.clone(),
+                            CheckedVariant::StructLike(
+                                smembers
+                                    .iter()
+                                    .map(|m| {
+                                        (m.name.data.clone(), this.declare_type_hint(m.ty.clone()))
+                                    })
+                                    .collect(),
+                            ),
+                        );
 
-                            for member in members {
-                                params.push(Param {
-                                    keyword: false,
-                                    patt: Located::new(
-                                        member.name.span,
-                                        Pattern::Path(Path::from(member.name.data.clone())),
-                                    ),
-                                    ty: member.ty,
-                                    default: member.default,
-                                });
+                        for member in smembers {
+                            if members.contains_key(&member.name.data) {
+                                this.error(Error::shared_member(
+                                    &member.name.data,
+                                    member.name.span,
+                                ))
                             }
-                        }
-                        VariantData::TupleLike(members) => {
-                            rvariants.insert(
-                                variant.name.data.clone(),
-                                CheckedVariant::TupleLike(
-                                    members
-                                        .iter()
-                                        .map(|(ty, _)| this.declare_type_hint(ty.clone()))
-                                        .collect(),
-                                ),
-                            );
 
-                            for (i, (ty, default)) in members.into_iter().enumerate() {
-                                params.push(Param {
-                                    keyword: false,
-                                    patt: Located::new(
-                                        Span::default(),
-                                        Pattern::Path(Path::from(format!("{i}"))),
-                                    ),
-                                    ty,
-                                    default,
-                                });
-                            }
+                            params.push(Param {
+                                keyword: false,
+                                patt: Located::new(
+                                    member.name.span,
+                                    Pattern::Path(Path::from(member.name.data.clone())),
+                                ),
+                                ty: member.ty,
+                                default: member.default,
+                            });
                         }
                     }
+                    VariantData::TupleLike(members) => {
+                        rvariants.insert(
+                            variant.name.data.clone(),
+                            CheckedVariant::TupleLike(
+                                members
+                                    .iter()
+                                    .map(|(ty, _)| this.declare_type_hint(ty.clone()))
+                                    .collect(),
+                            ),
+                        );
 
-                    this.declare_fn(
-                        autouse,
-                        None,
-                        Fn {
-                            public: base.public,
-                            name: Located::new(variant.name.span, variant.name.data),
-                            linkage: Linkage::Internal,
-                            is_async: false,
-                            variadic: false,
-                            is_unsafe: false,
-                            type_params: vec![],
-                            params,
-                            ret: ret.clone(),
-                            body: None,
-                        },
-                        vec![],
-                    )
-                })
-                .collect();
+                        for (i, (ty, default)) in members.into_iter().enumerate() {
+                            params.push(Param {
+                                keyword: false,
+                                patt: Located::new(
+                                    Span::default(),
+                                    Pattern::Path(Path::from(format!("{i}"))),
+                                ),
+                                ty,
+                                default,
+                            });
+                        }
+                    }
+                }
+
+                fns.push(this.declare_fn(
+                    autouse,
+                    None,
+                    Fn {
+                        public: base.public,
+                        name: Located::new(variant.name.span, variant.name.data),
+                        linkage: Linkage::Internal,
+                        is_async: false,
+                        variadic: false,
+                        is_unsafe: false,
+                        type_params: vec![],
+                        params,
+                        ret: ret.clone(),
+                        body: None,
+                    },
+                    vec![],
+                ));
+            }
             let member_cons_len = fns.len();
             fns.extend(
                 base.functions

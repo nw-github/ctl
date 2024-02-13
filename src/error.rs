@@ -83,6 +83,13 @@ impl Error {
         }
     }
 
+    pub fn shared_member(name: &str, span: Span) -> Self {
+        Self::new(
+            format!("cannot declare variant member with same name as shared member '{name}'"),
+            span,
+        )
+    }
+
     pub fn unterminated_str(span: Span) -> Self {
         Self::new("unterminated string literal", span)
     }
@@ -178,9 +185,6 @@ impl Error {
     }
 
     pub fn bad_destructure(ty: &str, span: Span) -> Self {
-        Self::new(
-            format!("cannot destructure value of type '{ty}'"),
-            span,
-        )
+        Self::new(format!("cannot destructure value of type '{ty}'"), span)
     }
 }
