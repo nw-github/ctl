@@ -3860,7 +3860,7 @@ impl TypeChecker {
         let Some(ut) = scrutinee.strip_references().as_user().filter(|ut| {
             matches!(
                 self.scopes.get(ut.id).data,
-                UserTypeData::Struct | UserTypeData::Union(_)
+                UserTypeData::Struct | UserTypeData::Union(_)| UserTypeData::AnonStruct
             )
         }) else {
             return self.error(Error::bad_destructure(&scrutinee.name(&self.scopes), span));

@@ -171,6 +171,7 @@ pub enum UserTypeData {
     Union(Union),
     UnsafeUnion,
     Template,
+    AnonStruct,
     Trait,
     Tuple,
 }
@@ -621,7 +622,7 @@ impl Scopes {
                         .collect(),
                     name: Located::new(Span::default(), "$anonstruct".into()),
                     body_scope: ScopeId::ROOT,
-                    data: UserTypeData::Struct,
+                    data: UserTypeData::AnonStruct,
                     type_params,
                     impls: vec![],
                     attrs: vec![],

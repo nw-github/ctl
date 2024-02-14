@@ -159,6 +159,7 @@ impl std::fmt::Display for Token<'_> {
             Token::Pub => write!(f, "pub"),
             Token::Mut => write!(f, "mut"),
             Token::This => write!(f, "This"),
+            Token::Struct => write!(f, "struct"),
             _ => write!(f, "FIXME: {self:?}"),
         }
     }

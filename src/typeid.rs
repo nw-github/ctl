@@ -137,29 +137,46 @@ pub type GenericUserType = WithTypeArgs<UserTypeId>;
 
 impl GenericUserType {
     pub fn name(&self, scopes: &Scopes) -> String {
-        if scopes.get(self.id).data.is_tuple() {
-            let mut result = "(".to_string();
-            for (i, concrete) in self.ty_args.values().enumerate() {
-                if i > 0 {
-                    result.push_str(", ");
+        match &scopes.get(self.id).data {
+            crate::sym::UserTypeData::AnonStruct => {
+                let mut result = "struct {".to_string();
+                for (i, concrete) in self.ty_args.values().enumerate() {
+                    if i > 0 {
+                        result.push(',');
+                    }
+                    result.push_str(&format!(
+                        " {}: {}",
+                        scopes.get(self.id).members.get_index(i).unwrap().0,
+                        concrete.name(scopes)
+                    ));
                 }
-                result.push_str(&concrete.name(scopes));
+                format!("{result} }}")
             }
-            format!("{result})")
-        } else {
-            let mut result = scopes.get(self.id).name.data.clone();
-            if !self.ty_args.is_empty() {
-                result.push('<');
+            crate::sym::UserTypeData::Tuple => {
+                let mut result = "(".to_string();
                 for (i, concrete) in self.ty_args.values().enumerate() {
                     if i > 0 {
                         result.push_str(", ");
                     }
                     result.push_str(&concrete.name(scopes));
                 }
-                result.push('>');
+                format!("{result})")
             }
+            _ => {
+                let mut result = scopes.get(self.id).name.data.clone();
+                if !self.ty_args.is_empty() {
+                    result.push('<');
+                    for (i, concrete) in self.ty_args.values().enumerate() {
+                        if i > 0 {
+                            result.push_str(", ");
+                        }
+                        result.push_str(&concrete.name(scopes));
+                    }
+                    result.push('>');
+                }
 
-            result
+                result
+            }
         }
     }
 

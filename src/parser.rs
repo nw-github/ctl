@@ -1344,6 +1344,19 @@ impl<'a, 'b> Parser<'a, 'b> {
                     ret: ret.into(),
                 }
             }
+            Token::Struct => {
+                let span = self.next().span;
+                self.expect_kind(Token::LCurly);
+                TypeHint::AnonStruct(
+                    self.csv(Vec::new(), Token::RCurly, span, |this| {
+                        let name = this.expect_id("expected member name");
+                        this.expect_kind(Token::Colon);
+                        let ty = this.type_hint();
+                        (name, ty)
+                    })
+                    .data,
+                )
+            }
             _ => TypeHint::Regular(self.type_path()),
         }
     }
