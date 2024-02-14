@@ -146,31 +146,14 @@ impl FunctionId {
     pub const RESERVED: FunctionId = FunctionId(0);
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Constructor)]
 pub struct CheckedMember {
     pub public: bool,
     pub ty: Type,
 }
 
-#[derive(Debug, Clone)]
-pub enum CheckedVariant {
-    Empty,
-    StructLike(IndexMap<String, Type>),
-    TupleLike(Vec<Type>),
-}
-
-impl CheckedVariant {
-    pub fn member_types<'a>(&'a self) -> Box<dyn Iterator<Item = &Type> + 'a> {
-        match self {
-            CheckedVariant::Empty => Box::new(std::iter::empty()),
-            CheckedVariant::StructLike(members) => Box::new(members.values()),
-            CheckedVariant::TupleLike(members) => Box::new(members.iter()),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deref, DerefMut)]
-pub struct Union(pub IndexMap<String, CheckedVariant>);
+pub struct Union(pub IndexMap<String, Option<Type>>);
 
 impl Union {
     pub fn tag_type(&self) -> Type {
@@ -344,6 +327,7 @@ pub struct Scopes {
     vars: Vec<Scoped<Variable>>,
     exts: Vec<Scoped<Extension>>,
     tuples: HashMap<usize, UserTypeId>,
+    structs: HashMap<Vec<String>, UserTypeId>,
     pub lang_types: HashMap<String, UserTypeId>,
     pub intrinsics: HashMap<FunctionId, String>,
     pub panic_handler: Option<FunctionId>,
@@ -358,6 +342,7 @@ impl Scopes {
             vars: Vec::new(),
             exts: Vec::new(),
             tuples: HashMap::new(),
+            structs: HashMap::new(),
             lang_types: HashMap::new(),
             intrinsics: HashMap::new(),
             panic_handler: None,
@@ -569,10 +554,10 @@ impl Scopes {
                         .map(|(i, id)| {
                             (
                                 format!("{i}"),
-                                CheckedMember {
-                                    public: true,
-                                    ty: Type::User(GenericUserType::from_id(self, *id).into()),
-                                },
+                                CheckedMember::new(
+                                    true,
+                                    Type::User(GenericUserType::from_id(self, *id).into()),
+                                ),
                             )
                         })
                         .collect(),
@@ -592,6 +577,64 @@ impl Scopes {
             id
         };
         Type::User(GenericUserType::from_type_args(self, id, ty_args).into())
+    }
+
+    pub fn get_anon_struct(&mut self, names: Vec<String>, types: Vec<Type>) -> Type {
+        let id = if let Some(id) = self.structs.get(&names) {
+            *id
+        } else {
+            let type_params: Vec<_> = (0..names.len())
+                .map(|_| {
+                    UserTypeId::insert_in(
+                        self,
+                        UserType {
+                            name: Default::default(),
+                            body_scope: ScopeId::ROOT,
+                            data: UserTypeData::Template,
+                            impls: Vec::new(),
+                            type_params: Vec::new(),
+                            attrs: Vec::new(),
+                            fns: Vec::new(),
+                            members: IndexMap::new(),
+                        },
+                        false,
+                        ScopeId::ROOT,
+                    )
+                    .0
+                })
+                .collect();
+            let (id, _) = UserTypeId::insert_in(
+                self,
+                UserType {
+                    members: type_params
+                        .iter()
+                        .enumerate()
+                        .map(|(i, id)| {
+                            (
+                                names[i].clone(),
+                                CheckedMember::new(
+                                    true,
+                                    Type::User(GenericUserType::from_id(self, *id).into()),
+                                ),
+                            )
+                        })
+                        .collect(),
+                    name: Located::new(Span::default(), "$anonstruct".into()),
+                    body_scope: ScopeId::ROOT,
+                    data: UserTypeData::Struct,
+                    type_params,
+                    impls: vec![],
+                    attrs: vec![],
+                    fns: vec![],
+                },
+                false,
+                ScopeId::ROOT,
+            );
+
+            self.structs.insert(names, id);
+            id
+        };
+        Type::User(GenericUserType::from_type_args(self, id, types).into())
     }
 }
 

@@ -158,7 +158,7 @@ pub struct Iter<K, V> {
 
     impl Iterator<(*K, *V)> {
         fn next(mut this): ?(*K, *V) {
-            let mut pos = 0u;
+            mut pos = 0u;
             for bucket in this.buckets.iter() {
                 pos++;
                 if bucket is Bucket::Some(key, val) {
@@ -175,7 +175,7 @@ pub struct IterMut<K, V> {
 
     impl Iterator<(*K, *mut V)> {
         fn next(mut this): ?(*K, *mut V) {
-            let mut pos = 0u;
+            mut pos = 0u;
             for bucket in this.buckets.iter_mut() {
                 pos++;
                 if bucket is Bucket::Some(key, val) {

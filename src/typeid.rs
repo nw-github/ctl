@@ -647,12 +647,9 @@ impl Type {
                         sa.next(member.ty.with_templates(&ut.ty_args).size_and_align(scopes));
                     }
 
-                    sa.next(union.values().fold((0, 1), |(sz, align), variant| {
-                        let mut sa = SizeAndAlign::new();
-                        for ty in variant.member_types() {
-                            sa.next(ty.with_templates(&ut.ty_args).size_and_align(scopes));
-                        }
-                        (sz.max(sa.size), align.max(sa.align))
+                    sa.next(union.values().flatten().fold((0, 1), |(sz, align), ty| {
+                        let (s, a) = ty.with_templates(&ut.ty_args).size_and_align(scopes);
+                        (sz.max(s), align.max(a))
                     }));
 
                     return (sa.size, sa.align);

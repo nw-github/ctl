@@ -215,11 +215,10 @@ impl TypeChecker {
     }
 
     fn can_access_privates(&self, scope: ScopeId) -> bool {
-        let target = self
-            .scopes
+        self.scopes
             .module_of(scope)
-            .expect("root scope passed to can_access_privates()");
-        self.scopes.walk(self.current).any(|(id, _)| id == target)
+            .map(|target| self.scopes.walk(self.current).any(|(id, _)| id == target))
+            .unwrap_or_default()
     }
 }
 
@@ -268,10 +267,7 @@ impl TypeChecker {
             for member in base.members {
                 let prev = members.insert(
                     member.name.data.clone(),
-                    CheckedMember {
-                        public: member.public,
-                        ty: this.declare_type_hint(member.ty),
-                    },
+                    CheckedMember::new(member.public, this.declare_type_hint(member.ty)),
                 );
                 if prev.is_some() {
                     this.error(Error::redefinition_k(
@@ -336,10 +332,10 @@ impl TypeChecker {
                 if members
                     .insert(
                         member.name.data.clone(),
-                        CheckedMember {
-                            public: member.public,
-                            ty: this.declare_type_hint(member.ty.clone()),
-                        },
+                        CheckedMember::new(
+                            member.public,
+                            this.declare_type_hint(member.ty.clone()),
+                        ),
                     )
                     .is_some()
                 {
@@ -354,10 +350,10 @@ impl TypeChecker {
                     keyword: true,
                     patt: Located::new(
                         member.name.span,
-                        Pattern::Path(Path::from(member.name.data.clone())),
+                        Pattern::Path(Path::from(member.name.data)),
                     ),
-                    ty: member.ty.clone(),
-                    default: member.default.clone(),
+                    ty: member.ty,
+                    default: member.default,
                 });
             }
 
@@ -367,18 +363,18 @@ impl TypeChecker {
                 let mut params = params.clone();
                 match variant.data {
                     VariantData::Empty => {
-                        rvariants.insert(variant.name.data.clone(), CheckedVariant::Empty);
+                        rvariants.insert(variant.name.data.clone(), None);
                     }
                     VariantData::StructLike(smembers) => {
                         rvariants.insert(
                             variant.name.data.clone(),
-                            CheckedVariant::StructLike(
-                                smembers
-                                    .iter()
-                                    .map(|m| {
-                                        (m.name.data.clone(), this.declare_type_hint(m.ty.clone()))
-                                    })
-                                    .collect(),
+                            Some(
+                                this.declare_type_hint(TypeHint::AnonStruct(
+                                    smembers
+                                        .iter()
+                                        .map(|m| (m.name.data.clone(), m.ty.clone()))
+                                        .collect(),
+                                )),
                             ),
                         );
 
@@ -404,12 +400,9 @@ impl TypeChecker {
                     VariantData::TupleLike(members) => {
                         rvariants.insert(
                             variant.name.data.clone(),
-                            CheckedVariant::TupleLike(
-                                members
-                                    .iter()
-                                    .map(|(ty, _)| this.declare_type_hint(ty.clone()))
-                                    .collect(),
-                            ),
+                            Some(this.declare_type_hint(TypeHint::Tuple(
+                                members.iter().map(|(ty, _)| ty.clone()).collect(),
+                            ))),
                         );
 
                         for (i, (ty, default)) in members.into_iter().enumerate() {
@@ -494,10 +487,7 @@ impl TypeChecker {
             for member in base.members {
                 let prev = members.insert(
                     member.name.data.clone(),
-                    CheckedMember {
-                        public: member.public,
-                        ty: this.declare_type_hint(member.ty),
-                    },
+                    CheckedMember::new(member.public, this.declare_type_hint(member.ty)),
                 );
                 if prev.is_some() {
                     this.error(Error::redefinition_k(
@@ -2572,27 +2562,27 @@ impl TypeChecker {
         )
     }
 
-    /// Returns `Ok(Some(_))` if the path is a compatible union variant.
-    /// Returns `Ok(None)` if the path is a union variant, but of the wrong type.
-    /// Returns `Err(err)` if the path is not a union variant.
+    /// Returns `Ok(_)` if the path is a compatible union variant.
+    /// Returns `Err(None)` if the path is a union variant, but of the wrong type.
+    /// Returns `Err(Some(_))` if the path is not a union variant.
     fn get_union_variant(
         &mut self,
         scrutinee: &Type,
         path: ResolvedPath,
         span: Span,
-    ) -> Result<Option<(CheckedVariant, String)>, Error> {
+    ) -> Result<(Option<Type>, String), Option<Error>> {
         let Some(ut) = scrutinee
             .strip_references()
             .as_user()
             .filter(|ut| self.scopes.get(ut.id).data.is_union())
         else {
-            return Err(Error::new(
+            return Err(Some(Error::new(
                 format!(
                     "cannot use union pattern on type '{}'",
                     scrutinee.name(&self.scopes)
                 ),
                 span,
-            ));
+            )));
         };
         self.resolve_members(ut.id);
 
@@ -2611,7 +2601,7 @@ impl TypeChecker {
             })
             .and_then(|ut| self.scopes.get(ut.id).data.as_union().zip(Some(ut)))
         else {
-            return Err(match path {
+            return Err(Some(match path {
                 ResolvedPath::UserType(ut) => Error::expected_found(
                     &scrutinee.name(&self.scopes),
                     &format!("type '{}'", self.scopes.get(ut.id).name),
@@ -2627,19 +2617,25 @@ impl TypeChecker {
                     &format!("variable '{}'", self.scopes.get(id).name),
                     span,
                 ),
-                ResolvedPath::None(err) => return Err(err),
-            });
+                ResolvedPath::None(err) => err,
+            }));
         };
 
         if ut.id == path_ut.id {
-            Ok(Some((union.get(&variant).unwrap().clone(), variant)))
+            Ok((
+                union
+                    .get(&variant)
+                    .unwrap()
+                    .clone()
+                    .map(|ty| scrutinee.matched_inner_type(ty.with_templates(&ut.ty_args))),
+                variant,
+            ))
         } else {
-            self.error::<()>(Error::type_mismatch_s(
+            Err(self.error(Error::type_mismatch_s(
                 &scrutinee.name(&self.scopes),
                 &path_ut.name(&self.scopes),
                 span,
-            ));
-            Ok(None)
+            )))
         }
     }
 
@@ -2975,128 +2971,23 @@ impl TypeChecker {
         span: Span,
     ) -> CheckedPattern {
         match self.get_union_variant(scrutinee, resolved, span) {
-            Ok(Some((CheckedVariant::TupleLike(members), variant))) => {
-                if members.len() != subpatterns.len() {
-                    self.error(Error::expected_found(
-                        &scrutinee.name(&self.scopes),
-                        &format!("({})", ["_"].repeat(subpatterns.len()).join(", ")),
-                        span,
-                    ))
-                }
-
-                let id = scrutinee.strip_references().as_user().unwrap();
-                let mut irrefutable = true;
-                let mut checked = Vec::new();
-                for (i, patt) in subpatterns.into_iter().enumerate() {
-                    let (inner, ty) = if let Some(ty) = members.get(i) {
-                        let ty = ty.with_templates(&id.ty_args);
-                        (ty.clone(), scrutinee.matched_inner_type(ty))
-                    } else {
-                        (Type::Unknown, Type::Unknown)
-                    };
-
-                    let patt = self.check_pattern(true, &ty, mutable, patt);
-                    if !patt.irrefutable {
-                        irrefutable = false;
-                    }
-                    checked.push((format!("{i}"), inner, patt));
-                }
-
+            Ok((Some(scrutinee), variant)) => {
                 CheckedPattern::refutable(CheckedPatternData::UnionMember {
                     pattern: Some(
-                        CheckedPattern::new(
-                            irrefutable,
-                            CheckedPatternData::Destrucure {
-                                patterns: checked,
-                                borrows: scrutinee.is_any_ptr(),
-                            },
-                        )
-                        .into(),
+                        self.check_tuple_pattern(&scrutinee, mutable, subpatterns, span)
+                            .into(),
                     ),
                     variant,
                     inner: Type::Unknown,
                     borrows: scrutinee.is_any_ptr(),
                 })
             }
-            Ok(Some((CheckedVariant::StructLike(_), _))) => self.error(Error::expected_found(
-                "tuple variant pattern",
-                "struct variant pattern",
-                span,
-            )),
-            Ok(Some((CheckedVariant::Empty, _))) => self.error(Error::expected_found(
+            Ok((None, _)) => self.error(Error::expected_found(
                 "tuple variant pattern",
                 "empty variant pattern",
                 span,
             )),
-            Err(err) => self.error(err),
-            _ => Default::default(),
-        }
-    }
-
-    fn check_struct_union_pattern(
-        &mut self,
-        scrutinee: &Type,
-        mutable: bool,
-        resolved: ResolvedPath,
-        subpatterns: Vec<Destructure>,
-        span: Span,
-    ) -> CheckedPattern {
-        match self.get_union_variant(scrutinee, resolved, span) {
-            Ok(Some((CheckedVariant::StructLike(members), variant))) => {
-                let id = scrutinee.strip_references().as_user().unwrap();
-                let mut irrefutable = true;
-                let mut checked = Vec::new();
-                for des in subpatterns {
-                    let Some(member) = members.get(&des.name.data) else {
-                        self.diag.error(Error::no_member(
-                            &scrutinee.name(&self.scopes),
-                            &des.name.data,
-                            des.name.span,
-                        ));
-                        continue;
-                    };
-
-                    // TODO: duplicates
-                    let inner = member.with_templates(&id.ty_args);
-                    let patt = self.check_pattern(
-                        true,
-                        &scrutinee.matched_inner_type(inner.clone()),
-                        mutable || des.mutable,
-                        des.pattern,
-                    );
-                    if !patt.irrefutable {
-                        irrefutable = false;
-                    }
-                    checked.push((des.name.data, inner, patt))
-                }
-
-                CheckedPattern::refutable(CheckedPatternData::UnionMember {
-                    pattern: Some(
-                        CheckedPattern::new(
-                            irrefutable,
-                            CheckedPatternData::Destrucure {
-                                patterns: checked,
-                                borrows: scrutinee.is_any_ptr(),
-                            },
-                        )
-                        .into(),
-                    ),
-                    variant,
-                    inner: Type::Unknown,
-                    borrows: scrutinee.is_any_ptr(),
-                })
-            }
-            Ok(Some((CheckedVariant::TupleLike(_), _))) => self.error(Error::expected_found(
-                "struct variant pattern",
-                "tuple variant pattern",
-                span,
-            )),
-            Ok(Some((CheckedVariant::Empty, _))) => self.error(Error::expected_found(
-                "struct variant pattern",
-                "empty variant pattern",
-                span,
-            )),
-            Err(err) => self.error(err),
+            Err(Some(err)) => self.error(err),
             _ => Default::default(),
         }
     }
@@ -3108,26 +2999,19 @@ impl TypeChecker {
         span: Span,
     ) -> CheckedPattern {
         match self.get_union_variant(scrutinee, resolved, span) {
-            Ok(None) => Default::default(),
-            Ok(Some((CheckedVariant::TupleLike(_), _))) => self.error(Error::expected_found(
+            Ok((Some(_), _)) => self.error(Error::expected_found(
                 "empty variant pattern",
-                "tuple variant pattern",
+                "variant pattern",
                 span,
             )),
-            Ok(Some((CheckedVariant::StructLike(_), _))) => self.error(Error::expected_found(
-                "empty variant pattern",
-                "struct variant pattern",
-                span,
-            )),
-            Ok(Some((CheckedVariant::Empty, variant))) => {
-                CheckedPattern::refutable(CheckedPatternData::UnionMember {
-                    pattern: None,
-                    variant,
-                    inner: Type::Unknown,
-                    borrows: false,
-                })
-            }
-            Err(err) => self.error(err),
+            Ok((None, variant)) => CheckedPattern::refutable(CheckedPatternData::UnionMember {
+                pattern: None,
+                variant,
+                inner: Type::Unknown,
+                borrows: false,
+            }),
+            Err(Some(err)) => self.error(err),
+            Err(None) => Default::default(),
         }
     }
 
@@ -3152,35 +3036,44 @@ impl TypeChecker {
                     return Default::default();
                 };
 
-                self.check_struct_union_pattern(scrutinee, mutable, resolved, subpatterns, span)
+                match self.get_union_variant(scrutinee, resolved, span) {
+                    Ok((Some(scrutinee), variant)) => {
+                        CheckedPattern::refutable(CheckedPatternData::UnionMember {
+                            pattern: Some(
+                                self.check_struct_pattern(&scrutinee, mutable, subpatterns, span)
+                                    .into(),
+                            ),
+                            variant,
+                            inner: Type::Unknown,
+                            borrows: scrutinee.is_any_ptr(),
+                        })
+                    }
+                    Ok((None, _)) => self.error(Error::expected_found(
+                        "tuple variant pattern",
+                        "empty variant pattern",
+                        span,
+                    )),
+                    Err(Some(err)) => self.error(err),
+                    _ => Default::default(),
+                }
             }
             Pattern::Path(path) => {
                 let resolved = self.resolve_path(&path, span, false);
                 if let Some(ident) = path.as_identifier() {
                     match resolved
-                        .ok_or(Error::new("", span))
+                        .ok_or(None)
                         .and_then(|p| self.get_union_variant(scrutinee, p, span))
                     {
-                        Ok(None) => Default::default(),
                         Ok(_) if binding => self.error(Error::new(
                             "cannot create binding that shadows union variant",
                             span,
                         )),
-                        Ok(Some((CheckedVariant::TupleLike(_), _))) => {
-                            self.error(Error::expected_found(
-                                "empty variant pattern",
-                                "tuple variant pattern",
-                                span,
-                            ))
-                        }
-                        Ok(Some((CheckedVariant::StructLike(_), _))) => {
-                            self.error(Error::expected_found(
-                                "empty variant pattern",
-                                "struct variant pattern",
-                                span,
-                            ))
-                        }
-                        Ok(Some((CheckedVariant::Empty, variant))) => {
+                        Ok((Some(_), _)) => self.error(Error::expected_found(
+                            "empty variant pattern",
+                            "tuple variant pattern",
+                            span,
+                        )),
+                        Ok((None, variant)) => {
                             CheckedPattern::refutable(CheckedPatternData::UnionMember {
                                 pattern: None,
                                 variant,
@@ -3188,7 +3081,7 @@ impl TypeChecker {
                                 borrows: false,
                             })
                         }
-                        Err(_) => CheckedPattern::irrefutable(CheckedPatternData::Variable(
+                        Err(Some(_)) => CheckedPattern::irrefutable(CheckedPatternData::Variable(
                             self.insert(
                                 Variable {
                                     name: ident.into(),
@@ -3201,6 +3094,7 @@ impl TypeChecker {
                             )
                             .0,
                         )),
+                        Err(None) => Default::default(),
                     }
                 } else if let Some(resolved) = resolved {
                     self.check_empty_union_pattern(scrutinee, resolved, span)
@@ -4022,6 +3916,15 @@ impl TypeChecker {
                 let params = params.iter().map(|p| self.resolve_typehint(p)).collect();
                 self.scopes.get_tuple(params)
             }
+            TypeHint::AnonStruct(params) => {
+                let mut types = Vec::with_capacity(params.len());
+                let mut names = Vec::with_capacity(params.len());
+                for (name, ty) in params {
+                    names.push(name.clone());
+                    types.push(self.resolve_typehint(ty));
+                }
+                self.scopes.get_anon_struct(names, types)
+            }
             TypeHint::Fn {
                 is_extern: _,
                 params,
@@ -4043,20 +3946,8 @@ impl TypeChecker {
         }
 
         if let Some(mut union) = self.scopes.get(id).data.as_union().cloned() {
-            for variant in union.values_mut() {
-                match variant {
-                    CheckedVariant::Empty => {}
-                    CheckedVariant::StructLike(members) => {
-                        for member in members.values_mut() {
-                            resolve_type!(self, *member);
-                        }
-                    }
-                    CheckedVariant::TupleLike(members) => {
-                        for member in members.iter_mut() {
-                            resolve_type!(self, *member);
-                        }
-                    }
-                }
+            for variant in union.values_mut().flatten() {
+                resolve_type!(self, *variant);
             }
             self.scopes.get_mut(id).data = UserTypeData::Union(union);
         }

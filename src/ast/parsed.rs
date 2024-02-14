@@ -325,6 +325,7 @@ pub enum TypeHint {
     Slice(Box<TypeHint>),
     SliceMut(Box<TypeHint>),
     Tuple(Vec<TypeHint>),
+    AnonStruct(Vec<(String, TypeHint)>),
     Set(Box<TypeHint>),
     Map(Box<TypeHint>, Box<TypeHint>),
     Option(Box<TypeHint>),
@@ -357,6 +358,16 @@ impl std::fmt::Debug for TypeHint {
                     write!(f, "{inner:?}")?;
                 }
                 write!(f, ")")
+            }
+            TypeHint::AnonStruct(vals) => {
+                write!(f, "struct {{")?;
+                for (i, (name, hint)) in vals.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{name}: {hint:?}")?;
+                }
+                write!(f, "}}")
             }
             TypeHint::Set(inner) => write!(f, "{{{inner:?}}}"),
             TypeHint::Map(key, val) => write!(f, "[{key:?}: {val:?}]"),

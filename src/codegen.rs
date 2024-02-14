@@ -183,35 +183,9 @@ impl<'a> TypeGen<'a> {
 
                 definitions.emit(" union{");
                 for (name, ty) in union.iter() {
-                    definitions.emit("struct{");
-                    match ty {
-                        CheckedVariant::Empty => {
-                            definitions.emit("CTL_DUMMY_MEMBER;");
-                        }
-                        CheckedVariant::StructLike(types) => {
-                            if types.is_empty() {
-                                definitions.emit("CTL_DUMMY_MEMBER;");
-                            }
-                            for (name, ty) in types {
-                                self.emit_member(ut, name, ty, &mut definitions, flags.minify);
-                            }
-                        }
-                        CheckedVariant::TupleLike(types) => {
-                            if types.is_empty() {
-                                definitions.emit("CTL_DUMMY_MEMBER;");
-                            }
-                            for (i, ty) in types.iter().enumerate() {
-                                self.emit_member(
-                                    ut,
-                                    &format!("{i}"),
-                                    ty,
-                                    &mut definitions,
-                                    flags.minify,
-                                );
-                            }
-                        }
+                    if let Some(ty) = ty {
+                        self.emit_member(ut, name, ty, &mut definitions, flags.minify);
                     }
-                    definitions.emit(format!("}}${name};"));
                 }
                 definitions.emit("};");
             } else {
@@ -308,7 +282,7 @@ impl<'a> TypeGen<'a> {
 
         if let Some(union) = sty.data.as_union() {
             self.add_type(diag, &union.tag_type(), None);
-            for ty in union.values().flat_map(|f| f.member_types()) {
+            for ty in union.values().flatten() {
                 self.check_member_dep(diag, &ut, ty, adding, &mut deps, sty.name.span);
             }
         }
@@ -1434,19 +1408,16 @@ impl<'a> Codegen<'a> {
                             self.buffer.emit(format!(".${name}={value},"));
                         }
 
-                        self.buffer.emit(format!(".${variant}={{"));
-                        let mut emitted = false;
-                        for (name, value) in members
-                            .iter()
-                            .filter(|(name, _)| !ut.members.contains_key(name))
-                        {
-                            self.buffer.emit(format!(".${name}={value},"));
-                            emitted = true;
+                        if union.get(&variant).is_some_and(|v| v.is_some()) {
+                            self.buffer.emit(format!(".${variant}={{"));
+                            for (name, value) in members
+                                .iter()
+                                .filter(|(name, _)| !ut.members.contains_key(name))
+                            {
+                                self.buffer.emit(format!(".${name}={value},"));
+                            }
+                            self.buffer.emit("}");
                         }
-                        if !emitted {
-                            self.buffer.emit("CTL_DUMMY_INIT");
-                        }
-                        self.buffer.emit("}}");
                     } else {
                         if members.is_empty() {
                             self.buffer.emit("CTL_DUMMY_INIT");
@@ -1458,8 +1429,8 @@ impl<'a> Codegen<'a> {
                             self.emit_expr(value, state);
                             self.buffer.emit(",");
                         }
-                        self.buffer.emit("}");
                     }
+                    self.buffer.emit("}");
                 }
             }
             CheckedExprData::Member { source, member } => {
