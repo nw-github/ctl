@@ -35,11 +35,12 @@ macro_rules! type_check_bail {
 
 macro_rules! resolve_type {
     ($self: expr, $ty: expr) => {
-        let mut ty = std::mem::take(&mut $ty);
-        if let Type::Unresolved(hint) = ty {
-            ty = $self.enter_id_and_resolve(hint.1, |this| this.resolve_typehint(&hint.0));
-        }
-        $ty = ty;
+        $ty = match std::mem::take(&mut $ty) {
+            Type::Unresolved(hint) => {
+                $self.enter_id_and_resolve(hint.1, |this| this.resolve_typehint(hint.0))
+            }
+            ty => ty,
+        };
     };
 }
 
@@ -999,7 +1000,7 @@ impl TypeChecker {
             DeclaredStmt::Let { ty, value, patt } => {
                 let span = patt.span;
                 if let Some(ty) = ty {
-                    let ty = self.resolve_typehint(&ty);
+                    let ty = self.resolve_typehint(ty);
                     let patt = self.check_pattern(true, &ty, false, patt);
                     if !patt.irrefutable {
                         return self.error(Error::must_be_irrefutable("let binding pattern", span));
@@ -2026,7 +2027,7 @@ impl TypeChecker {
                 )
             }
             ExprData::As { expr, ty, throwing } => {
-                let ty = self.resolve_typehint(&ty);
+                let ty = self.resolve_typehint(ty);
                 let expr = self.check_expr(*expr, Some(&ty));
                 match expr.coerce_to(&self.scopes, &ty) {
                     Ok(expr) => expr,
@@ -2049,7 +2050,7 @@ impl TypeChecker {
                 };
 
                 let mut lparams = Vec::new();
-                let ret = ret.map(|ret| self.resolve_typehint(&ret)).or_else(|| {
+                let ret = ret.map(|ret| self.resolve_typehint(ret)).or_else(|| {
                     target
                         .as_ref()
                         .and_then(|ty| ty.as_fn_ptr())
@@ -2062,7 +2063,7 @@ impl TypeChecker {
                     for (i, param) in params.into_iter().enumerate() {
                         let ty = param
                             .1
-                            .map(|ty| this.resolve_typehint(&ty))
+                            .map(|ty| this.resolve_typehint(ty))
                             .or_else(|| {
                                 target
                                     .as_ref()
@@ -3837,7 +3838,7 @@ impl TypeChecker {
         Type::User(GenericUserType::from_type_args(&self.scopes, id, args).into())
     }
 
-    fn resolve_typehint(&mut self, hint: &TypeHint) -> Type {
+    fn resolve_typehint(&mut self, hint: TypeHint) -> Type {
         match hint {
             TypeHint::Regular(path) => {
                 let res = path.data.as_identifier().and_then(|symbol| match symbol {
@@ -3878,8 +3879,8 @@ impl TypeChecker {
                 }
             }
             TypeHint::Void => Type::Void,
-            TypeHint::Ptr(ty) => Type::Ptr(self.resolve_typehint(ty).into()),
-            TypeHint::MutPtr(ty) => Type::MutPtr(self.resolve_typehint(ty).into()),
+            TypeHint::Ptr(ty) => Type::Ptr(self.resolve_typehint(*ty).into()),
+            TypeHint::MutPtr(ty) => Type::MutPtr(self.resolve_typehint(*ty).into()),
             TypeHint::This(span) => {
                 let current = self.current_function();
                 for (_, scope) in self.scopes.walk(self.current) {
@@ -3895,25 +3896,26 @@ impl TypeChecker {
                         _ => {}
                     }
                 }
-                self.error(Error::new(format!("'{THIS_TYPE}' outside of type"), *span))
+                self.error(Error::new(format!("'{THIS_TYPE}' outside of type"), span))
             }
             TypeHint::Array(ty, count) => {
-                let n = match Self::consteval(&self.scopes, count, Some(&Type::Usize)) {
+                let n = match Self::consteval(&self.scopes, &count, Some(&Type::Usize)) {
                     Ok(n) => n,
                     Err(err) => return self.error(err),
                 };
-                Type::Array((self.resolve_typehint(ty), n).into())
+                Type::Array((self.resolve_typehint(*ty), n).into())
             }
-            TypeHint::Option(ty) => self.resolve_lang_type("option", &[(**ty).clone()]),
-            TypeHint::Vec(ty) => self.resolve_lang_type("vec", &[(**ty).clone()]),
-            TypeHint::Map(key, value) => {
-                self.resolve_lang_type("map", &[(**key).clone(), (**value).clone()])
-            }
-            TypeHint::Set(ty) => self.resolve_lang_type("set", &[(**ty).clone()]),
-            TypeHint::Slice(ty) => self.resolve_lang_type("span", &[(**ty).clone()]),
-            TypeHint::SliceMut(ty) => self.resolve_lang_type("span_mut", &[(**ty).clone()]),
+            TypeHint::Option(ty) => self.resolve_lang_type("option", &[*ty]),
+            TypeHint::Vec(ty) => self.resolve_lang_type("vec", &[*ty]),
+            TypeHint::Map(key, val) => self.resolve_lang_type("map", &[*key, *val]),
+            TypeHint::Set(ty) => self.resolve_lang_type("set", &[*ty]),
+            TypeHint::Slice(ty) => self.resolve_lang_type("span", &[*ty]),
+            TypeHint::SliceMut(ty) => self.resolve_lang_type("span_mut", &[*ty]),
             TypeHint::Tuple(params) => {
-                let params = params.iter().map(|p| self.resolve_typehint(p)).collect();
+                let params = params
+                    .into_iter()
+                    .map(|p| self.resolve_typehint(p))
+                    .collect();
                 self.scopes.get_tuple(params)
             }
             TypeHint::AnonStruct(params) => {
@@ -3931,8 +3933,11 @@ impl TypeChecker {
                 ret,
             } => Type::FnPtr(
                 FnPtr {
-                    params: params.iter().map(|p| self.resolve_typehint(p)).collect(),
-                    ret: self.resolve_typehint(ret),
+                    params: params
+                        .into_iter()
+                        .map(|p| self.resolve_typehint(p))
+                        .collect(),
+                    ret: self.resolve_typehint(*ret),
                 }
                 .into(),
             ),
@@ -4680,7 +4685,7 @@ impl TypeChecker {
                 .cloned()
                 .zip(
                     args.iter()
-                        .map(|ty| self.resolve_typehint(ty))
+                        .map(|ty| self.resolve_typehint(ty.clone()))
                         .take(params.len())
                         .chain(
                             std::iter::repeat(Type::Unknown)
