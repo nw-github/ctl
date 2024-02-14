@@ -18,7 +18,7 @@ pub struct str {
 
     pub fn from_c_str(ptr: *c_char): str {
         // TODO: validate UTF-8
-        str(span: unsafe Span::new(ptr as *u8, builtin::strlen(ptr)))
+        str(span: unsafe Span::new(ptr as *raw u8, builtin::strlen(ptr)))
     }
 
     pub unsafe fn from_utf8_unchecked(span: [u8..]): str {
@@ -34,11 +34,11 @@ pub struct str {
     }
 
     pub fn as_ptr(this): *u8 {
-        unsafe this.span.as_raw().as_ptr()
+        unsafe this.span.as_raw() as *u8
     }
 
     pub fn as_c_str(this): *c_char {
-        unsafe this.span.as_raw().as_ptr() as *c_char
+        unsafe this.span.as_raw() as *c_char
     }
 
     pub fn as_bytes(this): [u8..] {

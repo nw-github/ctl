@@ -5,8 +5,8 @@ pub extension StringExt for str {
         mut i = 0u;
         while i < n {
             unsafe std::mem::copy::<u8>(
-                dst: std::ptr::offset_mut(buf.as_raw_mut().as_mut_ptr(), num * i),
-                src: this.as_ptr(),
+                dst: std::ptr::raw_add(buf.as_raw(), num * i),
+                src: this.as_ptr() as *raw u8,
                 num:,
             );
 

@@ -1,5 +1,3 @@
-use core::ptr::Raw;
-use core::ptr::RawMut;
 use core::range::RangeBounds;
 use core::range::Bound;
 use core::iter::Iterator;
@@ -7,10 +5,10 @@ use core::panic;
 
 #(lang(span))
 pub struct Span<T> {
-    ptr: *T,
+    ptr: *raw T,
     len: uint,
 
-    pub unsafe fn new(ptr: *T, len: uint): [T..] {
+    pub unsafe fn new(ptr: *raw T, len: uint): [T..] {
         Span(ptr:, len:)
     }
 
@@ -29,17 +27,17 @@ pub struct Span<T> {
     }
 
     pub unsafe fn get_unchecked(this, idx: uint): *T {
-        unsafe core::ptr::offset(this.ptr, idx)
+        unsafe core::ptr::raw_add(this.ptr, idx) as *T
     }
 
-    pub fn as_raw(this): Raw<T> {
-        Raw::from_ptr(this.ptr)
+    pub fn as_raw(this): *raw T {
+        this.ptr
     }
 
     pub fn iter(this): Iter<T> {
         Iter(
             ptr: this.ptr,
-            end: unsafe core::ptr::offset(this.ptr, this.len),
+            end: unsafe core::ptr::raw_add(this.ptr, this.len),
         )
     }
 
@@ -61,7 +59,7 @@ pub struct Span<T> {
         }
 
         Span(
-            ptr: unsafe core::ptr::offset(this.ptr, start),
+            ptr: unsafe core::ptr::raw_add(this.ptr, start),
             len: end - start,
         )
     }
@@ -69,10 +67,10 @@ pub struct Span<T> {
 
 #(lang(span_mut))
 pub struct SpanMut<T> {
-    ptr: *mut T,
+    ptr: *raw T,
     len: uint,
 
-    pub unsafe fn new(ptr: *mut T, len: uint): [mut T..] {
+    pub unsafe fn new(ptr: *raw T, len: uint): [mut T..] {
         SpanMut(ptr:, len:)
     }
 
@@ -97,32 +95,28 @@ pub struct SpanMut<T> {
     }
 
     pub unsafe fn get_unchecked(this, idx: uint): *T {
-        unsafe core::ptr::offset(this.ptr, idx)
+        unsafe core::ptr::raw_add(this.ptr, idx) as *T
     }
 
     pub unsafe fn get_mut_unchecked(this, idx: uint): *mut T {
-        unsafe core::ptr::offset_mut(this.ptr, idx)
+        unsafe core::ptr::raw_add(this.ptr, idx) as *mut T
     }
 
-    pub fn as_raw(this): Raw<T> {
-        Raw::from_ptr(this.ptr)
-    }
-
-    pub fn as_raw_mut(this): RawMut<T> {
-        RawMut::from_ptr(this.ptr)
+    pub fn as_raw(this): *raw T {
+        this.ptr
     }
 
     pub fn iter(this): Iter<T> {
         Iter(
             ptr: this.ptr,
-            end: unsafe core::ptr::offset(this.ptr, this.len),
+            end: unsafe core::ptr::raw_add(this.ptr, this.len),
         )
     }
 
     pub fn iter_mut(this): IterMut<T> {
         IterMut(
             ptr: this.ptr,
-            end: unsafe core::ptr::offset_mut(this.ptr, this.len),
+            end: unsafe core::ptr::raw_add(this.ptr, this.len),
         )
     }
 
@@ -144,33 +138,39 @@ pub struct SpanMut<T> {
         }
 
         SpanMut(
-            ptr: unsafe core::ptr::offset_mut(this.ptr, start),
+            ptr: unsafe core::ptr::raw_add(this.ptr, start),
             len: end - start,
         )
     }
 }
 
 pub struct Iter<T> {
-    ptr: *T,
-    end: *T,
+    ptr: *raw T,
+    end: *raw T,
 
     impl Iterator<*T> {
         fn next(mut this): ?*T {
-            if !core::ptr::eq(this.ptr, this.end) {
-                core::mem::replace(&mut this.ptr, unsafe core::ptr::offset(this.ptr, 1))
+            if this.ptr != this.end {
+                unsafe core::mem::replace::<*raw T>(
+                    &mut this.ptr,
+                    core::ptr::raw_add(this.ptr, 1),
+                ) as *T
             }
         }
     }
 }
 
 pub struct IterMut<T> {
-    ptr: *mut T,
-    end: *mut T,
+    ptr: *raw T,
+    end: *raw T,
 
     impl Iterator<*mut T> {
         fn next(mut this): ?*mut T {
-            if !core::ptr::eq(this.ptr, this.end) {
-                core::mem::replace(&mut this.ptr, unsafe core::ptr::offset_mut(this.ptr, 1))
+            if this.ptr != this.end {
+                unsafe core::mem::replace::<*raw T>(
+                    &mut this.ptr,
+                    core::ptr::raw_add(this.ptr, 1),
+                ) as *mut T
             }
         }
     }
@@ -181,5 +181,5 @@ pub fn compare<T>(lhs: [T..], rhs: [T..]): bool {
         return false;
     }
 
-    unsafe core::mem::compare(lhs.as_raw().as_ptr(), rhs.as_raw().as_ptr(), lhs.len())
+    unsafe core::mem::compare(lhs.ptr, rhs.ptr, lhs.len())
 }

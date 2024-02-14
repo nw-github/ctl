@@ -1244,7 +1244,7 @@ impl<'a> Codegen<'a> {
 
                     self.emit_with_capacity(&expr.ty, &tmp, &ut, len);
                     self.buffer.emit(format!(
-                        "CTL_MEMCPY((void*){tmp}.$ptr.$addr,(const void*){arr},{len}*{}",
+                        "CTL_MEMCPY((void*){tmp}.$ptr,(const void*){arr},{len}*{}",
                         inner.size_and_align(self.scopes).0
                     ));
                     self.buffer.emit(format!(");{tmp}.$len={len};"));
@@ -1257,7 +1257,7 @@ impl<'a> Codegen<'a> {
                     self.emit_with_capacity(&expr.ty, &tmp, &ut, &len);
                     self.buffer.emit(format!("for(usize i=0;i<{len};i++){{(("));
                     self.emit_type(ut.first_type_arg().unwrap());
-                    self.buffer.emit(format!("*){tmp}.$ptr.$addr)[i]="));
+                    self.buffer.emit(format!("*){tmp}.$ptr)[i]="));
                     self.emit_expr(*init, state);
                     self.buffer.emit(format!(";}}{tmp}.$len={len};"));
                 });
@@ -1774,7 +1774,7 @@ impl<'a> Codegen<'a> {
         &mut self,
         name: &str,
         func: &GenericFunc,
-        args: IndexMap<String, CheckedExpr>,
+        mut args: IndexMap<String, CheckedExpr>,
         state: &mut State,
     ) {
         match name {
@@ -1789,6 +1789,14 @@ impl<'a> Codegen<'a> {
                     "{}",
                     func.first_type_arg().unwrap().size_and_align(self.scopes).1
                 ));
+            }
+            "raw_add" | "raw_sub" => {
+                self.buffer.emit("(");
+                self.emit_expr(args.shift_remove_index(0).unwrap().1, state);
+                self.buffer
+                    .emit(if matches!(name, "raw_sub") { "-" } else { "+" });
+                self.emit_expr(args.shift_remove_index(0).unwrap().1, state);
+                self.buffer.emit(")");
             }
             "panic" => {
                 let panic = State::new(GenericFunc::from_id(

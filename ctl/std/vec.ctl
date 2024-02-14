@@ -1,16 +1,14 @@
-use std::ptr::Raw;
-use std::ptr::RawMut;
 use std::mem;
 use std::span::*;
 
 #(lang(vec))
 pub struct Vec<T> {
-    ptr: RawMut<T>,
+    ptr: *raw T,
     len: uint,
     cap: uint,
 
     pub fn new(): Vec<T> {
-        Vec(ptr: RawMut::dangling(), len: 0, cap: 0)
+        Vec(ptr: std::ptr::raw_dangling(), len: 0, cap: 0)
     }
 
     pub fn with_capacity(cap: uint): Vec<T> {
@@ -23,8 +21,8 @@ pub struct Vec<T> {
         mut self: [T] = Vec::with_capacity(span.len());
         unsafe {
             mem::copy(
-                dst: self.as_raw_mut().as_mut_ptr(),
-                src: span.as_raw().as_ptr(),
+                dst: self.ptr,
+                src: span.as_raw(),
                 num: span.len(),
             );
             self.set_len(span.len());
@@ -45,18 +43,18 @@ pub struct Vec<T> {
     }
 
     pub fn as_span(this): [T..] {
-        unsafe Span::new(this.ptr.as_mut_ptr(), this.len)
+        unsafe Span::new(this.ptr, this.len)
     }
 
-    pub fn as_span_mut(this): [mut T..] {
-        unsafe SpanMut::new(this.ptr.as_mut_ptr(), this.len)
+    pub fn as_span_mut(mut this): [mut T..] {
+        unsafe SpanMut::new(this.ptr, this.len)
     }
 
     pub fn iter(this): Iter<T> {
         this.as_span().iter()
     }
 
-    pub fn iter_mut(this): IterMut<T> {
+    pub fn iter_mut(mut this): IterMut<T> {
         this.as_span_mut().iter_mut()
     }
 
@@ -65,12 +63,12 @@ pub struct Vec<T> {
             this.grow();
         }
 
-        unsafe this.ptr.add(this.len++).write(t);
+        unsafe *std::ptr::raw_add(this.ptr, this.len++) = t;
     }
 
     pub fn push_within_capacity(mut this, t: T): ?T {
         if this.can_insert(1) {
-            unsafe this.ptr.add(this.len++).write(t);
+            unsafe *std::ptr::raw_add(this.ptr, this.len++) = t;
             null
         } else {
             t
@@ -79,7 +77,7 @@ pub struct Vec<T> {
 
     pub fn pop(mut this): ?T {
         if this.len > 0 {
-            unsafe this.ptr.add(--this.len).read()
+            unsafe *std::ptr::raw_add(this.ptr, --this.len)
         }
     }
 
@@ -89,8 +87,8 @@ pub struct Vec<T> {
         }
 
         unsafe mem::copy(
-            dst: this.ptr.add(this.len).as_mut_ptr(),
-            src: rhs.ptr.as_ptr(),
+            dst: std::ptr::raw_add::<T>(this.ptr, this.len),
+            src: rhs.ptr,
             num: rhs.len,
         );
 
@@ -116,16 +114,16 @@ pub struct Vec<T> {
             this.grow();
         }
 
-        let src = this.ptr.add(idx);
+        let src = std::ptr::raw_add(this.ptr, idx);
         if idx < this.len {
             unsafe mem::copy_overlapping(
-                dst: this.ptr.add(idx + 1).as_mut_ptr(), 
-                src: src.as_ptr(), 
+                dst: std::ptr::raw_add::<T>(src, 1), 
+                src:, 
                 num: this.len - idx,
             );
         }
 
-        unsafe src.write(t);
+        unsafe *src = t;
         this.len++;
     }
 
@@ -135,12 +133,12 @@ pub struct Vec<T> {
         }
 
         unsafe {
-            let ptr = this.ptr.add(idx);
-            let t   = ptr.read();
+            let dst = std::ptr::raw_add(this.ptr, idx);
+            let t   = unsafe *dst;
             if idx + 1 < this.len {
                 mem::copy_overlapping(
-                    dst: ptr.as_mut_ptr(),
-                    src: ptr.add(1).as_ptr(),
+                    dst:,
+                    src: std::ptr::raw_add::<T>(dst, 1),
                     num: this.len - idx,
                 );
             }
@@ -157,11 +155,11 @@ pub struct Vec<T> {
 
         this.len--;
 
-        let ptr = this.ptr.add(idx);
+        let ptr = std::ptr::raw_add(this.ptr, idx);
         if idx < this.len {
-            unsafe mem::replace(ptr.as_mut_ptr(), this.ptr.add(this.len).read())
+            unsafe mem::replace(ptr as *mut T, unsafe *std::ptr::raw_add(this.ptr, this.len))
         } else {
-            unsafe ptr.read()
+            unsafe *ptr
         }
     }
 
@@ -177,21 +175,17 @@ pub struct Vec<T> {
 
     pub fn get(this, idx: uint): ?*T {
         if idx < this.len {
-            unsafe this.ptr.add(idx).as_ptr()
+            unsafe std::ptr::raw_add(this.ptr, idx) as *T
         }
     }
 
     pub fn get_mut(mut this, idx: uint): ?*mut T {
         if idx < this.len {
-            unsafe this.ptr.add(idx).as_mut_ptr()
+            unsafe std::ptr::raw_add(this.ptr, idx) as *mut T
         }
     }
 
-    pub fn as_raw(this): Raw<T> {
-        Raw::from_mut(this.ptr)
-    }
-
-    pub fn as_raw_mut(mut this): RawMut<T> {
+    pub fn as_raw(this): *raw T {
         this.ptr
     }
 
@@ -215,7 +209,7 @@ pub struct Vec<T> {
         let ptr = if this.cap == 0 {
             std::alloc::alloc::<T>(cap)
         } else {
-            std::alloc::realloc(unsafe this.ptr.as_mut_ptr(), cap)
+            std::alloc::realloc(unsafe this.ptr as *mut T, cap)
         };
         if (ptr is ?ptr) {
             this.ptr = ptr;

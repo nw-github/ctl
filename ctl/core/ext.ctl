@@ -4,7 +4,7 @@ use core::ops::Eq;
 
 extension<T> _ for T {
     pub fn hash_bytes<H: Hasher>(this, h: *mut H) {
-        h.hash(unsafe Span::new(this as *u8, core::mem::size_of::<T>()));
+        h.hash(unsafe Span::new(this as *raw u8, core::mem::size_of::<T>()));
     }
 }
 
@@ -17,7 +17,7 @@ pub extension<T: core::reflect::Numeric> NumberExt for T {
 
     impl Eq<T> {
         fn eq(this, rhs: *T): bool {
-            unsafe core::mem::compare(this, rhs, 1)
+            unsafe core::mem::compare(this as *raw T, rhs as *raw T, 1)
         }
     }
 }

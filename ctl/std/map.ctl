@@ -92,7 +92,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         Iter(buckets: this.buckets.as_span())
     }
 
-    pub fn iter_mut(this): IterMut<K, V> {
+    pub fn iter_mut(mut this): IterMut<K, V> {
         IterMut(buckets: this.buckets.as_span_mut())
     }
 

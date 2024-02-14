@@ -59,11 +59,10 @@ impl<T> WithTypeArgs<T> {
     pub fn infer_type_args(&mut self, mut src: &Type, mut target: &Type) {
         loop {
             match (src, target) {
-                (Type::Ptr(gi), Type::Ptr(ti) | Type::RawPtr(ti)) => {
-                    src = gi;
-                    target = ti;
-                }
-                (Type::Ptr(gi) | Type::MutPtr(gi), Type::MutPtr(ti) | Type::RawPtr(ti)) => {
+                (
+                    Type::Ptr(gi) | Type::MutPtr(gi) | Type::RawPtr(gi),
+                    Type::Ptr(ti) | Type::MutPtr(ti) | Type::RawPtr(ti),
+                ) => {
                     src = gi;
                     target = ti;
                 }
