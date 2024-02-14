@@ -40,7 +40,7 @@ patterns:
   -
     comment: attributes
     name: meta.attribute.ctl
-    begin: '(#)(\!?)(\[)'
+    begin: '(#)(\!?)(\()'
     beginCaptures:
       1:
         name: punctuation.definition.attribute.ctl
@@ -48,7 +48,7 @@ patterns:
         name: keyword.operator.attribute.inner.ctl
       3:
         name: punctuation.brackets.attribute.ctl
-    end: '\]'
+    end: '\)'
     endCaptures:
       0:
         name: punctuation.brackets.attribute.ctl
@@ -168,7 +168,7 @@ repository:
       -
         comment: decimal integers and floats
         name: constant.numeric.decimal.ctl
-        match: \b\d[\d_]*(\.?)[\d_]*(?:(E)([+-])([\d_]+))?(f32|f64|u\d+|i\d+|isize|usize)?\b
+        match: \b\d[\d_]*(\.?)[\d_]*(?:(E)([+-])([\d_]+))?(f32|f64|u\d+|i\d+|u|i)?\b
         captures:
           1:
             name: punctuation.separator.dot.decimal.ctl
@@ -183,21 +183,21 @@ repository:
       -
         comment: hexadecimal integers
         name: constant.numeric.hex.ctl
-        match: \b0x[\da-fA-F_]+(u\d+|i\d+|isize|usize)?\b
+        match: \b0x[\da-fA-F_]+(u\d+|i\d+|u|i)?\b
         captures:
           1:
             name: entity.name.type.numeric.ctl
       -
         comment: octal integers
         name: constant.numeric.oct.ctl
-        match: \b0o[0-7_]+(u\d+|i\d+|isize|usize)?\b
+        match: \b0o[0-7_]+(u\d+|i\d+|u|i)?\b
         captures:
           1:
             name: entity.name.type.numeric.ctl
       -
         comment: binary integers
         name: constant.numeric.bin.ctl
-        match: \b0b[01_]+(u\d+|i\d+|isize|usize)?\b
+        match: \b0b[01_]+(u\d+|i\d+|int|uint)?\b
         captures:
           1:
             name: entity.name.type.numeric.ctl
@@ -208,7 +208,7 @@ repository:
   escapes:
     comment: 'escapes: ASCII, byte, Unicode, quote, regex'
     name: constant.character.escape.ctl
-    match: (\\)(?:(?:(x[0-7][0-7a-fA-F])|(u(\{)[\da-fA-F]{4,6}(\}))|.))
+    match: (\\)(?:(?:(x[0-9a-fA-F]{2})|(u(\{)[\da-fA-F]{1,6}(\}))|.))
     captures:
       1:
         name: constant.character.escape.backslash.ctl
@@ -330,7 +330,7 @@ repository:
       -
         comment: storage keywords
         name: keyword.other.ctl storage.type.ctl
-        match: \b(extern|let|mod)\b
+        match: \b(import|export|let|mod)\b
       -
         comment: const keyword
         name: storage.modifier.ctl
@@ -506,7 +506,7 @@ repository:
     patterns:
       -
         comment: numeric types
-        match: '(?<![A-Za-z])(f32|f64|u\d+|i\d+|isize|usize)\b'
+        match: '(?<![A-Za-z])(f32|f64|u\d+|i\d+|int|uint)\b'
         captures:
           1:
             name: entity.name.type.numeric.ctl

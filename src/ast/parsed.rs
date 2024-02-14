@@ -1,22 +1,59 @@
-use crate::lexer::{Located, Span};
+use crate::{
+    lexer::{Located, Span},
+    THIS_TYPE,
+};
 
 use super::{Attribute, BinaryOp, UnaryOp};
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Linkage {
+    Import,
+    Export,
+    #[default]
+    Internal,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum PathOrigin {
+    Root,
+    Super(Span),
+    Normal,
+}
+
+impl std::fmt::Display for PathOrigin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Root => write!(f, "::"),
+            Self::Super(_) => write!(f, "super::"),
+            _ => Ok(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum UsePathTail {
+    All,
+    Ident(Located<String>),
+}
+
+#[derive(Debug, Clone)]
+pub struct UsePath {
+    pub public: bool,
+    pub origin: PathOrigin,
+    pub components: Vec<Located<String>>,
+    pub tail: UsePathTail,
+}
 
 #[derive(Debug, Clone)]
 pub struct Stmt {
     pub data: StmtData,
-    pub span: Span,
     pub attrs: Vec<Attribute>,
 }
 
 #[derive(Debug, Clone)]
 pub enum StmtData {
     Expr(Expr),
-    Use {
-        public: bool,
-        path: Path,
-        all: bool,
-    },
+    Use(UsePath),
     Let {
         patt: Located<Pattern>,
         ty: Option<TypeHint>,
@@ -27,26 +64,20 @@ pub enum StmtData {
     Union {
         tag: Option<Located<Path>>,
         base: Struct,
+        variants: Vec<Variant>,
         is_unsafe: bool,
     },
     Trait {
         public: bool,
-        name: String,
+        name: Located<String>,
         is_unsafe: bool,
         type_params: Vec<(String, Vec<Located<Path>>)>,
         impls: Vec<Located<Path>>,
         functions: Vec<Fn>,
     },
-    Enum {
-        public: bool,
-        name: Located<String>,
-        impls: Vec<ImplBlock>,
-        variants: Vec<(String, Option<Expr>)>,
-        functions: Vec<Fn>,
-    },
     Extension {
         public: bool,
-        name: String,
+        name: Located<String>,
         ty: TypeHint,
         type_params: Vec<(String, Vec<Located<Path>>)>,
         impls: Vec<ImplBlock>,
@@ -54,13 +85,13 @@ pub enum StmtData {
     },
     Static {
         public: bool,
-        name: String,
+        name: Located<String>,
         ty: TypeHint,
         value: Expr,
     },
     Module {
         public: bool,
-        name: String,
+        name: Located<String>,
         body: Vec<Stmt>,
     },
     Error,
@@ -77,7 +108,7 @@ pub enum ExprData {
     },
     Is {
         expr: Box<Expr>,
-        pattern: Located<Pattern>,
+        pattern: Located<FullPattern>,
     },
     As {
         expr: Box<Expr>,
@@ -114,7 +145,7 @@ pub enum ExprData {
     Float(String),
     String(String),
     Char(char),
-    ByteString(String),
+    ByteString(Vec<u8>),
     ByteChar(u8),
     Path(Path),
     Void,
@@ -142,7 +173,7 @@ pub enum ExprData {
     },
     Match {
         expr: Box<Expr>,
-        body: Vec<(Located<Pattern>, Expr)>,
+        body: Vec<(Located<FullPattern>, Expr)>,
     },
     Member {
         source: Box<Expr>,
@@ -154,9 +185,8 @@ pub enum ExprData {
         args: Vec<Expr>,
     },
     Return(Box<Expr>),
-    Yield(Box<Expr>),
     Tail(Box<Expr>),
-    Break(Box<Expr>),
+    Break(Option<Box<Expr>>),
     Unsafe(Box<Expr>),
     Range {
         start: Option<Box<Expr>>,
@@ -168,56 +198,50 @@ pub enum ExprData {
         params: Vec<(Located<String>, Option<TypeHint>)>,
         ret: Option<TypeHint>,
         body: Box<Expr>,
+        moves: bool,
     },
     Error,
 }
 
-#[derive(Clone, enum_as_inner::EnumAsInner)]
-pub enum Path {
-    Root(Vec<(String, Vec<TypeHint>)>),
-    Super(Vec<(String, Vec<TypeHint>)>),
-    Normal(Vec<(String, Vec<TypeHint>)>),
-}
+pub type PathComponent = (String, Vec<TypeHint>);
 
-impl From<String> for Path {
-    fn from(value: String) -> Self {
-        Self::Normal(vec![(value, Vec::new())])
-    }
+#[derive(Clone, derive_more::Constructor)]
+pub struct Path {
+    pub origin: PathOrigin,
+    pub components: Vec<PathComponent>,
 }
 
 impl Path {
     pub fn as_identifier(&self) -> Option<&str> {
-        self.as_normal().and_then(|comps| {
-            (comps.len() == 1 && comps[0].1.is_empty()).then_some(comps[0].0.as_str())
-        })
+        self.components
+            .first()
+            .filter(|_| matches!(self.origin, PathOrigin::Normal) && self.components.len() == 1)
+            .filter(|(_, generics)| generics.is_empty())
+            .map(|(path, _)| path.as_str())
+    }
+}
+
+impl From<String> for Path {
+    fn from(value: String) -> Self {
+        Self::new(PathOrigin::Normal, vec![(value, Vec::new())])
     }
 }
 
 impl std::fmt::Debug for Path {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let res = match self {
-            Path::Root(r) => {
-                write!(f, "::")?;
-                r
-            }
-            Path::Super(r) => {
-                write!(f, "super::")?;
-                r
-            }
-            Path::Normal(r) => r,
-        };
-
-        for (i, (name, generics)) in res.iter().enumerate() {
+        write!(f, "{}", self.origin)?;
+        for (i, (zero, one)) in self.components.iter().enumerate() {
             if i > 0 {
                 write!(f, "::")?;
             }
-            write!(f, "{name}")?;
-            if generics.is_empty() {
-                continue;
+
+            write!(f, "{}", zero)?;
+            if one.is_empty() {
+                return Ok(());
             }
 
             write!(f, "::<")?;
-            for (i, generic) in generics.iter().enumerate() {
+            for (i, generic) in one.iter().enumerate() {
                 if i > 0 {
                     write!(f, ", ")?;
                 }
@@ -234,7 +258,7 @@ impl std::fmt::Debug for Path {
 pub struct Destructure {
     pub name: Located<String>,
     pub mutable: bool,
-    pub pattern: Option<Located<Pattern>>,
+    pub pattern: Located<Pattern>,
 }
 
 #[derive(Debug, Clone)]
@@ -259,6 +283,10 @@ pub enum Pattern {
         path: Located<Path>,
         subpatterns: Vec<Located<Pattern>>,
     },
+    StructLike {
+        path: Located<Path>,
+        subpatterns: Vec<Destructure>,
+    },
     // x is ::core::opt::Option::None
     // x is y
     Path(Path),
@@ -269,7 +297,8 @@ pub enum Pattern {
     // x is null
     Null,
     // let {x, y} = z;
-    StructDestructure(Vec<Destructure>),
+    Struct(Vec<Destructure>),
+    Tuple(Vec<Located<Pattern>>),
     Int(IntPattern),
     IntRange(RangePattern<IntPattern>),
     String(String),
@@ -277,7 +306,15 @@ pub enum Pattern {
     CharRange(RangePattern<char>),
     Array(Vec<Located<Pattern>>),
     Rest(Option<(bool, String)>),
+    Bool(bool),
+    Void,
     Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct FullPattern {
+    pub data: Pattern,
+    pub if_expr: Option<Box<Expr>>,
 }
 
 #[derive(Clone)]
@@ -288,6 +325,7 @@ pub enum TypeHint {
     Slice(Box<TypeHint>),
     SliceMut(Box<TypeHint>),
     Tuple(Vec<TypeHint>),
+    AnonStruct(Vec<(String, TypeHint)>),
     Set(Box<TypeHint>),
     Map(Box<TypeHint>, Box<TypeHint>),
     Option(Box<TypeHint>),
@@ -299,8 +337,7 @@ pub enum TypeHint {
         ret: Box<TypeHint>,
     },
     Void,
-    This,
-    MutThis,
+    This(Span),
     Error,
 }
 
@@ -322,6 +359,16 @@ impl std::fmt::Debug for TypeHint {
                 }
                 write!(f, ")")
             }
+            TypeHint::AnonStruct(vals) => {
+                write!(f, "struct {{")?;
+                for (i, (name, hint)) in vals.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{name}: {hint:?}")?;
+                }
+                write!(f, "}}")
+            }
             TypeHint::Set(inner) => write!(f, "{{{inner:?}}}"),
             TypeHint::Map(key, val) => write!(f, "[{key:?}: {val:?}]"),
             TypeHint::Option(inner) => write!(f, "?{inner:?}"),
@@ -342,8 +389,7 @@ impl std::fmt::Debug for TypeHint {
                 write!(f, ") {ret:?}")
             }
             TypeHint::Void => write!(f, "void"),
-            TypeHint::This => write!(f, "This"),
-            TypeHint::MutThis => write!(f, "mut This"),
+            TypeHint::This(_) => write!(f, "{THIS_TYPE}"),
             TypeHint::Error => write!(f, "Error"),
         }
     }
@@ -351,9 +397,8 @@ impl std::fmt::Debug for TypeHint {
 
 #[derive(Debug, Clone)]
 pub struct Param {
-    pub mutable: bool,
     pub keyword: bool,
-    pub name: String,
+    pub patt: Located<Pattern>,
     pub ty: TypeHint,
     pub default: Option<Expr>,
 }
@@ -362,8 +407,8 @@ pub struct Param {
 pub struct Fn {
     pub public: bool,
     pub name: Located<String>,
+    pub linkage: Linkage,
     pub is_async: bool,
-    pub is_extern: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
     pub type_params: Vec<(String, Vec<Located<Path>>)>,
@@ -373,12 +418,24 @@ pub struct Fn {
 }
 
 #[derive(Debug, Clone)]
-pub struct MemVar {
+pub struct Member {
     pub public: bool,
-    pub name: String,
-    pub shared: bool,
+    pub name: Located<String>,
     pub ty: TypeHint,
     pub default: Option<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub enum VariantData {
+    Empty,
+    StructLike(Vec<Member>),
+    TupleLike(Vec<(TypeHint, Option<Expr>)>),
+}
+
+#[derive(Debug, Clone)]
+pub struct Variant {
+    pub name: Located<String>,
+    pub data: VariantData,
 }
 
 #[derive(Debug, Clone)]
@@ -386,7 +443,7 @@ pub struct Struct {
     pub public: bool,
     pub name: Located<String>,
     pub type_params: Vec<(String, Vec<Located<Path>>)>,
-    pub members: Vec<MemVar>,
+    pub members: Vec<Member>,
     pub impls: Vec<ImplBlock>,
     pub functions: Vec<Fn>,
 }

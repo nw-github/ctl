@@ -1,43 +1,43 @@
 use core::mem;
 
-pub unsafe fn offset<T>(ptr: *T, count: usize): *T {
-    unsafe ((ptr as usize) + count * mem::size_of::<T>()) as *T
+pub unsafe fn offset<T>(ptr: *T, count: uint): *T {
+    unsafe ((ptr as uint) + count * mem::size_of::<T>()) as *T
 }
 
-pub unsafe fn offset_mut<T>(ptr: *mut T, count: usize): *mut T {
-    unsafe ((ptr as usize) + count * mem::size_of::<T>()) as *mut T
+pub unsafe fn offset_mut<T>(ptr: *mut T, count: uint): *mut T {
+    unsafe ((ptr as uint) + count * mem::size_of::<T>()) as *mut T
 }
 
 pub fn eq<T>(lhs: *T, rhs: *T): bool {
-    lhs as usize == rhs as usize
+    lhs as uint == rhs as uint
 }
 
 pub struct Raw<T> {
-    addr: usize,
+    addr: uint,
 
-    pub fn from_ptr<U>(ptr: *U): Raw<U> {
-        Raw(addr: ptr as usize)
+    pub fn from_ptr(ptr: *T): Raw<T> {
+        Raw(addr: ptr as uint)
     }
 
-    pub fn from_addr<U>(addr: usize): ?Raw<U> {
+    pub fn from_addr(addr: uint): ?Raw<T> {
         if addr > 0 {
-            Raw::<U>(addr:)
+            Raw::<T>(addr:)
         }
     }
 
-    pub fn from_mut<U>(ptr: RawMut<U>): Raw<U> {
+    pub fn from_mut(ptr: RawMut<T>): Raw<T> {
         Raw::from_ptr(unsafe ptr.as_ptr())
     }
 
-    pub fn dangling<U>(): Raw<U> {
+    pub fn dangling(): Raw<T> {
         Raw(addr: 0xDEADBEEF)
     }
 
-    pub fn add(this, count: usize): Raw<T> {
+    pub fn add(this, count: uint): Raw<T> {
         Raw(addr: this.addr + count * mem::size_of::<T>())
     }
 
-    pub fn sub(this, count: usize): Raw<T> {
+    pub fn sub(this, count: uint): Raw<T> {
         Raw(addr: this.addr - count * mem::size_of::<T>())
     }
 
@@ -57,27 +57,27 @@ pub struct Raw<T> {
 }
 
 pub struct RawMut<T> {
-    addr: usize,
+    addr: uint,
 
-    pub fn from_ptr<U>(ptr: *U): RawMut<U> {
-        RawMut(addr: ptr as usize)
+    pub fn from_ptr(ptr: *T): RawMut<T> {
+        RawMut(addr: ptr as uint)
     }
 
-    pub fn from_addr<U>(addr: usize): ?RawMut<U> {
+    pub fn from_addr(addr: uint): ?RawMut<T> {
         if addr > 0 {
-            RawMut::<U>(addr:)
+            RawMut::<T>(addr:)
         }
     }
 
-    pub fn dangling<U>(): RawMut<U> {
+    pub fn dangling(): RawMut<T> {
         RawMut(addr: 0xDEADBEEF)
     }
 
-    pub fn add(this, count: usize): RawMut<T> {
+    pub fn add(this, count: uint): RawMut<T> {
         RawMut(addr: this.addr + count * mem::size_of::<T>())
     }
 
-    pub fn sub(this, count: usize): RawMut<T> {
+    pub fn sub(this, count: uint): RawMut<T> {
         RawMut(addr: this.addr - count * mem::size_of::<T>())
     }
 
@@ -89,8 +89,10 @@ pub struct RawMut<T> {
         unsafe this.addr as *mut T
     }
 
-    pub unsafe fn write(this, t: T) {
-        unsafe mem::copy(dst: this.as_mut_ptr(), src: &t, num: 1);
+    pub unsafe fn write(this, t: T): *mut T {
+        let dst = unsafe this.as_mut_ptr();
+        unsafe mem::copy(dst:, src: &t, num: 1);
+        dst
     }
 
     pub unsafe fn read(this): T {

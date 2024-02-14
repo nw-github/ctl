@@ -3,25 +3,25 @@ use super::assert;
 struct A {
     pub foo: inner::A,
 
-    pub fn get_value(this): i32 {
+    pub fn get_value(this): int {
         this.foo.get_value()
     }
 }
 
 mod inner {
     pub struct A {
-        pub foo: i32,
+        pub foo: int,
 
-        pub fn get_value(this): i32 {
+        pub fn get_value(this): int {
             this.foo
         }
     }
 
     pub struct B {
-        pub foo: ::misc::modules::A,
+        pub foo: ::runtime::modules::A,
         pub bar: A,
 
-        pub fn get_value(this): i32 {
+        pub fn get_value(this): int {
             this.bar.get_value() + this.foo.get_value()
         }
     }

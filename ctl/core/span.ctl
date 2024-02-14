@@ -3,17 +3,18 @@ use core::ptr::RawMut;
 use core::range::RangeBounds;
 use core::range::Bound;
 use core::iter::Iterator;
+use core::panic;
 
-[lang(span)]
+#(lang(span))
 pub struct Span<T> {
     ptr: *T,
-    len: usize,
+    len: uint,
 
-    pub unsafe fn new<U>(ptr: *U, len: usize): [U..] {
+    pub unsafe fn new(ptr: *T, len: uint): [T..] {
         Span(ptr:, len:)
     }
 
-    pub fn len(this): usize {
+    pub fn len(this): uint {
         this.len
     }
 
@@ -21,17 +22,17 @@ pub struct Span<T> {
         this.len == 0
     }
 
-    pub fn get(this, idx: usize): ?*T {
+    pub fn get(this, idx: uint): ?*T {
         if idx < this.len {
             unsafe this.get_unchecked(idx)
         }
     }
 
-    pub unsafe fn get_unchecked(this, idx: usize): *T {
+    pub unsafe fn get_unchecked(this, idx: uint): *T {
         unsafe core::ptr::offset(this.ptr, idx)
     }
 
-    pub fn as_raw(this): core::ptr::Raw<T> {
+    pub fn as_raw(this): Raw<T> {
         Raw::from_ptr(this.ptr)
     }
 
@@ -42,7 +43,7 @@ pub struct Span<T> {
         )
     }
 
-    pub fn subspan<R: RangeBounds<usize> >(this, range: R): [T..] {
+    pub fn subspan<R: RangeBounds<uint>>(this, range: R): [T..] {
         let start = match range.begin() {
             Bound::Inclusive(start) => start,
             Bound::Exclusive(start) => start + 1,
@@ -66,16 +67,16 @@ pub struct Span<T> {
     }
 }
 
-[lang(span_mut)]
+#(lang(span_mut))
 pub struct SpanMut<T> {
     ptr: *mut T,
-    len: usize,
+    len: uint,
 
-    pub unsafe fn new<U>(ptr: *mut U, len: usize): [mut U..] {
-        SpanMut::<U>(ptr:, len:)
+    pub unsafe fn new(ptr: *mut T, len: uint): [mut T..] {
+        SpanMut(ptr:, len:)
     }
 
-    pub fn len(this): usize {
+    pub fn len(this): uint {
         this.len
     }
 
@@ -83,23 +84,23 @@ pub struct SpanMut<T> {
         this.len == 0
     }
 
-    pub fn get(this, idx: usize): ?*T {
+    pub fn get(this, idx: uint): ?*T {
         if idx < this.len {
             unsafe this.get_unchecked(idx)
         }
     }
 
-    pub fn get_mut(this, idx: usize): ?*mut T {
+    pub fn get_mut(this, idx: uint): ?*mut T {
         if idx < this.len {
             unsafe this.get_mut_unchecked(idx)
         }
     }
 
-    pub unsafe fn get_unchecked(this, idx: usize): *T {
+    pub unsafe fn get_unchecked(this, idx: uint): *T {
         unsafe core::ptr::offset(this.ptr, idx)
     }
 
-    pub unsafe fn get_mut_unchecked(this, idx: usize): *mut T {
+    pub unsafe fn get_mut_unchecked(this, idx: uint): *mut T {
         unsafe core::ptr::offset_mut(this.ptr, idx)
     }
 
@@ -125,7 +126,7 @@ pub struct SpanMut<T> {
         )
     }
 
-    pub fn subspan<R: RangeBounds<usize> >(this, range: R): [mut T..] {
+    pub fn subspan<R: RangeBounds<uint>>(this, range: R): [mut T..] {
         let start = match range.begin() {
             Bound::Inclusive(start) => start,
             Bound::Exclusive(start) => start + 1,
@@ -173,4 +174,12 @@ pub struct IterMut<T> {
             }
         }
     }
+}
+
+pub fn compare<T>(lhs: [T..], rhs: [T..]): bool {
+    if lhs.len() != rhs.len() {
+        return false;
+    }
+
+    unsafe core::mem::compare(lhs.as_raw().as_ptr(), rhs.as_raw().as_ptr(), lhs.len())
 }

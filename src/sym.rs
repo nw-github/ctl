@@ -1,24 +1,23 @@
-use derive_more::{Constructor, Deref, DerefMut};
+use derive_more::{Constructor, Deref, DerefMut, From};
 use enum_as_inner::EnumAsInner;
-use indexmap::IndexSet;
+use indexmap::IndexMap;
 use std::collections::HashMap;
 
 use crate::{
     ast::{
-        checked::{CheckedExpr, CheckedStmt},
-        parsed::{Expr, Path},
+        checked::{CheckedExpr, CheckedPattern, CheckedStmt},
+        parsed::{Expr, Linkage, Pattern, UsePath},
         Attribute,
     },
     lexer::{Located, Span},
-    typeid::{GenericFunc, GenericUserType, Type},
-    Error,
+    typeid::{GenericUserType, Type},
 };
 
 macro_rules! id {
     ($name: ident => $output: ident,
      $vec: ident,
-     $($parts:ident).+,
-     $suffix: ident) => {
+     $namespace: ident,
+     $($parts:ident).+) => {
         #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
         pub struct $name(usize);
 
@@ -33,66 +32,48 @@ macro_rules! id {
                 &mut scopes.$vec[self.0]
             }
 
-            fn find(scopes: &Scopes, name: &str) -> Option<Vis<Self>> {
-                for (id, scope) in scopes.iter() {
-                    if let Some(item) = Self::find_in(scopes, name, id) {
-                        return Some(item);
-                    }
-
-                    if matches!(scope.kind, ScopeKind::Module(_, _)) {
-                        break;
-                    }
-                }
-
-                None
-            }
-
-            fn find_in(scopes: &Scopes, name: &str, scope: ScopeId) -> Option<Vis<Self>> {
-                scopes[scope].$vec
-                    .iter()
-                    .rev()
-                    .find_map(|id| (scopes.$vec[id.0].$($parts).+ == name).then_some(*id))
-            }
-
-            fn insert(scopes: &mut Scopes, value: Self::Value, public: bool) -> Self {
-                Self::insert_in(scopes, value, public, scopes.current)
-            }
-
-            fn insert_in(scopes: &mut Scopes, value: Self::Value, public: bool, scope: ScopeId) -> Self {
+            fn insert_in(scopes: &mut Scopes, value: Self::Value, public: bool, scope: ScopeId) -> (Self, bool) {
                 let index = scopes.$vec.len();
                 scopes.$vec.push(Scoped::new(value, scope));
                 let id = $name(index);
-                scopes[scope].$vec.insert(Vis { id, public });
-                id
+                let name = (scopes.$vec[id.0].$($parts).+).clone();
+                let res = scopes[scope].$namespace.insert(name, Vis { id: id.into(), public });
+                (id, res.is_some())
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "{}", self.0)
             }
         }
     };
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct ScopeId(pub usize);
 
-id!(FunctionId => Function, fns, name.data, func);
-id!(UserTypeId => UserType, types, name, user_type);
-id!(VariableId => Variable, vars, name, var);
-id!(ExtensionId => Extension, exts, name, ext);
-
-#[derive(Debug, Clone)]
-pub struct UnresolvedUse {
-    pub public: bool,
-    pub path: Path,
-    pub all: bool,
-    pub span: Span,
+impl ScopeId {
+    pub const ROOT: ScopeId = ScopeId(0);
 }
+
+id!(FunctionId => Function, fns, vns, name.data);
+id!(UserTypeId => UserType, types, tns, name.data);
+id!(VariableId => Variable, vars, vns, name);
+id!(ExtensionId => Extension, exts, tns, name);
 
 #[derive(Default, Debug, Clone, EnumAsInner)]
 pub enum ScopeKind {
     Block(Option<Type>, bool),
-    Loop(Option<Type>, bool),
+    Loop {
+        target: Option<Type>,
+        breaks: Option<bool>,
+        infinite: bool,
+    },
     Lambda(Option<Type>, bool),
     Function(FunctionId),
     UserType(UserTypeId),
-    Module(String, Vec<UnresolvedUse>),
+    Module(String),
     Impl(UserTypeId),
     Extension(ExtensionId),
     #[default]
@@ -106,8 +87,9 @@ impl ScopeKind {
     {
         match self {
             &ScopeKind::Function(id) => Some(&scopes.get(id).name.data),
-            &ScopeKind::UserType(id) => Some(&scopes.get(id).name),
-            ScopeKind::Module(name, _) => Some(name),
+            &ScopeKind::UserType(id) => Some(&scopes.get(id).name.data),
+            &ScopeKind::Extension(id) => Some(&scopes.get(id).name),
+            ScopeKind::Module(name) => Some(name),
             _ => None,
         }
     }
@@ -119,11 +101,17 @@ pub enum DefaultExpr {
     Checked(CheckedExpr),
 }
 
+#[derive(Debug, Clone, EnumAsInner)]
+pub enum ParamPattern {
+    Unchecked(Located<Pattern>),
+    Checked(CheckedPattern),
+}
+
 #[derive(Debug, Clone)]
 pub struct CheckedParam {
-    pub mutable: bool,
     pub keyword: bool,
-    pub name: String,
+    pub label: String,
+    pub patt: ParamPattern,
     pub ty: Type,
     pub default: Option<DefaultExpr>,
 }
@@ -137,124 +125,105 @@ pub struct Variable {
     pub value: Option<CheckedExpr>,
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct Function {
     pub attrs: Vec<Attribute>,
     pub name: Located<String>,
+    pub linkage: Linkage,
     pub is_async: bool,
-    pub is_extern: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
     pub type_params: Vec<UserTypeId>,
     pub params: Vec<CheckedParam>,
     pub ret: Type,
     pub body: Option<Vec<CheckedStmt>>,
-    pub constructor: bool,
+    pub constructor: Option<UserTypeId>,
     pub body_scope: ScopeId,
     pub returns: bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct Member {
+impl FunctionId {
+    pub const RESERVED: FunctionId = FunctionId(0);
+}
+
+#[derive(Debug, Clone, Constructor)]
+pub struct CheckedMember {
     pub public: bool,
-    pub name: String,
-    pub shared: bool,
     pub ty: Type,
 }
 
-#[derive(Debug, Clone)]
-pub struct Union {
-    pub variants: Vec<Member>,
-    pub is_unsafe: bool,
-}
+#[derive(Debug, Clone, Deref, DerefMut)]
+pub struct Union(pub IndexMap<String, Option<Type>>);
 
 impl Union {
     pub fn tag_type(&self) -> Type {
-        Type::discriminant_for(self.variants.len())
+        Type::discriminant_for(self.0.len())
     }
 
     pub fn variant_tag(&self, name: &str) -> Option<usize> {
-        self.variants
-            .iter()
-            .filter(|m| !m.shared)
-            .position(|m| m.name == name)
+        self.0.get_index_of(name)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TT {
-    Struct,
-    Func,
 }
 
 #[derive(Debug, EnumAsInner)]
 pub enum UserTypeData {
-    Struct {
-        members: Vec<Member>,
-        init: FunctionId,
-    },
+    Struct,
     Union(Union),
-    Enum(Type),
-    Template(TT, usize),
+    UnsafeUnion,
+    Template,
     Trait,
-}
-
-impl UserTypeData {
-    pub fn as_func_template(&self) -> Option<&usize> {
-        if let Some((TT::Func, i)) = self.as_template() {
-            Some(i)
-        } else {
-            None
-        }
-    }
-
-    pub fn as_struct_template(&self) -> Option<&usize> {
-        if let Some((TT::Struct, i)) = self.as_template() {
-            Some(i)
-        } else {
-            None
-        }
-    }
+    Tuple,
 }
 
 #[derive(Debug)]
 pub struct UserType {
-    pub name: String,
+    pub name: Located<String>,
     pub body_scope: ScopeId,
     pub data: UserTypeData,
     pub impls: Vec<Type>,
     pub type_params: Vec<UserTypeId>,
+    pub attrs: Vec<Attribute>,
+    pub fns: Vec<Vis<FunctionId>>,
+    pub members: IndexMap<String, CheckedMember>,
 }
 
 impl UserType {
-    pub fn members(&self) -> Option<&[Member]> {
-        match &self.data {
-            UserTypeData::Struct { members, .. } => Some(members),
-            UserTypeData::Union(union) => Some(&union.variants),
-            _ => None,
-        }
-    }
-
-    pub fn members_mut(&mut self) -> Option<&mut [Member]> {
-        match &mut self.data {
-            UserTypeData::Struct { members, .. } => Some(members),
-            UserTypeData::Union(union) => Some(&mut union.variants),
-            _ => None,
-        }
+    pub fn find_associated_fn(&self, scopes: &Scopes, name: &str) -> Option<FunctionId> {
+        self.fns
+            .iter()
+            .map(|f| f.id)
+            .find(|&id| scopes.get(id).name.data == name)
     }
 }
 
-pub trait HasImplsAndTypeParams {
+pub trait HasTypeParams {
     fn get_type_params(&self) -> &[UserTypeId];
+}
+
+impl HasTypeParams for UserType {
+    fn get_type_params(&self) -> &[UserTypeId] {
+        &self.type_params
+    }
+}
+
+impl HasTypeParams for Extension {
+    fn get_type_params(&self) -> &[UserTypeId] {
+        &self.type_params
+    }
+}
+
+impl HasTypeParams for Function {
+    fn get_type_params(&self) -> &[UserTypeId] {
+        &self.type_params
+    }
+}
+
+pub trait HasImplsAndTypeParams: HasTypeParams {
     fn get_impls(&self) -> &Vec<Type>;
     fn get_impls_mut(&mut self) -> &mut Vec<Type>;
 }
 
 impl HasImplsAndTypeParams for UserType {
-    fn get_type_params(&self) -> &[UserTypeId] {
-        &self.type_params
-    }
-
     fn get_impls(&self) -> &Vec<Type> {
         &self.impls
     }
@@ -265,10 +234,6 @@ impl HasImplsAndTypeParams for UserType {
 }
 
 impl HasImplsAndTypeParams for Extension {
-    fn get_type_params(&self) -> &[UserTypeId] {
-        &self.type_params
-    }
-
     fn get_impls(&self) -> &Vec<Type> {
         &self.impls
     }
@@ -285,13 +250,7 @@ pub struct Extension {
     pub impls: Vec<Type>,
     pub type_params: Vec<UserTypeId>,
     pub body_scope: ScopeId,
-}
-
-impl Extension {
-    pub fn matches_type(&self, ty: &Type) -> bool {
-        // TODO: templates
-        &self.ty == ty
-    }
+    pub fns: Vec<Vis<FunctionId>>,
 }
 
 #[derive(Deref, DerefMut, Constructor)]
@@ -310,42 +269,55 @@ pub struct Vis<T> {
     pub public: bool,
 }
 
-impl<T: std::hash::Hash> std::hash::Hash for Vis<T> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-
-impl<T: PartialEq> PartialEq for Vis<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.id.eq(other)
-    }
-}
-
-impl<T: Eq> Eq for Vis<T> {}
-
 pub trait ItemId: Sized {
     type Value;
 
     fn get(self, scopes: &Scopes) -> &Scoped<Self::Value>;
     fn get_mut(self, scopes: &mut Scopes) -> &mut Scoped<Self::Value>;
+    fn insert_in(
+        scopes: &mut Scopes,
+        value: Self::Value,
+        public: bool,
+        scope: ScopeId,
+    ) -> (Self, bool);
+}
 
-    fn find(scopes: &Scopes, name: &str) -> Option<Vis<Self>>;
-    fn find_in(scopes: &Scopes, name: &str, scope: ScopeId) -> Option<Vis<Self>>;
+#[derive(Debug, Clone, Copy, EnumAsInner, From)]
+pub enum TypeItem {
+    Type(UserTypeId),
+    Extension(ExtensionId),
+    Module(ScopeId),
+}
 
-    fn insert(scopes: &mut Scopes, value: Self::Value, public: bool) -> Self;
-    fn insert_in(scopes: &mut Scopes, value: Self::Value, public: bool, scope: ScopeId) -> Self;
+#[derive(Debug, Clone, Copy, EnumAsInner, From)]
+pub enum ValueItem {
+    Fn(FunctionId),
+    Var(VariableId),
 }
 
 #[derive(Default, Debug)]
 pub struct Scope {
     pub kind: ScopeKind,
     pub parent: Option<ScopeId>,
-    pub fns: IndexSet<Vis<FunctionId>>,
-    pub types: IndexSet<Vis<UserTypeId>>,
-    pub vars: IndexSet<Vis<VariableId>>,
-    pub exts: IndexSet<Vis<ExtensionId>>,
-    pub children: IndexSet<Vis<ScopeId>>,
+    pub tns: HashMap<String, Vis<TypeItem>>,
+    pub vns: HashMap<String, Vis<ValueItem>>,
+    pub children: Vec<ScopeId>,
+    pub use_stmts: Vec<UsePath>,
+}
+
+impl Scope {
+    pub fn find_in_tns(&self, name: &str) -> Option<Vis<TypeItem>> {
+        self.tns.get(name).copied()
+    }
+
+    pub fn find_in_vns(&self, name: &str) -> Option<Vis<ValueItem>> {
+        self.vns.get(name).copied()
+    }
+
+    pub fn find_module(&self, name: &str) -> Option<ScopeId> {
+        self.find_in_tns(name)
+            .and_then(|inner| inner.as_module().copied())
+    }
 }
 
 pub struct Scopes {
@@ -354,26 +326,40 @@ pub struct Scopes {
     types: Vec<Scoped<UserType>>,
     vars: Vec<Scoped<Variable>>,
     exts: Vec<Scoped<Extension>>,
-    pub current: ScopeId,
+    tuples: HashMap<usize, UserTypeId>,
+    structs: HashMap<Vec<String>, UserTypeId>,
     pub lang_types: HashMap<String, UserTypeId>,
     pub intrinsics: HashMap<FunctionId, String>,
+    pub panic_handler: Option<FunctionId>,
 }
 
 impl Scopes {
     pub fn new() -> Self {
         Self {
             scopes: vec![Scope::default()],
-            current: ScopeId(0),
-            fns: Vec::new(),
+            fns: vec![Scoped::new(Function::default(), ScopeId::ROOT)],
             types: Vec::new(),
             vars: Vec::new(),
             exts: Vec::new(),
+            tuples: HashMap::new(),
+            structs: HashMap::new(),
             lang_types: HashMap::new(),
             intrinsics: HashMap::new(),
+            panic_handler: None,
         }
     }
 
-    pub fn iter_from(&self, id: ScopeId) -> impl Iterator<Item = (ScopeId, &Scope)> {
+    pub fn create_scope(&mut self, parent: ScopeId, kind: ScopeKind) -> ScopeId {
+        let id = ScopeId(self.scopes.len());
+        self.scopes.push(Scope {
+            parent: Some(parent),
+            kind,
+            ..Default::default()
+        });
+        id
+    }
+
+    pub fn walk(&self, id: ScopeId) -> impl Iterator<Item = (ScopeId, &Scope)> {
         pub struct ScopeIter<'a> {
             scopes: &'a Scopes,
             next: Option<ScopeId>,
@@ -396,16 +382,9 @@ impl Scopes {
         }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (ScopeId, &Scope)> {
-        self.iter_from(self.current)
-    }
-
     pub fn full_name(&self, id: ScopeId, ident: &str) -> String {
         let mut name: String = ident.chars().rev().collect();
-        for scope_name in self
-            .iter_from(id)
-            .flat_map(|(_, scope)| scope.kind.name(self))
-        {
+        for scope_name in self.walk(id).flat_map(|(_, scope)| scope.kind.name(self)) {
             name.reserve(scope_name.len() + 1);
             name.push('_');
             for c in scope_name.chars().rev() {
@@ -416,157 +395,40 @@ impl Scopes {
         name.chars().rev().collect::<String>()
     }
 
-    pub fn current(&mut self) -> &mut Scope {
-        let i = self.current;
-        &mut self[i]
-    }
-
-    pub fn enter<T>(&mut self, kind: ScopeKind, public: bool, f: impl FnOnce(&mut Self) -> T) -> T {
-        let id = ScopeId(self.scopes.len());
-        self.current().children.insert(Vis { id, public });
-        let parent = Some(self.current);
-        self.enter_id(id, |this| {
-            this.scopes.push(Scope {
-                parent,
-                kind,
-                ..Default::default()
-            });
-
-            f(this)
-        })
-    }
-
-    pub fn enter_id<T>(&mut self, id: ScopeId, f: impl FnOnce(&mut Self) -> T) -> T {
-        let prev = self.current;
-        self.current = id;
-        let result = f(self);
-        self.current = prev;
-        result
-    }
-
-    pub fn this_type_of(&self, id: UserTypeId) -> Type {
-        Type::User(
-            GenericUserType::new(
-                id,
-                self.get(id)
-                    .type_params
-                    .iter()
-                    .map(|&id| Type::User(GenericUserType::new(id, vec![]).into()))
-                    .collect(),
-            )
-            .into(),
-        )
-    }
-
-    pub fn current_this_type(&self) -> Option<Type> {
-        self.iter().find_map(|(_, scope)| {
-            match scope.kind {
-                ScopeKind::UserType(id) => {
-                    let ty = self.get(id);
-                    if !ty.data.is_template() {
-                        if ty.data.is_trait() {
-                            return Some(Type::TraitSelf);
-                        }
-
-                        return Some(self.this_type_of(id));
-                    }
-                }
-                ScopeKind::Extension(id) => {
-                    return Some(self.get(id).ty.clone());
-                }
-                _ => {}
-            }
-            None
-        })
-    }
-
-    pub fn current_function(&self) -> Option<FunctionId> {
-        self.function_of(self.current)
-    }
-
     pub fn function_of(&self, scope: ScopeId) -> Option<FunctionId> {
-        self.iter_from(scope)
+        self.walk(scope)
             .find_map(|(_, scope)| scope.kind.as_function().copied())
     }
 
     pub fn module_of(&self, id: ScopeId) -> Option<ScopeId> {
-        for (id, current) in self.iter_from(id) {
-            if matches!(current.kind, ScopeKind::Module(_, _)) {
-                return Some(id);
-            }
-        }
-
-        None
+        self.walk(id)
+            .find(|(_, current)| current.kind.is_module())
+            .map(|(id, _)| id)
     }
 
-    pub fn unresolved_use_stmts(&mut self, id: ScopeId) -> Option<&mut Vec<UnresolvedUse>> {
-        self.module_of(id)
-            .and_then(|id| self[id].kind.as_module_mut().map(|m| m.1))
-    }
-
-    pub fn scopes(&self) -> &[Scope] {
-        &self.scopes
-    }
-
-    pub fn extensions(&self) -> &[Scoped<Extension>] {
-        &self.exts
-    }
-
-    pub fn find_module_in(&self, name: &str, scope: ScopeId) -> Option<Vis<ScopeId>> {
-        self[scope]
-            .children
+    pub fn vars(&self) -> impl Iterator<Item = (VariableId, &Scoped<Variable>)> {
+        self.vars
             .iter()
-            .find(|&&id| matches!(&self[*id].kind, ScopeKind::Module(mn, _) if name == mn))
-            .copied()
+            .enumerate()
+            .map(|(i, var)| (VariableId(i), var))
     }
 
-    pub fn find_module(&self, name: &str) -> Option<Vis<ScopeId>> {
-        for (id, scope) in self.iter() {
-            if let Some(item) = self.find_module_in(name, id) {
-                return Some(item);
-            }
-
-            if matches!(scope.kind, ScopeKind::Module(_, _)) {
-                break;
-            }
-        }
-
-        None
-    }
-
-    pub fn find_free_fn(&self, name: &str) -> Option<Vis<FunctionId>> {
-        for (id, scope) in self
+    pub fn extensions(&self) -> impl Iterator<Item = (ExtensionId, &Scoped<Extension>)> {
+        self.exts
             .iter()
-            .filter(|(_, s)| !matches!(s.kind, ScopeKind::UserType(_)))
-        {
-            if let Some(item) = self.find_in(name, id) {
-                return Some(item);
-            }
+            .enumerate()
+            .map(|(i, var)| (ExtensionId(i), var))
+    }
 
-            if matches!(scope.kind, ScopeKind::Module(_, _)) {
-                break;
-            }
-        }
-
-        None
+    pub fn functions(&self) -> impl Iterator<Item = (FunctionId, &Scoped<Function>)> {
+        self.fns
+            .iter()
+            .enumerate()
+            .map(|(i, var)| (FunctionId(i), var))
     }
 
     pub fn get_option_id(&self) -> Option<UserTypeId> {
         self.lang_types.get("option").copied()
-    }
-
-    pub fn as_option_inner<'a>(&self, ty: &'a Type) -> Option<&'a Type> {
-        self.get_option_id().and_then(|opt| {
-            ty.as_user()
-                .filter(|ut| ut.id == opt)
-                .map(|ut| &ut.ty_args[0])
-        })
-    }
-
-    pub fn make_lang_type(&self, name: &str, ty_args: Vec<Type>) -> Option<Type> {
-        Some(Type::User(
-            GenericUserType::new(self.lang_types.get(name).copied()?, ty_args).into(),
-        ))
     }
 
     pub fn intrinsic_name(&self, id: FunctionId) -> Option<&str> {
@@ -581,50 +443,199 @@ impl Scopes {
         id.get_mut(self)
     }
 
-    pub fn find<T: ItemId>(&self, name: &str) -> Option<Vis<T>> {
-        T::find(self, name)
+    pub fn implements_trait(
+        &self,
+        ty: &Type,
+        bound: &GenericUserType,
+        excl: Option<ExtensionId>,
+        scope: ScopeId,
+    ) -> bool {
+        if ty.is_unknown() {
+            return true;
+        }
+
+        let search = |this: Option<&GenericUserType>, impls: &[Type]| {
+            impls.iter().any(|tr| {
+                let mut tr = tr.clone();
+                if let Some(this) = this {
+                    tr.fill_templates(&this.ty_args);
+                }
+                tr.as_user().is_some_and(|tr| &**tr == bound)
+            })
+        };
+
+        if ty
+            .as_user()
+            .is_some_and(|this| search(Some(this), &self.get(this.id).impls))
+        {
+            return true;
+        }
+
+        self.extensions_in_scope_for(ty, excl, scope)
+            .any(|(_, ext)| search(ty.as_user().map(|ty| &**ty), &ext.impls))
     }
 
-    pub fn find_in<T: ItemId>(&self, name: &str, scope: ScopeId) -> Option<Vis<T>> {
-        T::find_in(self, name, scope)
-    }
-
-    pub fn insert<T: ItemId>(&mut self, value: T::Value, public: bool) -> T {
-        T::insert(self, value, public)
+    pub fn extension_applies_to(
+        &self,
+        id: ExtensionId,
+        ext: &Extension,
+        rhs: &Type,
+        scope: ScopeId,
+    ) -> bool {
+        match &ext.ty {
+            Type::User(ut) if self.get(ut.id).data.is_template() => {
+                for bound in self
+                    .get(ut.id)
+                    .impls
+                    .iter()
+                    .flat_map(|bound| bound.as_user())
+                {
+                    if !self.implements_trait(rhs, bound, Some(id), scope) {
+                        return false;
+                    }
+                }
+                true
+            }
+            ty => ty == rhs,
+        }
     }
 
     pub fn extensions_in_scope_for<'a, 'b>(
         &'a self,
         ty: &'b Type,
-    ) -> impl Iterator<Item = &Scoped<Extension>> + 'b
+        excl: Option<ExtensionId>,
+        current: ScopeId,
+    ) -> impl Iterator<Item = (ExtensionId, &Scoped<Extension>)> + 'b
     where
         'a: 'b,
     {
-        self.iter().flat_map(|(_, scope)| {
+        self.walk(current).flat_map(move |(_, scope)| {
+            // TODO: maybe keep an extensions field to make this lookup faster
             scope
-                .exts
+                .tns
                 .iter()
-                .map(|ext| self.get(ext.id))
-                .filter(|ext| ext.matches_type(ty))
+                .filter_map(|id| id.1.as_extension())
+                .map(|ext| (*ext, self.get(*ext)))
+                .filter(move |(id, _)| Some(*id) != excl)
+                .filter(move |(id, ext)| self.extension_applies_to(*id, ext, ty, current))
         })
     }
 
-    pub fn can_access_privates(&self, scope: ScopeId) -> bool {
-        let target = self
-            .module_of(scope)
-            .expect("root scope passed to can_access_privates()");
-        self.iter().any(|(id, _)| id == target)
-    }
-}
+    pub fn get_tuple(&mut self, ty_args: Vec<Type>) -> Type {
+        let id = if let Some(id) = self.tuples.get(&ty_args.len()) {
+            *id
+        } else {
+            let type_params: Vec<_> = (0..ty_args.len())
+                .map(|_| {
+                    UserTypeId::insert_in(
+                        self,
+                        UserType {
+                            name: Default::default(),
+                            body_scope: ScopeId::ROOT,
+                            data: UserTypeData::Template,
+                            impls: Vec::new(),
+                            type_params: Vec::new(),
+                            attrs: Vec::new(),
+                            fns: Vec::new(),
+                            members: IndexMap::new(),
+                        },
+                        false,
+                        ScopeId::ROOT,
+                    )
+                    .0
+                })
+                .collect();
+            let (id, _) = UserTypeId::insert_in(
+                self,
+                UserType {
+                    members: type_params
+                        .iter()
+                        .enumerate()
+                        .map(|(i, id)| {
+                            (
+                                format!("{i}"),
+                                CheckedMember::new(
+                                    true,
+                                    Type::User(GenericUserType::from_id(self, *id).into()),
+                                ),
+                            )
+                        })
+                        .collect(),
+                    name: Located::new(Span::default(), "$tuple".into()),
+                    body_scope: ScopeId::ROOT,
+                    type_params,
+                    data: UserTypeData::Tuple,
+                    impls: vec![],
+                    attrs: vec![],
+                    fns: vec![],
+                },
+                false,
+                ScopeId::ROOT,
+            );
 
-#[derive(Debug, EnumAsInner)]
-pub enum ResolvedPath {
-    UserType(GenericUserType),
-    Func(GenericFunc),
-    Var(VariableId),
-    Module(ScopeId),
-    Extension(ExtensionId),
-    None(Error),
+            self.tuples.insert(ty_args.len(), id);
+            id
+        };
+        Type::User(GenericUserType::from_type_args(self, id, ty_args).into())
+    }
+
+    pub fn get_anon_struct(&mut self, names: Vec<String>, types: Vec<Type>) -> Type {
+        let id = if let Some(id) = self.structs.get(&names) {
+            *id
+        } else {
+            let type_params: Vec<_> = (0..names.len())
+                .map(|_| {
+                    UserTypeId::insert_in(
+                        self,
+                        UserType {
+                            name: Default::default(),
+                            body_scope: ScopeId::ROOT,
+                            data: UserTypeData::Template,
+                            impls: Vec::new(),
+                            type_params: Vec::new(),
+                            attrs: Vec::new(),
+                            fns: Vec::new(),
+                            members: IndexMap::new(),
+                        },
+                        false,
+                        ScopeId::ROOT,
+                    )
+                    .0
+                })
+                .collect();
+            let (id, _) = UserTypeId::insert_in(
+                self,
+                UserType {
+                    members: type_params
+                        .iter()
+                        .enumerate()
+                        .map(|(i, id)| {
+                            (
+                                names[i].clone(),
+                                CheckedMember::new(
+                                    true,
+                                    Type::User(GenericUserType::from_id(self, *id).into()),
+                                ),
+                            )
+                        })
+                        .collect(),
+                    name: Located::new(Span::default(), "$anonstruct".into()),
+                    body_scope: ScopeId::ROOT,
+                    data: UserTypeData::Struct,
+                    type_params,
+                    impls: vec![],
+                    attrs: vec![],
+                    fns: vec![],
+                },
+                false,
+                ScopeId::ROOT,
+            );
+
+            self.structs.insert(names, id);
+            id
+        };
+        Type::User(GenericUserType::from_type_args(self, id, types).into())
+    }
 }
 
 impl std::ops::Index<ScopeId> for Scopes {

@@ -5,7 +5,7 @@ A general-purpose programming language that compiles to C.
 ## Example
 
 ```rust
-extern fn printf(fmt: *c_char, ...): c_int;
+import fn printf(fmt: *c_char, ...): c_int;
 
 trait Animal {
     fn make_sound(this, kw loud: bool);
@@ -54,7 +54,5 @@ fn main(): c_int {
 
 ### Build
 ```
-cargo r -r -- main.ctl > main.c
-clang -std=c11 -lgc -lm main.c
-./a.out
+cargo r -r -- run main.ctl
 ```

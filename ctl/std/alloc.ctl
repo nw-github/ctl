@@ -1,22 +1,22 @@
-use core::ptr::RawMut;
-use core::mem::size_of;
+use std::ptr::RawMut;
+use std::mem::size_of;
 
-pub fn alloc<T>(count: usize): ?RawMut<T> {
-    [c_macro]
-    extern fn GC_MALLOC(size: usize): ?*mut c_void;
+mod builtin {
+    #(c_opaque, c_name(CTL_MALLOC))
+    pub import fn malloc(size: uint): ?*mut c_void;
 
-    match GC_MALLOC(size_of::<T>() * count) {
-        ?ptr => RawMut::from_ptr(unsafe ptr as *mut T),
-        null => null,
+    #(c_opaque, c_name(CTL_REALLOC))
+    pub import fn realloc(addr: *mut c_void, size: uint): ?*mut c_void;
+}
+
+pub fn alloc<T>(count: uint): ?RawMut<T> {
+    if (builtin::malloc(size_of::<T>() * count) is ?ptr) {
+        RawMut::from_ptr(unsafe ptr as *mut T)
     }
 }
 
-pub fn realloc<T>(addr: *mut T, count: usize): ?RawMut<T> {
-    [c_macro]
-    extern fn GC_REALLOC(addr: *mut c_void, size: usize): ?*mut c_void;
-
-    unsafe match GC_REALLOC(addr as *mut c_void, size_of::<T>() * count) {
-        ?ptr => RawMut::from_ptr(ptr as *mut T),
-        null => null,
+pub fn realloc<T>(addr: *mut T, count: uint): ?RawMut<T> {
+    if (builtin::realloc(unsafe addr as *mut c_void, size_of::<T>() * count) is ?ptr) {
+        RawMut::from_ptr(unsafe ptr as *mut T)
     }
 }

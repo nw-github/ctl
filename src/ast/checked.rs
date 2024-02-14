@@ -27,32 +27,65 @@ pub struct ArrayPattern<T> {
     pub patterns: Vec<T>,
     pub rest: Option<RestPattern>,
     pub arr_len: usize,
-    pub ptr: bool,
-}
-
-#[derive(Debug, Clone)]
-pub enum IrrefutablePattern {
-    Variable(VariableId),
-    Destrucure(Vec<(String, IrrefutablePattern)>),
-    Array(ArrayPattern<IrrefutablePattern>),
+    pub inner: Type,
 }
 
 #[derive(Debug, Clone, Default, EnumAsInner)]
-pub enum CheckedPattern {
+pub enum CheckedPatternData {
     UnionMember {
-        pattern: Option<IrrefutablePattern>,
+        pattern: Option<Box<CheckedPattern>>,
         variant: String,
-        ptr: bool,
+        inner: Type,
+        borrows: bool,
     },
-    Irrefutable(IrrefutablePattern),
-    Destrucure(Vec<(String, CheckedPattern)>),
+    Destrucure {
+        patterns: Vec<(String, Type, CheckedPattern)>,
+        borrows: bool,
+    },
+    Array {
+        patterns: ArrayPattern<CheckedPattern>,
+        borrows: bool,
+    },
     Int(BigInt),
     IntRange(RangePattern<BigInt>),
     String(String),
-    Array(ArrayPattern<CheckedPattern>),
-    Span(Vec<IrrefutablePattern>, Option<RestPattern>),
+    Span {
+        patterns: Vec<CheckedPattern>,
+        rest: Option<RestPattern>,
+        inner: Type,
+    },
+    Variable(VariableId),
+    Void,
     #[default]
     Error,
+}
+
+#[derive(Debug, Clone, derive_more::Constructor)]
+pub struct CheckedPattern {
+    pub irrefutable: bool,
+    pub data: CheckedPatternData,
+}
+
+impl CheckedPattern {
+    pub fn irrefutable(data: CheckedPatternData) -> Self {
+        Self {
+            irrefutable: true,
+            data,
+        }
+    }
+
+    pub fn refutable(data: CheckedPatternData) -> Self {
+        Self {
+            irrefutable: false,
+            data,
+        }
+    }
+}
+
+impl Default for CheckedPattern {
+    fn default() -> Self {
+        Self::irrefutable(Default::default())
+    }
 }
 
 #[derive(Debug, Clone, EnumAsInner)]
@@ -64,12 +97,9 @@ pub enum Symbol {
 #[derive(Debug, Default, Clone)]
 pub enum CheckedStmt {
     Expr(CheckedExpr),
-    Let(VariableId),
-    LetPattern(IrrefutablePattern, CheckedExpr),
-    Module(Block),
-    None,
+    Let(CheckedPattern, Option<CheckedExpr>),
     #[default]
-    Error,
+    None,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -88,6 +118,7 @@ pub enum CheckedExprData {
         args: IndexMap<String, CheckedExpr>,
         inst: Option<Type>,
         trait_id: Option<UserTypeId>,
+        scope: ScopeId,
     },
     CallFnPtr {
         expr: Box<CheckedExpr>,
@@ -113,10 +144,10 @@ pub enum CheckedExprData {
     Integer(BigInt),
     Float(String),
     String(String),
-    ByteString(String),
+    ByteString(Vec<u8>),
     Char(char),
     Void,
-    Symbol(Symbol),
+    Symbol(Symbol, ScopeId),
     Assign {
         target: Box<CheckedExpr>,
         binary: Option<BinaryOp>,
@@ -132,11 +163,14 @@ pub enum CheckedExprData {
         cond: Option<Box<CheckedExpr>>,
         body: Block,
         do_while: bool,
+        optional: bool,
     },
     For {
         iter: Box<CheckedExpr>,
-        patt: IrrefutablePattern,
+        patt: CheckedPattern,
         body: Vec<CheckedStmt>,
+        optional: bool,
+        scope: ScopeId,
     },
     Match {
         expr: Box<CheckedExpr>,
@@ -151,10 +185,12 @@ pub enum CheckedExprData {
         args: Vec<CheckedExpr>,
     },
     As(Box<CheckedExpr>, bool),
+    Is(Box<CheckedExpr>, CheckedPattern),
     Return(Box<CheckedExpr>),
     Yield(Box<CheckedExpr>),
-    Break(Box<CheckedExpr>),
+    Break(Option<Box<CheckedExpr>>),
     Lambda(Vec<CheckedStmt>),
+    NeverCoerce(Box<CheckedExpr>),
     Continue,
     #[default]
     Error,
@@ -172,9 +208,11 @@ impl CheckedExpr {
             CheckedExprData::Unary { op, expr } => {
                 matches!(op, UnaryOp::Deref) && matches!(expr.ty, Type::MutPtr(_))
             }
-            CheckedExprData::Symbol(_) | CheckedExprData::Member { .. } => self.can_addrmut(scopes),
+            CheckedExprData::Symbol(_, _) | CheckedExprData::Member { .. } => {
+                self.can_addrmut(scopes)
+            }
             CheckedExprData::Subscript { callee, .. } => match &callee.data {
-                CheckedExprData::Symbol(Symbol::Var(id)) => {
+                CheckedExprData::Symbol(Symbol::Var(id), _) => {
                     callee.ty.is_mut_ptr() || scopes.get(*id).mutable
                 }
                 CheckedExprData::Member { source, .. } => source.is_assignable(scopes),
@@ -189,7 +227,7 @@ impl CheckedExpr {
             CheckedExprData::Unary { op, expr } => {
                 !matches!(op, UnaryOp::Deref) || matches!(expr.ty, Type::MutPtr(_))
             }
-            CheckedExprData::Symbol(symbol) => match symbol {
+            CheckedExprData::Symbol(symbol, _) => match symbol {
                 Symbol::Func(_) => false,
                 Symbol::Var(var) => scopes.get(*var).mutable,
             },
@@ -201,31 +239,44 @@ impl CheckedExpr {
         }
     }
 
-    pub fn coerce_to(self, target: &Type, scopes: &Scopes) -> CheckedExpr {
+    pub fn coerce_to(mut self, scopes: &Scopes, target: &Type) -> Result<CheckedExpr, CheckedExpr> {
         match (&self.ty, target) {
-            (Type::MutPtr(lhs), Type::Ptr(rhs)) if lhs == rhs => {
-                CheckedExpr::new(target.clone(), self.data)
+            (Type::Never, rhs) => Ok(CheckedExpr::new(
+                rhs.clone(),
+                CheckedExprData::NeverCoerce(self.into()),
+            )),
+            (Type::Unknown, _) | (_, Type::Unknown) => {
+                self.ty = target.clone();
+                Ok(self)
             }
-            (ty, target)
-                if scopes
-                    .as_option_inner(target)
-                    .map_or(false, |inner| ty.coerces_to(scopes, inner)) =>
-            {
-                let inner = scopes.as_option_inner(target).unwrap();
-                let expr = self.coerce_to(inner, scopes);
-                CheckedExpr::new(
-                    scopes
-                        .make_lang_type("option", vec![expr.ty.clone()])
-                        .unwrap(),
-                    CheckedExprData::Instance {
-                        members: [("Some".into(), expr)].into(),
-                        variant: Some("Some".into()),
-                    },
-                )
-                .coerce_to(target, scopes)
+            (lhs, rhs) if lhs.may_ptr_coerce(rhs) => {
+                self.ty = target.clone();
+                Ok(self)
             }
-            (Type::Never, _) => CheckedExpr::new(target.clone(), self.data),
-            _ => self,
+            (src, rhs) if src != rhs => {
+                if let Some(inner) = rhs.as_option_inner(scopes) {
+                    match self.coerce_to(scopes, inner) {
+                        Ok(expr) => Ok(CheckedExpr::new(
+                            rhs.clone(),
+                            CheckedExprData::Instance {
+                                members: [("0".into(), expr)].into(),
+                                variant: Some("Some".into()),
+                            },
+                        )),
+                        Err(expr) => Err(expr),
+                    }
+                } else {
+                    Err(self)
+                }
+            }
+            _ => Ok(self),
+        }
+    }
+
+    pub fn try_coerce_to(self, scopes: &Scopes, target: &Type) -> CheckedExpr {
+        match self.coerce_to(scopes, target) {
+            Ok(expr) => expr,
+            Err(expr) => expr,
         }
     }
 
@@ -245,11 +296,11 @@ impl CheckedExpr {
 
         while my_indirection > indirection {
             my_indirection -= 1;
-            let (Type::Ptr(inner) | Type::MutPtr(inner)) = self.ty.clone() else {
+            let (Type::Ptr(inner) | Type::MutPtr(inner)) = &self.ty else {
                 unreachable!()
             };
             self = CheckedExpr::new(
-                (*inner).clone(),
+                (**inner).clone(),
                 CheckedExprData::Unary {
                     op: UnaryOp::Deref,
                     expr: self.into(),
@@ -258,5 +309,15 @@ impl CheckedExpr {
         }
 
         self
+    }
+
+    pub fn option_null(opt: Type) -> CheckedExpr {
+        CheckedExpr::new(
+            opt,
+            CheckedExprData::Instance {
+                members: Default::default(),
+                variant: Some("None".into()),
+            },
+        )
     }
 }

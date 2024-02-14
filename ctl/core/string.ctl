@@ -4,22 +4,28 @@ use core::hash::Hasher;
 use core::ops::Eq;
 use core::range::RangeBounds;
 use core::iter::Iterator;
+use core::panic;
+use core::unreachable;
 
-[lang(string)]
+mod builtin {
+    #(c_opaque, c_name(CTL_STRLEN))
+    pub import fn strlen(ptr: *c_char): uint;
+}
+
+#(lang(string))
 pub struct str {
     span: [u8..],
 
     pub fn from_c_str(ptr: *c_char): str {
-        extern fn strlen(ptr: *c_char): usize;
         // TODO: validate UTF-8
-        str(span: unsafe Span::new(ptr as *u8, strlen(ptr)))
+        str(span: unsafe Span::new(ptr as *u8, builtin::strlen(ptr)))
     }
 
     pub unsafe fn from_utf8_unchecked(span: [u8..]): str {
         str(span:)
     }
 
-    pub fn len(this): usize {
+    pub fn len(this): uint {
         this.span.len()
     }
 
@@ -43,15 +49,15 @@ pub struct str {
         Chars(s: this.as_bytes())
     }
 
-    pub fn substr<R: RangeBounds<usize> >(this, range: R): str {
+    pub fn substr<R: RangeBounds<uint>>(this, range: R): str {
         let span = this.span.subspan(range);
-        match span.get(0) {
-            ?ch => if !is_char_boundary(*ch) {
+        if (span.get(0) is ?ch) {
+            if !is_char_boundary(*ch) {
                 panic("str::substr(): range does not start at char boundary");
             }
         }
-        match span.get(span.len()) {
-            ?ch => if !is_char_boundary(*ch) {
+        if (span.get(span.len()) is ?ch) {
+            if !is_char_boundary(*ch) {
                 panic("str::substr(): range does not end at char boundary");
             }
         }
@@ -66,11 +72,7 @@ pub struct str {
 
     impl Eq<str> {
         fn eq(this, rhs: *str): bool {
-            if this.len() != rhs.len() {
-                false
-            } else {
-                core::mem::compare(this.as_ptr(), rhs.as_ptr(), this.len())
-            }
+            core::span::compare(this.as_bytes(), rhs.as_bytes())
         }
     }
 }
@@ -80,36 +82,33 @@ pub struct Chars {
 
     impl Iterator<char> {
         fn next(mut this): ?char {
-            match this.s.get(0) {
-                ?cp => unsafe {
-                    mut cp = *cp as u32 & 0xff;
-                    if cp < 0x80 {
-                        this.s = this.s.subspan(1usize..);
-                    } else if cp >> 5 == 0x6 {
-                        cp = ((cp << 6) & 0x7ff) + (*this.s.get_unchecked(1) as u32 & 0x3f);
-                        this.s = this.s.subspan(2usize..);
-                    } else if cp >> 4 == 0xe {
-                        cp = (
-                            (cp << 12) & 0xffff) + 
-                            (((*this.s.get_unchecked(1) as u32 & 0xff) << 6) & 0xfff
-                        );
-                        cp += *this.s.get_unchecked(2) as u32 & 0x3f;
-                        this.s = this.s.subspan(3usize..);
-                    } else if cp >> 4 == 0x1e {
-                        cp = (
-                            (cp << 18) & 0x1fffff) + 
-                            (((*this.s.get_unchecked(1) as u32 & 0xff) << 12) & 0x3ffff
-                        );
-                        cp += ((*this.s.get_unchecked(2) as u32 & 0xff) << 6) & 0xfff;
-                        cp += *this.s.get_unchecked(3) as u32 & 0x3f;
-                        this.s = this.s.subspan(4usize..);
-                    } else {
-                        unreachable();
-                    }
+            unsafe if (this.s.get(0) is ?cp) {
+                mut cp = *cp as u32 & 0xff;
+                if cp < 0x80 {
+                    this.s = this.s.subspan(1u..);
+                } else if cp >> 5 == 0x6 {
+                    cp = ((cp << 6) & 0x7ff) + (*this.s.get_unchecked(1) as u32 & 0x3f);
+                    this.s = this.s.subspan(2u..);
+                } else if cp >> 4 == 0xe {
+                    cp = (
+                        (cp << 12) & 0xffff) + 
+                        (((*this.s.get_unchecked(1) as u32 & 0xff) << 6) & 0xfff
+                    );
+                    cp += *this.s.get_unchecked(2) as u32 & 0x3f;
+                    this.s = this.s.subspan(3u..);
+                } else if cp >> 4 == 0x1e {
+                    cp = (
+                        (cp << 18) & 0x1fffff) + 
+                        (((*this.s.get_unchecked(1) as u32 & 0xff) << 12) & 0x3ffff
+                    );
+                    cp += ((*this.s.get_unchecked(2) as u32 & 0xff) << 6) & 0xfff;
+                    cp += *this.s.get_unchecked(3) as u32 & 0x3f;
+                    this.s = this.s.subspan(4u..);
+                } else {
+                    unreachable();
+                }
 
-                    cp as! char
-                },
-                null => null,
+                cp as! char
             }
         }
     }

@@ -2,7 +2,10 @@ use std::borrow::Cow;
 
 use enum_as_inner::EnumAsInner;
 
-use crate::{THIS_PARAM, THIS_TYPE};
+use crate::{
+    error::{Diagnostics, Error, FileId},
+    THIS_PARAM, THIS_TYPE,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, EnumAsInner)]
 pub enum Token<'a> {
@@ -26,7 +29,9 @@ pub enum Token<'a> {
     Colon,
     Semicolon,
     Hash,
+    HashLParen,
     At,
+    Move,
 
     Plus,
     AddAssign,
@@ -70,6 +75,8 @@ pub enum Token<'a> {
     Struct,
     Union,
     Enum,
+    Export,
+    Import,
     Trait,
     Dyn,
     Type,
@@ -115,10 +122,46 @@ pub enum Token<'a> {
     },
     Float(&'a str),
     String(Cow<'a, str>),
-    ByteString(Cow<'a, str>),
+    ByteString(Vec<u8>),
     Char(char),
     ByteChar(u8),
     Eof,
+}
+
+impl std::fmt::Display for Token<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::LCurly => write!(f, "{{"),
+            Token::RCurly => write!(f, "}}"),
+            Token::LBrace => write!(f, "["),
+            Token::RBrace => write!(f, "]"),
+            Token::LParen => write!(f, "("),
+            Token::RParen => write!(f, ")"),
+            Token::LAngle => write!(f, "<"),
+            Token::RAngle => write!(f, ">"),
+            Token::Dot => write!(f, "."),
+            Token::Range => write!(f, ".."),
+            Token::RangeInclusive => write!(f, "..="),
+            Token::Ellipses => write!(f, "..."),
+            Token::ScopeRes => write!(f, "::"),
+            Token::Arrow => write!(f, "->"),
+            Token::FatArrow => write!(f, "=>"),
+            Token::Comma => write!(f, ","),
+            Token::Colon => write!(f, ":"),
+            Token::Semicolon => write!(f, ";"),
+            Token::Hash => write!(f, "#"),
+            Token::HashLParen => write!(f, "#("),
+            Token::Assign => write!(f, "="),
+            Token::Fn => write!(f, "fn"),
+            Token::Import => write!(f, "import"),
+            Token::Export => write!(f, "export"),
+            Token::Unsafe => write!(f, "unsafe"),
+            Token::Pub => write!(f, "pub"),
+            Token::Mut => write!(f, "mut"),
+            Token::This => write!(f, "This"),
+            _ => write!(f, "FIXME: {self:?}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -172,49 +215,11 @@ impl Token<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Error {
-    UnterminatedStr,
-    UnterminatedChar,
-    CharTooLong,
-    BadByteChar,
-    BadByteStr,
-    EmptyChar,
-    UnterminatedComment,
-    UnrecognizedChar,
-    InvalidEscape,
-}
-
-impl Error {
-    pub fn tell(&self) -> &'static str {
-        match self {
-            Error::UnterminatedStr => "unterminated string literal",
-            Error::UnterminatedChar => "unterminated char literal",
-            Error::EmptyChar => "empty char literal",
-            Error::CharTooLong => "char literal must only contain one character",
-            Error::BadByteStr => "invalid character in byte string",
-            Error::BadByteChar => "invalid character in byte literal (must be ascii)",
-            Error::UnterminatedComment => "unterminated block comment",
-            Error::UnrecognizedChar => "unexpected character",
-            Error::InvalidEscape => "invalid UTF-8 escape sequence",
-        }
-    }
-}
-
-pub type FileIndex = usize;
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Location {
-    pub row: usize,
-    pub col: usize,
-    pub pos: usize,
-}
-
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Span {
-    pub loc: Location,
+    pub pos: usize,
     pub len: usize,
-    pub file: FileIndex,
+    pub file: FileId,
 }
 
 impl Span {
@@ -222,22 +227,17 @@ impl Span {
         *self = self.extended_to(b);
     }
 
-    pub fn extended_to(&self, b: impl Into<Span>) -> Self {
+    pub fn extended_to(self, b: impl Into<Span>) -> Self {
         let b: Span = b.into();
-        assert!(b.loc.pos >= self.loc.pos);
+        debug_assert!(b.pos >= self.pos);
         Self {
-            loc: self.loc,
-            len: b.loc.pos - self.loc.pos + b.len,
-            file: self.file,
+            len: b.pos - self.pos + b.len,
+            ..self
         }
-    }
-
-    pub fn text<'a>(&self, text: &'a str) -> &'a str {
-        &text[self.loc.pos..][..self.len]
     }
 }
 
-#[derive(Clone, derive_more::Constructor)]
+#[derive(Default, Clone, derive_more::Constructor)]
 pub struct Located<T> {
     pub span: Span,
     pub data: T,
@@ -255,45 +255,49 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Located<T> {
     }
 }
 
+impl<T: std::fmt::Display> std::fmt::Display for Located<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.data.fmt(f)
+    }
+}
+
 pub struct Lexer<'a> {
     src: &'a str,
-    loc: Location,
-    file: FileIndex,
+    pos: usize,
+    file: FileId,
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(src: &'a str, file: FileIndex) -> Self {
-        Self {
-            src,
-            loc: Location {
-                row: 1,
-                col: 1,
-                pos: 0,
-            },
-            file,
-        }
+    pub fn new(src: &'a str, file: FileId) -> Self {
+        Self { src, file, pos: 0 }
+    }
+
+    pub fn token(&mut self, diag: &mut Diagnostics) -> Located<Token<'a>> {
+        self.next(diag)
+            .unwrap_or_else(|| Located::new(self.here(0), Token::Eof))
     }
 
     #[inline]
     fn peek(&self) -> Option<char> {
-        self.src[self.loc.pos..].chars().next()
+        self.src[self.pos..].chars().next()
     }
 
     #[inline]
     fn peek_next(&self) -> Option<char> {
-        self.src[self.loc.pos..].chars().nth(1)
+        self.src[self.pos..].chars().nth(1)
+    }
+
+    fn here(&self, len: usize) -> Span {
+        Span {
+            pos: self.pos,
+            file: self.file,
+            len,
+        }
     }
 
     fn advance(&mut self) -> Option<char> {
         if let Some(ch) = self.peek() {
-            self.loc.pos += ch.len_utf8();
-            if ch == '\n' {
-                self.loc.col = 1;
-                self.loc.row += 1;
-            } else {
-                self.loc.col += 1;
-            }
-
+            self.pos += ch.len_utf8();
             Some(ch)
         } else {
             None
@@ -310,15 +314,15 @@ impl<'a> Lexer<'a> {
     }
 
     fn advance_while(&mut self, mut f: impl FnMut(char) -> bool) -> &'a str {
-        let start = self.loc.pos;
-        while self.peek().map_or(false, &mut f) {
+        let start = self.pos;
+        while self.peek().is_some_and(&mut f) {
             self.advance();
         }
-        &self.src[start..self.loc.pos]
+        &self.src[start..self.pos]
     }
 
     fn advance_match(&mut self, s: &str) -> bool {
-        let source = &self.src[self.loc.pos..];
+        let source = &self.src[self.pos..];
         if s.len() <= source.len() && s == &source[..s.len()] {
             for _ in 0..s.len() {
                 self.advance();
@@ -330,92 +334,127 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn escape_char(&mut self) -> Result<char, Located<Error>> {
-        Ok(match self.advance() {
+    fn expect(&mut self, diag: &mut Diagnostics, c: char) {
+        if !matches!(self.peek(), Some(ch) if ch == c) {
+            diag.error(Error::new(format!("expected '{c}'"), self.here(1)));
+        } else {
+            self.advance();
+        }
+    }
+
+    fn escape_char(&mut self, diag: &mut Diagnostics, byte: bool) -> char {
+        match self.advance() {
             Some('"') => '"',
             Some('\'') => '\'',
             Some('\\') => '\\',
             Some('n') => '\n',
             Some('t') => '\t',
-            _ => {
-                return Err(Located::new(
-                    Span {
-                        loc: self.loc,
-                        len: 1,
-                        file: self.file,
-                    },
-                    Error::InvalidEscape,
-                ));
+            Some('r') => '\r',
+            Some('0') => '\0',
+            Some('x') => {
+                let mut count = 0;
+                let chars = self.advance_while(|ch| {
+                    let result = count < 2 && ch.is_ascii_hexdigit();
+                    count += 1;
+                    result
+                });
+                let span = Span {
+                    pos: self.pos - chars.len(),
+                    file: self.file,
+                    len: chars.len(),
+                };
+                if chars.len() < 2 {
+                    diag.error(Error::new("hexadecimal literal is too short", span));
+                    '\0'
+                } else if let Ok(ch) = u8::from_str_radix(chars, 16) {
+                    let ch = char::from(ch);
+                    if !byte && !ch.is_ascii() {
+                        diag.error(Error::non_ascii_char(span));
+                    }
+                    ch
+                } else {
+                    diag.error(Error::non_ascii_char(span));
+                    '\0'
+                }
             }
-        })
+            Some('u') => {
+                self.expect(diag, '{');
+                let chars = self.advance_while(|ch| ch.is_ascii_hexdigit());
+                if chars.is_empty() {
+                    diag.error(Error::new("expected hexadecimal digits", self.here(1)));
+                    '\0'
+                } else if let Some(ch) =
+                    u32::from_str_radix(chars, 16).ok().and_then(char::from_u32)
+                {
+                    self.expect(diag, '}');
+                    ch
+                } else {
+                    diag.error(Error::new(
+                        "invalid unicode literal",
+                        Span {
+                            pos: self.pos - chars.len(),
+                            file: self.file,
+                            len: chars.len(),
+                        },
+                    ));
+                    self.expect(diag, '}');
+                    '\0'
+                }
+            }
+            _ => {
+                diag.error(Error::new("invalid escape sequence", self.here(1)));
+                '\0'
+            }
+        }
     }
 
-    fn string_literal(&mut self, start: usize) -> Result<Token<'a>, Located<Error>> {
+    fn string_literal(&mut self, diag: &mut Diagnostics, start: usize) -> Token<'a> {
         let mut result = Cow::from("");
         loop {
             match self.advance() {
+                Some('"') => break Token::String(result),
                 Some('\\') => {
-                    result.to_mut().push(self.escape_char()?);
+                    result.to_mut().push(self.escape_char(diag, false));
                 }
-                Some('"') => break Ok(Token::String(result)),
                 Some(ch) => match &mut result {
-                    Cow::Borrowed(str) => *str = &self.src[start + 1..self.loc.pos],
+                    Cow::Borrowed(str) => *str = &self.src[start + 1..self.pos],
                     Cow::Owned(str) => str.push(ch),
                 },
                 None => {
-                    return Err(Located::new(
-                        Span {
-                            loc: self.loc,
-                            len: 0,
-                            file: self.file,
-                        },
-                        Error::UnterminatedStr,
-                    ));
+                    diag.error(Error::new("unterminated string literal", self.here(1)));
+                    break Token::String(result);
                 }
             }
         }
     }
 
-    fn char_literal(&mut self) -> Result<Token<'a>, Located<Error>> {
+    fn char_literal(&mut self, diag: &mut Diagnostics, byte: bool) -> char {
         let ch = match self.advance() {
-            Some('\\') => self.escape_char()?,
+            Some('\\') => self.escape_char(diag, byte),
             Some('\'') => {
-                return Err(Located::new(
-                    Span {
-                        loc: self.loc,
-                        len: 0,
-                        file: self.file,
-                    },
-                    Error::EmptyChar,
-                ))
+                diag.error(Error::new("empty char literal", self.here(1)));
+                '\0'
             }
             Some(any) => any,
             None => {
-                return Err(Located::new(
-                    Span {
-                        loc: self.loc,
-                        len: 0,
-                        file: self.file,
-                    },
-                    Error::UnterminatedChar,
-                ))
+                diag.error(Error::new("unterminated char literal", self.here(1)));
+                '\0'
             }
         };
 
         if !self.advance_if('\'') {
-            self.advance_while(|c| c != '\'');
+            let ch = self.advance_while(|c| c != '\'');
             self.advance();
-            Err(Located::new(
+            diag.error(Error::new(
+                "char literal must only contain one character",
                 Span {
-                    loc: self.loc,
-                    len: 0,
+                    pos: self.pos - ch.len() - 1,
+                    len: ch.len(),
                     file: self.file,
                 },
-                Error::CharTooLong,
-            ))
-        } else {
-            Ok(Token::Char(ch))
+            ));
         }
+        ch
     }
 
     fn numeric_suffix(&mut self) -> Option<&'a str> {
@@ -427,43 +466,62 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn numeric_literal(&mut self, start: usize) -> Token<'a> {
-        if self.src[start..].starts_with('0') {
-            if self.advance_if('x') {
-                return Token::Int {
-                    base: 16,
-                    value: self.advance_while(|ch| ch.is_ascii_hexdigit()),
-                    width: self.numeric_suffix(),
-                };
-            } else if self.advance_if('o') {
-                return Token::Int {
-                    base: 8,
-                    value: self.advance_while(|ch| ch.is_digit(8)),
-                    width: self.numeric_suffix(),
-                };
-            } else if self.advance_if('b') {
-                return Token::Int {
-                    base: 2,
-                    value: self.advance_while(|ch| ch.is_digit(2)),
-                    width: self.numeric_suffix(),
-                };
+    fn numeric_literal(&mut self, diag: &mut Diagnostics, ch: char, start: usize) -> Token<'a> {
+        let mut warn_leading_zero = false;
+        if ch == '0' {
+            match self.peek() {
+                Some('x') => {
+                    self.advance();
+                    return Token::Int {
+                        base: 16,
+                        value: self.advance_while(|ch| ch.is_ascii_hexdigit()),
+                        width: self.numeric_suffix(),
+                    };
+                }
+                Some('o') => {
+                    self.advance();
+                    return Token::Int {
+                        base: 8,
+                        value: self.advance_while(|ch| ch.is_digit(8)),
+                        width: self.numeric_suffix(),
+                    };
+                }
+                Some('b') => {
+                    self.advance();
+                    return Token::Int {
+                        base: 2,
+                        value: self.advance_while(|ch| ch.is_digit(2)),
+                        width: self.numeric_suffix(),
+                    };
+                }
+                Some(_) => {
+                    warn_leading_zero = true;
+                }
+                _ => {}
             }
         }
 
         self.advance_while(|ch| ch.is_ascii_digit());
-        if self.peek() == Some('.') && self.peek_next().map_or(false, |f| f.is_ascii_digit()) {
+        if self.peek() == Some('.') && self.peek_next().is_some_and(|f| f.is_ascii_digit()) {
             self.advance();
             self.advance_while(|ch| ch.is_ascii_digit());
-            Token::Float(&self.src[start..self.loc.pos])
+            Token::Float(&self.src[start..self.pos])
         } else {
-            let src = &self.src[start..self.loc.pos];
-            if src.len() == 1 {
-                // TODO: warn about leading zero, dont make it an error
+            let value = &self.src[start..self.pos];
+            if warn_leading_zero && value.len() > 1 {
+                diag.warn(Error::new(
+                    "leading zero in decimal literal (use 0o to create an octal literal)",
+                    Span {
+                        pos: start,
+                        len: value.len(),
+                        file: self.file,
+                    },
+                ));
             }
 
             Token::Int {
+                value,
                 base: 10,
-                value: src,
                 width: self.numeric_suffix(),
             }
         }
@@ -471,7 +529,7 @@ impl<'a> Lexer<'a> {
 
     fn identifier(&mut self, start: usize) -> Token<'a> {
         self.advance_while(Self::is_identifier_char);
-        match &self.src[start..self.loc.pos] {
+        match &self.src[start..self.pos] {
             "as" => Token::As,
             "async" => Token::Async,
             "await" => Token::Await,
@@ -481,6 +539,7 @@ impl<'a> Lexer<'a> {
             "dyn" => Token::Dyn,
             "else" => Token::Else,
             "enum" => Token::Enum,
+            "export" => Token::Export,
             "extension" => Token::Extension,
             "extern" => Token::Extern,
             "false" => Token::False,
@@ -488,6 +547,7 @@ impl<'a> Lexer<'a> {
             "for" => Token::For,
             "if" => Token::If,
             "impl" => Token::Impl,
+            "import" => Token::Import,
             "in" => Token::In,
             "is" => Token::Is,
             "kw" => Token::Keyword,
@@ -495,6 +555,7 @@ impl<'a> Lexer<'a> {
             "loop" => Token::Loop,
             "match" => Token::Match,
             "mod" => Token::Mod,
+            "move" => Token::Move,
             "mut" => Token::Mut,
             "null" => Token::None,
             "pub" => Token::Pub,
@@ -520,44 +581,52 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn maybe_byte_string(&mut self, start: usize) -> Result<Token<'a>, Located<Error>> {
+    fn maybe_byte_string(&mut self, diag: &mut Diagnostics, start: usize) -> Token<'a> {
+        fn bchar(diag: &mut Diagnostics, c: char, name: &str, span: Span) -> u8 {
+            match c.try_into() {
+                Ok(c) => c,
+                Err(_) => {
+                    diag.error(Error::new(
+                        format!(
+                            "invalid character '{c}' ({:#x}) in byte {name} literal",
+                            c as u8
+                        ),
+                        span,
+                    ));
+                    0
+                }
+            }
+        }
+
         match self.peek() {
             Some('\'') => {
                 self.advance();
-                let Token::Char(c) = self.char_literal()? else {
-                    unreachable!()
-                };
-                match c.try_into() {
-                    Ok(c) => Ok(Token::ByteChar(c)),
-                    Err(_) => Err(Located::new(
-                        Span {
-                            loc: self.loc,
-                            len: 0,
-                            file: self.file,
-                        },
-                        Error::BadByteChar,
-                    )),
-                }
+                let prev = self.here(0);
+                let ch = self.char_literal(diag, true);
+                Token::ByteChar(bchar(diag, ch, "char", prev.extended_to(self.here(0))))
             }
             Some('"') => {
                 self.advance();
-                let Token::String(s) = self.string_literal(start)? else {
-                    unreachable!()
-                };
-                if s.chars().any(|c| !c.is_ascii()) {
-                    Err(Located::new(
-                        Span {
-                            loc: self.loc,
-                            len: 0,
-                            file: self.file,
-                        },
-                        Error::BadByteStr,
-                    ))
-                } else {
-                    Ok(Token::ByteString(s))
+                let mut result = vec![];
+                loop {
+                    let prev = self.here(0);
+                    match self.advance() {
+                        Some('"') => break Token::ByteString(result),
+                        Some('\\') => {
+                            let ch = self.escape_char(diag, true);
+                            result.push(bchar(diag, ch, "string", prev.extended_to(self.here(0))))
+                        }
+                        Some(ch) => {
+                            result.push(bchar(diag, ch, "string", prev.extended_to(self.here(0))))
+                        }
+                        None => {
+                            diag.error(Error::unterminated_str(self.here(1)));
+                            break Token::ByteString(result);
+                        }
+                    }
                 }
             }
-            _ => Ok(self.identifier(start)),
+            _ => self.identifier(start),
         }
     }
 
@@ -569,7 +638,7 @@ impl<'a> Lexer<'a> {
         matches!(ch, '_' | 'a'..='z' | 'A'..='Z')
     }
 
-    fn next_internal(&mut self) -> Option<<Self as Iterator>::Item> {
+    fn next(&mut self, diag: &mut Diagnostics) -> Option<Located<Token<'a>>> {
         loop {
             self.advance_while(char::is_whitespace);
             if self.advance_match("//") {
@@ -581,15 +650,9 @@ impl<'a> Lexer<'a> {
                         count -= 1;
                     } else if self.advance_match("/*") {
                         count += 1;
-                    } else if self.loc.pos >= self.src.len() {
-                        return Some(Err(Located::new(
-                            Span {
-                                loc: self.loc,
-                                len: 0,
-                                file: self.file,
-                            },
-                            Error::UnterminatedComment,
-                        )));
+                    } else if self.pos >= self.src.len() {
+                        diag.error(Error::new("unterminated block comment", self.here(0)));
+                        return None;
                     } else {
                         self.advance();
                     }
@@ -599,7 +662,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        let start = self.loc;
+        let start = self.pos;
         let token = match self.advance()? {
             '{' => Token::LCurly,
             '}' => Token::RCurly,
@@ -609,8 +672,14 @@ impl<'a> Lexer<'a> {
             ')' => Token::RParen,
             ',' => Token::Comma,
             ';' => Token::Semicolon,
-            '#' => Token::Hash,
             '@' => Token::At,
+            '#' => {
+                if self.advance_if('(') {
+                    Token::HashLParen
+                } else {
+                    Token::Hash
+                }
+            }
             '.' => {
                 if self.advance_if('.') {
                     if self.advance_if('.') {
@@ -750,54 +819,24 @@ impl<'a> Lexer<'a> {
                     Token::Assign
                 }
             }
-            '"' => match self.string_literal(start.pos) {
-                Ok(token) => token,
-                Err(err) => return Some(Err(err)),
-            },
-            '\'' => match self.char_literal() {
-                Ok(token) => token,
-                Err(err) => return Some(Err(err)),
-            },
-            '0'..='9' => self.numeric_literal(start.pos),
-            'b' => match self.maybe_byte_string(start.pos) {
-                Ok(token) => token,
-                Err(err) => return Some(Err(err)),
-            },
-            ch if Self::is_identifier_first_char(ch) => self.identifier(start.pos),
+            '"' => self.string_literal(diag, start),
+            '\'' => Token::Char(self.char_literal(diag, false)),
+            ch @ '0'..='9' => self.numeric_literal(diag, ch, start),
+            'b' => self.maybe_byte_string(diag, start),
+            ch if Self::is_identifier_first_char(ch) => self.identifier(start),
             _ => {
-                return Some(Err(Located::new(
-                    Span {
-                        loc: self.loc,
-                        len: 0,
-                        file: self.file,
-                    },
-                    Error::UnrecognizedChar,
-                )))
+                diag.error(Error::new("unexpected character", self.here(0)));
+                return self.next(diag);
             }
         };
 
-        Some(Ok(Located::new(
+        Some(Located::new(
             Span {
-                loc: start,
-                len: self.loc.pos - start.pos,
+                pos: start,
+                len: self.pos - start,
                 file: self.file,
             },
             token,
-        )))
-    }
-}
-
-impl<'a> Iterator for Lexer<'a> {
-    type Item = Result<Located<Token<'a>>, Located<Error>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        Some(self.next_internal().unwrap_or(Ok(Located::new(
-            Span {
-                loc: self.loc,
-                len: 0,
-                file: self.file,
-            },
-            Token::Eof,
-        ))))
+        ))
     }
 }
