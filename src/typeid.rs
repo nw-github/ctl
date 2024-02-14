@@ -351,6 +351,7 @@ impl Type {
                         | Type::CInt(_)
                         | Type::CUint(_)
                         | Type::Char
+                        | Type::RawPtr(_)
                 )
             }
             BinaryOp::LogicalOr | BinaryOp::LogicalAnd => matches!(self, Type::Bool),
@@ -396,7 +397,7 @@ impl Type {
         loop {
             match src {
                 Type::Array(t) => src = &mut t.0,
-                Type::Ptr(t) | Type::MutPtr(t) => src = t,
+                Type::Ptr(t) | Type::MutPtr(t) | Type::RawPtr(t) => src = t,
                 Type::User(ty) => {
                     for ty in ty.ty_args.values_mut() {
                         ty.fill_this(this);
@@ -430,7 +431,7 @@ impl Type {
         loop {
             match src {
                 Type::Array(t) => src = &mut t.0,
-                Type::Ptr(t) | Type::MutPtr(t) => src = t,
+                Type::Ptr(t) | Type::MutPtr(t) | Type::RawPtr(t) => src = t,
                 Type::User(ut) => {
                     if let Some(ty) = map.get(&ut.id) {
                         if !ty.is_unknown() {
@@ -643,7 +644,9 @@ impl Type {
                 let ty = scopes.get(ut.id);
                 if let Some(union) = ty.data.as_union() {
                     let mut sa = SizeAndAlign::new();
-                    sa.next(union.tag_type().size_and_align(scopes));
+                    if self.can_omit_tag(scopes).is_none() {
+                        sa.next(union.tag_type().size_and_align(scopes));
+                    }
                     for member in ty.members.values() {
                         sa.next(member.ty.with_templates(&ut.ty_args).size_and_align(scopes));
                     }

@@ -141,6 +141,9 @@ fn main() {
 
         std::println("void_assigns()...");
         misc::void_assigns();
+
+        std::println("sizes()...");
+        misc::sizes();
     }
 
     std::println("\nloops: ");

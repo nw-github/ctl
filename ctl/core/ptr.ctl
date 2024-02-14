@@ -9,7 +9,7 @@ pub unsafe fn offset_mut<T>(ptr: *mut T, count: uint): *mut T {
 }
 
 pub fn eq<T>(lhs: *T, rhs: *T): bool {
-    lhs as uint == rhs as uint
+    lhs as *raw T == rhs as *raw T
 }
 
 pub struct Raw<T> {

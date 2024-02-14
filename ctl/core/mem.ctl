@@ -46,7 +46,7 @@ pub fn replace<T>(ptr: *mut T, val: T): T {
     old
 }
 
-pub unsafe fn transmute<In, Out>(i: In): Out {
+pub unsafe fn transmute<In, Out>(from: In): Out {
     // TODO: this is fine since we transpile to c, but whenever a spec gets written this usage of 
     // unions in CTL code should be considered UB
     unsafe union Transmuter<T, U> {
@@ -54,5 +54,5 @@ pub unsafe fn transmute<In, Out>(i: In): Out {
         to: U,
     }
     // static_assert(size_of::<In>() == size_of::<Out>());
-    unsafe Transmuter::<In, Out>(from: i).to
+    unsafe Transmuter::<In, Out>(from:).to
 }

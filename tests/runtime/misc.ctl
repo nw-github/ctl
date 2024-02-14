@@ -28,3 +28,20 @@ pub fn booleans() {
     assert((!x) == true, "! should negate");
     assert((!!x) == false, "!! should be a no op");
 }
+
+pub fn sizes() {
+    use std::mem::size_of;
+
+    struct T {}
+
+    assert(size_of::<*T>() == size_of::<int>(), "sizeof *T and int differs!");
+    assert(size_of::<*T>() == size_of::<uint>(), "sizeof *T and uint differs!");
+    assert(size_of::<*T>() == size_of::<*mut T>(), "sizeof *T and *mut T differs!");
+    assert(size_of::<*T>() == size_of::<*raw T>(), "sizeof *T and *raw T differs!");
+    assert(size_of::<T>() == 0, "empty struct is not zero size!");
+
+    assert(size_of::<?*i32>() == size_of::<*i32>(), "?*i32 variant is not optimized away!");
+    assert(size_of::<?*mut i32>() == size_of::<*i32>(), "?*mut i32 variant is not optimized away!");
+    assert(size_of::<?*raw i32>() == size_of::<*i32>(), "?*raw i32 variant is not optimized away!");
+    assert(size_of::<?fn()>() == size_of::<*i32>(), "?fn() variant is not optimized away!");
+}
