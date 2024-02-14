@@ -1156,13 +1156,7 @@ impl<'a> Codegen<'a> {
                     .map(|(name, mut expr)| {
                         state.fill_generics(&mut expr.ty);
                         // TODO: dont emit temporaries for expressions that cant have side effects
-                        tmpbuf!(self, state, |tmp| {
-                            self.emit_type(&expr.ty);
-                            self.buffer.emit(format!(" {tmp}="));
-                            self.emit_expr_inner(expr, state);
-                            self.buffer.emit(";");
-                            (name, tmp)
-                        })
+                        (name, hoist!(self, state, self.emit_tmpvar(expr, state)))
                     })
                     .collect();
 
@@ -1387,13 +1381,7 @@ impl<'a> Codegen<'a> {
                             .map(|(name, mut expr)| {
                                 state.fill_generics(&mut expr.ty);
                                 // TODO: dont emit temporaries for expressions that cant have side effects
-                                tmpbuf!(self, state, |tmp| {
-                                    self.emit_type(&expr.ty);
-                                    self.buffer.emit(format!(" {tmp}="));
-                                    self.emit_expr_inner(expr, state);
-                                    self.buffer.emit(";");
-                                    (name, tmp)
-                                })
+                                (name, hoist!(self, state, self.emit_tmpvar(expr, state)))
                             })
                             .collect();
                         self.buffer.emit(format!(

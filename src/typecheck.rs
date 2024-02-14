@@ -4682,7 +4682,7 @@ impl TypeChecker {
             ))
         }
 
-        TypeArgs(
+        let ty_args = TypeArgs(
             params
                 .iter()
                 .cloned()
@@ -4696,6 +4696,11 @@ impl TypeChecker {
                         ),
                 )
                 .collect(),
-        )
+        );
+        for (id, ty) in ty_args.iter() {
+            self.check_bounds(&ty_args, ty, self.scopes.get(*id).impls.clone(), span);
+        }
+
+        ty_args
     }
 }
