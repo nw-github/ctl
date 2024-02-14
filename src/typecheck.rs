@@ -2248,111 +2248,6 @@ impl TypeChecker {
         })
     }
 
-    fn check_match_coverage<'a>(
-        &mut self,
-        ty: &Type,
-        mut patterns: impl Iterator<Item = &'a CheckedPattern> + Clone,
-        span: Span,
-    ) {
-        let ty = ty.strip_references();
-        if let Some((mut value, max)) = ty
-            .integer_stats()
-            .map(|int| (int.min(), int.max()))
-            .or_else(|| {
-                ty.is_char()
-                    .then(|| (BigInt::default(), BigInt::from(char::MAX as u32)))
-            })
-            .or_else(|| ty.is_bool().then(|| (BigInt::default(), BigInt::from(1))))
-        {
-            'outer: while value <= max {
-                if ty.is_char() && (0xd800.into()..=0xe000.into()).contains(&value) {
-                    value = 0xe000.into();
-                }
-
-                for patt in patterns.clone() {
-                    if patt.irrefutable {
-                        return;
-                    }
-
-                    match &patt.data {
-                        CheckedPatternData::Int(i) if i == &value => {
-                            value += 1;
-                            continue 'outer;
-                        }
-                        CheckedPatternData::IntRange(i) => {
-                            if i.inclusive {
-                                if value >= i.start && value <= i.end {
-                                    value = &i.end + 1;
-                                    continue 'outer;
-                                }
-                            } else if value >= i.start && value < i.end {
-                                value = i.end.clone();
-                                continue 'outer;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                return self.error(Error::match_statement("", span));
-            }
-        } else if ty
-            .as_user()
-            .is_some_and(|ut| Some(&ut.id) == self.scopes.lang_types.get("string"))
-        {
-            if !patterns.any(|patt| patt.irrefutable) {
-                self.error(Error::match_statement("", span))
-            }
-        } else if ty.as_user().is_some_and(|ut| {
-            Some(&ut.id) == self.scopes.lang_types.get("span")
-                || Some(&ut.id) == self.scopes.lang_types.get("span_mut")
-        }) {
-            if !patterns.any(|patt| {
-                patt.irrefutable
-                    || match &patt.data {
-                        CheckedPatternData::Span { patterns, rest, .. } => {
-                            patterns.is_empty() && rest.is_some()
-                        }
-                        _ => false,
-                    }
-            }) {
-                self.error(Error::match_statement("", span))
-            }
-        } else if let Some(ut) = ty
-            .as_user()
-            .and_then(|ut| self.scopes.get(ut.id).data.as_union())
-        {
-            let mut missing = vec![];
-            'outer: for (name, _) in ut.iter() {
-                for patt in patterns.clone() {
-                    if patt.irrefutable {
-                        return;
-                    } else if patt
-                        .data
-                        .as_union_member()
-                        .is_some_and(|(sub, variant, _, _)| {
-                            name == variant && sub.as_ref().map_or(true, |sub| sub.irrefutable)
-                        })
-                    {
-                        continue 'outer;
-                    }
-                }
-
-                missing.push(&name[..]);
-            }
-
-            if !missing.is_empty() {
-                return self.error(Error::match_statement(
-                    &format!("(missing variant(s) {})", missing.join(", ")),
-                    span,
-                ));
-            }
-        } else if !patterns.any(|patt| patt.irrefutable) {
-            // covers struct/array/void
-            self.error(Error::match_statement("", span))
-        }
-    }
-
     fn check_yield(&mut self, expr: Expr) -> CheckedExpr {
         let ScopeKind::Block(target, _) = std::mem::take(&mut self.scopes[self.current].kind)
         else {
@@ -2561,715 +2456,6 @@ impl TypeChecker {
                 expr: expr.into(),
             },
         )
-    }
-
-    /// Returns `Ok(_)` if the path is a compatible union variant.
-    /// Returns `Err(None)` if the path is a union variant, but of the wrong type.
-    /// Returns `Err(Some(_))` if the path is not a union variant.
-    fn get_union_variant(
-        &mut self,
-        scrutinee: &Type,
-        path: ResolvedPath,
-        span: Span,
-    ) -> Result<(Option<Type>, String), Option<Error>> {
-        let Some(ut) = scrutinee
-            .strip_references()
-            .as_user()
-            .filter(|ut| self.scopes.get(ut.id).data.is_union())
-        else {
-            return Err(Some(Error::new(
-                format!(
-                    "cannot use union pattern on type '{}'",
-                    scrutinee.name(&self.scopes)
-                ),
-                span,
-            )));
-        };
-        self.resolve_members(ut.id);
-
-        let mut variant = String::new();
-        let Some((union, path_ut)) = path
-            .as_func()
-            .map(|f| {
-                self.resolve_proto(f.id);
-                f
-            })
-            .map(|f| self.scopes.get(f.id))
-            .filter(|f| f.constructor.is_some())
-            .and_then(|f| {
-                variant = f.name.data.clone();
-                f.ret.as_user()
-            })
-            .and_then(|ut| self.scopes.get(ut.id).data.as_union().zip(Some(ut)))
-        else {
-            return Err(Some(match path {
-                ResolvedPath::UserType(ut) => Error::expected_found(
-                    &scrutinee.name(&self.scopes),
-                    &format!("type '{}'", self.scopes.get(ut.id).name),
-                    span,
-                ),
-                ResolvedPath::Func(f) => Error::expected_found(
-                    &scrutinee.name(&self.scopes),
-                    &format!("function '{}'", self.scopes.get(f.id).name.data),
-                    span,
-                ),
-                ResolvedPath::Var(id) => Error::expected_found(
-                    &scrutinee.name(&self.scopes),
-                    &format!("variable '{}'", self.scopes.get(id).name),
-                    span,
-                ),
-                ResolvedPath::None(err) => err,
-            }));
-        };
-
-        if ut.id == path_ut.id {
-            Ok((
-                union
-                    .get(&variant)
-                    .unwrap()
-                    .clone()
-                    .map(|ty| scrutinee.matched_inner_type(ty.with_templates(&ut.ty_args))),
-                variant,
-            ))
-        } else {
-            Err(self.error(Error::type_mismatch_s(
-                &scrutinee.name(&self.scopes),
-                &path_ut.name(&self.scopes),
-                span,
-            )))
-        }
-    }
-
-    fn check_int_pattern(
-        &mut self,
-        target: &Type,
-        IntPattern {
-            negative,
-            base,
-            value,
-            width,
-        }: IntPattern,
-        span: Span,
-    ) -> Option<BigInt> {
-        let inner = target.strip_references();
-        let Some(stats) = inner.integer_stats() else {
-            let (ty, _) = self.get_int_type_and_val(None, base, width, value, span);
-            if ty.is_unknown() {
-                return None;
-            }
-
-            return self.error(Error::type_mismatch(target, &ty, &self.scopes, span));
-        };
-
-        let (ty, value) = self.get_int_type_and_val(Some(inner), base, width, value, span);
-        if &ty != inner {
-            return self.error(Error::type_mismatch(inner, &ty, &self.scopes, span));
-        }
-
-        if !stats.signed && negative {
-            return self.error(Error::new(
-                format!(
-                    "cannot negate unsigned integer type '{}'",
-                    ty.name(&self.scopes)
-                ),
-                span,
-            ));
-        }
-
-        Some(if negative { -value } else { value })
-    }
-
-    fn check_slice_pattern(
-        &mut self,
-        inner_ptr: Type,
-        span_inner: Type,
-        patterns: Vec<Located<Pattern>>,
-        span_id: UserTypeId,
-    ) -> CheckedPattern {
-        let mut rest = None;
-        let mut result = Vec::new();
-        for (i, patt) in patterns.into_iter().enumerate() {
-            if let Pattern::Rest(var) = patt.data {
-                let id = var.map(|(mutable, name)| {
-                    self.insert(
-                        Variable {
-                            name,
-                            ty: Type::Unknown,
-                            is_static: false,
-                            mutable,
-                            value: None,
-                        },
-                        false,
-                    )
-                    .0
-                });
-
-                if rest.is_some() {
-                    self.error(Error::new(
-                        "... can only be used once in an array pattern",
-                        patt.span,
-                    ))
-                } else {
-                    rest = Some(RestPattern { id, pos: i });
-                }
-            } else {
-                result.push(self.check_pattern(true, &inner_ptr, false, patt));
-            }
-        }
-
-        if let Some(RestPattern { id: Some(id), .. }) = &mut rest {
-            self.scopes.get_mut(*id).item.ty = Type::User(
-                GenericUserType::from_type_args(&self.scopes, span_id, [span_inner.clone()]).into(),
-            );
-        }
-
-        CheckedPattern::refutable(CheckedPatternData::Span {
-            rest,
-            patterns: result,
-            inner: span_inner,
-        })
-    }
-
-    fn check_array_pattern(
-        &mut self,
-        target: &Type,
-        patterns: Vec<Located<Pattern>>,
-        span: Span,
-    ) -> CheckedPattern {
-        let span_id = self.scopes.lang_types.get("span").copied();
-        let span_mut_id = self.scopes.lang_types.get("span_mut").copied();
-        let (real_inner, arr_len) = match target.strip_references() {
-            Type::Array(inner) => (&inner.0, inner.1),
-            Type::User(ut) if Some(ut.id) == span_id => {
-                let inner = ut.first_type_arg().unwrap().clone();
-                return self.check_slice_pattern(
-                    Type::Ptr(inner.clone().into()),
-                    inner,
-                    patterns,
-                    span_id.unwrap(),
-                );
-            }
-            Type::User(ut) if Some(ut.id) == span_mut_id => {
-                let inner = ut.first_type_arg().unwrap().clone();
-                if target.is_ptr() || target.is_mut_ptr() {
-                    let ptr = target.matched_inner_type(inner.clone());
-                    let id = if ptr.is_ptr() {
-                        span_id.unwrap()
-                    } else {
-                        span_mut_id.unwrap()
-                    };
-                    return self.check_slice_pattern(ptr, inner, patterns, id);
-                } else {
-                    return self.check_slice_pattern(
-                        Type::MutPtr(inner.clone().into()),
-                        inner,
-                        patterns,
-                        span_mut_id.unwrap(),
-                    );
-                }
-            }
-            _ => {
-                return self.error(Error::new(
-                    format!(
-                        "array pattern cannot match value of type '{}'",
-                        target.name(&self.scopes)
-                    ),
-                    span,
-                ))
-            }
-        };
-
-        let inner = target.matched_inner_type(real_inner.clone());
-
-        let mut rest = None;
-        let mut irrefutable = true;
-        let mut result = Vec::new();
-        for (i, patt) in patterns.into_iter().enumerate() {
-            if let Pattern::Rest(var) = patt.data {
-                let id = var.map(|(mutable, name)| {
-                    self.insert(
-                        Variable {
-                            name,
-                            ty: Type::Unknown,
-                            is_static: false,
-                            mutable,
-                            value: None,
-                        },
-                        false,
-                    )
-                    .0
-                });
-
-                if rest.is_some() {
-                    self.error(Error::new(
-                        "... can only be used once in an array pattern",
-                        patt.span,
-                    ))
-                } else {
-                    rest = Some(RestPattern { id, pos: i });
-                }
-            } else {
-                let patt = self.check_pattern(true, &inner, false, patt);
-                if !patt.irrefutable {
-                    irrefutable = false;
-                }
-                result.push(patt);
-            }
-        }
-
-        if result.len() > arr_len {
-            self.error(Error::new(
-                format!("expected {} elements, got {}", arr_len, result.len()),
-                span,
-            ))
-        }
-
-        if let Some(RestPattern { id: Some(id), .. }) = &mut rest {
-            self.scopes.get_mut(*id).item.ty = target.matched_inner_type(Type::Array(
-                (real_inner.clone(), arr_len - result.len()).into(),
-            ));
-        }
-
-        CheckedPattern {
-            irrefutable,
-            data: CheckedPatternData::Array {
-                patterns: ArrayPattern {
-                    rest,
-                    arr_len,
-                    inner: real_inner.clone(),
-                    patterns: result,
-                },
-                borrows: target.is_any_ptr(),
-            },
-        }
-    }
-
-    fn check_struct_pattern(
-        &mut self,
-        scrutinee: &Type,
-        mutable: bool,
-        destructures: Vec<Destructure>,
-        span: Span,
-    ) -> CheckedPattern {
-        let Some(ut) = scrutinee.strip_references().as_user().filter(|ut| {
-            matches!(
-                self.scopes.get(ut.id).data,
-                UserTypeData::Struct | UserTypeData::Union(_)
-            )
-        }) else {
-            return self.error(Error::bad_destructure(&scrutinee.name(&self.scopes), span));
-        };
-        self.resolve_members(ut.id);
-
-        let cap = self.can_access_privates(self.scopes.get(ut.id).scope);
-        let mut irrefutable = true;
-        let mut checked = Vec::new();
-
-        for Destructure {
-            name,
-            mutable: pm,
-            pattern,
-        } in destructures
-        {
-            let Some(member) = self.scopes.get(ut.id).members.get(&name.data) else {
-                self.diag.error(Error::no_member(
-                    &scrutinee.name(&self.scopes),
-                    &name.data,
-                    name.span,
-                ));
-                continue;
-            };
-
-            if !member.public && !cap {
-                self.diag.error(Error::private_member(
-                    &scrutinee.name(&self.scopes),
-                    &name.data,
-                    name.span,
-                ));
-            }
-
-            // TODO: duplicates
-            let inner = member.ty.with_templates(&ut.ty_args);
-            let patt = self.check_pattern(
-                true,
-                &scrutinee.matched_inner_type(inner.clone()),
-                mutable || pm,
-                pattern,
-            );
-            if !patt.irrefutable {
-                irrefutable = false;
-            }
-            checked.push((name.data, inner, patt))
-        }
-
-        CheckedPattern {
-            irrefutable,
-            data: CheckedPatternData::Destrucure {
-                patterns: checked,
-                borrows: scrutinee.is_any_ptr(),
-            },
-        }
-    }
-
-    fn check_tuple_pattern(
-        &mut self,
-        scrutinee: &Type,
-        mutable: bool,
-        subpatterns: Vec<Located<Pattern>>,
-        span: Span,
-    ) -> CheckedPattern {
-        let Some(ut) = scrutinee
-            .strip_references()
-            .as_user()
-            .filter(|ut| self.scopes.get(ut.id).data.is_tuple())
-        else {
-            return self.error(Error::expected_found(
-                &scrutinee.name(&self.scopes),
-                &format!("({})", ["_"].repeat(subpatterns.len()).join(", ")),
-                span,
-            ));
-        };
-
-        if ut.ty_args.len() != subpatterns.len() {
-            self.error(Error::expected_found(
-                &scrutinee.name(&self.scopes),
-                &format!("({})", ["_"].repeat(subpatterns.len()).join(", ")),
-                span,
-            ))
-        }
-
-        let mut irrefutable = true;
-        let mut checked = Vec::new();
-        for (i, patt) in subpatterns.into_iter().enumerate() {
-            let (inner, ty) = if let Some((_, ty)) = ut.ty_args.get_index(i) {
-                (ty.clone(), scrutinee.matched_inner_type(ty.clone()))
-            } else {
-                (Type::Unknown, Type::Unknown)
-            };
-
-            let patt = self.check_pattern(true, &ty, mutable, patt);
-            if !patt.irrefutable {
-                irrefutable = false;
-            }
-            checked.push((format!("{i}"), inner, patt));
-        }
-
-        CheckedPattern {
-            irrefutable,
-            data: CheckedPatternData::Destrucure {
-                patterns: checked,
-                borrows: scrutinee.is_any_ptr(),
-            },
-        }
-    }
-
-    fn check_tuple_union_pattern(
-        &mut self,
-        scrutinee: &Type,
-        mutable: bool,
-        resolved: ResolvedPath,
-        subpatterns: Vec<Located<Pattern>>,
-        span: Span,
-    ) -> CheckedPattern {
-        match self.get_union_variant(scrutinee, resolved, span) {
-            Ok((Some(scrutinee), variant)) => {
-                CheckedPattern::refutable(CheckedPatternData::UnionMember {
-                    pattern: Some(
-                        self.check_tuple_pattern(&scrutinee, mutable, subpatterns, span)
-                            .into(),
-                    ),
-                    variant,
-                    inner: Type::Unknown,
-                    borrows: scrutinee.is_any_ptr(),
-                })
-            }
-            Ok((None, _)) => self.error(Error::expected_found(
-                "tuple variant pattern",
-                "empty variant pattern",
-                span,
-            )),
-            Err(Some(err)) => self.error(err),
-            _ => Default::default(),
-        }
-    }
-
-    fn check_empty_union_pattern(
-        &mut self,
-        scrutinee: &Type,
-        resolved: ResolvedPath,
-        span: Span,
-    ) -> CheckedPattern {
-        match self.get_union_variant(scrutinee, resolved, span) {
-            Ok((Some(_), _)) => self.error(Error::expected_found(
-                "empty variant pattern",
-                "variant pattern",
-                span,
-            )),
-            Ok((None, variant)) => CheckedPattern::refutable(CheckedPatternData::UnionMember {
-                pattern: None,
-                variant,
-                inner: Type::Unknown,
-                borrows: false,
-            }),
-            Err(Some(err)) => self.error(err),
-            Err(None) => Default::default(),
-        }
-    }
-
-    fn check_pattern(
-        &mut self,
-        binding: bool,
-        scrutinee: &Type,
-        mutable: bool,
-        pattern: Located<Pattern>,
-    ) -> CheckedPattern {
-        let span = pattern.span;
-        match pattern.data {
-            Pattern::TupleLike { path, subpatterns } => {
-                let Some(resolved) = self.resolve_path(&path.data, path.span, false) else {
-                    return Default::default();
-                };
-
-                self.check_tuple_union_pattern(scrutinee, mutable, resolved, subpatterns, span)
-            }
-            Pattern::StructLike { path, subpatterns } => {
-                let Some(resolved) = self.resolve_path(&path.data, path.span, false) else {
-                    return Default::default();
-                };
-
-                match self.get_union_variant(scrutinee, resolved, span) {
-                    Ok((Some(scrutinee), variant)) => {
-                        CheckedPattern::refutable(CheckedPatternData::UnionMember {
-                            pattern: Some(
-                                self.check_struct_pattern(&scrutinee, mutable, subpatterns, span)
-                                    .into(),
-                            ),
-                            variant,
-                            inner: Type::Unknown,
-                            borrows: scrutinee.is_any_ptr(),
-                        })
-                    }
-                    Ok((None, _)) => self.error(Error::expected_found(
-                        "tuple variant pattern",
-                        "empty variant pattern",
-                        span,
-                    )),
-                    Err(Some(err)) => self.error(err),
-                    _ => Default::default(),
-                }
-            }
-            Pattern::Path(path) => {
-                let resolved = self.resolve_path(&path, span, false);
-                if let Some(ident) = path.as_identifier() {
-                    match resolved
-                        .ok_or(None)
-                        .and_then(|p| self.get_union_variant(scrutinee, p, span))
-                    {
-                        Ok(_) if binding => self.error(Error::new(
-                            "cannot create binding that shadows union variant",
-                            span,
-                        )),
-                        Ok((Some(_), _)) => self.error(Error::expected_found(
-                            "empty variant pattern",
-                            "tuple variant pattern",
-                            span,
-                        )),
-                        Ok((None, variant)) => {
-                            CheckedPattern::refutable(CheckedPatternData::UnionMember {
-                                pattern: None,
-                                variant,
-                                inner: Type::Unknown,
-                                borrows: false,
-                            })
-                        }
-                        Err(Some(_)) => CheckedPattern::irrefutable(CheckedPatternData::Variable(
-                            self.insert(
-                                Variable {
-                                    name: ident.into(),
-                                    ty: scrutinee.clone(),
-                                    is_static: false,
-                                    mutable,
-                                    value: None,
-                                },
-                                false,
-                            )
-                            .0,
-                        )),
-                        Err(None) => Default::default(),
-                    }
-                } else if let Some(resolved) = resolved {
-                    self.check_empty_union_pattern(scrutinee, resolved, span)
-                } else {
-                    Default::default()
-                }
-            }
-            Pattern::Option(patt) => {
-                let Some(resolved) = self.scopes.get_option_id().and_then(|id| {
-                    self.resolve_path_in(
-                        &[("Some".into(), vec![])],
-                        Default::default(),
-                        self.scopes.get(id).body_scope,
-                        false,
-                        pattern.span,
-                    )
-                }) else {
-                    return self.error(Error::no_lang_item("option", pattern.span));
-                };
-
-                self.check_tuple_union_pattern(
-                    scrutinee,
-                    false,
-                    resolved,
-                    vec![Located::new(pattern.span, *patt)],
-                    pattern.span,
-                )
-            }
-            Pattern::Null => {
-                let Some(resolved) = self.scopes.get_option_id().and_then(|id| {
-                    self.resolve_path_in(
-                        &[("None".into(), vec![])],
-                        Default::default(),
-                        self.scopes.get(id).body_scope,
-                        false,
-                        pattern.span,
-                    )
-                }) else {
-                    return self.error(Error::no_lang_item("option", pattern.span));
-                };
-
-                self.check_empty_union_pattern(scrutinee, resolved, pattern.span)
-            }
-            Pattern::MutBinding(name) => CheckedPattern::irrefutable(CheckedPatternData::Variable(
-                self.insert(
-                    Variable {
-                        name,
-                        ty: scrutinee.clone(),
-                        is_static: false,
-                        mutable: true,
-                        value: None,
-                    },
-                    false,
-                )
-                .0,
-            )),
-            Pattern::Struct(sub) => self.check_struct_pattern(scrutinee, mutable, sub, span),
-            Pattern::String(value) => {
-                let string = &self.make_lang_type_by_name("string", [], span);
-                if scrutinee.strip_references() != string {
-                    return self.error(Error::type_mismatch(scrutinee, string, &self.scopes, span));
-                }
-
-                CheckedPattern::refutable(CheckedPatternData::String(value))
-            }
-            Pattern::Int(patt) => CheckedPattern::refutable(
-                self.check_int_pattern(scrutinee, patt, span)
-                    .map(CheckedPatternData::Int)
-                    .unwrap_or_default(),
-            ),
-            Pattern::IntRange(RangePattern {
-                inclusive,
-                start,
-                end,
-            }) => {
-                let Some(start) = self.check_int_pattern(scrutinee, start, span) else {
-                    return Default::default();
-                };
-                let Some(end) = self.check_int_pattern(scrutinee, end, span) else {
-                    return Default::default();
-                };
-
-                if start > end {
-                    return self.error(Error::new(
-                        "range start must be less than or equal to its end",
-                        span,
-                    ));
-                }
-
-                CheckedPattern::refutable(CheckedPatternData::IntRange(RangePattern {
-                    inclusive,
-                    start,
-                    end,
-                }))
-            }
-            Pattern::Char(ch) => {
-                if scrutinee.strip_references() != &Type::Char {
-                    return self.error(Error::type_mismatch(
-                        scrutinee,
-                        &Type::Char,
-                        &self.scopes,
-                        span,
-                    ));
-                }
-
-                CheckedPattern::refutable(CheckedPatternData::Int(BigInt::from(ch as u32)))
-            }
-            Pattern::CharRange(RangePattern {
-                inclusive,
-                start,
-                end,
-            }) => {
-                if scrutinee.strip_references() != &Type::Char {
-                    return self.error(Error::type_mismatch(
-                        scrutinee,
-                        &Type::Char,
-                        &self.scopes,
-                        span,
-                    ));
-                }
-
-                if start > end {
-                    return self.error(Error::new(
-                        "range pattern end cannot be greater than its start",
-                        span,
-                    ));
-                }
-
-                CheckedPattern::refutable(CheckedPatternData::IntRange(RangePattern {
-                    inclusive,
-                    start: BigInt::from(start as u32),
-                    end: BigInt::from(end as u32),
-                }))
-            }
-            Pattern::Rest { .. } => self.error(Error::new(
-                "rest patterns are only valid inside array or span patterns",
-                span,
-            )),
-            Pattern::Array(sub) => self.check_array_pattern(scrutinee, sub, span),
-            Pattern::Bool(val) => {
-                if scrutinee.strip_references() != &Type::Bool {
-                    return self.error(Error::type_mismatch(
-                        scrutinee,
-                        &Type::Bool,
-                        &self.scopes,
-                        span,
-                    ));
-                }
-
-                CheckedPattern::refutable(CheckedPatternData::Int(BigInt::from(val as u32)))
-            }
-            Pattern::Tuple(sub) => self.check_tuple_pattern(scrutinee, mutable, sub, span),
-            Pattern::Void => {
-                if scrutinee.strip_references() != &Type::Void {
-                    return self.error(Error::type_mismatch(
-                        scrutinee,
-                        &Type::Void,
-                        &self.scopes,
-                        span,
-                    ));
-                }
-
-                CheckedPattern::irrefutable(CheckedPatternData::Void)
-            }
-            Pattern::Error => Default::default(),
-        }
-    }
-
-    fn check_full_pattern(
-        &mut self,
-        scrutinee: &Type,
-        pattern: Located<FullPattern>,
-    ) -> CheckedPattern {
-        self.check_pattern(false, scrutinee, false, pattern.map(|inner| inner.data))
     }
 
     fn check_unsafe_union_constructor(
@@ -4273,6 +3459,823 @@ impl TypeChecker {
                 _ => (Type::Void, false),
             }
         }
+    }
+}
+
+/// Pattern matching routines
+impl TypeChecker {
+    fn check_match_coverage<'a>(
+        &mut self,
+        ty: &Type,
+        mut patterns: impl Iterator<Item = &'a CheckedPattern> + Clone,
+        span: Span,
+    ) {
+        let ty = ty.strip_references();
+        if let Some((mut value, max)) = ty
+            .integer_stats()
+            .map(|int| (int.min(), int.max()))
+            .or_else(|| {
+                ty.is_char()
+                    .then(|| (BigInt::default(), BigInt::from(char::MAX as u32)))
+            })
+            .or_else(|| ty.is_bool().then(|| (BigInt::default(), BigInt::from(1))))
+        {
+            'outer: while value <= max {
+                if ty.is_char() && (0xd800.into()..=0xe000.into()).contains(&value) {
+                    value = 0xe000.into();
+                }
+
+                for patt in patterns.clone() {
+                    if patt.irrefutable {
+                        return;
+                    }
+
+                    match &patt.data {
+                        CheckedPatternData::Int(i) if i == &value => {
+                            value += 1;
+                            continue 'outer;
+                        }
+                        CheckedPatternData::IntRange(i) => {
+                            if i.inclusive {
+                                if value >= i.start && value <= i.end {
+                                    value = &i.end + 1;
+                                    continue 'outer;
+                                }
+                            } else if value >= i.start && value < i.end {
+                                value = i.end.clone();
+                                continue 'outer;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                return self.error(Error::match_statement("", span));
+            }
+        } else if ty
+            .as_user()
+            .is_some_and(|ut| Some(&ut.id) == self.scopes.lang_types.get("string"))
+        {
+            if !patterns.any(|patt| patt.irrefutable) {
+                self.error(Error::match_statement("", span))
+            }
+        } else if ty.as_user().is_some_and(|ut| {
+            Some(&ut.id) == self.scopes.lang_types.get("span")
+                || Some(&ut.id) == self.scopes.lang_types.get("span_mut")
+        }) {
+            if !patterns.any(|patt| {
+                patt.irrefutable
+                    || match &patt.data {
+                        CheckedPatternData::Span { patterns, rest, .. } => {
+                            patterns.is_empty() && rest.is_some()
+                        }
+                        _ => false,
+                    }
+            }) {
+                self.error(Error::match_statement("", span))
+            }
+        } else if let Some(ut) = ty
+            .as_user()
+            .and_then(|ut| self.scopes.get(ut.id).data.as_union())
+        {
+            let mut missing = vec![];
+            'outer: for (name, _) in ut.iter() {
+                for patt in patterns.clone() {
+                    if patt.irrefutable {
+                        return;
+                    } else if patt
+                        .data
+                        .as_union_member()
+                        .is_some_and(|(sub, variant, _, _)| {
+                            name == variant && sub.as_ref().map_or(true, |sub| sub.irrefutable)
+                        })
+                    {
+                        continue 'outer;
+                    }
+                }
+
+                missing.push(&name[..]);
+            }
+
+            if !missing.is_empty() {
+                return self.error(Error::match_statement(
+                    &format!("(missing variant(s) {})", missing.join(", ")),
+                    span,
+                ));
+            }
+        } else if !patterns.any(|patt| patt.irrefutable) {
+            // covers struct/array/void
+            self.error(Error::match_statement("", span))
+        }
+    }
+
+    /// Returns `Ok(_)` if the path is a compatible union variant.
+    /// Returns `Err(None)` if the path is a union variant, but of the wrong type.
+    /// Returns `Err(Some(_))` if the path is not a union variant.
+    fn get_union_variant(
+        &mut self,
+        scrutinee: &Type,
+        path: ResolvedPath,
+        span: Span,
+    ) -> Result<(Option<Type>, String), Option<Error>> {
+        let Some(ut) = scrutinee
+            .strip_references()
+            .as_user()
+            .filter(|ut| self.scopes.get(ut.id).data.is_union())
+        else {
+            return Err(Some(Error::new(
+                format!(
+                    "cannot use union pattern on type '{}'",
+                    scrutinee.name(&self.scopes)
+                ),
+                span,
+            )));
+        };
+        self.resolve_members(ut.id);
+
+        let mut variant = String::new();
+        let Some((union, path_ut)) = path
+            .as_func()
+            .map(|f| {
+                self.resolve_proto(f.id);
+                f
+            })
+            .map(|f| self.scopes.get(f.id))
+            .filter(|f| f.constructor.is_some())
+            .and_then(|f| {
+                variant = f.name.data.clone();
+                f.ret.as_user()
+            })
+            .and_then(|ut| self.scopes.get(ut.id).data.as_union().zip(Some(ut)))
+        else {
+            return Err(Some(match path {
+                ResolvedPath::UserType(ut) => Error::expected_found(
+                    &scrutinee.name(&self.scopes),
+                    &format!("type '{}'", self.scopes.get(ut.id).name),
+                    span,
+                ),
+                ResolvedPath::Func(f) => Error::expected_found(
+                    &scrutinee.name(&self.scopes),
+                    &format!("function '{}'", self.scopes.get(f.id).name.data),
+                    span,
+                ),
+                ResolvedPath::Var(id) => Error::expected_found(
+                    &scrutinee.name(&self.scopes),
+                    &format!("variable '{}'", self.scopes.get(id).name),
+                    span,
+                ),
+                ResolvedPath::None(err) => err,
+            }));
+        };
+
+        if ut.id == path_ut.id {
+            Ok((
+                union
+                    .get(&variant)
+                    .unwrap()
+                    .clone()
+                    .map(|ty| scrutinee.matched_inner_type(ty.with_templates(&ut.ty_args))),
+                variant,
+            ))
+        } else {
+            Err(self.error(Error::type_mismatch_s(
+                &scrutinee.name(&self.scopes),
+                &path_ut.name(&self.scopes),
+                span,
+            )))
+        }
+    }
+
+    fn check_int_pattern(
+        &mut self,
+        target: &Type,
+        IntPattern {
+            negative,
+            base,
+            value,
+            width,
+        }: IntPattern,
+        span: Span,
+    ) -> Option<BigInt> {
+        let inner = target.strip_references();
+        let Some(stats) = inner.integer_stats() else {
+            let (ty, _) = self.get_int_type_and_val(None, base, width, value, span);
+            if ty.is_unknown() {
+                return None;
+            }
+
+            return self.error(Error::type_mismatch(target, &ty, &self.scopes, span));
+        };
+
+        let (ty, value) = self.get_int_type_and_val(Some(inner), base, width, value, span);
+        if &ty != inner {
+            return self.error(Error::type_mismatch(inner, &ty, &self.scopes, span));
+        }
+
+        if !stats.signed && negative {
+            return self.error(Error::new(
+                format!(
+                    "cannot negate unsigned integer type '{}'",
+                    ty.name(&self.scopes)
+                ),
+                span,
+            ));
+        }
+
+        Some(if negative { -value } else { value })
+    }
+
+    fn check_slice_pattern(
+        &mut self,
+        inner_ptr: Type,
+        span_inner: Type,
+        patterns: Vec<Located<Pattern>>,
+        span_id: UserTypeId,
+    ) -> CheckedPattern {
+        let mut rest = None;
+        let mut result = Vec::new();
+        for (i, patt) in patterns.into_iter().enumerate() {
+            if let Pattern::Rest(var) = patt.data {
+                let id = var.map(|(mutable, name)| {
+                    self.insert(
+                        Variable {
+                            name,
+                            ty: Type::Unknown,
+                            is_static: false,
+                            mutable,
+                            value: None,
+                        },
+                        false,
+                    )
+                    .0
+                });
+
+                if rest.is_some() {
+                    self.error(Error::new(
+                        "... can only be used once in an array pattern",
+                        patt.span,
+                    ))
+                } else {
+                    rest = Some(RestPattern { id, pos: i });
+                }
+            } else {
+                result.push(self.check_pattern(true, &inner_ptr, false, patt));
+            }
+        }
+
+        if let Some(RestPattern { id: Some(id), .. }) = &mut rest {
+            self.scopes.get_mut(*id).item.ty = Type::User(
+                GenericUserType::from_type_args(&self.scopes, span_id, [span_inner.clone()]).into(),
+            );
+        }
+
+        CheckedPattern::refutable(CheckedPatternData::Span {
+            rest,
+            patterns: result,
+            inner: span_inner,
+        })
+    }
+
+    fn check_array_pattern(
+        &mut self,
+        target: &Type,
+        patterns: Vec<Located<Pattern>>,
+        span: Span,
+    ) -> CheckedPattern {
+        let span_id = self.scopes.lang_types.get("span").copied();
+        let span_mut_id = self.scopes.lang_types.get("span_mut").copied();
+        let (real_inner, arr_len) = match target.strip_references() {
+            Type::Array(inner) => (&inner.0, inner.1),
+            Type::User(ut) if Some(ut.id) == span_id => {
+                let inner = ut.first_type_arg().unwrap().clone();
+                return self.check_slice_pattern(
+                    Type::Ptr(inner.clone().into()),
+                    inner,
+                    patterns,
+                    span_id.unwrap(),
+                );
+            }
+            Type::User(ut) if Some(ut.id) == span_mut_id => {
+                let inner = ut.first_type_arg().unwrap().clone();
+                if target.is_ptr() || target.is_mut_ptr() {
+                    let ptr = target.matched_inner_type(inner.clone());
+                    let id = if ptr.is_ptr() {
+                        span_id.unwrap()
+                    } else {
+                        span_mut_id.unwrap()
+                    };
+                    return self.check_slice_pattern(ptr, inner, patterns, id);
+                } else {
+                    return self.check_slice_pattern(
+                        Type::MutPtr(inner.clone().into()),
+                        inner,
+                        patterns,
+                        span_mut_id.unwrap(),
+                    );
+                }
+            }
+            _ => {
+                return self.error(Error::new(
+                    format!(
+                        "array pattern cannot match value of type '{}'",
+                        target.name(&self.scopes)
+                    ),
+                    span,
+                ))
+            }
+        };
+
+        let inner = target.matched_inner_type(real_inner.clone());
+
+        let mut rest = None;
+        let mut irrefutable = true;
+        let mut result = Vec::new();
+        for (i, patt) in patterns.into_iter().enumerate() {
+            if let Pattern::Rest(var) = patt.data {
+                let id = var.map(|(mutable, name)| {
+                    self.insert(
+                        Variable {
+                            name,
+                            ty: Type::Unknown,
+                            is_static: false,
+                            mutable,
+                            value: None,
+                        },
+                        false,
+                    )
+                    .0
+                });
+
+                if rest.is_some() {
+                    self.error(Error::new(
+                        "... can only be used once in an array pattern",
+                        patt.span,
+                    ))
+                } else {
+                    rest = Some(RestPattern { id, pos: i });
+                }
+            } else {
+                let patt = self.check_pattern(true, &inner, false, patt);
+                if !patt.irrefutable {
+                    irrefutable = false;
+                }
+                result.push(patt);
+            }
+        }
+
+        if result.len() > arr_len {
+            self.error(Error::new(
+                format!("expected {} elements, got {}", arr_len, result.len()),
+                span,
+            ))
+        }
+
+        if let Some(RestPattern { id: Some(id), .. }) = &mut rest {
+            self.scopes.get_mut(*id).item.ty = target.matched_inner_type(Type::Array(
+                (real_inner.clone(), arr_len - result.len()).into(),
+            ));
+        }
+
+        CheckedPattern {
+            irrefutable,
+            data: CheckedPatternData::Array {
+                patterns: ArrayPattern {
+                    rest,
+                    arr_len,
+                    inner: real_inner.clone(),
+                    patterns: result,
+                },
+                borrows: target.is_any_ptr(),
+            },
+        }
+    }
+
+    fn check_struct_pattern(
+        &mut self,
+        scrutinee: &Type,
+        mutable: bool,
+        destructures: Vec<Destructure>,
+        span: Span,
+    ) -> CheckedPattern {
+        let Some(ut) = scrutinee.strip_references().as_user().filter(|ut| {
+            matches!(
+                self.scopes.get(ut.id).data,
+                UserTypeData::Struct | UserTypeData::Union(_)
+            )
+        }) else {
+            return self.error(Error::bad_destructure(&scrutinee.name(&self.scopes), span));
+        };
+        self.resolve_members(ut.id);
+
+        let cap = self.can_access_privates(self.scopes.get(ut.id).scope);
+        let mut irrefutable = true;
+        let mut checked = Vec::new();
+
+        for Destructure {
+            name,
+            mutable: pm,
+            pattern,
+        } in destructures
+        {
+            let Some(member) = self.scopes.get(ut.id).members.get(&name.data) else {
+                self.diag.error(Error::no_member(
+                    &scrutinee.name(&self.scopes),
+                    &name.data,
+                    name.span,
+                ));
+                continue;
+            };
+
+            if !member.public && !cap {
+                self.diag.error(Error::private_member(
+                    &scrutinee.name(&self.scopes),
+                    &name.data,
+                    name.span,
+                ));
+            }
+
+            // TODO: duplicates
+            let inner = member.ty.with_templates(&ut.ty_args);
+            let patt = self.check_pattern(
+                true,
+                &scrutinee.matched_inner_type(inner.clone()),
+                mutable || pm,
+                pattern,
+            );
+            if !patt.irrefutable {
+                irrefutable = false;
+            }
+            checked.push((name.data, inner, patt))
+        }
+
+        CheckedPattern {
+            irrefutable,
+            data: CheckedPatternData::Destrucure {
+                patterns: checked,
+                borrows: scrutinee.is_any_ptr(),
+            },
+        }
+    }
+
+    fn check_tuple_pattern(
+        &mut self,
+        scrutinee: &Type,
+        mutable: bool,
+        subpatterns: Vec<Located<Pattern>>,
+        span: Span,
+    ) -> CheckedPattern {
+        let Some(ut) = scrutinee
+            .strip_references()
+            .as_user()
+            .filter(|ut| self.scopes.get(ut.id).data.is_tuple())
+        else {
+            return self.error(Error::expected_found(
+                &scrutinee.name(&self.scopes),
+                &format!("({})", ["_"].repeat(subpatterns.len()).join(", ")),
+                span,
+            ));
+        };
+
+        if ut.ty_args.len() != subpatterns.len() {
+            self.error(Error::expected_found(
+                &scrutinee.name(&self.scopes),
+                &format!("({})", ["_"].repeat(subpatterns.len()).join(", ")),
+                span,
+            ))
+        }
+
+        let mut irrefutable = true;
+        let mut checked = Vec::new();
+        for (i, patt) in subpatterns.into_iter().enumerate() {
+            let (inner, ty) = if let Some((_, ty)) = ut.ty_args.get_index(i) {
+                (ty.clone(), scrutinee.matched_inner_type(ty.clone()))
+            } else {
+                (Type::Unknown, Type::Unknown)
+            };
+
+            let patt = self.check_pattern(true, &ty, mutable, patt);
+            if !patt.irrefutable {
+                irrefutable = false;
+            }
+            checked.push((format!("{i}"), inner, patt));
+        }
+
+        CheckedPattern {
+            irrefutable,
+            data: CheckedPatternData::Destrucure {
+                patterns: checked,
+                borrows: scrutinee.is_any_ptr(),
+            },
+        }
+    }
+
+    fn check_tuple_union_pattern(
+        &mut self,
+        scrutinee: &Type,
+        mutable: bool,
+        resolved: ResolvedPath,
+        subpatterns: Vec<Located<Pattern>>,
+        span: Span,
+    ) -> CheckedPattern {
+        match self.get_union_variant(scrutinee, resolved, span) {
+            Ok((Some(scrutinee), variant)) => {
+                CheckedPattern::refutable(CheckedPatternData::UnionMember {
+                    pattern: Some(
+                        self.check_tuple_pattern(&scrutinee, mutable, subpatterns, span)
+                            .into(),
+                    ),
+                    variant,
+                    inner: Type::Unknown,
+                    borrows: scrutinee.is_any_ptr(),
+                })
+            }
+            Ok((None, _)) => self.error(Error::expected_found(
+                "tuple variant pattern",
+                "empty variant pattern",
+                span,
+            )),
+            Err(Some(err)) => self.error(err),
+            _ => Default::default(),
+        }
+    }
+
+    fn check_empty_union_pattern(
+        &mut self,
+        scrutinee: &Type,
+        resolved: ResolvedPath,
+        span: Span,
+    ) -> CheckedPattern {
+        match self.get_union_variant(scrutinee, resolved, span) {
+            Ok((Some(_), _)) => self.error(Error::expected_found(
+                "empty variant pattern",
+                "variant pattern",
+                span,
+            )),
+            Ok((None, variant)) => CheckedPattern::refutable(CheckedPatternData::UnionMember {
+                pattern: None,
+                variant,
+                inner: Type::Unknown,
+                borrows: false,
+            }),
+            Err(Some(err)) => self.error(err),
+            Err(None) => Default::default(),
+        }
+    }
+
+    fn check_pattern(
+        &mut self,
+        binding: bool,
+        scrutinee: &Type,
+        mutable: bool,
+        pattern: Located<Pattern>,
+    ) -> CheckedPattern {
+        let span = pattern.span;
+        match pattern.data {
+            Pattern::TupleLike { path, subpatterns } => {
+                let Some(resolved) = self.resolve_path(&path.data, path.span, false) else {
+                    return Default::default();
+                };
+
+                self.check_tuple_union_pattern(scrutinee, mutable, resolved, subpatterns, span)
+            }
+            Pattern::StructLike { path, subpatterns } => {
+                let Some(resolved) = self.resolve_path(&path.data, path.span, false) else {
+                    return Default::default();
+                };
+
+                match self.get_union_variant(scrutinee, resolved, span) {
+                    Ok((Some(scrutinee), variant)) => {
+                        CheckedPattern::refutable(CheckedPatternData::UnionMember {
+                            pattern: Some(
+                                self.check_struct_pattern(&scrutinee, mutable, subpatterns, span)
+                                    .into(),
+                            ),
+                            variant,
+                            inner: Type::Unknown,
+                            borrows: scrutinee.is_any_ptr(),
+                        })
+                    }
+                    Ok((None, _)) => self.error(Error::expected_found(
+                        "tuple variant pattern",
+                        "empty variant pattern",
+                        span,
+                    )),
+                    Err(Some(err)) => self.error(err),
+                    _ => Default::default(),
+                }
+            }
+            Pattern::Path(path) => {
+                let resolved = self.resolve_path(&path, span, false);
+                if let Some(ident) = path.as_identifier() {
+                    match resolved
+                        .ok_or(None)
+                        .and_then(|p| self.get_union_variant(scrutinee, p, span))
+                    {
+                        Ok(_) if binding => self.error(Error::new(
+                            "cannot create binding that shadows union variant",
+                            span,
+                        )),
+                        Ok((Some(_), _)) => self.error(Error::expected_found(
+                            "empty variant pattern",
+                            "tuple variant pattern",
+                            span,
+                        )),
+                        Ok((None, variant)) => {
+                            CheckedPattern::refutable(CheckedPatternData::UnionMember {
+                                pattern: None,
+                                variant,
+                                inner: Type::Unknown,
+                                borrows: false,
+                            })
+                        }
+                        Err(Some(_)) => CheckedPattern::irrefutable(CheckedPatternData::Variable(
+                            self.insert(
+                                Variable {
+                                    name: ident.into(),
+                                    ty: scrutinee.clone(),
+                                    is_static: false,
+                                    mutable,
+                                    value: None,
+                                },
+                                false,
+                            )
+                            .0,
+                        )),
+                        Err(None) => Default::default(),
+                    }
+                } else if let Some(resolved) = resolved {
+                    self.check_empty_union_pattern(scrutinee, resolved, span)
+                } else {
+                    Default::default()
+                }
+            }
+            Pattern::Option(patt) => {
+                let Some(resolved) = self.scopes.get_option_id().and_then(|id| {
+                    self.resolve_path_in(
+                        &[("Some".into(), vec![])],
+                        Default::default(),
+                        self.scopes.get(id).body_scope,
+                        false,
+                        pattern.span,
+                    )
+                }) else {
+                    return self.error(Error::no_lang_item("option", pattern.span));
+                };
+
+                self.check_tuple_union_pattern(
+                    scrutinee,
+                    false,
+                    resolved,
+                    vec![Located::new(pattern.span, *patt)],
+                    pattern.span,
+                )
+            }
+            Pattern::Null => {
+                let Some(resolved) = self.scopes.get_option_id().and_then(|id| {
+                    self.resolve_path_in(
+                        &[("None".into(), vec![])],
+                        Default::default(),
+                        self.scopes.get(id).body_scope,
+                        false,
+                        pattern.span,
+                    )
+                }) else {
+                    return self.error(Error::no_lang_item("option", pattern.span));
+                };
+
+                self.check_empty_union_pattern(scrutinee, resolved, pattern.span)
+            }
+            Pattern::MutBinding(name) => CheckedPattern::irrefutable(CheckedPatternData::Variable(
+                self.insert(
+                    Variable {
+                        name,
+                        ty: scrutinee.clone(),
+                        is_static: false,
+                        mutable: true,
+                        value: None,
+                    },
+                    false,
+                )
+                .0,
+            )),
+            Pattern::Struct(sub) => self.check_struct_pattern(scrutinee, mutable, sub, span),
+            Pattern::String(value) => {
+                let string = &self.make_lang_type_by_name("string", [], span);
+                if scrutinee.strip_references() != string {
+                    return self.error(Error::type_mismatch(scrutinee, string, &self.scopes, span));
+                }
+
+                CheckedPattern::refutable(CheckedPatternData::String(value))
+            }
+            Pattern::Int(patt) => CheckedPattern::refutable(
+                self.check_int_pattern(scrutinee, patt, span)
+                    .map(CheckedPatternData::Int)
+                    .unwrap_or_default(),
+            ),
+            Pattern::IntRange(RangePattern {
+                inclusive,
+                start,
+                end,
+            }) => {
+                let Some(start) = self.check_int_pattern(scrutinee, start, span) else {
+                    return Default::default();
+                };
+                let Some(end) = self.check_int_pattern(scrutinee, end, span) else {
+                    return Default::default();
+                };
+
+                if start > end {
+                    return self.error(Error::new(
+                        "range start must be less than or equal to its end",
+                        span,
+                    ));
+                }
+
+                CheckedPattern::refutable(CheckedPatternData::IntRange(RangePattern {
+                    inclusive,
+                    start,
+                    end,
+                }))
+            }
+            Pattern::Char(ch) => {
+                if scrutinee.strip_references() != &Type::Char {
+                    return self.error(Error::type_mismatch(
+                        scrutinee,
+                        &Type::Char,
+                        &self.scopes,
+                        span,
+                    ));
+                }
+
+                CheckedPattern::refutable(CheckedPatternData::Int(BigInt::from(ch as u32)))
+            }
+            Pattern::CharRange(RangePattern {
+                inclusive,
+                start,
+                end,
+            }) => {
+                if scrutinee.strip_references() != &Type::Char {
+                    return self.error(Error::type_mismatch(
+                        scrutinee,
+                        &Type::Char,
+                        &self.scopes,
+                        span,
+                    ));
+                }
+
+                if start > end {
+                    return self.error(Error::new(
+                        "range pattern end cannot be greater than its start",
+                        span,
+                    ));
+                }
+
+                CheckedPattern::refutable(CheckedPatternData::IntRange(RangePattern {
+                    inclusive,
+                    start: BigInt::from(start as u32),
+                    end: BigInt::from(end as u32),
+                }))
+            }
+            Pattern::Rest { .. } => self.error(Error::new(
+                "rest patterns are only valid inside array or span patterns",
+                span,
+            )),
+            Pattern::Array(sub) => self.check_array_pattern(scrutinee, sub, span),
+            Pattern::Bool(val) => {
+                if scrutinee.strip_references() != &Type::Bool {
+                    return self.error(Error::type_mismatch(
+                        scrutinee,
+                        &Type::Bool,
+                        &self.scopes,
+                        span,
+                    ));
+                }
+
+                CheckedPattern::refutable(CheckedPatternData::Int(BigInt::from(val as u32)))
+            }
+            Pattern::Tuple(sub) => self.check_tuple_pattern(scrutinee, mutable, sub, span),
+            Pattern::Void => {
+                if scrutinee.strip_references() != &Type::Void {
+                    return self.error(Error::type_mismatch(
+                        scrutinee,
+                        &Type::Void,
+                        &self.scopes,
+                        span,
+                    ));
+                }
+
+                CheckedPattern::irrefutable(CheckedPatternData::Void)
+            }
+            Pattern::Error => Default::default(),
+        }
+    }
+
+    fn check_full_pattern(
+        &mut self,
+        scrutinee: &Type,
+        pattern: Located<FullPattern>,
+    ) -> CheckedPattern {
+        self.check_pattern(false, scrutinee, false, pattern.map(|inner| inner.data))
     }
 }
 
