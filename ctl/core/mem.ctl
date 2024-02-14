@@ -1,6 +1,9 @@
 #(intrinsic(size_of))
 pub import fn size_of<T>(): uint;
 
+#(intrinsic(align_of))
+pub import fn align_of<T>(): uint;
+
 pub fn size_of_val<T>(_: *T): uint {
     size_of::<T>()
 }

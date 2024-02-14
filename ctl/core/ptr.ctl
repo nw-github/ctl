@@ -30,7 +30,7 @@ pub struct Raw<T> {
     }
 
     pub fn dangling(): Raw<T> {
-        Raw(addr: 0xDEADBEEF)
+        Raw(addr: core::mem::align_of::<T>())
     }
 
     pub fn add(this, count: uint): Raw<T> {
@@ -70,7 +70,7 @@ pub struct RawMut<T> {
     }
 
     pub fn dangling(): RawMut<T> {
-        RawMut(addr: 0xDEADBEEF)
+        RawMut(addr: core::mem::align_of::<T>())
     }
 
     pub fn add(this, count: uint): RawMut<T> {

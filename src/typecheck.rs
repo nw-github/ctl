@@ -738,7 +738,7 @@ impl TypeChecker {
         } else if let Some(attr) = attrs.iter().find(|attr| attr.name.data == "intrinsic") {
             if let Some(attr) = attr.props.first() {
                 match attr.name.data.as_str() {
-                    "size_of" | "panic" => {
+                    "size_of" | "align_of" | "panic" => {
                         self.scopes.intrinsics.insert(id, attr.name.data.clone());
                     }
                     _ => self.error(Error::new(

@@ -21,6 +21,7 @@ const ARRAY_DATA_NAME: &str = "data";
 const VOID_INSTANCE: &str = "CTL_VOID";
 const ATTR_NOGEN: &str = "c_opaque";
 const ATTR_LINKNAME: &str = "c_name";
+const NULLPTR: &str = "((void *)0)";
 
 #[derive(Eq, Clone)]
 struct State {
@@ -1369,7 +1370,7 @@ impl<'a> Codegen<'a> {
                     if let Some(some) = members.remove("0") {
                         self.emit_expr(some, state);
                     } else {
-                        self.buffer.emit(" NULL");
+                        self.buffer.emit(NULLPTR);
                     }
                 } else {
                     self.emit_cast(&expr.ty);
@@ -1714,7 +1715,7 @@ impl<'a> Codegen<'a> {
                 self.emit_expr_inner(*inner, state);
                 self.buffer.emit("),*(");
                 self.emit_type(&expr.ty);
-                self.buffer.emit("*)(NULL))");
+                self.buffer.emit(format!("*){NULLPTR})"));
             }
             CheckedExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }
@@ -1774,6 +1775,12 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit(format!(
                     "{}",
                     func.first_type_arg().unwrap().size_and_align(self.scopes).0
+                ));
+            }
+            "align_of" => {
+                self.buffer.emit(format!(
+                    "{}",
+                    func.first_type_arg().unwrap().size_and_align(self.scopes).1
                 ));
             }
             "panic" => {
@@ -1884,7 +1891,7 @@ impl<'a> Codegen<'a> {
                 let base = ty.strip_references();
                 if base.can_omit_tag(self.scopes).is_some() {
                     if variant == "Some" {
-                        conditions.next_str(format!("({src}!=NULL)"));
+                        conditions.next_str(format!("({src}!={NULLPTR})"));
                         if let Some((patt, borrows)) =
                             patt.as_ref().and_then(|patt| patt.data.as_destrucure())
                         {
@@ -1899,7 +1906,7 @@ impl<'a> Codegen<'a> {
                             );
                         }
                     } else {
-                        conditions.next_str(format!("({src}==NULL)"));
+                        conditions.next_str(format!("({src}=={NULLPTR})"));
                     }
                 } else {
                     let tag = base
