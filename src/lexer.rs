@@ -69,6 +69,7 @@ pub enum Token<'a> {
 
     Let,
     Mut,
+    Raw,
     Fn,
     Keyword,
     Pub,
@@ -158,6 +159,7 @@ impl std::fmt::Display for Token<'_> {
             Token::Unsafe => write!(f, "unsafe"),
             Token::Pub => write!(f, "pub"),
             Token::Mut => write!(f, "mut"),
+            Token::Raw => write!(f, "raw"),
             Token::This => write!(f, "This"),
             Token::Struct => write!(f, "struct"),
             _ => write!(f, "FIXME: {self:?}"),
@@ -561,6 +563,7 @@ impl<'a> Lexer<'a> {
             "null" => Token::None,
             "pub" => Token::Pub,
             "raise" => Token::Raise,
+            "raw" => Token::Raw,
             "return" => Token::Return,
             "shared" => Token::Shared,
             "static" => Token::Static,

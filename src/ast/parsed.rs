@@ -331,6 +331,7 @@ pub enum TypeHint {
     Option(Box<TypeHint>),
     Ptr(Box<TypeHint>),
     MutPtr(Box<TypeHint>),
+    RawPtr(Box<TypeHint>),
     Fn {
         is_extern: bool,
         params: Vec<TypeHint>,
@@ -374,6 +375,7 @@ impl std::fmt::Debug for TypeHint {
             TypeHint::Option(inner) => write!(f, "?{inner:?}"),
             TypeHint::Ptr(inner) => write!(f, "*{inner:?}"),
             TypeHint::MutPtr(inner) => write!(f, "*mut {inner:?}"),
+            TypeHint::RawPtr(inner) => write!(f, "*raw {inner:?}"),
             TypeHint::Fn {
                 is_extern,
                 params,

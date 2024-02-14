@@ -459,7 +459,7 @@ impl Buffer {
             Type::F64 => self.emit("f64"),
             Type::Bool => self.emit("CTL_bool"),
             Type::Char => self.emit("CTL_char"),
-            Type::Ptr(inner) | Type::MutPtr(inner) => {
+            Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) => {
                 if let Type::Array(value) = &**inner {
                     self.emit_type(scopes, &value.0, tg, min);
                     // self.emit("/*");
@@ -522,6 +522,7 @@ impl Buffer {
             Type::Int(bits) => self.emit(format!("i{bits}")),
             Type::Uint(bits) => self.emit(format!("u{bits}")),
             Type::CInt(ty) | Type::CUint(ty) => {
+                self.emit("c_");
                 if matches!(id, Type::CUint(_)) {
                     self.emit("u");
                 }
@@ -540,11 +541,15 @@ impl Buffer {
             Type::Bool => self.emit("bool"),
             Type::Char => self.emit("char"),
             Type::Ptr(inner) => {
-                self.emit("ptr_");
+                self.emit(if min { "p" } else { "ptr_" });
                 self.emit_generic_mangled_name(scopes, inner, min);
             }
             Type::MutPtr(inner) => {
-                self.emit("mutptr_");
+                self.emit(if min { "m" } else { "mutptr_" });
+                self.emit_generic_mangled_name(scopes, inner, min);
+            }
+            Type::RawPtr(inner) => {
+                self.emit(if min { "r" } else { "rawptr_" });
                 self.emit_generic_mangled_name(scopes, inner, min);
             }
             Type::FnPtr(f) => self.emit_fnptr_name(scopes, f, min),
@@ -1611,8 +1616,10 @@ impl<'a> Codegen<'a> {
                         }
                     }
                 } else {
-                    self.buffer
-                        .emit(format!("({}", "*".repeat(callee.ty.indirection() - 1)));
+                    self.buffer.emit(format!(
+                        "({}",
+                        "*".repeat(Self::indirection(&callee.ty) - 1)
+                    ));
                     self.emit_expr(*callee, state);
                     self.buffer.emit(")");
                 }
@@ -2352,11 +2359,20 @@ impl<'a> Codegen<'a> {
             format!(
                 "({:*<1$}{src})",
                 "",
-                ty.indirection() - usize::from(ty.strip_references().is_array())
+                Self::indirection(ty) - usize::from(ty.strip_references().is_array())
             )
         } else {
             src.into()
         }
+    }
+
+    fn indirection(mut id: &Type) -> usize {
+        let mut count = 0;
+        while let Type::Ptr(inner) | Type::MutPtr(inner) = id {
+            id = inner;
+            count += 1;
+        }
+        count
     }
 
     fn find_function(&self, module: &str, name: &str) -> Option<State> {

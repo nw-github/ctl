@@ -206,14 +206,15 @@ impl CheckedExpr {
     pub fn is_assignable(&self, scopes: &Scopes) -> bool {
         match &self.data {
             CheckedExprData::Unary { op, expr } => {
-                matches!(op, UnaryOp::Deref) && matches!(expr.ty, Type::MutPtr(_))
+                matches!(op, UnaryOp::Deref) && matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
             }
             CheckedExprData::Symbol(_, _) | CheckedExprData::Member { .. } => {
                 self.can_addrmut(scopes)
             }
             CheckedExprData::Subscript { callee, .. } => match &callee.data {
                 CheckedExprData::Symbol(Symbol::Var(id), _) => {
-                    callee.ty.is_mut_ptr() || scopes.get(*id).mutable
+                    matches!(callee.ty, Type::MutPtr(_) | Type::RawPtr(_))
+                        || scopes.get(*id).mutable
                 }
                 CheckedExprData::Member { source, .. } => source.is_assignable(scopes),
                 _ => true,
@@ -225,14 +226,15 @@ impl CheckedExpr {
     pub fn can_addrmut(&self, scopes: &Scopes) -> bool {
         match &self.data {
             CheckedExprData::Unary { op, expr } => {
-                !matches!(op, UnaryOp::Deref) || matches!(expr.ty, Type::MutPtr(_))
+                !matches!(op, UnaryOp::Deref)
+                    || matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
             }
             CheckedExprData::Symbol(symbol, _) => match symbol {
                 Symbol::Func(_) => false,
                 Symbol::Var(var) => scopes.get(*var).mutable,
             },
             CheckedExprData::Member { source, .. } => {
-                source.ty.is_mut_ptr() || source.can_addrmut(scopes)
+                matches!(source.ty, Type::MutPtr(_)) || source.can_addrmut(scopes)
             }
             CheckedExprData::Subscript { callee, .. } => callee.can_addrmut(scopes),
             _ => true,
@@ -240,6 +242,17 @@ impl CheckedExpr {
     }
 
     pub fn coerce_to(mut self, scopes: &Scopes, target: &Type) -> Result<CheckedExpr, CheckedExpr> {
+        fn may_ptr_coerce(lhs: &Type, rhs: &Type) -> bool {
+            match (lhs, rhs) {
+                (Type::MutPtr(s), Type::Ptr(t) | Type::RawPtr(t)) if s == t => true,
+                (Type::MutPtr(s), Type::RawPtr(t) | Type::MutPtr(t) | Type::Ptr(t)) => {
+                    may_ptr_coerce(s, t)
+                }
+                (Type::Ptr(s), Type::Ptr(t)) => may_ptr_coerce(s, t),
+                _ => false,
+            }
+        }
+
         match (&self.ty, target) {
             (Type::Never, rhs) => Ok(CheckedExpr::new(
                 rhs.clone(),
@@ -249,11 +262,11 @@ impl CheckedExpr {
                 self.ty = target.clone();
                 Ok(self)
             }
-            (lhs, rhs) if lhs.may_ptr_coerce(rhs) => {
+            (lhs, rhs) if may_ptr_coerce(lhs, rhs) => {
                 self.ty = target.clone();
                 Ok(self)
             }
-            (src, rhs) if src != rhs => {
+            (lhs, rhs) if lhs != rhs => {
                 if let Some(inner) = rhs.as_option_inner(scopes) {
                     match self.coerce_to(scopes, inner) {
                         Ok(expr) => Ok(CheckedExpr::new(

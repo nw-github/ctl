@@ -665,6 +665,11 @@
           "match": "\\bmut\\b"
         },
         {
+          "comment": "raw",
+          "name": "storage.modifier.raw.ctl",
+          "match": "\\braw\\b"
+        },
+        {
           "comment": "keyword",
           "name": "storage.modifier.kw.ctl",
           "match": "\\bkw\\b"

@@ -59,11 +59,11 @@ impl<T> WithTypeArgs<T> {
     pub fn infer_type_args(&mut self, mut src: &Type, mut target: &Type) {
         loop {
             match (src, target) {
-                (Type::Ptr(gi), Type::Ptr(ti)) => {
+                (Type::Ptr(gi), Type::Ptr(ti) | Type::RawPtr(ti)) => {
                     src = gi;
                     target = ti;
                 }
-                (Type::Ptr(gi) | Type::MutPtr(gi), Type::MutPtr(ti)) => {
+                (Type::Ptr(gi) | Type::MutPtr(gi), Type::MutPtr(ti) | Type::RawPtr(ti)) => {
                     src = gi;
                     target = ti;
                 }
@@ -255,6 +255,7 @@ pub enum Type {
     User(Box<GenericUserType>),
     Ptr(Box<Type>),
     MutPtr(Box<Type>),
+    RawPtr(Box<Type>),
     Array(Box<(Type, usize)>),
     TraitSelf,
 }
@@ -269,6 +270,7 @@ impl PartialEq for Type {
             (Self::User(l0), Self::User(r0)) => l0 == r0,
             (Self::Ptr(l0), Self::Ptr(r0)) => l0 == r0,
             (Self::MutPtr(l0), Self::MutPtr(r0)) => l0 == r0,
+            (Self::RawPtr(l0), Self::RawPtr(r0)) => l0 == r0,
             (Self::Array(l0), Self::Array(r0)) => l0 == r0,
             (Self::FnPtr(l0), Self::FnPtr(r0)) => l0 == r0,
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
@@ -287,9 +289,11 @@ impl std::hash::Hash for Type {
             Self::User(l0) => l0.hash(state),
             Self::Ptr(l0) => l0.hash(state),
             Self::MutPtr(l0) => l0.hash(state),
+            Self::RawPtr(l0) => l0.hash(state),
             Self::Array(l0) => l0.hash(state),
-            _ => core::mem::discriminant(self).hash(state),
+            _ => {}
         }
+        core::mem::discriminant(self).hash(state);
     }
 }
 
@@ -467,6 +471,7 @@ impl Type {
             Type::Char => "char".into(),
             Type::Ptr(id) => format!("*{}", id.name(scopes)),
             Type::MutPtr(id) => format!("*mut {}", id.name(scopes)),
+            Type::RawPtr(id) => format!("*raw {}", id.name(scopes)),
             Type::FnPtr(f) => {
                 let mut result = "fn(".to_string();
                 for (i, param) in f.params.iter().enumerate() {
@@ -519,7 +524,7 @@ impl Type {
     }
 
     pub fn is_any_ptr(&self) -> bool {
-        matches!(self, Type::Ptr(_) | Type::MutPtr(_))
+        matches!(self, Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_))
     }
 
     pub fn is_any_int(&self) -> bool {
@@ -555,27 +560,6 @@ impl Type {
         };
 
         Some(IntStats { bits, signed })
-    }
-
-    pub fn indirection(&self) -> usize {
-        let mut count = 0;
-        let mut id = self;
-        while let Type::Ptr(inner) | Type::MutPtr(inner) = id {
-            id = inner;
-            count += 1;
-        }
-        count
-    }
-
-    pub fn may_ptr_coerce(&self, target: &Type) -> bool {
-        match (self, target) {
-            (Type::MutPtr(ty), Type::Ptr(target)) if ty == target => true,
-            (Type::MutPtr(ty), Type::MutPtr(target) | Type::Ptr(target)) => {
-                ty.may_ptr_coerce(target)
-            }
-            (Type::Ptr(ty), Type::Ptr(target)) => ty.may_ptr_coerce(target),
-            _ => false,
-        }
     }
 
     pub fn from_int_name(name: &str, ty: bool) -> Option<Type> {
@@ -631,7 +615,7 @@ impl Type {
                 CInt::Long => std::mem::size_of::<c_long>(),
                 CInt::LongLong => std::mem::size_of::<c_longlong>(),
             },
-            Type::Ptr(_) | Type::MutPtr(_) => std::mem::size_of::<*const ()>(),
+            Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_) => std::mem::size_of::<*const ()>(),
             Type::Isize => std::mem::size_of::<isize>(),
             Type::Usize => std::mem::size_of::<usize>(),
             Type::F32 => std::mem::size_of::<f32>(),
@@ -690,7 +674,11 @@ impl Type {
     }
 
     pub fn can_omit_tag(&self, scopes: &Scopes) -> Option<&Type> {
-        self.as_option_inner(scopes)
-            .filter(|inner| inner.is_ptr() || inner.is_mut_ptr() || inner.is_fn_ptr())
+        self.as_option_inner(scopes).filter(|inner| {
+            matches!(
+                inner,
+                Type::FnPtr(_) | Type::RawPtr(_) | Type::Ptr(_) | Type::MutPtr(_)
+            )
+        })
     }
 }

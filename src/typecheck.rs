@@ -2165,7 +2165,7 @@ impl TypeChecker {
             (Type::Char, Type::Uint(num)) if *num >= 32 => {}
             (Type::Char, Type::Int(num)) if *num >= 33 => {}
             (Type::F32, Type::F64) => {}
-            (Type::Ptr(_) | Type::MutPtr(_), Type::Usize) => {}
+            (Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_), Type::Usize) => {}
             (
                 Type::Bool,
                 Type::Int(_)
@@ -2175,9 +2175,10 @@ impl TypeChecker {
                 | Type::Usize
                 | Type::Isize,
             ) => {}
-
+            (Type::Usize, Type::RawPtr(_)) => {}
+            (Type::MutPtr(_) | Type::Ptr(_), Type::RawPtr(_)) => {}
             (Type::Usize, Type::Ptr(_) | Type::MutPtr(_))
-            | (Type::MutPtr(_) | Type::Ptr(_), Type::MutPtr(_) | Type::Ptr(_)) => {
+            | (Type::MutPtr(_) | Type::Ptr(_) | Type::RawPtr(_), Type::MutPtr(_) | Type::Ptr(_)) => {
                 if self.safety != Safety::Unsafe {
                     self.error(Error::is_unsafe(span))
                 }
@@ -2362,10 +2363,16 @@ impl TypeChecker {
                     self.check_expr(expr, target)
                 };
 
-                if let Type::Ptr(inner) | Type::MutPtr(inner) = &expr.ty {
-                    ((**inner).clone(), expr)
-                } else {
-                    (invalid!(expr.ty), expr)
+                match &expr.ty {
+                    Type::Ptr(inner) | Type::MutPtr(inner) => ((**inner).clone(), expr),
+                    Type::RawPtr(inner) => {
+                        if self.safety != Safety::Unsafe {
+                            self.error(Error::is_unsafe(span))
+                        }
+
+                        ((**inner).clone(), expr)
+                    }
+                    _ => (invalid!(expr.ty), expr),
                 }
             }
             Addr => {
@@ -2580,24 +2587,24 @@ impl TypeChecker {
 
                 if this_param.ty.is_mut_ptr() {
                     let mut ty = &recv.ty;
-                    if !ty.is_ptr() && !ty.is_mut_ptr() && !recv.can_addrmut(&self.scopes) {
+                    if !matches!(ty, Type::Ptr(_) | Type::MutPtr(_))
+                        && !recv.can_addrmut(&self.scopes)
+                    {
                         return self.error(Error::new(
                             format!("cannot call method '{member}' with immutable receiver"),
                             span,
                         ));
-                    } else {
-                        while let Type::MutPtr(inner) = ty {
-                            ty = inner;
-                        }
+                    }
 
-                        if matches!(ty, Type::Ptr(_)) {
-                            return self.error(Error::new(
-                                format!(
-                                    "cannot call method '{member}' through an immutable pointer"
-                                ),
-                                span,
-                            ));
-                        }
+                    while let Type::MutPtr(inner) = ty {
+                        ty = inner;
+                    }
+
+                    if matches!(ty, Type::Ptr(_)) {
+                        return self.error(Error::new(
+                            format!("cannot call method '{member}' through an immutable pointer"),
+                            span,
+                        ));
                     }
                 }
 
@@ -3067,6 +3074,7 @@ impl TypeChecker {
             TypeHint::Void => Type::Void,
             TypeHint::Ptr(ty) => Type::Ptr(self.resolve_typehint(*ty).into()),
             TypeHint::MutPtr(ty) => Type::MutPtr(self.resolve_typehint(*ty).into()),
+            TypeHint::RawPtr(ty) => Type::RawPtr(self.resolve_typehint(*ty).into()),
             TypeHint::This(span) => {
                 let current = self.current_function();
                 for (_, scope) in self.scopes.walk(self.current) {
@@ -3860,7 +3868,7 @@ impl TypeChecker {
         let Some(ut) = scrutinee.strip_references().as_user().filter(|ut| {
             matches!(
                 self.scopes.get(ut.id).data,
-                UserTypeData::Struct | UserTypeData::Union(_)| UserTypeData::AnonStruct
+                UserTypeData::Struct | UserTypeData::Union(_) | UserTypeData::AnonStruct
             )
         }) else {
             return self.error(Error::bad_destructure(&scrutinee.name(&self.scopes), span));

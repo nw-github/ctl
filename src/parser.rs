@@ -1267,6 +1267,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.next();
                 if self.next_if_kind(Token::Mut).is_some() {
                     TypeHint::MutPtr(self.type_hint().into())
+                } else if self.next_if_kind(Token::Raw).is_some() {
+                    TypeHint::RawPtr(self.type_hint().into())
                 } else {
                     TypeHint::Ptr(self.type_hint().into())
                 }
