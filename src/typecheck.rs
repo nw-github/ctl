@@ -2175,15 +2175,13 @@ impl TypeChecker {
                 | Type::Usize
                 | Type::Isize,
             ) => {}
-            (Type::Usize, Type::RawPtr(_)) => {}
-            (Type::MutPtr(_) | Type::Ptr(_), Type::RawPtr(_)) => {}
+            (Type::Usize | Type::MutPtr(_) | Type::Ptr(_) | Type::RawPtr(_), Type::RawPtr(_)) => {}
             (Type::Usize, Type::Ptr(_) | Type::MutPtr(_))
             | (Type::MutPtr(_) | Type::Ptr(_) | Type::RawPtr(_), Type::MutPtr(_) | Type::Ptr(_)) => {
                 if self.safety != Safety::Unsafe {
                     self.error(Error::is_unsafe(span))
                 }
             }
-
             (Type::CUint(a), Type::CUint(b)) if a <= b => {}
             (
                 Type::Int(_)
