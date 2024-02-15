@@ -83,6 +83,13 @@ impl Error {
         }
     }
 
+    pub fn invalid_operator(op: impl std::fmt::Display, ty: &str, span: Span) -> Self {
+        Self::new(
+            format!("operator '{op}' is invalid for a value of type {ty}"),
+            span,
+        )
+    }
+
     pub fn shared_member(name: &str, span: Span) -> Self {
         Self::new(
             format!("cannot declare variant member with same name as shared member '{name}'"),

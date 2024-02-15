@@ -6,7 +6,7 @@ use crate::{
     ast::{
         checked::*,
         parsed::{Linkage, RangePattern},
-        UnaryOp,
+        BinaryOp, UnaryOp,
     },
     error::{Diagnostics, Error},
     lexer::Span,
@@ -1009,19 +1009,56 @@ impl<'a> Codegen<'a> {
 
     fn emit_expr_inner(&mut self, expr: CheckedExpr, state: &mut State) {
         match expr.data {
-            CheckedExprData::Binary { op, left, right } => {
-                if expr.ty == Type::Bool {
-                    self.emit_cast(&expr.ty);
-                    self.buffer.emit("(");
-                }
-                self.buffer.emit("(");
-                self.emit_expr(*left, state);
-                self.buffer.emit(format!(" {op} "));
-                self.emit_expr(*right, state);
-                self.buffer.emit(")");
+            CheckedExprData::Binary {
+                op,
+                mut left,
+                right,
+            } => {
+                if op == BinaryOp::NoneCoalesce {
+                    tmpbuf_emit!(self, state, |tmp| {
+                        self.emit_type(&expr.ty);
+                        self.buffer.emit(format!(" {tmp};"));
 
-                if expr.ty == Type::Bool {
-                    self.buffer.emit(" ? 1 : 0)");
+                        state.fill_generics(&mut left.ty);
+                        let opt_type = left.ty.clone();
+                        let name = hoist!(self, state, self.emit_tmpvar(*left, state));
+                        self.emit_pattern_if_stmt(
+                            state,
+                            &CheckedPatternData::UnionMember {
+                                pattern: None,
+                                variant: "None".into(),
+                                inner: expr.ty,
+                                borrows: false,
+                            },
+                            &name,
+                            &opt_type,
+                        );
+                        hoist_point!(self, {
+                            self.buffer.emit(format!("{tmp}="));
+                            self.emit_expr(*right, state);
+                        });
+                        let tag = if opt_type.can_omit_tag(self.scopes).is_some() {
+                            ""
+                        } else {
+                            ".$Some.$0"
+                        };
+                        self.buffer.emit(format!(";}}else{{{tmp}={name}{tag};}}"));
+                    });
+                    
+                } else {
+                    if expr.ty == Type::Bool {
+                        self.emit_cast(&expr.ty);
+                        self.buffer.emit("(");
+                    }
+                    self.buffer.emit("(");
+                    self.emit_expr(*left, state);
+                    self.buffer.emit(format!(" {op} "));
+                    self.emit_expr(*right, state);
+                    self.buffer.emit(")");
+
+                    if expr.ty == Type::Bool {
+                        self.buffer.emit(" ? 1 : 0)");
+                    }
                 }
             }
             CheckedExprData::Unary {
@@ -1701,17 +1738,7 @@ impl<'a> Codegen<'a> {
                 state.fill_generics(&mut inner.ty);
                 let ty = inner.ty.clone();
                 let tmp = hoist!(self, state, self.emit_tmpvar(*inner, state));
-                let mut bindings = Buffer::default();
-                let mut conditions = ConditionBuilder::default();
-                self.emit_pattern(
-                    state,
-                    &patt.data,
-                    &tmp,
-                    &ty,
-                    false,
-                    &mut bindings,
-                    &mut conditions,
-                );
+                let (_, conditions) = self.emit_pattern(state, &patt.data, &tmp, &ty);
                 self.buffer.emit(conditions.finish());
             }
             CheckedExprData::Lambda(_) => todo!(),
@@ -1841,7 +1868,7 @@ impl<'a> Codegen<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn emit_pattern(
+    fn emit_pattern_inner(
         &mut self,
         state: &mut State,
         pattern: &CheckedPatternData,
@@ -1910,7 +1937,7 @@ impl<'a> Codegen<'a> {
                         if let Some((patt, borrows)) =
                             patt.as_ref().and_then(|patt| patt.data.as_destrucure())
                         {
-                            self.emit_pattern(
+                            self.emit_pattern_inner(
                                 state,
                                 &patt[0].2.data,
                                 &src,
@@ -1932,7 +1959,7 @@ impl<'a> Codegen<'a> {
                     conditions.next_str(format!("({src}.{UNION_TAG_NAME}=={tag})"));
 
                     if let Some(patt) = patt {
-                        self.emit_pattern(
+                        self.emit_pattern_inner(
                             state,
                             &patt.data,
                             &format!("{src}.${variant}"),
@@ -1973,7 +2000,7 @@ impl<'a> Codegen<'a> {
                     pos
                 });
                 for (i, patt) in patterns.iter().enumerate() {
-                    self.emit_pattern(
+                    self.emit_pattern_inner(
                         state,
                         &patt.data,
                         &if pos.is_some_and(|pos| i >= pos) {
@@ -1991,7 +2018,7 @@ impl<'a> Codegen<'a> {
             CheckedPatternData::Destrucure { patterns, borrows } => {
                 let src = Self::deref(src, ty);
                 for (member, inner, patt) in patterns {
-                    self.emit_pattern(
+                    self.emit_pattern_inner(
                         state,
                         &patt.data,
                         &format!("{src}.${member}"),
@@ -2041,7 +2068,7 @@ impl<'a> Codegen<'a> {
                     if let Some((_, rest_len)) = rest.filter(|&(pos, _)| i >= pos) {
                         i += rest_len;
                     }
-                    self.emit_pattern(
+                    self.emit_pattern_inner(
                         state,
                         &patt.data,
                         &format!("{src}[{i}]"),
@@ -2066,16 +2093,16 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn emit_pattern_if_stmt(
+    fn emit_pattern(
         &mut self,
         state: &mut State,
         pattern: &CheckedPatternData,
         src: &str,
         ty: &Type,
-    ) {
+    ) -> (Buffer, ConditionBuilder) {
         let mut bindings = Buffer::default();
         let mut conditions = ConditionBuilder::default();
-        self.emit_pattern(
+        self.emit_pattern_inner(
             state,
             pattern,
             src,
@@ -2084,6 +2111,17 @@ impl<'a> Codegen<'a> {
             &mut bindings,
             &mut conditions,
         );
+        (bindings, conditions)
+    }
+
+    fn emit_pattern_if_stmt(
+        &mut self,
+        state: &mut State,
+        pattern: &CheckedPatternData,
+        src: &str,
+        ty: &Type,
+    ) {
+        let (bindings, conditions) = self.emit_pattern(state, pattern, src, ty);
         self.buffer.emit(format!("if({}){{", conditions.finish()));
         self.buffer.emit(bindings.finish());
     }
@@ -2095,17 +2133,7 @@ impl<'a> Codegen<'a> {
         src: &str,
         ty: &Type,
     ) {
-        let mut bindings = Buffer::default();
-        let mut conditions = ConditionBuilder::default();
-        self.emit_pattern(
-            state,
-            pattern,
-            src,
-            ty,
-            false,
-            &mut bindings,
-            &mut conditions,
-        );
+        let (bindings, _) = self.emit_pattern(state, pattern, src, ty);
         self.buffer.emit(bindings.finish());
     }
 

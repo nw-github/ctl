@@ -14,25 +14,6 @@ use crate::{
     Compiler, THIS_PARAM, THIS_TYPE,
 };
 
-macro_rules! type_check_bail {
-    ($self: expr, $source: expr, $target: expr) => {{
-        let source = $source;
-        let span = source.span;
-        let source = $self.check_expr(source, Some($target));
-        match source.coerce_to(&$self.scopes, $target) {
-            Ok(expr) => expr,
-            Err(expr) => {
-                return $self.error(Error::type_mismatch(
-                    &$target,
-                    &expr.ty,
-                    &$self.scopes,
-                    span,
-                ));
-            }
-        }
-    }};
-}
-
 macro_rules! resolve_type {
     ($self: expr, $ty: expr) => {
         $ty = match std::mem::take(&mut $ty) {
@@ -1268,46 +1249,89 @@ impl TypeChecker {
         }
     }
 
+    fn check_null_coalesce(
+        &mut self,
+        lhs: Expr,
+        rhs: Expr,
+        target: Option<&Type>,
+        span: Span,
+    ) -> CheckedExpr {
+        let Some(id) = self.scopes.get_option_id() else {
+            return self.error(Error::no_lang_item("option", span));
+        };
+
+        let target = if let Some(target) = target {
+            Type::User(GenericUserType::from_type_args(&self.scopes, id, [target.clone()]).into())
+        } else {
+            Type::User(GenericUserType::from_type_args(&self.scopes, id, [Type::Unknown]).into())
+        };
+        let lhs = self.check_expr(lhs, Some(&target));
+        let Some(target) = lhs.ty.as_option_inner(&self.scopes) else {
+            if lhs.ty.is_unknown() {
+                return Default::default();
+            }
+
+            return self.error(Error::invalid_operator(
+                BinaryOp::NoneCoalesce,
+                &lhs.ty.name(&self.scopes),
+                span,
+            ));
+        };
+        let span = rhs.span;
+        // 
+        let rhs = self.check_expr_inner(rhs, Some(target));
+        let rhs = self.type_check_checked(rhs, target, span);
+        CheckedExpr::new(
+            target.clone(),
+            CheckedExprData::Binary {
+                op: BinaryOp::NoneCoalesce,
+                left: lhs.into(),
+                right: rhs.into(),
+            },
+        )
+    }
+
     fn check_expr_inner(&mut self, expr: Expr, target: Option<&Type>) -> CheckedExpr {
         let span = expr.span;
         match expr.data {
             ExprData::Binary { op, left, right } => {
+                if op == BinaryOp::NoneCoalesce {
+                    return self.check_null_coalesce(*left, *right, target, span);
+                }
+
                 let left = self.check_expr(*left, target);
                 if left.ty.is_unknown() {
                     return Default::default();
                 }
 
-                let right = type_check_bail!(self, *right, &left.ty);
                 if !left.ty.supports_binop(&self.scopes, op) {
-                    self.error(Error::new(
-                        format!(
-                            "operator '{op}' is invalid for values of type {} and {}",
-                            &left.ty.name(&self.scopes),
-                            &right.ty.name(&self.scopes)
-                        ),
+                    return self.error(Error::invalid_operator(
+                        op,
+                        &left.ty.name(&self.scopes),
                         span,
-                    ))
-                } else {
-                    CheckedExpr::new(
-                        match op {
-                            BinaryOp::NoneCoalesce => todo!(),
-                            BinaryOp::Gt
-                            | BinaryOp::GtEqual
-                            | BinaryOp::Lt
-                            | BinaryOp::LtEqual
-                            | BinaryOp::Equal
-                            | BinaryOp::NotEqual
-                            | BinaryOp::LogicalOr
-                            | BinaryOp::LogicalAnd => Type::Bool,
-                            _ => left.ty.clone(),
-                        },
-                        CheckedExprData::Binary {
-                            op,
-                            left: left.into(),
-                            right: right.into(),
-                        },
-                    )
+                    ));
                 }
+
+                let right = self.type_check(*right, &left.ty);
+                CheckedExpr::new(
+                    match op {
+                        BinaryOp::NoneCoalesce => unreachable!(),
+                        BinaryOp::Gt
+                        | BinaryOp::GtEqual
+                        | BinaryOp::Lt
+                        | BinaryOp::LtEqual
+                        | BinaryOp::Equal
+                        | BinaryOp::NotEqual
+                        | BinaryOp::LogicalOr
+                        | BinaryOp::LogicalAnd => Type::Bool,
+                        _ => left.ty.clone(),
+                    },
+                    CheckedExprData::Binary {
+                        op,
+                        left: left.into(),
+                        right: right.into(),
+                    },
+                )
             }
             ExprData::Unary { op, expr } => self.check_unary(*expr, target, op),
             ExprData::Call { callee, args } => self.check_call(target, *callee, args, span),
@@ -1506,7 +1530,7 @@ impl TypeChecker {
                 // this could be skipped by just transforming these expressions to calls
                 (Some(start), Some(end)) => {
                     let start = self.check_expr(*start, None);
-                    let end = type_check_bail!(self, *end, &start.ty);
+                    let end = self.type_check(*end, &start.ty);
                     let item = if inclusive {
                         "range_inclusive"
                     } else {
@@ -1630,23 +1654,18 @@ impl TypeChecker {
 
                 if !lhs.is_assignable(&self.scopes) {
                     // TODO: report a better error here
-                    return self.error(Error::new("expression is not assignable", lhs_span));
+                    self.error(Error::new("expression is not assignable", lhs_span))
                 }
 
-                let rhs = type_check_bail!(self, *value, &lhs.ty);
-                if let Some(op) = binary {
-                    if !lhs.ty.supports_binop(&self.scopes, op) {
-                        self.error(Error::new(
-                            format!(
-                                "operator '{op}' is invalid for values of type {} and {}",
-                                &lhs.ty.name(&self.scopes),
-                                &rhs.ty.name(&self.scopes)
-                            ),
-                            span,
-                        ))
-                    }
+                if let Some(op) = binary.filter(|&op| !lhs.ty.supports_binop(&self.scopes, op)) {
+                    self.error(Error::invalid_operator(
+                        op,
+                        &lhs.ty.name(&self.scopes),
+                        span,
+                    ))
                 }
 
+                let rhs = self.type_check(*value, &lhs.ty);
                 CheckedExpr::new(
                     lhs.ty.clone(),
                     CheckedExprData::Assign {
@@ -1910,7 +1929,7 @@ impl TypeChecker {
                 }
 
                 let callee = self.check_expr(*callee, None);
-                let arg = type_check_bail!(self, args.into_iter().next().unwrap(), &Type::Isize);
+                let arg = self.type_check(args.into_iter().next().unwrap(), &Type::Isize);
                 if let Type::Array(target) = callee.ty.strip_references() {
                     CheckedExpr::new(
                         target.0.clone(),
