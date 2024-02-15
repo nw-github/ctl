@@ -1,7 +1,7 @@
 use crate::{
     ast::parsed::{Expr, Pattern, TypeHint},
     lexer::{Located, Span},
-    sym::{ExtensionId, FunctionId, ScopeId, UserTypeId, VariableId},
+    sym::{ExtensionId, FunctionId, ScopeId, TraitId, UserTypeId, VariableId},
 };
 
 pub struct DeclaredFn {
@@ -41,7 +41,7 @@ pub enum DeclaredStmt {
         functions: Vec<DeclaredFn>,
     },
     Trait {
-        id: UserTypeId,
+        id: TraitId,
         functions: Vec<DeclaredFn>,
     },
     Extension {

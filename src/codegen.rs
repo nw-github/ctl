@@ -490,7 +490,6 @@ impl Buffer {
 
                     self.emit(&scopes.get(ut.id).name.data);
                 }
-                UserTypeData::Trait => panic!("ICE: Trait type in emit_type"),
                 _ => {
                     if let Some(ty) = id.can_omit_tag(scopes) {
                         self.emit_type(scopes, ty, tg, min);
@@ -1604,7 +1603,7 @@ impl<'a> Codegen<'a> {
                     state.fill_generics(&mut iter.ty);
                     let next = self
                         .scopes
-                        .lang_types
+                        .lang_traits
                         .get("iter")
                         .copied()
                         .and_then(|id| self.find_implementation(&iter.ty, id, "next", scope))
@@ -2395,7 +2394,7 @@ impl<'a> Codegen<'a> {
     fn find_implementation(
         &self,
         ty: &Type,
-        trait_id: UserTypeId,
+        trait_id: TraitId,
         fn_name: &str,
         scope: ScopeId,
     ) -> Option<FunctionId> {

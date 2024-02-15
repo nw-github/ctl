@@ -1,7 +1,7 @@
 use crate::{
     ast::{parsed::TypeHint, BinaryOp},
     nearest_pow_of_two,
-    sym::{FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, UserTypeId},
+    sym::{FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, TraitId, UserTypeId},
 };
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
@@ -35,10 +35,6 @@ impl<T: ItemId + Clone + Copy> WithTypeArgs<T>
 where
     T::Value: HasTypeParams,
 {
-    pub fn first_type_arg(&self) -> Option<&Type> {
-        self.ty_args.values().next()
-    }
-
     pub fn from_type_args(scopes: &Scopes, id: T, types: impl IntoIterator<Item = Type>) -> Self {
         Self::new(
             id,
@@ -56,6 +52,10 @@ where
 }
 
 impl<T> WithTypeArgs<T> {
+    pub fn first_type_arg(&self) -> Option<&Type> {
+        self.ty_args.values().next()
+    }
+
     pub fn infer_type_args(&mut self, mut src: &Type, mut target: &Type) {
         loop {
             match (src, target) {
@@ -191,6 +191,26 @@ impl GenericUserType {
                     .collect(),
             ),
         )
+    }
+}
+
+pub type GenericTrait = WithTypeArgs<TraitId>;
+
+impl GenericTrait {
+    pub fn name(&self, scopes: &Scopes) -> String {
+        let mut result = scopes.get(self.id).name.data.clone();
+        if !self.ty_args.is_empty() {
+            result.push('<');
+            for (i, concrete) in self.ty_args.values().enumerate() {
+                if i > 0 {
+                    result.push_str(", ");
+                }
+                result.push_str(&concrete.name(scopes));
+            }
+            result.push('>');
+        }
+
+        result
     }
 }
 
@@ -481,7 +501,7 @@ impl Type {
 
                     result.push_str(&param.name(scopes));
                 }
-                format!("{result}) -> {}", f.ret.name(scopes))
+                format!("{result}) => {}", f.ret.name(scopes))
             }
             Type::User(ty) => ty.name(scopes),
             Type::Array(inner) => format!("[{}; {}]", inner.0.name(scopes), inner.1),
@@ -641,8 +661,8 @@ impl Type {
                 }
 
                 let ty = scopes.get(ut.id);
+                let mut sa = SizeAndAlign::new();
                 if let Some(union) = ty.data.as_union() {
-                    let mut sa = SizeAndAlign::new();
                     if self.can_omit_tag(scopes).is_none() {
                         sa.next(union.tag_type().size_and_align(scopes));
                     }
@@ -654,15 +674,13 @@ impl Type {
                         let (s, a) = ty.with_templates(&ut.ty_args).size_and_align(scopes);
                         (sz.max(s), align.max(a))
                     }));
-
-                    return (sa.size, sa.align);
                 } else {
                     let mut sa = SizeAndAlign::new();
                     for member in ty.members.values() {
                         sa.next(member.ty.with_templates(&ut.ty_args).size_and_align(scopes));
                     }
-                    return (sa.size, sa.align);
                 }
+                return (sa.size, sa.align);
             }
             Type::Array(data) => {
                 let (s, a) = data.0.size_and_align(scopes);
