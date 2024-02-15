@@ -2316,15 +2316,14 @@ impl TypeChecker {
         else {
             return self.error(Error::new("yield outside of block", expr.span));
         };
-
         let span = expr.span;
         let mut expr = self.check_expr(expr, target.as_ref());
-        if let Some(target) = target {
+        self.scopes[self.current].kind = if let Some(target) = target {
             expr = self.type_check_checked(expr, &target, span);
-            self.scopes[self.current].kind = ScopeKind::Block(Some(target), true);
+            ScopeKind::Block(Some(target), true)
         } else {
-            self.scopes[self.current].kind = ScopeKind::Block(Some(expr.ty.clone()), true);
-        }
+            ScopeKind::Block(Some(expr.ty.clone()), true)
+        };
 
         CheckedExpr::new(Type::Never, CheckedExprData::Yield(expr.into()))
     }
@@ -2333,19 +2332,16 @@ impl TypeChecker {
         let lambda = self
             .scopes
             .walk(self.current)
-            .find_map(|(id, scope)| match &scope.kind {
-                ScopeKind::Lambda(target, _) => Some((id, target.clone())),
-                _ => None,
-            });
+            .find_map(|(id, scope)| scope.kind.as_lambda().map(|(t, _)| (id, t.clone())));
         if let Some((id, target)) = lambda {
             let span = expr.span;
             let mut expr = self.check_expr(expr, target.as_ref());
-            if let Some(target) = &target {
+            self.scopes[id].kind = if let Some(target) = &target {
                 expr = self.type_check_checked(expr, target, span);
-                self.scopes[id].kind = ScopeKind::Lambda(Some(target.clone()), true);
+                ScopeKind::Lambda(Some(target.clone()), true)
             } else {
-                self.scopes[id].kind = ScopeKind::Lambda(Some(expr.ty.clone()), true);
-            }
+                ScopeKind::Lambda(Some(expr.ty.clone()), true)
+            };
 
             CheckedExpr::new(Type::Never, CheckedExprData::Return(expr.into()))
         } else {
@@ -4647,24 +4643,22 @@ impl TypeChecker {
                             );
                         }
                         TypeItem::Module(id) => {
-                            if rest.is_empty() {
-                                return Some(ResolvedPath::None(Error::no_symbol(name, span)));
-                            }
+                            if !rest.is_empty() {
+                                if !ty_args.is_empty() {
+                                    return self.error(Error::new(
+                                        "modules cannot be parameterized with type arguments",
+                                        span,
+                                    ));
+                                }
 
-                            if !ty_args.is_empty() {
-                                return self.error(Error::new(
-                                    "modules cannot be parameterized with type arguments",
+                                return self.resolve_path_in(
+                                    rest,
+                                    Default::default(),
+                                    id,
+                                    typehint,
                                     span,
-                                ));
+                                );
                             }
-
-                            return self.resolve_path_in(
-                                rest,
-                                Default::default(),
-                                id,
-                                typehint,
-                                span,
-                            );
                         }
                         _ => {}
                     }
