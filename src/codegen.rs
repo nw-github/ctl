@@ -1707,13 +1707,13 @@ impl<'a> Codegen<'a> {
             }
             CheckedExprData::Break(expr) => {
                 hoist!(self, state, {
+                    self.buffer.emit(format!("{}=", self.cur_loop));
                     if let Some(expr) = expr {
-                        self.buffer.emit(format!("{}=", self.cur_loop));
                         self.emit_expr(*expr, state);
-                        self.buffer.emit(";break;");
                     } else {
-                        self.buffer.emit("break;");
+                        self.buffer.emit(VOID_INSTANCE);
                     }
+                    self.buffer.emit(";break;");
                 });
                 self.buffer.emit(VOID_INSTANCE);
                 //self.yielded = true;
@@ -1832,13 +1832,13 @@ impl<'a> Codegen<'a> {
         match name {
             "size_of" => {
                 self.buffer.emit(format!(
-                    "{}",
+                    "(usize){}",
                     func.first_type_arg().unwrap().size_and_align(self.scopes).0
                 ));
             }
             "align_of" => {
                 self.buffer.emit(format!(
-                    "{}",
+                    "(usize){}",
                     func.first_type_arg().unwrap().size_and_align(self.scopes).1
                 ));
             }

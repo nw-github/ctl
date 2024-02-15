@@ -675,11 +675,11 @@ impl Type {
                         (sz.max(s), align.max(a))
                     }));
                 } else {
-                    let mut sa = SizeAndAlign::new();
                     for member in ty.members.values() {
                         sa.next(member.ty.with_templates(&ut.ty_args).size_and_align(scopes));
                     }
                 }
+                sa.next((0, sa.align));
                 return (sa.size, sa.align);
             }
             Type::Array(data) => {

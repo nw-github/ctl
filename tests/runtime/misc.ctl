@@ -44,4 +44,21 @@ pub fn sizes() {
     assert(size_of::<?*mut i32>() == size_of::<*i32>(), "?*mut i32 variant is not optimized away!");
     assert(size_of::<?*raw i32>() == size_of::<*i32>(), "?*raw i32 variant is not optimized away!");
     assert(size_of::<?fn()>() == size_of::<*i32>(), "?fn() variant is not optimized away!");
+
+    struct MidPadding {
+        x: i32,
+        y: u8,
+        z: i32,
+    }
+
+    assert(size_of::<MidPadding>() == 12, "MidPadding is not 8 bytes");
+
+    union TailPadding {
+        shared x: i32,
+
+        Baz(u8),
+        Quux(u16),
+    }
+
+    assert(size_of::<TailPadding>() == 12, "TailPadding is not 12 bytes");
 }
