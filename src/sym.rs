@@ -59,7 +59,7 @@ impl ScopeId {
 
 id!(FunctionId => Function, fns, vns, name.data);
 id!(UserTypeId => UserType, types, tns, name.data);
-id!(VariableId => Variable, vars, vns, name);
+id!(VariableId => Variable, vars, vns, name.data);
 id!(ExtensionId => Extension, exts, tns, name);
 
 #[derive(Default, Debug, Clone, EnumAsInner)]
@@ -116,13 +116,14 @@ pub struct CheckedParam {
     pub default: Option<DefaultExpr>,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Variable {
-    pub name: String,
+    pub name: Located<String>,
     pub ty: Type,
     pub is_static: bool,
     pub mutable: bool,
     pub value: Option<CheckedExpr>,
+    pub unused: bool,
 }
 
 #[derive(Default, Debug)]

@@ -851,13 +851,15 @@ impl<'a> Codegen<'a> {
 
         hoist_point!(self, {
             for (id, var) in self.scopes.vars().filter(|(_, v)| v.is_static) {
-                usebuf!(self, &mut defs, {
-                    self.emit_local_decl(id, state);
-                    self.buffer.emit(";");
-                });
+                if !var.unused {
+                    usebuf!(self, &mut defs, {
+                        self.emit_local_decl(id, state);
+                        self.buffer.emit(";");
+                    });
 
-                self.emit_var_name(id, state);
-                self.buffer.emit("=");
+                    self.emit_var_name(id, state);
+                    self.buffer.emit("=");
+                }
                 self.emit_expr(var.value.clone().unwrap(), state);
                 self.buffer.emit(";");
             }
@@ -978,14 +980,20 @@ impl<'a> Codegen<'a> {
             CheckedStmt::Let(patt, value) => {
                 hoist_point!(self, {
                     if let CheckedPatternData::Variable(id) = patt.data {
-                        let ty = self.emit_local_decl(id, state);
-                        if let Some(mut expr) = value {
-                            expr.ty = ty;
-                            self.buffer.emit("=");
+                        if !self.scopes.get(id).unused {
+                            let ty = self.emit_local_decl(id, state);
+                            if let Some(mut expr) = value {
+                                expr.ty = ty;
+                                self.buffer.emit("=");
+                                self.emit_expr_inner(expr, state);
+                            }
+                            self.buffer.emit(";");
+                        } else if let Some(mut expr) = value {
+                            self.buffer.emit("(void)");
+                            state.fill_generics(&mut expr.ty);
                             self.emit_expr_inner(expr, state);
+                            self.buffer.emit(";");
                         }
-
-                        self.buffer.emit(";");
                     } else if let Some(mut value) = value {
                         state.fill_generics(&mut value.ty);
                         let ty = value.ty.clone();
@@ -1044,7 +1052,6 @@ impl<'a> Codegen<'a> {
                         };
                         self.buffer.emit(format!(";}}else{{{tmp}={name}{tag};}}"));
                     });
-                    
                 } else {
                     if expr.ty == Type::Bool {
                         self.emit_cast(&expr.ty);
@@ -1988,7 +1995,7 @@ impl<'a> Codegen<'a> {
                 });
 
                 let pos = rest.map(|RestPattern { id, pos }| {
-                    if let Some(id) = id {
+                    if let Some(id) = id.filter(|&id| !self.scopes.get(id).unused) {
                         usebuf!(self, bindings, {
                             self.emit_local_decl(id, state);
                             self.buffer.emit(format!(
@@ -2046,7 +2053,7 @@ impl<'a> Codegen<'a> {
                 };
                 let rest = rest.map(|RestPattern { id, pos }| {
                     let rest_len = arr_len - patterns.len();
-                    if let Some(id) = id {
+                    if let Some(id) = id.filter(|&id| !self.scopes.get(id).unused) {
                         usebuf!(self, bindings, {
                             self.emit_local_decl(id, state);
                             if ty.is_any_ptr() {
@@ -2080,11 +2087,13 @@ impl<'a> Codegen<'a> {
                 }
             }
             &CheckedPatternData::Variable(id) => {
-                usebuf!(self, bindings, {
-                    self.emit_local_decl(id, state);
-                    self.buffer
-                        .emit(format!("={}{src};", if borrow { "&" } else { "" }));
-                });
+                if !self.scopes.get(id).unused {
+                    usebuf!(self, bindings, {
+                        self.emit_local_decl(id, state);
+                        self.buffer
+                            .emit(format!("={}{src};", if borrow { "&" } else { "" }));
+                    });
+                }
             }
             CheckedPatternData::Void => {
                 conditions.next(|buffer| buffer.emit("1"));
@@ -2240,12 +2249,12 @@ impl<'a> Codegen<'a> {
         let var = self.scopes.get(id);
         if var.is_static {
             self.buffer
-                .emit(self.scopes.full_name(var.scope, &var.name));
+                .emit(self.scopes.full_name(var.scope, &var.name.data));
         } else {
-            match state.emitted_names.entry(var.name.clone()) {
+            match state.emitted_names.entry(var.name.data.clone()) {
                 Entry::Occupied(entry) if *entry.get() == id => {
                     self.buffer.emit("$");
-                    self.buffer.emit(&var.name);
+                    self.buffer.emit(&var.name.data);
                 }
                 Entry::Occupied(_) => {
                     let len = state.renames.len();
@@ -2259,7 +2268,7 @@ impl<'a> Codegen<'a> {
                 Entry::Vacant(entry) => {
                     entry.insert(id);
                     self.buffer.emit("$");
-                    self.buffer.emit(&var.name);
+                    self.buffer.emit(&var.name.data);
                 }
             }
         }

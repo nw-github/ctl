@@ -1162,10 +1162,14 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.csv_one(Token::RBrace, span, |this| {
                     if let Some(token) = this.next_if_kind(Token::Ellipses) {
                         let pattern = if this.next_if_kind(Token::Mut).is_some() {
-                            let ident = this.expect_id("expected name");
+                            let ident = this.expect_id_l("expected name");
                             Some((true, ident))
                         } else {
-                            let ident = this.next_if_map(|t| t.data.as_ident().map(|&i| i.into()));
+                            let ident = this.next_if_map(|t| {
+                                t.data
+                                    .as_ident()
+                                    .map(|&i| Located::new(t.span, i.to_string()))
+                            });
                             Some(false).zip(ident)
                         };
 
