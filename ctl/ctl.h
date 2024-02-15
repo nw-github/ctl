@@ -87,14 +87,15 @@
 
 #define SINT(bits) _BitInt(bits)
 #define UINT(bits) unsigned _BitInt(bits)
+#define STRLIT(s, data, n) (s){.$span={.$ptr=(UINT(8) *)data, .$len=(usize)n}}
 
 const char *oldlocale;
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wundefined-internal"
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wundefined-internal"
 static void $ctl_static_init(void);
 static void $ctl_static_deinit(void);
-#pragma GCC diagnostic pop
+#pragma clang diagnostic pop
 
 CTL_DEINIT($ctl_runtime_deinit) {
     $ctl_static_deinit();

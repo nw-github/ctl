@@ -84,7 +84,7 @@ impl TypeChecker {
         for (_, var) in this
             .scopes
             .vars()
-            .filter(|(_, v)| v.unused && !v.name.data.starts_with('_'))
+            .filter(|(_, v)| v.unused && !v.name.data.starts_with('_') && v.name.data != THIS_PARAM)
         {
             if this.scopes.walk(var.scope).any(|(id, _)| id == scope) {
                 this.diag.warn(Error::new(
@@ -93,7 +93,6 @@ impl TypeChecker {
                 ));
             }
         }
-
 
         Ok((
             Module {
@@ -1194,17 +1193,16 @@ impl TypeChecker {
         self.enter_id_and_resolve(self.scopes.get(id).body_scope, |this| {
             this.resolve_proto(id);
             for i in 0..this.scopes.get(id).params.len() {
-                if let ParamPattern::Unchecked(patt) =
-                    this.scopes.get_mut(id).params[i].patt.clone()
-                {
-                    let span = patt.span;
-                    let ty = this.scopes.get(id).params[i].ty.clone();
-                    let patt = this.check_pattern(true, &ty, false, patt, body.is_none());
-                    if !patt.irrefutable {
-                        this.error(Error::must_be_irrefutable("parameter patterns", span))
-                    } else {
-                        this.scopes.get_mut(id).params[i].patt = ParamPattern::Checked(patt);
-                    }
+                let Some(patt) = this.scopes.get_mut(id).params[i].patt.as_unchecked().cloned() else {
+                    continue;
+                };
+                let ty = this.scopes.get(id).params[i].ty.clone();
+                let span = patt.span;
+                let patt = this.check_pattern(true, &ty, false, patt, body.is_none());
+                if !patt.irrefutable {
+                    this.error(Error::must_be_irrefutable("parameter patterns", span))
+                } else {
+                    this.scopes.get_mut(id).params[i].patt = ParamPattern::Checked(patt);
                 }
             }
 
