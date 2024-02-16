@@ -52,7 +52,7 @@ macro_rules! id {
             }
 
             fn name<'a>(&self, scopes: &'a Scopes) -> &'a Located<String> {
-                return &scopes.$vec[self.0].name;
+                &scopes.$vec[self.0].name
             }
         }
 
@@ -360,6 +360,8 @@ pub enum TypeItem {
 pub enum ValueItem {
     Fn(FunctionId),
     Var(VariableId),
+    StructConstructor(UserTypeId, FunctionId),
+    UnionConstructor(UserTypeId),
 }
 
 #[derive(Default, Debug)]
