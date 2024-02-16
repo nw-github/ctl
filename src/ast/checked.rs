@@ -120,9 +120,17 @@ pub enum CheckedExprData {
         trait_id: Option<TraitId>,
         scope: ScopeId,
     },
+    CallDyn {
+        func: GenericFunc,
+        args: IndexMap<String, CheckedExpr>,
+    },
     CallFnPtr {
         expr: Box<CheckedExpr>,
         args: Vec<CheckedExpr>,
+    },
+    DynCoerce {
+        expr: Box<CheckedExpr>,
+        scope: ScopeId,
     },
     Instance {
         members: IndexMap<String, CheckedExpr>,
@@ -241,7 +249,12 @@ impl CheckedExpr {
         }
     }
 
-    pub fn coerce_to(mut self, scopes: &Scopes, target: &Type) -> Result<CheckedExpr, CheckedExpr> {
+    pub fn coerce_to(
+        mut self,
+        scopes: &Scopes,
+        scope: ScopeId,
+        target: &Type,
+    ) -> Result<CheckedExpr, CheckedExpr> {
         fn may_ptr_coerce(lhs: &Type, rhs: &Type) -> bool {
             match (lhs, rhs) {
                 (Type::MutPtr(s), Type::Ptr(t) | Type::RawPtr(t)) if s == t => true,
@@ -262,13 +275,35 @@ impl CheckedExpr {
                 self.ty = target.clone();
                 Ok(self)
             }
+            (Type::Ptr(lhs), Type::DynPtr(rhs))
+                if scopes.implements_trait(lhs, rhs, None, scope) =>
+            {
+                Ok(CheckedExpr::new(
+                    target.clone(),
+                    CheckedExprData::DynCoerce {
+                        expr: self.into(),
+                        scope,
+                    },
+                ))
+            }
+            (Type::MutPtr(lhs), Type::DynPtr(rhs) | Type::DynMutPtr(rhs))
+                if scopes.implements_trait(lhs, rhs, None, scope) =>
+            {
+                Ok(CheckedExpr::new(
+                    target.clone(),
+                    CheckedExprData::DynCoerce {
+                        expr: self.into(),
+                        scope,
+                    },
+                ))
+            }
             (lhs, rhs) if may_ptr_coerce(lhs, rhs) => {
                 self.ty = target.clone();
                 Ok(self)
             }
             (lhs, rhs) if lhs != rhs => {
                 if let Some(inner) = rhs.as_option_inner(scopes) {
-                    match self.coerce_to(scopes, inner) {
+                    match self.coerce_to(scopes, scope, inner) {
                         Ok(expr) => Ok(CheckedExpr::new(
                             rhs.clone(),
                             CheckedExprData::Instance {
@@ -286,8 +321,8 @@ impl CheckedExpr {
         }
     }
 
-    pub fn try_coerce_to(self, scopes: &Scopes, target: &Type) -> CheckedExpr {
-        match self.coerce_to(scopes, target) {
+    pub fn try_coerce_to(self, scopes: &Scopes, scope: ScopeId, target: &Type) -> CheckedExpr {
+        match self.coerce_to(scopes, scope, target) {
             Ok(expr) => expr,
             Err(expr) => expr,
         }
