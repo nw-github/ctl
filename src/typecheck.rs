@@ -1053,13 +1053,20 @@ impl TypeChecker {
                 let span = patt.span;
                 if let Some(ty) = ty {
                     let ty = self.resolve_typehint(ty);
-                    let patt = self.check_pattern(true, &ty, false, patt, false);
-                    if !patt.irrefutable {
-                        return self.error(Error::must_be_irrefutable("let binding pattern", span));
-                    }
                     if let Some(value) = value {
-                        return CheckedStmt::Let(patt, Some(self.type_check(value, &ty)));
+                        let value = self.type_check(value, &ty);
+                        let patt = self.check_pattern(true, &ty, false, patt, false);
+                        if !patt.irrefutable {
+                            return self
+                                .error(Error::must_be_irrefutable("let binding pattern", span));
+                        }
+                        return CheckedStmt::Let(patt, Some(value));
                     } else {
+                        let patt = self.check_pattern(true, &ty, false, patt, false);
+                        if !patt.irrefutable {
+                            return self
+                                .error(Error::must_be_irrefutable("let binding pattern", span));
+                        }
                         if !matches!(patt.data, CheckedPatternData::Variable(_)) {
                             return self.error(Error::new(
                                 "must provide a value with a destructuring assignment",
