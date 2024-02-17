@@ -151,7 +151,7 @@ impl<'a> TypeGen<'a> {
             buffer.emit_trait_name(self.scopes, &tr, flags.minify);
             buffer.emit("{void*self;");
             buffer.emit_vtable_struct_name(self.scopes, &tr, flags.minify);
-            buffer.emit("*vtable;}");
+            buffer.emit(" const*vtable;}");
             buffer.emit_trait_name(self.scopes, &tr, flags.minify);
             buffer.emit(";");
 
@@ -166,7 +166,7 @@ impl<'a> TypeGen<'a> {
                         None,
                         flags.minify,
                     );
-                    defs.emit("(*");
+                    defs.emit("(*const ");
                     defs.emit_fn_name(
                         self.scopes,
                         &GenericFunc::new(f.id, tr.ty_args.clone()),
@@ -997,7 +997,7 @@ impl<'a> Codegen<'a> {
 
         let mut buffer = Buffer::default();
         usebuf!(self, &mut buffer, {
-            self.buffer.emit("static ");
+            self.buffer.emit("static const ");
             self.buffer
                 .emit_vtable_struct_name(self.scopes, &vtable.tr, self.flags.minify);
             self.buffer.emit(" ");
