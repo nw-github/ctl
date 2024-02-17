@@ -342,6 +342,10 @@ impl CheckedExpr {
             my_indirection += 1;
         }
 
+        if let Type::DynMutPtr(_) | Type::DynPtr(_) = ty {
+            my_indirection += 1;
+        }
+
         while my_indirection > indirection {
             my_indirection -= 1;
             let (Type::Ptr(inner) | Type::MutPtr(inner)) = &self.ty else {

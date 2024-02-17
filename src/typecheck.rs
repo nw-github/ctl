@@ -3425,14 +3425,18 @@ impl TypeChecker {
         if let Some(ut) = ty.as_user().map(|ut| self.scopes.get(ut.id)) {
             let src_scope = ut.scope;
             if ut.data.is_template() {
-                // TODO: search recursively
-                for ut in ut.impls.iter().flat_map(|ut| ut.as_checked()) {
-                    if let Some(func) = search(&self.scopes.get(ut.id).fns) {
-                        return Some(MemberFn {
-                            recv: MemberReceiver::TraitImpl((*ut).clone()),
-                            func,
-                            src_scope,
-                        });
+                for tr in ut.impls.iter().flat_map(|ut| ut.as_checked()) {
+                    for imp in self.scopes.get_trait_impls(tr.id) {
+                        if let Some(func) = search(&self.scopes.get(imp).fns) {
+                            return Some(MemberFn {
+                                recv: MemberReceiver::TraitImpl(GenericTrait::new(
+                                    imp,
+                                    tr.ty_args.clone(),
+                                )),
+                                func,
+                                src_scope,
+                            });
+                        }
                     }
                 }
             } else if let Some(func) = search(&ut.fns) {
@@ -3454,12 +3458,14 @@ impl TypeChecker {
 
             // TODO: search recursively
             for tr in data.impls.iter().flat_map(|ut| ut.as_checked()) {
-                if let Some(func) = search(&self.scopes.get(tr.id).fns) {
-                    return Some(MemberFn {
-                        recv: MemberReceiver::Dyn,
-                        func,
-                        src_scope: self.scopes.get(tr.id).scope,
-                    });
+                for imp in self.scopes.get_trait_impls(tr.id) {
+                    if let Some(func) = search(&self.scopes.get(imp).fns) {
+                        return Some(MemberFn {
+                            recv: MemberReceiver::Dyn,
+                            func,
+                            src_scope: self.scopes.get(tr.id).scope,
+                        });
+                    }
                 }
             }
         }
