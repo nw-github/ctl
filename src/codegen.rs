@@ -13,7 +13,7 @@ use crate::{
     nearest_pow_of_two,
     sym::*,
     typeid::{CInt, FnPtr, GenericFunc, GenericTrait, GenericUserType, Type, TypeArgs},
-    CodegenFlags, THIS_PARAM,
+    CodegenFlags,
 };
 
 const UNION_TAG_NAME: &str = "tag";
@@ -146,21 +146,19 @@ impl<'a> TypeGen<'a> {
             definitions.emit_trait_name(self.scopes, &tr, flags.minify);
             definitions.emit(" ");
             definitions.emit_trait_name(self.scopes, &tr, flags.minify);
-            definitions.emit(";");
 
-            definitions.emit("typedef struct ");
-            definitions.emit_trait_name(self.scopes, &tr, flags.minify);
-            definitions.emit("_vtable ");
-            definitions.emit_trait_name(self.scopes, &tr, flags.minify);
-            definitions.emit("_vtable;");
+            definitions.emit(";typedef struct ");
+            definitions.emit_vtable_struct_name(self.scopes, &tr, flags.minify);
+            definitions.emit(" ");
+            definitions.emit_vtable_struct_name(self.scopes, &tr, flags.minify);
 
-            definitions.emit("struct ");
+            definitions.emit(";struct ");
             definitions.emit_trait_name(self.scopes, &tr, flags.minify);
             definitions.emit("{void*self;");
             definitions.emit_trait_name(self.scopes, &tr, flags.minify);
             definitions.emit("_vtable*vtable;};");
 
-            Self::emit_vtable(self.scopes, &mut definitions, &tr, flags.minify);
+            Self::emit_vtable_struct(self.scopes, &mut definitions, &tr, flags.minify);
         }
 
         let mut emitted_arrays = HashSet::new();
@@ -470,16 +468,12 @@ impl<'a> TypeGen<'a> {
         defs.emit(format!(" {ARRAY_DATA_NAME}[{size}];}};"));
     }
 
-    fn emit_vtable(scopes: &Scopes, buffer: &mut Buffer, tr: &GenericTrait, min: bool) {
+    fn emit_vtable_struct(scopes: &Scopes, buffer: &mut Buffer, tr: &GenericTrait, min: bool) {
         buffer.emit("struct ");
-        buffer.emit_trait_name(scopes, tr, min);
-        buffer.emit("_vtable{");
-        for f in scopes.get(tr.id).fns.iter() {
+        buffer.emit_vtable_struct_name(scopes, tr, min);
+        buffer.emit("{");
+        for f in scopes.get(tr.id).methods(scopes) {
             let func = scopes.get(f.id);
-            if !func.params.first().is_some_and(|p| p.label == THIS_PARAM) {
-                continue;
-            }
-
             buffer.emit_type(scopes, &func.ret.with_templates(&tr.ty_args), None, min);
             buffer.emit("(*");
             buffer.emit_fn_name(scopes, &GenericFunc::new(f.id, tr.ty_args.clone()), min);
@@ -488,6 +482,8 @@ impl<'a> TypeGen<'a> {
                 if i > 0 {
                     buffer.emit(",");
                     buffer.emit_type(scopes, &param.ty.with_templates(&tr.ty_args), None, min);
+                } else if param.ty.is_ptr() {
+                    buffer.emit("const void*");
                 } else {
                     buffer.emit("void*");
                 }
@@ -771,6 +767,11 @@ impl Buffer {
         }
     }
 
+    fn emit_vtable_struct_name(&mut self, scopes: &Scopes, tr: &GenericTrait, min: bool) {
+        self.emit_trait_name(scopes, tr, min);
+        self.emit("_vtable");
+    }
+
     fn finish(self) -> String {
         self.0
     }
@@ -887,6 +888,13 @@ macro_rules! usebuf {
     };
 }
 
+#[derive(PartialEq, Eq, Hash)]
+struct Vtable {
+    tr: GenericTrait,
+    ty: Type,
+    scope: ScopeId,
+}
+
 pub struct Codegen<'a> {
     scopes: &'a Scopes,
     diag: Diagnostics,
@@ -898,6 +906,8 @@ pub struct Codegen<'a> {
     cur_loop: String,
     yielded: bool,
     flags: CodegenFlags,
+    vtables: Buffer,
+    emitted_vtables: HashSet<Vtable>,
 }
 
 impl<'a> Codegen<'a> {
@@ -918,6 +928,8 @@ impl<'a> Codegen<'a> {
             cur_block: Default::default(),
             cur_loop: Default::default(),
             yielded: Default::default(),
+            vtables: Default::default(),
+            emitted_vtables: Default::default(),
         }
     }
 
@@ -968,7 +980,6 @@ impl<'a> Codegen<'a> {
             }
         }
         let functions = std::mem::take(&mut this.buffer).finish();
-
         if this.flags.leak {
             this.buffer.emit("#define CTL_NOGC\n");
         }
@@ -981,6 +992,7 @@ impl<'a> Codegen<'a> {
         }
         this.type_gen.finish(&mut this.buffer, &this.flags);
         this.buffer.emit(prototypes.finish());
+        this.buffer.emit(this.vtables.finish());
         this.buffer.emit(static_defs);
         this.buffer.emit(functions);
         this.buffer.emit(init);
@@ -989,6 +1001,75 @@ impl<'a> Codegen<'a> {
         }
 
         Ok((this.diag, this.buffer.finish()))
+    }
+
+    fn emit_vtable(&mut self, vtable: Vtable) {
+        if self.emitted_vtables.contains(&vtable) {
+            return;
+        }
+
+        let mut buffer = Buffer::default();
+        usebuf!(self, &mut buffer, {
+            self.buffer.emit("static ");
+            self.buffer
+                .emit_vtable_struct_name(self.scopes, &vtable.tr, self.flags.minify);
+            self.buffer.emit(" ");
+            self.emit_vtable_name(&vtable);
+            self.buffer.emit("={");
+            for f in self.scopes.get(vtable.tr.id).methods(self.scopes) {
+                self.buffer.emit(".");
+
+                let func = GenericFunc::new(f.id, vtable.tr.ty_args.clone());
+                let func_data = self.scopes.get(f.id);
+
+                self.buffer
+                    .emit_fn_name(self.scopes, &func, self.flags.minify);
+                self.buffer.emit("=(");
+                self.buffer.emit_type(
+                    self.scopes,
+                    &func_data.ret.with_templates(&func.ty_args),
+                    None,
+                    self.flags.minify,
+                );
+                self.buffer.emit("(*");
+                self.buffer.emit(")(");
+                for (i, param) in func_data.params.iter().enumerate() {
+                    if i > 0 {
+                        self.buffer.emit(",");
+                        self.buffer.emit_type(
+                            self.scopes,
+                            &param.ty.with_templates(&func.ty_args),
+                            None,
+                            self.flags.minify,
+                        );
+                    } else if param.ty.is_ptr() {
+                        self.buffer.emit("const void*");
+                    } else {
+                        self.buffer.emit("void*");
+                    }
+                }
+                self.buffer.emit("))");
+
+                let func = GenericFunc::new(
+                    self.find_implementation(
+                        &vtable.ty,
+                        vtable.tr.id,
+                        &self.scopes.get(f.id).name.data,
+                        vtable.scope,
+                    )
+                    .unwrap(),
+                    func.ty_args,
+                );
+                self.buffer
+                    .emit_fn_name(self.scopes, &func, self.flags.minify);
+                self.buffer.emit(",");
+                self.funcs.insert(State::new(func));
+            }
+            self.buffer.emit("};");
+        });
+
+        self.vtables.emit(buffer.finish());
+        self.emitted_vtables.insert(vtable);
     }
 
     fn gen_ctl_init(&mut self) -> (String, String) {
@@ -1399,12 +1480,32 @@ impl<'a> Codegen<'a> {
                     self.finish_emit_fn_args(state, func.id, args);
                 }
             }
-            CheckedExprData::DynCoerce { expr: inner, scope } => {
+            CheckedExprData::DynCoerce {
+                expr: mut inner,
+                scope,
+            } => {
+                state.fill_generics(&mut inner.ty);
+                let vtable = if let Type::Ptr(inner) | Type::MutPtr(inner) = &inner.ty {
+                    Vtable {
+                        tr: expr
+                            .ty
+                            .as_dyn()
+                            .expect("ICE: DynCoerce to non dyn pointer")
+                            .clone(),
+                        ty: (**inner).clone(),
+                        scope,
+                    }
+                } else {
+                    panic!("ICE: DynCoerce from non-pointer");
+                };
+
                 self.emit_cast(&expr.ty);
                 self.buffer.emit("{.self=(void*)");
                 self.emit_expr(*inner, state);
-                self.buffer.emit(",.vtable=NULL}");
-                // TODO: actually emit vtable
+                self.buffer.emit(",.vtable=&");
+                self.emit_vtable_name(&vtable);
+                self.buffer.emit("}");
+                self.emit_vtable(vtable);
             }
             CheckedExprData::CallFnPtr { expr, args } => {
                 self.buffer.emit("(");
@@ -2086,6 +2187,15 @@ impl<'a> Codegen<'a> {
         self.emit_expr_inner(expr, state);
         self.buffer.emit(";");
         tmp
+    }
+
+    fn emit_vtable_name(&mut self, vtable: &Vtable) {
+        self.buffer
+            .emit_generic_mangled_name(self.scopes, &vtable.ty, self.flags.minify);
+        self.buffer.emit("_");
+        self.buffer
+            .emit_trait_name(self.scopes, &vtable.tr, self.flags.minify);
+        self.buffer.emit("_$vtable");
     }
 
     #[allow(clippy::too_many_arguments)]

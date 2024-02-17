@@ -11,6 +11,7 @@ use crate::{
     },
     lexer::{Located, Span},
     typeid::{GenericTrait, GenericUserType, Type},
+    THIS_PARAM,
 };
 
 macro_rules! id {
@@ -274,6 +275,16 @@ pub trait TypeLike: HasTypeParams {
     fn get_impls(&self) -> &[TraitImpl];
     fn get_impls_mut(&mut self) -> &mut [TraitImpl];
     fn get_fns(&self) -> &[Vis<FunctionId>];
+
+    fn methods(&self, scopes: &Scopes) -> impl Iterator<Item = &Vis<FunctionId>> {
+        self.get_fns().iter().filter(|f| {
+            scopes
+                .get(f.id)
+                .params
+                .first()
+                .is_some_and(|p| p.label == THIS_PARAM)
+        })
+    }
 }
 
 impl TypeLike for UserType {

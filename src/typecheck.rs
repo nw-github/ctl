@@ -444,10 +444,10 @@ impl TypeChecker {
                             }
 
                             params.push(Param {
-                                keyword: false,
+                                keyword: true,
                                 patt: Located::new(
                                     member.name.span,
-                                    Pattern::Path(Path::from(member.name.data.clone())),
+                                    Pattern::Path(Path::from(member.name.data)),
                                 ),
                                 ty: member.ty,
                                 default: member.default,
