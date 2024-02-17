@@ -275,6 +275,8 @@ pub enum Type {
     Ptr(Box<Type>),
     MutPtr(Box<Type>),
     RawPtr(Box<Type>),
+    DynPtr(Box<GenericTrait>),
+    DynMutPtr(Box<GenericTrait>),
     Array(Box<(Type, usize)>),
     TraitSelf,
 }
@@ -436,6 +438,12 @@ impl Type {
                     f.ret.fill_this(this);
                     break;
                 }
+                Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
+                    for ty in tr.ty_args.values_mut() {
+                        ty.fill_this(this);
+                    }
+                    break;
+                }
                 _ => break,
             }
         }
@@ -471,8 +479,22 @@ impl Type {
                     f.ret.fill_templates(map);
                     break;
                 }
+                Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
+                    for ty in tr.ty_args.values_mut() {
+                        ty.fill_templates(map);
+                    }
+                    break;
+                }
                 _ => break,
             }
+        }
+    }
+
+    pub fn as_dyn(&self) -> Option<&GenericTrait> {
+        if let Type::DynMutPtr(tr) | Type::DynPtr(tr) = self {
+            Some(&**tr)
+        } else {
+            None
         }
     }
 
@@ -492,6 +514,8 @@ impl Type {
             Type::Ptr(id) => format!("*{}", id.name(scopes)),
             Type::MutPtr(id) => format!("*mut {}", id.name(scopes)),
             Type::RawPtr(id) => format!("*raw {}", id.name(scopes)),
+            Type::DynPtr(id) => format!("*dyn {}", id.name(scopes)),
+            Type::DynMutPtr(id) => format!("*dyn mut {}", id.name(scopes)),
             Type::FnPtr(f) => {
                 let mut result = "fn(".to_string();
                 for (i, param) in f.params.iter().enumerate() {
@@ -636,6 +660,7 @@ impl Type {
                 CInt::LongLong => std::mem::size_of::<c_longlong>(),
             },
             Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_) => std::mem::size_of::<*const ()>(),
+            Type::DynPtr(_) | Type::DynMutPtr(_) => std::mem::size_of::<*const ()>() * 2,
             Type::Isize => std::mem::size_of::<isize>(),
             Type::Usize => std::mem::size_of::<usize>(),
             Type::F32 => std::mem::size_of::<f32>(),

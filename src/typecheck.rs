@@ -52,11 +52,17 @@ pub struct Module {
     pub scope: ScopeId,
 }
 
+pub enum MemberReceiver {
+    TraitImpl(GenericTrait),
+    Extension(ExtensionId),
+    Dyn,
+    Normal,
+}
+
 pub struct MemberFn {
-    pub tr: Option<GenericTrait>,
+    pub recv: MemberReceiver,
     pub func: Vis<FunctionId>,
     pub src_scope: ScopeId,
-    pub ext: Option<ExtensionId>,
 }
 
 #[derive(Default)]
@@ -438,10 +444,10 @@ impl TypeChecker {
                             }
 
                             params.push(Param {
-                                keyword: false,
+                                keyword: true,
                                 patt: Located::new(
                                     member.name.span,
-                                    Pattern::Path(Path::from(member.name.data.clone())),
+                                    Pattern::Path(Path::from(member.name.data)),
                                 ),
                                 ty: member.ty,
                                 default: member.default,
@@ -1797,7 +1803,8 @@ impl TypeChecker {
                             Some(CheckedExpr::new(Type::Void, CheckedExprData::Void))
                         } else {
                             out_type = self.make_lang_type_by_name("option", [out_type], span);
-                            if_branch = if_branch.try_coerce_to(&self.scopes, &out_type);
+                            if_branch =
+                                if_branch.try_coerce_to(&self.scopes, self.current, &out_type);
                             Some(self.check_expr_inner(
                                 Located::new(span, ExprData::None),
                                 Some(&out_type),
@@ -2056,7 +2063,10 @@ impl TypeChecker {
 
                     let (target, opt) = self.loop_out_type(&self.scopes[id].kind.clone(), span);
                     if opt {
-                        Some(expr.try_coerce_to(&self.scopes, &target).into())
+                        Some(
+                            expr.try_coerce_to(&self.scopes, self.current, &target)
+                                .into(),
+                        )
                     } else {
                         Some(expr.into())
                     }
@@ -2118,7 +2128,7 @@ impl TypeChecker {
             ExprData::As { expr, ty, throwing } => {
                 let ty = self.resolve_typehint(ty);
                 let expr = self.check_expr(*expr, Some(&ty));
-                match expr.coerce_to(&self.scopes, &ty) {
+                match expr.coerce_to(&self.scopes, self.current, &ty) {
                     Ok(expr) => expr,
                     Err(expr) => {
                         self.check_cast(&expr.ty, &ty, throwing, span);
@@ -2672,8 +2682,10 @@ impl TypeChecker {
 
                 if this_param.ty.is_mut_ptr() {
                     let mut ty = &recv.ty;
-                    if !matches!(ty, Type::Ptr(_) | Type::MutPtr(_))
-                        && !recv.can_addrmut(&self.scopes)
+                    if !matches!(
+                        ty,
+                        Type::Ptr(_) | Type::MutPtr(_) | Type::DynPtr(_) | Type::DynMutPtr(_)
+                    ) && !recv.can_addrmut(&self.scopes)
                     {
                         return self.error(Error::new(
                             format!("cannot call method '{member}' with immutable receiver"),
@@ -2685,7 +2697,7 @@ impl TypeChecker {
                         ty = inner;
                     }
 
-                    if matches!(ty, Type::Ptr(_)) {
+                    if matches!(ty, Type::Ptr(_) | Type::DynPtr(_)) {
                         return self.error(Error::new(
                             format!("cannot call method '{member}' through an immutable pointer"),
                             span,
@@ -2693,7 +2705,10 @@ impl TypeChecker {
                     }
                 }
 
-                let recv = if !matches!(recv.ty, Type::Ptr(_) | Type::MutPtr(_)) {
+                let recv = if !matches!(
+                    recv.ty,
+                    Type::Ptr(_) | Type::MutPtr(_) | Type::DynMutPtr(_) | Type::DynPtr(_)
+                ) {
                     if matches!(this_param.ty, Type::Ptr(_)) {
                         CheckedExpr::new(
                             Type::Ptr(recv.ty.clone().into()),
@@ -2719,30 +2734,52 @@ impl TypeChecker {
                     *memfn.func,
                     self.resolve_type_args(&f.type_params.clone(), &generics, false, span),
                 );
-                if let Some(ty_args) = memfn
-                    .tr
-                    .as_ref()
-                    .map(|tr| &tr.ty_args)
-                    .or(id.as_user().map(|ut| &ut.ty_args))
-                {
-                    func.ty_args.copy_args(ty_args);
-                }
 
-                if let Some(etempl) = memfn
-                    .ext
-                    .and_then(|id| self.scopes.get(id).type_params.first())
-                {
-                    func.ty_args.insert(*etempl, id.clone());
+                let mut trait_id = None;
+                match &memfn.recv {
+                    MemberReceiver::TraitImpl(tr) => {
+                        func.ty_args.copy_args(&tr.ty_args);
+                        trait_id = Some(tr.id);
+                    }
+                    MemberReceiver::Extension(ext) => {
+                        if let Some(etempl) = self.scopes.get(*ext).type_params.first() {
+                            func.ty_args.insert(*etempl, id.clone());
+                        }
+                        if let Some(ty_args) = id.as_user().map(|ut| &ut.ty_args) {
+                            func.ty_args.copy_args(ty_args);
+                        }
+                    }
+                    MemberReceiver::Dyn => {
+                        if let Some(ty_args) = id.as_dyn().map(|ut| &ut.ty_args) {
+                            func.ty_args.copy_args(ty_args);
+                        }
+
+                        if !self.scopes.get(func.id).type_params.is_empty() {
+                            self.error(Error::new(
+                                "cannot call generic functions through a dynamic trait pointer",
+                                span,
+                            ))
+                        }
+                    }
+                    MemberReceiver::Normal => {
+                        if let Some(ty_args) = id.as_user().map(|ut| &ut.ty_args) {
+                            func.ty_args.copy_args(ty_args);
+                        }
+                    }
                 }
 
                 let (args, ret) = self.check_fn_args(&mut func, Some(recv), args, target, span);
+                if let MemberReceiver::Dyn = memfn.recv {
+                    return CheckedExpr::new(ret, CheckedExprData::CallDyn { func, args });
+                }
+
                 return CheckedExpr::new(
                     ret,
                     CheckedExprData::Call {
                         func,
                         inst: Some(id),
                         args,
-                        trait_id: memfn.tr.map(|ut| ut.id),
+                        trait_id,
                         scope: self.current,
                     },
                 );
@@ -3038,7 +3075,7 @@ impl TypeChecker {
         target: &Type,
         span: Span,
     ) -> CheckedExpr {
-        match source.coerce_to(&self.scopes, target) {
+        match source.coerce_to(&self.scopes, self.current, target) {
             Ok(expr) => expr,
             Err(expr) => self.error(Error::type_mismatch(target, &expr.ty, &self.scopes, span)),
         }
@@ -3090,6 +3127,18 @@ impl TypeChecker {
         Type::User(GenericUserType::from_type_args(&self.scopes, id, args).into())
     }
 
+    fn resolve_dyn_ptr(&mut self, path: Located<Path>) -> Option<GenericTrait> {
+        match self.resolve_type_path(&path.data, path.span) {
+            ResolvedType::UserType(ut) => self.error(Error::expected_found(
+                "trait",
+                &format!("type '{}'", ut.name(&self.scopes)),
+                path.span,
+            )),
+            ResolvedType::Trait(tr) => Some(tr),
+            ResolvedType::Error => None,
+        }
+    }
+
     fn resolve_typehint(&mut self, hint: TypeHint) -> Type {
         match hint {
             TypeHint::Regular(path) => {
@@ -3132,6 +3181,20 @@ impl TypeChecker {
             TypeHint::Ptr(ty) => Type::Ptr(self.resolve_typehint(*ty).into()),
             TypeHint::MutPtr(ty) => Type::MutPtr(self.resolve_typehint(*ty).into()),
             TypeHint::RawPtr(ty) => Type::RawPtr(self.resolve_typehint(*ty).into()),
+            TypeHint::DynPtr(path) => {
+                if let Some(tr) = self.resolve_dyn_ptr(path) {
+                    Type::DynPtr(tr.into())
+                } else {
+                    Type::Unknown
+                }
+            }
+            TypeHint::DynMutPtr(path) => {
+                if let Some(tr) = self.resolve_dyn_ptr(path) {
+                    Type::DynMutPtr(tr.into())
+                } else {
+                    Type::Unknown
+                }
+            }
             TypeHint::This(span) => {
                 let current = self.current_function();
                 for (_, scope) in self.scopes.walk(self.current) {
@@ -3362,23 +3425,48 @@ impl TypeChecker {
         if let Some(ut) = ty.as_user().map(|ut| self.scopes.get(ut.id)) {
             let src_scope = ut.scope;
             if ut.data.is_template() {
-                for ut in ut.impls.iter().flat_map(|ut| ut.as_checked()) {
-                    if let Some(func) = search(&self.scopes.get(ut.id).fns) {
-                        return Some(MemberFn {
-                            tr: Some((*ut).clone()),
-                            ext: None,
-                            func,
-                            src_scope,
-                        });
+                for tr in ut.impls.iter().flat_map(|ut| ut.as_checked()) {
+                    for imp in self.scopes.get_trait_impls(tr.id) {
+                        if let Some(func) = search(&self.scopes.get(imp).fns) {
+                            return Some(MemberFn {
+                                recv: MemberReceiver::TraitImpl(GenericTrait::new(
+                                    imp,
+                                    tr.ty_args.clone(),
+                                )),
+                                func,
+                                src_scope,
+                            });
+                        }
                     }
                 }
             } else if let Some(func) = search(&ut.fns) {
                 return Some(MemberFn {
-                    tr: None,
-                    ext: None,
+                    recv: MemberReceiver::Normal,
                     func,
                     src_scope,
                 });
+            }
+        } else if let Some(tr) = ty.as_dyn() {
+            let data = self.scopes.get(tr.id);
+            if let Some(func) = search(&data.fns) {
+                return Some(MemberFn {
+                    recv: MemberReceiver::Dyn,
+                    func,
+                    src_scope: data.scope,
+                });
+            }
+
+            // TODO: search recursively
+            for tr in data.impls.iter().flat_map(|ut| ut.as_checked()) {
+                for imp in self.scopes.get_trait_impls(tr.id) {
+                    if let Some(func) = search(&self.scopes.get(imp).fns) {
+                        return Some(MemberFn {
+                            recv: MemberReceiver::Dyn,
+                            func,
+                            src_scope: self.scopes.get(tr.id).scope,
+                        });
+                    }
+                }
             }
         }
 
@@ -3386,8 +3474,7 @@ impl TypeChecker {
             .extensions_in_scope_for(ty, None, self.current)
             .find_map(|(id, ext)| {
                 search(&ext.fns).map(|func| MemberFn {
-                    tr: None,
-                    ext: Some(id),
+                    recv: MemberReceiver::Extension(id),
                     func,
                     src_scope: ext.scope,
                 })
@@ -4458,7 +4545,7 @@ impl TypeChecker {
                 }
                 found = true;
             }
-            
+
             if !found {
                 return Err(Error::new(
                     format!("no symbol '{}' found in this module", tail.data),
@@ -4730,17 +4817,15 @@ impl TypeChecker {
                 let ((name, ty_args), rest) = path.components.split_first().unwrap();
                 if rest.is_empty() {
                     match self.find_in_vns(name, true).map(|f| f.id) {
-                        Some(ValueItem::Fn(id)) => {
-                            ResolvedValue::Func(GenericFunc::new(
-                                id,
-                                self.resolve_type_args(
-                                    &self.scopes.get(id).type_params.clone(),
-                                    ty_args,
-                                    args,
-                                    span,
-                                ),
-                            ))
-                        }
+                        Some(ValueItem::Fn(id)) => ResolvedValue::Func(GenericFunc::new(
+                            id,
+                            self.resolve_type_args(
+                                &self.scopes.get(id).type_params.clone(),
+                                ty_args,
+                                args,
+                                span,
+                            ),
+                        )),
                         Some(ValueItem::StructConstructor(id, init)) => {
                             ResolvedValue::StructConstructor(
                                 id,

@@ -158,5 +158,17 @@ fn main() {
         loops::infinite_loop();
     }
 
+    std::println("\ndynamic dispatch: ");
+    {
+        std::println("normal()...");
+        dyndispatch::normal();
+
+        std::println("dependant()...");
+        dyndispatch::dependant();
+
+        std::println("recursive()...");
+        dyndispatch::recursive();
+    }
+
     std::println("\nall tests passed!");
 }

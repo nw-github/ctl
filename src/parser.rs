@@ -1273,6 +1273,12 @@ impl<'a, 'b> Parser<'a, 'b> {
                     TypeHint::MutPtr(self.type_hint().into())
                 } else if self.next_if_kind(Token::Raw).is_some() {
                     TypeHint::RawPtr(self.type_hint().into())
+                } else if self.next_if_kind(Token::Dyn).is_some() {
+                    if self.next_if_kind(Token::Mut).is_some() {
+                        TypeHint::DynMutPtr(self.type_path())
+                    } else {
+                        TypeHint::DynPtr(self.type_path())
+                    }
                 } else {
                     TypeHint::Ptr(self.type_hint().into())
                 }

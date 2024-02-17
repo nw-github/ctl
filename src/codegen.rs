@@ -12,7 +12,7 @@ use crate::{
     lexer::Span,
     nearest_pow_of_two,
     sym::*,
-    typeid::{CInt, FnPtr, GenericFunc, GenericUserType, Type, TypeArgs},
+    typeid::{CInt, FnPtr, GenericFunc, GenericTrait, GenericUserType, Type, TypeArgs},
     CodegenFlags,
 };
 
@@ -21,7 +21,7 @@ const ARRAY_DATA_NAME: &str = "data";
 const VOID_INSTANCE: &str = "CTL_VOID";
 const ATTR_NOGEN: &str = "c_opaque";
 const ATTR_LINKNAME: &str = "c_name";
-const NULLPTR: &str = "((void *)0)";
+const NULLPTR: &str = "((void*)0)";
 
 #[derive(Eq, Clone)]
 struct State {
@@ -91,6 +91,7 @@ struct TypeGen<'a> {
     fnptrs: HashSet<FnPtr>,
     arrays: HashMap<Type, HashSet<usize>>,
     integers: HashSet<(u32, bool)>,
+    dynptrs: HashSet<GenericTrait>,
     scopes: &'a Scopes,
 }
 
@@ -102,16 +103,13 @@ impl<'a> TypeGen<'a> {
             fnptrs: Default::default(),
             arrays: Default::default(),
             integers: Default::default(),
+            dynptrs: Default::default(),
         }
     }
 
     fn finish(mut self, buffer: &mut Buffer, flags: &CodegenFlags) {
-        let integers = std::mem::take(&mut self.integers);
-        let structs = std::mem::take(&mut self.structs);
-        let fnptrs = std::mem::take(&mut self.fnptrs);
-        let mut arrays = std::mem::take(&mut self.arrays);
-        let mut definitions = Buffer::default();
-        for (bits, signed) in integers {
+        let mut defs = Buffer::default();
+        for (bits, signed) in self.integers {
             if flags.no_bit_int {
                 buffer.emit(format!(
                     "typedef {}int{}_t {}{bits};",
@@ -122,29 +120,82 @@ impl<'a> TypeGen<'a> {
             } else {
                 let ch = if signed { 's' } else { 'u' };
                 buffer.emit(format!(
-                    "typedef {}INT({bits}) {ch}{bits};",
+                    "typedef {}INT({bits}){ch}{bits};",
                     ch.to_uppercase(),
                 ));
             }
         }
-        for f in fnptrs {
-            definitions.emit("typedef ");
-            definitions.emit_type(self.scopes, &f.ret, None, flags.minify);
-            definitions.emit("(*");
-            definitions.emit_fnptr_name(self.scopes, &f, flags.minify);
-            definitions.emit(")(");
+        for f in self.fnptrs {
+            defs.emit("typedef ");
+            defs.emit_type(self.scopes, &f.ret, None, flags.minify);
+            defs.emit("(*");
+            defs.emit_fnptr_name(self.scopes, &f, flags.minify);
+            defs.emit(")(");
             for (i, param) in f.params.iter().enumerate() {
                 if i > 0 {
-                    definitions.emit(",");
+                    defs.emit(",");
                 }
 
-                definitions.emit_type(self.scopes, param, None, flags.minify);
+                defs.emit_type(self.scopes, param, None, flags.minify);
             }
-            definitions.emit(");");
+            defs.emit(");");
+        }
+
+        for tr in self.dynptrs {
+            buffer.emit("typedef struct ");
+            buffer.emit_vtable_struct_name(self.scopes, &tr, flags.minify);
+            buffer.emit(" ");
+            buffer.emit_vtable_struct_name(self.scopes, &tr, flags.minify);
+
+            buffer.emit(";typedef struct ");
+            buffer.emit_trait_name(self.scopes, &tr, flags.minify);
+            buffer.emit("{void*self;");
+            buffer.emit_vtable_struct_name(self.scopes, &tr, flags.minify);
+            buffer.emit(" const*vtable;}");
+            buffer.emit_trait_name(self.scopes, &tr, flags.minify);
+            buffer.emit(";");
+
+            defs.emit("struct ");
+            defs.emit_vtable_struct_name(self.scopes, &tr, flags.minify);
+            defs.emit("{");
+            for id in self.scopes.get_trait_impls(tr.id) {
+                for f in self.scopes.get(id).vtable_methods(self.scopes) {
+                    defs.emit_type(
+                        self.scopes,
+                        &self.scopes.get(f.id).ret.with_templates(&tr.ty_args),
+                        None,
+                        flags.minify,
+                    );
+                    defs.emit("(*const ");
+                    defs.emit_fn_name(
+                        self.scopes,
+                        &GenericFunc::new(f.id, tr.ty_args.clone()),
+                        flags.minify,
+                    );
+                    defs.emit(")(");
+                    for (i, param) in self.scopes.get(f.id).params.iter().enumerate() {
+                        if i > 0 {
+                            defs.emit(",");
+                            defs.emit_type(
+                                self.scopes,
+                                &param.ty.with_templates(&tr.ty_args),
+                                None,
+                                flags.minify,
+                            );
+                        } else if param.ty.is_ptr() {
+                            defs.emit("const void*");
+                        } else {
+                            defs.emit("void*");
+                        }
+                    }
+                    defs.emit(");");
+                }
+            }
+            defs.emit("};");
         }
 
         let mut emitted_arrays = HashSet::new();
-        for ut in self.get_struct_order(&structs) {
+        for ut in Self::get_struct_order(&self.structs) {
             let ut_data = self.scopes.get(ut.id);
             buffer.emit(if ut_data.data.is_unsafe_union() {
                 "typedef union "
@@ -165,61 +216,69 @@ impl<'a> TypeGen<'a> {
                 continue;
             }
 
-            definitions.emit(if ut_data.data.is_unsafe_union() {
+            defs.emit(if ut_data.data.is_unsafe_union() {
                 "union "
             } else {
                 "struct "
             });
-            definitions.emit_type_name(self.scopes, ut, flags.minify);
-            definitions.emit("{");
+            defs.emit_type_name(self.scopes, ut, flags.minify);
+            defs.emit("{");
 
             let members = &self.scopes.get(ut.id).members;
             if let UserTypeData::Union(union) = &ut_data.data {
-                definitions.emit_type(self.scopes, &union.tag_type(), None, flags.minify);
-                definitions.emit(format!(" {UNION_TAG_NAME};"));
+                defs.emit_type(self.scopes, &union.tag_type(), None, flags.minify);
+                defs.emit(format!(" {UNION_TAG_NAME};"));
 
                 for (name, member) in members {
-                    self.emit_member(ut, name, &member.ty, &mut definitions, flags.minify);
+                    Self::emit_member(self.scopes, ut, name, &member.ty, &mut defs, flags.minify);
                 }
 
-                definitions.emit(" union{");
+                defs.emit("union{");
                 for (name, ty) in union.iter() {
                     if let Some(ty) = ty {
-                        self.emit_member(ut, name, ty, &mut definitions, flags.minify);
+                        Self::emit_member(self.scopes, ut, name, ty, &mut defs, flags.minify);
                     }
                 }
-                definitions.emit("};");
+                defs.emit("};");
             } else {
                 if members.is_empty() {
-                    definitions.emit("CTL_DUMMY_MEMBER;");
+                    defs.emit("CTL_DUMMY_MEMBER;");
                 }
 
                 for (name, member) in members {
-                    self.emit_member(ut, name, &member.ty, &mut definitions, flags.minify);
+                    Self::emit_member(self.scopes, ut, name, &member.ty, &mut defs, flags.minify);
                 }
             }
 
-            definitions.emit("};");
+            defs.emit("};");
 
             let ty = Type::User(ut.clone().into());
-            if let Some(sizes) = arrays.remove(&ty) {
+            if let Some(sizes) = self.arrays.remove(&ty) {
                 for size in sizes {
-                    self.emit_array(buffer, Some(&mut definitions), &ty, size, flags.minify);
+                    Self::emit_array(
+                        self.scopes,
+                        buffer,
+                        Some(&mut defs),
+                        &ty,
+                        size,
+                        flags.minify,
+                    );
                 }
                 emitted_arrays.insert(ty);
             }
         }
 
-        for (ty, sizes) in arrays
+        for (ty, sizes) in self
+            .arrays
             .into_iter()
             .filter(|(ty, _)| !emitted_arrays.contains(ty))
         {
             for size in sizes {
-                self.emit_array(buffer, None, &ty, size, flags.minify);
+                Self::emit_array(self.scopes, buffer, None, &ty, size, flags.minify);
             }
         }
 
-        buffer.emit(definitions.finish());
+        buffer.emit(defs.finish());
     }
 
     fn add_type(&mut self, diag: &mut Diagnostics, ty: &Type, adding: Option<&GenericUserType>) {
@@ -234,6 +293,9 @@ impl<'a> TypeGen<'a> {
             Type::Uint(bits) => {
                 self.integers.insert((*bits, false));
             }
+            Type::DynPtr(ut) | Type::DynMutPtr(ut) => {
+                self.add_dynptr(diag, (**ut).clone());
+            }
             _ => {}
         }
     }
@@ -245,6 +307,10 @@ impl<'a> TypeGen<'a> {
 
         self.add_type(diag, &f.ret, None);
         self.fnptrs.insert(f);
+    }
+
+    fn add_dynptr(&mut self, _diag: &mut Diagnostics, tr: GenericTrait) {
+        self.dynptrs.insert(tr);
     }
 
     fn add_array(
@@ -338,10 +404,9 @@ impl<'a> TypeGen<'a> {
         }
     }
 
-    fn get_struct_order<'b>(
-        &self,
-        structs: &'b HashMap<GenericUserType, Vec<GenericUserType>>,
-    ) -> Vec<&'b GenericUserType> {
+    fn get_struct_order(
+        structs: &HashMap<GenericUserType, Vec<GenericUserType>>,
+    ) -> Vec<&GenericUserType> {
         fn dfs<'b>(
             sid: &'b GenericUserType,
             structs: &'b HashMap<GenericUserType, Vec<GenericUserType>>,
@@ -377,7 +442,7 @@ impl<'a> TypeGen<'a> {
     }
 
     fn emit_member(
-        &mut self,
+        scopes: &Scopes,
         ut: &GenericUserType,
         name: &str,
         ty: &Type,
@@ -385,16 +450,16 @@ impl<'a> TypeGen<'a> {
         min: bool,
     ) {
         let ty = ty.with_templates(&ut.ty_args);
-        if ty.size_and_align(self.scopes).0 == 0 {
+        if ty.size_and_align(scopes).0 == 0 {
             buffer.emit("CTL_ZST ");
         }
 
-        buffer.emit_type(self.scopes, &ty, None, min);
+        buffer.emit_type(scopes, &ty, None, min);
         buffer.emit(format!(" ${name};"));
     }
 
     fn emit_array(
-        &mut self,
+        scopes: &Scopes,
         typedef: &mut Buffer,
         defs: Option<&mut Buffer>,
         ty: &Type,
@@ -402,16 +467,16 @@ impl<'a> TypeGen<'a> {
         min: bool,
     ) {
         typedef.emit("typedef struct ");
-        typedef.emit_array_struct_name(self.scopes, ty, size, min);
+        typedef.emit_array_struct_name(scopes, ty, size, min);
         typedef.emit(" ");
-        typedef.emit_array_struct_name(self.scopes, ty, size, min);
+        typedef.emit_array_struct_name(scopes, ty, size, min);
         typedef.emit(";");
 
         let defs = defs.unwrap_or(typedef);
         defs.emit("struct ");
-        defs.emit_array_struct_name(self.scopes, ty, size, min);
+        defs.emit_array_struct_name(scopes, ty, size, min);
         defs.emit("{");
-        defs.emit_type(self.scopes, ty, None, min);
+        defs.emit_type(scopes, ty, None, min);
         defs.emit(format!(" {ARRAY_DATA_NAME}[{size}];}};"));
     }
 }
@@ -507,6 +572,12 @@ impl Buffer {
                     tg.add_array(diag, data.0.clone(), data.1, None);
                 }
             }
+            Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
+                self.emit_trait_name(scopes, tr, min);
+                if let Some((diag, tg)) = tg {
+                    tg.add_dynptr(diag, (**tr).clone());
+                }
+            }
             Type::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             Type::Unresolved(_) => panic!("ICE: TypeId::Unresolved in emit_type"),
             Type::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_type"),
@@ -550,6 +621,9 @@ impl Buffer {
             Type::RawPtr(inner) => {
                 self.emit(if min { "r" } else { "rawptr_" });
                 self.emit_generic_mangled_name(scopes, inner, min);
+            }
+            Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
+                self.emit_trait_name(scopes, tr, min);
             }
             Type::FnPtr(f) => self.emit_fnptr_name(scopes, f, min),
             Type::User(ut) => {
@@ -605,6 +679,26 @@ impl Buffer {
         }
     }
 
+    fn emit_trait_name(&mut self, scopes: &Scopes, tr: &GenericTrait, min: bool) {
+        let ty = scopes.get(tr.id);
+        if min {
+            self.emit(format!("t{}", tr.id));
+            for ty in tr.ty_args.values() {
+                self.emit_generic_mangled_name(scopes, ty, min);
+            }
+        } else {
+            self.emit(scopes.full_name(ty.scope, &ty.name.data));
+            if !tr.ty_args.is_empty() {
+                self.emit("$");
+                for ty in tr.ty_args.values() {
+                    self.emit("$");
+                    self.emit_generic_mangled_name(scopes, ty, min);
+                }
+                self.emit("$$");
+            }
+        }
+    }
+
     fn emit_array_struct_name(&mut self, scopes: &Scopes, ty: &Type, size: usize, min: bool) {
         if min {
             self.emit("a");
@@ -615,6 +709,54 @@ impl Buffer {
             self.emit_generic_mangled_name(scopes, ty, min);
             self.emit(format!("_{size}"));
         }
+    }
+
+    fn emit_fn_name(&mut self, scopes: &Scopes, f: &GenericFunc, min: bool) {
+        self.emit_fn_name_ex(false, scopes, f, min)
+    }
+
+    fn emit_fn_name_ex(&mut self, real: bool, scopes: &Scopes, func: &GenericFunc, min: bool) {
+        let f = scopes.get(func.id);
+        let is_macro = f.attrs.iter().any(|attr| attr.name.data == ATTR_NOGEN);
+        if f.linkage == Linkage::Internal {
+            if min {
+                self.emit(format!("f{}", func.id));
+                for ty in func.ty_args.values() {
+                    self.emit_generic_mangled_name(scopes, ty, min);
+                }
+            } else {
+                self.emit(scopes.full_name(f.scope, &f.name.data));
+                if !func.ty_args.is_empty() {
+                    self.emit("$");
+                    for ty in func.ty_args.values() {
+                        self.emit("$");
+                        self.emit_generic_mangled_name(scopes, ty, min);
+                    }
+                    self.emit("$$");
+                }
+            }
+        } else {
+            let name = f
+                .attrs
+                .iter()
+                .find(|attr| attr.name.data == ATTR_LINKNAME && !attr.props.is_empty())
+                .map(|attr| &attr.props[0].name.data)
+                .unwrap_or(&f.name.data);
+
+            if !is_macro && !real && needs_fn_wrapper(f) {
+                if min {
+                    return self.emit(format!("f{}", func.id));
+                } else {
+                    self.emit("$");
+                }
+            }
+            self.emit(name);
+        }
+    }
+
+    fn emit_vtable_struct_name(&mut self, scopes: &Scopes, tr: &GenericTrait, min: bool) {
+        self.emit(if min { "v" } else { "$vtable_" });
+        self.emit_trait_name(scopes, tr, min);
     }
 
     fn finish(self) -> String {
@@ -733,6 +875,13 @@ macro_rules! usebuf {
     };
 }
 
+#[derive(PartialEq, Eq, Hash)]
+struct Vtable {
+    tr: GenericTrait,
+    ty: Type,
+    scope: ScopeId,
+}
+
 pub struct Codegen<'a> {
     scopes: &'a Scopes,
     diag: Diagnostics,
@@ -744,6 +893,8 @@ pub struct Codegen<'a> {
     cur_loop: String,
     yielded: bool,
     flags: CodegenFlags,
+    vtables: Buffer,
+    emitted_vtables: HashSet<Vtable>,
 }
 
 impl<'a> Codegen<'a> {
@@ -764,6 +915,8 @@ impl<'a> Codegen<'a> {
             cur_block: Default::default(),
             cur_loop: Default::default(),
             yielded: Default::default(),
+            vtables: Default::default(),
+            emitted_vtables: Default::default(),
         }
     }
 
@@ -814,7 +967,6 @@ impl<'a> Codegen<'a> {
             }
         }
         let functions = std::mem::take(&mut this.buffer).finish();
-
         if this.flags.leak {
             this.buffer.emit("#define CTL_NOGC\n");
         }
@@ -827,6 +979,7 @@ impl<'a> Codegen<'a> {
         }
         this.type_gen.finish(&mut this.buffer, &this.flags);
         this.buffer.emit(prototypes.finish());
+        this.buffer.emit(this.vtables.finish());
         this.buffer.emit(static_defs);
         this.buffer.emit(functions);
         this.buffer.emit(init);
@@ -835,6 +988,77 @@ impl<'a> Codegen<'a> {
         }
 
         Ok((this.diag, this.buffer.finish()))
+    }
+
+    fn emit_vtable(&mut self, vtable: Vtable) {
+        if self.emitted_vtables.contains(&vtable) {
+            return;
+        }
+
+        let mut buffer = Buffer::default();
+        usebuf!(self, &mut buffer, {
+            self.buffer.emit("static const ");
+            self.buffer
+                .emit_vtable_struct_name(self.scopes, &vtable.tr, self.flags.minify);
+            self.buffer.emit(" ");
+            self.emit_vtable_name(&vtable);
+            self.buffer.emit("={");
+            for tr in self.scopes.get_trait_impls(vtable.tr.id) {
+                for f in self.scopes.get(tr).vtable_methods(self.scopes) {
+                    self.buffer.emit(".");
+
+                    let func = GenericFunc::new(f.id, vtable.tr.ty_args.clone());
+                    let func_data = self.scopes.get(f.id);
+
+                    self.buffer
+                        .emit_fn_name(self.scopes, &func, self.flags.minify);
+                    self.buffer.emit("=(");
+                    self.buffer.emit_type(
+                        self.scopes,
+                        &func_data.ret.with_templates(&func.ty_args),
+                        None,
+                        self.flags.minify,
+                    );
+                    self.buffer.emit("(*");
+                    self.buffer.emit(")(");
+                    for (i, param) in func_data.params.iter().enumerate() {
+                        if i > 0 {
+                            self.buffer.emit(",");
+                            self.buffer.emit_type(
+                                self.scopes,
+                                &param.ty.with_templates(&func.ty_args),
+                                None,
+                                self.flags.minify,
+                            );
+                        } else if param.ty.is_ptr() {
+                            self.buffer.emit("const void*");
+                        } else {
+                            self.buffer.emit("void*");
+                        }
+                    }
+                    self.buffer.emit("))");
+
+                    let func = GenericFunc::new(
+                        self.find_implementation(
+                            &vtable.ty,
+                            tr,
+                            &self.scopes.get(f.id).name.data,
+                            vtable.scope,
+                        )
+                        .unwrap(),
+                        func.ty_args,
+                    );
+                    self.buffer
+                        .emit_fn_name(self.scopes, &func, self.flags.minify);
+                    self.buffer.emit(",");
+                    self.funcs.insert(State::new(func));
+                }
+            }
+            self.buffer.emit("};");
+        });
+
+        self.vtables.emit(buffer.finish());
+        self.emitted_vtables.insert(vtable);
     }
 
     fn gen_ctl_init(&mut self) -> (String, String) {
@@ -876,9 +1100,11 @@ impl<'a> Codegen<'a> {
             if returns {
                 self.buffer.emit("return ");
             }
-            self.emit_fn_name(main);
+            self.buffer
+                .emit_fn_name(self.scopes, &main.func, self.flags.minify);
             self.buffer.emit("(");
-            self.emit_fn_name(&state);
+            self.buffer
+                .emit_fn_name(self.scopes, &state.func, self.flags.minify);
             if returns {
                 self.buffer.emit("(argc,(const char **)argv));}");
             } else {
@@ -892,7 +1118,8 @@ impl<'a> Codegen<'a> {
             if returns {
                 self.buffer.emit("return ");
             }
-            self.emit_fn_name(main);
+            self.buffer
+                .emit_fn_name(self.scopes, &main.func, self.flags.minify);
             if returns {
                 self.buffer.emit("();}");
             } else {
@@ -909,14 +1136,15 @@ impl<'a> Codegen<'a> {
             return;
         }
 
-        if Self::needs_fn_wrapper(func) {
+        if needs_fn_wrapper(func) {
             usebuf!(self, prototypes, {
                 self.emit_prototype(state, false, false);
 
                 self.buffer.emit("{");
                 self.emit_prototype(state, true, true);
                 self.buffer.emit(";");
-                self.emit_fn_name_inner(state, true);
+                self.buffer
+                    .emit_fn_name_ex(true, self.scopes, &state.func, self.flags.minify);
                 self.buffer.emit("(");
                 for i in 0..func.params.len() {
                     if i > 0 {
@@ -1220,39 +1448,53 @@ impl<'a> Codegen<'a> {
                     return self.emit_intrinsic(name, &func, args, state);
                 }
 
-                let mut args: IndexMap<_, _> = args
-                    .into_iter()
-                    .map(|(name, mut expr)| {
-                        state.fill_generics(&mut expr.ty);
-                        // TODO: dont emit temporaries for expressions that cant have side effects
-                        (name, hoist!(self, state, self.emit_tmpvar(expr, state)))
-                    })
-                    .collect();
-
-                let mut count = 0;
-                macro_rules! arg {
-                    ($arg: expr) => {{
-                        if count > 0 {
-                            self.buffer.emit(",");
-                        }
-
-                        self.buffer.emit($arg);
-                        count += 1;
-                    }};
-                }
-
                 let next_state = State::with_instance_and_caller(func, inst.as_ref(), scope);
-                self.emit_fn_name(&next_state);
+                self.buffer
+                    .emit_fn_name(self.scopes, &next_state.func, self.flags.minify);
                 self.buffer.emit("(");
-                self.scopes
-                    .get(original_id)
-                    .params
-                    .iter()
-                    .flat_map(|param| args.shift_remove(&param.label))
-                    .for_each(|arg| arg!(arg));
-                args.into_iter().for_each(|(_, arg)| arg!(arg));
-                self.buffer.emit(")");
+                self.finish_emit_fn_args(state, original_id, args);
                 self.funcs.insert(next_state);
+            }
+            CheckedExprData::CallDyn { func, mut args } => {
+                let (_, recv) = args.shift_remove_index(0).unwrap();
+                let recv = hoist!(self, state, self.emit_tmpvar(recv, state));
+                self.buffer.emit(format!("{recv}.vtable->"));
+                self.buffer
+                    .emit_fn_name(self.scopes, &func, self.flags.minify);
+                self.buffer.emit(format!("({recv}.self"));
+                if args.is_empty() {
+                    self.buffer.emit(")");
+                } else {
+                    self.buffer.emit(", ");
+                    self.finish_emit_fn_args(state, func.id, args);
+                }
+            }
+            CheckedExprData::DynCoerce {
+                expr: mut inner,
+                scope,
+            } => {
+                state.fill_generics(&mut inner.ty);
+                let vtable = if let Type::Ptr(inner) | Type::MutPtr(inner) = &inner.ty {
+                    Vtable {
+                        tr: expr
+                            .ty
+                            .as_dyn()
+                            .expect("ICE: DynCoerce to non dyn pointer")
+                            .clone(),
+                        ty: (**inner).clone(),
+                        scope,
+                    }
+                } else {
+                    panic!("ICE: DynCoerce from non-pointer");
+                };
+
+                self.emit_cast(&expr.ty);
+                self.buffer.emit("{.self=(void*)");
+                self.emit_expr(*inner, state);
+                self.buffer.emit(",.vtable=&");
+                self.emit_vtable_name(&vtable);
+                self.buffer.emit("}");
+                self.emit_vtable(vtable);
             }
             CheckedExprData::CallFnPtr { expr, args } => {
                 self.buffer.emit("(");
@@ -1345,7 +1587,8 @@ impl<'a> Codegen<'a> {
                     );
 
                     for val in exprs {
-                        self.emit_fn_name(&insert);
+                        self.buffer
+                            .emit_fn_name(self.scopes, &insert.func, self.flags.minify);
                         self.buffer.emit(format!("(&{tmp},"));
                         self.emit_expr(val, state);
                         self.buffer.emit(");");
@@ -1373,7 +1616,8 @@ impl<'a> Codegen<'a> {
 
                     self.emit_with_capacity(&expr.ty, &tmp, &ut, exprs.len());
                     for (key, val) in exprs {
-                        self.emit_fn_name(&insert);
+                        self.buffer
+                            .emit_fn_name(self.scopes, &insert.func, self.flags.minify);
                         self.buffer.emit(format!("(&{tmp},"));
                         self.emit_expr(key, state);
                         self.buffer.emit(",");
@@ -1420,7 +1664,8 @@ impl<'a> Codegen<'a> {
             CheckedExprData::Symbol(symbol, scope) => match symbol {
                 Symbol::Func(func) => {
                     let state = State::new_with_caller(func, scope);
-                    self.emit_fn_name(&state);
+                    self.buffer
+                        .emit_fn_name(self.scopes, &state.func, self.flags.minify);
                     self.funcs.insert(state);
                 }
                 Symbol::Var(id) => {
@@ -1624,7 +1869,8 @@ impl<'a> Codegen<'a> {
                     let item = state.tmpvar();
                     self.emit_type(&next_ty);
                     self.buffer.emit(format!(" {item}="));
-                    self.emit_fn_name(&next_state);
+                    self.buffer
+                        .emit_fn_name(self.scopes, &next_state.func, self.flags.minify);
                     self.buffer.emit(format!("(&{iter_var});"));
                     let inner = next_ty.as_option_inner(self.scopes).unwrap().clone();
                     self.emit_pattern_if_stmt(
@@ -1775,6 +2021,43 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    fn finish_emit_fn_args(
+        &mut self,
+        state: &mut State,
+        original_id: FunctionId,
+        args: IndexMap<String, CheckedExpr>,
+    ) {
+        let mut args: IndexMap<_, _> = args
+            .into_iter()
+            .map(|(name, mut expr)| {
+                state.fill_generics(&mut expr.ty);
+                // TODO: dont emit temporaries for expressions that cant have side effects
+                (name, hoist!(self, state, self.emit_tmpvar(expr, state)))
+            })
+            .collect();
+
+        let mut count = 0;
+        macro_rules! arg {
+            ($arg: expr) => {{
+                if count > 0 {
+                    self.buffer.emit(",");
+                }
+
+                self.buffer.emit($arg);
+                count += 1;
+            }};
+        }
+
+        self.scopes
+            .get(original_id)
+            .params
+            .iter()
+            .flat_map(|param| args.shift_remove(&param.label))
+            .for_each(|arg| arg!(arg));
+        args.into_iter().for_each(|(_, arg)| arg!(arg));
+        self.buffer.emit(")");
+    }
+
     fn emit_loop_break(&mut self, state: &mut State, ty: Type, optional: bool) {
         if optional {
             self.buffer.emit(format!("{}=", self.cur_loop));
@@ -1795,7 +2078,8 @@ impl<'a> Codegen<'a> {
             ut.ty_args.clone(),
         ));
 
-        self.emit_fn_name(&new_state);
+        self.buffer
+            .emit_fn_name(self.scopes, &new_state.func, self.flags.minify);
         self.buffer.emit("()");
         self.funcs.insert(new_state);
     }
@@ -1817,7 +2101,8 @@ impl<'a> Codegen<'a> {
             ut.ty_args.clone(),
         ));
 
-        self.emit_fn_name(&state);
+        self.buffer
+            .emit_fn_name(self.scopes, &state.func, self.flags.minify);
         self.buffer.emit(format!("({len});"));
         self.funcs.insert(state);
     }
@@ -1858,7 +2143,8 @@ impl<'a> Codegen<'a> {
                         .expect("a panic handler should exist"),
                 ));
 
-                self.emit_fn_name(&panic);
+                self.buffer
+                    .emit_fn_name(self.scopes, &panic.func, self.flags.minify);
                 self.buffer.emit("(");
                 for (i, (_, expr)) in args.into_iter().enumerate() {
                     if i > 0 {
@@ -1890,6 +2176,19 @@ impl<'a> Codegen<'a> {
         self.emit_expr_inner(expr, state);
         self.buffer.emit(";");
         tmp
+    }
+
+    fn emit_vtable_name(&mut self, vtable: &Vtable) {
+        self.buffer
+            .emit_generic_mangled_name(self.scopes, &vtable.ty, self.flags.minify);
+        if !self.flags.minify {
+            self.buffer.emit("_");
+        }
+        self.buffer
+            .emit_trait_name(self.scopes, &vtable.tr, self.flags.minify);
+        self.buffer
+            .emit(if self.flags.minify { "v" } else { "_$vtable" });
+        self.buffer.emit(format!("{}", vtable.scope.0));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2200,7 +2499,7 @@ impl<'a> Codegen<'a> {
         let mut ret = f.ret.clone();
         state.fill_generics(&mut ret);
 
-        let needs_wrapper = Self::needs_fn_wrapper(f);
+        let needs_wrapper = needs_fn_wrapper(f);
         if f.linkage == Linkage::Internal || (needs_wrapper && !real) {
             self.buffer.emit("static ");
             if needs_wrapper {
@@ -2220,7 +2519,8 @@ impl<'a> Codegen<'a> {
             self.emit_type(&ret);
             self.buffer.emit(" ");
         }
-        self.emit_fn_name_inner(state, real);
+        self.buffer
+            .emit_fn_name_ex(real, self.scopes, &state.func, self.flags.minify);
         self.buffer.emit("(");
 
         let mut unused = vec![];
@@ -2319,52 +2619,6 @@ impl<'a> Codegen<'a> {
         ty
     }
 
-    fn emit_fn_name(&mut self, state: &State) {
-        self.emit_fn_name_inner(state, false)
-    }
-
-    fn emit_fn_name_inner(&mut self, state: &State, real: bool) {
-        let f = self.scopes.get(state.func.id);
-        let is_macro = f.attrs.iter().any(|attr| attr.name.data == ATTR_NOGEN);
-        if f.linkage == Linkage::Internal {
-            if self.flags.minify {
-                self.buffer.emit(format!("f{}", state.func.id));
-                for ty in state.func.ty_args.values() {
-                    self.buffer
-                        .emit_generic_mangled_name(self.scopes, ty, self.flags.minify);
-                }
-            } else {
-                self.buffer
-                    .emit(self.scopes.full_name(f.scope, &f.name.data));
-                if !state.func.ty_args.is_empty() {
-                    self.buffer.emit("$");
-                    for ty in state.func.ty_args.values() {
-                        self.buffer.emit("$");
-                        self.buffer
-                            .emit_generic_mangled_name(self.scopes, ty, self.flags.minify);
-                    }
-                    self.buffer.emit("$$");
-                }
-            }
-        } else {
-            let name = f
-                .attrs
-                .iter()
-                .find(|attr| attr.name.data == ATTR_LINKNAME && !attr.props.is_empty())
-                .map(|attr| &attr.props[0].name.data)
-                .unwrap_or(&f.name.data);
-
-            if !is_macro && !real && Self::needs_fn_wrapper(f) {
-                if self.flags.minify {
-                    return self.buffer.emit(format!("f{}", state.func.id));
-                } else {
-                    self.buffer.emit("$");
-                }
-            }
-            self.buffer.emit(name);
-        }
-    }
-
     fn has_side_effects(expr: &CheckedExpr) -> bool {
         matches!(
             &expr.data,
@@ -2423,10 +2677,6 @@ impl<'a> Codegen<'a> {
             .find_map(|(_, ext)| search(ext.body_scope))
     }
 
-    fn needs_fn_wrapper(f: &Function) -> bool {
-        f.linkage == Linkage::Import && matches!(f.ret, Type::Void | Type::Never | Type::CVoid)
-    }
-
     fn deref(src: &str, ty: &Type) -> String {
         if ty.is_ptr() || ty.is_mut_ptr() {
             format!(
@@ -2456,4 +2706,8 @@ impl<'a> Codegen<'a> {
             .as_fn()?;
         Some(State::new(GenericFunc::from_id(self.scopes, *id)))
     }
+}
+
+fn needs_fn_wrapper(f: &Function) -> bool {
+    f.linkage == Linkage::Import && matches!(f.ret, Type::Void | Type::Never | Type::CVoid)
 }

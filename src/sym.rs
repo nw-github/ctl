@@ -1,7 +1,7 @@
 use derive_more::{Constructor, Deref, DerefMut, From};
 use enum_as_inner::EnumAsInner;
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     ast::{
@@ -11,6 +11,7 @@ use crate::{
     },
     lexer::{Located, Span},
     typeid::{GenericTrait, GenericUserType, Type},
+    THIS_PARAM,
 };
 
 macro_rules! id {
@@ -274,6 +275,13 @@ pub trait TypeLike: HasTypeParams {
     fn get_impls(&self) -> &[TraitImpl];
     fn get_impls_mut(&mut self) -> &mut [TraitImpl];
     fn get_fns(&self) -> &[Vis<FunctionId>];
+
+    fn vtable_methods(&self, scopes: &Scopes) -> impl Iterator<Item = &Vis<FunctionId>> {
+        self.get_fns().iter().filter(|f| {
+            let f = scopes.get(f.id);
+            f.type_params.is_empty() && f.params.first().is_some_and(|p| p.label == THIS_PARAM)
+        })
+    }
 }
 
 impl TypeLike for UserType {
@@ -711,6 +719,23 @@ impl Scopes {
         };
         Type::User(GenericUserType::from_type_args(self, id, types).into())
     }
+
+    pub fn get_trait_impls(&self, tr: TraitId) -> HashSet<TraitId> {
+        fn inner(this: &Scopes, tr: TraitId, results: &mut HashSet<TraitId>) {
+            if !results.insert(tr) {
+                return;
+            }
+    
+            for imp in this.get(tr).impls.iter().flat_map(|tr| tr.as_checked()) {
+                inner(this, imp.id, results);
+            }
+        }
+    
+        let mut result = HashSet::new();
+        inner(self, tr, &mut result);
+        result
+    }
+    
 }
 
 impl std::ops::Index<ScopeId> for Scopes {
