@@ -891,7 +891,6 @@ pub struct Codegen<'a> {
     funcs: HashSet<State>,
     cur_block: String,
     cur_loop: String,
-    yielded: bool,
     flags: CodegenFlags,
     vtables: Buffer,
     emitted_vtables: HashSet<Vtable>,
@@ -914,7 +913,6 @@ impl<'a> Codegen<'a> {
             type_gen: TypeGen::new(scopes),
             cur_block: Default::default(),
             cur_loop: Default::default(),
-            yielded: Default::default(),
             vtables: Default::default(),
             emitted_vtables: Default::default(),
         }
@@ -1408,6 +1406,11 @@ impl<'a> Codegen<'a> {
                 }
                 UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in gen_expr"),
             },
+            CheckedExprData::AutoDeref(expr, count) => {
+                self.buffer.emit(format!("({:*<1$}", "", count));
+                self.emit_expr(*expr, state);
+                self.buffer.emit(")");
+            }
             CheckedExprData::Call {
                 mut func,
                 args,
@@ -1940,7 +1943,6 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit(";");
                 });
                 self.buffer.emit(VOID_INSTANCE);
-                //self.yielded = true;
             }
             CheckedExprData::Yield(expr) => {
                 hoist!(self, state, {
@@ -1949,7 +1951,6 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit(";");
                 });
                 self.buffer.emit(VOID_INSTANCE);
-                //self.yielded = true;
             }
             CheckedExprData::Break(expr) => {
                 hoist!(self, state, {
@@ -1962,12 +1963,10 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit(";break;");
                 });
                 self.buffer.emit(VOID_INSTANCE);
-                //self.yielded = true;
             }
             CheckedExprData::Continue => {
                 hoist!(self, state, self.buffer.emit("continue;"));
                 self.buffer.emit(VOID_INSTANCE);
-                //self.yielded = true;
             }
             CheckedExprData::Match {
                 expr: mut scrutinee,
@@ -2010,12 +2009,15 @@ impl<'a> Codegen<'a> {
             CheckedExprData::Lambda(_) => todo!(),
             CheckedExprData::NeverCoerce(mut inner) => {
                 state.fill_generics(&mut inner.ty);
-
-                self.buffer.emit("/*never*/((");
-                self.emit_expr_inner(*inner, state);
-                self.buffer.emit("),*(");
-                self.emit_type(&expr.ty);
-                self.buffer.emit(format!("*){NULLPTR})"));
+                if matches!(expr.ty, Type::Void | Type::CVoid) {
+                    self.emit_expr_inner(*inner, state);
+                } else {
+                    self.buffer.emit("/*never*/((");
+                    self.emit_expr_inner(*inner, state);
+                    self.buffer.emit("),*(");
+                    self.emit_type(&expr.ty);
+                    self.buffer.emit(format!("*){NULLPTR})"));
+                }
             }
             CheckedExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }
@@ -2462,16 +2464,17 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_block(&mut self, block: Vec<CheckedStmt>, state: &mut State) {
-        let old = std::mem::take(&mut self.yielded);
-        self.buffer.emit("{");
-        for stmt in block.into_iter() {
-            self.emit_stmt(stmt, state);
-            if self.yielded {
-                break;
+        if !self.flags.minify {
+            self.buffer.emit("{");
+            for stmt in block.into_iter() {
+                self.emit_stmt(stmt, state);
+            }
+            self.buffer.emit("}");
+        } else {
+            for stmt in block.into_iter() {
+                self.emit_stmt(stmt, state);
             }
         }
-        self.buffer.emit("}");
-        self.yielded = old;
     }
 
     fn emit_type(&mut self, id: &Type) {

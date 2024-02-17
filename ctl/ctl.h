@@ -60,6 +60,7 @@
 #define CTL_MEMMOVE     __builtin_memmove
 #define CTL_MEMCMP      __builtin_memcmp
 #define CTL_STRLEN      __builtin_strlen
+#if !defined(__TINYC__)
 #if defined(NDEBUG)
 #define CTL_UNREACHABLE() __builtin_unreachable()
 #else
@@ -69,6 +70,10 @@
         __builtin_unreachable(); \
     } while (0)
 #endif
+#else
+#define CTL_UNREACHABLE() __asm__ volatile("ud2")
+#endif
+
 #define CTL_ASSUME(x)          \
     do {                       \
         if (!(x)) {            \
@@ -87,9 +92,9 @@
 
 #define SINT(bits) _BitInt(bits)
 #define UINT(bits) unsigned _BitInt(bits)
-#define STRLIT(s, data, n) (s){.$span={.$ptr=(UINT(8) *)data, .$len=(usize)n}}
+#define STRLIT(s, data, n) (s){.$span={.$ptr=(u8 *)data, .$len=(usize)n}}
 
-const char *oldlocale;
+static const char *oldlocale;
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wundefined-internal"

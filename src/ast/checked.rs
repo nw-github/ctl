@@ -113,6 +113,7 @@ pub enum CheckedExprData {
         op: UnaryOp,
         expr: Box<CheckedExpr>,
     },
+    AutoDeref(Box<CheckedExpr>, usize),
     Call {
         func: GenericFunc,
         args: IndexMap<String, CheckedExpr>,
@@ -267,6 +268,7 @@ impl CheckedExpr {
         }
 
         match (&self.ty, target) {
+            (Type::Never, Type::Never) => Ok(self),
             (Type::Never, rhs) => Ok(CheckedExpr::new(
                 rhs.clone(),
                 CheckedExprData::NeverCoerce(self.into()),
@@ -328,7 +330,7 @@ impl CheckedExpr {
         }
     }
 
-    pub fn auto_deref(mut self, mut target: &Type) -> CheckedExpr {
+    pub fn auto_deref(self, mut target: &Type) -> CheckedExpr {
         let mut indirection = 0;
         while let Type::Ptr(inner) | Type::MutPtr(inner) = target {
             target = inner;
@@ -346,21 +348,14 @@ impl CheckedExpr {
             my_indirection += 1;
         }
 
-        while my_indirection > indirection {
-            my_indirection -= 1;
-            let (Type::Ptr(inner) | Type::MutPtr(inner)) = &self.ty else {
-                unreachable!()
-            };
-            self = CheckedExpr::new(
-                (**inner).clone(),
-                CheckedExprData::Unary {
-                    op: UnaryOp::Deref,
-                    expr: self.into(),
-                },
-            );
+        if my_indirection != indirection {
+            CheckedExpr::new(
+                ty.clone(),
+                CheckedExprData::AutoDeref(self.into(), my_indirection - indirection),
+            )
+        } else {
+            self
         }
-
-        self
     }
 
     pub fn option_null(opt: Type) -> CheckedExpr {
