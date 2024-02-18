@@ -200,6 +200,7 @@ pub enum ExprData {
         body: Box<Expr>,
         moves: bool,
     },
+    StringInterpolation(Vec<Expr>),
     Error,
 }
 

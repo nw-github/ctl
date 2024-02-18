@@ -384,6 +384,36 @@ impl<'a, 'b> Parser<'a, 'b> {
                     ExprData::Path(Path::new(PathOrigin::Super(original), data)),
                 )
             }
+            Token::StringPart(value) => {
+                let mut parts = vec![
+                    Expr::new(span, ExprData::String(value.into())),
+                    self.expression(),
+                ];
+                while let Some(part) = self.next_if_map(|t| {
+                    t.data
+                        .as_string_part()
+                        .map(|s| Located::new(t.span, s.clone().into_owned()))
+                }) {
+                    let expr = self.expression();
+                    span.extend_to(expr.span);
+                    parts.push(part.map(ExprData::String));
+                    parts.push(expr);
+                    // TODO: ':' format options
+                }
+
+                match self.next() {
+                    Located {
+                        span: inner,
+                        data: Token::String(data),
+                    } => {
+                        span.extend_to(inner);
+                        parts.push(Expr::new(inner, ExprData::String(data.into())));
+                    }
+                    token => self.error(Error::new("expected end of string", token.span)),
+                }
+
+                Expr::new(span, ExprData::StringInterpolation(parts))
+            }
             // prefix operators
             Token::Plus
             | Token::Minus

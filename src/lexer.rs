@@ -123,6 +123,8 @@ pub enum Token<'a> {
     },
     Float(&'a str),
     String(Cow<'a, str>),
+    StringPart(Cow<'a, str>),
+
     ByteString(Vec<u8>),
     Char(char),
     ByteChar(u8),
@@ -268,11 +270,17 @@ pub struct Lexer<'a> {
     src: &'a str,
     pos: usize,
     file: FileId,
+    interpolating: bool,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a str, file: FileId) -> Self {
-        Self { src, file, pos: 0 }
+        Self {
+            src,
+            file,
+            pos: 0,
+            interpolating: false,
+        }
     }
 
     pub fn token(&mut self, diag: &mut Diagnostics) -> Located<Token<'a>> {
@@ -354,6 +362,8 @@ impl<'a> Lexer<'a> {
             Some('t') => '\t',
             Some('r') => '\r',
             Some('0') => '\0',
+            Some('{') => '{',
+            Some('}') => '}',
             Some('x') => {
                 let mut count = 0;
                 let chars = self.advance_while(|ch| {
@@ -415,9 +425,16 @@ impl<'a> Lexer<'a> {
         let mut result = Cow::from("");
         loop {
             match self.advance() {
-                Some('"') => break Token::String(result),
+                Some('"') => {
+                    self.interpolating = false;
+                    break Token::String(result);
+                }
                 Some('\\') => {
                     result.to_mut().push(self.escape_char(diag, false));
+                }
+                Some('{') => {
+                    self.interpolating = true;
+                    break Token::StringPart(result);
                 }
                 Some(ch) => match &mut result {
                     Cow::Borrowed(str) => *str = &self.src[start + 1..self.pos],
@@ -669,7 +686,13 @@ impl<'a> Lexer<'a> {
         let start = self.pos;
         let token = match self.advance()? {
             '{' => Token::LCurly,
-            '}' => Token::RCurly,
+            '}' => {
+                if self.interpolating {
+                    self.string_literal(diag, start)
+                } else {
+                    Token::RCurly
+                }
+            }
             '[' => Token::LBrace,
             ']' => Token::RBrace,
             '(' => Token::LParen,

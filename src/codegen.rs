@@ -720,7 +720,7 @@ impl Buffer {
         let is_macro = f.attrs.iter().any(|attr| attr.name.data == ATTR_NOGEN);
         if f.linkage == Linkage::Internal {
             if min {
-                self.emit(format!("f{}", func.id));
+                self.emit(format!("p{}", func.id));
                 for ty in func.ty_args.values() {
                     self.emit_generic_mangled_name(scopes, ty, min);
                 }
@@ -2018,6 +2018,57 @@ impl<'a> Codegen<'a> {
                     self.emit_type(&expr.ty);
                     self.buffer.emit(format!("*){NULLPTR})"));
                 }
+            }
+            CheckedExprData::StringInterpolation {
+                mut formatter,
+                parts,
+                scope,
+            } => {
+                state.fill_generics(&mut formatter.ty);
+                let formatter_ty = formatter.ty.clone();
+                let formatter = hoist!(self, state, {
+                    let format_id = self.scopes.lang_traits.get("format").copied().unwrap();
+                    let formatter = self.emit_tmpvar(*formatter, state);
+                    for mut expr in parts {
+                        state.fill_generics(&mut expr.ty);
+                        let format_state = State::with_instance(
+                            GenericFunc::from_type_args(
+                                self.scopes,
+                                self.find_implementation(&expr.ty, format_id, "format", scope)
+                                    .unwrap(),
+                                [formatter_ty.clone()]
+                            ),
+                            Some(&expr.ty),
+                        );
+
+                        self.buffer.emit_fn_name(
+                            self.scopes,
+                            &format_state.func,
+                            self.flags.minify,
+                        );
+                        self.buffer.emit("(&");
+                        self.emit_expr(expr, state);
+                        self.buffer.emit(format!(",&{formatter});"));
+                        self.funcs.insert(format_state);
+                    }
+                    formatter
+                });
+                let formatter_id = self.scopes.lang_traits.get("formatter").copied().unwrap();
+                let finish_state = State::with_instance(
+                    GenericFunc::from_id(
+                        self.scopes,
+                        self.find_implementation(&formatter_ty, formatter_id, "written", scope)
+                            .unwrap(),
+                    ),
+                    Some(&formatter_ty),
+                );
+                self.buffer.emit_fn_name(
+                    self.scopes,
+                    &finish_state.func,
+                    self.flags.minify,
+                );
+                self.buffer.emit(format!("(&{formatter})"));
+                self.funcs.insert(finish_state);
             }
             CheckedExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }

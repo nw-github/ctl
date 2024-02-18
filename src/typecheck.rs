@@ -1651,6 +1651,57 @@ impl TypeChecker {
                 self.make_lang_type_by_name("string", [], span),
                 CheckedExprData::String(s),
             ),
+            ExprData::StringInterpolation(parts) => {
+                let Some(write_id) = self.scopes.lang_traits.get("format").copied() else {
+                    return self.error(Error::no_lang_item("Format", span));
+                };
+                let formatter = self
+                    .scopes
+                    .lang_types
+                    .get("string_formatter")
+                    .and_then(|&id| {
+                        self.scopes[self.scopes.get(id).body_scope]
+                            .find_in_vns("new")
+                            .and_then(|f| f.into_fn().ok())
+                            .map(|f| {
+                                CheckedExpr::new(
+                                    Type::User(GenericUserType::new(id, Default::default()).into()),
+                                    CheckedExprData::Call {
+                                        func: GenericFunc::new(f, Default::default()),
+                                        args: Default::default(),
+                                        inst: Default::default(),
+                                        trait_id: None,
+                                        scope: self.current,
+                                    },
+                                )
+                            })
+                    })
+                    .unwrap_or_else(|| self.error(Error::no_lang_item("String Formatter", span)));
+                let sty = self.make_lang_type_by_name("string", [], span);
+
+                let mut out_parts = Vec::with_capacity(parts.len() * 2 + 1);
+                for expr in parts {
+                    let span = expr.span;
+                    let expr = self.check_expr(expr, target);
+                    if !expr.ty.is_unknown() && self.get_trait_impl(&expr.ty, write_id).is_none() {
+                        self.diag.error(Error::doesnt_implement(
+                            &expr.ty.name(&self.scopes),
+                            "Format",
+                            span,
+                        ));
+                    }
+                    out_parts.push(expr);
+                }
+
+                CheckedExpr::new(
+                    sty,
+                    CheckedExprData::StringInterpolation {
+                        parts: out_parts,
+                        formatter: formatter.into(),
+                        scope: self.current,
+                    },
+                )
+            }
             ExprData::ByteString(s) => CheckedExpr::new(
                 Type::Ptr(Type::Array((Type::Uint(8), s.len()).into()).into()),
                 CheckedExprData::ByteString(s),

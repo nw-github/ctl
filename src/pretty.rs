@@ -417,6 +417,12 @@ pub fn print_expr(expr: &Expr, indent: usize) {
             eprintln!("{tabs}Unsafe");
             print_expr(expr, indent + 1);
         }
+        ExprData::StringInterpolation(parts) => {
+            eprintln!("{tabs}StringInterpolation");
+            for part in parts {
+                print_expr(part, indent + 1);
+            }
+        }
     }
 }
 

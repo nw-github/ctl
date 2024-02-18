@@ -153,6 +153,11 @@ pub enum CheckedExprData {
     Integer(BigInt),
     Float(String),
     String(String),
+    StringInterpolation {
+        formatter: Box<CheckedExpr>,
+        parts: Vec<CheckedExpr>,
+        scope: ScopeId,
+    },
     ByteString(Vec<u8>),
     Char(char),
     Void,

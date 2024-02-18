@@ -6,6 +6,7 @@ use core::range::RangeBounds;
 use core::iter::Iterator;
 use core::panic;
 use core::unreachable;
+use core::fmt::*;
 
 mod builtin {
     #(c_opaque, c_name(CTL_STRLEN))
@@ -73,6 +74,12 @@ pub struct str {
     impl Eq<str> {
         fn eq(this, rhs: *str): bool {
             core::span::compare(this.as_bytes(), rhs.as_bytes())
+        }
+    }
+
+    impl Format {
+        fn format<F: Formatter>(this, f: *mut F) {
+            f.write(this.as_bytes());
         }
     }
 }
