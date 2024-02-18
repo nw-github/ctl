@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 use indexmap::{map::Entry, IndexMap};
 use num_bigint::BigInt;
@@ -28,22 +28,26 @@ macro_rules! resolve_type {
 
 macro_rules! resolve_impl {
     ($self: expr, $tr: expr) => {
-        $tr =
-            match std::mem::take(&mut $tr) {
-                TraitImpl::Unchecked(scope, path) => $self.enter_id_and_resolve(scope, |this| {
-                    match this.resolve_type_path(&path.data, path.span) {
-                        ResolvedType::Trait(tr) => TraitImpl::Checked(tr),
-                        ResolvedType::UserType(ut) => this.error(Error::expected_found(
-                            "trait",
-                            &format!("type '{}'", ut.name(&this.scopes)),
-                            path.span,
-                        )),
-                        ResolvedType::Error => Default::default(),
-                    }
-                }),
-                TraitImpl::Checked(tr) => TraitImpl::Checked(tr),
-                TraitImpl::None => TraitImpl::None,
-            };
+        $tr = match std::mem::take(&mut $tr) {
+            TraitImpl::Unchecked(scope, path) => {
+                $self.enter_id_and_resolve(scope, |this| match this.resolve_type_path(&path) {
+                    ResolvedType::Trait(tr) => TraitImpl::Checked(tr),
+                    ResolvedType::UserType(ut) => this.error(Error::expected_found(
+                        "trait",
+                        &format!("type '{}'", ut.name(&this.scopes)),
+                        path.span,
+                    )),
+                    ResolvedType::Builtin(ty) => this.error(Error::expected_found(
+                        "trait",
+                        &format!("type '{}'", ty.name(&this.scopes)),
+                        path.span,
+                    )),
+                    ResolvedType::Error => Default::default(),
+                })
+            }
+            TraitImpl::Checked(tr) => TraitImpl::Checked(tr),
+            TraitImpl::None => TraitImpl::None,
+        };
     };
 }
 
@@ -69,6 +73,7 @@ pub struct MemberFn {
 pub enum ResolvedType {
     UserType(GenericUserType),
     Trait(GenericTrait),
+    Builtin(Type),
     #[default]
     Error,
 }
@@ -2910,6 +2915,11 @@ impl TypeChecker {
     ) -> (IndexMap<String, CheckedExpr>, Type) {
         self.resolve_proto(func.id);
 
+        let unknowns: HashSet<_> = func
+            .ty_args
+            .iter()
+            .filter_map(|(&id, ty)| ty.is_unknown().then_some(id))
+            .collect();
         if let Some(target) = target {
             func.infer_type_args(&self.scopes.get(func.id).ret, target);
         }
@@ -3009,7 +3019,7 @@ impl TypeChecker {
             ))
         }
 
-        for (id, ty) in func.ty_args.iter() {
+        for (id, ty) in func.ty_args.iter().filter(|(id, _)| unknowns.contains(id)) {
             if ty.is_unknown() {
                 self.error(Error::new(
                     format!(
@@ -3128,10 +3138,15 @@ impl TypeChecker {
     }
 
     fn resolve_dyn_ptr(&mut self, path: Located<Path>) -> Option<GenericTrait> {
-        match self.resolve_type_path(&path.data, path.span) {
+        match self.resolve_type_path(&path) {
             ResolvedType::UserType(ut) => self.error(Error::expected_found(
                 "trait",
                 &format!("type '{}'", ut.name(&self.scopes)),
+                path.span,
+            )),
+            ResolvedType::Builtin(ty) => self.error(Error::expected_found(
+                "trait",
+                &format!("type '{}'", ty.name(&self.scopes)),
                 path.span,
             )),
             ResolvedType::Trait(tr) => Some(tr),
@@ -3141,42 +3156,16 @@ impl TypeChecker {
 
     fn resolve_typehint(&mut self, hint: TypeHint) -> Type {
         match hint {
-            TypeHint::Regular(path) => {
-                let res = path.data.as_identifier().and_then(|symbol| match symbol {
-                    "void" => Some(Type::Void),
-                    "never" => Some(Type::Never),
-                    "f32" => Some(Type::F32),
-                    "f64" => Some(Type::F64),
-                    "bool" => Some(Type::Bool),
-                    "char" => Some(Type::Char),
-                    "c_void" => Some(Type::CVoid),
-                    "c_char" => Some(Type::CInt(CInt::Char)),
-                    "c_short" => Some(Type::CInt(CInt::Short)),
-                    "c_int" => Some(Type::CInt(CInt::Int)),
-                    "c_long" => Some(Type::CInt(CInt::Long)),
-                    "c_longlong" => Some(Type::CInt(CInt::LongLong)),
-                    "c_uchar" => Some(Type::CUint(CInt::Char)),
-                    "c_ushort" => Some(Type::CUint(CInt::Short)),
-                    "c_uint" => Some(Type::CUint(CInt::Int)),
-                    "c_ulong" => Some(Type::CUint(CInt::Long)),
-                    "c_ulonglong" => Some(Type::CUint(CInt::LongLong)),
-                    _ => Type::from_int_name(symbol, true),
-                });
-
-                if let Some(res) = res {
-                    return res;
-                }
-
-                match self.resolve_type_path(&path.data, path.span) {
-                    ResolvedType::UserType(ut) => Type::User(ut.into()),
-                    ResolvedType::Trait(tr) => self.error(Error::expected_found(
-                        "type",
-                        &format!("trait '{}'", tr.name(&self.scopes)),
-                        path.span,
-                    )),
-                    ResolvedType::Error => Type::Unknown,
-                }
-            }
+            TypeHint::Regular(path) => match self.resolve_type_path(&path) {
+                ResolvedType::Builtin(ty) => ty,
+                ResolvedType::UserType(ut) => Type::User(ut.into()),
+                ResolvedType::Trait(tr) => self.error(Error::expected_found(
+                    "type",
+                    &format!("trait '{}'", tr.name(&self.scopes)),
+                    path.span,
+                )),
+                ResolvedType::Error => Type::Unknown,
+            },
             TypeHint::Void => Type::Void,
             TypeHint::Ptr(ty) => Type::Ptr(self.resolve_typehint(*ty).into()),
             TypeHint::MutPtr(ty) => Type::MutPtr(self.resolve_typehint(*ty).into()),
@@ -4623,7 +4612,9 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_type_path(&mut self, path: &Path, span: Span) -> ResolvedType {
+    fn resolve_type_path(&mut self, path: &Located<Path>) -> ResolvedType {
+        let span = path.span;
+        let path = &path.data;
         match path.origin {
             PathOrigin::Root => {
                 self.resolve_type_path_in(&path.components, Default::default(), ScopeId::ROOT, span)
@@ -4634,6 +4625,13 @@ impl TypeChecker {
                 .unwrap_or_default(),
             PathOrigin::Normal => {
                 let ((name, ty_args), rest) = path.components.split_first().unwrap();
+                if let Some(builtin) = self.builtin_type_path(name) {
+                    if rest.is_empty() {
+                        return ResolvedType::Builtin(builtin);
+                    }
+                    return self.error(Error::new("", span));
+                }
+
                 match self.find_in_tns(name).map(|t| t.id) {
                     Some(TypeItem::Type(id)) => {
                         let ty_args = self.resolve_type_args(
@@ -5095,5 +5093,28 @@ impl TypeChecker {
         }
 
         ty_args
+    }
+
+    fn builtin_type_path(&self, name: &str) -> Option<Type> {
+        match name {
+            "void" => Some(Type::Void),
+            "never" => Some(Type::Never),
+            "f32" => Some(Type::F32),
+            "f64" => Some(Type::F64),
+            "bool" => Some(Type::Bool),
+            "char" => Some(Type::Char),
+            "c_void" => Some(Type::CVoid),
+            "c_char" => Some(Type::CInt(CInt::Char)),
+            "c_short" => Some(Type::CInt(CInt::Short)),
+            "c_int" => Some(Type::CInt(CInt::Int)),
+            "c_long" => Some(Type::CInt(CInt::Long)),
+            "c_longlong" => Some(Type::CInt(CInt::LongLong)),
+            "c_uchar" => Some(Type::CUint(CInt::Char)),
+            "c_ushort" => Some(Type::CUint(CInt::Short)),
+            "c_uint" => Some(Type::CUint(CInt::Int)),
+            "c_ulong" => Some(Type::CUint(CInt::Long)),
+            "c_ulonglong" => Some(Type::CUint(CInt::LongLong)),
+            name => Type::from_int_name(name, true),
+        }
     }
 }
