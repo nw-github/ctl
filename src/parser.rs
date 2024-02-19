@@ -13,7 +13,7 @@ struct FnConfig {
     linkage: Linkage,
     is_public: bool,
     is_unsafe: bool,
-    body: bool,
+    body: Option<bool>,
 }
 
 pub struct Parser<'a, 'b> {
@@ -87,7 +87,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             },
             is_public: public.is_some(),
             is_unsafe: is_unsafe.is_some(),
-            body: is_import.is_none(),
+            body: Some(is_import.is_none()),
         }) {
             Ok(Stmt {
                 attrs,
@@ -113,7 +113,11 @@ impl<'a, 'b> Parser<'a, 'b> {
 
             Ok(Stmt {
                 attrs,
-                data: self.union(public.is_some(), token.span, is_unsafe.is_some()),
+                data: if is_unsafe.is_some() {
+                    StmtData::UnsafeUnion(self.structure(public.is_some(), token.span))
+                } else {
+                    self.union(public.is_some(), token.span)
+                },
             })
         } else if let Some(token) = self.next_if_kind(Token::Trait) {
             if let Some(token) = is_import.or(is_export) {
@@ -1428,7 +1432,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 is_public: public.is_some(),
                 linkage: Linkage::Internal,
                 is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
-                body: true,
+                body: Some(true),
             };
             if config.is_unsafe {
                 if let Ok(func) = this.expect_fn(config) {
@@ -1470,16 +1474,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
     }
 
-    fn union(&mut self, public: bool, span: Span, is_unsafe: bool) -> StmtData {
-        if is_unsafe {
-            return StmtData::Union {
-                is_unsafe,
-                tag: None,
-                base: self.structure(public, span),
-                variants: Vec::new(),
-            };
-        }
-
+    fn union(&mut self, public: bool, span: Span) -> StmtData {
         let name = self.expect_id_l("expected name");
         let type_params = self.type_params();
         let tag = self.next_if_kind(Token::Colon).map(|_| self.type_path());
@@ -1495,7 +1490,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 linkage: Linkage::Internal,
                 is_public: this.next_if_kind(Token::Pub).is_some(),
                 is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
-                body: true,
+                body: Some(true),
             };
             if config.is_public || config.is_unsafe {
                 if let Ok(func) = this.expect_fn(config) {
@@ -1568,7 +1563,6 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         StmtData::Union {
             tag,
-            is_unsafe,
             variants,
             base: Struct {
                 public,
@@ -1591,7 +1585,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.next_until(Token::RCurly, span, |this| {
             let is_unsafe = this.next_if_kind(Token::Unsafe).is_some();
             if let Ok(proto) = this.expect_fn(FnConfig {
-                body: false,
+                body: None,
                 allow_method: true,
                 linkage: Linkage::Internal,
                 is_public: true,
@@ -1627,7 +1621,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             } else {
                 let config = FnConfig {
                     allow_method: true,
-                    body: true,
+                    body: Some(true),
                     linkage: Linkage::Internal,
                     is_public: this.next_if_kind(Token::Pub).is_some(),
                     is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
@@ -1663,7 +1657,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             if let Ok(func) = this.expect_fn(FnConfig {
                 allow_method: true,
                 is_public: true,
-                body: true,
+                body: Some(true),
                 linkage: Linkage::Internal,
                 is_unsafe,
             }) {
@@ -1780,11 +1774,19 @@ impl<'a, 'b> Parser<'a, 'b> {
             TypeHint::Void
         };
 
-        let body = if body {
-            Some(self.block().data)
-        } else {
-            self.expect_kind(Token::Semicolon);
-            None
+        let body = match body {
+            Some(true) => Some(self.block().data),
+            Some(false) => {
+                self.expect_kind(Token::Semicolon);
+                None
+            }
+            None => {
+                if self.next_if_kind(Token::Semicolon).is_some() {
+                    None
+                } else {
+                    Some(self.block().data)
+                }
+            }
         };
 
         Some(Located::new(
@@ -1811,14 +1813,17 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
 
             loop {
-                let token = self.next();
+                let token = self.peek();
                 match token.data {
-                    Token::Extern | Token::Fn | Token::Async => break,
+                    Token::Pub | Token::Extern | Token::Fn | Token::Async => break,
                     Token::Eof => {
-                        self.error_no_sync(Error::new("expected function", token.span));
+                        let span = token.span;
+                        self.error_no_sync(Error::new("expected function", span));
                         return Err(());
                     }
-                    _ => {}
+                    _ => {
+                        self.next();
+                    }
                 }
             }
         }

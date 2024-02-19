@@ -14,7 +14,7 @@ pub struct DeclaredImplBlock {
     pub impl_index: usize,
     pub span: Span,
     pub scope: ScopeId,
-    pub functions: Vec<DeclaredFn>,
+    pub fns: Vec<DeclaredFn>,
 }
 
 pub enum DeclaredStmt {
@@ -31,23 +31,23 @@ pub enum DeclaredStmt {
     Fn(DeclaredFn),
     Struct {
         id: UserTypeId,
-        impl_blocks: Vec<DeclaredImplBlock>,
-        functions: Vec<DeclaredFn>,
+        impls: Vec<DeclaredImplBlock>,
+        fns: Vec<DeclaredFn>,
         init: DeclaredFn,
     },
     Union {
         id: UserTypeId,
-        impl_blocks: Vec<DeclaredImplBlock>,
-        functions: Vec<DeclaredFn>,
+        impls: Vec<DeclaredImplBlock>,
+        fns: Vec<DeclaredFn>,
     },
     Trait {
         id: TraitId,
-        functions: Vec<DeclaredFn>,
+        fns: Vec<DeclaredFn>,
     },
     Extension {
         id: ExtensionId,
-        impl_blocks: Vec<DeclaredImplBlock>,
-        functions: Vec<DeclaredFn>,
+        impls: Vec<DeclaredImplBlock>,
+        fns: Vec<DeclaredFn>,
     },
     Module {
         id: ScopeId,

@@ -1091,10 +1091,14 @@ impl<'a> Codegen<'a> {
     fn gen_c_main(&mut self, main: &mut State) -> String {
         self.buffer.emit("int main(int argc, char **argv){");
         let returns = self.scopes.get(main.func.id).ret != Type::Void;
-        if let Some(state) = self
-            .find_function("std", "convert_argv")
+        if let Some(id) = self
+            .scopes
+            .lang_fns
+            .get("convert_argv")
+            .cloned()
             .filter(|_| self.scopes.get(main.func.id).params.len() == 1)
         {
+            let state = State::new(GenericFunc::from_id(self.scopes, id));
             if returns {
                 self.buffer.emit("return ");
             }
@@ -2036,7 +2040,7 @@ impl<'a> Codegen<'a> {
                                 self.scopes,
                                 self.find_implementation(&expr.ty, format_id, "format", scope)
                                     .unwrap(),
-                                [formatter_ty.clone()]
+                                [formatter_ty.clone()],
                             ),
                             Some(&expr.ty),
                         );
@@ -2062,11 +2066,8 @@ impl<'a> Codegen<'a> {
                     ),
                     Some(&formatter_ty),
                 );
-                self.buffer.emit_fn_name(
-                    self.scopes,
-                    &finish_state.func,
-                    self.flags.minify,
-                );
+                self.buffer
+                    .emit_fn_name(self.scopes, &finish_state.func, self.flags.minify);
                 self.buffer.emit(format!("(&{formatter})"));
                 self.funcs.insert(finish_state);
             }
@@ -2192,7 +2193,9 @@ impl<'a> Codegen<'a> {
                 let panic = State::new(GenericFunc::from_id(
                     self.scopes,
                     self.scopes
-                        .panic_handler
+                        .lang_fns
+                        .get("panic_handler")
+                        .cloned()
                         .expect("a panic handler should exist"),
                 ));
 
@@ -2710,25 +2713,25 @@ impl<'a> Codegen<'a> {
         // implement the same trait, and they are both used to call the trait in two different
         // places, this function will pick the wrong one for one of them. either fix this lookup or
         // reject duplicate trait implementation in extensions
-        let search = |scope: ScopeId| {
-            self.scopes[scope]
-                .children
+        let search = |impls: &[TraitImpl]| {
+            impls
                 .iter()
-                .find(|&&id| matches!(self.scopes[id].kind, ScopeKind::Impl(id) if id == trait_id))
-                .and_then(|&id| self.scopes[id].find_in_vns(fn_name))
+                .flat_map(|imp| imp.as_checked())
+                .find_map(|(imp, scope)| scope.filter(|_| imp.id == trait_id))
+                .and_then(|id| self.scopes[id].find_in_vns(fn_name))
                 .and_then(|f| f.as_fn().copied())
         };
 
         if let Some(f) = ty
             .as_user()
-            .and_then(|ut| search(self.scopes.get(ut.id).body_scope))
+            .and_then(|ut| search(&self.scopes.get(ut.id).impls))
         {
             return Some(f);
         }
 
         self.scopes
             .extensions_in_scope_for(ty, None, scope)
-            .find_map(|(_, ext)| search(ext.body_scope))
+            .find_map(|(_, ext)| search(&ext.impls))
     }
 
     fn deref(src: &str, ty: &Type) -> String {
@@ -2750,15 +2753,6 @@ impl<'a> Codegen<'a> {
             count += 1;
         }
         count
-    }
-
-    fn find_function(&self, module: &str, name: &str) -> Option<State> {
-        let id = self.scopes[self.scopes[ScopeId::ROOT].find_module(module)?]
-            .vns
-            .get(name)?
-            .id
-            .as_fn()?;
-        Some(State::new(GenericFunc::from_id(self.scopes, *id)))
     }
 }
 

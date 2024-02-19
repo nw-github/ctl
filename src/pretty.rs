@@ -33,15 +33,12 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
         StmtData::Union {
             tag,
             base,
-            is_unsafe,
             variants,
         } => {
             if let Some(tag) = tag {
                 print_struct(&format!("Union({tag:?})"), base, indent);
-                print_bool!(is_unsafe);
             } else {
                 print_struct("Union", base, indent);
-                print_bool!(is_unsafe);
             }
             let plus_1 = INDENT.repeat(indent + 1);
             if !variants.is_empty() {
@@ -51,6 +48,7 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
                 }
             }
         }
+        StmtData::UnsafeUnion(base) => print_struct("Union", base, indent),
         StmtData::Trait {
             public,
             name,

@@ -29,9 +29,9 @@ macro_rules! resolve_type {
 macro_rules! resolve_impl {
     ($self: expr, $tr: expr) => {
         $tr = match std::mem::take(&mut $tr) {
-            TraitImpl::Unchecked(scope, path) => {
+            TraitImpl::Unchecked { scope, path, block } => {
                 $self.enter_id_and_resolve(scope, |this| match this.resolve_type_path(&path) {
-                    ResolvedType::Trait(tr) => TraitImpl::Checked(tr),
+                    ResolvedType::Trait(tr) => TraitImpl::Checked(tr, block),
                     ResolvedType::UserType(ut) => this.error(Error::expected_found(
                         "trait",
                         &format!("type '{}'", ut.name(&this.scopes)),
@@ -45,8 +45,7 @@ macro_rules! resolve_impl {
                     ResolvedType::Error => Default::default(),
                 })
             }
-            TraitImpl::Checked(tr) => TraitImpl::Checked(tr),
-            TraitImpl::None => TraitImpl::None,
+            other => other,
         };
     };
 }
@@ -170,7 +169,6 @@ impl TypeChecker {
                 })
                 .collect();
 
-            this.include_universal();
             for ast in declared {
                 for stmt in ast {
                     this.check_stmt(stmt);
@@ -193,7 +191,6 @@ impl TypeChecker {
 
     fn enter<T>(&mut self, kind: ScopeKind, f: impl FnOnce(&mut Self) -> T) -> T {
         let id = self.scopes.create_scope(self.current, kind);
-        self.scopes[self.current].children.push(id);
         self.enter_id(id, f)
     }
 
@@ -207,7 +204,6 @@ impl TypeChecker {
         let id = self
             .scopes
             .create_scope(self.current, ScopeKind::Module(name.clone()));
-        self.scopes[self.current].children.push(id);
         if self.scopes[self.current]
             .tns
             .insert(name.clone(), Vis::new(id.into(), public))
@@ -241,10 +237,10 @@ impl TypeChecker {
         None
     }
 
-    fn find_in_vns(&self, name: &str, free: bool) -> Option<Vis<ValueItem>> {
+    fn find_in_vns(&self, name: &str) -> Option<Vis<ValueItem>> {
         for (id, scope) in self.scopes.walk(self.current) {
             if let Some(item) = self.scopes[id].find_in_vns(name) {
-                if free && item.is_fn() && matches!(scope.kind, ScopeKind::UserType(_)) {
+                if item.is_fn() && matches!(scope.kind, ScopeKind::UserType(_)) {
                     continue;
                 }
 
@@ -278,11 +274,10 @@ impl TypeChecker {
         let name = base.name.clone();
         let public = base.public;
         let lang_item = self.get_lang_item(&attrs).map(String::from);
-        let (ut, init, fns, impl_blocks) = self.enter(ScopeKind::None, |this| {
+        let (ut, init, fns, impls) = self.enter(ScopeKind::None, |this| {
             let init = this.enter(ScopeKind::None, |this| {
                 this.declare_fn(
                     autouse,
-                    None,
                     Fn {
                         public: base.public && !base.members.iter().any(|m| !m.public),
                         name: base.name.clone(),
@@ -329,7 +324,7 @@ impl TypeChecker {
             let fns: Vec<_> = base
                 .functions
                 .into_iter()
-                .map(|f| this.declare_fn(autouse, None, f, vec![]))
+                .map(|f| this.declare_fn(autouse, f, vec![]))
                 .collect();
             let ut = UserType {
                 members,
@@ -341,7 +336,7 @@ impl TypeChecker {
                 attrs,
                 fns: fns
                     .iter()
-                    .chain(impl_blocks.iter().flat_map(|block| block.functions.iter()))
+                    .chain(impl_blocks.iter().flat_map(|block| block.fns.iter()))
                     .chain(std::iter::once(&init))
                     .map(|f| Vis::new(f.id, f.public))
                     .collect(),
@@ -372,20 +367,21 @@ impl TypeChecker {
         DeclaredStmt::Struct {
             init,
             id,
-            impl_blocks,
-            functions: fns,
+            impls,
+            fns,
         }
     }
 
     fn declare_union(
         &mut self,
         autouse: &mut Vec<ScopeId>,
+        _tag: Option<Located<Path>>,
         base: Struct,
         variants: Vec<Variant>,
         attrs: Vec<Attribute>,
     ) -> DeclaredStmt {
         let lang_item = self.get_lang_item(&attrs).map(String::from);
-        let (ut, impl_blocks, fns, member_cons_len) = self.enter(ScopeKind::None, |this| {
+        let (ut, impls, fns, member_cons_len) = self.enter(ScopeKind::None, |this| {
             let mut rvariants = IndexMap::with_capacity(base.members.len());
             let mut members = IndexMap::with_capacity(base.members.len());
             let mut params = Vec::with_capacity(base.members.len());
@@ -483,7 +479,6 @@ impl TypeChecker {
 
                 fns.push(this.declare_fn(
                     autouse,
-                    None,
                     Fn {
                         public: base.public,
                         name: Located::new(variant.name.span, variant.name.data),
@@ -503,7 +498,7 @@ impl TypeChecker {
             fns.extend(
                 base.functions
                     .into_iter()
-                    .map(|f| this.declare_fn(autouse, None, f, vec![])),
+                    .map(|f| this.declare_fn(autouse, f, vec![])),
             );
 
             let ut = UserType {
@@ -516,7 +511,7 @@ impl TypeChecker {
                 attrs,
                 fns: fns
                     .iter()
-                    .chain(impl_blocks.iter().flat_map(|block| block.functions.iter()))
+                    .chain(impl_blocks.iter().flat_map(|block| block.fns.iter()))
                     .map(|f| Vis::new(f.id, f.public))
                     .collect(),
             };
@@ -533,11 +528,7 @@ impl TypeChecker {
             self.scopes.get_mut(c.id).constructor = Some(id);
         }
 
-        DeclaredStmt::Union {
-            id,
-            impl_blocks,
-            functions: fns,
-        }
+        DeclaredStmt::Union { id, impls, fns }
     }
 
     fn declare_unsafe_union(
@@ -549,7 +540,7 @@ impl TypeChecker {
         let lang_item = self.get_lang_item(&attrs).map(String::from);
         let name = base.name.clone();
         let public = base.public;
-        let (ut, fns, impl_blocks) = self.enter(ScopeKind::None, |this| {
+        let (ut, fns, impls) = self.enter(ScopeKind::None, |this| {
             let mut members = IndexMap::with_capacity(base.members.len());
             for member in base.members {
                 let prev = members.insert(
@@ -569,7 +560,7 @@ impl TypeChecker {
             let fns: Vec<_> = base
                 .functions
                 .into_iter()
-                .map(|f| this.declare_fn(autouse, None, f, vec![]))
+                .map(|f| this.declare_fn(autouse, f, vec![]))
                 .collect();
             let ut = UserType {
                 members,
@@ -581,7 +572,7 @@ impl TypeChecker {
                 attrs,
                 fns: fns
                     .iter()
-                    .chain(impl_blocks.iter().flat_map(|block| block.functions.iter()))
+                    .chain(impl_blocks.iter().flat_map(|block| block.fns.iter()))
                     .map(|f| Vis::new(f.id, f.public))
                     .collect(),
             };
@@ -606,19 +597,19 @@ impl TypeChecker {
         }
         self.scopes[scope].kind = ScopeKind::UserType(id);
 
-        DeclaredStmt::Union {
-            id,
-            impl_blocks,
-            functions: fns,
-        }
+        DeclaredStmt::Union { id, impls, fns }
     }
 
     fn declare_stmt(&mut self, autouse: &mut Vec<ScopeId>, stmt: Stmt) -> DeclaredStmt {
         match stmt.data {
             StmtData::Module { public, name, body } => {
                 self.enter_mod(name.data, name.span, public, |this| {
-                    let core = this.scopes[ScopeId::ROOT].find_module("core");
-                    let std = this.scopes[ScopeId::ROOT].find_module("std");
+                    let core = this.scopes[ScopeId::ROOT]
+                        .find_in_tns("core")
+                        .and_then(|inner| inner.as_module().copied());
+                    let std = this.scopes[ScopeId::ROOT]
+                        .find_in_tns("std")
+                        .and_then(|inner| inner.as_module().copied());
                     if stmt.attrs.iter().any(|attr| attr.name.data == "autouse") {
                         if this
                             .scopes
@@ -645,17 +636,11 @@ impl TypeChecker {
             }
             StmtData::Struct(base) => self.declare_struct(autouse, base, stmt.attrs),
             StmtData::Union {
-                tag: _,
+                tag,
                 base,
-                is_unsafe,
                 variants,
-            } => {
-                if is_unsafe {
-                    self.declare_unsafe_union(autouse, base, stmt.attrs)
-                } else {
-                    self.declare_union(autouse, base, variants, stmt.attrs)
-                }
-            }
+            } => self.declare_union(autouse, tag, base, variants, stmt.attrs),
+            StmtData::UnsafeUnion(base) => self.declare_unsafe_union(autouse, base, stmt.attrs),
             StmtData::Trait {
                 public,
                 name,
@@ -668,7 +653,7 @@ impl TypeChecker {
                 let (tr, fns) = self.enter(ScopeKind::None, |this| {
                     let fns: Vec<_> = functions
                         .into_iter()
-                        .map(|f| this.declare_fn(autouse, None, f, vec![]))
+                        .map(|f| this.declare_fn(autouse, f, vec![]))
                         .collect();
                     let tr = Trait {
                         name,
@@ -676,7 +661,11 @@ impl TypeChecker {
                         type_params: this.declare_type_params(type_params),
                         impls: impls
                             .into_iter()
-                            .map(|path| TraitImpl::Unchecked(this.current, path))
+                            .map(|path| TraitImpl::Unchecked {
+                                scope: this.current,
+                                path,
+                                block: None,
+                            })
                             .collect(),
                         attrs: stmt.attrs,
                         fns: fns.iter().map(|f| Vis::new(f.id, f.public)).collect(),
@@ -690,7 +679,7 @@ impl TypeChecker {
                     self.scopes.lang_traits.insert(name, id);
                 }
                 self.scopes[scope].kind = ScopeKind::Trait(id);
-                DeclaredStmt::Trait { id, functions: fns }
+                DeclaredStmt::Trait { id, fns }
             }
             StmtData::Extension {
                 public,
@@ -704,7 +693,7 @@ impl TypeChecker {
                     let (impls, impl_blocks) = this.declare_impl_blocks(autouse, impls);
                     let fns: Vec<_> = functions
                         .into_iter()
-                        .map(|f| this.declare_fn(autouse, None, f, vec![]))
+                        .map(|f| this.declare_fn(autouse, f, vec![]))
                         .collect();
                     let ext = Extension {
                         name,
@@ -714,7 +703,7 @@ impl TypeChecker {
                         body_scope: this.current,
                         fns: fns
                             .iter()
-                            .chain(impl_blocks.iter().flat_map(|block| block.functions.iter()))
+                            .chain(impl_blocks.iter().flat_map(|block| block.fns.iter()))
                             .map(|f| Vis::new(f.id, f.public))
                             .collect(),
                     };
@@ -727,11 +716,11 @@ impl TypeChecker {
                 self.scopes[scope].kind = ScopeKind::Extension(id);
                 DeclaredStmt::Extension {
                     id,
-                    impl_blocks,
-                    functions: fns,
+                    impls: impl_blocks,
+                    fns,
                 }
             }
-            StmtData::Fn(f) => DeclaredStmt::Fn(self.declare_fn(autouse, None, f, stmt.attrs)),
+            StmtData::Fn(f) => DeclaredStmt::Fn(self.declare_fn(autouse, f, stmt.attrs)),
             StmtData::Static {
                 public,
                 name,
@@ -767,7 +756,6 @@ impl TypeChecker {
     fn declare_fn(
         &mut self,
         autouse: &mut Vec<ScopeId>,
-        constructor: Option<UserTypeId>,
         f: Fn,
         attrs: Vec<Attribute>,
     ) -> DeclaredFn {
@@ -797,32 +785,41 @@ impl TypeChecker {
                 body: None,
                 body_scope: ScopeId::ROOT,
                 returns: false,
-                constructor,
+                constructor: None,
             },
             f.public,
-            constructor.is_none(),
+            true,
         );
 
-        let attrs = &self.scopes.get::<FunctionId>(id).attrs;
-        if attrs.iter().any(|attr| attr.name.data == "panic_handler") {
-            self.scopes.panic_handler = Some(id);
-            // TODO: verify the signature
-        } else if let Some(attr) = attrs.iter().find(|attr| attr.name.data == "intrinsic") {
-            if let Some(attr) = attr.props.first() {
-                match attr.name.data.as_str() {
-                    "size_of" | "align_of" | "panic" | "raw_add" | "raw_sub" => {
-                        self.scopes.intrinsics.insert(id, attr.name.data.clone());
-                    }
-                    _ => self.error(Error::new(
-                        format!("intrinsic '{}' is not supported", attr.name.data),
-                        attr.name.span,
-                    )),
+        for attr in self.scopes.get::<FunctionId>(id).attrs.clone().iter() {
+            match &attr.name.data[..] {
+                "lang" => {
+                    let Some(inner) = attr.props.first() else {
+                        self.diag
+                            .error(Error::new("language item must have name", attr.name.span));
+                        continue;
+                    };
+                    self.scopes.lang_fns.insert(inner.name.data.clone(), id);
                 }
-            } else {
-                self.error(Error::new(
-                    "intrinsic function must have name",
-                    attr.name.span,
-                ))
+                "intrinsic" => {
+                    if let Some(attr) = attr.props.first() {
+                        match attr.name.data.as_str() {
+                            "size_of" | "align_of" | "panic" | "raw_add" | "raw_sub" => {
+                                self.scopes.intrinsics.insert(id, attr.name.data.clone());
+                            }
+                            _ => self.error(Error::new(
+                                format!("intrinsic '{}' is not supported", attr.name.data),
+                                attr.name.span,
+                            )),
+                        }
+                    } else {
+                        self.error(Error::new(
+                            "intrinsic function must have name",
+                            attr.name.span,
+                        ))
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -873,7 +870,11 @@ impl TypeChecker {
                         type_params: Vec::new(),
                         impls: impls
                             .into_iter()
-                            .map(|path| TraitImpl::Unchecked(self.current, path))
+                            .map(|path| TraitImpl::Unchecked {
+                                scope: self.current,
+                                path,
+                                block: None,
+                            })
                             .collect(),
                         attrs: vec![],
                         fns: vec![],
@@ -893,23 +894,27 @@ impl TypeChecker {
     ) -> (Vec<TraitImpl>, Vec<DeclaredImplBlock>) {
         let mut impls = Vec::new();
         let mut declared_blocks = Vec::new();
-        for block in blocks {
-            let span = block.path.span;
-            let impl_index = impls.len();
-            impls.push(TraitImpl::Unchecked(self.current, block.path));
-
-            declared_blocks.push(self.enter(ScopeKind::None, |this| {
-                DeclaredImplBlock {
-                    impl_index,
-                    span,
-                    scope: this.current,
-                    functions: block
-                        .functions
-                        .into_iter()
-                        .map(|f| this.declare_fn(autouse, None, f, vec![]))
-                        .collect(),
-                }
-            }));
+        for ImplBlock {
+            type_params: _,
+            path,
+            functions,
+        } in blocks
+        {
+            let block = self.enter(ScopeKind::None, |this| DeclaredImplBlock {
+                impl_index: impls.len(),
+                span: path.span,
+                scope: this.current,
+                fns: functions
+                    .into_iter()
+                    .map(|f| this.declare_fn(autouse, f, vec![]))
+                    .collect(),
+            });
+            impls.push(TraitImpl::Unchecked {
+                scope: self.current,
+                path,
+                block: Some(block.scope),
+            });
+            declared_blocks.push(block);
         }
 
         (impls, declared_blocks)
@@ -971,7 +976,9 @@ impl TypeChecker {
             {
                 this.enter_id(id, |this| {
                     if this.scopes[this.current].kind.is_module() {
-                        this.include_universal();
+                        for scope in this.universal.clone() {
+                            this.use_all(scope, false);
+                        }
                     }
 
                     for stmt in std::mem::take(&mut this.scopes[this.current].use_stmts) {
@@ -989,19 +996,16 @@ impl TypeChecker {
     fn check_stmt(&mut self, stmt: DeclaredStmt) -> CheckedStmt {
         match stmt {
             DeclaredStmt::Module { id, body } => {
-                self.enter_id_and_resolve(id, |this| {
-                    this.include_universal();
-                    Block {
-                        body: body.into_iter().map(|stmt| this.check_stmt(stmt)).collect(),
-                        scope: this.current,
-                    }
+                self.enter_id_and_resolve(id, |this| Block {
+                    body: body.into_iter().map(|stmt| this.check_stmt(stmt)).collect(),
+                    scope: this.current,
                 });
             }
             DeclaredStmt::Struct {
                 init,
                 id,
-                impl_blocks,
-                functions,
+                impls: impl_blocks,
+                fns: functions,
             } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
                     this.resolve_impls(id);
@@ -1020,8 +1024,8 @@ impl TypeChecker {
             }
             DeclaredStmt::Union {
                 id,
-                impl_blocks,
-                functions,
+                impls: impl_blocks,
+                fns: functions,
             } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
                     this.resolve_impls(id);
@@ -1037,7 +1041,7 @@ impl TypeChecker {
                     }
                 });
             }
-            DeclaredStmt::Trait { id, functions } => {
+            DeclaredStmt::Trait { id, fns: functions } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
                     this.resolve_impls(id);
                     for f in functions {
@@ -1047,8 +1051,8 @@ impl TypeChecker {
             }
             DeclaredStmt::Extension {
                 id,
-                impl_blocks,
-                functions,
+                impls: impl_blocks,
+                fns: functions,
             } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
                     this.resolve_impls(id);
@@ -1164,8 +1168,12 @@ impl TypeChecker {
             for (s, t) in s
                 .impls
                 .iter()
-                .flat_map(|tr| tr.as_checked())
-                .zip(t.impls.iter().flat_map(|tr| tr.as_checked()))
+                .flat_map(|tr| tr.as_checked().map(|(a, _)| a))
+                .zip(
+                    t.impls
+                        .iter()
+                        .flat_map(|tr| tr.as_checked().map(|(a, _)| a)),
+                )
             {
                 for (s, t) in s.ty_args.values().zip(t.ty_args.values()) {
                     if let Err(err) = compare_types(s, t.clone()) {
@@ -1201,7 +1209,7 @@ impl TypeChecker {
     fn check_impl_block(&mut self, this: &Type, tr: &GenericTrait, block: DeclaredImplBlock) {
         // TODO: default implementations
         let str = self.scopes.get(tr.id);
-        for dep in str.impls.iter().flat_map(|tr| tr.as_checked()) {
+        for (dep, _) in str.impls.iter().flat_map(|tr| tr.as_checked()) {
             if !self.scopes.implements_trait(this, dep, None, self.current) {
                 self.diag.error(Error::new(
                     format!(
@@ -1215,7 +1223,7 @@ impl TypeChecker {
         }
 
         let mut required = str.fns.clone();
-        for f in block.functions {
+        for f in block.fns {
             let Located {
                 span: fn_span,
                 data: fn_name,
@@ -1297,12 +1305,8 @@ impl TypeChecker {
         });
     }
 
-    fn check_impl_blocks<T: ItemId + Copy>(
-        &mut self,
-        this_ty: Type,
-        id: T,
-        impls: Vec<DeclaredImplBlock>,
-    ) where
+    fn check_impl_blocks<T: ItemId>(&mut self, this_ty: Type, id: T, impls: Vec<DeclaredImplBlock>)
+    where
         T::Value: TypeLike,
     {
         for block in impls {
@@ -1310,12 +1314,14 @@ impl TypeChecker {
             // - impl type params (impl<T> Trait<T>)
             // - implement the same trait more than once
             self.enter_id(block.scope, |this| {
-                if let Some(gtr) = this.scopes.get(id).get_impls()[block.impl_index].as_checked() {
+                if let Some((gtr, _)) =
+                    this.scopes.get(id).get_impls()[block.impl_index].as_checked()
+                {
                     let gtr = gtr.clone();
                     this.check_impl_block(&this_ty, &gtr, block);
                     this.scopes[this.current].kind = ScopeKind::Impl(gtr.id);
                 } else {
-                    for f in block.functions {
+                    for f in block.fns {
                         this.check_fn(f);
                     }
                 }
@@ -3099,7 +3105,7 @@ impl TypeChecker {
     }
 
     fn check_bounds(&mut self, ty_args: &TypeArgs, ty: &Type, bounds: Vec<TraitImpl>, span: Span) {
-        for mut bound in bounds.into_iter().flat_map(|bound| bound.into_checked()) {
+        for (mut bound, _) in bounds.into_iter().flat_map(|bound| bound.into_checked()) {
             self.resolve_impls(bound.id);
             for bty in bound.ty_args.values_mut() {
                 bty.fill_templates(ty_args);
@@ -3314,7 +3320,7 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_impls<T: ItemId + Copy>(&mut self, id: T)
+    fn resolve_impls<T: ItemId>(&mut self, id: T)
     where
         T::Value: TypeLike,
     {
@@ -3352,19 +3358,13 @@ impl TypeChecker {
         }
     }
 
-    fn include_universal(&mut self) {
-        for scope in self.universal.clone() {
-            self.use_all(scope, false);
-        }
-    }
-
     fn implements_trait_and_resolve(&mut self, ty: &Type, bound: &GenericTrait) -> bool {
         if ty.is_unknown() {
             return true;
         }
 
         fn check(this: Option<&GenericUserType>, tr: &TraitImpl, bound: &GenericTrait) -> bool {
-            if let TraitImpl::Checked(tr) = tr {
+            if let TraitImpl::Checked(tr, _) = tr {
                 let mut tr = tr.clone();
                 if let Some(this) = this {
                     for ty in tr.ty_args.values_mut() {
@@ -3412,11 +3412,7 @@ impl TypeChecker {
         false
     }
 
-    fn get_trait_impl_helper<Id: ItemId + Clone + Copy>(
-        &mut self,
-        id: Id,
-        target: TraitId,
-    ) -> Option<GenericTrait>
+    fn get_trait_impl_helper<Id: ItemId>(&mut self, id: Id, target: TraitId) -> Option<GenericTrait>
     where
         Id::Value: TypeLike,
     {
@@ -3424,6 +3420,7 @@ impl TypeChecker {
             resolve_impl!(self, self.scopes.get_mut(id).get_impls_mut()[i]);
             if let Some(ut) = self.scopes.get(id).get_impls()[i]
                 .as_checked()
+                .map(|(ut, _)| ut)
                 .filter(|ut| ut.id == target)
                 .cloned()
             {
@@ -3469,7 +3466,7 @@ impl TypeChecker {
         if let Some(ut) = ty.as_user().map(|ut| self.scopes.get(ut.id)) {
             let src_scope = ut.scope;
             if ut.data.is_template() {
-                for tr in ut.impls.iter().flat_map(|ut| ut.as_checked()) {
+                for (tr, _) in ut.impls.iter().flat_map(|ut| ut.as_checked()) {
                     for imp in self.scopes.get_trait_impls(tr.id) {
                         if let Some(func) = search(&self.scopes.get(imp).fns) {
                             return Some(MemberFn {
@@ -3501,7 +3498,7 @@ impl TypeChecker {
             }
 
             // TODO: search recursively
-            for tr in data.impls.iter().flat_map(|ut| ut.as_checked()) {
+            for (tr, _) in data.impls.iter().flat_map(|ut| ut.as_checked()) {
                 for imp in self.scopes.get_trait_impls(tr.id) {
                     if let Some(func) = search(&self.scopes.get(imp).fns) {
                         return Some(MemberFn {
@@ -4869,7 +4866,7 @@ impl TypeChecker {
             PathOrigin::Normal => {
                 let ((name, ty_args), rest) = path.components.split_first().unwrap();
                 if rest.is_empty() {
-                    match self.find_in_vns(name, true).map(|f| f.id) {
+                    match self.find_in_vns(name).map(|f| f.id) {
                         Some(ValueItem::Fn(id)) => ResolvedValue::Func(GenericFunc::new(
                             id,
                             self.resolve_type_args(

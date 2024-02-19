@@ -31,7 +31,7 @@ pub struct WithTypeArgs<T> {
     pub ty_args: TypeArgs,
 }
 
-impl<T: ItemId + Clone + Copy> WithTypeArgs<T>
+impl<T: ItemId> WithTypeArgs<T>
 where
     T::Value: HasTypeParams,
 {

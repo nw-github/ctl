@@ -19,6 +19,7 @@ pub fn eprint(s: str) {
     write(2, unsafe s.as_ptr() as *c_void, s.len());
 }
 
+#(lang(convert_argv))
 fn convert_argv(argc: c_int, argv: **c_char): [str..] {
     mut result: [str] = std::vec::Vec::with_capacity(argc as! uint);
     for arg in (unsafe std::span::Span::new(ptr: argv as *raw *c_char, len: argc as! uint)).iter() {
@@ -27,7 +28,7 @@ fn convert_argv(argc: c_int, argv: **c_char): [str..] {
     result.as_span()
 }
 
-#(panic_handler)
+#(lang(panic_handler))
 fn panic_handler(s: str): never {
     eprint("fatal error: ");
     eprintln(s);

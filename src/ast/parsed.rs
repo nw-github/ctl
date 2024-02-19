@@ -65,8 +65,8 @@ pub enum StmtData {
         tag: Option<Located<Path>>,
         base: Struct,
         variants: Vec<Variant>,
-        is_unsafe: bool,
     },
+    UnsafeUnion(Struct),
     Trait {
         public: bool,
         name: Located<String>,

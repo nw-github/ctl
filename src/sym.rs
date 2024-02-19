@@ -127,8 +127,12 @@ pub enum ParamPattern {
 
 #[derive(Debug, Clone, EnumAsInner, Default)]
 pub enum TraitImpl {
-    Unchecked(ScopeId, Located<Path>),
-    Checked(GenericTrait),
+    Unchecked {
+        scope: ScopeId,
+        path: Located<Path>,
+        block: Option<ScopeId>,
+    },
+    Checked(GenericTrait, Option<ScopeId>),
     #[default]
     None,
 }
@@ -342,18 +346,14 @@ pub struct Vis<T> {
     pub public: bool,
 }
 
-pub trait ItemId: Sized {
+pub trait ItemId: Sized + Copy + Clone {
     type Value;
 
     fn get(self, scopes: &Scopes) -> &Scoped<Self::Value>;
     fn get_mut(self, scopes: &mut Scopes) -> &mut Scoped<Self::Value>;
-    fn insert_in(
-        scopes: &mut Scopes,
-        value: Self::Value,
-        public: bool,
-        scope: ScopeId,
-    ) -> (Self, bool);
     fn name<'a>(&self, scopes: &'a Scopes) -> &'a Located<String>;
+
+    fn insert_in(scopes: &mut Scopes, val: Self::Value, public: bool, id: ScopeId) -> (Self, bool);
 }
 
 #[derive(Debug, Clone, Copy, EnumAsInner, From)]
@@ -378,7 +378,6 @@ pub struct Scope {
     pub parent: Option<ScopeId>,
     pub tns: HashMap<String, Vis<TypeItem>>,
     pub vns: HashMap<String, Vis<ValueItem>>,
-    pub children: Vec<ScopeId>,
     pub use_stmts: Vec<UsePath>,
 }
 
@@ -389,11 +388,6 @@ impl Scope {
 
     pub fn find_in_vns(&self, name: &str) -> Option<Vis<ValueItem>> {
         self.vns.get(name).copied()
-    }
-
-    pub fn find_module(&self, name: &str) -> Option<ScopeId> {
-        self.find_in_tns(name)
-            .and_then(|inner| inner.as_module().copied())
     }
 }
 
@@ -408,8 +402,8 @@ pub struct Scopes {
     structs: HashMap<Vec<String>, UserTypeId>,
     pub lang_types: HashMap<String, UserTypeId>,
     pub lang_traits: HashMap<String, TraitId>,
+    pub lang_fns: HashMap<String, FunctionId>,
     pub intrinsics: HashMap<FunctionId, String>,
-    pub panic_handler: Option<FunctionId>,
 }
 
 impl Scopes {
@@ -425,8 +419,8 @@ impl Scopes {
             structs: HashMap::new(),
             lang_types: HashMap::new(),
             lang_traits: HashMap::new(),
+            lang_fns: HashMap::new(),
             intrinsics: HashMap::new(),
-            panic_handler: None,
         }
     }
 
@@ -536,7 +530,7 @@ impl Scopes {
         }
 
         let search = |this: Option<&GenericUserType>, impls: &[TraitImpl]| {
-            impls.iter().flat_map(|i| i.as_checked()).any(|tr| {
+            impls.iter().flat_map(|i| i.as_checked()).any(|(tr, _)| {
                 let mut tr = tr.clone();
                 if let Some(this) = this {
                     for ty in tr.ty_args.values_mut() {
@@ -573,7 +567,7 @@ impl Scopes {
                     .iter()
                     .flat_map(|bound| bound.as_checked())
                 {
-                    if !self.implements_trait(rhs, bound, Some(id), scope) {
+                    if !self.implements_trait(rhs, bound.0, Some(id), scope) {
                         return false;
                     }
                 }
@@ -725,17 +719,16 @@ impl Scopes {
             if !results.insert(tr) {
                 return;
             }
-    
-            for imp in this.get(tr).impls.iter().flat_map(|tr| tr.as_checked()) {
+
+            for (imp, _) in this.get(tr).impls.iter().flat_map(|tr| tr.as_checked()) {
                 inner(this, imp.id, results);
             }
         }
-    
+
         let mut result = HashSet::new();
         inner(self, tr, &mut result);
         result
     }
-    
 }
 
 impl std::ops::Index<ScopeId> for Scopes {
