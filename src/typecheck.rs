@@ -1199,9 +1199,7 @@ impl TypeChecker {
     }
 
     fn check_impl_block(&mut self, this: &Type, tr: &GenericTrait, block: DeclaredImplBlock) {
-        // TODO:
-        //  - detect and fail on circular trait dependencies
-        //  - default implementations
+        // TODO: default implementations
         let str = self.scopes.get(tr.id);
         for dep in str.impls.iter().flat_map(|tr| tr.as_checked()) {
             if !self.scopes.implements_trait(this, dep, None, self.current) {
@@ -1645,7 +1643,13 @@ impl TypeChecker {
                         },
                     )
                 }
-                (None, None) => todo!("full range is blocked until impl<T> is supported"),
+                (None, None) => CheckedExpr::new(
+                    self.make_lang_type_by_name("range_full", [], span),
+                    CheckedExprData::Instance {
+                        members: Default::default(),
+                        variant: None,
+                    },
+                ),
             },
             ExprData::String(s) => CheckedExpr::new(
                 self.make_lang_type_by_name("string", [], span),
