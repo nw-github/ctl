@@ -1947,13 +1947,13 @@ impl<'a, 'b> Parser<'a, 'b> {
     //
 
     fn peek(&mut self) -> &Located<Token<'a>> {
-        self.peek.get_or_insert_with(|| self.lexer.token(self.diag))
+        self.peek.get_or_insert_with(|| self.lexer.next_skip_comments(self.diag))
     }
 
     fn next(&mut self) -> Located<Token<'a>> {
         self.peek
             .take()
-            .unwrap_or_else(|| self.lexer.token(self.diag))
+            .unwrap_or_else(|| self.lexer.next_skip_comments(self.diag))
     }
 
     fn next_if_l(&mut self, f: impl FnOnce(&Located<Token>) -> bool) -> Option<Located<Token<'a>>> {
