@@ -226,7 +226,7 @@ impl<'a> TypeGen<'a> {
 
             let members = &self.scopes.get(ut.id).members;
             if let UserTypeData::Union(union) = &ut_data.data {
-                defs.emit_type(self.scopes, &union.tag_type(), None, flags.minify);
+                defs.emit_type(self.scopes, &union.tag, None, flags.minify);
                 defs.emit(format!(" {UNION_TAG_NAME};"));
 
                 for (name, member) in members {
@@ -234,7 +234,7 @@ impl<'a> TypeGen<'a> {
                 }
 
                 defs.emit("union{");
-                for (name, ty) in union.iter() {
+                for (name, ty) in union.variants.iter() {
                     if let Some(ty) = ty {
                         Self::emit_member(self.scopes, ut, name, ty, &mut defs, flags.minify);
                     }
@@ -348,8 +348,8 @@ impl<'a> TypeGen<'a> {
         }
 
         if let Some(union) = sty.data.as_union() {
-            self.add_type(diag, &union.tag_type(), None);
-            for ty in union.values().flatten() {
+            self.add_type(diag, &union.tag, None);
+            for ty in union.variants.values().flatten() {
                 self.check_member_dep(diag, &ut, ty, adding, &mut deps, sty.name.span);
             }
         }
@@ -1704,7 +1704,7 @@ impl<'a> Codegen<'a> {
                             .collect();
                         self.buffer.emit(format!(
                             ".{UNION_TAG_NAME}={},",
-                            union.variant_tag(&variant).unwrap()
+                            Self::variant_tag(union, &variant).unwrap()
                         ));
 
                         for (name, value) in members
@@ -1714,7 +1714,7 @@ impl<'a> Codegen<'a> {
                             self.buffer.emit(format!(".${name}={value},"));
                         }
 
-                        if union.get(&variant).is_some_and(|v| v.is_some()) {
+                        if union.variants.get(&variant).is_some_and(|v| v.is_some()) {
                             self.buffer.emit(format!(".${variant}={{"));
                             for (name, value) in members
                                 .iter()
@@ -2334,7 +2334,7 @@ impl<'a> Codegen<'a> {
                     let tag = base
                         .as_user()
                         .and_then(|ut| self.scopes.get(ut.id).data.as_union())
-                        .and_then(|union| union.variant_tag(variant))
+                        .and_then(|union| Self::variant_tag(union, variant))
                         .unwrap();
                     conditions.next_str(format!("{src}.{UNION_TAG_NAME}=={tag}"));
 
@@ -2753,6 +2753,10 @@ impl<'a> Codegen<'a> {
             count += 1;
         }
         count
+    }
+
+    fn variant_tag(union: &Union, name: &str) -> Option<usize> {
+        union.variants.get_index_of(name)
     }
 }
 

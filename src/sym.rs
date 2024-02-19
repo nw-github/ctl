@@ -183,17 +183,10 @@ pub struct CheckedMember {
     pub ty: Type,
 }
 
-#[derive(Debug, Clone, Deref, DerefMut)]
-pub struct Union(pub IndexMap<String, Option<Type>>);
-
-impl Union {
-    pub fn tag_type(&self) -> Type {
-        Type::discriminant_for(self.0.len())
-    }
-
-    pub fn variant_tag(&self, name: &str) -> Option<usize> {
-        self.0.get_index_of(name)
-    }
+#[derive(Debug, Clone)]
+pub struct Union {
+    pub variants: IndexMap<String, Option<Type>>,
+    pub tag: Type,
 }
 
 #[derive(Debug, EnumAsInner)]

@@ -375,7 +375,7 @@ impl TypeChecker {
     fn declare_union(
         &mut self,
         autouse: &mut Vec<ScopeId>,
-        _tag: Option<Located<Path>>,
+        tag: Option<Located<Path>>,
         base: Struct,
         variants: Vec<Variant>,
         attrs: Vec<Attribute>,
@@ -506,7 +506,12 @@ impl TypeChecker {
                 name: base.name,
                 body_scope: this.current,
                 type_params: this.declare_type_params(base.type_params),
-                data: UserTypeData::Union(Union(rvariants)),
+                data: UserTypeData::Union(Union {
+                    tag: tag
+                        .map(|tag| this.declare_type_hint(TypeHint::Regular(tag)))
+                        .unwrap_or(Type::Uint(discriminant_bits(rvariants.len()))),
+                    variants: rvariants,
+                }),
                 impls,
                 attrs,
                 fns: fns
@@ -1038,6 +1043,26 @@ impl TypeChecker {
 
                     for f in functions {
                         this.check_fn(f);
+                    }
+
+                    let Some(union) = &this.scopes.get(id).data.as_union() else {
+                        return;
+                    };
+                    if let Some(stats) = union.tag.integer_stats() {
+                        if stats.bits < discriminant_bits(union.variants.len()) {
+                            this.error(Error::new(
+                                format!(
+                                    "type '{}' does not have sufficient range to represent the tag for this type", 
+                                    union.tag.name(&this.scopes)
+                                ),
+                                this.scopes.get(id).name.span,
+                            ))
+                        }
+                    } else if !union.tag.is_unknown() {
+                        this.error(Error::new(
+                            "union tag must be an integer type",
+                            this.scopes.get(id).name.span,
+                        ))
                     }
                 });
             }
@@ -3313,7 +3338,8 @@ impl TypeChecker {
         }
 
         if let Some(mut union) = self.scopes.get(id).data.as_union().cloned() {
-            for variant in union.values_mut().flatten() {
+            resolve_type!(self, union.tag);
+            for variant in union.variants.values_mut().flatten() {
                 resolve_type!(self, *variant);
             }
             self.scopes.get_mut(id).data = UserTypeData::Union(union);
@@ -3725,12 +3751,12 @@ impl TypeChecker {
             }) {
                 self.error(Error::match_statement("", span))
             }
-        } else if let Some(ut) = ty
+        } else if let Some(union) = ty
             .as_user()
             .and_then(|ut| self.scopes.get(ut.id).data.as_union())
         {
             let mut missing = vec![];
-            'outer: for (name, _) in ut.iter() {
+            'outer: for (name, _) in union.variants.iter() {
                 for patt in patterns.clone() {
                     if patt.irrefutable {
                         return;
@@ -3794,8 +3820,7 @@ impl TypeChecker {
                             .get(ut.id)
                             .data
                             .as_union()
-                            .unwrap()
-                            .get(&variant)
+                            .and_then(|union| union.variants.get(&variant))
                             .unwrap()
                             .clone()
                             .map(|ty| scrutinee.matched_inner_type(ty.with_templates(&ut.ty_args))),
@@ -5169,4 +5194,8 @@ impl TypeChecker {
             name => Type::from_int_name(name, true),
         }
     }
+}
+
+fn discriminant_bits(count: usize) -> u32 {
+    (count as f64).log2().ceil() as u32
 }

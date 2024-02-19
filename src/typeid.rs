@@ -321,10 +321,6 @@ impl std::hash::Hash for Type {
 impl Eq for Type {}
 
 impl Type {
-    pub fn discriminant_for(max: usize) -> Type {
-        Type::Uint((max as f64).log2().ceil() as u32)
-    }
-
     pub fn supports_binop(&self, _scopes: &Scopes, op: BinaryOp) -> bool {
         match op {
             BinaryOp::Add
@@ -689,16 +685,22 @@ impl Type {
                 let mut sa = SizeAndAlign::new();
                 if let Some(union) = ty.data.as_union() {
                     if self.can_omit_tag(scopes).is_none() {
-                        sa.next(union.tag_type().size_and_align(scopes));
+                        sa.next(union.tag.size_and_align(scopes));
                     }
                     for member in ty.members.values() {
                         sa.next(member.ty.with_templates(&ut.ty_args).size_and_align(scopes));
                     }
 
-                    sa.next(union.values().flatten().fold((0, 1), |(sz, align), ty| {
-                        let (s, a) = ty.with_templates(&ut.ty_args).size_and_align(scopes);
-                        (sz.max(s), align.max(a))
-                    }));
+                    sa.next(
+                        union
+                            .variants
+                            .values()
+                            .flatten()
+                            .fold((0, 1), |(sz, align), ty| {
+                                let (s, a) = ty.with_templates(&ut.ty_args).size_and_align(scopes);
+                                (sz.max(s), align.max(a))
+                            }),
+                    );
                 } else {
                     for member in ty.members.values() {
                         sa.next(member.ty.with_templates(&ut.ty_args).size_and_align(scopes));
