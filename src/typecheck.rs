@@ -58,6 +58,7 @@ pub struct Module {
 pub enum MemberReceiver {
     TraitImpl(GenericTrait),
     Extension(ExtensionId),
+    TraitImplInExtension(ExtensionId, GenericTrait),
     Dyn,
     Normal,
 }
@@ -1726,8 +1727,6 @@ impl TypeChecker {
                                     CheckedExprData::Call {
                                         func: GenericFunc::new(f, Default::default()),
                                         args: Default::default(),
-                                        inst: Default::default(),
-                                        trait_id: None,
                                         scope: self.current,
                                     },
                                 )
@@ -2620,8 +2619,8 @@ impl TypeChecker {
                         .unwrap();
                     return CheckedExpr::new(
                         inner.clone(),
-                        CheckedExprData::Call {
-                            inst: Some(expr.ty.clone()),
+                        CheckedExprData::MemberCall {
+                            inst: expr.ty.clone(),
                             args: IndexMap::from([(
                                 THIS_PARAM.into(),
                                 CheckedExpr::new(
@@ -2852,6 +2851,7 @@ impl TypeChecker {
                 match &memfn.recv {
                     MemberReceiver::TraitImpl(tr) => {
                         func.ty_args.copy_args(&tr.ty_args);
+                        func.ty_args.insert(self.scopes.get(tr.id).this, id.clone());
                         trait_id = Some(tr.id);
                     }
                     MemberReceiver::Extension(ext) => {
@@ -2879,18 +2879,25 @@ impl TypeChecker {
                             func.ty_args.copy_args(ty_args);
                         }
                     }
+                    MemberReceiver::TraitImplInExtension(ext, tr) => {
+                        func.ty_args.copy_args(&tr.ty_args);
+                        func.ty_args.insert(self.scopes.get(tr.id).this, id.clone());
+                        trait_id = Some(tr.id);
+                        if let Some(etempl) = self.scopes.get(*ext).type_params.first() {
+                            func.ty_args.insert(*etempl, id.clone());
+                        }
+                        if let Some(ty_args) = id.as_user().map(|ut| &ut.ty_args) {
+                            func.ty_args.copy_args(ty_args);
+                        }
+                    }
                 }
 
                 let (args, ret) = self.check_fn_args(&mut func, Some(recv), args, target, span);
-                if let MemberReceiver::Dyn = memfn.recv {
-                    return CheckedExpr::new(ret, CheckedExprData::CallDyn { func, args });
-                }
-
                 return CheckedExpr::new(
                     ret,
-                    CheckedExprData::Call {
+                    CheckedExprData::MemberCall {
                         func,
-                        inst: Some(id),
+                        inst: id,
                         args,
                         trait_id,
                         scope: self.current,
@@ -2930,13 +2937,7 @@ impl TypeChecker {
                                 variant,
                             }
                         } else {
-                            CheckedExprData::Call {
-                                func,
-                                args,
-                                inst: None,
-                                trait_id: None,
-                                scope: self.current,
-                            }
+                            CheckedExprData::Call { func, args, scope: self.current }
                         },
                     );
                 }
@@ -3154,9 +3155,7 @@ impl TypeChecker {
     fn check_bounds(&mut self, ty_args: &TypeArgs, ty: &Type, bounds: Vec<TraitImpl>, span: Span) {
         for (mut bound, _) in bounds.into_iter().flat_map(|bound| bound.into_checked()) {
             self.resolve_impls(bound.id);
-            for bty in bound.ty_args.values_mut() {
-                bty.fill_templates(ty_args);
-            }
+            bound.fill_templates(ty_args);
 
             if !self.implements_trait_and_resolve(ty, &bound) {
                 self.error(Error::doesnt_implement(
@@ -3389,6 +3388,21 @@ impl TypeChecker {
         }
     }
 
+    fn resolve_impls_recursive<T: ItemId>(&mut self, id: T)
+    where
+        T::Value: TypeLike,
+    {
+        for i in 0..self.scopes.get(id).get_impls().len() {
+            resolve_impl!(self, self.scopes.get_mut(id).get_impls_mut()[i]);
+            if let Some(id) = self.scopes.get_mut(id).get_impls_mut()[i]
+                .as_checked()
+                .map(|(tr, _)| tr.id)
+            {
+                self.resolve_impls(id);
+            }
+        }
+    }
+
     fn resolve_proto(&mut self, id: FunctionId) {
         for i in 0..self.scopes.get(id).params.len() {
             resolve_type!(self, self.scopes.get_mut(id).params[i].ty);
@@ -3419,11 +3433,7 @@ impl TypeChecker {
         fn check(this: Option<&GenericUserType>, tr: &TraitImpl, bound: &GenericTrait) -> bool {
             if let TraitImpl::Checked(tr, _) = tr {
                 let mut tr = tr.clone();
-                if let Some(this) = this {
-                    for ty in tr.ty_args.values_mut() {
-                        ty.fill_templates(&this.ty_args);
-                    }
-                }
+                this.inspect(|this| tr.fill_templates(&this.ty_args));
                 &tr == bound
             } else {
                 false
@@ -3506,43 +3516,103 @@ impl TypeChecker {
         }
     }
 
-    fn get_member_fn(&self, ty: &Type, member: &str) -> Option<MemberFn> {
-        let search = |funcs: &[Vis<FunctionId>]| {
+    fn get_member_fn(&mut self, ty: &Type, method: &str) -> Option<MemberFn> {
+        fn search(
+            scopes: &Scopes,
+            funcs: &[Vis<FunctionId>],
+            method: &str,
+        ) -> Option<Vis<FunctionId>> {
             // TODO: trait implement overload ie.
             // impl Eq<f32> { ... } impl Eq<i32> { ... }
             funcs
                 .iter()
-                .find(|&&id| (self.scopes.get(*id).name.data == member))
+                .find(|&&id| (scopes.get(*id).name.data == method))
                 .copied()
-        };
+        }
 
-        if let Some(ut) = ty.as_user().map(|ut| self.scopes.get(ut.id)) {
-            let src_scope = ut.scope;
-            if ut.data.is_template() {
-                for (tr, _) in ut.impls.iter().flat_map(|ut| ut.as_checked()) {
-                    for imp in self.scopes.get_trait_impls(tr.id) {
-                        if let Some(func) = search(&self.scopes.get(imp).fns) {
+        fn search_extensions(this: &mut TypeChecker, ty: &Type, method: &str) -> Option<MemberFn> {
+            let ext_ids: Vec<_> = this
+                .scopes
+                .extensions_in_scope_for(ty, None, this.current)
+                .map(|(id, _)| id)
+                .collect();
+
+            for id in ext_ids {
+                if let Some(func) = search(&this.scopes, &this.scopes.get(id).fns, method) {
+                    return Some(MemberFn {
+                        recv: MemberReceiver::Extension(id),
+                        func,
+                        src_scope: this.scopes.get(id).scope,
+                    });
+                }
+
+                this.resolve_impls_recursive(id);
+                for (tr, _) in this
+                    .scopes
+                    .get(id)
+                    .impls
+                    .iter()
+                    .flat_map(|ut| ut.as_checked())
+                {
+                    for imp in this.scopes.get_trait_impls(tr.id) {
+                        if let Some(func) = search(&this.scopes, &this.scopes.get(imp).fns, method)
+                        {
                             return Some(MemberFn {
-                                recv: MemberReceiver::TraitImpl(GenericTrait::new(
-                                    imp,
-                                    tr.ty_args.clone(),
-                                )),
+                                recv: MemberReceiver::TraitImplInExtension(
+                                    id,
+                                    GenericTrait::new(imp, tr.ty_args.clone()),
+                                ),
                                 func,
-                                src_scope,
+                                src_scope: this.scopes.get(id).scope,
                             });
                         }
                     }
                 }
-            } else if let Some(func) = search(&ut.fns) {
+            }
+
+            None
+        }
+
+        if let Type::User(ut) = ty {
+            let src_scope = self.scopes.get(ut.id).scope;
+            if let Some(func) = search(&self.scopes, &self.scopes.get(ut.id).fns, method) {
                 return Some(MemberFn {
                     recv: MemberReceiver::Normal,
                     func,
                     src_scope,
                 });
             }
+
+            if let Some(res) = search_extensions(self, ty, method) {
+                return Some(res);
+            }
+
+            self.resolve_impls_recursive(ut.id);
+            for (tr, _) in self
+                .scopes
+                .get(ut.id)
+                .impls
+                .iter()
+                .flat_map(|ut| ut.as_checked())
+            {
+                for imp in self.scopes.get_trait_impls(tr.id) {
+                    if let Some(func) = search(&self.scopes, &self.scopes.get(imp).fns, method) {
+                        return Some(MemberFn {
+                            recv: MemberReceiver::TraitImpl(GenericTrait::new(
+                                imp,
+                                tr.ty_args.clone(),
+                            )),
+                            func,
+                            src_scope,
+                        });
+                    }
+                }
+            }
+
+            return None;
         } else if let Some(tr) = ty.as_dyn() {
             let data = self.scopes.get(tr.id);
-            if let Some(func) = search(&data.fns) {
+            if let Some(func) = search(&self.scopes, &data.fns, method) {
                 return Some(MemberFn {
                     recv: MemberReceiver::Dyn,
                     func,
@@ -3552,7 +3622,7 @@ impl TypeChecker {
 
             for (tr, _) in data.impls.iter().flat_map(|ut| ut.as_checked()) {
                 for imp in self.scopes.get_trait_impls(tr.id) {
-                    if let Some(func) = search(&self.scopes.get(imp).fns) {
+                    if let Some(func) = search(&self.scopes, &self.scopes.get(imp).fns, method) {
                         return Some(MemberFn {
                             recv: MemberReceiver::Dyn,
                             func,
@@ -3563,15 +3633,7 @@ impl TypeChecker {
             }
         }
 
-        self.scopes
-            .extensions_in_scope_for(ty, None, self.current)
-            .find_map(|(id, ext)| {
-                search(&ext.fns).map(|func| MemberFn {
-                    recv: MemberReceiver::Extension(id),
-                    func,
-                    src_scope: ext.scope,
-                })
-            })
+        search_extensions(self, ty, method)
     }
 
     fn get_int_type_and_val(
@@ -4990,12 +5052,13 @@ impl TypeChecker {
                             )
                         }
                         Some(TypeItem::Trait(id)) => {
-                            let ty_args = self.resolve_type_args(
+                            let mut ty_args = self.resolve_type_args(
                                 &self.scopes.get(id).type_params.clone(),
                                 ty_args,
                                 args,
                                 span,
                             );
+                            ty_args.insert(self.scopes.get(id).this, Type::Unknown);
 
                             self.resolve_value_path_in(
                                 rest,
@@ -5096,6 +5159,7 @@ impl TypeChecker {
                 TypeItem::Trait(id) => {
                     let ty = self.scopes.get(id);
                     scope = ty.body_scope;
+                    ty_args.insert(self.scopes.get(id).this, Type::Unknown);
                     ty_args.copy_args(&self.resolve_type_args(
                         &ty.type_params.clone(),
                         args,

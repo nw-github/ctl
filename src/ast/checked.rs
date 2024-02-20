@@ -117,13 +117,14 @@ pub enum CheckedExprData {
     Call {
         func: GenericFunc,
         args: IndexMap<String, CheckedExpr>,
-        inst: Option<Type>,
-        trait_id: Option<TraitId>,
         scope: ScopeId,
     },
-    CallDyn {
+    MemberCall {
         func: GenericFunc,
         args: IndexMap<String, CheckedExpr>,
+        inst: Type,
+        trait_id: Option<TraitId>,
+        scope: ScopeId,
     },
     CallFnPtr {
         expr: Box<CheckedExpr>,

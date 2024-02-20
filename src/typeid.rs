@@ -119,6 +119,12 @@ impl<T> WithTypeArgs<T> {
             }
         }
     }
+
+    pub fn fill_templates(&mut self, map: &TypeArgs) {
+        for ty in self.ty_args.values_mut() {
+            ty.fill_templates(map);
+        }
+    }
 }
 
 pub type GenericFunc = WithTypeArgs<FunctionId>;
@@ -433,9 +439,7 @@ impl Type {
                             *src = ty.clone();
                         }
                     } else if !ut.ty_args.is_empty() {
-                        for ty in ut.ty_args.values_mut() {
-                            ty.fill_templates(map);
-                        }
+                        ut.fill_templates(map);
                     }
                     break;
                 }
@@ -448,9 +452,7 @@ impl Type {
                     break;
                 }
                 Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                    for ty in tr.ty_args.values_mut() {
-                        ty.fill_templates(map);
-                    }
+                    tr.fill_templates(map);
                     break;
                 }
                 _ => break,

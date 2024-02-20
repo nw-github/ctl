@@ -161,13 +161,55 @@ fn main() {
     std::println("\ndynamic dispatch: ");
     {
         std::println("normal()...");
-        dyndispatch::normal();
+        traits::dd::normal();
 
         std::println("dependant()...");
-        dyndispatch::dependant();
+        traits::dd::dependant();
 
         std::println("recursive()...");
-        dyndispatch::recursive();
+        traits::dd::recursive();
+    }
+
+    std::println("\ntrait default: ");
+    {
+        std::println("nooverride_direct()...");
+        traits::default::nooverride_direct();
+
+        std::println("nooverride_dyn()...");
+        traits::default::nooverride_dyn();
+
+        std::println("nooverride_generic()...");
+        traits::default::nooverride_generic();
+
+        std::println("override_direct()...");
+        traits::default::override_direct();
+
+        std::println("override_dyn()...");
+        traits::default::override_dyn();
+
+        std::println("override_generic()...");
+        traits::default::override_generic();
+    }
+
+    std::println("\ntrait default by extension: ");
+    {
+        std::println("nooverride_direct()...");
+        traits::default_ext::nooverride_direct();
+
+        std::println("nooverride_dyn()...");
+        traits::default_ext::nooverride_dyn();
+
+        std::println("nooverride_generic()...");
+        traits::default_ext::nooverride_generic();
+
+        std::println("override_direct()...");
+        traits::default_ext::override_direct();
+
+        std::println("override_dyn()...");
+        traits::default_ext::override_dyn();
+
+        std::println("override_generic()...");
+        traits::default_ext::override_generic();
     }
 
     std::println("\nall tests passed!");

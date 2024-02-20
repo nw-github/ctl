@@ -273,13 +273,6 @@ pub trait TypeLike: HasTypeParams {
     fn get_impls(&self) -> &[TraitImpl];
     fn get_impls_mut(&mut self) -> &mut [TraitImpl];
     fn get_fns(&self) -> &[Vis<FunctionId>];
-
-    fn vtable_methods(&self, scopes: &Scopes) -> impl Iterator<Item = &Vis<FunctionId>> {
-        self.get_fns().iter().filter(|f| {
-            let f = scopes.get(f.id);
-            f.type_params.is_empty() && f.params.first().is_some_and(|p| p.label == THIS_PARAM)
-        })
-    }
 }
 
 impl TypeLike for UserType {
@@ -527,9 +520,7 @@ impl Scopes {
             impls.iter().flat_map(|i| i.as_checked()).any(|(tr, _)| {
                 let mut tr = tr.clone();
                 if let Some(this) = this {
-                    for ty in tr.ty_args.values_mut() {
-                        ty.fill_templates(&this.ty_args);
-                    }
+                    tr.fill_templates(&this.ty_args);
                 }
                 &tr == bound
             })
