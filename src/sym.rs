@@ -228,6 +228,7 @@ pub struct Trait {
     pub type_params: Vec<UserTypeId>,
     pub attrs: Vec<Attribute>,
     pub fns: Vec<Vis<FunctionId>>,
+    pub this: UserTypeId,
 }
 
 #[derive(Debug)]

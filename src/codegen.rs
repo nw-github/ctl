@@ -580,7 +580,6 @@ impl Buffer {
             }
             Type::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             Type::Unresolved(_) => panic!("ICE: TypeId::Unresolved in emit_type"),
-            Type::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_type"),
         }
     }
 
@@ -632,7 +631,6 @@ impl Buffer {
             Type::Array(data) => self.emit_array_struct_name(scopes, &data.0, data.1, min),
             Type::Unknown => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
             Type::Unresolved(_) => panic!("ICE: TypeId::Unresolved in emit_generic_mangled_name"),
-            Type::TraitSelf => panic!("ICE: TypeId::TraitSelf in emit_generic_mangled_name"),
         }
     }
 

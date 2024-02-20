@@ -656,6 +656,28 @@ impl TypeChecker {
             } => {
                 let lang_item = self.get_lang_item(&stmt.attrs).map(String::from);
                 let (tr, fns) = self.enter(ScopeKind::None, |this| {
+                    let impls: Vec<_> = impls
+                        .into_iter()
+                        .map(|path| TraitImpl::Unchecked {
+                            scope: this.current,
+                            path,
+                            block: None,
+                        })
+                        .collect();
+                    let this_ty = this.insert(
+                        UserType {
+                            name: Located::new(name.span, THIS_TYPE.into()),
+                            body_scope: this.current,
+                            data: UserTypeData::Template,
+                            type_params: Vec::new(),
+                            impls: impls.clone(),
+                            attrs: vec![],
+                            fns: vec![],
+                            members: Default::default(),
+                        },
+                        false,
+                        false,
+                    );
                     let fns: Vec<_> = functions
                         .into_iter()
                         .map(|f| this.declare_fn(autouse, f, vec![]))
@@ -664,16 +686,10 @@ impl TypeChecker {
                         name,
                         body_scope: this.current,
                         type_params: this.declare_type_params(type_params),
-                        impls: impls
-                            .into_iter()
-                            .map(|path| TraitImpl::Unchecked {
-                                scope: this.current,
-                                path,
-                                block: None,
-                            })
-                            .collect(),
+                        impls,
                         attrs: stmt.attrs,
                         fns: fns.iter().map(|f| Vis::new(f.id, f.public)).collect(),
+                        this: this_ty,
                     };
                     (tr, fns)
                 });
@@ -683,6 +699,13 @@ impl TypeChecker {
                 if let Some(name) = lang_item {
                     self.scopes.lang_traits.insert(name, id);
                 }
+                let tr = self.scopes.get(id);
+                let imp = GenericTrait::from_type_params(&self.scopes, id);
+                self.scopes
+                    .get_mut(tr.this)
+                    .impls
+                    .push(TraitImpl::Checked(imp, None));
+
                 self.scopes[scope].kind = ScopeKind::Trait(id);
                 DeclaredStmt::Trait { id, fns }
             }
@@ -1009,8 +1032,8 @@ impl TypeChecker {
             DeclaredStmt::Struct {
                 init,
                 id,
-                impls: impl_blocks,
-                fns: functions,
+                impls,
+                fns,
             } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
                     this.resolve_impls(id);
@@ -1019,29 +1042,25 @@ impl TypeChecker {
                     this.check_impl_blocks(
                         Type::User(GenericUserType::from_id(&this.scopes, id).into()),
                         id,
-                        impl_blocks,
+                        impls,
                     );
 
-                    for f in functions {
+                    for f in fns {
                         this.check_fn(f);
                     }
                 });
             }
-            DeclaredStmt::Union {
-                id,
-                impls: impl_blocks,
-                fns: functions,
-            } => {
+            DeclaredStmt::Union { id, impls, fns } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
                     this.resolve_impls(id);
                     this.resolve_members(id);
                     this.check_impl_blocks(
                         Type::User(GenericUserType::from_id(&this.scopes, id).into()),
                         id,
-                        impl_blocks,
+                        impls,
                     );
 
-                    for f in functions {
+                    for f in fns {
                         this.check_fn(f);
                     }
 
@@ -1068,22 +1087,20 @@ impl TypeChecker {
             }
             DeclaredStmt::Trait { id, fns: functions } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
+                    this.resolve_impls(this.scopes.get(id).this);
+                    // TODO: disable errors so this doesn't cause duplicate errors
                     this.resolve_impls(id);
                     for f in functions {
                         this.check_fn(f);
                     }
                 });
             }
-            DeclaredStmt::Extension {
-                id,
-                impls: impl_blocks,
-                fns: functions,
-            } => {
+            DeclaredStmt::Extension { id, impls, fns } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
                     this.resolve_impls(id);
                     resolve_type!(this, this.scopes.get_mut(id).ty);
-                    this.check_impl_blocks(this.scopes.get(id).ty.clone(), id, impl_blocks);
-                    for f in functions {
+                    this.check_impl_blocks(this.scopes.get(id).ty.clone(), id, impls);
+                    for f in fns {
                         this.check_fn(f);
                     }
                 });
@@ -1145,6 +1162,7 @@ impl TypeChecker {
 
     fn signatures_match(
         scopes: &Scopes,
+        tr: TraitId,
         this: &Type,
         lhs_id: FunctionId,
         rhs_id: FunctionId,
@@ -1159,10 +1177,10 @@ impl TypeChecker {
                 Type::User(GenericUserType::from_id(scopes, lhs.type_params[i]).into()),
             );
         }
+        ty_args.insert(scopes.get(tr).this, this.clone());
 
         let compare_types = |a: &Type, mut b: Type| {
             b.fill_templates(&ty_args);
-            b.fill_this(this);
 
             if a != &b {
                 Err(format!(
@@ -1272,7 +1290,9 @@ impl TypeChecker {
 
             let rhs = *required.swap_remove(pos);
             self.resolve_proto(rhs);
-            if let Err(err) = Self::signatures_match(&self.scopes, this, lhs, rhs, &tr.ty_args) {
+            if let Err(err) =
+                Self::signatures_match(&self.scopes, tr.id, this, lhs, rhs, &tr.ty_args)
+            {
                 self.error(Error::new(
                     format!("invalid implementation of function '{fn_name}': {err}"),
                     fn_span,
@@ -1281,14 +1301,16 @@ impl TypeChecker {
         }
 
         for id in required {
-            self.error(Error::new(
-                format!(
-                    "must implement '{}::{}'",
-                    tr.name(&self.scopes),
-                    self.scopes.get(*id).name.data
-                ),
-                block.span,
-            ))
+            if self.scopes.get(*id).body.is_none() {
+                self.error(Error::new(
+                    format!(
+                        "must implement '{}::{}'",
+                        tr.name(&self.scopes),
+                        self.scopes.get(*id).name.data
+                    ),
+                    block.span,
+                ))
+            }
         }
     }
 
@@ -3274,7 +3296,12 @@ impl TypeChecker {
                 let current = self.current_function();
                 for (_, scope) in self.scopes.walk(self.current) {
                     match scope.kind {
-                        ScopeKind::Trait(_) => return Type::TraitSelf,
+                        ScopeKind::Trait(id) => {
+                            return Type::User(
+                                GenericUserType::from_id(&self.scopes, self.scopes.get(id).this)
+                                    .into(),
+                            )
+                        }
                         ScopeKind::UserType(id) => {
                             return Type::User(GenericUserType::from_id(&self.scopes, id).into())
                         }
@@ -3523,7 +3550,6 @@ impl TypeChecker {
                 });
             }
 
-            // TODO: search recursively
             for (tr, _) in data.impls.iter().flat_map(|ut| ut.as_checked()) {
                 for imp in self.scopes.get_trait_impls(tr.id) {
                     if let Some(func) = search(&self.scopes.get(imp).fns) {

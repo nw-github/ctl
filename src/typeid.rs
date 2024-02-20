@@ -49,6 +49,25 @@ where
             ),
         )
     }
+
+    pub fn from_type_params(scopes: &Scopes, id: T) -> Self {
+        Self::new(
+            id,
+            TypeArgs(
+                scopes
+                    .get(id)
+                    .get_type_params()
+                    .iter()
+                    .map(|&id| {
+                        (
+                            id,
+                            Type::User(GenericUserType::new(id, Default::default()).into()),
+                        )
+                    })
+                    .collect(),
+            ),
+        )
+    }
 }
 
 impl<T> WithTypeArgs<T> {
@@ -180,17 +199,7 @@ impl GenericUserType {
     }
 
     pub fn from_id(scopes: &Scopes, id: UserTypeId) -> Self {
-        Self::new(
-            id,
-            TypeArgs(
-                scopes
-                    .get(id)
-                    .type_params
-                    .iter()
-                    .map(|&id| (id, Type::User(Self::new(id, Default::default()).into())))
-                    .collect(),
-            ),
-        )
+        Self::from_type_params(scopes, id)
     }
 }
 
@@ -278,7 +287,6 @@ pub enum Type {
     DynPtr(Box<GenericTrait>),
     DynMutPtr(Box<GenericTrait>),
     Array(Box<(Type, usize)>),
-    TraitSelf,
 }
 
 impl PartialEq for Type {
@@ -409,42 +417,6 @@ impl Type {
         }
     }
 
-    pub fn fill_this(&mut self, this: &Type) {
-        let mut src = self;
-        loop {
-            match src {
-                Type::Array(t) => src = &mut t.0,
-                Type::Ptr(t) | Type::MutPtr(t) | Type::RawPtr(t) => src = t,
-                Type::User(ty) => {
-                    for ty in ty.ty_args.values_mut() {
-                        ty.fill_this(this);
-                    }
-
-                    break;
-                }
-                Type::TraitSelf => {
-                    *src = this.clone();
-                    break;
-                }
-                Type::FnPtr(f) => {
-                    for ty in f.params.iter_mut() {
-                        ty.fill_this(this);
-                    }
-
-                    f.ret.fill_this(this);
-                    break;
-                }
-                Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                    for ty in tr.ty_args.values_mut() {
-                        ty.fill_this(this);
-                    }
-                    break;
-                }
-                _ => break,
-            }
-        }
-    }
-
     pub fn fill_templates(&mut self, map: &TypeArgs) {
         if map.is_empty() {
             return;
@@ -545,7 +517,6 @@ impl Type {
                 )
             }
             Type::CVoid => "c_void".into(),
-            Type::TraitSelf => "This".into(),
         }
     }
 
