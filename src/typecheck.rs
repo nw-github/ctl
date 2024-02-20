@@ -1877,19 +1877,27 @@ impl TypeChecker {
                 if_branch,
                 else_branch,
             } => {
+                let check_if_branch = |this: &mut TypeChecker| {
+                    let target = if else_branch.is_none() {
+                        target.and_then(|t| t.as_option_inner(&this.scopes))
+                    } else {
+                        target
+                    };
+
+                    let if_span = if_branch.span;
+                    let expr = this.check_expr_inner(*if_branch, target);
+                    if let Some(target) = target {
+                        this.type_check_checked(expr, target, if_span)
+                    } else {
+                        expr
+                    }
+                };
+
                 let (cond, mut if_branch) = if let ExprData::Is { expr, pattern } = cond.data {
-                    self.check_is_expr(*expr, pattern, |this, cond| {
-                        (
-                            cond,
-                            this.check_if_branch(*if_branch, target, else_branch.is_some()),
-                        )
-                    })
+                    self.check_is_expr(*expr, pattern, |this, cond| (cond, check_if_branch(this)))
                 } else {
                     let cond = self.type_check(*cond, &Type::Bool);
-                    (
-                        cond,
-                        self.check_if_branch(*if_branch, target, else_branch.is_some()),
-                    )
+                    (cond, check_if_branch(self))
                 };
 
                 let mut out_type = if_branch.ty.clone();
@@ -2425,25 +2433,6 @@ impl TypeChecker {
         }
     }
 
-    fn check_if_branch(&mut self, expr: Expr, target: Option<&Type>, el: bool) -> CheckedExpr {
-        let target = if el {
-            target
-        } else {
-            target
-                .and_then(|t| t.as_user())
-                .filter(|t| Some(t.id) == self.scopes.get_option_id())
-                .and_then(|target| target.first_type_arg())
-        };
-
-        let if_span = expr.span;
-        let expr = self.check_expr_inner(expr, target);
-        if let Some(target) = target {
-            self.type_check_checked(expr, target, if_span)
-        } else {
-            expr
-        }
-    }
-
     fn check_is_expr<T>(
         &mut self,
         expr: Expr,
@@ -2937,7 +2926,11 @@ impl TypeChecker {
                                 variant,
                             }
                         } else {
-                            CheckedExprData::Call { func, args, scope: self.current }
+                            CheckedExprData::Call {
+                                func,
+                                args,
+                                scope: self.current,
+                            }
                         },
                     );
                 }

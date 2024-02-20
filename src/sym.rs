@@ -11,7 +11,6 @@ use crate::{
     },
     lexer::{Located, Span},
     typeid::{GenericTrait, GenericUserType, Type},
-    THIS_PARAM,
 };
 
 macro_rules! id {
