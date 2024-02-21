@@ -13,8 +13,7 @@ use crate::{
     nearest_pow_of_two,
     sym::*,
     typeid::{CInt, FnPtr, GenericFunc, GenericTrait, GenericUserType, Type, TypeArgs},
-    CodegenFlags,
-    THIS_PARAM,
+    CodegenFlags, THIS_PARAM,
 };
 
 const UNION_TAG_NAME: &str = "tag";
@@ -452,7 +451,9 @@ impl<'a> TypeGen<'a> {
         }
 
         buffer.emit_type(scopes, &ty, None, min);
-        buffer.emit(format!(" ${name};"));
+        buffer.emit(" ");
+        buffer.emit_member_name(scopes, Some(ut.id), name);
+        buffer.emit(";");
     }
 
     fn emit_array(
@@ -656,6 +657,13 @@ impl Buffer {
             .map(|attr| &attr.props[0].name.data)
         {
             self.emit(name);
+        } else if scopes
+            .get(ut.id)
+            .attrs
+            .iter()
+            .any(|attr| attr.name.data == ATTR_NOGEN)
+        {
+            self.emit(&scopes.get(ut.id).name.data);
         } else if min {
             self.emit(format!("t{}", ut.id));
             for ty in ut.ty_args.values() {
@@ -752,6 +760,20 @@ impl Buffer {
     fn emit_vtable_struct_name(&mut self, scopes: &Scopes, tr: &GenericTrait, min: bool) {
         self.emit(if min { "v" } else { "$vtable_" });
         self.emit_trait_name(scopes, tr, min);
+    }
+
+    fn emit_member_name(&mut self, scopes: &Scopes, id: Option<UserTypeId>, name: &str) {
+        if id.is_some_and(|id| {
+            scopes
+                .get(id)
+                .attrs
+                .iter()
+                .any(|f| f.name.data == ATTR_NOGEN)
+        }) {
+            self.emit(name);
+        } else {
+            self.emit(format!("${name}"));
+        }
     }
 
     fn finish(self) -> String {
@@ -1407,7 +1429,11 @@ impl<'a> Codegen<'a> {
                 self.emit_expr(*expr, state);
                 self.buffer.emit(")");
             }
-            CheckedExprData::Call { mut func, args, scope } => {
+            CheckedExprData::Call {
+                mut func,
+                args,
+                scope,
+            } => {
                 func.fill_templates(&state.func.ty_args);
                 if let Some(name) = self.scopes.intrinsic_name(func.id) {
                     return self.emit_intrinsic(name, &func, args, state);
@@ -1695,7 +1721,8 @@ impl<'a> Codegen<'a> {
                 } else {
                     self.emit_cast(&expr.ty);
                     self.buffer.emit("{");
-                    let ut = self.scopes.get(expr.ty.as_user().unwrap().id);
+                    let ut_id = expr.ty.as_user().unwrap().id;
+                    let ut = self.scopes.get(ut_id);
                     if let Some((variant, union)) = variant.zip(ut.data.as_union()) {
                         let members: Vec<_> = members
                             .into_iter()
@@ -1714,7 +1741,9 @@ impl<'a> Codegen<'a> {
                             .iter()
                             .filter(|(name, _)| ut.members.contains_key(name))
                         {
-                            self.buffer.emit(format!(".${name}={value},"));
+                            self.buffer.emit(".");
+                            self.buffer.emit_member_name(self.scopes, Some(ut_id), name);
+                            self.buffer.emit(format!("={value},"));
                         }
 
                         if union.variants.get(&variant).is_some_and(|v| v.is_some()) {
@@ -1734,7 +1763,10 @@ impl<'a> Codegen<'a> {
 
                         for (name, mut value) in members {
                             state.fill_generics(&mut value.ty);
-                            self.buffer.emit(format!(".${name}="));
+                            self.buffer.emit(".");
+                            self.buffer
+                                .emit_member_name(self.scopes, Some(ut_id), &name);
+                            self.buffer.emit("=");
                             self.emit_expr(value, state);
                             self.buffer.emit(",");
                         }
@@ -1743,8 +1775,10 @@ impl<'a> Codegen<'a> {
                 }
             }
             CheckedExprData::Member { source, member } => {
+                let id = source.ty.as_user().map(|ut| ut.id);
                 self.emit_expr(*source, state);
-                self.buffer.emit(format!(".${member}"));
+                self.buffer.emit(".");
+                self.buffer.emit_member_name(self.scopes, id, &member);
             }
             CheckedExprData::Assign {
                 target,
@@ -2782,11 +2816,16 @@ fn needs_fn_wrapper(f: &Function) -> bool {
     f.linkage == Linkage::Import && matches!(f.ret, Type::Void | Type::Never | Type::CVoid)
 }
 
-fn vtable_methods<'a>(scopes: &'a Scopes, tr: &'a Trait) -> impl Iterator<Item = &'a Vis<FunctionId>> {
+fn vtable_methods<'a>(
+    scopes: &'a Scopes,
+    tr: &'a Trait,
+) -> impl Iterator<Item = &'a Vis<FunctionId>> {
     tr.fns.iter().filter(|f| {
         let f = scopes.get(f.id);
         f.type_params.is_empty()
             && f.params.first().is_some_and(|p| p.label == THIS_PARAM)
-            && f.params.iter().all(|p| !p.ty.as_user().is_some_and(|ty| ty.id == tr.this))
+            && f.params
+                .iter()
+                .all(|p| !p.ty.as_user().is_some_and(|ty| ty.id == tr.this))
     })
 }
