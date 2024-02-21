@@ -2216,7 +2216,8 @@ impl TypeChecker {
             ExprData::Match { expr, body } => {
                 let scrutinee = self.check_expr(*expr, None);
                 let mut target = target.cloned();
-                let result: Vec<_> = body
+                let mut has_never = false;
+                let mut result: Vec<_> = body
                     .into_iter()
                     .map(|(patt, expr)| {
                         let span = expr.span;
@@ -2230,15 +2231,26 @@ impl TypeChecker {
                         if let Some(target) = &target {
                             (patt, self.type_check_checked(expr, target, span))
                         } else {
-                            target = Some(expr.ty.clone());
+                            if expr.ty.is_never() {
+                                has_never = true;
+                            } else {
+                                target = Some(expr.ty.clone());
+                            }
+
                             (patt, expr)
                         }
                     })
                     .collect();
+                let target = target.unwrap_or(if has_never { Type::Never } else { Type::Void });
+                if !matches!(target, Type::Never | Type::Void) {
+                    for (_, e) in result.iter_mut() {
+                        *e = std::mem::take(e).try_coerce_to(&self.scopes, self.current, &target);
+                    }
+                }
 
                 self.check_match_coverage(&scrutinee.ty, result.iter().map(|it| &it.0), span);
                 CheckedExpr::new(
-                    target.unwrap_or(Type::Void),
+                    target,
                     CheckedExprData::Match {
                         expr: scrutinee.into(),
                         body: result,
