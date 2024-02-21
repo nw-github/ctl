@@ -138,7 +138,11 @@ impl Error {
     }
 
     pub fn no_member(ty: &str, member: &str, span: Span) -> Self {
-        Self::new(format!("type '{ty}' has no member '{member}'"), span)
+        Self::new(format!("no member '{member}' found on type '{ty}'"), span)
+    }
+
+    pub fn no_method(ty: &str, method: &str, span: Span) -> Self {
+        Self::new(format!("no method '{method}' found on type '{ty}'"), span)
     }
 
     pub fn no_symbol(symbol: &str, span: Span) -> Self {

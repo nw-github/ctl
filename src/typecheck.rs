@@ -55,18 +55,9 @@ pub struct Module {
     pub scope: ScopeId,
 }
 
-pub enum MemberReceiver {
-    TraitImpl(GenericTrait),
-    Extension(ExtensionId),
-    TraitImplInExtension(ExtensionId, GenericTrait),
-    Dyn,
-    Normal,
-}
-
 pub struct MemberFn {
-    pub recv: MemberReceiver,
-    pub func: Vis<FunctionId>,
-    pub src_scope: ScopeId,
+    pub func: GenericFunc,
+    pub tr: Option<TraitId>,
 }
 
 #[derive(Default)]
@@ -808,6 +799,7 @@ impl TypeChecker {
                 is_async: f.is_async,
                 is_unsafe: f.is_unsafe,
                 variadic: f.variadic,
+                has_body: f.body.is_some(),
                 type_params: Vec::new(),
                 params: Vec::new(),
                 ret: Type::Unknown,
@@ -1302,7 +1294,7 @@ impl TypeChecker {
         }
 
         for id in required {
-            if self.scopes.get(*id).body.is_none() {
+            if !self.scopes.get(*id).has_body {
                 self.error(Error::new(
                     format!(
                         "must implement '{}::{}'",
@@ -1419,6 +1411,48 @@ impl TypeChecker {
         )
     }
 
+    fn check_eq(&mut self, lhs: CheckedExpr, rhs: Expr, span: Span) -> CheckedExpr {
+        let Some(eq_id) = self.scopes.lang_traits.get("op_eq").copied() else {
+            return self.error(Error::no_lang_item("Eq", span));
+        };
+
+        let stripped = lhs.ty.strip_references();
+        if self.get_trait_impl(stripped, eq_id).is_none() {
+            return self.error(Error::doesnt_implement(
+                &stripped.name(&self.scopes),
+                "Eq",
+                span,
+            ));
+        };
+        let rhs_span = rhs.span;
+        let rhs = self.check_expr(rhs, None);
+        let Ok(MemberFn { func, tr }) = self.get_member_fn(stripped, "eq", &[], span) else {
+            return Default::default();
+        };
+
+        let [p0, p1, ..] = &self.scopes.get(func.id).params[..] else {
+            unreachable!()
+        };
+        let p1_ty = p1.ty.with_templates(&func.ty_args);
+        CheckedExpr::new(
+            Type::Bool,
+            CheckedExprData::MemberCall {
+                func,
+                inst: stripped.clone(),
+                args: [
+                    (p0.label.clone(), lhs.auto_deref(&p0.ty)),
+                    (
+                        p1.label.clone(),
+                        self.type_check_checked(rhs.auto_deref(&p1_ty), &p1_ty, rhs_span),
+                    ),
+                ]
+                .into(),
+                trait_id: tr,
+                scope: self.current,
+            },
+        )
+    }
+
     fn check_expr_inner(&mut self, expr: Expr, target: Option<&Type>) -> CheckedExpr {
         let span = expr.span;
         match expr.data {
@@ -1427,12 +1461,16 @@ impl TypeChecker {
                     return self.check_null_coalesce(*left, *right, target, span);
                 }
 
-                let left = self.check_expr(*left, target);
+                let left = self.check_expr(*left, None);
                 if left.ty.is_unknown() {
                     return Default::default();
                 }
 
                 if !left.ty.supports_binop(&self.scopes, op) {
+                    if op == BinaryOp::Equal {
+                        return self.check_eq(left, *right, span);
+                    }
+
                     return self.error(Error::invalid_operator(
                         op,
                         &left.ty.name(&self.scopes),
@@ -2764,34 +2802,20 @@ impl TypeChecker {
                     return Default::default();
                 }
 
-                let Some(memfn) = self.get_member_fn(&id, &member) else {
-                    return self.error(Error::new(
-                        format!(
-                            "no method '{member}' found on type '{}'",
-                            id.name(&self.scopes)
-                        ),
-                        span,
-                    ));
+                let Ok(MemberFn { mut func, tr }) =
+                    self.get_member_fn(&id, &member, &generics, span)
+                else {
+                    return Default::default();
                 };
-                self.resolve_proto(memfn.func.id);
+                self.resolve_proto(func.id);
 
-                let f = self.scopes.get(*memfn.func);
+                let f = self.scopes.get(func.id);
                 let Some(this_param) = f.params.first().filter(|p| p.label == THIS_PARAM) else {
                     return self.error(Error::new(
                         format!("associated function '{member}' cannot be used as a method"),
                         span,
                     ));
                 };
-
-                if !memfn.func.public && !self.can_access_privates(memfn.src_scope) {
-                    return self.error(Error::new(
-                        format!(
-                            "cannot access private method '{member}' of type '{}'",
-                            id.name(&self.scopes)
-                        ),
-                        span,
-                    ));
-                }
 
                 if this_param.ty.is_mut_ptr() {
                     let mut ty = &recv.ty;
@@ -2818,81 +2842,7 @@ impl TypeChecker {
                     }
                 }
 
-                let recv = if !matches!(
-                    recv.ty,
-                    Type::Ptr(_) | Type::MutPtr(_) | Type::DynMutPtr(_) | Type::DynPtr(_)
-                ) {
-                    if matches!(this_param.ty, Type::Ptr(_)) {
-                        CheckedExpr::new(
-                            Type::Ptr(recv.ty.clone().into()),
-                            CheckedExprData::Unary {
-                                op: UnaryOp::Addr,
-                                expr: recv.into(),
-                            },
-                        )
-                    } else {
-                        CheckedExpr::new(
-                            Type::MutPtr(recv.ty.clone().into()),
-                            CheckedExprData::Unary {
-                                op: UnaryOp::AddrMut,
-                                expr: recv.into(),
-                            },
-                        )
-                    }
-                } else {
-                    recv.auto_deref(&this_param.ty)
-                };
-
-                let mut func = GenericFunc::new(
-                    *memfn.func,
-                    self.resolve_type_args(&f.type_params.clone(), &generics, false, span),
-                );
-
-                let mut trait_id = None;
-                match &memfn.recv {
-                    MemberReceiver::TraitImpl(tr) => {
-                        func.ty_args.copy_args(&tr.ty_args);
-                        func.ty_args.insert(self.scopes.get(tr.id).this, id.clone());
-                        trait_id = Some(tr.id);
-                    }
-                    MemberReceiver::Extension(ext) => {
-                        if let Some(etempl) = self.scopes.get(*ext).type_params.first() {
-                            func.ty_args.insert(*etempl, id.clone());
-                        }
-                        if let Some(ty_args) = id.as_user().map(|ut| &ut.ty_args) {
-                            func.ty_args.copy_args(ty_args);
-                        }
-                    }
-                    MemberReceiver::Dyn => {
-                        if let Some(ty_args) = id.as_dyn().map(|ut| &ut.ty_args) {
-                            func.ty_args.copy_args(ty_args);
-                        }
-
-                        if !self.scopes.get(func.id).type_params.is_empty() {
-                            self.error(Error::new(
-                                "cannot call generic functions through a dynamic trait pointer",
-                                span,
-                            ))
-                        }
-                    }
-                    MemberReceiver::Normal => {
-                        if let Some(ty_args) = id.as_user().map(|ut| &ut.ty_args) {
-                            func.ty_args.copy_args(ty_args);
-                        }
-                    }
-                    MemberReceiver::TraitImplInExtension(ext, tr) => {
-                        func.ty_args.copy_args(&tr.ty_args);
-                        func.ty_args.insert(self.scopes.get(tr.id).this, id.clone());
-                        trait_id = Some(tr.id);
-                        if let Some(etempl) = self.scopes.get(*ext).type_params.first() {
-                            func.ty_args.insert(*etempl, id.clone());
-                        }
-                        if let Some(ty_args) = id.as_user().map(|ut| &ut.ty_args) {
-                            func.ty_args.copy_args(ty_args);
-                        }
-                    }
-                }
-
+                let recv = recv.auto_deref(&this_param.ty);
                 let (args, ret) = self.check_fn_args(&mut func, Some(recv), args, target, span);
                 return CheckedExpr::new(
                     ret,
@@ -2900,7 +2850,7 @@ impl TypeChecker {
                         func,
                         inst: id,
                         args,
-                        trait_id,
+                        trait_id: tr,
                         scope: self.current,
                     },
                 );
@@ -3521,7 +3471,13 @@ impl TypeChecker {
         }
     }
 
-    fn get_member_fn(&mut self, ty: &Type, method: &str) -> Option<MemberFn> {
+    fn get_member_fn(
+        &mut self,
+        ty: &Type,
+        method: &str,
+        generics: &[TypeHint],
+        span: Span,
+    ) -> Result<MemberFn, ()> {
         fn search(
             scopes: &Scopes,
             funcs: &[Vis<FunctionId>],
@@ -3535,7 +3491,13 @@ impl TypeChecker {
                 .copied()
         }
 
-        fn search_extensions(this: &mut TypeChecker, ty: &Type, method: &str) -> Option<MemberFn> {
+        fn search_extensions(
+            this: &mut TypeChecker,
+            ty: &Type,
+            method: &str,
+            generics: &[TypeHint],
+            span: Span,
+        ) -> Result<Option<MemberFn>, ()> {
             let ext_ids: Vec<_> = this
                 .scopes
                 .extensions_in_scope_for(ty, None, this.current)
@@ -3543,12 +3505,16 @@ impl TypeChecker {
                 .collect();
 
             for id in ext_ids {
+                let src_scope = this.scopes.get(id).scope;
                 if let Some(func) = search(&this.scopes, &this.scopes.get(id).fns, method) {
-                    return Some(MemberFn {
-                        recv: MemberReceiver::Extension(id),
-                        func,
-                        src_scope: this.scopes.get(id).scope,
-                    });
+                    let mut func = make_func(this, func, ty, generics, src_scope, span)?;
+                    if let Some(id) = this.scopes.get(id).type_params.first() {
+                        func.ty_args.insert(*id, ty.clone());
+                    }
+                    if let Some(ty_args) = ty.as_user().map(|ut| &ut.ty_args) {
+                        func.ty_args.copy_args(ty_args);
+                    }
+                    return Ok(Some(MemberFn { func, tr: None }));
                 }
 
                 this.resolve_impls_recursive(id);
@@ -3559,37 +3525,79 @@ impl TypeChecker {
                     .iter()
                     .flat_map(|ut| ut.as_checked())
                 {
-                    for imp in this.scopes.get_trait_impls(tr.id) {
+                    let tr_id = tr.id;
+                    for imp in this.scopes.get_trait_impls(tr_id) {
                         if let Some(func) = search(&this.scopes, &this.scopes.get(imp).fns, method)
                         {
-                            return Some(MemberFn {
-                                recv: MemberReceiver::TraitImplInExtension(
-                                    id,
-                                    GenericTrait::new(imp, tr.ty_args.clone()),
-                                ),
-                                func,
-                                src_scope: this.scopes.get(id).scope,
-                            });
+                            let ty_args = tr.ty_args.clone();
+                            let mut func = make_func(this, func, ty, generics, src_scope, span)?;
+                            func.ty_args.copy_args(&ty_args);
+                            func.ty_args.insert(this.scopes.get(tr_id).this, ty.clone());
+                            if let Some(ty_args) = ty.as_user().map(|ut| &ut.ty_args) {
+                                func.ty_args.copy_args(ty_args);
+                            }
+                            if let Some(id) = this.scopes.get(id).type_params.first() {
+                                func.ty_args.insert(*id, ty.clone());
+                                return Ok(Some(MemberFn {
+                                    func,
+                                    tr: Some(imp),
+                                }));
+                            }
+
+                            return Ok(Some(MemberFn { func, tr: None }));
                         }
                     }
                 }
             }
 
-            None
+            Ok(None)
+        }
+
+        fn make_func(
+            this: &mut TypeChecker,
+            f: Vis<FunctionId>,
+            ty: &Type,
+            generics: &[TypeHint],
+            scope: ScopeId,
+            span: Span,
+        ) -> Result<GenericFunc, ()> {
+            let func = GenericFunc::new(
+                f.id,
+                this.resolve_type_args(
+                    &this.scopes.get(f.id).type_params.clone(),
+                    generics,
+                    false,
+                    span,
+                ),
+            );
+            if !f.public && !this.can_access_privates(scope) {
+                this.diag.error(Error::new(
+                    format!(
+                        "cannot access private method '{}' of type '{}'",
+                        this.scopes.get(f.id).name.data,
+                        ty.name(&this.scopes)
+                    ),
+                    span,
+                ));
+                return Err(());
+            }
+
+            Ok(func)
         }
 
         if let Type::User(ut) = ty {
             let src_scope = self.scopes.get(ut.id).scope;
             if let Some(func) = search(&self.scopes, &self.scopes.get(ut.id).fns, method) {
-                return Some(MemberFn {
-                    recv: MemberReceiver::Normal,
-                    func,
-                    src_scope,
-                });
+                let mut func = make_func(self, func, ty, generics, src_scope, span)?;
+                if let Some(ty_args) = ty.as_user().map(|ut| &ut.ty_args) {
+                    func.ty_args.copy_args(ty_args);
+                }
+
+                return Ok(MemberFn { func, tr: None });
             }
 
-            if let Some(res) = search_extensions(self, ty, method) {
-                return Some(res);
+            if let Some(res) = search_extensions(self, ty, method, generics, span)? {
+                return Ok(res);
             }
 
             self.resolve_impls_recursive(ut.id);
@@ -3600,45 +3608,58 @@ impl TypeChecker {
                 .iter()
                 .flat_map(|ut| ut.as_checked())
             {
-                for imp in self.scopes.get_trait_impls(tr.id) {
+                let tr_id = tr.id;
+                for imp in self.scopes.get_trait_impls(tr_id) {
                     if let Some(func) = search(&self.scopes, &self.scopes.get(imp).fns, method) {
-                        return Some(MemberFn {
-                            recv: MemberReceiver::TraitImpl(GenericTrait::new(
-                                imp,
-                                tr.ty_args.clone(),
-                            )),
+                        let ty_args = tr.ty_args.clone();
+                        let mut func = make_func(self, func, ty, generics, src_scope, span)?;
+                        func.ty_args.copy_args(&ty_args);
+                        func.ty_args.insert(self.scopes.get(tr_id).this, ty.clone());
+                        return Ok(MemberFn {
                             func,
-                            src_scope,
+                            tr: self.scopes.get(ut.id).data.is_template().then_some(imp),
                         });
                     }
                 }
             }
 
-            return None;
+            self.diag
+                .error(Error::no_method(&ty.name(&self.scopes), method, span));
+            return Err(());
         } else if let Some(tr) = ty.as_dyn() {
             let data = self.scopes.get(tr.id);
-            if let Some(func) = search(&self.scopes, &data.fns, method) {
-                return Some(MemberFn {
-                    recv: MemberReceiver::Dyn,
-                    func,
-                    src_scope: data.scope,
-                });
-            }
-
-            for (tr, _) in data.impls.iter().flat_map(|ut| ut.as_checked()) {
-                for imp in self.scopes.get_trait_impls(tr.id) {
-                    if let Some(func) = search(&self.scopes, &self.scopes.get(imp).fns, method) {
-                        return Some(MemberFn {
-                            recv: MemberReceiver::Dyn,
-                            func,
-                            src_scope: self.scopes.get(tr.id).scope,
-                        });
+            let func = search(&self.scopes, &data.fns, method).or_else(|| {
+                for (tr, _) in data.impls.iter().flat_map(|ut| ut.as_checked()) {
+                    for imp in self.scopes.get_trait_impls(tr.id) {
+                        if let Some(func) = search(&self.scopes, &self.scopes.get(imp).fns, method)
+                        {
+                            return Some(func);
+                        }
                     }
                 }
+                None
+            });
+
+            if let Some(func) = func {
+                let mut func = make_func(self, func, ty, generics, data.scope, span)?;
+                func.ty_args.copy_args(&tr.ty_args);
+                if !self.scopes.get(func.id).type_params.is_empty() {
+                    self.error(Error::new(
+                        "cannot call generic functions through a dynamic trait pointer",
+                        span,
+                    ))
+                }
+                return Ok(MemberFn { func, tr: None });
             }
         }
 
-        search_extensions(self, ty, method)
+        if let Some(result) = search_extensions(self, ty, method, generics, span)? {
+            Ok(result)
+        } else {
+            self.diag
+                .error(Error::no_method(&ty.name(&self.scopes), method, span));
+            Err(())
+        }
     }
 
     fn get_int_type_and_val(

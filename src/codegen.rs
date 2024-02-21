@@ -624,7 +624,7 @@ impl Buffer {
             }
             Type::FnPtr(f) => self.emit_fnptr_name(scopes, f, min),
             Type::User(ut) => {
-                self.emit_type_name(scopes, ut, min);
+                self.emit_type_name_ex(scopes, ut, min, true);
             }
             Type::Array(data) => self.emit_array_struct_name(scopes, &data.0, data.1, min),
             Type::Unknown => panic!("ICE: TypeId::Unknown in emit_generic_mangled_name"),
@@ -644,27 +644,41 @@ impl Buffer {
     }
 
     fn emit_type_name(&mut self, scopes: &Scopes, ut: &GenericUserType, min: bool) {
+        self.emit_type_name_ex(scopes, ut, min, false)
+    }
+
+    fn emit_type_name_ex(
+        &mut self,
+        scopes: &Scopes,
+        ut: &GenericUserType,
+        min: bool,
+        generic: bool,
+    ) {
         let ty = scopes.get(ut.id);
         if ty.data.is_template() && !cfg!(debug_assertions) {
             panic!("ICE: Template type in emit_type_name")
         }
 
-        if let Some(name) = scopes
-            .get(ut.id)
-            .attrs
-            .iter()
-            .find(|attr| attr.name.data == ATTR_LINKNAME && !attr.props.is_empty())
-            .map(|attr| &attr.props[0].name.data)
-        {
-            self.emit(name);
-        } else if scopes
-            .get(ut.id)
-            .attrs
-            .iter()
-            .any(|attr| attr.name.data == ATTR_NOGEN)
-        {
-            self.emit(&scopes.get(ut.id).name.data);
-        } else if min {
+        if !generic {
+            if let Some(name) = scopes
+                .get(ut.id)
+                .attrs
+                .iter()
+                .find(|attr| attr.name.data == ATTR_LINKNAME && !attr.props.is_empty())
+                .map(|attr| &attr.props[0].name.data)
+            {
+                return self.emit(name);
+            } else if scopes
+                .get(ut.id)
+                .attrs
+                .iter()
+                .any(|attr| attr.name.data == ATTR_NOGEN)
+            {
+                return self.emit(&scopes.get(ut.id).name.data);
+            }
+        }
+
+        if min {
             self.emit(format!("t{}", ut.id));
             for ty in ut.ty_args.values() {
                 self.emit_generic_mangled_name(scopes, ty, min);

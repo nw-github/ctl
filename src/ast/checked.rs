@@ -336,31 +336,50 @@ impl CheckedExpr {
         }
     }
 
-    pub fn auto_deref(self, mut target: &Type) -> CheckedExpr {
-        let mut indirection = 0;
-        while let Type::Ptr(inner) | Type::MutPtr(inner) = target {
-            target = inner;
-            indirection += 1;
+    pub fn auto_deref(self, target: &Type) -> CheckedExpr {
+        let mut needed = 0;
+        let mut current = target;
+        while let Type::Ptr(inner) | Type::MutPtr(inner) = current {
+            current = inner;
+            needed += 1;
         }
 
         let mut ty = &self.ty;
-        let mut my_indirection = 0;
+        let mut indirection = 0;
         while let Type::Ptr(inner) | Type::MutPtr(inner) = ty {
             ty = inner;
-            my_indirection += 1;
+            indirection += 1;
         }
 
         if let Type::DynMutPtr(_) | Type::DynPtr(_) = ty {
-            my_indirection += 1;
+            indirection += 1;
         }
 
-        if my_indirection != indirection {
-            CheckedExpr::new(
+        match indirection.cmp(&needed) {
+            std::cmp::Ordering::Less => {
+                if matches!(target, Type::Ptr(_)) {
+                    CheckedExpr::new(
+                        Type::Ptr(self.ty.clone().into()),
+                        CheckedExprData::Unary {
+                            op: UnaryOp::Addr,
+                            expr: self.into(),
+                        },
+                    )
+                } else {
+                    CheckedExpr::new(
+                        Type::MutPtr(self.ty.clone().into()),
+                        CheckedExprData::Unary {
+                            op: UnaryOp::AddrMut,
+                            expr: self.into(),
+                        },
+                    )
+                }
+            }
+            std::cmp::Ordering::Equal => self,
+            std::cmp::Ordering::Greater => CheckedExpr::new(
                 ty.clone(),
-                CheckedExprData::AutoDeref(self.into(), my_indirection - indirection),
-            )
-        } else {
-            self
+                CheckedExprData::AutoDeref(self.into(), indirection - needed),
+            ),
         }
     }
 

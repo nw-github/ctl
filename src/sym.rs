@@ -163,6 +163,7 @@ pub struct Function {
     pub is_async: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
+    pub has_body: bool,
     pub type_params: Vec<UserTypeId>,
     pub params: Vec<CheckedParam>,
     pub ret: Type,

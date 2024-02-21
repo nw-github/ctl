@@ -4,4 +4,4 @@ clean:
 
 code:
     cd ide/code && just yaml
-    cd ide/code && rsync -av . ~/.vscode-oss/extensions/ctl --exclude node_modules --exclude .vscode
+    cd ide/code && rsync -av . ~/.vscode-server/extensions/ctl --exclude node_modules --exclude .vscode
