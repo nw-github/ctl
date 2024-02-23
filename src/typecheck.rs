@@ -3531,11 +3531,14 @@ impl TypeChecker {
                         {
                             let ty_args = tr.ty_args.clone();
                             let mut func = make_func(this, func, ty, generics, src_scope, span)?;
-                            func.ty_args.copy_args(&ty_args);
-                            func.ty_args.insert(this.scopes.get(tr_id).this, ty.clone());
-                            if let Some(ty_args) = ty.as_user().map(|ut| &ut.ty_args) {
-                                func.ty_args.copy_args(ty_args);
+                            if let Some(ut_ty_args) = ty.as_user().map(|ut| &ut.ty_args) {
+                                func.ty_args.copy_args(ut_ty_args);
+                                func.ty_args.copy_args_with(&ty_args, ut_ty_args);
+                            } else {
+                                func.ty_args.copy_args(&ty_args);
                             }
+                            func.ty_args.insert(this.scopes.get(tr_id).this, ty.clone());
+                            
                             if let Some(id) = this.scopes.get(id).type_params.first() {
                                 func.ty_args.insert(*id, ty.clone());
                                 return Ok(Some(MemberFn {
@@ -3613,7 +3616,7 @@ impl TypeChecker {
                     if let Some(func) = search(&self.scopes, &self.scopes.get(imp).fns, method) {
                         let ty_args = tr.ty_args.clone();
                         let mut func = make_func(self, func, ty, generics, src_scope, span)?;
-                        func.ty_args.copy_args(&ty_args);
+                        func.ty_args.copy_args_with(&ty_args, &ut.ty_args);
                         func.ty_args.insert(self.scopes.get(tr_id).this, ty.clone());
                         return Ok(MemberFn {
                             func,

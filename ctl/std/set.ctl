@@ -1,16 +1,17 @@
 use std::hash::Hash;
 use std::ops::Eq;
+use std::map::Map;
 
 #(lang(set))
 pub struct Set<T: Hash + Eq<T>> {
-    inner: [T: void],
+    inner: Map<T, void>,
 
     pub fn new(): Set<T> {
-        Set(inner: [:])
+        Set(inner: Map::new())
     }
 
     pub fn with_capacity(cap: uint): Set<T> {
-        Set(inner: std::map::Map::with_capacity(cap:))
+        Set(inner: Map::with_capacity(cap:))
     }
 
     pub fn from_iter<I: Iterator<T>>(iter: I): Set<T> {

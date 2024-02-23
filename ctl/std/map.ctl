@@ -158,11 +158,9 @@ pub struct Iter<K, V> {
 
     impl Iterator<(*K, *V)> {
         fn next(mut this): ?(*K, *V) {
-            mut pos = 0u;
-            for bucket in this.buckets.iter() {
-                pos++;
+            for (i, bucket) in this.buckets.iter().enumerate() {
                 if bucket is Bucket::Some(key, val) {
-                    this.buckets = this.buckets.subspan(pos..);
+                    this.buckets = this.buckets.subspan(i + 1..);
                     break (key, val);
                 }
             }
@@ -175,11 +173,9 @@ pub struct IterMut<K, V> {
 
     impl Iterator<(*K, *mut V)> {
         fn next(mut this): ?(*K, *mut V) {
-            mut pos = 0u;
-            for bucket in this.buckets.iter_mut() {
-                pos++;
+            for (i, bucket) in this.buckets.iter_mut().enumerate() {
                 if bucket is Bucket::Some(key, val) {
-                    this.buckets = this.buckets.subspan(pos..);
+                    this.buckets = this.buckets.subspan(i + 1..);
                     break (key, val);
                 }
             }

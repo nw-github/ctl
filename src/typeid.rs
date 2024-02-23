@@ -23,6 +23,10 @@ impl TypeArgs {
     pub fn copy_args(&mut self, rhs: &TypeArgs) {
         self.extend(rhs.iter().map(|(x, y)| (*x, y.clone())));
     }
+
+    pub fn copy_args_with(&mut self, rhs: &TypeArgs, map: &TypeArgs) {
+        self.extend(rhs.iter().map(|(x, y)| (*x, y.with_templates(map))));
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, Constructor)]
