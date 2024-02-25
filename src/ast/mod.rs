@@ -1,5 +1,5 @@
 use crate::lexer::{Located, Token};
-use derive_more::Display;
+use derive_more::{Deref, Display};
 
 pub mod checked;
 pub mod declared;
@@ -11,7 +11,30 @@ pub struct Attribute {
     pub props: Vec<Attribute>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+#[derive(Default, Debug, Clone, Deref)]
+pub struct Attributes {
+    attrs: Vec<Attribute>,
+}
+
+impl Attributes {
+    pub fn new(attrs: Vec<Attribute>) -> Self {
+        Self { attrs }
+    }
+
+    pub fn val(&self, name: &str) -> Option<&str> {
+        self.attrs
+            .iter()
+            .find(|attr| attr.name.data == name)
+            .and_then(|attr| attr.props.first())
+            .map(|attr| &attr.name.data[..])
+    }
+
+    pub fn has(&self, name: &str) -> bool {
+        self.attrs.iter().any(|attr| attr.name.data == name)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, Hash)]
 pub enum BinaryOp {
     #[display(fmt = "+")]
     Add,

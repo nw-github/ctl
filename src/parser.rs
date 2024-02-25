@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{
-    ast::{parsed::*, Attribute, UnaryOp},
+    ast::{parsed::*, Attribute, Attributes, UnaryOp},
     error::{Diagnostics, Error, FileId},
     lexer::{Lexer, Located, Precedence, Span, Token},
     THIS_PARAM, THIS_TYPE,
@@ -54,19 +54,14 @@ impl<'a, 'b> Parser<'a, 'b> {
                     crate::derive_module_name(this.diag.file_path(file)),
                 ),
             },
-            attrs: Vec::new(),
+            attrs: Default::default(),
         }
     }
 
     //
 
-    fn try_item(&mut self) -> Result<Stmt, (Option<Located<Token<'a>>>, Vec<Attribute>)> {
-        let mut attrs = vec![];
-        while let Some(token) = self.next_if_kind(Token::HashLParen) {
-            let attr = self.csv_one(Token::RParen, token.span, Self::attribute);
-            attrs.extend(attr.data);
-        }
-
+    fn try_item(&mut self) -> Result<Stmt, (Option<Located<Token<'a>>>, Attributes)> {
+        let attrs = self.attributes();
         let public = self.next_if_kind(Token::Pub);
         let is_unsafe = self.next_if_kind(Token::Unsafe);
         let is_import = self.next_if_kind(Token::Import);
@@ -78,22 +73,30 @@ impl<'a, 'b> Parser<'a, 'b> {
             ));
         }
 
-        if let Some(func) = self.try_function(FnConfig {
-            allow_method: false,
-            linkage: match (&is_export, &is_import) {
-                (Some(_), None) => Linkage::Export,
-                (None, Some(_)) => Linkage::Import,
-                _ => Linkage::Internal,
+        let attrs = match self.try_function(
+            FnConfig {
+                allow_method: false,
+                linkage: match (&is_export, &is_import) {
+                    (Some(_), None) => Linkage::Export,
+                    (None, Some(_)) => Linkage::Import,
+                    _ => Linkage::Internal,
+                },
+                is_public: public.is_some(),
+                is_unsafe: is_unsafe.is_some(),
+                body: Some(is_import.is_none()),
             },
-            is_public: public.is_some(),
-            is_unsafe: is_unsafe.is_some(),
-            body: Some(is_import.is_none()),
-        }) {
-            Ok(Stmt {
-                attrs,
-                data: StmtData::Fn(func.data),
-            })
-        } else if let Some(token) = self.next_if_kind(Token::Struct) {
+            attrs,
+        ) {
+            Ok(func) => {
+                return Ok(Stmt {
+                    attrs: Default::default(),
+                    data: StmtData::Fn(func.data),
+                })
+            }
+            Err(attrs) => attrs,
+        };
+
+        if let Some(token) = self.next_if_kind(Token::Struct) {
             if let Some(token) = is_unsafe {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
@@ -1193,7 +1196,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
             Token::LBrace => {
                 let span = self.next().span;
-                self.csv_one(Token::RBrace, span, |this| {
+                self.csv(Vec::new(), Token::RBrace, span, |this| {
                     if let Some(token) = this.next_if_kind(Token::Ellipses) {
                         let pattern = if this.next_if_kind(Token::Mut).is_some() {
                             let ident = this.expect_id_l("expected name");
@@ -1271,6 +1274,15 @@ impl<'a, 'b> Parser<'a, 'b> {
                 })
                 .unwrap_or_default(),
         }
+    }
+
+    fn attributes(&mut self) -> Attributes {
+        let mut attrs = vec![];
+        while let Some(token) = self.next_if_kind(Token::HashLParen) {
+            let attr = self.csv_one(Token::RParen, token.span, Self::attribute);
+            attrs.extend(attr.data);
+        }
+        Attributes::new(attrs)
     }
 
     //
@@ -1435,10 +1447,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                 body: Some(true),
             };
             if config.is_unsafe {
-                if let Ok(func) = this.expect_fn(config) {
+                if let Ok(func) = this.expect_fn(config, Default::default()) {
                     functions.push(func.data);
                 }
-            } else if let Some(func) = this.try_function(config) {
+            } else if let Ok(func) = this.try_function(config, Default::default()) {
                 functions.push(func.data);
             } else if let Some(token) = this.next_if_kind(Token::Impl) {
                 if let Some(token) = public {
@@ -1493,10 +1505,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                 body: Some(true),
             };
             if config.is_public || config.is_unsafe {
-                if let Ok(func) = this.expect_fn(config) {
+                if let Ok(func) = this.expect_fn(config, Default::default()) {
                     functions.push(func.data);
                 }
-            } else if let Some(func) = this.try_function(config) {
+            } else if let Ok(func) = this.try_function(config, Default::default()) {
                 functions.push(func.data);
             } else if this.next_if_kind(Token::Shared).is_some() {
                 // warn if pub was specified that it is useless
@@ -1584,13 +1596,16 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut functions = Vec::new();
         self.next_until(Token::RCurly, span, |this| {
             let is_unsafe = this.next_if_kind(Token::Unsafe).is_some();
-            if let Ok(proto) = this.expect_fn(FnConfig {
-                body: None,
-                allow_method: true,
-                linkage: Linkage::Internal,
-                is_public: true,
-                is_unsafe,
-            }) {
+            if let Ok(proto) = this.expect_fn(
+                FnConfig {
+                    body: None,
+                    allow_method: true,
+                    linkage: Linkage::Internal,
+                    is_public: true,
+                    is_unsafe,
+                },
+                Default::default(),
+            ) {
                 functions.push(proto.data);
             }
         });
@@ -1626,7 +1641,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     is_public: this.next_if_kind(Token::Pub).is_some(),
                     is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
                 };
-                if let Ok(func) = this.expect_fn(config) {
+                if let Ok(func) = this.expect_fn(config, Default::default()) {
                     functions.push(func.data);
                 }
             }
@@ -1649,18 +1664,22 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         let mut functions = Vec::new();
         self.next_until(Token::RCurly, span, |this| {
+            let attrs = this.attributes();
             if let Some(token) = this.next_if_kind(Token::Pub) {
                 this.error_no_sync(Error::not_valid_here(&token));
             }
 
             let is_unsafe = this.next_if_kind(Token::Unsafe).is_some();
-            if let Ok(func) = this.expect_fn(FnConfig {
-                allow_method: true,
-                is_public: true,
-                body: Some(true),
-                linkage: Linkage::Internal,
-                is_unsafe,
-            }) {
+            if let Ok(func) = this.expect_fn(
+                FnConfig {
+                    allow_method: true,
+                    is_public: true,
+                    body: Some(true),
+                    linkage: Linkage::Internal,
+                    is_unsafe,
+                },
+                attrs,
+            ) {
                 functions.push(func.data);
             }
         });
@@ -1681,14 +1700,15 @@ impl<'a, 'b> Parser<'a, 'b> {
             linkage,
             body,
         }: FnConfig,
-    ) -> Option<Located<Fn>> {
+        attrs: Attributes,
+    ) -> Result<Located<Fn>, Attributes> {
         let (span, is_async) = if let Some(token) = self.next_if_kind(Token::Fn) {
             (token.span, false)
         } else if let Some(token) = self.next_if_kind(Token::Async) {
             self.expect_kind(Token::Fn);
             (token.span, true)
         } else {
-            return None;
+            return Err(attrs);
         };
 
         let name = self.expect_id_l("expected name");
@@ -1789,7 +1809,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
         };
 
-        Some(Located::new(
+        Ok(Located::new(
             span,
             Fn {
                 name,
@@ -1802,15 +1822,17 @@ impl<'a, 'b> Parser<'a, 'b> {
                 params,
                 ret,
                 body,
+                attrs,
             },
         ))
     }
 
-    fn expect_fn(&mut self, params: FnConfig) -> Result<Located<Fn>, ()> {
+    fn expect_fn(&mut self, params: FnConfig, mut attrs: Attributes) -> Result<Located<Fn>, ()> {
         loop {
-            if let Some(proto) = self.try_function(params) {
-                return Ok(proto);
-            }
+            match self.try_function(params, attrs) {
+                Ok(proto) => return Ok(proto),
+                Err(a) => attrs = a,
+            };
 
             loop {
                 let token = self.peek();
@@ -1947,7 +1969,8 @@ impl<'a, 'b> Parser<'a, 'b> {
     //
 
     fn peek(&mut self) -> &Located<Token<'a>> {
-        self.peek.get_or_insert_with(|| self.lexer.next_skip_comments(self.diag))
+        self.peek
+            .get_or_insert_with(|| self.lexer.next_skip_comments(self.diag))
     }
 
     fn next(&mut self) -> Located<Token<'a>> {

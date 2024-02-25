@@ -1,11 +1,14 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use indexmap::{map::Entry, IndexMap};
 use num_bigint::BigInt;
 use num_traits::Num;
 
 use crate::{
-    ast::{checked::*, declared::*, parsed::*, Attribute, BinaryOp, UnaryOp},
+    ast::{checked::*, declared::*, parsed::*, Attributes, BinaryOp, UnaryOp},
     error::{Diagnostics, Error},
     lexer::{Located, Span},
     sym::*,
@@ -261,11 +264,11 @@ impl TypeChecker {
         &mut self,
         autouse: &mut Vec<ScopeId>,
         base: Struct,
-        attrs: Vec<Attribute>,
+        attrs: Attributes,
     ) -> DeclaredStmt {
         let name = base.name.clone();
         let public = base.public;
-        let lang_item = self.get_lang_item(&attrs).map(String::from);
+        let lang_item = attrs.val("lang").map(String::from);
         let (ut, init, fns, impls) = self.enter(ScopeKind::None, |this| {
             let init = this.enter(ScopeKind::None, |this| {
                 this.declare_fn(
@@ -293,8 +296,8 @@ impl TypeChecker {
                             .collect(),
                         ret: Self::typehint_for_struct(&base.name, &base.type_params),
                         body: None,
+                        attrs: Default::default(),
                     },
-                    vec![],
                 )
             });
             let mut members = IndexMap::with_capacity(base.members.len());
@@ -316,7 +319,7 @@ impl TypeChecker {
             let fns: Vec<_> = base
                 .functions
                 .into_iter()
-                .map(|f| this.declare_fn(autouse, f, vec![]))
+                .map(|f| this.declare_fn(autouse, f))
                 .collect();
             let ut = UserType {
                 members,
@@ -370,9 +373,9 @@ impl TypeChecker {
         tag: Option<Located<Path>>,
         base: Struct,
         variants: Vec<Variant>,
-        attrs: Vec<Attribute>,
+        attrs: Attributes,
     ) -> DeclaredStmt {
-        let lang_item = self.get_lang_item(&attrs).map(String::from);
+        let lang_item = attrs.val("lang").map(String::from);
         let (ut, impls, fns, member_cons_len) = self.enter(ScopeKind::None, |this| {
             let mut rvariants = IndexMap::with_capacity(base.members.len());
             let mut members = IndexMap::with_capacity(base.members.len());
@@ -482,15 +485,15 @@ impl TypeChecker {
                         params,
                         ret: ret.clone(),
                         body: None,
+                        attrs: Default::default(),
                     },
-                    vec![],
                 ));
             }
             let member_cons_len = fns.len();
             fns.extend(
                 base.functions
                     .into_iter()
-                    .map(|f| this.declare_fn(autouse, f, vec![])),
+                    .map(|f| this.declare_fn(autouse, f)),
             );
 
             let ut = UserType {
@@ -532,9 +535,9 @@ impl TypeChecker {
         &mut self,
         autouse: &mut Vec<ScopeId>,
         base: Struct,
-        attrs: Vec<Attribute>,
+        attrs: Attributes,
     ) -> DeclaredStmt {
-        let lang_item = self.get_lang_item(&attrs).map(String::from);
+        let lang_item = attrs.val("lang").map(String::from);
         let name = base.name.clone();
         let public = base.public;
         let (ut, fns, impls) = self.enter(ScopeKind::None, |this| {
@@ -557,7 +560,7 @@ impl TypeChecker {
             let fns: Vec<_> = base
                 .functions
                 .into_iter()
-                .map(|f| this.declare_fn(autouse, f, vec![]))
+                .map(|f| this.declare_fn(autouse, f))
                 .collect();
             let ut = UserType {
                 members,
@@ -646,7 +649,7 @@ impl TypeChecker {
                 functions,
                 is_unsafe: _,
             } => {
-                let lang_item = self.get_lang_item(&stmt.attrs).map(String::from);
+                let lang_item = stmt.attrs.val("lang").map(String::from);
                 let (tr, fns) = self.enter(ScopeKind::None, |this| {
                     let impls: Vec<_> = impls
                         .into_iter()
@@ -663,8 +666,8 @@ impl TypeChecker {
                             data: UserTypeData::Template,
                             type_params: Vec::new(),
                             impls: impls.clone(),
-                            attrs: vec![],
                             fns: vec![],
+                            attrs: Default::default(),
                             members: Default::default(),
                         },
                         false,
@@ -672,7 +675,7 @@ impl TypeChecker {
                     );
                     let fns: Vec<_> = functions
                         .into_iter()
-                        .map(|f| this.declare_fn(autouse, f, vec![]))
+                        .map(|f| this.declare_fn(autouse, f))
                         .collect();
                     let tr = Trait {
                         name,
@@ -713,7 +716,7 @@ impl TypeChecker {
                     let (impls, impl_blocks) = this.declare_impl_blocks(autouse, impls);
                     let fns: Vec<_> = functions
                         .into_iter()
-                        .map(|f| this.declare_fn(autouse, f, vec![]))
+                        .map(|f| this.declare_fn(autouse, f))
                         .collect();
                     let ext = Extension {
                         name,
@@ -740,7 +743,7 @@ impl TypeChecker {
                     fns,
                 }
             }
-            StmtData::Fn(f) => DeclaredStmt::Fn(self.declare_fn(autouse, f, stmt.attrs)),
+            StmtData::Fn(f) => DeclaredStmt::Fn(self.declare_fn(autouse, f)),
             StmtData::Static {
                 public,
                 name,
@@ -773,12 +776,7 @@ impl TypeChecker {
         }
     }
 
-    fn declare_fn(
-        &mut self,
-        autouse: &mut Vec<ScopeId>,
-        f: Fn,
-        attrs: Vec<Attribute>,
-    ) -> DeclaredFn {
+    fn declare_fn(&mut self, autouse: &mut Vec<ScopeId>, f: Fn) -> DeclaredFn {
         let span = f.name.span;
         if f.variadic && f.linkage != Linkage::Import {
             self.error(Error::new("only import functions may be variadic", span))
@@ -793,7 +791,7 @@ impl TypeChecker {
 
         let id = self.insert::<FunctionId>(
             Function {
-                attrs,
+                attrs: f.attrs,
                 name: f.name,
                 linkage: f.linkage,
                 is_async: f.is_async,
@@ -897,7 +895,7 @@ impl TypeChecker {
                                 block: None,
                             })
                             .collect(),
-                        attrs: vec![],
+                        attrs: Default::default(),
                         fns: vec![],
                         members: Default::default(),
                     },
@@ -927,7 +925,7 @@ impl TypeChecker {
                 scope: this.current,
                 fns: functions
                     .into_iter()
-                    .map(|f| this.declare_fn(autouse, f, vec![]))
+                    .map(|f| this.declare_fn(autouse, f))
                     .collect(),
             });
             impls.push(TraitImpl::Unchecked {
@@ -962,18 +960,6 @@ impl TypeChecker {
                 )],
             ),
         ))
-    }
-
-    fn get_lang_item<'a>(&mut self, attrs: &'a [Attribute]) -> Option<&'a str> {
-        if let Some(attr) = attrs.iter().find(|attr| attr.name.data == "lang") {
-            let Some(name) = attr.props.first() else {
-                return self.error(Error::new("language item must have name", attr.name.span));
-            };
-
-            return Some(&name.name.data);
-        }
-
-        None
     }
 }
 
@@ -1178,8 +1164,8 @@ impl TypeChecker {
             if a != &b {
                 Err(format!(
                     "expected '{}', got '{}'",
+                    b.name(scopes),
                     a.name(scopes),
-                    b.name(scopes)
                 ))
             } else {
                 Ok(())
@@ -1411,31 +1397,56 @@ impl TypeChecker {
         )
     }
 
-    fn check_eq(&mut self, lhs: CheckedExpr, rhs: Expr, span: Span) -> CheckedExpr {
-        let Some(eq_id) = self.scopes.lang_traits.get("op_eq").copied() else {
-            return self.error(Error::no_lang_item("Eq", span));
-        };
+    fn check_user_op(
+        &mut self,
+        lhs: CheckedExpr,
+        rhs: Expr,
+        op: BinaryOp,
+        span: Span,
+    ) -> CheckedExpr {
+        let op_traits: HashMap<BinaryOp, (&str, &str)> = [
+            (BinaryOp::Equal, ("op_eq", "eq")),
+            (BinaryOp::NotEqual, ("op_eq", "ne")),
+            (BinaryOp::Add, ("op_add", "add")),
+            (BinaryOp::Sub, ("op_sub", "sub")),
+            (BinaryOp::Mul, ("op_mul", "mul")),
+            (BinaryOp::Div, ("op_div", "div")),
+            (BinaryOp::Rem, ("op_rem", "rem")),
+        ]
+        .into();
 
-        let stripped = lhs.ty.strip_references();
-        if self.get_trait_impl(stripped, eq_id).is_none() {
-            return self.error(Error::doesnt_implement(
-                &stripped.name(&self.scopes),
-                "Eq",
+        let Some(op) = op_traits.get(&op) else {
+            return self.error(Error::new(
+                format!("operator '{op}' cannot currently be overridden for user types"),
                 span,
             ));
         };
+
+        let Some(tr_id) = self.scopes.lang_traits.get(op.0).copied() else {
+            return self.error(Error::no_lang_item(op.0, span));
+        };
+
+        let stripped = lhs.ty.strip_references();
+        if self.get_trait_impl(stripped, tr_id).is_none() {
+            return self.error(Error::doesnt_implement(
+                &stripped.name(&self.scopes),
+                &self.scopes.get(tr_id).name.data,
+                span,
+            ));
+        }
         let rhs_span = rhs.span;
         let rhs = self.check_expr(rhs, None);
-        let Ok(MemberFn { func, tr }) = self.get_member_fn(stripped, "eq", &[], span) else {
+        let Ok(MemberFn { func, tr }) = self.get_member_fn(stripped, op.1, &[], span) else {
             return Default::default();
         };
 
-        let [p0, p1, ..] = &self.scopes.get(func.id).params[..] else {
+        let f = self.scopes.get(func.id);
+        let [p0, p1, ..] = &f.params[..] else {
             unreachable!()
         };
         let p1_ty = p1.ty.with_templates(&func.ty_args);
         CheckedExpr::new(
-            Type::Bool,
+            f.ret.with_templates(&func.ty_args),
             CheckedExprData::MemberCall {
                 func,
                 inst: stripped.clone(),
@@ -1467,15 +1478,7 @@ impl TypeChecker {
                 }
 
                 if !left.ty.supports_binop(&self.scopes, op) {
-                    if op == BinaryOp::Equal {
-                        return self.check_eq(left, *right, span);
-                    }
-
-                    return self.error(Error::invalid_operator(
-                        op,
-                        &left.ty.name(&self.scopes),
-                        span,
-                    ));
+                    return self.check_user_op(left, *right, op, span);
                 }
 
                 let right = self.type_check(*right, &left.ty);
@@ -1943,6 +1946,7 @@ impl TypeChecker {
                     if out_type.is_never() {
                         let expr = self.check_expr_inner(*expr, None);
                         out_type = expr.ty.clone();
+                        if_branch = if_branch.try_coerce_to(&self.scopes, self.current, &expr.ty);
                         Some(expr)
                     } else {
                         let span = expr.span;
@@ -3381,10 +3385,6 @@ impl TypeChecker {
     }
 
     fn implements_trait_and_resolve(&mut self, ty: &Type, bound: &GenericTrait) -> bool {
-        if ty.is_unknown() {
-            return true;
-        }
-
         fn check(this: Option<&GenericUserType>, tr: &TraitImpl, bound: &GenericTrait) -> bool {
             if let TraitImpl::Checked(tr, _) = tr {
                 let mut tr = tr.clone();
@@ -3393,6 +3393,10 @@ impl TypeChecker {
             } else {
                 false
             }
+        }
+
+        if ty.is_unknown() || self.scopes.has_builtin_impl(ty, bound) {
+            return true;
         }
 
         let has_impl = ty.as_user().is_some_and(|this| {
@@ -3538,7 +3542,7 @@ impl TypeChecker {
                                 func.ty_args.copy_args(&ty_args);
                             }
                             func.ty_args.insert(this.scopes.get(tr_id).this, ty.clone());
-                            
+
                             if let Some(id) = this.scopes.get(id).type_params.first() {
                                 func.ty_args.insert(*id, ty.clone());
                                 return Ok(Some(MemberFn {

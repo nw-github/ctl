@@ -3,7 +3,7 @@ use crate::{
     THIS_TYPE,
 };
 
-use super::{Attribute, BinaryOp, UnaryOp};
+use super::{Attributes, BinaryOp, UnaryOp};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Linkage {
@@ -47,7 +47,7 @@ pub struct UsePath {
 #[derive(Debug, Clone)]
 pub struct Stmt {
     pub data: StmtData,
-    pub attrs: Vec<Attribute>,
+    pub attrs: Attributes,
 }
 
 #[derive(Debug, Clone)]
@@ -412,6 +412,7 @@ pub struct Param {
 
 #[derive(Debug, Clone)]
 pub struct Fn {
+    pub attrs: Attributes,
     pub public: bool,
     pub name: Located<String>,
     pub linkage: Linkage,

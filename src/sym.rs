@@ -7,7 +7,7 @@ use crate::{
     ast::{
         checked::{CheckedExpr, CheckedPattern, CheckedStmt},
         parsed::{Expr, Linkage, Path, Pattern, UsePath},
-        Attribute,
+        Attributes,
     },
     lexer::{Located, Span},
     typeid::{GenericTrait, GenericUserType, Type},
@@ -157,7 +157,7 @@ pub struct Variable {
 
 #[derive(Default, Debug)]
 pub struct Function {
-    pub attrs: Vec<Attribute>,
+    pub attrs: Attributes,
     pub name: Located<String>,
     pub linkage: Linkage,
     pub is_async: bool,
@@ -201,12 +201,12 @@ pub enum UserTypeData {
 
 #[derive(Debug)]
 pub struct UserType {
+    pub attrs: Attributes,
     pub name: Located<String>,
     pub body_scope: ScopeId,
     pub data: UserTypeData,
     pub impls: Vec<TraitImpl>,
     pub type_params: Vec<UserTypeId>,
-    pub attrs: Vec<Attribute>,
     pub fns: Vec<Vis<FunctionId>>,
     pub members: IndexMap<String, CheckedMember>,
 }
@@ -222,11 +222,11 @@ impl UserType {
 
 #[derive(Debug)]
 pub struct Trait {
+    pub attrs: Attributes,
     pub name: Located<String>,
     pub body_scope: ScopeId,
     pub impls: Vec<TraitImpl>,
     pub type_params: Vec<UserTypeId>,
-    pub attrs: Vec<Attribute>,
     pub fns: Vec<Vis<FunctionId>>,
     pub this: UserTypeId,
 }
@@ -512,7 +512,7 @@ impl Scopes {
         excl: Option<ExtensionId>,
         scope: ScopeId,
     ) -> bool {
-        if ty.is_unknown() {
+        if ty.is_unknown() || self.has_builtin_impl(ty, bound) {
             return true;
         }
 
@@ -597,7 +597,7 @@ impl Scopes {
                             data: UserTypeData::Template,
                             impls: Vec::new(),
                             type_params: Vec::new(),
-                            attrs: Vec::new(),
+                            attrs: Default::default(),
                             fns: Vec::new(),
                             members: IndexMap::new(),
                         },
@@ -627,8 +627,8 @@ impl Scopes {
                     body_scope: ScopeId::ROOT,
                     type_params,
                     data: UserTypeData::Tuple,
+                    attrs: Default::default(),
                     impls: vec![],
-                    attrs: vec![],
                     fns: vec![],
                 },
                 false,
@@ -655,7 +655,7 @@ impl Scopes {
                             data: UserTypeData::Template,
                             impls: Vec::new(),
                             type_params: Vec::new(),
-                            attrs: Vec::new(),
+                            attrs: Default::default(),
                             fns: Vec::new(),
                             members: IndexMap::new(),
                         },
@@ -685,8 +685,8 @@ impl Scopes {
                     body_scope: ScopeId::ROOT,
                     data: UserTypeData::AnonStruct,
                     type_params,
+                    attrs: Default::default(),
                     impls: vec![],
-                    attrs: vec![],
                     fns: vec![],
                 },
                 false,
@@ -713,6 +713,23 @@ impl Scopes {
         let mut result = HashSet::new();
         inner(self, tr, &mut result);
         result
+    }
+
+    pub fn has_builtin_impl(&self, ty: &Type, bound: &GenericTrait) -> bool {
+        if ty.is_numeric() && Some(&bound.id) == self.lang_traits.get("numeric") {
+            return true;
+        }
+
+        if let Some(int) = ty.integer_stats() {
+            if int.signed && Some(&bound.id) == self.lang_traits.get("signed") {
+                return true;
+            }
+            if !int.signed && Some(&bound.id) == self.lang_traits.get("unsigned") {
+                return true;
+            }
+        }
+
+        false
     }
 }
 

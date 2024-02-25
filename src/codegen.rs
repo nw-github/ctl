@@ -202,13 +202,7 @@ impl<'a> TypeGen<'a> {
             buffer.emit(" ");
             buffer.emit_type_name(self.scopes, ut, flags.minify);
             buffer.emit(";");
-            if self
-                .scopes
-                .get(ut.id)
-                .attrs
-                .iter()
-                .any(|attr| attr.name.data == ATTR_NOGEN)
-            {
+            if self.scopes.get(ut.id).attrs.has(ATTR_NOGEN) {
                 continue;
             }
 
@@ -660,20 +654,9 @@ impl Buffer {
         }
 
         if !generic {
-            if let Some(name) = scopes
-                .get(ut.id)
-                .attrs
-                .iter()
-                .find(|attr| attr.name.data == ATTR_LINKNAME && !attr.props.is_empty())
-                .map(|attr| &attr.props[0].name.data)
-            {
+            if let Some(name) = scopes.get(ut.id).attrs.val(ATTR_LINKNAME) {
                 return self.emit(name);
-            } else if scopes
-                .get(ut.id)
-                .attrs
-                .iter()
-                .any(|attr| attr.name.data == ATTR_NOGEN)
-            {
+            } else if scopes.get(ut.id).attrs.has(ATTR_NOGEN) {
                 return self.emit(&scopes.get(ut.id).name.data);
             }
         }
@@ -734,7 +717,7 @@ impl Buffer {
 
     fn emit_fn_name_ex(&mut self, real: bool, scopes: &Scopes, func: &GenericFunc, min: bool) {
         let f = scopes.get(func.id);
-        let is_macro = f.attrs.iter().any(|attr| attr.name.data == ATTR_NOGEN);
+        let is_macro = f.attrs.has(ATTR_NOGEN);
         if f.linkage == Linkage::Internal {
             if min {
                 self.emit(format!("p{}", func.id));
@@ -753,13 +736,7 @@ impl Buffer {
                 }
             }
         } else {
-            let name = f
-                .attrs
-                .iter()
-                .find(|attr| attr.name.data == ATTR_LINKNAME && !attr.props.is_empty())
-                .map(|attr| &attr.props[0].name.data)
-                .unwrap_or(&f.name.data);
-
+            let name = f.attrs.val(ATTR_LINKNAME).unwrap_or(&f.name.data);
             if !is_macro && !real && needs_fn_wrapper(f) {
                 if min {
                     return self.emit(format!("f{}", func.id));
@@ -777,13 +754,7 @@ impl Buffer {
     }
 
     fn emit_member_name(&mut self, scopes: &Scopes, id: Option<UserTypeId>, name: &str) {
-        if id.is_some_and(|id| {
-            scopes
-                .get(id)
-                .attrs
-                .iter()
-                .any(|f| f.name.data == ATTR_NOGEN)
-        }) {
+        if id.is_some_and(|id| scopes.get(id).attrs.has(ATTR_NOGEN)) {
             self.emit(name);
         } else {
             self.emit(format!("${name}"));
@@ -1162,7 +1133,7 @@ impl<'a> Codegen<'a> {
     fn emit_fn(&mut self, state: &mut State, prototypes: &mut Buffer) {
         // TODO: emit an error if a function has the c_macro attribute and a body
         let func = self.scopes.get(state.func.id);
-        if func.attrs.iter().any(|attr| attr.name.data == ATTR_NOGEN) {
+        if func.attrs.has(ATTR_NOGEN) {
             return;
         }
 
@@ -1294,56 +1265,8 @@ impl<'a> Codegen<'a> {
 
     fn emit_expr_inner(&mut self, expr: CheckedExpr, state: &mut State) {
         match expr.data {
-            CheckedExprData::Binary {
-                op,
-                mut left,
-                right,
-            } => {
-                if op == BinaryOp::NoneCoalesce {
-                    tmpbuf_emit!(self, state, |tmp| {
-                        self.emit_type(&expr.ty);
-                        self.buffer.emit(format!(" {tmp};"));
-
-                        state.fill_generics(&mut left.ty);
-                        let opt_type = left.ty.clone();
-                        let name = hoist!(self, state, self.emit_tmpvar(*left, state));
-                        self.emit_pattern_if_stmt(
-                            state,
-                            &CheckedPatternData::UnionMember {
-                                pattern: None,
-                                variant: "None".into(),
-                                inner: expr.ty,
-                                borrows: false,
-                            },
-                            &name,
-                            &opt_type,
-                        );
-                        hoist_point!(self, {
-                            self.buffer.emit(format!("{tmp}="));
-                            self.emit_expr(*right, state);
-                        });
-                        let tag = if opt_type.can_omit_tag(self.scopes).is_some() {
-                            ""
-                        } else {
-                            ".$Some.$0"
-                        };
-                        self.buffer.emit(format!(";}}else{{{tmp}={name}{tag};}}"));
-                    });
-                } else {
-                    if expr.ty == Type::Bool {
-                        self.emit_cast(&expr.ty);
-                        self.buffer.emit("(");
-                    }
-                    self.buffer.emit("(");
-                    self.emit_expr(*left, state);
-                    self.buffer.emit(format!(" {op} "));
-                    self.emit_expr(*right, state);
-                    self.buffer.emit(")");
-
-                    if expr.ty == Type::Bool {
-                        self.buffer.emit(" ? 1 : 0)");
-                    }
-                }
+            CheckedExprData::Binary { op, left, right } => {
+                self.emit_binary(state, op, expr.ty, *left, *right)
             }
             CheckedExprData::Unary {
                 op,
@@ -1478,7 +1401,7 @@ impl<'a> Codegen<'a> {
                     if args.is_empty() {
                         self.buffer.emit(")");
                     } else {
-                        self.buffer.emit(", ");
+                        self.buffer.emit(",");
                         self.finish_emit_fn_args(state, func.id, args);
                     }
                     return;
@@ -1504,6 +1427,31 @@ impl<'a> Codegen<'a> {
                                 ),
                             )
                         },
+                    );
+                }
+
+                if let Some(op) = self.scopes.get(func.id).attrs.val("binary_op") {
+                    let mut args = args.into_iter();
+                    return self.emit_binary(
+                        state,
+                        match op {
+                            "eq" => BinaryOp::Equal,
+                            "add" => BinaryOp::Add,
+                            "sub" => BinaryOp::Sub,
+                            "mul" => BinaryOp::Mul,
+                            "div" => BinaryOp::Div,
+                            "rem" => BinaryOp::Rem,
+                            _ => panic!("ICE: call to unsupported binary operator '{op}'"),
+                        },
+                        expr.ty,
+                        args.next()
+                            .expect("ICE: binary operator should receive two arguments")
+                            .1
+                            .auto_deref(&Type::Unknown),
+                        args.next()
+                            .expect("ICE: binary operator should receive two arguments")
+                            .1
+                            .auto_deref(&Type::Unknown),
                     );
                 }
 
@@ -2115,6 +2063,61 @@ impl<'a> Codegen<'a> {
                 self.funcs.insert(finish_state);
             }
             CheckedExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
+        }
+    }
+
+    fn emit_binary(
+        &mut self,
+        state: &mut State,
+        op: BinaryOp,
+        ret: Type,
+        mut lhs: CheckedExpr,
+        rhs: CheckedExpr,
+    ) {
+        if op == BinaryOp::NoneCoalesce {
+            tmpbuf_emit!(self, state, |tmp| {
+                self.emit_type(&ret);
+                self.buffer.emit(format!(" {tmp};"));
+
+                state.fill_generics(&mut lhs.ty);
+                let opt_type = lhs.ty.clone();
+                let name = hoist!(self, state, self.emit_tmpvar(lhs, state));
+                self.emit_pattern_if_stmt(
+                    state,
+                    &CheckedPatternData::UnionMember {
+                        pattern: None,
+                        variant: "None".into(),
+                        inner: ret,
+                        borrows: false,
+                    },
+                    &name,
+                    &opt_type,
+                );
+                hoist_point!(self, {
+                    self.buffer.emit(format!("{tmp}="));
+                    self.emit_expr(rhs, state);
+                });
+                let tag = if opt_type.can_omit_tag(self.scopes).is_some() {
+                    ""
+                } else {
+                    ".$Some.$0"
+                };
+                self.buffer.emit(format!(";}}else{{{tmp}={name}{tag};}}"));
+            });
+        } else {
+            if ret == Type::Bool {
+                self.emit_cast(&ret);
+                self.buffer.emit("(");
+            }
+            self.buffer.emit("(");
+            self.emit_expr(lhs, state);
+            self.buffer.emit(format!(" {op} "));
+            self.emit_expr(rhs, state);
+            self.buffer.emit(")");
+
+            if ret == Type::Bool {
+                self.buffer.emit(" ? 1 : 0)");
+            }
         }
     }
 

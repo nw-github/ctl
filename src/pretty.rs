@@ -442,6 +442,7 @@ fn print_fn(
         ret,
         public,
         body,
+        attrs: _,
     }: &Fn,
     indent: usize,
 ) {

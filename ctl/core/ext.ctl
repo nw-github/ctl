@@ -1,6 +1,6 @@
 use core::hash::*;
+use core::ops::*;
 use core::span::Span;
-use core::ops::Eq;
 
 extension<T> _ for T {
     pub fn hash_bytes<H: Hasher>(this, h: *mut H) {
@@ -16,9 +16,33 @@ pub extension<T: core::reflect::Numeric> NumberExt for T {
     }
 
     impl Eq<T> {
-        fn eq(this, rhs: *T): bool {
-            unsafe core::mem::compare(this as *raw T, rhs as *raw T, 1)
-        }
+        #(binary_op(eq))
+        fn eq(this, rhs: *T): bool { this == rhs }
+    }
+
+    impl Add<T, T> {
+        #(binary_op(add))
+        fn add(this, rhs: T): T { this + rhs }
+    }
+
+    impl Sub<T, T> {
+        #(binary_op(sub))
+        fn sub(this, rhs: T): T { this - rhs }
+    }
+
+    impl Mul<T, T> {
+        #(binary_op(mul))
+        fn mul(this, rhs: T): T { this * rhs }
+    }
+
+    impl Div<T, T> {
+        #(binary_op(div))
+        fn div(this, rhs: T): T { this / rhs }
+    }
+
+    impl Rem<T, T> {
+        #(binary_op(rem))
+        fn rem(this, rhs: T): T { this % rhs }
     }
 }
 
@@ -30,8 +54,7 @@ pub extension CharExt for char {
     }
 
     impl Eq<char> {
-        fn eq(this, rhs: *char): bool {
-            *this == *rhs
-        }
+        #(binary_op(eq))
+        fn eq(this, rhs: *char): bool { *this == *rhs }
     }
 }
