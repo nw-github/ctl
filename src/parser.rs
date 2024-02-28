@@ -656,7 +656,8 @@ impl<'a, 'b> Parser<'a, 'b> {
             | Token::LAngle
             | Token::LtEqual
             | Token::Equal
-            | Token::NotEqual => {
+            | Token::NotEqual
+            | Token::Spaceship => {
                 let right = self.precedence(op.data.precedence());
                 Expr::new(
                     left.span.extended_to(right.span),

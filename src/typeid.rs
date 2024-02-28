@@ -351,7 +351,8 @@ impl Type {
             | BinaryOp::Gt
             | BinaryOp::GtEqual
             | BinaryOp::Lt
-            | BinaryOp::LtEqual => {
+            | BinaryOp::LtEqual
+            | BinaryOp::Cmp => {
                 matches!(
                     self,
                     Type::Int(_)

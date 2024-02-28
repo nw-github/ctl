@@ -1435,6 +1435,7 @@ impl<'a> Codegen<'a> {
                     return self.emit_binary(
                         state,
                         match op {
+                            "cmp" => BinaryOp::Cmp,
                             "eq" => BinaryOp::Equal,
                             "add" => BinaryOp::Add,
                             "sub" => BinaryOp::Sub,
@@ -2074,49 +2075,88 @@ impl<'a> Codegen<'a> {
         mut lhs: CheckedExpr,
         rhs: CheckedExpr,
     ) {
-        if op == BinaryOp::NoneCoalesce {
-            tmpbuf_emit!(self, state, |tmp| {
-                self.emit_type(&ret);
-                self.buffer.emit(format!(" {tmp};"));
+        match op {
+            BinaryOp::NoneCoalesce => {
+                tmpbuf_emit!(self, state, |tmp| {
+                    self.emit_type(&ret);
+                    self.buffer.emit(format!(" {tmp};"));
 
-                state.fill_generics(&mut lhs.ty);
-                let opt_type = lhs.ty.clone();
-                let name = hoist!(self, state, self.emit_tmpvar(lhs, state));
-                self.emit_pattern_if_stmt(
-                    state,
-                    &CheckedPatternData::UnionMember {
-                        pattern: None,
-                        variant: "None".into(),
-                        inner: ret,
-                        borrows: false,
-                    },
-                    &name,
-                    &opt_type,
-                );
-                hoist_point!(self, {
-                    self.buffer.emit(format!("{tmp}="));
-                    self.emit_expr(rhs, state);
+                    state.fill_generics(&mut lhs.ty);
+                    let opt_type = lhs.ty.clone();
+                    let name = hoist!(self, state, self.emit_tmpvar(lhs, state));
+                    self.emit_pattern_if_stmt(
+                        state,
+                        &CheckedPatternData::UnionMember {
+                            pattern: None,
+                            variant: "None".into(),
+                            inner: ret,
+                            borrows: false,
+                        },
+                        &name,
+                        &opt_type,
+                    );
+                    hoist_point!(self, {
+                        self.buffer.emit(format!("{tmp}="));
+                        self.emit_expr(rhs, state);
+                    });
+                    let tag = if opt_type.can_omit_tag(self.scopes).is_some() {
+                        ""
+                    } else {
+                        ".$Some.$0"
+                    };
+                    self.buffer.emit(format!(";}}else{{{tmp}={name}{tag};}}"));
                 });
-                let tag = if opt_type.can_omit_tag(self.scopes).is_some() {
-                    ""
-                } else {
-                    ".$Some.$0"
-                };
-                self.buffer.emit(format!(";}}else{{{tmp}={name}{tag};}}"));
-            });
-        } else {
-            if ret == Type::Bool {
-                self.emit_cast(&ret);
-                self.buffer.emit("(");
             }
-            self.buffer.emit("(");
-            self.emit_expr(lhs, state);
-            self.buffer.emit(format!(" {op} "));
-            self.emit_expr(rhs, state);
-            self.buffer.emit(")");
+            BinaryOp::Cmp => {
+                let tmp = tmpbuf!(self, state, |tmp| {
+                    self.emit_type(&lhs.ty);
+                    self.buffer.emit(format!(" {tmp}="));
+                    self.emit_expr(lhs, state);
+                    self.buffer.emit("-");
+                    self.emit_expr(rhs, state);
+                    self.buffer.emit(";");
 
-            if ret == Type::Bool {
-                self.buffer.emit(" ? 1 : 0)");
+                    tmp
+                });
+
+                let union = self
+                    .scopes
+                    .get(ret.as_user().unwrap().id)
+                    .data
+                    .as_union()
+                    .unwrap();
+
+                self.buffer.emit(format!("({tmp}<0?"));
+                self.emit_cast(&ret);
+                self.buffer.emit(format!(
+                    "{{.{UNION_TAG_NAME}={}}}:({tmp}>0?",
+                    Self::variant_tag(union, "Less").unwrap()
+                ));
+                self.emit_cast(&ret);
+                self.buffer.emit(format!(
+                    "{{.{UNION_TAG_NAME}={}}}:",
+                    Self::variant_tag(union, "Greater").unwrap()
+                ));
+                self.emit_cast(&ret);
+                self.buffer.emit(format!(
+                    "{{.{UNION_TAG_NAME}={}}}))",
+                    Self::variant_tag(union, "Equal").unwrap()
+                ));
+            }
+            _ => {
+                if ret == Type::Bool {
+                    self.emit_cast(&ret);
+                    self.buffer.emit("(");
+                }
+                self.buffer.emit("(");
+                self.emit_expr(lhs, state);
+                self.buffer.emit(format!(" {op} "));
+                self.emit_expr(rhs, state);
+                self.buffer.emit(")");
+
+                if ret == Type::Bool {
+                    self.buffer.emit(" ? 1 : 0)");
+                }
             }
         }
     }

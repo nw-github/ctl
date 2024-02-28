@@ -70,6 +70,7 @@ pub enum Token<'a> {
     ShlAssign,
     Assign,
     Equal,
+    Spaceship,
 
     Let,
     Mut,
@@ -181,7 +182,7 @@ pub enum Precedence {
     LogicalOr,    // ||
     LogicalAnd,   // &&
     Eq,           // != ==
-    Comparison,   // < > <= >= is
+    Comparison,   // < > <= >= <=> is
     NoneCoalesce, // ??
     Or,           // |
     And,          // &
@@ -216,7 +217,7 @@ impl Token<'_> {
             LogicalAnd => Precedence::LogicalAnd,
             LogicalOr => Precedence::LogicalOr,
             Equal | NotEqual => Precedence::Eq,
-            LAngle | RAngle | GtEqual | LtEqual | Is => Precedence::Comparison,
+            LAngle | RAngle | GtEqual | LtEqual | Spaceship | Is => Precedence::Comparison,
             NoneCoalesce => Precedence::NoneCoalesce,
             As => Precedence::Cast,
             _ => Precedence::Min,
@@ -473,7 +474,11 @@ impl<'a> Lexer<'a> {
             }
             '<' => {
                 if self.advance_if('=') {
-                    Token::LtEqual
+                    if self.advance_if('>') {
+                        Token::Spaceship
+                    } else {
+                        Token::LtEqual
+                    }
                 } else if self.advance_if('<') {
                     if self.advance_if('=') {
                         Token::ShlAssign

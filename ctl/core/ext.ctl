@@ -15,6 +15,11 @@ pub extension<T: core::reflect::Numeric> NumberExt for T {
         }
     }
 
+    impl Cmp<T> {
+        #(binary_op(cmp))
+        fn cmp(this, rhs: *T): Ordering { this <=> rhs }
+    }
+
     impl Eq<T> {
         #(binary_op(eq))
         fn eq(this, rhs: *T): bool { this == rhs }

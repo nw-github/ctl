@@ -1405,6 +1405,7 @@ impl TypeChecker {
         span: Span,
     ) -> CheckedExpr {
         let op_traits: HashMap<BinaryOp, (&str, &str)> = [
+            (BinaryOp::Cmp, ("op_cmp", "cmp")),
             (BinaryOp::Equal, ("op_eq", "eq")),
             (BinaryOp::NotEqual, ("op_eq", "ne")),
             (BinaryOp::Add, ("op_add", "add")),
@@ -1485,6 +1486,7 @@ impl TypeChecker {
                 CheckedExpr::new(
                     match op {
                         BinaryOp::NoneCoalesce => unreachable!(),
+                        BinaryOp::Cmp => self.make_lang_type_by_name("ordering", [], span),
                         BinaryOp::Gt
                         | BinaryOp::GtEqual
                         | BinaryOp::Lt

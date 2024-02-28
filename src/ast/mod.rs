@@ -66,6 +66,8 @@ pub enum BinaryOp {
     Lt,
     #[display(fmt = "<=")]
     LtEqual,
+    #[display(fmt = "<=>")]
+    Cmp,
     #[display(fmt = "==")]
     Equal,
     #[display(fmt = "!=")]
@@ -100,6 +102,7 @@ impl TryFrom<Token<'_>> for BinaryOp {
             Token::NotEqual => Ok(BinaryOp::NotEqual),
             Token::LogicalAnd => Ok(BinaryOp::LogicalAnd),
             Token::LogicalOr => Ok(BinaryOp::LogicalOr),
+            Token::Spaceship => Ok(BinaryOp::Cmp),
             _ => Err(()),
         }
     }

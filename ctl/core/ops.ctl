@@ -1,3 +1,15 @@
+#(lang(ordering))
+pub union Ordering: i8 {
+    Less /* = -1 */,
+    Greater /* = 0 */,
+    Equal /* = 1 */,
+}
+
+#(lang(op_cmp))
+pub trait Cmp<T> {
+    fn cmp(this, rhs: *T): Ordering;
+}
+
 #(lang(op_eq))
 pub trait Eq<T> {
     fn eq(this, rhs: *T): bool;
