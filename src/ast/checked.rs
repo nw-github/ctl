@@ -344,9 +344,11 @@ impl CheckedExpr {
             needed += 1;
         }
 
+        let mut prev = &self.ty;
         let mut ty = &self.ty;
         let mut indirection = 0;
         while let Type::Ptr(inner) | Type::MutPtr(inner) = ty {
+            prev = ty;
             ty = inner;
             indirection += 1;
         }
@@ -377,7 +379,7 @@ impl CheckedExpr {
             }
             std::cmp::Ordering::Equal => self,
             std::cmp::Ordering::Greater => CheckedExpr::new(
-                ty.clone(),
+                if needed != 0 { prev.clone() } else { ty.clone() },
                 CheckedExprData::AutoDeref(self.into(), indirection - needed),
             ),
         }
