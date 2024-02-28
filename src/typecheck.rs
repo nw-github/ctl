@@ -3116,7 +3116,7 @@ impl TypeChecker {
             self.resolve_impls(bound.id);
             bound.fill_templates(ty_args);
 
-            if !self.implements_trait_and_resolve(ty, &bound) {
+            if !self.implements_trait(ty, &bound) {
                 self.error(Error::doesnt_implement(
                     &ty.name(&self.scopes),
                     &bound.name(&self.scopes),
@@ -3384,11 +3384,11 @@ impl TypeChecker {
         }
     }
 
-    fn implements_trait_and_resolve(&mut self, ty: &Type, bound: &GenericTrait) -> bool {
-        fn check(this: Option<&GenericUserType>, tr: &TraitImpl, bound: &GenericTrait) -> bool {
+    fn implements_trait(&mut self, ty: &Type, bound: &GenericTrait) -> bool {
+        fn check(this: Option<&TypeArgs>, tr: &TraitImpl, bound: &GenericTrait) -> bool {
             if let TraitImpl::Checked(tr, _) = tr {
                 let mut tr = tr.clone();
-                this.inspect(|this| tr.fill_templates(&this.ty_args));
+                this.inspect(|ty_args| tr.fill_templates(ty_args));
                 &tr == bound
             } else {
                 false
@@ -3402,7 +3402,11 @@ impl TypeChecker {
         let has_impl = ty.as_user().is_some_and(|this| {
             for i in 0..self.scopes.get(this.id).impls.len() {
                 resolve_impl!(self, self.scopes.get_mut(this.id).impls[i]);
-                if check(Some(this), &self.scopes.get(this.id).impls[i], bound) {
+                if check(
+                    Some(&this.ty_args),
+                    &self.scopes.get(this.id).impls[i],
+                    bound,
+                ) {
                     return true;
                 }
             }
@@ -3413,19 +3417,14 @@ impl TypeChecker {
             return true;
         }
 
-        for id in self
+        for ext in self
             .scopes
             .extensions_in_scope_for(ty, None, self.current)
-            .map(|(id, _)| id)
             .collect::<Vec<_>>()
         {
-            for i in 0..self.scopes.get(id).impls.len() {
-                resolve_impl!(self, self.scopes.get_mut(id).impls[i]);
-                if check(
-                    ty.as_user().map(|ty| &**ty),
-                    &self.scopes.get(id).impls[i],
-                    bound,
-                ) {
+            for i in 0..self.scopes.get(ext.id).impls.len() {
+                resolve_impl!(self, self.scopes.get_mut(ext.id).impls[i]);
+                if check(Some(&ext.ty_args), &self.scopes.get(ext.id).impls[i], bound) {
                     return true;
                 }
             }
@@ -3463,10 +3462,9 @@ impl TypeChecker {
             for ext in self
                 .scopes
                 .extensions_in_scope_for(ty, None, self.current)
-                .map(|(id, _)| id)
                 .collect::<Vec<_>>()
             {
-                if let Some(ut) = self.get_trait_impl_helper(ext, id) {
+                if let Some(ut) = self.get_trait_impl_helper(ext.id, id) {
                     return Some(ut);
                 }
             }
@@ -3502,29 +3500,22 @@ impl TypeChecker {
             generics: &[TypeHint],
             span: Span,
         ) -> Result<Option<MemberFn>, ()> {
-            let ext_ids: Vec<_> = this
+            for ext in this
                 .scopes
                 .extensions_in_scope_for(ty, None, this.current)
-                .map(|(id, _)| id)
-                .collect();
-
-            for id in ext_ids {
-                let src_scope = this.scopes.get(id).scope;
-                if let Some(func) = search(&this.scopes, &this.scopes.get(id).fns, method) {
+                .collect::<Vec<_>>()
+            {
+                let src_scope = this.scopes.get(ext.id).scope;
+                if let Some(func) = search(&this.scopes, &this.scopes.get(ext.id).fns, method) {
                     let mut func = make_func(this, func, ty, generics, src_scope, span)?;
-                    if let Some(id) = this.scopes.get(id).type_params.first() {
-                        func.ty_args.insert(*id, ty.clone());
-                    }
-                    if let Some(ty_args) = ty.as_user().map(|ut| &ut.ty_args) {
-                        func.ty_args.copy_args(ty_args);
-                    }
+                    func.ty_args.copy_args(&ext.ty_args);
                     return Ok(Some(MemberFn { func, tr: None }));
                 }
 
-                this.resolve_impls_recursive(id);
+                this.resolve_impls_recursive(ext.id);
                 for (tr, _) in this
                     .scopes
-                    .get(id)
+                    .get(ext.id)
                     .impls
                     .iter()
                     .flat_map(|ut| ut.as_checked())
@@ -3535,23 +3526,15 @@ impl TypeChecker {
                         {
                             let ty_args = tr.ty_args.clone();
                             let mut func = make_func(this, func, ty, generics, src_scope, span)?;
-                            if let Some(ut_ty_args) = ty.as_user().map(|ut| &ut.ty_args) {
-                                func.ty_args.copy_args(ut_ty_args);
-                                func.ty_args.copy_args_with(&ty_args, ut_ty_args);
-                            } else {
-                                func.ty_args.copy_args(&ty_args);
+                            func.ty_args.copy_args(&ext.ty_args);
+                            if let Type::User(ut) = ty {
+                                func.ty_args.copy_args_with(&ty_args, &ut.ty_args);
                             }
                             func.ty_args.insert(this.scopes.get(tr_id).this, ty.clone());
-
-                            if let Some(id) = this.scopes.get(id).type_params.first() {
-                                func.ty_args.insert(*id, ty.clone());
-                                return Ok(Some(MemberFn {
-                                    func,
-                                    tr: Some(imp),
-                                }));
-                            }
-
-                            return Ok(Some(MemberFn { func, tr: None }));
+                            return Ok(Some(MemberFn {
+                                func,
+                                tr: Some(imp),
+                            }));
                         }
                     }
                 }

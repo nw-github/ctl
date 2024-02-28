@@ -10,7 +10,7 @@ use crate::{
         Attributes,
     },
     lexer::{Located, Span},
-    typeid::{GenericTrait, GenericUserType, Type},
+    typeid::{GenericExtension, GenericTrait, GenericUserType, Type, TypeArgs},
 };
 
 macro_rules! id {
@@ -516,25 +516,23 @@ impl Scopes {
             return true;
         }
 
-        let search = |this: Option<&GenericUserType>, impls: &[TraitImpl]| {
+        let search = |this: Option<&TypeArgs>, impls: &[TraitImpl]| {
             impls.iter().flat_map(|i| i.as_checked()).any(|(tr, _)| {
                 let mut tr = tr.clone();
-                if let Some(this) = this {
-                    tr.fill_templates(&this.ty_args);
-                }
+                this.inspect(|ty_args| tr.fill_templates(ty_args));
                 &tr == bound
             })
         };
 
         if ty
             .as_user()
-            .is_some_and(|this| search(Some(this), &self.get(this.id).impls))
+            .is_some_and(|this| search(Some(&this.ty_args), &self.get(this.id).impls))
         {
             return true;
         }
 
         self.extensions_in_scope_for(ty, excl, scope)
-            .any(|(_, ext)| search(ty.as_user().map(|ty| &**ty), &ext.impls))
+            .any(|ext| search(Some(&ext.ty_args), &self.get(ext.id).impls))
     }
 
     pub fn extension_applies_to(
@@ -543,7 +541,7 @@ impl Scopes {
         ext: &Extension,
         rhs: &Type,
         scope: ScopeId,
-    ) -> bool {
+    ) -> Option<GenericExtension> {
         match &ext.ty {
             Type::User(ut) if self.get(ut.id).data.is_template() => {
                 for bound in self
@@ -553,12 +551,12 @@ impl Scopes {
                     .flat_map(|bound| bound.as_checked())
                 {
                     if !self.implements_trait(rhs, bound.0, Some(id), scope) {
-                        return false;
+                        return None;
                     }
                 }
-                true
+                Some(GenericExtension::new(id, TypeArgs([(ut.id, rhs.clone())].into())))
             }
-            ty => ty == rhs,
+            ty => (ty == rhs).then(|| GenericExtension::new(id, Default::default())),
         }
     }
 
@@ -567,7 +565,7 @@ impl Scopes {
         ty: &'b Type,
         excl: Option<ExtensionId>,
         current: ScopeId,
-    ) -> impl Iterator<Item = (ExtensionId, &Scoped<Extension>)> + 'b
+    ) -> impl Iterator<Item = GenericExtension> + 'b
     where
         'a: 'b,
     {
@@ -579,7 +577,7 @@ impl Scopes {
                 .filter_map(|id| id.1.as_extension())
                 .map(|ext| (*ext, self.get(*ext)))
                 .filter(move |(id, _)| Some(*id) != excl)
-                .filter(move |(id, ext)| self.extension_applies_to(*id, ext, ty, current))
+                .filter_map(move |(id, ext)| self.extension_applies_to(id, ext, ty, current))
         })
     }
 

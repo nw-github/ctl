@@ -48,6 +48,9 @@ fn main() {
 
         std::println("running set()...");
         hash::set();
+
+        std::println("running map_builtin()...");
+        hash::map_builtin();
     }
 
     std::println("\norder of evaluation: ");

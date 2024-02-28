@@ -1,7 +1,7 @@
 use crate::{
     ast::{parsed::TypeHint, BinaryOp},
     nearest_pow_of_two,
-    sym::{FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, TraitId, UserTypeId},
+    sym::{ExtensionId, FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, TraitId, UserTypeId},
 };
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
@@ -232,6 +232,8 @@ impl GenericTrait {
         result
     }
 }
+
+pub type GenericExtension = WithTypeArgs<ExtensionId>;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
 pub enum CInt {

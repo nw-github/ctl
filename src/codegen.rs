@@ -2774,12 +2774,14 @@ impl<'a> Codegen<'a> {
             .and_then(|ut| search(&self.scopes.get(ut.id).impls))
         {
             return finish(id);
-        } else if let Some(id) = self
+        } else if let Some((id, ext)) = self
             .scopes
             .extensions_in_scope_for(this, None, scope)
-            .find_map(|(_, ext)| search(&ext.impls))
+            .find_map(|ext| search(&self.scopes.get(ext.id).impls).zip(Some(ext)))
         {
-            return finish(id);
+            let mut f = finish(id);
+            f.ty_args.copy_args(&ext.ty_args);
+            return f;
         }
 
         let default = self

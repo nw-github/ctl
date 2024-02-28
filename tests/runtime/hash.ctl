@@ -23,10 +23,10 @@ pub fn map() {
     assert(map.insert("a", "apple") is null, "insertion of apple returned an item");
     assert(map.len() == 5, "map len was not 5");
 
-    assert(map.remove(&"c")!.eq(&"cat"), "removing 'c' did not return 'cat'");
+    assert(map.remove(&"c")! == "cat", "removing 'c' did not return 'cat'");
     assert(map.len() == 4, "map len was not 4 after remove");
 
-    assert(map.insert("a", "asthma")!.eq(&"apple"), "inserting 'asthma' did not return 'apple'");
+    assert(map.insert("a", "asthma")! == "apple", "inserting 'asthma' did not return 'apple'");
     assert(map.len() == 4, "inserting identical key changed the map len");
 }
 
@@ -57,4 +57,11 @@ pub fn set() {
 
     assert(!set.insert("apple"), "inserting 'apple' did not return false");
     assert(set.len() == 4, "replacing entry changed the set len");
+}
+
+pub fn map_builtin() {
+    let map = [10: "a", 20: "b", 30: "c"];
+    assert(map.get(&10) is ?"a", "10 wasnt a");
+    assert(map.get(&20) is ?"b", "20 wasnt b");
+    assert(map.get(&30) is ?"c", "30 wasnt c");
 }
