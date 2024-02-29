@@ -1436,7 +1436,12 @@ impl<'a> Codegen<'a> {
                         state,
                         match op {
                             "cmp" => BinaryOp::Cmp,
+                            "gt" => BinaryOp::Gt,
+                            "ge" => BinaryOp::GtEqual,
+                            "lt" => BinaryOp::Lt,
+                            "le" => BinaryOp::LtEqual,
                             "eq" => BinaryOp::Equal,
+                            "ne" => BinaryOp::NotEqual,
                             "add" => BinaryOp::Add,
                             "sub" => BinaryOp::Sub,
                             "mul" => BinaryOp::Mul,

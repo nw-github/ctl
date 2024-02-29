@@ -1064,20 +1064,20 @@ impl TypeChecker {
                     }
                 });
             }
-            DeclaredStmt::Trait { id, fns: functions } => {
+            DeclaredStmt::Trait { id, fns } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
                     this.resolve_impls(this.scopes.get(id).this);
                     // TODO: disable errors so this doesn't cause duplicate errors
                     this.resolve_impls(id);
-                    for f in functions {
+                    for f in fns {
                         this.check_fn(f);
                     }
                 });
             }
             DeclaredStmt::Extension { id, impls, fns } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
-                    this.resolve_impls(id);
                     resolve_type!(this, this.scopes.get_mut(id).ty);
+                    this.resolve_impls(id);
                     this.check_impl_blocks(this.scopes.get(id).ty.clone(), id, impls);
                     for f in fns {
                         this.check_fn(f);
@@ -1143,46 +1143,46 @@ impl TypeChecker {
         scopes: &Scopes,
         tr: TraitId,
         this: &Type,
-        lhs_id: FunctionId,
-        rhs_id: FunctionId,
+        has: FunctionId,
+        wants: FunctionId,
         ty_args: &TypeArgs,
     ) -> Result<(), String> {
-        let lhs = scopes.get(lhs_id);
-        let rhs = scopes.get(rhs_id);
+        let hfn = scopes.get(has);
+        let wfn = scopes.get(wants);
         let mut ty_args = ty_args.clone();
-        for (i, &id) in rhs.type_params.iter().enumerate() {
+        for (i, &id) in wfn.type_params.iter().enumerate() {
             ty_args.insert(
                 id,
-                Type::User(GenericUserType::from_id(scopes, lhs.type_params[i]).into()),
+                Type::User(GenericUserType::from_id(scopes, hfn.type_params[i]).into()),
             );
         }
         ty_args.insert(scopes.get(tr).this, this.clone());
 
-        let compare_types = |a: &Type, mut b: Type| {
-            b.fill_templates(&ty_args);
+        let compare_types = |has: &Type, mut wants: Type| {
+            wants.fill_templates(&ty_args);
 
-            if a != &b {
+            if has != &wants {
                 Err(format!(
-                    "expected '{}', got '{}'",
-                    b.name(scopes),
-                    a.name(scopes),
+                    "expected '{}', found '{}'",
+                    wants.name(scopes),
+                    has.name(scopes),
                 ))
             } else {
                 Ok(())
             }
         };
 
-        if let Err(err) = compare_types(&lhs.ret, rhs.ret.clone()) {
+        if let Err(err) = compare_types(&hfn.ret, wfn.ret.clone()) {
             return Err(format!("return type is incorrect: {err}"));
         }
 
-        for (s, t) in lhs.params.iter().zip(rhs.params.iter().cloned()) {
+        for (s, t) in hfn.params.iter().zip(wfn.params.iter().cloned()) {
             if let Err(err) = compare_types(&s.ty, t.ty) {
                 return Err(format!("parameter '{}' is incorrect: {err}", t.label));
             }
         }
 
-        for (&s, &t) in lhs.type_params.iter().zip(rhs.type_params.iter()) {
+        for (&s, &t) in hfn.type_params.iter().zip(wfn.type_params.iter()) {
             let s = scopes.get(s);
             let t = scopes.get(t);
             let name = &t.name;
@@ -1209,19 +1209,19 @@ impl TypeChecker {
             }
         }
 
-        if lhs.params.len() != rhs.params.len() {
+        if hfn.params.len() != wfn.params.len() {
             return Err(format!(
                 "expected {} parameter(s), got {}",
-                rhs.params.len(),
-                lhs.params.len(),
+                wfn.params.len(),
+                hfn.params.len(),
             ));
         }
 
-        if lhs.type_params.len() != rhs.type_params.len() {
+        if hfn.type_params.len() != wfn.type_params.len() {
             return Err(format!(
                 "expected {} type parameter(s), got {}",
-                rhs.type_params.len(),
-                lhs.type_params.len(),
+                wfn.type_params.len(),
+                hfn.type_params.len(),
             ));
         }
 
@@ -1229,10 +1229,8 @@ impl TypeChecker {
     }
 
     fn check_impl_block(&mut self, this: &Type, tr: &GenericTrait, block: DeclaredImplBlock) {
-        // TODO: default implementations
-        let str = self.scopes.get(tr.id);
-        for (dep, _) in str.impls.iter().flat_map(|tr| tr.as_checked()) {
-            if !self.scopes.implements_trait(this, dep, None, self.current) {
+        for (dep, _) in self.scopes.get(tr.id).impls.clone().iter().flat_map(|tr| tr.as_checked()) {
+            if !self.implements_trait(this, dep) {
                 self.diag.error(Error::new(
                     format!(
                         "trait '{}' requires implementation of trait '{}'",
@@ -1244,7 +1242,7 @@ impl TypeChecker {
             }
         }
 
-        let mut required = str.fns.clone();
+        let mut required = self.scopes.get(tr.id).fns.clone();
         for f in block.fns {
             let Located {
                 span: fn_span,
@@ -1406,6 +1404,10 @@ impl TypeChecker {
     ) -> CheckedExpr {
         let op_traits: HashMap<BinaryOp, (&str, &str)> = [
             (BinaryOp::Cmp, ("op_cmp", "cmp")),
+            (BinaryOp::Gt, ("op_cmp", "gt")),
+            (BinaryOp::GtEqual, ("op_cmp", "ge")),
+            (BinaryOp::Lt, ("op_cmp", "lt")),
+            (BinaryOp::LtEqual, ("op_cmp", "le")),
             (BinaryOp::Equal, ("op_eq", "eq")),
             (BinaryOp::NotEqual, ("op_eq", "ne")),
             (BinaryOp::Add, ("op_add", "add")),

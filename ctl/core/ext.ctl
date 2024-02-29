@@ -18,11 +18,26 @@ pub extension<T: core::reflect::Numeric> NumberExt for T {
     impl Cmp<T> {
         #(binary_op(cmp))
         fn cmp(this, rhs: *T): Ordering { this <=> rhs }
+
+        #(binary_op(ge))
+        fn ge(this, rhs: *T): bool { this >= rhs }
+
+        #(binary_op(gt))
+        fn gt(this, rhs: *T): bool { this > rhs }
+
+        #(binary_op(le))
+        fn le(this, rhs: *T): bool { this <= rhs }
+
+        #(binary_op(lt))
+        fn lt(this, rhs: *T): bool { this < rhs }
     }
 
     impl Eq<T> {
         #(binary_op(eq))
         fn eq(this, rhs: *T): bool { this == rhs }
+
+        #(binary_op(ne))
+        fn ne(this, rhs: *T): bool { this != rhs }
     }
 
     impl Add<T, T> {
@@ -58,8 +73,44 @@ pub extension CharExt for char {
         }
     }
 
-    impl Eq<char> {
+    impl Eq<This> {
         #(binary_op(eq))
-        fn eq(this, rhs: *char): bool { *this == *rhs }
+        fn eq(this, rhs: *This): bool { this == rhs }
+
+        #(binary_op(ne))
+        fn ne(this, rhs: *This): bool { this != rhs }
+    }
+
+    impl Cmp<This> {
+        #(binary_op(cmp))
+        fn cmp(this, rhs: *This): Ordering { this <=> rhs }
+
+        #(binary_op(ge))
+        fn ge(this, rhs: *This): bool { this >= rhs }
+
+        #(binary_op(gt))
+        fn gt(this, rhs: *This): bool { this > rhs }
+
+        #(binary_op(le))
+        fn le(this, rhs: *This): bool { this <= rhs }
+
+        #(binary_op(lt))
+        fn lt(this, rhs: *This): bool { this < rhs }
+    }
+}
+
+pub extension BoolExt for bool {
+    impl Hash {
+        fn hash<H: Hasher>(this, h: *mut H) {
+            this.hash_bytes(h)
+        }
+    }
+
+    impl Eq<This> {
+        #(binary_op(eq))
+        fn eq(this, rhs: *This): bool { this == rhs }
+
+        #(binary_op(ne))
+        fn ne(this, rhs: *This): bool { this != rhs }
     }
 }

@@ -14,5 +14,6 @@ mod prelude {
     pub use super::iter::Iterator;
 
     pub use super::ext::CharExt;
+    pub use super::ext::BoolExt;
     pub use super::ext::NumberExt;
 }

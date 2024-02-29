@@ -215,5 +215,11 @@ fn main() {
         traits::default_ext::override_generic();
     }
 
+    std::println("\noperator overloading: ");
+    {
+        std::println("cmp_eq()...");
+        ops::cmp_eq();
+    }
+
     std::println("\nall tests passed!");
 }

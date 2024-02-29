@@ -343,16 +343,10 @@ impl Eq for Type {}
 impl Type {
     pub fn supports_binop(&self, _scopes: &Scopes, op: BinaryOp) -> bool {
         match op {
-            BinaryOp::Add
-            | BinaryOp::Sub
-            | BinaryOp::Mul
-            | BinaryOp::Div
-            | BinaryOp::Rem
-            | BinaryOp::Gt
-            | BinaryOp::GtEqual
-            | BinaryOp::Lt
-            | BinaryOp::LtEqual
-            | BinaryOp::Cmp => {
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
+                self.is_numeric()
+            }
+            BinaryOp::Gt | BinaryOp::GtEqual | BinaryOp::Lt | BinaryOp::LtEqual | BinaryOp::Cmp => {
                 matches!(
                     self,
                     Type::Int(_)
@@ -363,6 +357,7 @@ impl Type {
                         | Type::F64
                         | Type::CInt(_)
                         | Type::CUint(_)
+                        | Type::Char
                 )
             }
             BinaryOp::And | BinaryOp::Xor | BinaryOp::Or | BinaryOp::Shl | BinaryOp::Shr => {
@@ -393,7 +388,7 @@ impl Type {
                 )
             }
             BinaryOp::LogicalOr | BinaryOp::LogicalAnd => matches!(self, Type::Bool),
-            BinaryOp::NoneCoalesce => todo!(),
+            BinaryOp::NoneCoalesce => unreachable!(),
         }
     }
 
@@ -509,19 +504,19 @@ impl Type {
             Type::Isize => "int".into(),
             Type::Usize => "uint".into(),
             Type::CInt(ty) | Type::CUint(ty) => {
-                let name = match ty {
-                    CInt::Char => "char",
-                    CInt::Short => "short",
-                    CInt::Int => "int",
-                    CInt::Long => "long",
-                    CInt::LongLong => "longlong",
-                };
                 format!(
-                    "c_{}{name}",
+                    "c_{}{}",
                     if matches!(self, Type::CUint(_)) {
                         "u"
                     } else {
                         ""
+                    },
+                    match ty {
+                        CInt::Char => "char",
+                        CInt::Short => "short",
+                        CInt::Int => "int",
+                        CInt::Long => "long",
+                        CInt::LongLong => "longlong",
                     }
                 )
             }
