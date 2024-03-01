@@ -102,6 +102,10 @@ pub struct SpanMut<T> {
         unsafe core::ptr::raw_add(this.ptr, idx) as *mut T
     }
 
+    pub fn as_span(this): [T..] {
+        unsafe Span::new(this.ptr, this.len)
+    }
+
     pub fn as_raw(this): *raw T {
         this.ptr
     }

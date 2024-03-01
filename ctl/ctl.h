@@ -30,6 +30,7 @@
 #define CTL_NORETURN      __declspec(noreturn)
 #define CTL_FORCEINLINE   __forceinline
 #define CTL_MEMCPY        memcpy
+#define CTL_MEMSET        memset
 #define CTL_MEMMOVE       memmove
 #define CTL_MEMCMP        memcmp
 #define CTL_STRLEN        strlen
@@ -57,6 +58,7 @@
 #define CTL_NORETURN    _Noreturn
 #define CTL_FORCEINLINE __attribute__((always_inline))
 #define CTL_MEMCPY      __builtin_memcpy
+#define CTL_MEMSET      __builtin_memset
 #define CTL_MEMMOVE     __builtin_memmove
 #define CTL_MEMCMP      __builtin_memcmp
 #define CTL_STRLEN      __builtin_strlen
