@@ -7,17 +7,17 @@ pub struct Vec<T> {
     len: uint,
     cap: uint,
 
-    pub fn new(): Vec<T> {
+    pub fn new(): This {
         Vec(ptr: std::ptr::raw_dangling(), len: 0, cap: 0)
     }
 
-    pub fn with_capacity(cap: uint): Vec<T> {
-        mut self: Vec<T> = Vec::new();
+    pub fn with_capacity(cap: uint): This {
+        mut self: This = Vec::new();
         self.reserve(cap);
         self
     }
 
-    pub fn from_span(span: [T..]): Vec<T> {
+    pub fn from_span(span: [T..]): This {
         mut self: [T] = Vec::with_capacity(span.len());
         unsafe {
             mem::copy(
@@ -81,7 +81,7 @@ pub struct Vec<T> {
         }
     }
 
-    pub fn append(mut this, rhs: *mut Vec<T>) {
+    pub fn append(mut this, rhs: *mut This) {
         if !this.can_insert(rhs.len) {
             this.grow();
         }

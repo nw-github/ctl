@@ -40,7 +40,7 @@ mod prelude {
     pub use super::vec::Vec;
     pub use super::map::Map;
     pub use super::set::Set;
-    pub use super::ext::StringExt;
+    pub use super::ext::*;
 }
 
 pub use core::*;

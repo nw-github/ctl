@@ -1,4 +1,4 @@
-#(intrinsic(panic))
+#(intrinsic)
 pub import fn panic(s: string::str): never;
 
 pub fn unreachable(): never {

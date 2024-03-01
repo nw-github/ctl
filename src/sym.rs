@@ -509,7 +509,7 @@ impl Scopes {
         &self,
         ty: &Type,
         bound: &GenericTrait,
-        excl: Option<ExtensionId>,
+        excl: &HashSet<ExtensionId>,
         scope: ScopeId,
     ) -> bool {
         if ty.is_unknown() || self.has_builtin_impl(ty, bound) {
@@ -538,23 +538,29 @@ impl Scopes {
     pub fn extension_applies_to(
         &self,
         id: ExtensionId,
+        excl: &HashSet<ExtensionId>,
         ext: &Extension,
         rhs: &Type,
         scope: ScopeId,
     ) -> Option<GenericExtension> {
         match &ext.ty {
             Type::User(ut) if self.get(ut.id).data.is_template() => {
+                let mut excl = excl.clone();
+                excl.insert(id);
                 for bound in self
                     .get(ut.id)
                     .impls
                     .iter()
                     .flat_map(|bound| bound.as_checked())
                 {
-                    if !self.implements_trait(rhs, bound.0, Some(id), scope) {
+                    if !self.implements_trait(rhs, bound.0, &excl, scope) {
                         return None;
                     }
                 }
-                Some(GenericExtension::new(id, TypeArgs([(ut.id, rhs.clone())].into())))
+                Some(GenericExtension::new(
+                    id,
+                    TypeArgs([(ut.id, rhs.clone())].into()),
+                ))
             }
             ty => (ty == rhs).then(|| GenericExtension::new(id, Default::default())),
         }
@@ -563,7 +569,7 @@ impl Scopes {
     pub fn extensions_in_scope_for<'a, 'b>(
         &'a self,
         ty: &'b Type,
-        excl: Option<ExtensionId>,
+        excl: &'b HashSet<ExtensionId>,
         current: ScopeId,
     ) -> impl Iterator<Item = GenericExtension> + 'b
     where
@@ -576,8 +582,8 @@ impl Scopes {
                 .iter()
                 .filter_map(|id| id.1.as_extension())
                 .map(|ext| (*ext, self.get(*ext)))
-                .filter(move |(id, _)| Some(*id) != excl)
-                .filter_map(move |(id, ext)| self.extension_applies_to(id, ext, ty, current))
+                .filter(move |(id, _)| !excl.contains(id))
+                .filter_map(move |(id, ext)| self.extension_applies_to(id, excl, ext, ty, current))
         })
     }
 

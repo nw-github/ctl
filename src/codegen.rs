@@ -2050,7 +2050,7 @@ impl<'a> Codegen<'a> {
                             self.flags.minify,
                         );
                         self.buffer.emit("(&");
-                        self.emit_expr(expr, state);
+                        self.emit_tmpvar_ident(expr, state);
                         self.buffer.emit(format!(",&{formatter});"));
                         self.funcs.insert(format_state);
                     }
@@ -2260,6 +2260,17 @@ impl<'a> Codegen<'a> {
         state: &mut State,
     ) {
         match name {
+            "numeric_abs" => {
+                let (_, mut expr) = args.shift_remove_index(0).unwrap();
+                state.fill_generics(&mut expr.ty);
+                let tmp = hoist!(self, state, self.emit_tmpvar(expr, state));
+                self.buffer.emit(format!("({tmp} < 0 ? -{tmp} : {tmp})"));
+            }
+            "numeric_cast" => {
+                let (_, expr) = args.shift_remove_index(0).unwrap();
+                self.emit_cast(&self.scopes.get(func.id).ret.with_templates(&func.ty_args));
+                self.emit_expr(expr, state);
+            }
             "size_of" => {
                 self.buffer.emit(format!(
                     "(usize){}",
@@ -2821,7 +2832,7 @@ impl<'a> Codegen<'a> {
             return finish(id);
         } else if let Some((id, ext)) = self
             .scopes
-            .extensions_in_scope_for(this, None, scope)
+            .extensions_in_scope_for(this, &Default::default(), scope)
             .find_map(|ext| search(&self.scopes.get(ext.id).impls).zip(Some(ext)))
         {
             let mut f = finish(id);

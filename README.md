@@ -5,8 +5,6 @@ A general-purpose programming language that compiles to C.
 ## Example
 
 ```rust
-import fn printf(fmt: *c_char, ...): c_int;
-
 trait Animal {
     fn make_sound(this, kw loud: bool);
 }
@@ -15,8 +13,8 @@ struct Cat {
     pub name: str,
 
     impl Animal {
-        fn make_sound(this, kw loud: bool) {
-            printf("%s said: purr...\n".as_c_str(), this.name.as_c_str());
+        fn make_sound(this, kw _loud: bool) {
+            std::println("{this.name} said: purr...");
         }
     }
 }
@@ -26,11 +24,8 @@ struct Dog {
 
     impl Animal {
         fn make_sound(this, kw loud: bool) {
-            printf(
-                "%s said: %s\n".as_c_str(), 
-                this.name.as_c_str(), 
-                if loud { "WOOF! WOOF!" } else { "woof..." }.as_c_str(),
-            );
+            let msg = if loud { "WOOF! WOOF!" } else { "woof..." };
+            std::println("{this.name} said: {msg}");
         }
     }
 }

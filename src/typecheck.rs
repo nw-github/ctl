@@ -821,21 +821,16 @@ impl TypeChecker {
                     self.scopes.lang_fns.insert(inner.name.data.clone(), id);
                 }
                 "intrinsic" => {
-                    if let Some(attr) = attr.props.first() {
-                        match attr.name.data.as_str() {
-                            "size_of" | "align_of" | "panic" | "raw_add" | "raw_sub" => {
-                                self.scopes.intrinsics.insert(id, attr.name.data.clone());
-                            }
-                            _ => self.error(Error::new(
-                                format!("intrinsic '{}' is not supported", attr.name.data),
-                                attr.name.span,
-                            )),
+                    let name = &self.scopes.get(id).name.data[..];
+                    match name {
+                        "size_of" | "align_of" | "panic" | "raw_add" | "raw_sub"
+                        | "numeric_cast" | "numeric_abs" => {
+                            self.scopes.intrinsics.insert(id, name.to_string());
                         }
-                    } else {
-                        self.error(Error::new(
-                            "intrinsic function must have name",
+                        _ => self.error(Error::new(
+                            format!("intrinsic '{}' is not supported", name),
                             attr.name.span,
-                        ))
+                        )),
                     }
                 }
                 _ => {}
@@ -1229,7 +1224,14 @@ impl TypeChecker {
     }
 
     fn check_impl_block(&mut self, this: &Type, tr: &GenericTrait, block: DeclaredImplBlock) {
-        for (dep, _) in self.scopes.get(tr.id).impls.clone().iter().flat_map(|tr| tr.as_checked()) {
+        for (dep, _) in self
+            .scopes
+            .get(tr.id)
+            .impls
+            .clone()
+            .iter()
+            .flat_map(|tr| tr.as_checked())
+        {
             if !self.implements_trait(this, dep) {
                 self.diag.error(Error::new(
                     format!(
@@ -1437,8 +1439,6 @@ impl TypeChecker {
                 span,
             ));
         }
-        let rhs_span = rhs.span;
-        let rhs = self.check_expr(rhs, None);
         let Ok(MemberFn { func, tr }) = self.get_member_fn(stripped, op.1, &[], span) else {
             return Default::default();
         };
@@ -1447,16 +1447,22 @@ impl TypeChecker {
         let [p0, p1, ..] = &f.params[..] else {
             unreachable!()
         };
+        let inst = stripped.clone();
+        let arg0 = (p0.label.clone(), lhs.auto_deref(&p0.ty));
         let p1_ty = p1.ty.with_templates(&func.ty_args);
+        let ret = f.ret.with_templates(&func.ty_args);
+        let rhs_span = rhs.span;
+        let rhs_name = p1.label.clone();
+        let rhs = self.check_expr(rhs, Some(p1_ty.strip_references()));
         CheckedExpr::new(
-            f.ret.with_templates(&func.ty_args),
+            ret,
             CheckedExprData::MemberCall {
                 func,
-                inst: stripped.clone(),
+                inst,
                 args: [
-                    (p0.label.clone(), lhs.auto_deref(&p0.ty)),
+                    arg0,
                     (
-                        p1.label.clone(),
+                        rhs_name,
                         self.type_check_checked(rhs.auto_deref(&p1_ty), &p1_ty, rhs_span),
                     ),
                 ]
@@ -1587,7 +1593,7 @@ impl TypeChecker {
             ExprData::ArrayWithInit { init, count } => {
                 if let Some(Type::Array(inner)) = target {
                     let init = self.type_check(*init, &inner.0);
-                    match Self::consteval(&self.scopes, &count, Some(&Type::Usize)) {
+                    match self.consteval(&count, Some(&Type::Usize)) {
                         Ok(count) => CheckedExpr::new(
                             Type::Array(Box::new((init.ty.clone(), count))),
                             CheckedExprData::ArrayWithInit {
@@ -1599,7 +1605,7 @@ impl TypeChecker {
                     }
                 } else {
                     let init = self.check_expr(*init, target);
-                    match Self::consteval(&self.scopes, &count, Some(&Type::Usize)) {
+                    match self.consteval(&count, Some(&Type::Usize)) {
                         Ok(count) => CheckedExpr::new(
                             Type::Array(Box::new((init.ty.clone(), count))),
                             CheckedExprData::ArrayWithInit {
@@ -3275,7 +3281,7 @@ impl TypeChecker {
                 self.error(Error::new(format!("'{THIS_TYPE}' outside of type"), span))
             }
             TypeHint::Array(ty, count) => {
-                let n = match Self::consteval(&self.scopes, &count, Some(&Type::Usize)) {
+                let n = match self.consteval(&count, Some(&Type::Usize)) {
                     Ok(n) => n,
                     Err(err) => return self.error(err),
                 };
@@ -3423,7 +3429,7 @@ impl TypeChecker {
 
         for ext in self
             .scopes
-            .extensions_in_scope_for(ty, None, self.current)
+            .extensions_in_scope_for(ty, &Default::default(), self.current)
             .collect::<Vec<_>>()
         {
             for i in 0..self.scopes.get(ext.id).impls.len() {
@@ -3465,7 +3471,7 @@ impl TypeChecker {
         } else {
             for ext in self
                 .scopes
-                .extensions_in_scope_for(ty, None, self.current)
+                .extensions_in_scope_for(ty, &Default::default(), self.current)
                 .collect::<Vec<_>>()
             {
                 if let Some(ut) = self.get_trait_impl_helper(ext.id, id) {
@@ -3506,7 +3512,7 @@ impl TypeChecker {
         ) -> Result<Option<MemberFn>, ()> {
             for ext in this
                 .scopes
-                .extensions_in_scope_for(ty, None, this.current)
+                .extensions_in_scope_for(ty, &Default::default(), this.current)
                 .collect::<Vec<_>>()
             {
                 let src_scope = this.scopes.get(ext.id).scope;
@@ -3721,7 +3727,7 @@ impl TypeChecker {
         (ty, result)
     }
 
-    fn consteval(scopes: &Scopes, expr: &Expr, target: Option<&Type>) -> Result<usize, Error> {
+    fn consteval(&mut self, expr: &Expr, target: Option<&Type>) -> Result<usize, Error> {
         match &expr.data {
             ExprData::Integer { base, value, width } => {
                 if let Some(width) = width
@@ -3729,20 +3735,69 @@ impl TypeChecker {
                     .and_then(|width| Type::from_int_name(width, false))
                 {
                     if let Some(target) = target.filter(|&target| target != &width) {
-                        return Err(Error::type_mismatch(target, &width, scopes, expr.span));
+                        return Err(Error::type_mismatch(
+                            target,
+                            &width,
+                            &self.scopes,
+                            expr.span,
+                        ));
                     }
                 }
 
-                match usize::from_str_radix(value, *base as u32) {
+                return match usize::from_str_radix(value, *base as u32) {
                     Ok(value) => Ok(value),
                     Err(_) => Err(Error::new("value cannot be converted to uint", expr.span)),
+                };
+            }
+            ExprData::Binary { op, left, right } => {
+                let lhs = self.consteval(left, None)?;
+                let rhs = self.consteval(right, None)?;
+                return Ok(match op {
+                    BinaryOp::Add => lhs + rhs,
+                    BinaryOp::Sub => lhs - rhs,
+                    BinaryOp::Mul => lhs * rhs,
+                    BinaryOp::Div => lhs / rhs,
+                    BinaryOp::Rem => lhs % rhs,
+                    BinaryOp::And => lhs & rhs,
+                    BinaryOp::Xor => lhs ^ rhs,
+                    BinaryOp::Or => lhs | rhs,
+                    BinaryOp::Shl => lhs << rhs,
+                    BinaryOp::Shr => lhs >> rhs,
+                    op => {
+                        return Err(Error::invalid_operator(
+                            op,
+                            &Type::Usize.name(&self.scopes),
+                            expr.span,
+                        ))
+                    }
+                });
+            }
+            ExprData::Call { callee, args: _ } => {
+                if let ExprData::Path(path) = &callee.data {
+                    match self.resolve_value_path(path, callee.span, false) {
+                        ResolvedValue::Func(func) => {
+                            if self.scopes.intrinsics.get(&func.id).is_some()
+                                && self.scopes.get(func.id).name.data == "size_of"
+                            {
+                                return Ok(func
+                                    .first_type_arg()
+                                    .unwrap()
+                                    .size_and_align(&self.scopes)
+                                    .0);
+                            }
+                        }
+                        ResolvedValue::NotFound(err) => return Err(err),
+                        _ => {},
+                    }
                 }
             }
-            _ => Err(Error::new(
-                "expression is not compile time evaluatable",
-                expr.span,
-            )),
+            _ => {}
         }
+
+        Err(Error::new(
+            "expression is not compile time evaluatable",
+            expr.span,
+        ))
     }
 
     fn loop_target<'a>(

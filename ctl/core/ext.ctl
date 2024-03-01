@@ -2,15 +2,28 @@ use core::hash::*;
 use core::ops::*;
 use core::fmt::*;
 use core::span::*;
+use core::reflect::*;
 use core::string::str;
+
+#(intrinsic)
+import fn numeric_abs<T: Signed>(_: T): T;
+
+#(intrinsic)
+import fn numeric_cast<T: Numeric, U: Numeric>(_: T): U;
+
+static DIGITS: *[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 extension<T> _ for T {
     pub fn as_byte_span(this): [u8..] {
         unsafe Span::new(this as *raw u8, core::mem::size_of::<T>())
     }
+
+    pub unsafe fn as_byte_span_mut(mut this): [mut u8..] {
+        unsafe SpanMut::new(this as *raw u8, core::mem::size_of::<T>())
+    }
 }
 
-pub extension<T: core::reflect::Numeric> NumberExt for T {
+pub extension<T: Numeric> NumberExt for T {
     impl Hash {
         fn hash<H: Hasher>(this, h: *mut H) {
             h.hash(this.as_byte_span());
@@ -66,6 +79,72 @@ pub extension<T: core::reflect::Numeric> NumberExt for T {
         #(binary_op(rem))
         fn rem(this, rhs: T): T { this % rhs }
     }
+
+    pub fn max(this, rhs: T): T {
+        if *this > rhs { *this } else { rhs }
+    }
+
+    pub fn min(this, rhs: T): T {
+        if *this > rhs { rhs } else { *this }
+    }
+}
+
+pub extension<T: Numeric + Signed> SignedExt for T {
+    pub fn abs(this): T {
+        numeric_abs(*this)
+    }
+
+    pub fn to_str_radix_ex(this, radix: u32, buf: [mut u8..]): str {
+        if radix < 2 || radix > 36 {
+            core::panic("to_str_radix(): invalid radix");
+        }
+
+        let radix: T = numeric_cast(radix);
+        mut pos = buf.len();
+        mut val = this.abs();
+        loop {
+            *buf.get_mut(--pos)! = DIGITS[numeric_cast::<T, int>(val % radix)];
+            val = val / radix;
+        } while val != numeric_cast(0);
+
+        if this < numeric_cast(0) {
+            *buf.get_mut(--pos)! = b'-';
+        }
+
+        unsafe str::from_utf8_unchecked(buf.as_span().subspan(pos..))
+    }
+
+    impl Format {
+        fn format<F: Formatter>(this, f: *mut F) {
+            mut buffer = [b'0'; core::mem::size_of::<i32>() * 8 + 1];
+            this.to_str_radix_ex(10, unsafe buffer.as_byte_span_mut()).format(f);
+        }
+    }
+}
+
+pub extension<T: Numeric + Unsigned> UnsignedExt for T {
+    pub fn to_str_radix_ex(this, radix: u32, buf: [mut u8..]): str {
+        if radix < 2 || radix > 36 {
+            core::panic("to_str_radix(): invalid radix");
+        }
+
+        let radix: T = numeric_cast(radix);
+        mut pos = buf.len();
+        mut val = *this;
+        loop {
+            *buf.get_mut(--pos)! = DIGITS[numeric_cast::<T, int>(val % radix)];
+            val = val / radix;
+        } while val != numeric_cast(0);
+
+        unsafe str::from_utf8_unchecked(buf.as_span().subspan(pos..))
+    }
+
+    impl Format {
+        fn format<F: Formatter>(this, f: *mut F) {
+            mut buffer = [b'0'; core::mem::size_of::<i32>() * 8];
+            this.to_str_radix_ex(10, unsafe buffer.as_byte_span_mut()).format(f);
+        }
+    }
 }
 
 pub extension CharExt for char {
@@ -104,7 +183,7 @@ pub extension CharExt for char {
         fn format<F: Formatter>(this, f: *mut F) {
             unsafe this.encode_utf8_unchecked(
                 this.len_utf8(),
-                SpanMut::new(unsafe &mut [0u8; 4] as *raw u8, 4),
+                [0u8; 4].as_byte_span_mut(),
             ).format(f);
         }
     }

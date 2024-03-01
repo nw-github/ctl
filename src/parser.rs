@@ -1828,27 +1828,14 @@ impl<'a, 'b> Parser<'a, 'b> {
         ))
     }
 
-    fn expect_fn(&mut self, params: FnConfig, mut attrs: Attributes) -> Result<Located<Fn>, ()> {
-        loop {
-            match self.try_function(params, attrs) {
-                Ok(proto) => return Ok(proto),
-                Err(a) => attrs = a,
-            };
-
-            loop {
-                let token = self.peek();
-                match token.data {
-                    Token::Pub | Token::Extern | Token::Fn | Token::Async => break,
-                    Token::Eof => {
-                        let span = token.span;
-                        self.error_no_sync(Error::new("expected function", span));
-                        return Err(());
-                    }
-                    _ => {
-                        self.next();
-                    }
-                }
-            }
+    fn expect_fn(&mut self, params: FnConfig, attrs: Attributes) -> Result<Located<Fn>, ()> {
+        match self.try_function(params, attrs) {
+            Ok(proto) => Ok(proto),
+            Err(_) => {
+                let span = self.next().span;
+                self.error(Error::new("expected function", span));
+                Err(())
+            },
         }
     }
 

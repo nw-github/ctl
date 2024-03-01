@@ -6,15 +6,15 @@ use std::map::Map;
 pub struct Set<T: Hash + Eq<T>> {
     inner: Map<T, void>,
 
-    pub fn new(): Set<T> {
+    pub fn new(): This {
         Set(inner: Map::new())
     }
 
-    pub fn with_capacity(cap: uint): Set<T> {
+    pub fn with_capacity(cap: uint): This {
         Set(inner: Map::with_capacity(cap:))
     }
 
-    pub fn from_iter<I: Iterator<T>>(iter: I): Set<T> {
+    pub fn from_iter<I: Iterator<T>>(iter: I): This {
         mut self: {T} = #[]; // TODO: size hint
         for i in iter {
             self.insert(i);

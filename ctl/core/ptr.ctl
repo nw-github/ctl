@@ -1,10 +1,10 @@
 use core::mem;
 
 // TODO: make an extension for this type
-#(intrinsic(raw_add))
+#(intrinsic)
 pub import fn raw_add<T>(ptr: *raw T, by: uint): *raw T;
 
-#(intrinsic(raw_sub))
+#(intrinsic)
 pub import fn raw_sub<T>(ptr: *raw T, by: uint): *raw T;
 
 pub fn raw_dangling<T>(): *raw T {

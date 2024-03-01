@@ -284,7 +284,7 @@ impl CheckedExpr {
                 Ok(self)
             }
             (Type::Ptr(lhs), Type::DynPtr(rhs))
-                if scopes.implements_trait(lhs, rhs, None, scope) =>
+                if scopes.implements_trait(lhs, rhs, &Default::default(), scope) =>
             {
                 Ok(CheckedExpr::new(
                     target.clone(),
@@ -295,7 +295,7 @@ impl CheckedExpr {
                 ))
             }
             (Type::MutPtr(lhs), Type::DynPtr(rhs) | Type::DynMutPtr(rhs))
-                if scopes.implements_trait(lhs, rhs, None, scope) =>
+                if scopes.implements_trait(lhs, rhs, &Default::default(), scope) =>
             {
                 Ok(CheckedExpr::new(
                     target.clone(),
