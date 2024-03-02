@@ -19,24 +19,8 @@ patterns:
       - include: '#comments'
       - include: '#gtypes'
       - include: '#lvariables'
-      - include: '#lifetimes'
       - include: '#punctuation'
       - include: '#types'
-  -
-    comment: macro metavariables
-    name: meta.macro.metavariable.ctl
-    match: (\$)([a-z][A-Za-z0-9_]*)((:)(block|expr|ident|item|lifetime|literal|meta|path?|stmt|tt|ty|vis))?
-    captures:
-      1:
-        name: keyword.operator.macro.dollar.ctl
-      2:
-        name: variable.other.metavariable.name.ctl
-      4:
-        name: keyword.operator.key-value.ctl
-      5:
-        name: variable.other.metavariable.specifier.ctl
-    patterns:
-      - include: '#keywords'
   -
     comment: attributes
     name: meta.attribute.ctl
@@ -56,7 +40,6 @@ patterns:
       - include: '#block-comments'
       - include: '#comments'
       - include: '#keywords'
-      - include: '#lifetimes'
       - include: '#punctuation'
       - include: '#strings'
       - include: '#gtypes'
@@ -69,24 +52,6 @@ patterns:
         name: storage.type.ctl
       2:
         name: entity.name.module.ctl
-  -
-    comment: external crate imports
-    name: meta.import.ctl
-    begin: \b(extern)\s+(crate)
-    beginCaptures:
-      1:
-        name: storage.type.ctl
-      2:
-        name: keyword.other.crate.ctl
-    end: ;
-    endCaptures:
-      0:
-        name: punctuation.semi.ctl
-    patterns:
-      - include: '#block-comments'
-      - include: '#comments'
-      - include: '#keywords'
-      - include: '#punctuation'
   -
     comment: use statements
     name: meta.use.ctl
@@ -114,7 +79,6 @@ patterns:
   - include: '#functions'
   - include: '#types'
   - include: '#keywords'
-  - include: '#lifetimes'
   - include: '#macros'
   - include: '#namespaces'
   - include: '#punctuation'
@@ -255,7 +219,6 @@ repository:
           - include: '#constants'
           - include: '#gtypes'
           - include: '#functions'
-          - include: '#lifetimes'
           - include: '#macros'
           - include: '#namespaces'
           - include: '#punctuation'
@@ -288,7 +251,6 @@ repository:
           - include: '#constants'
           - include: '#gtypes'
           - include: '#functions'
-          - include: '#lifetimes'
           - include: '#macros'
           - include: '#namespaces'
           - include: '#punctuation'
@@ -314,7 +276,6 @@ repository:
           - include: '#constants'
           - include: '#gtypes'
           - include: '#functions'
-          - include: '#lifetimes'
           - include: '#macros'
           - include: '#namespaces'
           - include: '#punctuation'
@@ -470,32 +431,27 @@ repository:
   interpolations:
     comment: curly brace interpolations
     name: meta.interpolation.ctl
-    match: '({)[^"{}]*(})'
-    captures:
+    begin: '(?<=[^\{]|^)((?:\{\{)*)(\{)(?=[^\{])'
+    beginCaptures:
       1:
-        name: punctuation.definition.interpolation.ctl
+        name: string.quoted.double.ctl
       2:
-        name: punctuation.definition.interpolation.ctl
-  lifetimes:
+        name: punctuation.brackets.interpolation.begin.ctl
+    end: '\}'
+    endCaptures:
+      0:
+        name: punctuation.brackets.interpolation.end.ct
     patterns:
-      -
-        comment: named lifetime parameters
-        match: (['])([a-zA-Z_][0-9a-zA-Z_]*)(?!['])\b
-        captures:
-          1:
-            name: punctuation.definition.lifetime.ctl
-          2:
-            name: entity.name.type.lifetime.ctl
-      -
-        comment: borrowing references to named lifetimes
-        match: (\&)(['])([a-zA-Z_][0-9a-zA-Z_]*)(?!['])\b
-        captures:
-          1:
-            name: keyword.operator.borrow.ctl
-          2:
-            name: punctuation.definition.lifetime.ctl
-          3:
-            name: entity.name.type.lifetime.ctl
+      - include: '#constants'
+      - include: '#functions'
+      - include: '#keywords'
+      - include: '#namespaces'
+      - include: '#types'
+      - include: '#gtypes'
+      - include: '#punctuation'
+      - include: '#strings'
+      - include: '#lvariables'
+      - include: '#variables'
   namespaces:
     patterns:
       -
@@ -537,7 +493,6 @@ repository:
           - include: '#comments'
           - include: '#keywords'
           - include: '#lvariables'
-          - include: '#lifetimes'
           - include: '#punctuation'
           - include: '#types'
           - include: '#variables'
