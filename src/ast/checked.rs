@@ -163,11 +163,6 @@ pub enum CheckedExprData {
     Char(char),
     Void,
     Symbol(Symbol, ScopeId),
-    Assign {
-        target: Box<CheckedExpr>,
-        binary: Option<BinaryOp>,
-        value: Box<CheckedExpr>,
-    },
     Block(Block),
     If {
         cond: Box<CheckedExpr>,

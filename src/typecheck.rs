@@ -1359,6 +1359,7 @@ impl TypeChecker {
         &mut self,
         lhs: Expr,
         rhs: Expr,
+        op: BinaryOp,
         target: Option<&Type>,
         span: Span,
     ) -> CheckedExpr {
@@ -1371,6 +1372,7 @@ impl TypeChecker {
         } else {
             Type::User(GenericUserType::from_type_args(&self.scopes, id, [Type::Unknown]).into())
         };
+        let lhs_span = lhs.span;
         let lhs = self.check_expr(lhs, Some(&target));
         let Some(target) = lhs.ty.as_option_inner(&self.scopes) else {
             if lhs.ty.is_unknown() {
@@ -1383,6 +1385,11 @@ impl TypeChecker {
                 span,
             ));
         };
+        if op.is_assignment() && !lhs.is_assignable(&self.scopes) {
+            // TODO: report a better error here
+            self.error(Error::new("expression is not assignable", lhs_span))
+        }
+
         let span = rhs.span;
         //
         let rhs = self.check_expr_inner(rhs, Some(target));
@@ -1390,7 +1397,7 @@ impl TypeChecker {
         CheckedExpr::new(
             target.clone(),
             CheckedExprData::Binary {
-                op: BinaryOp::NoneCoalesce,
+                op,
                 left: lhs.into(),
                 right: rhs.into(),
             },
@@ -1477,16 +1484,22 @@ impl TypeChecker {
         let span = expr.span;
         match expr.data {
             ExprData::Binary { op, left, right } => {
-                if op == BinaryOp::NoneCoalesce {
-                    return self.check_null_coalesce(*left, *right, target, span);
+                if matches!(op, BinaryOp::NoneCoalesce | BinaryOp::NoneCoalesceAssign) {
+                    return self.check_null_coalesce(*left, *right, op, target, span);
                 }
 
+                let left_span = left.span;
                 let left = self.check_expr(*left, None);
                 if left.ty.is_unknown() {
                     return Default::default();
                 }
 
-                if !left.ty.supports_binop(&self.scopes, op) {
+                if op.is_assignment() && !left.is_assignable(&self.scopes) {
+                    // TODO: report a better error here
+                    self.error(Error::new("expression is not assignable", left_span))
+                }
+
+                if op != BinaryOp::Assign && !left.ty.supports_binop(&self.scopes, op) {
                     return self.check_user_op(left, *right, op, span);
                 }
 
@@ -1878,40 +1891,6 @@ impl TypeChecker {
                 ResolvedValue::NotFound(err) => self.error(err),
                 ResolvedValue::Error => Default::default(),
             },
-            ExprData::Assign {
-                target: lhs,
-                binary,
-                value,
-            } => {
-                let lhs_span = lhs.span;
-                let lhs = self.check_expr(*lhs, None);
-                if lhs.ty.is_unknown() {
-                    return Default::default();
-                }
-
-                if !lhs.is_assignable(&self.scopes) {
-                    // TODO: report a better error here
-                    self.error(Error::new("expression is not assignable", lhs_span))
-                }
-
-                if let Some(op) = binary.filter(|&op| !lhs.ty.supports_binop(&self.scopes, op)) {
-                    self.error(Error::invalid_operator(
-                        op,
-                        &lhs.ty.name(&self.scopes),
-                        span,
-                    ))
-                }
-
-                let rhs = self.type_check(*value, &lhs.ty);
-                CheckedExpr::new(
-                    lhs.ty.clone(),
-                    CheckedExprData::Assign {
-                        target: lhs.into(),
-                        binary,
-                        value: rhs.into(),
-                    },
-                )
-            }
             ExprData::Block(body) => {
                 let block = self.create_block(body, ScopeKind::Block(target.cloned(), false));
                 let (target, yields) = self.scopes[block.scope].kind.as_block().unwrap();
@@ -3787,7 +3766,7 @@ impl TypeChecker {
                             }
                         }
                         ResolvedValue::NotFound(err) => return Err(err),
-                        _ => {},
+                        _ => {}
                     }
                 }
             }

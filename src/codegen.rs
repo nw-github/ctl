@@ -1200,20 +1200,8 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_expr_stmt(&mut self, mut expr: CheckedExpr, state: &mut State) {
-        let good_expr_stmt = matches!(
-            expr.data,
-            CheckedExprData::Unary {
-                op: UnaryOp::PostDecrement
-                    | UnaryOp::PostIncrement
-                    | UnaryOp::PreIncrement
-                    | UnaryOp::PreDecrement,
-                ..
-            } | CheckedExprData::Call { .. }
-                | CheckedExprData::CallFnPtr { .. }
-                | CheckedExprData::Assign { .. }
-        );
         state.fill_generics(&mut expr.ty);
-        if good_expr_stmt {
+        if Self::has_side_effects(&expr) {
             self.emit_expr_inner(expr, state);
             self.buffer.emit(";");
         } else {
@@ -1748,19 +1736,6 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit(".");
                 self.buffer.emit_member_name(self.scopes, id, &member);
             }
-            CheckedExprData::Assign {
-                target,
-                binary,
-                value,
-            } => {
-                self.emit_expr(*target, state);
-                if let Some(binary) = binary {
-                    self.buffer.emit(format!(" {binary}="));
-                } else {
-                    self.buffer.emit("=");
-                }
-                self.emit_expr(*value, state);
-            }
             CheckedExprData::Block(block) => {
                 enter_block!(self, state, &expr.ty, {
                     self.emit_block(block.body, state);
@@ -1815,19 +1790,21 @@ impl<'a> Codegen<'a> {
                 enter_loop!(self, state, &expr.ty, {
                     macro_rules! cond {
                         ($cond: expr) => {
-                            self.buffer.emit("if(!");
-                            self.emit_expr($cond, state);
-                            self.buffer.emit("){");
-                            self.emit_loop_break(state, expr.ty, optional);
-                            self.buffer.emit("}");
+                            hoist_point!(self, {
+                                self.buffer.emit("if(!");
+                                self.emit_expr_inner($cond, state);
+                                self.buffer.emit("){");
+                                self.emit_loop_break(state, expr.ty, optional);
+                                self.buffer.emit("}");
+                            });
                         };
                     }
 
                     self.buffer.emit("for(;;){");
                     hoist_point!(self, {
-                        if let Some(cond) = cond {
-                            if let CheckedExprData::Is(mut cond, patt) = cond.data {
-                                state.fill_generics(&mut cond.ty);
+                        if let Some(mut cond) = cond {
+                            state.fill_generics(&mut cond.ty);
+                            if let CheckedExprData::Is(cond, patt) = cond.data {
                                 let ty = cond.ty.clone();
                                 let tmp = self.emit_tmpvar(*cond, state);
                                 self.emit_pattern_if_stmt(state, &patt.data, &tmp, &ty);
@@ -2779,17 +2756,21 @@ impl<'a> Codegen<'a> {
     }
 
     fn has_side_effects(expr: &CheckedExpr) -> bool {
-        matches!(
-            &expr.data,
+        match &expr.data {
             CheckedExprData::Unary {
-                op: UnaryOp::PostIncrement
+                op:
+                    UnaryOp::PostIncrement
                     | UnaryOp::PostDecrement
                     | UnaryOp::PreIncrement
                     | UnaryOp::PreDecrement,
                 ..
-            } | CheckedExprData::Call { .. }
-                | CheckedExprData::Assign { .. }
-        )
+            } => true,
+            CheckedExprData::Call { .. }
+            | CheckedExprData::CallFnPtr { .. }
+            | CheckedExprData::MemberCall { .. } => true,
+            CheckedExprData::Binary { op, .. } if op.is_assignment() => true,
+            _ => false,
+        }
     }
 
     fn is_lvalue(expr: &CheckedExpr) -> bool {

@@ -258,18 +258,6 @@ pub fn print_expr(expr: &Expr, indent: usize) {
         ExprData::Path(path) => {
             eprintln!("{tabs}Path[{path:?}]");
         }
-        ExprData::Assign {
-            target,
-            binary,
-            value,
-        } => {
-            eprintln!("{tabs}Assign({binary:?})");
-            let tabs = INDENT.repeat(indent + 1);
-            eprintln!("{tabs}Target: ");
-            print_expr(target, indent + 2);
-            eprintln!("{tabs}Value: ");
-            print_expr(value, indent + 2);
-        }
         ExprData::Block(expr) => {
             eprintln!("{tabs}Block");
             print_stmts(expr, indent + 1);

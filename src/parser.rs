@@ -657,18 +657,8 @@ impl<'a, 'b> Parser<'a, 'b> {
             | Token::LtEqual
             | Token::Equal
             | Token::NotEqual
-            | Token::Spaceship => {
-                let right = self.precedence(op.data.precedence());
-                Expr::new(
-                    left.span.extended_to(right.span),
-                    ExprData::Binary {
-                        op: op.data.try_into().unwrap(),
-                        left: left.into(),
-                        right: right.into(),
-                    },
-                )
-            }
-            Token::Assign
+            | Token::Spaceship
+            | Token::Assign
             | Token::AddAssign
             | Token::SubAssign
             | Token::MulAssign
@@ -680,13 +670,13 @@ impl<'a, 'b> Parser<'a, 'b> {
             | Token::ShlAssign
             | Token::ShrAssign
             | Token::NoneCoalesceAssign => {
-                let right = self.precedence(Precedence::Min);
+                let right = self.precedence(op.data.precedence());
                 Expr::new(
                     left.span.extended_to(right.span),
-                    ExprData::Assign {
-                        target: left.into(),
-                        binary: op.data.try_into().ok(),
-                        value: right.into(),
+                    ExprData::Binary {
+                        op: op.data.try_into().unwrap(),
+                        left: left.into(),
+                        right: right.into(),
                     },
                 )
             }
@@ -1835,7 +1825,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let span = self.next().span;
                 self.error(Error::new("expected function", span));
                 Err(())
-            },
+            }
         }
     }
 

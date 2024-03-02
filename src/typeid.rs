@@ -342,11 +342,13 @@ impl Eq for Type {}
 
 impl Type {
     pub fn supports_binop(&self, _scopes: &Scopes, op: BinaryOp) -> bool {
+        use BinaryOp::*;
+
         match op {
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
-                self.is_numeric()
-            }
-            BinaryOp::Gt | BinaryOp::GtEqual | BinaryOp::Lt | BinaryOp::LtEqual | BinaryOp::Cmp => {
+            Assign => true,
+            Add | Sub | Mul | Div | Rem | AddAssign | SubAssign | MulAssign | DivAssign
+            | RemAssign => self.is_numeric(),
+            Gt | GtEqual | Lt | LtEqual | Cmp => {
                 matches!(
                     self,
                     Type::Int(_)
@@ -360,18 +362,9 @@ impl Type {
                         | Type::Char
                 )
             }
-            BinaryOp::And | BinaryOp::Xor | BinaryOp::Or | BinaryOp::Shl | BinaryOp::Shr => {
-                matches!(
-                    self,
-                    Type::Int(_)
-                        | Type::Uint(_)
-                        | Type::Isize
-                        | Type::Usize
-                        | Type::CInt(_)
-                        | Type::CUint(_)
-                )
-            }
-            BinaryOp::Equal | BinaryOp::NotEqual => {
+            And | Xor | Or | Shl | Shr | AndAssign | XorAssign | OrAssign | ShlAssign
+            | ShrAssign => self.is_any_int(),
+            Equal | NotEqual => {
                 matches!(
                     self,
                     Type::Int(_)
@@ -387,8 +380,8 @@ impl Type {
                         | Type::RawPtr(_)
                 )
             }
-            BinaryOp::LogicalOr | BinaryOp::LogicalAnd => matches!(self, Type::Bool),
-            BinaryOp::NoneCoalesce => unreachable!(),
+            LogicalOr | LogicalAnd => matches!(self, Type::Bool),
+            NoneCoalesce | NoneCoalesceAssign => false,
         }
     }
 

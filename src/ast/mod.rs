@@ -76,6 +76,30 @@ pub enum BinaryOp {
     LogicalOr,
     #[display(fmt = "&&")]
     LogicalAnd,
+    #[display(fmt = "=")]
+    Assign,
+    #[display(fmt = "+=")]
+    AddAssign,
+    #[display(fmt = "-=")]
+    SubAssign,
+    #[display(fmt = "*=")]
+    MulAssign,
+    #[display(fmt = "/=")]
+    DivAssign,
+    #[display(fmt = "%=")]
+    RemAssign,
+    #[display(fmt = "&=")]
+    AndAssign,
+    #[display(fmt = "^=")]
+    XorAssign,
+    #[display(fmt = "|=")]
+    OrAssign,
+    #[display(fmt = "<<=")]
+    ShlAssign,
+    #[display(fmt = ">>=")]
+    ShrAssign,
+    #[display(fmt = "??=")]
+    NoneCoalesceAssign,
 }
 
 impl TryFrom<Token<'_>> for BinaryOp {
@@ -83,15 +107,15 @@ impl TryFrom<Token<'_>> for BinaryOp {
 
     fn try_from(value: Token<'_>) -> Result<Self, Self::Error> {
         match value {
-            Token::Plus | Token::AddAssign => Ok(BinaryOp::Add),
-            Token::Minus | Token::SubAssign => Ok(BinaryOp::Sub),
-            Token::Asterisk | Token::MulAssign => Ok(BinaryOp::Mul),
-            Token::Div | Token::DivAssign => Ok(BinaryOp::Div),
-            Token::Rem | Token::RemAssign => Ok(BinaryOp::Rem),
-            Token::Ampersand | Token::AndAssign => Ok(BinaryOp::And),
-            Token::Caret | Token::XorAssign => Ok(BinaryOp::Xor),
-            Token::Or | Token::OrAssign => Ok(BinaryOp::Or),
-            Token::NoneCoalesce | Token::NoneCoalesceAssign => Ok(BinaryOp::NoneCoalesce),
+            Token::Plus => Ok(BinaryOp::Add),
+            Token::Minus => Ok(BinaryOp::Sub),
+            Token::Asterisk => Ok(BinaryOp::Mul),
+            Token::Div => Ok(BinaryOp::Div),
+            Token::Rem => Ok(BinaryOp::Rem),
+            Token::Ampersand => Ok(BinaryOp::And),
+            Token::Caret => Ok(BinaryOp::Xor),
+            Token::Or => Ok(BinaryOp::Or),
+            Token::NoneCoalesce => Ok(BinaryOp::NoneCoalesce),
             Token::RAngle => Ok(BinaryOp::Gt),
             Token::GtEqual => Ok(BinaryOp::GtEqual),
             Token::LAngle => Ok(BinaryOp::Lt),
@@ -103,8 +127,38 @@ impl TryFrom<Token<'_>> for BinaryOp {
             Token::LogicalAnd => Ok(BinaryOp::LogicalAnd),
             Token::LogicalOr => Ok(BinaryOp::LogicalOr),
             Token::Spaceship => Ok(BinaryOp::Cmp),
+            Token::Assign => Ok(BinaryOp::Assign),
+            Token::AddAssign => Ok(BinaryOp::AddAssign),
+            Token::SubAssign => Ok(BinaryOp::SubAssign),
+            Token::MulAssign => Ok(BinaryOp::MulAssign),
+            Token::DivAssign => Ok(BinaryOp::DivAssign),
+            Token::RemAssign => Ok(BinaryOp::RemAssign),
+            Token::AndAssign => Ok(BinaryOp::AndAssign),
+            Token::XorAssign => Ok(BinaryOp::XorAssign),
+            Token::OrAssign => Ok(BinaryOp::OrAssign),
+            Token::NoneCoalesceAssign => Ok(BinaryOp::NoneCoalesceAssign),
             _ => Err(()),
         }
+    }
+}
+
+impl BinaryOp {
+    pub fn is_assignment(&self) -> bool {
+        matches!(
+            self,
+            BinaryOp::Assign
+                | BinaryOp::AddAssign
+                | BinaryOp::SubAssign
+                | BinaryOp::MulAssign
+                | BinaryOp::DivAssign
+                | BinaryOp::RemAssign
+                | BinaryOp::AndAssign
+                | BinaryOp::OrAssign
+                | BinaryOp::XorAssign
+                | BinaryOp::ShlAssign
+                | BinaryOp::ShrAssign
+                | BinaryOp::NoneCoalesceAssign
+        )
     }
 }
 

@@ -150,11 +150,6 @@ pub enum ExprData {
     Path(Path),
     Void,
     None,
-    Assign {
-        target: Box<Expr>,
-        binary: Option<BinaryOp>,
-        value: Box<Expr>,
-    },
     Block(Vec<Stmt>),
     If {
         cond: Box<Expr>,
