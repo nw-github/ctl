@@ -80,6 +80,31 @@ pub extension<T: Numeric> NumberExt for T {
         fn rem(this, rhs: T): T { this % rhs }
     }
 
+    impl And<T, T> {
+        #(binary_op(and))
+        fn and(this, rhs: T): T { this & rhs }
+    }
+
+    impl Or<T, T> {
+        #(binary_op(or))
+        fn or(this, rhs: T): T { this | rhs }
+    }
+
+    impl Xor<T, T> {
+        #(binary_op(xor))
+        fn xor(this, rhs: T): T { this ^ rhs }
+    }
+
+    impl Shl<T, T> {
+        #(binary_op(shl))
+        fn shl(this, rhs: T): T { this << rhs }
+    }
+
+    impl Shr<T, T> {
+        #(binary_op(shr))
+        fn shr(this, rhs: T): T { this >> rhs }
+    }
+
     pub fn max(this, rhs: T): T {
         if *this > rhs { *this } else { rhs }
     }

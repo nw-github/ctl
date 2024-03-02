@@ -1424,6 +1424,11 @@ impl TypeChecker {
             (BinaryOp::Mul, ("op_mul", "mul")),
             (BinaryOp::Div, ("op_div", "div")),
             (BinaryOp::Rem, ("op_rem", "rem")),
+            (BinaryOp::And, ("op_and", "and")),
+            (BinaryOp::Or, ("op_or", "or")),
+            (BinaryOp::Xor, ("op_xor", "xor")),
+            (BinaryOp::Shl, ("op_shl", "shl")),
+            (BinaryOp::Shr, ("op_shr", "shr")),
         ]
         .into();
 

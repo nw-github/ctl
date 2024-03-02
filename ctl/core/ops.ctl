@@ -67,3 +67,28 @@ pub trait Div<T, R> {
 pub trait Rem<T, R> {
     fn rem(this, rhs: T): R;
 }
+
+#(lang(op_and))
+pub trait And<T, R> {
+    fn and(this, rhs: T): R;
+}
+
+#(lang(op_and))
+pub trait Or<T, R> {
+    fn or(this, rhs: T): R;
+}
+
+#(lang(op_xor))
+pub trait Xor<T, R> {
+    fn xor(this, rhs: T): R;
+}
+
+#(lang(op_shl))
+pub trait Shl<T, R> {
+    fn shl(this, rhs: T): R;
+}
+
+#(lang(op_shr))
+pub trait Shr<T, R> {
+    fn shr(this, rhs: T): R;
+}

@@ -535,25 +535,26 @@ impl Scopes {
             .any(|ext| search(Some(&ext.ty_args), &self.get(ext.id).impls))
     }
 
-    pub fn extension_applies_to(
-        &self,
-        id: ExtensionId,
-        excl: &HashSet<ExtensionId>,
-        ext: &Extension,
-        rhs: &Type,
+    pub fn extensions_in_scope_for<'a, 'b>(
+        &'a self,
+        rhs: &'b Type,
+        excl: &'b HashSet<ExtensionId>,
         scope: ScopeId,
-    ) -> Option<GenericExtension> {
-        match &ext.ty {
+    ) -> impl Iterator<Item = GenericExtension> + 'b
+    where
+        'a: 'b,
+    {
+        let applies_to = move |id: ExtensionId, lhs: &Type| match lhs {
             Type::User(ut) if self.get(ut.id).data.is_template() => {
                 let mut excl = excl.clone();
                 excl.insert(id);
-                for bound in self
+                for (bound, _) in self
                     .get(ut.id)
                     .impls
                     .iter()
                     .flat_map(|bound| bound.as_checked())
                 {
-                    if !self.implements_trait(rhs, bound.0, &excl, scope) {
+                    if !self.implements_trait(rhs, bound, &excl, scope) {
                         return None;
                     }
                 }
@@ -563,19 +564,9 @@ impl Scopes {
                 ))
             }
             ty => (ty == rhs).then(|| GenericExtension::new(id, Default::default())),
-        }
-    }
+        };
 
-    pub fn extensions_in_scope_for<'a, 'b>(
-        &'a self,
-        ty: &'b Type,
-        excl: &'b HashSet<ExtensionId>,
-        current: ScopeId,
-    ) -> impl Iterator<Item = GenericExtension> + 'b
-    where
-        'a: 'b,
-    {
-        self.walk(current).flat_map(move |(_, scope)| {
+        self.walk(scope).flat_map(move |(_, scope)| {
             // TODO: maybe keep an extensions field to make this lookup faster
             scope
                 .tns
@@ -583,7 +574,7 @@ impl Scopes {
                 .filter_map(|id| id.1.as_extension())
                 .map(|ext| (*ext, self.get(*ext)))
                 .filter(move |(id, _)| !excl.contains(id))
-                .filter_map(move |(id, ext)| self.extension_applies_to(id, excl, ext, ty, current))
+                .filter_map(move |(id, ext)| applies_to(id, &ext.ty))
         })
     }
 
