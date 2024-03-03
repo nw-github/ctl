@@ -1508,27 +1508,88 @@ impl TypeChecker {
                     return self.check_user_op(left, *right, op, span);
                 }
 
-                let right = self.type_check(*right, &left.ty);
-                CheckedExpr::new(
-                    match op {
-                        BinaryOp::NoneCoalesce => unreachable!(),
-                        BinaryOp::Cmp => self.make_lang_type_by_name("ordering", [], span),
-                        BinaryOp::Gt
-                        | BinaryOp::GtEqual
-                        | BinaryOp::Lt
-                        | BinaryOp::LtEqual
-                        | BinaryOp::Equal
-                        | BinaryOp::NotEqual
-                        | BinaryOp::LogicalOr
-                        | BinaryOp::LogicalAnd => Type::Bool,
-                        _ => left.ty.clone(),
-                    },
-                    CheckedExprData::Binary {
-                        op,
-                        left: left.into(),
-                        right: right.into(),
-                    },
-                )
+                match (&left.ty, op) {
+                    (Type::RawPtr(_), BinaryOp::Sub) => {
+                        let span = right.span;
+                        let right = self.check_expr(*right, Some(&Type::Isize)).try_coerce_to(
+                            &self.scopes,
+                            self.current,
+                            &Type::Isize,
+                        );
+                        match &right.ty {
+                            ty if &left.ty == ty => CheckedExpr::new(
+                                Type::Isize,
+                                CheckedExprData::Binary {
+                                    op,
+                                    left: left.into(),
+                                    right: right.into(),
+                                },
+                            ),
+                            ty if ty.is_any_int() || ty.is_unknown() => CheckedExpr::new(
+                                left.ty.clone(),
+                                CheckedExprData::Binary {
+                                    op,
+                                    left: left.into(),
+                                    right: right.into(),
+                                },
+                            ),
+                            _ => self.error(Error::type_mismatch_s(
+                                "{integer}",
+                                &right.ty.name(&self.scopes),
+                                span,
+                            )),
+                        }
+                    }
+                    (
+                        Type::RawPtr(_),
+                        BinaryOp::Add | BinaryOp::AddAssign | BinaryOp::SubAssign,
+                    ) => {
+                        let span = right.span;
+                        let right = self.check_expr(*right, Some(&Type::Isize)).try_coerce_to(
+                            &self.scopes,
+                            self.current,
+                            &Type::Isize,
+                        );
+                        if !right.ty.is_any_int() && !right.ty.is_unknown() {
+                            self.error(Error::type_mismatch_s(
+                                "{integer}",
+                                &right.ty.name(&self.scopes),
+                                span,
+                            ))
+                        }
+                        CheckedExpr::new(
+                            left.ty.clone(),
+                            CheckedExprData::Binary {
+                                op,
+                                left: left.into(),
+                                right: right.into(),
+                            },
+                        )
+                    }
+                    _ => {
+                        let right = self.type_check(*right, &left.ty);
+                        CheckedExpr::new(
+                            match op {
+                                BinaryOp::NoneCoalesce => unreachable!(),
+                                BinaryOp::Cmp => self.make_lang_type_by_name("ordering", [], span),
+                                BinaryOp::Gt
+                                | BinaryOp::GtEqual
+                                | BinaryOp::Lt
+                                | BinaryOp::LtEqual
+                                | BinaryOp::Equal
+                                | BinaryOp::NotEqual
+                                | BinaryOp::LogicalOr
+                                | BinaryOp::LogicalAnd => Type::Bool,
+                                _ => left.ty.clone(),
+                            },
+                            CheckedExprData::Binary {
+                                op,
+                                left: left.into(),
+                                right: right.into(),
+                            },
+                        )
+                    }
+                }
             }
             ExprData::Unary { op, expr } => self.check_unary(*expr, target, op),
             ExprData::Call { callee, args } => self.check_call(target, *callee, args, span),
@@ -2583,7 +2644,7 @@ impl TypeChecker {
             PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
                 let span = expr.span;
                 let expr = self.check_expr(expr, target);
-                if expr.ty.is_any_int() {
+                if expr.ty.is_any_int() || expr.ty.is_raw_ptr() {
                     if !expr.is_assignable(&self.scopes) {
                         self.error(Error::new("expression is not assignable", span))
                     }

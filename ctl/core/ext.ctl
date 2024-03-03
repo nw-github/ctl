@@ -238,25 +238,25 @@ pub extension CharExt for char {
     unsafe fn encode_utf8_unchecked(this, len_utf8: uint, buf: [mut u8..]): str {
         unsafe {
             let cp = *this as u32;
-            let ptr = buf.as_raw();
+            mut ptr = buf.as_raw();
             match len_utf8 {
                 1 => {
                     *ptr = cp as! u8;
                 }
                 2 => {
-                    *ptr = ((cp >> 6) | 0xc0) as! u8;
-                    *core::ptr::raw_add(ptr, 1) = ((cp & 0x3f) | 0x80) as! u8;
+                    *ptr++ = ((cp >> 6) | 0xc0) as! u8;
+                    *ptr   = ((cp & 0x3f) | 0x80) as! u8;
                 }
                 3 => {
-                    *ptr = ((cp >> 12) | 0xe0) as! u8;
-                    *core::ptr::raw_add(ptr, 1) = (((cp >> 6) & 0x3f) | 0x80) as! u8;
-                    *core::ptr::raw_add(ptr, 2) = ((cp & 0x3f) | 0x80) as! u8;
+                    *ptr++ = ((cp >> 12) | 0xe0) as! u8;
+                    *ptr++ = (((cp >> 6) & 0x3f) | 0x80) as! u8;
+                    *ptr   = ((cp & 0x3f) | 0x80) as! u8;
                 }
                 4 => {
-                    *ptr = ((cp >> 18) | 0xf0) as! u8;
-                    *core::ptr::raw_add(ptr, 1) = (((cp >> 12) & 0x3f) | 0x80) as! u8;
-                    *core::ptr::raw_add(ptr, 2) = (((cp >> 6) & 0x3f) | 0x80) as! u8;
-                    *core::ptr::raw_add(ptr, 3) = ((cp & 0x3f) | 0x80) as! u8;
+                    *ptr++ = ((cp >> 18) | 0xf0) as! u8;
+                    *ptr++ = (((cp >> 12) & 0x3f) | 0x80) as! u8;
+                    *ptr++ = (((cp >> 6) & 0x3f) | 0x80) as! u8;
+                    *ptr   = ((cp & 0x3f) | 0x80) as! u8;
                 }
                 _ => core::unreachable_unchecked(),
             }

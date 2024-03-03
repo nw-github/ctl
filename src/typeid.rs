@@ -343,6 +343,9 @@ impl Eq for Type {}
 impl Type {
     pub fn supports_binop(&self, _scopes: &Scopes, op: BinaryOp) -> bool {
         use BinaryOp::*;
+        if matches!((self, op), (Type::RawPtr(_), Add | AddAssign | Sub | SubAssign)) {
+            return true;
+        }
 
         match op {
             Assign => true,
@@ -360,6 +363,7 @@ impl Type {
                         | Type::CInt(_)
                         | Type::CUint(_)
                         | Type::Char
+                        | Type::RawPtr(_)
                 )
             }
             And | Xor | Or | Shl | Shr | AndAssign | XorAssign | OrAssign | ShlAssign

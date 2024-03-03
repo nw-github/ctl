@@ -2147,7 +2147,11 @@ impl<'a> Codegen<'a> {
             }
             BinaryOp::Cmp => {
                 let tmp = tmpbuf!(self, state, |tmp| {
-                    self.emit_type(&lhs.ty);
+                    if matches!(lhs.ty, Type::RawPtr(_)) {
+                        self.emit_type(&Type::Isize);
+                    } else {
+                        self.emit_type(&lhs.ty);
+                    }
                     self.buffer.emit(format!(" {tmp}="));
                     self.emit_expr(lhs, state);
                     self.buffer.emit("-");

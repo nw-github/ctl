@@ -63,12 +63,12 @@ pub struct Vec<T> {
             this.grow();
         }
 
-        unsafe *std::ptr::raw_add(this.ptr, this.len++) = t;
+        unsafe *(this.ptr + this.len++) = t;
     }
 
     pub fn push_within_capacity(mut this, t: T): ?T {
         if this.can_insert(1) {
-            unsafe *std::ptr::raw_add(this.ptr, this.len++) = t;
+            unsafe *(this.ptr + this.len++) = t;
             null
         } else {
             t
@@ -77,7 +77,7 @@ pub struct Vec<T> {
 
     pub fn pop(mut this): ?T {
         if this.len > 0 {
-            unsafe *std::ptr::raw_add(this.ptr, --this.len)
+            unsafe *(this.ptr + --this.len)
         }
     }
 
@@ -87,7 +87,7 @@ pub struct Vec<T> {
         }
 
         unsafe mem::copy(
-            dst: std::ptr::raw_add::<T>(this.ptr, this.len),
+            dst: this.ptr + this.len,
             src: rhs.ptr,
             num: rhs.len,
         );
@@ -114,10 +114,10 @@ pub struct Vec<T> {
             this.grow();
         }
 
-        let src = std::ptr::raw_add(this.ptr, idx);
+        let src = this.ptr + idx;
         if idx < this.len {
             unsafe mem::copy_overlapping(
-                dst: std::ptr::raw_add::<T>(src, 1), 
+                dst: src + 1, 
                 src:, 
                 num: this.len - idx,
             );
@@ -133,12 +133,12 @@ pub struct Vec<T> {
         }
 
         unsafe {
-            let dst = std::ptr::raw_add(this.ptr, idx);
+            let dst = this.ptr + idx;
             let t   = unsafe *dst;
             if idx + 1 < this.len {
                 mem::copy_overlapping(
                     dst:,
-                    src: std::ptr::raw_add::<T>(dst, 1),
+                    src: dst + 1,
                     num: this.len - idx,
                 );
             }
@@ -155,9 +155,9 @@ pub struct Vec<T> {
 
         this.len--;
 
-        let ptr = std::ptr::raw_add(this.ptr, idx);
+        let ptr = this.ptr + idx;
         if idx < this.len {
-            unsafe mem::replace(ptr as *mut T, unsafe *std::ptr::raw_add(this.ptr, this.len))
+            unsafe mem::replace(ptr as *mut T, unsafe *(this.ptr + this.len))
         } else {
             unsafe *ptr
         }
@@ -175,13 +175,13 @@ pub struct Vec<T> {
 
     pub fn get(this, idx: uint): ?*T {
         if idx < this.len {
-            unsafe std::ptr::raw_add(this.ptr, idx) as *T
+            unsafe (this.ptr + idx) as *T
         }
     }
 
     pub fn get_mut(mut this, idx: uint): ?*mut T {
         if idx < this.len {
-            unsafe std::ptr::raw_add(this.ptr, idx) as *mut T
+            unsafe (this.ptr + idx) as *mut T
         }
     }
 

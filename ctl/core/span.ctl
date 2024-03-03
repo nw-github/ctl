@@ -27,7 +27,7 @@ pub struct Span<T> {
     }
 
     pub unsafe fn get_unchecked(this, idx: uint): *T {
-        unsafe core::ptr::raw_add(this.ptr, idx) as *T
+        unsafe (this.ptr + idx) as *T
     }
 
     pub fn as_raw(this): *raw T {
@@ -35,10 +35,7 @@ pub struct Span<T> {
     }
 
     pub fn iter(this): Iter<T> {
-        Iter(
-            ptr: this.ptr,
-            end: unsafe core::ptr::raw_add(this.ptr, this.len),
-        )
+        Iter(ptr: this.ptr, end: this.ptr + this.len)
     }
 
     pub fn subspan<R: RangeBounds<uint>>(this, range: R): [T..] {
@@ -58,10 +55,7 @@ pub struct Span<T> {
             panic("Span::subspan(): invalid range!");
         }
 
-        Span(
-            ptr: unsafe core::ptr::raw_add(this.ptr, start),
-            len: end - start,
-        )
+        unsafe Span::new(this.ptr + start, end - start)
     }
 }
 
@@ -95,11 +89,11 @@ pub struct SpanMut<T> {
     }
 
     pub unsafe fn get_unchecked(this, idx: uint): *T {
-        unsafe core::ptr::raw_add(this.ptr, idx) as *T
+        unsafe (this.ptr + idx) as *T
     }
 
     pub unsafe fn get_mut_unchecked(this, idx: uint): *mut T {
-        unsafe core::ptr::raw_add(this.ptr, idx) as *mut T
+        unsafe (this.ptr + idx) as *mut T
     }
 
     pub fn as_span(this): [T..] {
@@ -111,17 +105,11 @@ pub struct SpanMut<T> {
     }
 
     pub fn iter(this): Iter<T> {
-        Iter(
-            ptr: this.ptr,
-            end: unsafe core::ptr::raw_add(this.ptr, this.len),
-        )
+        Iter(ptr: this.ptr, end: this.ptr + this.len)
     }
 
     pub fn iter_mut(this): IterMut<T> {
-        IterMut(
-            ptr: this.ptr,
-            end: unsafe core::ptr::raw_add(this.ptr, this.len),
-        )
+        IterMut(ptr: this.ptr, end: this.ptr + this.len)
     }
 
     pub fn subspan<R: RangeBounds<uint>>(this, range: R): [mut T..] {
@@ -141,10 +129,7 @@ pub struct SpanMut<T> {
             panic("SpanMut::subspan(): invalid range!");
         }
 
-        SpanMut(
-            ptr: unsafe core::ptr::raw_add(this.ptr, start),
-            len: end - start,
-        )
+        unsafe SpanMut::new(this.ptr + start, end - start)
     }
 }
 
@@ -155,10 +140,7 @@ pub struct Iter<T> {
     impl Iterator<*T> {
         fn next(mut this): ?*T {
             if this.ptr != this.end {
-                unsafe core::mem::replace::<*raw T>(
-                    &mut this.ptr,
-                    core::ptr::raw_add(this.ptr, 1),
-                ) as *T
+                unsafe this.ptr++ as *T
             }
         }
     }
@@ -171,10 +153,7 @@ pub struct IterMut<T> {
     impl Iterator<*mut T> {
         fn next(mut this): ?*mut T {
             if this.ptr != this.end {
-                unsafe core::mem::replace::<*raw T>(
-                    &mut this.ptr,
-                    core::ptr::raw_add(this.ptr, 1),
-                ) as *mut T
+                unsafe this.ptr++ as *mut T
             }
         }
     }
