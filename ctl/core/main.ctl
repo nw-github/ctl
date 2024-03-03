@@ -5,7 +5,7 @@ pub fn unreachable(): never {
     panic("entered unreachable code");
 }
 
-pub fn unreachable_unchecked(): never {
+pub unsafe fn unreachable_unchecked(): never {
     #(c_opaque, c_name(CTL_UNREACHABLE))
     pub import fn builtin_unreachable(): never;
 

@@ -1,6 +1,5 @@
 use std::hash::*;
 use std::ops::Eq;
-use std::vec::Vec;
 
 union Bucket<K, V> {
     Some(K, V),

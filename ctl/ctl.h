@@ -22,9 +22,8 @@
 #define CTL_ZST
 #endif
 
-#define CTL_DUMMY_INIT \
-    { 0 }
-#define CTL_DUMMY_MEMBER  CTL_ZST char dummy0[1]
+#define CTL_DUMMY_INIT    0
+#define CTL_DUMMY_MEMBER  CTL_ZST char dummy
 #define CTL_NORETURN      __declspec(noreturn)
 #define CTL_FORCEINLINE   __forceinline
 #define CTL_MEMCPY        memcpy

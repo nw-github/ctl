@@ -282,7 +282,7 @@ pub extension BoolExt for bool {
 
     impl Format {
         fn format<F: Formatter>(this, f: *mut F) {
-            f.write(if *this { "true".as_bytes() } else { "false".as_bytes() });
+            if *this { "true".format(f) } else { "false".format(f) }
         }
     }
 }
@@ -302,7 +302,7 @@ pub extension VoidExt for void {
 
     impl Format {
         fn format<F: Formatter>(this, f: *mut F) {
-            f.write("void".as_bytes());
+            "void".format(f);
         }
     }
 }
