@@ -530,7 +530,7 @@ impl Buffer {
                 if id.is_ptr() {
                     self.emit(" const*");
                 } else {
-                    self.emit(" *");
+                    self.emit("*");
                 }
             }
             Type::FnPtr(f) => {
@@ -872,7 +872,7 @@ macro_rules! hoist_point {
 macro_rules! usebuf {
     ($self: expr, $buf: expr, $body: expr) => {
         std::mem::swap(&mut $self.buffer, $buf);
-        $body
+        $body;
         std::mem::swap(&mut $self.buffer, $buf);
     };
 }
@@ -2060,9 +2060,58 @@ impl<'a> Codegen<'a> {
         op: BinaryOp,
         ret: Type,
         mut lhs: CheckedExpr,
-        rhs: CheckedExpr,
+        mut rhs: CheckedExpr,
     ) {
         match op {
+            BinaryOp::NoneCoalesceAssign => {
+                state.fill_generics(&mut lhs.ty);
+                let opt_type = lhs.ty.clone();
+                let tag = if opt_type.can_omit_tag(self.scopes).is_some() {
+                    ""
+                } else {
+                    ".$Some.$0"
+                };
+                let mut left = Buffer::default();
+                usebuf!(self, &mut left, self.emit_expr_inner(lhs, state));
+                let left = left.finish();
+
+                hoist!(self, state, {
+                    self.emit_pattern_if_stmt(
+                        state,
+                        &CheckedPatternData::UnionMember {
+                            pattern: None,
+                            variant: "None".into(),
+                            inner: ret,
+                            borrows: false,
+                        },
+                        &left,
+                        &opt_type,
+                    );
+
+                    hoist_point!(self, {
+                        state.fill_generics(&mut rhs.ty);
+
+                        self.buffer.emit(format!("{left}{tag}="));
+                        self.emit_expr_inner(rhs, state);
+                        if opt_type.can_omit_tag(self.scopes).is_none() {
+                            self.buffer.emit(";");
+                            let union = self
+                                .scopes
+                                .get(opt_type.as_user().unwrap().id)
+                                .data
+                                .as_union()
+                                .unwrap();
+                            self.buffer.emit(format!(
+                                "{left}.{UNION_TAG_NAME}={}",
+                                Self::variant_tag(union, "Some").unwrap()
+                            ));
+                        }
+                        self.buffer.emit(";}");
+                    });
+                });
+
+                self.buffer.emit(format!("{left}{tag}"));
+            }
             BinaryOp::NoneCoalesce => {
                 tmpbuf_emit!(self, state, |tmp| {
                     self.emit_type(&ret);
@@ -2083,8 +2132,10 @@ impl<'a> Codegen<'a> {
                         &opt_type,
                     );
                     hoist_point!(self, {
+                        state.fill_generics(&mut rhs.ty);
+
                         self.buffer.emit(format!("{tmp}="));
-                        self.emit_expr(rhs, state);
+                        self.emit_expr_inner(rhs, state);
                     });
                     let tag = if opt_type.can_omit_tag(self.scopes).is_some() {
                         ""
@@ -2137,12 +2188,12 @@ impl<'a> Codegen<'a> {
                 }
                 self.buffer.emit("(");
                 self.emit_expr(lhs, state);
-                self.buffer.emit(format!(" {op} "));
+                self.buffer.emit(format!("{op}"));
                 self.emit_expr(rhs, state);
                 self.buffer.emit(")");
 
                 if ret == Type::Bool {
-                    self.buffer.emit(" ? 1 : 0)");
+                    self.buffer.emit("?1:0)");
                 }
             }
         }
@@ -2246,7 +2297,7 @@ impl<'a> Codegen<'a> {
                 let (_, mut expr) = args.shift_remove_index(0).unwrap();
                 state.fill_generics(&mut expr.ty);
                 let tmp = hoist!(self, state, self.emit_tmpvar(expr, state));
-                self.buffer.emit(format!("({tmp} < 0 ? -{tmp} : {tmp})"));
+                self.buffer.emit(format!("({tmp}<0?-{tmp}:{tmp})"));
             }
             "numeric_cast" => {
                 let (_, expr) = args.shift_remove_index(0).unwrap();

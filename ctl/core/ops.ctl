@@ -73,7 +73,7 @@ pub trait And<T, R> {
     fn and(this, rhs: T): R;
 }
 
-#(lang(op_and))
+#(lang(op_or))
 pub trait Or<T, R> {
     fn or(this, rhs: T): R;
 }
