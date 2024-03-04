@@ -1,5 +1,5 @@
 use crate::{
-    ast::{parsed::TypeHint, BinaryOp},
+    ast::{parsed::TypeHint, BinaryOp, UnaryOp},
     nearest_pow_of_two,
     sym::{ExtensionId, FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, TraitId, UserTypeId},
 };
@@ -341,9 +341,12 @@ impl std::hash::Hash for Type {
 impl Eq for Type {}
 
 impl Type {
-    pub fn supports_binop(&self, _scopes: &Scopes, op: BinaryOp) -> bool {
+    pub fn supports_binary(&self, _scopes: &Scopes, op: BinaryOp) -> bool {
         use BinaryOp::*;
-        if matches!((self, op), (Type::RawPtr(_), Add | AddAssign | Sub | SubAssign)) {
+        if matches!(
+            (self, op),
+            (Type::RawPtr(_), Add | AddAssign | Sub | SubAssign)
+        ) {
             return true;
         }
 
@@ -367,7 +370,7 @@ impl Type {
                 )
             }
             And | Xor | Or | Shl | Shr | AndAssign | XorAssign | OrAssign | ShlAssign
-            | ShrAssign => self.is_any_int(),
+            | ShrAssign => self.is_integral(),
             Equal | NotEqual => {
                 matches!(
                     self,
@@ -386,6 +389,22 @@ impl Type {
             }
             LogicalOr | LogicalAnd => matches!(self, Type::Bool),
             NoneCoalesce | NoneCoalesceAssign => false,
+        }
+    }
+
+    pub fn supports_unary(&self, scopes: &Scopes, op: UnaryOp) -> bool {
+        use UnaryOp::*;
+        match op {
+            Neg => self.integer_stats().is_some_and(|s| s.signed),
+            PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
+                self.is_integral() || self.is_raw_ptr()
+            }
+            Not => self.is_integral() || self.is_bool(),
+            Try => self.as_option_inner(scopes).is_some(),
+            Plus => self.is_numeric(),
+            Deref => self.is_any_ptr(),
+            Addr | AddrMut => true,
+            Unwrap => false,
         }
     }
 
@@ -539,7 +558,7 @@ impl Type {
         matches!(self, Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_))
     }
 
-    pub fn is_any_int(&self) -> bool {
+    pub fn is_integral(&self) -> bool {
         matches!(
             self,
             Type::Int(_)

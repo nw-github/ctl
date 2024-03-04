@@ -1404,7 +1404,7 @@ impl TypeChecker {
         )
     }
 
-    fn check_user_op(
+    fn check_binary(
         &mut self,
         lhs: CheckedExpr,
         rhs: Expr,
@@ -1432,15 +1432,16 @@ impl TypeChecker {
         ]
         .into();
 
-        let Some(op) = op_traits.get(&op) else {
-            return self.error(Error::new(
-                format!("operator '{op}' cannot currently be overridden for user types"),
+        let Some(&(trait_name, fn_name)) = op_traits.get(&op) else {
+            return self.error(Error::invalid_operator(
+                op,
+                &lhs.ty.name(&self.scopes),
                 span,
             ));
         };
 
-        let Some(tr_id) = self.scopes.lang_traits.get(op.0).copied() else {
-            return self.error(Error::no_lang_item(op.0, span));
+        let Some(tr_id) = self.scopes.lang_traits.get(trait_name).copied() else {
+            return self.error(Error::no_lang_item(trait_name, span));
         };
 
         let stripped = lhs.ty.strip_references();
@@ -1451,9 +1452,10 @@ impl TypeChecker {
                 span,
             ));
         }
-        let Ok(MemberFn { func, tr }) = self.get_member_fn(stripped, op.1, &[], span) else {
+        let Ok(MemberFn { func, tr }) = self.get_member_fn(stripped, fn_name, &[], span) else {
             return Default::default();
         };
+        self.resolve_proto(func.id);
 
         let f = self.scopes.get(func.id);
         let [p0, p1, ..] = &f.params[..] else {
@@ -1485,6 +1487,56 @@ impl TypeChecker {
         )
     }
 
+    fn check_unary(&mut self, expr: CheckedExpr, op: UnaryOp, span: Span) -> CheckedExpr {
+        let op_traits: HashMap<UnaryOp, (&str, &str)> = [
+            (UnaryOp::Neg, ("op_neg", "neg")),
+            (UnaryOp::Not, ("op_not", "not")),
+            (UnaryOp::Unwrap, ("op_unwrap", "unwrap")),
+            (UnaryOp::PostDecrement, ("op_post_dec", "post_dec")),
+            (UnaryOp::PostIncrement, ("op_post_inc", "post_inc")),
+            (UnaryOp::PreDecrement, ("op_pre_dec", "pre_dec")),
+            (UnaryOp::PreIncrement, ("op_pre_dec", "pre_dec")),
+        ]
+        .into();
+
+        let Some(&(trait_name, fn_name)) = op_traits.get(&op) else {
+            return self.error(Error::invalid_operator(
+                op,
+                &expr.ty.name(&self.scopes),
+                span,
+            ));
+        };
+
+        let Some(tr_id) = self.scopes.lang_traits.get(trait_name).copied() else {
+            return self.error(Error::no_lang_item(trait_name, span));
+        };
+
+        let stripped = expr.ty.strip_references();
+        if self.get_trait_impl(stripped, tr_id).is_none() {
+            return self.error(Error::doesnt_implement(
+                &stripped.name(&self.scopes),
+                &self.scopes.get(tr_id).name.data,
+                span,
+            ));
+        }
+        let Ok(MemberFn { func, tr }) = self.get_member_fn(stripped, fn_name, &[], span) else {
+            return Default::default();
+        };
+        self.resolve_proto(func.id);
+
+        let f = self.scopes.get(func.id);
+        CheckedExpr::new(
+            f.ret.with_templates(&func.ty_args),
+            CheckedExprData::MemberCall {
+                func,
+                inst: stripped.clone(),
+                args: [(f.params[0].label.clone(), expr.auto_deref(&f.params[0].ty))].into(),
+                trait_id: tr,
+                scope: self.current,
+            },
+        )
+    }
+
     fn check_expr_inner(&mut self, expr: Expr, target: Option<&Type>) -> CheckedExpr {
         let span = expr.span;
         match expr.data {
@@ -1504,8 +1556,8 @@ impl TypeChecker {
                     self.error(Error::new("expression is not assignable", left_span))
                 }
 
-                if op != BinaryOp::Assign && !left.ty.supports_binop(&self.scopes, op) {
-                    return self.check_user_op(left, *right, op, span);
+                if op != BinaryOp::Assign && !left.ty.supports_binary(&self.scopes, op) {
+                    return self.check_binary(left, *right, op, span);
                 }
 
                 match (&left.ty, op) {
@@ -1525,7 +1577,7 @@ impl TypeChecker {
                                     right: right.into(),
                                 },
                             ),
-                            ty if ty.is_any_int() || ty.is_unknown() => CheckedExpr::new(
+                            ty if ty.is_integral() || ty.is_unknown() => CheckedExpr::new(
                                 left.ty.clone(),
                                 CheckedExprData::Binary {
                                     op,
@@ -1550,7 +1602,7 @@ impl TypeChecker {
                             self.current,
                             &Type::Isize,
                         );
-                        if !right.ty.is_any_int() && !right.ty.is_unknown() {
+                        if !right.ty.is_integral() && !right.ty.is_unknown() {
                             self.error(Error::type_mismatch_s(
                                 "{integer}",
                                 &right.ty.name(&self.scopes),
@@ -1591,7 +1643,117 @@ impl TypeChecker {
                     }
                 }
             }
-            ExprData::Unary { op, expr } => self.check_unary(*expr, target, op),
+            ExprData::Unary { op, expr } => {
+                let span = expr.span;
+                let (out_ty, expr) = match op {
+                    UnaryOp::Deref => {
+                        let expr = if let Some(target) = target {
+                            self.check_expr(*expr, Some(&Type::Ptr(target.clone().into())))
+                        } else {
+                            self.check_expr(*expr, target)
+                        };
+
+                        match &expr.ty {
+                            Type::Ptr(inner) | Type::MutPtr(inner) => ((**inner).clone(), expr),
+                            Type::RawPtr(inner) => {
+                                if self.safety != Safety::Unsafe {
+                                    self.error(Error::is_unsafe(span))
+                                }
+
+                                ((**inner).clone(), expr)
+                            }
+                            Type::Unknown => return Default::default(),
+                            ty => {
+                                return self.error(Error::invalid_operator(
+                                    op,
+                                    &ty.name(&self.scopes),
+                                    span,
+                                ))
+                            }
+                        }
+                    }
+                    UnaryOp::Addr => {
+                        let expr = self.check_expr(
+                            *expr,
+                            target.and_then(|t| t.as_mut_ptr().or(t.as_ptr()).map(|t| &**t)),
+                        );
+                        (Type::Ptr(expr.ty.clone().into()), expr)
+                    }
+                    UnaryOp::AddrMut => {
+                        let expr = self.check_expr(
+                            *expr,
+                            target.and_then(|t| t.as_mut_ptr().or(t.as_ptr()).map(|t| &**t)),
+                        );
+                        if !expr.can_addrmut(&self.scopes) {
+                            self.error(Error::new(
+                                "cannot create mutable pointer to immutable memory location",
+                                span,
+                            ))
+                        }
+
+                        (Type::MutPtr(expr.ty.clone().into()), expr)
+                    }
+                    UnaryOp::Try => {
+                        let expr = self.check_expr(
+                            *expr,
+                            target.and_then(|t| t.as_option_inner(&self.scopes)),
+                        );
+                        if let Some(inner) = expr.ty.as_option_inner(&self.scopes) {
+                            // TODO: lambdas
+                            if self
+                                .current_function()
+                                .and_then(|id| {
+                                    self.scopes.get(id).ret.as_option_inner(&self.scopes)
+                                })
+                                .is_none()
+                            {
+                                self.error(Error::new(
+                                    "operator '?' is only valid in functions that return Option",
+                                    span,
+                                ))
+                            }
+
+                            (inner.clone(), expr)
+                        } else if expr.ty == Type::Unknown {
+                            return Default::default();
+                        } else {
+                            return self.error(Error::invalid_operator(
+                                op,
+                                &expr.ty.name(&self.scopes),
+                                span,
+                            ));
+                        }
+                    }
+                    _ => {
+                        let span = expr.span;
+                        let expr = self.check_expr(*expr, target);
+                        if !expr.ty.supports_unary(&self.scopes, op) {
+                            return self.check_unary(expr, op, span);
+                        }
+
+                        if matches!(
+                            op,
+                            UnaryOp::PostIncrement
+                                | UnaryOp::PostDecrement
+                                | UnaryOp::PreIncrement
+                                | UnaryOp::PreDecrement
+                        ) && !expr.is_assignable(&self.scopes)
+                        {
+                            self.error(Error::new("expression is not assignable", span))
+                        }
+
+                        (expr.ty.clone(), expr)
+                    }
+                };
+
+                CheckedExpr::new(
+                    out_ty,
+                    CheckedExprData::Unary {
+                        op,
+                        expr: expr.into(),
+                    },
+                )
+            }
             ExprData::Call { callee, args } => self.check_call(target, *callee, args, span),
             ExprData::Array(elements) => {
                 let mut checked = Vec::with_capacity(elements.len());
@@ -1919,8 +2081,7 @@ impl TypeChecker {
             }
             ExprData::Float(value) => CheckedExpr::new(
                 target
-                    .map(|target| target.strip_options(&self.scopes))
-                    .filter(|target| matches!(target, Type::F32 | Type::F64))
+                    .filter(|t| matches!(t.strip_options(&self.scopes), Type::F32 | Type::F64))
                     .cloned()
                     .unwrap_or(Type::F64),
                 CheckedExprData::Float(value),
@@ -2601,173 +2762,6 @@ impl TypeChecker {
                 CheckedExprData::Return(self.type_check(expr, &target).into()),
             )
         }
-    }
-
-    fn check_unary(&mut self, expr: Expr, target: Option<&Type>, op: UnaryOp) -> CheckedExpr {
-        use UnaryOp::*;
-
-        let span = expr.span;
-        macro_rules! invalid {
-            ($ty: expr) => {
-                if $ty.is_unknown() {
-                    Default::default()
-                } else {
-                    self.error(Error::new(
-                        format!(
-                            "operator '{op}' is invalid for value of type {}",
-                            $ty.name(&self.scopes)
-                        ),
-                        span,
-                    ))
-                }
-            };
-        }
-
-        let (out_ty, expr) = match op {
-            Plus => {
-                let expr = self.check_expr(expr, target);
-                if !expr.ty.is_numeric() {
-                    invalid!(expr.ty)
-                }
-                (expr.ty.clone(), expr)
-            }
-            Neg => {
-                let expr = self.check_expr(expr, target);
-                if !matches!(
-                    expr.ty,
-                    Type::Int(_) | Type::Isize | Type::F32 | Type::F64 | Type::CInt(_)
-                ) {
-                    invalid!(expr.ty)
-                }
-                (expr.ty.clone(), expr)
-            }
-            PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
-                let span = expr.span;
-                let expr = self.check_expr(expr, target);
-                if expr.ty.is_any_int() || expr.ty.is_raw_ptr() {
-                    if !expr.is_assignable(&self.scopes) {
-                        self.error(Error::new("expression is not assignable", span))
-                    }
-                } else {
-                    invalid!(expr.ty)
-                }
-
-                (expr.ty.clone(), expr)
-            }
-            Not => {
-                let expr = self.check_expr(expr, target);
-                if !(expr.ty.is_bool() || expr.ty.is_any_int()) {
-                    invalid!(expr.ty)
-                }
-                (expr.ty.clone(), expr)
-            }
-            Deref => {
-                let expr = if let Some(target) = target {
-                    self.check_expr(expr, Some(&Type::Ptr(target.clone().into())))
-                } else {
-                    self.check_expr(expr, target)
-                };
-
-                match &expr.ty {
-                    Type::Ptr(inner) | Type::MutPtr(inner) => ((**inner).clone(), expr),
-                    Type::RawPtr(inner) => {
-                        if self.safety != Safety::Unsafe {
-                            self.error(Error::is_unsafe(span))
-                        }
-
-                        ((**inner).clone(), expr)
-                    }
-                    _ => (invalid!(expr.ty), expr),
-                }
-            }
-            Addr => {
-                let expr = self.check_expr(
-                    expr,
-                    target.and_then(|t| t.as_mut_ptr().or(t.as_ptr()).map(|t| &**t)),
-                );
-                (Type::Ptr(expr.ty.clone().into()), expr)
-            }
-            AddrMut => {
-                let expr = self.check_expr(
-                    expr,
-                    target.and_then(|t| t.as_mut_ptr().or(t.as_ptr()).map(|t| &**t)),
-                );
-                if !expr.can_addrmut(&self.scopes) {
-                    self.error(Error::new(
-                        "cannot create mutable pointer to immutable memory location",
-                        span,
-                    ))
-                }
-
-                (Type::MutPtr(expr.ty.clone().into()), expr)
-            }
-            Unwrap => {
-                let expr =
-                    self.check_expr(expr, target.and_then(|t| t.as_option_inner(&self.scopes)));
-
-                if let Some(inner) = expr.ty.as_option_inner(&self.scopes) {
-                    let func = self
-                        .scopes
-                        .get_option_id()
-                        .and_then(|id| {
-                            self.scopes
-                                .get(id)
-                                .find_associated_fn(&self.scopes, "unwrap")
-                        })
-                        .unwrap();
-                    return CheckedExpr::new(
-                        inner.clone(),
-                        CheckedExprData::MemberCall {
-                            inst: expr.ty.clone(),
-                            args: IndexMap::from([(
-                                THIS_PARAM.into(),
-                                CheckedExpr::new(
-                                    Type::Ptr(expr.ty.clone().into()),
-                                    CheckedExprData::Unary {
-                                        op: UnaryOp::Addr,
-                                        expr: expr.into(),
-                                    },
-                                ),
-                            )]),
-                            func: GenericFunc::from_id(&self.scopes, func),
-                            trait_id: None,
-                            scope: self.current,
-                        },
-                    );
-                }
-                (invalid!(expr.ty), expr)
-            }
-            Try => {
-                let expr =
-                    self.check_expr(expr, target.and_then(|t| t.as_option_inner(&self.scopes)));
-
-                if let Some(inner) = expr.ty.as_option_inner(&self.scopes) {
-                    // TODO: lambdas
-                    if self
-                        .current_function()
-                        .and_then(|id| self.scopes.get(id).ret.as_option_inner(&self.scopes))
-                        .is_none()
-                    {
-                        self.error(Error::new(
-                            "operator '?' is only valid in functions that return Option",
-                            span,
-                        ))
-                    }
-
-                    (inner.clone(), expr)
-                } else {
-                    (invalid!(expr.ty), expr)
-                }
-            }
-        };
-
-        CheckedExpr::new(
-            out_ty,
-            CheckedExprData::Unary {
-                op,
-                expr: expr.into(),
-            },
-        )
     }
 
     fn check_unsafe_union_constructor(
@@ -3725,12 +3719,10 @@ impl TypeChecker {
                 ));
             }
         } else {
-            // FIXME: attempt to promote the literal if its too large for i32
             target
-                .map(|target| target.strip_options(&self.scopes))
                 .filter(|target| {
                     matches!(
-                        target,
+                        target.strip_options(&self.scopes),
                         Type::Int(_)
                             | Type::Uint(_)
                             | Type::Isize

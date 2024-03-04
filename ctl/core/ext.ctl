@@ -31,78 +31,53 @@ pub extension<T: Numeric> NumberExt for T {
     }
 
     impl Cmp<T> {
-        #(binary_op(cmp))
+        #(binary_op)
         fn cmp(this, rhs: *T): Ordering { this <=> rhs }
 
-        #(binary_op(ge))
+        #(binary_op)
         fn ge(this, rhs: *T): bool { this >= rhs }
 
-        #(binary_op(gt))
+        #(binary_op)
         fn gt(this, rhs: *T): bool { this > rhs }
 
-        #(binary_op(le))
+        #(binary_op)
         fn le(this, rhs: *T): bool { this <= rhs }
 
-        #(binary_op(lt))
+        #(binary_op)
         fn lt(this, rhs: *T): bool { this < rhs }
     }
 
     impl Eq<T> {
-        #(binary_op(eq))
+        #(binary_op)
         fn eq(this, rhs: *T): bool { this == rhs }
 
-        #(binary_op(ne))
+        #(binary_op)
         fn ne(this, rhs: *T): bool { this != rhs }
     }
 
     impl Add<T, T> {
-        #(binary_op(add))
+        #(binary_op)
         fn add(this, rhs: T): T { this + rhs }
     }
 
     impl Sub<T, T> {
-        #(binary_op(sub))
+        #(binary_op)
         fn sub(this, rhs: T): T { this - rhs }
     }
 
     impl Mul<T, T> {
-        #(binary_op(mul))
+        #(binary_op)
         fn mul(this, rhs: T): T { this * rhs }
     }
 
     impl Div<T, T> {
-        #(binary_op(div))
+        #(binary_op)
         fn div(this, rhs: T): T { this / rhs }
     }
 
     impl Rem<T, T> {
-        #(binary_op(rem))
+        #(binary_op)
         fn rem(this, rhs: T): T { this % rhs }
-    }
-
-    impl And<T, T> {
-        #(binary_op(and))
-        fn and(this, rhs: T): T { this & rhs }
-    }
-
-    impl Or<T, T> {
-        #(binary_op(or))
-        fn or(this, rhs: T): T { this | rhs }
-    }
-
-    impl Xor<T, T> {
-        #(binary_op(xor))
-        fn xor(this, rhs: T): T { this ^ rhs }
-    }
-
-    impl Shl<T, T> {
-        #(binary_op(shl))
-        fn shl(this, rhs: T): T { this << rhs }
-    }
-
-    impl Shr<T, T> {
-        #(binary_op(shr))
-        fn shr(this, rhs: T): T { this >> rhs }
     }
 
     pub fn max(this, rhs: T): T {
@@ -114,7 +89,59 @@ pub extension<T: Numeric> NumberExt for T {
     }
 }
 
-pub extension<T: Numeric + Signed> SignedExt for T {
+pub extension<T: Integral> IntegralExt for T {
+    impl And<T, T> {
+        #(binary_op)
+        fn and(this, rhs: T): T { this & rhs }
+    }
+
+    impl Or<T, T> {
+        #(binary_op)
+        fn or(this, rhs: T): T { this | rhs }
+    }
+
+    impl Xor<T, T> {
+        #(binary_op)
+        fn xor(this, rhs: T): T { this ^ rhs }
+    }
+
+    impl Shl<T, T> {
+        #(binary_op)
+        fn shl(this, rhs: T): T { this << rhs }
+    }
+
+    impl Shr<T, T> {
+        #(binary_op)
+        fn shr(this, rhs: T): T { this >> rhs }
+    }
+
+    impl Not<T> {
+        #(unary_op)
+        fn not(this): T { !*this }
+    }
+
+    impl PostInc<T> {
+        #(unary_op)
+        fn post_inc(mut this): T { (*this)++ }
+    }
+
+    impl PostDec<T> {
+        #(unary_op)
+        fn post_dec(mut this): T { (*this)-- }
+    }
+
+    impl PreInc<T> {
+        #(unary_op)
+        fn pre_inc(mut this): T { ++(*this) }
+    }
+
+    impl PreDec<T> {
+        #(unary_op)
+        fn pre_dec(mut this): T { --(*this) }
+    }
+}
+
+pub extension<T: Numeric + Integral + Signed> SignedExt for T {
     pub fn abs(this): T {
         numeric_abs(*this)
     }
@@ -145,9 +172,14 @@ pub extension<T: Numeric + Signed> SignedExt for T {
             this.to_str_radix_ex(10, unsafe buffer.as_byte_span_mut()).format(f);
         }
     }
+
+    impl Neg<T> {
+        #(unary_op)
+        fn neg(this): T { -*this }
+    }
 }
 
-pub extension<T: Numeric + Unsigned> UnsignedExt for T {
+pub extension<T: Numeric + Integral + Unsigned> UnsignedExt for T {
     pub fn to_str_radix_ex(this, radix: u32, buf: [mut u8..]): str {
         if radix < 2 || radix > 36 {
             core::panic("to_str_radix(): invalid radix");
@@ -180,27 +212,27 @@ pub extension CharExt for char {
     }
 
     impl Eq<This> {
-        #(binary_op(eq))
+        #(binary_op)
         fn eq(this, rhs: *This): bool { this == rhs }
 
-        #(binary_op(ne))
+        #(binary_op)
         fn ne(this, rhs: *This): bool { this != rhs }
     }
 
     impl Cmp<This> {
-        #(binary_op(cmp))
+        #(binary_op)
         fn cmp(this, rhs: *This): Ordering { this <=> rhs }
 
-        #(binary_op(ge))
+        #(binary_op)
         fn ge(this, rhs: *This): bool { this >= rhs }
 
-        #(binary_op(gt))
+        #(binary_op)
         fn gt(this, rhs: *This): bool { this > rhs }
 
-        #(binary_op(le))
+        #(binary_op)
         fn le(this, rhs: *This): bool { this <= rhs }
 
-        #(binary_op(lt))
+        #(binary_op)
         fn lt(this, rhs: *This): bool { this < rhs }
     }
 
@@ -273,11 +305,16 @@ pub extension BoolExt for bool {
     }
 
     impl Eq<This> {
-        #(binary_op(eq))
+        #(binary_op)
         fn eq(this, rhs: *This): bool { this == rhs }
 
-        #(binary_op(ne))
+        #(binary_op)
         fn ne(this, rhs: *This): bool { this != rhs }
+    }
+
+    impl Not<This> {
+        #(binary_op)
+        fn not(this): This { !*this }
     }
 
     impl Format {

@@ -92,3 +92,38 @@ pub trait Shl<T, R> {
 pub trait Shr<T, R> {
     fn shr(this, rhs: T): R;
 }
+
+#(lang(op_neg))
+pub trait Neg<R> {
+    fn neg(this): R;
+}
+
+#(lang(op_not))
+pub trait Not<R> {
+    fn not(this): R;
+}
+
+#(lang(op_unwrap))
+pub trait Unwrap<R> {
+    fn unwrap(this): R;
+}
+
+#(lang(op_post_inc))
+pub trait PostInc<R> {
+    fn post_inc(mut this): R;
+}
+
+#(lang(op_post_dec))
+pub trait PostDec<R> {
+    fn post_dec(mut this): R;
+}
+
+#(lang(op_pre_inc))
+pub trait PreInc<R> {
+    fn pre_inc(mut this): R;
+}
+
+#(lang(op_pre_dec))
+pub trait PreDec<R> {
+    fn pre_dec(mut this): R;
+}

@@ -21,14 +21,14 @@ pub extension StringExt for str {
     }
 }
 
-pub extension<T: Numeric + Signed> StdSignedExt for T {
+pub extension<T: Numeric + Integral + Signed> StdSignedExt for T {
     pub fn to_str_radix(this, radix: u32): str {
         mut buffer = @[b'0'; core::mem::size_of::<i32>() * 8 + 1];
         this.to_str_radix_ex(radix, buffer.as_span_mut())
     }
 }
 
-pub extension<T: Numeric + Unsigned> StdUnsignedExt for T {
+pub extension<T: Numeric + Integral + Unsigned> StdUnsignedExt for T {
     pub fn to_str_radix(this, radix: u32): str {
         mut buffer = @[b'0'; core::mem::size_of::<i32>() * 8];
         this.to_str_radix_ex(radix, buffer.as_span_mut())

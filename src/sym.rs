@@ -716,6 +716,9 @@ impl Scopes {
         }
 
         if let Some(int) = ty.integer_stats() {
+            if Some(&bound.id) == self.lang_traits.get("integral") {
+                return true;
+            }
             if int.signed && Some(&bound.id) == self.lang_traits.get("signed") {
                 return true;
             }

@@ -85,7 +85,7 @@ impl Error {
 
     pub fn invalid_operator(op: impl std::fmt::Display, ty: &str, span: Span) -> Self {
         Self::new(
-            format!("operator '{op}' is invalid for a value of type {ty}"),
+            format!("operator '{op}' is invalid for a value of type '{ty}'"),
             span,
         )
     }

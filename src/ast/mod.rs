@@ -162,7 +162,7 @@ impl BinaryOp {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, Hash)]
 pub enum UnaryOp {
     #[display(fmt = "+")]
     Plus,

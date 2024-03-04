@@ -539,25 +539,22 @@ impl Buffer {
                     tg.add_fnptr(diag, (**f).clone());
                 }
             }
-            Type::User(ut) => match &scopes.get(ut.id).data {
-                UserTypeData::Template => {
-                    if !cfg!(debug_assertions) {
-                        panic!("ICE: Template type in emit_type")
-                    }
-
+            Type::User(ut) => {
+                if scopes.get(ut.id).data.is_template() {
+                    eprintln!("ICE: Template type in emit_type");
                     self.emit(&scopes.get(ut.id).name.data);
+                    return;
                 }
-                _ => {
-                    if let Some(ty) = id.can_omit_tag(scopes) {
-                        self.emit_type(scopes, ty, tg, min);
-                    } else {
-                        if let Some((diag, tg)) = tg {
-                            tg.add_user_type(diag, (**ut).clone(), None);
-                        }
-                        self.emit_type_name(scopes, ut, min);
+
+                if let Some(ty) = id.can_omit_tag(scopes) {
+                    self.emit_type(scopes, ty, tg, min);
+                } else {
+                    if let Some((diag, tg)) = tg {
+                        tg.add_user_type(diag, (**ut).clone(), None);
                     }
+                    self.emit_type_name(scopes, ut, min);
                 }
-            },
+            }
             Type::Array(data) => {
                 self.emit_generic_mangled_name(scopes, id, min);
                 if let Some((diag, tg)) = tg {
@@ -650,7 +647,7 @@ impl Buffer {
     ) {
         let ty = scopes.get(ut.id);
         if ty.data.is_template() && !cfg!(debug_assertions) {
-            panic!("ICE: Template type in emit_type_name")
+            eprintln!("ICE: Template type in emit_type");
         }
 
         if !generic {
@@ -1256,99 +1253,9 @@ impl<'a> Codegen<'a> {
             CheckedExprData::Binary { op, left, right } => {
                 self.emit_binary(state, op, expr.ty, *left, *right)
             }
-            CheckedExprData::Unary {
-                op,
-                expr: mut inner,
-            } => match op {
-                UnaryOp::Plus => {
-                    self.emit_expr(*inner, state);
-                }
-                UnaryOp::Neg => {
-                    self.buffer.emit("-");
-                    self.emit_expr(*inner, state);
-                }
-                UnaryOp::PostIncrement => {
-                    self.emit_expr(*inner, state);
-                    self.buffer.emit("++");
-                }
-                UnaryOp::PostDecrement => {
-                    self.emit_expr(*inner, state);
-                    self.buffer.emit("--");
-                }
-                UnaryOp::PreIncrement => {
-                    self.buffer.emit("++");
-                    self.emit_expr(*inner, state);
-                }
-                UnaryOp::PreDecrement => {
-                    self.buffer.emit("--");
-                    self.emit_expr(*inner, state);
-                }
-                UnaryOp::Not => {
-                    if inner.ty == Type::Bool {
-                        self.emit_cast(&expr.ty);
-                        self.buffer.emit("((");
-                        self.emit_expr(*inner, state);
-                        self.buffer.emit(") ^ 1)");
-                    } else {
-                        self.buffer.emit("~");
-                        self.emit_expr(*inner, state);
-                    }
-                }
-                UnaryOp::Deref => {
-                    self.buffer.emit("(*");
-                    self.emit_expr(*inner, state);
-                    self.buffer.emit(")");
-                }
-                UnaryOp::Addr | UnaryOp::AddrMut => {
-                    state.fill_generics(&mut inner.ty);
-
-                    let array = inner.ty.is_array();
-                    if !array {
-                        self.buffer.emit("&");
-                    }
-                    if Self::is_lvalue(&inner) {
-                        self.emit_expr(*inner, state);
-                    } else {
-                        self.emit_tmpvar_ident(*inner, state);
-                    }
-
-                    if array {
-                        self.buffer.emit(format!(".{ARRAY_DATA_NAME}"));
-                    }
-                }
-                UnaryOp::Try => {
-                    tmpbuf_emit!(self, state, |tmp| {
-                        self.emit_type(&expr.ty);
-                        self.buffer.emit(format!(" {tmp};"));
-
-                        state.fill_generics(&mut inner.ty);
-                        let inner_ty = inner.ty.clone();
-                        let inner_tmp = self.emit_tmpvar(*inner, state);
-                        self.emit_pattern_if_stmt(
-                            state,
-                            &CheckedPatternData::UnionMember {
-                                pattern: None,
-                                variant: "None".into(),
-                                inner: expr.ty.clone(),
-                                borrows: false,
-                            },
-                            &inner_tmp,
-                            &inner_ty,
-                        );
-                        self.buffer.emit("return ");
-                        let mut ret_type = self.scopes.get(state.func.id).ret.clone();
-                        state.fill_generics(&mut ret_type);
-                        self.emit_expr_inner(CheckedExpr::option_null(ret_type), state);
-                        self.buffer.emit(format!(";}}{tmp}="));
-                        if inner_ty.can_omit_tag(self.scopes).is_some() {
-                            self.buffer.emit(format!("{inner_tmp};"));
-                        } else {
-                            self.buffer.emit(format!("{inner_tmp}.$Some.$0;"));
-                        }
-                    });
-                }
-                UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in gen_expr"),
-            },
+            CheckedExprData::Unary { op, expr: inner } => {
+                self.emit_unary(state, op, expr.ty, *inner)
+            }
             CheckedExprData::AutoDeref(expr, count) => {
                 self.buffer.emit(format!("({:*<1$}", "", count));
                 self.emit_expr(*expr, state);
@@ -1418,8 +1325,9 @@ impl<'a> Codegen<'a> {
                     );
                 }
 
-                if let Some(op) = self.scopes.get(func.id).attrs.val("binary_op") {
+                if self.scopes.get(func.id).attrs.has("binary_op") {
                     let mut args = args.into_iter();
+                    let op = &self.scopes.get(func.id).name.data[..];
                     return self.emit_binary(
                         state,
                         match op {
@@ -1449,6 +1357,26 @@ impl<'a> Codegen<'a> {
                             .auto_deref(&Type::Unknown),
                         args.next()
                             .expect("ICE: binary operator should receive two arguments")
+                            .1
+                            .auto_deref(&Type::Unknown),
+                    );
+                } else if self.scopes.get(func.id).attrs.has("unary_op") {
+                    let op = &self.scopes.get(func.id).name.data[..];
+                    return self.emit_unary(
+                        state,
+                        match op {
+                            "neg" => UnaryOp::Neg,
+                            "not" => UnaryOp::Not,
+                            "post_inc" => UnaryOp::PostIncrement,
+                            "post_dec" => UnaryOp::PostDecrement,
+                            "pre_inc" => UnaryOp::PreIncrement,
+                            "pre_dec" => UnaryOp::PreDecrement,
+                            _ => panic!("ICE: call to unsupported binary operator '{op}'"),
+                        },
+                        expr.ty,
+                        args.into_iter()
+                            .next()
+                            .expect("ICE: unary operator should receive one argument")
                             .1
                             .auto_deref(&Type::Unknown),
                     );
@@ -1964,7 +1892,7 @@ impl<'a> Codegen<'a> {
                     state.fill_generics(&mut scrutinee.ty);
                     let ty = scrutinee.ty.clone();
                     let tmp = self.emit_tmpvar(*scrutinee, state);
-                    for (i, (patt, expr)) in body.into_iter().enumerate() {
+                    for (i, (patt, mut expr)) in body.into_iter().enumerate() {
                         if i > 0 {
                             self.buffer.emit("else ");
                         }
@@ -1972,8 +1900,9 @@ impl<'a> Codegen<'a> {
                         self.emit_pattern_if_stmt(state, &patt.data, &tmp, &ty);
 
                         hoist_point!(self, {
+                            state.fill_generics(&mut expr.ty);
                             self.buffer.emit(format!("{}=", self.cur_block));
-                            self.emit_expr(expr, state);
+                            self.emit_expr_inner(expr, state);
                             self.buffer.emit(";}");
                         });
                     }
@@ -2200,6 +2129,98 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit("?1:0)");
                 }
             }
+        }
+    }
+
+    fn emit_unary(&mut self, state: &mut State, op: UnaryOp, ret: Type, mut lhs: CheckedExpr) {
+        match op {
+            UnaryOp::Plus => self.emit_expr(lhs, state),
+            UnaryOp::Neg => {
+                self.buffer.emit("-");
+                self.emit_expr(lhs, state);
+            }
+            UnaryOp::PostIncrement => {
+                self.emit_expr(lhs, state);
+                self.buffer.emit("++");
+            }
+            UnaryOp::PostDecrement => {
+                self.emit_expr(lhs, state);
+                self.buffer.emit("--");
+            }
+            UnaryOp::PreIncrement => {
+                self.buffer.emit("++");
+                self.emit_expr(lhs, state);
+            }
+            UnaryOp::PreDecrement => {
+                self.buffer.emit("--");
+                self.emit_expr(lhs, state);
+            }
+            UnaryOp::Not => {
+                if lhs.ty == Type::Bool {
+                    self.emit_cast(&ret);
+                    self.buffer.emit("((");
+                    self.emit_expr(lhs, state);
+                    self.buffer.emit(") ^ 1)");
+                } else {
+                    self.buffer.emit("~");
+                    self.emit_expr(lhs, state);
+                }
+            }
+            UnaryOp::Deref => {
+                self.buffer.emit("(*");
+                self.emit_expr(lhs, state);
+                self.buffer.emit(")");
+            }
+            UnaryOp::Addr | UnaryOp::AddrMut => {
+                state.fill_generics(&mut lhs.ty);
+
+                let array = lhs.ty.is_array();
+                if !array {
+                    self.buffer.emit("&");
+                }
+                if Self::is_lvalue(&lhs) {
+                    self.emit_expr(lhs, state);
+                } else {
+                    self.emit_tmpvar_ident(lhs, state);
+                }
+
+                if array {
+                    self.buffer.emit(format!(".{ARRAY_DATA_NAME}"));
+                }
+            }
+            UnaryOp::Try => {
+                tmpbuf_emit!(self, state, |tmp| {
+                    state.fill_generics(&mut lhs.ty);
+
+                    self.emit_type(&lhs.ty);
+                    self.buffer.emit(format!(" {tmp};"));
+
+                    let inner_ty = lhs.ty.clone();
+                    let inner_tmp = self.emit_tmpvar(lhs, state);
+                    self.emit_pattern_if_stmt(
+                        state,
+                        &CheckedPatternData::UnionMember {
+                            pattern: None,
+                            variant: "None".into(),
+                            inner: ret.clone(),
+                            borrows: false,
+                        },
+                        &inner_tmp,
+                        &inner_ty,
+                    );
+                    self.buffer.emit("return ");
+                    let mut ret_type = self.scopes.get(state.func.id).ret.clone();
+                    state.fill_generics(&mut ret_type);
+                    self.emit_expr_inner(CheckedExpr::option_null(ret_type), state);
+                    self.buffer.emit(format!(";}}{tmp}="));
+                    if inner_ty.can_omit_tag(self.scopes).is_some() {
+                        self.buffer.emit(format!("{inner_tmp};"));
+                    } else {
+                        self.buffer.emit(format!("{inner_tmp}.$Some.$0;"));
+                    }
+                });
+            }
+            UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in gen_expr"),
         }
     }
 

@@ -2,10 +2,14 @@
 #(lang(numeric))
 pub trait Numeric {}
 
+// i*, u*, int, uint, c_*
+#(lang(integral))
+pub trait Integral: Numeric {}
+
 // i*, int, signed c_*
 #(lang(signed))
-pub trait Signed {}
+pub trait Signed: Integral {}
 
 // i*, int, c_u*
 #(lang(unsigned))
-pub trait Unsigned {}
+pub trait Unsigned: Integral {}
