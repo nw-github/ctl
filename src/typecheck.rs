@@ -2653,9 +2653,13 @@ impl TypeChecker {
 
         match (lhs, rhs) {
             (a, b) if a == b => {}
-            (Type::Char, Type::Uint(num)) if *num >= 32 => {}
-            (Type::Char, Type::Int(num)) if *num >= 33 => {}
+            (Type::Char, Type::Uint(n)) if *n >= 32 => {}
+            (Type::Char, Type::Int(n)) if *n >= 33 => {}
             (Type::F32, Type::F64) => {}
+            (Type::Uint(n), Type::F32) if *n <= 24 => {}
+            (Type::Int(n), Type::F32) if *n <= 25 => {}
+            (Type::Uint(n), Type::F64) if *n <= 53 => {}
+            (Type::Int(n), Type::F64) if *n <= 53 => {}
             (Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_), Type::Usize) => {}
             (
                 Type::Bool,
@@ -2674,6 +2678,24 @@ impl TypeChecker {
                 }
             }
             (Type::CUint(a), Type::CUint(b)) if a <= b => {}
+            (
+                Type::Int(_)
+                | Type::Uint(_)
+                | Type::CInt(_)
+                | Type::CUint(_)
+                | Type::Usize
+                | Type::Isize,
+                Type::F32 | Type::F64,
+            ) if throwing => {}
+            (
+                Type::F32 | Type::F64,
+                Type::Int(_)
+                | Type::Uint(_)
+                | Type::CInt(_)
+                | Type::CUint(_)
+                | Type::Usize
+                | Type::Isize,
+            ) if throwing => {}
             (
                 Type::Int(_)
                 | Type::Uint(_)
@@ -3748,7 +3770,10 @@ impl TypeChecker {
         let max = stats.max();
         if result > max {
             return self.error(Error::new(
-                format!("integer literal is larger than its type allows ({max})"),
+                format!(
+                    "integer literal too large for type '{}' (max is {max})",
+                    ty.name(&self.scopes)
+                ),
                 span,
             ));
         }
@@ -3756,7 +3781,10 @@ impl TypeChecker {
         let min = stats.min();
         if result < min {
             return self.error(Error::new(
-                format!("integer literal is smaller than its type allows ({min})"),
+                format!(
+                    "integer literal too small for type '{}' (min is {max})",
+                    ty.name(&self.scopes)
+                ),
                 span,
             ));
         }

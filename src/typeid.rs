@@ -395,7 +395,10 @@ impl Type {
     pub fn supports_unary(&self, scopes: &Scopes, op: UnaryOp) -> bool {
         use UnaryOp::*;
         match op {
-            Neg => self.integer_stats().is_some_and(|s| s.signed),
+            Neg => {
+                self.integer_stats().is_some_and(|s| s.signed)
+                    || matches!(self, Type::F32 | Type::F64)
+            }
             PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
                 self.is_integral() || self.is_raw_ptr()
             }

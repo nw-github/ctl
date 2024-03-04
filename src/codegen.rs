@@ -2179,7 +2179,7 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit("&");
                 }
                 if Self::is_lvalue(&lhs) {
-                    self.emit_expr(lhs, state);
+                    self.emit_expr_inner(lhs, state);
                 } else {
                     self.emit_tmpvar_ident(lhs, state);
                 }
