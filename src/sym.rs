@@ -505,77 +505,114 @@ impl Scopes {
         id.get_mut(self)
     }
 
-    pub fn implements_trait(
-        &self,
-        ty: &Type,
-        bound: &GenericTrait,
-        excl: &HashSet<ExtensionId>,
-        scope: ScopeId,
-    ) -> bool {
-        if ty.is_unknown() || self.has_builtin_impl(ty, bound) {
-            return true;
-        }
+    pub fn extensions_in_scope_for(&self, ty: &Type, scope: ScopeId) -> Vec<GenericExtension> {
+        fn implements_trait(
+            this: &Scopes,
+            ty: &Type,
+            bound: &GenericTrait,
+            ignore: &HashSet<ExtensionId>,
+            exts: &[ExtensionId],
+            results: &mut [Option<Option<GenericExtension>>],
+        ) -> bool {
+            if ty.is_unknown() || this.has_builtin_impl(ty, bound) {
+                return true;
+            }
 
-        let search = |this: Option<&TypeArgs>, impls: &[TraitImpl]| {
-            impls.iter().flat_map(|i| i.as_checked()).any(|(tr, _)| {
-                let mut tr = tr.clone();
-                this.inspect(|ty_args| tr.fill_templates(ty_args));
-                &tr == bound
-            })
-        };
+            let search = |this: Option<&TypeArgs>, impls: &[TraitImpl]| {
+                impls.iter().flat_map(|i| i.as_checked()).any(|(tr, _)| {
+                    let mut tr = tr.clone();
+                    this.inspect(|ty_args| tr.fill_templates(ty_args));
+                    &tr == bound
+                })
+            };
 
-        if ty
-            .as_user()
-            .is_some_and(|this| search(Some(&this.ty_args), &self.get(this.id).impls))
-        {
-            return true;
-        }
+            if ty
+                .as_user()
+                .is_some_and(|ut| search(Some(&ut.ty_args), &this.get(ut.id).impls))
+            {
+                return true;
+            }
 
-        self.extensions_in_scope_for(ty, excl, scope)
-            .any(|ext| search(Some(&ext.ty_args), &self.get(ext.id).impls))
-    }
-
-    pub fn extensions_in_scope_for<'a, 'b>(
-        &'a self,
-        rhs: &'b Type,
-        excl: &'b HashSet<ExtensionId>,
-        scope: ScopeId,
-    ) -> impl Iterator<Item = GenericExtension> + 'b
-    where
-        'a: 'b,
-    {
-        let applies_to = move |id: ExtensionId, lhs: &Type| match lhs {
-            Type::User(ut) if self.get(ut.id).data.is_template() => {
-                let mut excl = excl.clone();
-                excl.insert(id);
-                for (bound, _) in self
-                    .get(ut.id)
-                    .impls
-                    .iter()
-                    .flat_map(|bound| bound.as_checked())
-                {
-                    if !self.implements_trait(rhs, bound, &excl, scope) {
-                        return None;
+            for (i, &id) in exts
+                .iter()
+                .enumerate()
+                .filter(|(_, id)| !ignore.contains(id))
+            {
+                match &results[i] {
+                    Some(Some(ext)) => {
+                        if search(Some(&ext.ty_args), &this.get(ext.id).impls) {
+                            return true;
+                        }
+                    }
+                    Some(None) => continue,
+                    None => {
+                        let mut ignore = ignore.clone();
+                        ignore.insert(id);
+                        if let Some(args) =
+                            applies_to(this, ty, &this.get(id).ty, &ignore, exts, results)
+                        {
+                            if search(Some(&args), &this.get(id).impls) {
+                                return true;
+                            }
+                            results[i] = Some(Some(GenericExtension::new(id, args)))
+                        } else {
+                            results[i] = Some(None);
+                        }
                     }
                 }
-                Some(GenericExtension::new(
-                    id,
-                    TypeArgs([(ut.id, rhs.clone())].into()),
-                ))
             }
-            ty => (ty == rhs).then(|| GenericExtension::new(id, Default::default())),
-        };
 
-        self.walk(scope).flat_map(move |(_, scope)| {
-            // TODO: maybe keep an extensions field to make this lookup faster
-            scope
-                .tns
-                .iter()
-                .filter_map(|id| id.1.as_extension())
-                .map(|ext| (*ext, self.get(*ext)))
-                .filter(move |(id, _)| !excl.contains(id))
-                .filter_map(move |(id, ext)| applies_to(id, &ext.ty))
-        })
+            false
+        }
+
+        fn applies_to(
+            this: &Scopes,
+            ty: &Type,
+            ext_ty: &Type,
+            ignore: &HashSet<ExtensionId>,
+            exts: &[ExtensionId],
+            results: &mut [Option<Option<GenericExtension>>],
+        ) -> Option<TypeArgs> {
+            match ext_ty {
+                Type::User(ut) if this.get(ut.id).data.is_template() => {
+                    for (bound, _) in this
+                        .get(ut.id)
+                        .impls
+                        .iter()
+                        .flat_map(|bound| bound.as_checked())
+                    {
+                        if !implements_trait(this, ty, bound, ignore, exts, results) {
+                            return None;
+                        }
+                    }
+                    Some(TypeArgs([(ut.id, ty.clone())].into()))
+                }
+                rhs => (ty == rhs).then(Default::default),
+            }
+        }
+
+        let exts: Vec<_> = self
+            .walk(scope)
+            .flat_map(|(_, scope)| scope.tns.iter().flat_map(|s| s.1.as_extension().copied()))
+            .collect();
+        let mut results = vec![None; exts.len()];
+        for (i, &id) in exts.iter().enumerate() {
+            if results[i].is_none() {
+                results[i] = Some(
+                    applies_to(
+                        self,
+                        ty,
+                        &self.get(id).ty,
+                        &[id].into(),
+                        &exts,
+                        &mut results,
+                    )
+                    .map(|args| GenericExtension::new(id, args)),
+                );
+            }
+        }
+
+        results.into_iter().flatten().flatten().collect()
     }
 
     pub fn get_tuple(&mut self, ty_args: Vec<Type>) -> Type {

@@ -251,86 +251,6 @@ impl CheckedExpr {
         }
     }
 
-    pub fn coerce_to(
-        mut self,
-        scopes: &Scopes,
-        scope: ScopeId,
-        target: &Type,
-    ) -> Result<CheckedExpr, CheckedExpr> {
-        fn may_ptr_coerce(lhs: &Type, rhs: &Type) -> bool {
-            match (lhs, rhs) {
-                (Type::MutPtr(s), Type::Ptr(t) | Type::RawPtr(t)) if s == t => true,
-                (Type::MutPtr(s), Type::RawPtr(t) | Type::MutPtr(t) | Type::Ptr(t)) => {
-                    may_ptr_coerce(s, t)
-                }
-                (Type::Ptr(s), Type::Ptr(t)) => may_ptr_coerce(s, t),
-                _ => false,
-            }
-        }
-
-        match (&self.ty, target) {
-            (Type::Never, Type::Never) => Ok(self),
-            (Type::Never, rhs) => Ok(CheckedExpr::new(
-                rhs.clone(),
-                CheckedExprData::NeverCoerce(self.into()),
-            )),
-            (Type::Unknown, _) | (_, Type::Unknown) => {
-                self.ty = target.clone();
-                Ok(self)
-            }
-            (Type::Ptr(lhs), Type::DynPtr(rhs))
-                if scopes.implements_trait(lhs, rhs, &Default::default(), scope) =>
-            {
-                Ok(CheckedExpr::new(
-                    target.clone(),
-                    CheckedExprData::DynCoerce {
-                        expr: self.into(),
-                        scope,
-                    },
-                ))
-            }
-            (Type::MutPtr(lhs), Type::DynPtr(rhs) | Type::DynMutPtr(rhs))
-                if scopes.implements_trait(lhs, rhs, &Default::default(), scope) =>
-            {
-                Ok(CheckedExpr::new(
-                    target.clone(),
-                    CheckedExprData::DynCoerce {
-                        expr: self.into(),
-                        scope,
-                    },
-                ))
-            }
-            (lhs, rhs) if may_ptr_coerce(lhs, rhs) => {
-                self.ty = target.clone();
-                Ok(self)
-            }
-            (lhs, rhs) if lhs != rhs => {
-                if let Some(inner) = rhs.as_option_inner(scopes) {
-                    match self.coerce_to(scopes, scope, inner) {
-                        Ok(expr) => Ok(CheckedExpr::new(
-                            rhs.clone(),
-                            CheckedExprData::Instance {
-                                members: [("0".into(), expr)].into(),
-                                variant: Some("Some".into()),
-                            },
-                        )),
-                        Err(expr) => Err(expr),
-                    }
-                } else {
-                    Err(self)
-                }
-            }
-            _ => Ok(self),
-        }
-    }
-
-    pub fn try_coerce_to(self, scopes: &Scopes, scope: ScopeId, target: &Type) -> CheckedExpr {
-        match self.coerce_to(scopes, scope, target) {
-            Ok(expr) => expr,
-            Err(expr) => expr,
-        }
-    }
-
     pub fn auto_deref(self, target: &Type) -> CheckedExpr {
         let mut needed = 0;
         let mut current = target;
@@ -374,7 +294,11 @@ impl CheckedExpr {
             }
             std::cmp::Ordering::Equal => self,
             std::cmp::Ordering::Greater => CheckedExpr::new(
-                if needed != 0 { prev.clone() } else { ty.clone() },
+                if needed != 0 {
+                    prev.clone()
+                } else {
+                    ty.clone()
+                },
                 CheckedExprData::AutoDeref(self.into(), indirection - needed),
             ),
         }

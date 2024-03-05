@@ -1565,11 +1565,8 @@ impl TypeChecker {
                 match (&left.ty, op) {
                     (Type::RawPtr(_), BinaryOp::Sub) => {
                         let span = right.span;
-                        let right = self.check_expr(*right, Some(&Type::Isize)).try_coerce_to(
-                            &self.scopes,
-                            self.current,
-                            &Type::Isize,
-                        );
+                        let right = self.check_expr(*right, Some(&Type::Isize));
+                        let right = self.try_coerce(right, &Type::Isize);
                         match &right.ty {
                             ty if &left.ty == ty => CheckedExpr::new(
                                 Type::Isize,
@@ -1599,11 +1596,8 @@ impl TypeChecker {
                         BinaryOp::Add | BinaryOp::AddAssign | BinaryOp::SubAssign,
                     ) => {
                         let span = right.span;
-                        let right = self.check_expr(*right, Some(&Type::Isize)).try_coerce_to(
-                            &self.scopes,
-                            self.current,
-                            &Type::Isize,
-                        );
+                        let right = self.check_expr(*right, Some(&Type::Isize));
+                        let right = self.try_coerce(right, &Type::Isize);
                         if !right.ty.is_integral() && !right.ty.is_unknown() {
                             self.error(Error::type_mismatch_s(
                                 "{integer}",
@@ -2164,7 +2158,7 @@ impl TypeChecker {
                     if out_type.is_never() {
                         let expr = self.check_expr_inner(*expr, None);
                         out_type = expr.ty.clone();
-                        if_branch = if_branch.try_coerce_to(&self.scopes, self.current, &expr.ty);
+                        if_branch = self.try_coerce(if_branch, &expr.ty);
                         Some(expr)
                     } else {
                         let span = expr.span;
@@ -2183,8 +2177,7 @@ impl TypeChecker {
                             Some(CheckedExpr::new(Type::Void, CheckedExprData::Void))
                         } else {
                             out_type = self.make_lang_type_by_name("option", [out_type], span);
-                            if_branch =
-                                if_branch.try_coerce_to(&self.scopes, self.current, &out_type);
+                            if_branch = self.try_coerce(if_branch, &out_type);
                             Some(self.check_expr_inner(
                                 Located::new(span, ExprData::None),
                                 Some(&out_type),
@@ -2443,10 +2436,7 @@ impl TypeChecker {
 
                     let (target, opt) = self.loop_out_type(&self.scopes[id].kind.clone(), span);
                     if opt {
-                        Some(
-                            expr.try_coerce_to(&self.scopes, self.current, &target)
-                                .into(),
-                        )
+                        Some(self.try_coerce(expr, &target).into())
                     } else {
                         Some(expr.into())
                     }
@@ -2504,7 +2494,7 @@ impl TypeChecker {
                 let target = target.unwrap_or(if has_never { Type::Never } else { Type::Void });
                 if !matches!(target, Type::Never | Type::Void) {
                     for (_, e) in result.iter_mut() {
-                        *e = std::mem::take(e).try_coerce_to(&self.scopes, self.current, &target);
+                        *e = self.try_coerce(std::mem::take(e), &target);
                     }
                 }
 
@@ -2520,7 +2510,7 @@ impl TypeChecker {
             ExprData::As { expr, ty, throwing } => {
                 let ty = self.resolve_typehint(ty);
                 let expr = self.check_expr(*expr, Some(&ty));
-                match expr.coerce_to(&self.scopes, self.current, &ty) {
+                match self.coerce(expr, &ty) {
                     Ok(expr) => expr,
                     Err(expr) => {
                         self.check_cast(&expr.ty, &ty, throwing, span);
@@ -3224,7 +3214,7 @@ impl TypeChecker {
         target: &Type,
         span: Span,
     ) -> CheckedExpr {
-        match source.coerce_to(&self.scopes, self.current, target) {
+        match self.coerce(source, target) {
             Ok(expr) => expr,
             Err(expr) => self.error(Error::type_mismatch(target, &expr.ty, &self.scopes, span)),
         }
@@ -3490,11 +3480,7 @@ impl TypeChecker {
             return true;
         }
 
-        for ext in self
-            .scopes
-            .extensions_in_scope_for(ty, &Default::default(), self.current)
-            .collect::<Vec<_>>()
-        {
+        for ext in self.scopes.extensions_in_scope_for(ty, self.current) {
             for i in 0..self.scopes.get(ext.id).impls.len() {
                 resolve_impl!(self, self.scopes.get_mut(ext.id).impls[i]);
                 if check(Some(&ext.ty_args), &self.scopes.get(ext.id).impls[i], bound) {
@@ -3532,11 +3518,7 @@ impl TypeChecker {
         {
             Some(ut)
         } else {
-            for ext in self
-                .scopes
-                .extensions_in_scope_for(ty, &Default::default(), self.current)
-                .collect::<Vec<_>>()
-            {
+            for ext in self.scopes.extensions_in_scope_for(ty, self.current) {
                 if let Some(ut) = self.get_trait_impl_helper(ext.id, id) {
                     return Some(ut);
                 }
@@ -3573,11 +3555,7 @@ impl TypeChecker {
             generics: &[TypeHint],
             span: Span,
         ) -> Result<Option<MemberFn>, ()> {
-            for ext in this
-                .scopes
-                .extensions_in_scope_for(ty, &Default::default(), this.current)
-                .collect::<Vec<_>>()
-            {
+            for ext in this.scopes.extensions_in_scope_for(ty, this.current) {
                 let src_scope = this.scopes.get(ext.id).scope;
                 if let Some(func) = search(&this.scopes, &this.scopes.get(ext.id).fns, method) {
                     let mut func = make_func(this, func, ty, generics, src_scope, span)?;
@@ -3905,6 +3883,83 @@ impl TypeChecker {
                 ),
                 _ => (Type::Void, false),
             }
+        }
+    }
+
+    pub fn coerce(
+        &mut self,
+        mut expr: CheckedExpr,
+        target: &Type,
+    ) -> Result<CheckedExpr, CheckedExpr> {
+        fn may_ptr_coerce(lhs: &Type, rhs: &Type) -> bool {
+            match (lhs, rhs) {
+                (Type::MutPtr(s), Type::Ptr(t) | Type::RawPtr(t)) if s == t => true,
+                (Type::MutPtr(s), Type::RawPtr(t) | Type::MutPtr(t) | Type::Ptr(t)) => {
+                    may_ptr_coerce(s, t)
+                }
+                (Type::Ptr(s), Type::Ptr(t)) => may_ptr_coerce(s, t),
+                _ => false,
+            }
+        }
+
+        match (&expr.ty, target) {
+            (Type::Never, Type::Never) => Ok(expr),
+            (Type::Never, rhs) => Ok(CheckedExpr::new(
+                rhs.clone(),
+                CheckedExprData::NeverCoerce(expr.into()),
+            )),
+            (Type::Unknown, _) | (_, Type::Unknown) => {
+                expr.ty = target.clone();
+                Ok(expr)
+            }
+            (Type::Ptr(lhs), Type::DynPtr(rhs)) if self.implements_trait(lhs, rhs) => {
+                Ok(CheckedExpr::new(
+                    target.clone(),
+                    CheckedExprData::DynCoerce {
+                        expr: expr.into(),
+                        scope: self.current,
+                    },
+                ))
+            }
+            (Type::MutPtr(lhs), Type::DynPtr(rhs) | Type::DynMutPtr(rhs))
+                if self.implements_trait(lhs, rhs) =>
+            {
+                Ok(CheckedExpr::new(
+                    target.clone(),
+                    CheckedExprData::DynCoerce {
+                        expr: expr.into(),
+                        scope: self.current,
+                    },
+                ))
+            }
+            (lhs, rhs) if may_ptr_coerce(lhs, rhs) => {
+                expr.ty = target.clone();
+                Ok(expr)
+            }
+            (lhs, rhs) if lhs != rhs => {
+                if let Some(inner) = rhs.as_option_inner(&self.scopes) {
+                    match self.coerce(expr, inner) {
+                        Ok(expr) => Ok(CheckedExpr::new(
+                            rhs.clone(),
+                            CheckedExprData::Instance {
+                                members: [("0".into(), expr)].into(),
+                                variant: Some("Some".into()),
+                            },
+                        )),
+                        Err(expr) => Err(expr),
+                    }
+                } else {
+                    Err(expr)
+                }
+            }
+            _ => Ok(expr),
+        }
+    }
+
+    pub fn try_coerce(&mut self, expr: CheckedExpr, target: &Type) -> CheckedExpr {
+        match self.coerce(expr, target) {
+            Ok(expr) => expr,
+            Err(expr) => expr,
         }
     }
 }

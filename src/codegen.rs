@@ -2886,7 +2886,8 @@ impl<'a> Codegen<'a> {
             return finish(id);
         } else if let Some((id, ext)) = self
             .scopes
-            .extensions_in_scope_for(this, &Default::default(), scope)
+            .extensions_in_scope_for(this, scope)
+            .iter()
             .find_map(|ext| search(&self.scopes.get(ext.id).impls).zip(Some(ext)))
         {
             let mut f = finish(id);
