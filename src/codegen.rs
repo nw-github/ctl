@@ -445,9 +445,7 @@ impl<'a> TypeGen<'a> {
         }
 
         buffer.emit_type(scopes, &ty, None, min);
-        buffer.emit(" ");
-        buffer.emit_member_name(scopes, Some(ut.id), name);
-        buffer.emit(";");
+        buffer.emit(format!(" {};", member_name(scopes, Some(ut.id), name)));
     }
 
     fn emit_array(
@@ -748,14 +746,6 @@ impl Buffer {
     fn emit_vtable_struct_name(&mut self, scopes: &Scopes, tr: &GenericTrait, min: bool) {
         self.emit(if min { "v" } else { "$vtable_" });
         self.emit_trait_name(scopes, tr, min);
-    }
-
-    fn emit_member_name(&mut self, scopes: &Scopes, id: Option<UserTypeId>, name: &str) {
-        if id.is_some_and(|id| scopes.get(id).attrs.has(ATTR_NOGEN)) {
-            self.emit(name);
-        } else {
-            self.emit(format!("${name}"));
-        }
     }
 
     fn finish(self) -> String {
@@ -1630,9 +1620,10 @@ impl<'a> Codegen<'a> {
                             .iter()
                             .filter(|(name, _)| ut.members.contains_key(name))
                         {
-                            self.buffer.emit(".");
-                            self.buffer.emit_member_name(self.scopes, Some(ut_id), name);
-                            self.buffer.emit(format!("={value},"));
+                            self.buffer.emit(format!(
+                                ".{}={value},",
+                                member_name(self.scopes, Some(ut_id), name)
+                            ));
                         }
 
                         if union.variants.get(&variant).is_some_and(|v| v.is_some()) {
@@ -1652,10 +1643,10 @@ impl<'a> Codegen<'a> {
 
                         for (name, mut value) in members {
                             state.fill_generics(&mut value.ty);
-                            self.buffer.emit(".");
-                            self.buffer
-                                .emit_member_name(self.scopes, Some(ut_id), &name);
-                            self.buffer.emit("=");
+                            self.buffer.emit(format!(
+                                ".{}=",
+                                member_name(self.scopes, Some(ut_id), &name)
+                            ));
                             self.emit_expr(value, state);
                             self.buffer.emit(",");
                         }
@@ -1666,8 +1657,8 @@ impl<'a> Codegen<'a> {
             CheckedExprData::Member { source, member } => {
                 let id = source.ty.as_user().map(|ut| ut.id);
                 self.emit_expr(*source, state);
-                self.buffer.emit(".");
-                self.buffer.emit_member_name(self.scopes, id, &member);
+                self.buffer
+                    .emit(format!(".{}", member_name(self.scopes, id, &member)));
             }
             CheckedExprData::Block(block) => {
                 enter_block!(self, state, &expr.ty, {
@@ -2557,11 +2548,12 @@ impl<'a> Codegen<'a> {
             }
             CheckedPatternData::Destrucure { patterns, borrows } => {
                 let src = Self::deref(src, ty);
+                let ut_id = ty.strip_references().as_user().map(|ut| ut.id);
                 for (member, inner, patt) in patterns {
                     self.emit_pattern_inner(
                         state,
                         &patt.data,
-                        &format!("{src}.${member}"),
+                        &format!("{src}.{}", member_name(self.scopes, ut_id, member)),
                         inner,
                         borrow || *borrows,
                         bindings,
@@ -2965,4 +2957,12 @@ fn vtable_methods<'a>(
                 .iter()
                 .all(|p| !p.ty.as_user().is_some_and(|ty| ty.id == tr.this))
     })
+}
+
+fn member_name(scopes: &Scopes, id: Option<UserTypeId>, name: &str) -> String {
+    if id.is_some_and(|id| scopes.get(id).attrs.has(ATTR_NOGEN)) {
+        name.into()
+    } else {
+        format!("${name}")
+    }
 }

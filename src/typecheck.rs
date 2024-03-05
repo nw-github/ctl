@@ -1368,12 +1368,14 @@ impl TypeChecker {
         };
 
         let target = if let Some(target) = target {
-            Type::User(GenericUserType::from_type_args(&self.scopes, id, [target.clone()]).into())
+            Some(Type::User(
+                GenericUserType::from_type_args(&self.scopes, id, [target.clone()]).into(),
+            ))
         } else {
-            Type::User(GenericUserType::from_type_args(&self.scopes, id, [Type::Unknown]).into())
+            None
         };
         let lhs_span = lhs.span;
-        let lhs = self.check_expr(lhs, Some(&target));
+        let lhs = self.check_expr(lhs, target.as_ref());
         let Some(target) = lhs.ty.as_option_inner(&self.scopes) else {
             if lhs.ty.is_unknown() {
                 return Default::default();
