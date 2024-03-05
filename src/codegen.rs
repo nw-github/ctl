@@ -2571,8 +2571,9 @@ impl<'a> Codegen<'a> {
                     },
                 borrows,
             } => {
+                let src = Self::deref(src, ty);
                 let src = if ty.is_any_ptr() {
-                    src.into()
+                    src
                 } else {
                     format!("{src}.{ARRAY_DATA_NAME}")
                 };
@@ -2612,13 +2613,21 @@ impl<'a> Codegen<'a> {
                 }
             }
             &CheckedPatternData::Variable(id) => {
-                if !self.scopes.get(id).unused {
-                    usebuf!(self, bindings, {
-                        self.emit_local_decl(id, state);
+                if self.scopes.get(id).unused {
+                    return;
+                }
+
+                usebuf!(self, bindings, {
+                    let ty = self.emit_local_decl(id, state);
+                    if borrow
+                        && matches!(ty, Type::Ptr(i) | Type::MutPtr(i) | Type::RawPtr(i) if i.is_array())
+                    {
+                        self.buffer.emit(format!("={src}.{ARRAY_DATA_NAME};"));
+                    } else {
                         self.buffer
                             .emit(format!("={}{src};", if borrow { "&" } else { "" }));
-                    });
-                }
+                    }
+                });
             }
             CheckedPatternData::Void => conditions.next_str("1"),
             CheckedPatternData::Error => panic!("ICE: CheckedPatternData::Error in gen_pattern"),
@@ -2917,7 +2926,7 @@ impl<'a> Codegen<'a> {
     }
 
     fn deref(src: &str, ty: &Type) -> String {
-        if ty.is_ptr() || ty.is_mut_ptr() {
+        if matches!(ty, Type::Ptr(_) | Type::MutPtr(_)) {
             format!(
                 "({:*<1$}{src})",
                 "",
