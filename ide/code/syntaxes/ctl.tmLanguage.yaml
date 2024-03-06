@@ -46,7 +46,7 @@ patterns:
       - include: '#types'
   -
     comment: modules
-    match: (mod)\s+((?:r#(?!crate|[Tt]his|super))?[a-z][A-Za-z0-9_]*)
+    match: (mod)\s+((?:r#(?!crate|[Tt]his|super))?\p{XID_Start}\p{XID_Continue}*)
     captures:
       1:
         name: storage.type.ctl
@@ -120,10 +120,10 @@ repository:
       -
         comment: ALL CAPS constants
         name: constant.other.caps.ctl
-        match: \b[A-Z]{2}[A-Z0-9_]*\b
+        match: \b\p{Uppercase}{2}[A-Z0-9_]*\b
       -
         comment: constant declarations
-        match: \b(const)\s+([A-Z][A-Za-z0-9_]*)\b
+        match: \b(const)\s+(\p{Uppercase}\p{XID_Continue}*)\b
         captures:
           1:
             name: storage.type.ctl
@@ -197,7 +197,7 @@ repository:
       -
         comment: function definition
         name: meta.function.definition.ctl
-        begin: \b(fn)\s+((?:r#(?!crate|[Tt]his|super))?[A-Za-z0-9_]+)((\()|(<))
+        begin: \b(fn)\s+((?:r#(?!crate|[Tt]his|super))?\p{XID_Continue}+)((\()|(<))
         beginCaptures:
           1:
             name: keyword.other.fn.ctl
@@ -233,7 +233,7 @@ repository:
         # this currently highlights correctly, even with parens
         comment: function/method calls, chaining
         name: meta.function.call.ctl
-        begin: ((?:r#(?!crate|[Tt]his|super))?[A-Za-z0-9_]+)(\()
+        begin: ((?:r#(?!crate|[Tt]his|super))?\p{XID_Continue}+)(\()
         beginCaptures:
           1:
             name: entity.name.function.ctl
@@ -260,7 +260,7 @@ repository:
       -
         comment: function/method calls with turbofish
         name: meta.function.call.ctl
-        begin: ((?:r#(?!crate|[Tt]his|super))?[A-Za-z0-9_]+)(?=::<.*>\()
+        begin: ((?:r#(?!crate|[Tt]his|super))?\p{XID_Continue}+)(?=::<.*>\()
         beginCaptures:
           1:
             name: entity.name.function.ctl
@@ -456,7 +456,7 @@ repository:
     patterns:
       -
         comment: namespace (non-type, non-function path segment)
-        match: (?<![A-Za-z0-9_])([a-z0-9_]+)((?<!super)::)
+        match: (?<!\p{XID_Continue})(\p{XID_Continue}+)((?<!super)::)
         captures:
           1:
             name: entity.name.namespace.ctl
@@ -478,7 +478,7 @@ repository:
             name: entity.name.type.c.ctl
       -
         comment: parameterized types
-        begin: \b([A-Z][A-Za-z0-9]*)(<)
+        begin: \b(\p{Uppercase}\p{XID_Continue}*)(<)
         beginCaptures:
           1:
             name: entity.name.type.ctl
@@ -502,7 +502,7 @@ repository:
         match: \b(bool|char|str|void|never)\b
       -
         comment: trait declarations
-        match: \b(trait)\s+([A-Z][A-Za-z0-9]*)\b
+        match: \b(trait)\s+(\p{Uppercase}\p{XID_Continue}*)\b
         captures:
           1:
             name: keyword.declaration.trait.ctl storage.type.ctl
@@ -511,7 +511,7 @@ repository:
       # todo: add a specific case for struct fields so they can have different scope than variables - make sure not to catch namespaces
       -
         comment: struct declarations
-        match: \b(struct)\s+([A-Z][A-Za-z0-9]*)\b
+        match: \b(struct)\s+(\p{Uppercase}\p{XID_Continue}*)\b
         captures:
           1:
             name: keyword.declaration.struct.ctl storage.type.ctl
@@ -519,7 +519,7 @@ repository:
             name: entity.name.type.struct.ctl
       -
         comment: enum declarations
-        match: \b(enum)\s+([A-Z][A-Za-z0-9_]*)\b
+        match: \b(enum)\s+(\p{Uppercase}\p{XID_Continue}*)\b
         captures:
           1:
             name: keyword.declaration.enum.ctl storage.type.ctl
@@ -527,7 +527,7 @@ repository:
             name: entity.name.type.enum.ctl
       -
         comment: type declarations
-        match: \b(type)\s+([A-Z][A-Za-z0-9_]*)\b
+        match: \b(type)\s+(\p{Uppercase}\p{XID_Continue}*)\b
         captures:
           1:
             name: keyword.declaration.type.ctl storage.type.ctl
@@ -536,7 +536,7 @@ repository:
       -
         comment: types
         name: entity.name.type.ctl
-        match: '\b[A-Z][A-Za-z0-9]*\b(?!!)'
+        match: '\b\p{Uppercase}\p{XID_Continue}*\b(?!!)'
   gtypes:
     patterns:
       -
@@ -641,4 +641,4 @@ repository:
       -
         comment: variables
         name: variable.other.ctl
-        match: \b(?<!(?<!\.)\.)(?:r#(?!(crate|[Tt]his|super)))?[a-z0-9_]+\b
+        match: \b(?<!(?<!\.)\.)(?:r#(?!(crate|[Tt]his|super)))?\p{XID_Continue}+\b

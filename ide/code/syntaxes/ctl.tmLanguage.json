@@ -88,7 +88,7 @@
     },
     {
       "comment": "modules",
-      "match": "(mod)\\s+((?:r#(?!crate|[Tt]his|super))?[a-z][A-Za-z0-9_]*)",
+      "match": "(mod)\\s+((?:r#(?!crate|[Tt]his|super))?\\p{XID_Start}\\p{XID_Continue}*)",
       "captures": {
         "1": {
           "name": "storage.type.ctl"
@@ -228,11 +228,11 @@
         {
           "comment": "ALL CAPS constants",
           "name": "constant.other.caps.ctl",
-          "match": "\\b[A-Z]{2}[A-Z0-9_]*\\b"
+          "match": "\\b\\p{Uppercase}{2}[A-Z0-9_]*\\b"
         },
         {
           "comment": "constant declarations",
-          "match": "\\b(const)\\s+([A-Z][A-Za-z0-9_]*)\\b",
+          "match": "\\b(const)\\s+(\\p{Uppercase}\\p{XID_Continue}*)\\b",
           "captures": {
             "1": {
               "name": "storage.type.ctl"
@@ -340,7 +340,7 @@
         {
           "comment": "function definition",
           "name": "meta.function.definition.ctl",
-          "begin": "\\b(fn)\\s+((?:r#(?!crate|[Tt]his|super))?[A-Za-z0-9_]+)((\\()|(<))",
+          "begin": "\\b(fn)\\s+((?:r#(?!crate|[Tt]his|super))?\\p{XID_Continue}+)((\\()|(<))",
           "beginCaptures": {
             "1": {
               "name": "keyword.other.fn.ctl"
@@ -406,7 +406,7 @@
         {
           "comment": "function/method calls, chaining",
           "name": "meta.function.call.ctl",
-          "begin": "((?:r#(?!crate|[Tt]his|super))?[A-Za-z0-9_]+)(\\()",
+          "begin": "((?:r#(?!crate|[Tt]his|super))?\\p{XID_Continue}+)(\\()",
           "beginCaptures": {
             "1": {
               "name": "entity.name.function.ctl"
@@ -466,7 +466,7 @@
         {
           "comment": "function/method calls with turbofish",
           "name": "meta.function.call.ctl",
-          "begin": "((?:r#(?!crate|[Tt]his|super))?[A-Za-z0-9_]+)(?=::<.*>\\()",
+          "begin": "((?:r#(?!crate|[Tt]his|super))?\\p{XID_Continue}+)(?=::<.*>\\()",
           "beginCaptures": {
             "1": {
               "name": "entity.name.function.ctl"
@@ -767,7 +767,7 @@
       "patterns": [
         {
           "comment": "namespace (non-type, non-function path segment)",
-          "match": "(?<![A-Za-z0-9_])([a-z0-9_]+)((?<!super)::)",
+          "match": "(?<!\\p{XID_Continue})(\\p{XID_Continue}+)((?<!super)::)",
           "captures": {
             "1": {
               "name": "entity.name.namespace.ctl"
@@ -801,7 +801,7 @@
         },
         {
           "comment": "parameterized types",
-          "begin": "\\b([A-Z][A-Za-z0-9]*)(<)",
+          "begin": "\\b(\\p{Uppercase}\\p{XID_Continue}*)(<)",
           "beginCaptures": {
             "1": {
               "name": "entity.name.type.ctl"
@@ -847,7 +847,7 @@
         },
         {
           "comment": "trait declarations",
-          "match": "\\b(trait)\\s+([A-Z][A-Za-z0-9]*)\\b",
+          "match": "\\b(trait)\\s+(\\p{Uppercase}\\p{XID_Continue}*)\\b",
           "captures": {
             "1": {
               "name": "keyword.declaration.trait.ctl storage.type.ctl"
@@ -859,7 +859,7 @@
         },
         {
           "comment": "struct declarations",
-          "match": "\\b(struct)\\s+([A-Z][A-Za-z0-9]*)\\b",
+          "match": "\\b(struct)\\s+(\\p{Uppercase}\\p{XID_Continue}*)\\b",
           "captures": {
             "1": {
               "name": "keyword.declaration.struct.ctl storage.type.ctl"
@@ -871,7 +871,7 @@
         },
         {
           "comment": "enum declarations",
-          "match": "\\b(enum)\\s+([A-Z][A-Za-z0-9_]*)\\b",
+          "match": "\\b(enum)\\s+(\\p{Uppercase}\\p{XID_Continue}*)\\b",
           "captures": {
             "1": {
               "name": "keyword.declaration.enum.ctl storage.type.ctl"
@@ -883,7 +883,7 @@
         },
         {
           "comment": "type declarations",
-          "match": "\\b(type)\\s+([A-Z][A-Za-z0-9_]*)\\b",
+          "match": "\\b(type)\\s+(\\p{Uppercase}\\p{XID_Continue}*)\\b",
           "captures": {
             "1": {
               "name": "keyword.declaration.type.ctl storage.type.ctl"
@@ -896,7 +896,7 @@
         {
           "comment": "types",
           "name": "entity.name.type.ctl",
-          "match": "\\b[A-Z][A-Za-z0-9]*\\b(?!!)"
+          "match": "\\b\\p{Uppercase}\\p{XID_Continue}*\\b(?!!)"
         }
       ]
     },
@@ -1047,7 +1047,7 @@
         {
           "comment": "variables",
           "name": "variable.other.ctl",
-          "match": "\\b(?<!(?<!\\.)\\.)(?:r#(?!(crate|[Tt]his|super)))?[a-z0-9_]+\\b"
+          "match": "\\b(?<!(?<!\\.)\\.)(?:r#(?!(crate|[Tt]his|super)))?\\p{XID_Continue}+\\b"
         }
       ]
     }
