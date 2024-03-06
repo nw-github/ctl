@@ -821,15 +821,19 @@ impl TypeChecker {
                     self.scopes.lang_fns.insert(inner.name.data.clone(), id);
                 }
                 "intrinsic" => {
-                    let name = &self.scopes.get(id).name.data[..];
+                    let (name, span) = if let Some(attr) = attr.props.first() {
+                        (&attr.name.data[..], attr.name.span)
+                    } else {
+                        (&self.scopes.get(id).name.data[..], attr.name.span)
+                    };
                     match name {
-                        "size_of" | "align_of" | "panic" | "raw_add" | "raw_sub"
+                        "size_of" | "align_of" | "panic" | "binary_op" | "unary_op"
                         | "numeric_cast" | "numeric_abs" => {
                             self.scopes.intrinsics.insert(id, name.to_string());
                         }
                         _ => self.error(Error::new(
-                            format!("intrinsic '{}' is not supported", name),
-                            attr.name.span,
+                            format!("intrinsic '{name}' is not supported"),
+                            span,
                         )),
                     }
                 }
@@ -1041,7 +1045,7 @@ impl TypeChecker {
                     let Some(union) = &this.scopes.get(id).data.as_union() else {
                         return;
                     };
-                    if let Some(stats) = union.tag.integer_stats() {
+                    if let Some(stats) = union.tag.as_integral() {
                         if stats.bits < discriminant_bits(union.variants.len()) {
                             this.error(Error::new(
                                 format!(
@@ -1669,17 +1673,11 @@ impl TypeChecker {
                         }
                     }
                     UnaryOp::Addr => {
-                        let expr = self.check_expr(
-                            *expr,
-                            target.and_then(|t| t.as_mut_ptr().or(t.as_ptr()).map(|t| &**t)),
-                        );
+                        let expr = self.check_expr(*expr, target.and_then(Type::as_pointee));
                         (Type::Ptr(expr.ty.clone().into()), expr)
                     }
                     UnaryOp::AddrMut => {
-                        let expr = self.check_expr(
-                            *expr,
-                            target.and_then(|t| t.as_mut_ptr().or(t.as_ptr()).map(|t| &**t)),
-                        );
+                        let expr = self.check_expr(*expr, target.and_then(Type::as_pointee));
                         if !expr.can_addrmut(&self.scopes) {
                             self.error(Error::new(
                                 "cannot create mutable pointer to immutable memory location",
@@ -2634,7 +2632,7 @@ impl TypeChecker {
     }
 
     fn check_cast(&mut self, lhs: &Type, rhs: &Type, throwing: bool, span: Span) {
-        if let Some((a, b)) = lhs.integer_stats().zip(rhs.integer_stats()) {
+        if let Some((a, b)) = lhs.as_integral().zip(rhs.as_integral()) {
             if (a.signed == b.signed || (a.signed && !b.signed)) && a.bits <= b.bits {
                 return;
             }
@@ -3667,7 +3665,7 @@ impl TypeChecker {
             self.diag
                 .error(Error::no_method(&ty.name(&self.scopes), method, span));
             return Err(());
-        } else if let Some(tr) = ty.as_dyn() {
+        } else if let Some(tr) = ty.as_dyn_pointee() {
             let data = self.scopes.get(tr.id);
             let func = search(&self.scopes, &data.fns, method).or_else(|| {
                 for (tr, _) in data.impls.iter().flat_map(|ut| ut.as_checked()) {
@@ -3737,7 +3735,7 @@ impl TypeChecker {
                 .unwrap_or(Type::Isize)
         };
 
-        let stats = ty.integer_stats().unwrap();
+        let stats = ty.as_integral().unwrap();
         let result = match BigInt::from_str_radix(&value, base as u32) {
             Ok(result) => result,
             Err(e) => {
@@ -3974,7 +3972,7 @@ impl TypeChecker {
     ) {
         let ty = ty.strip_references();
         if let Some((mut value, max)) = ty
-            .integer_stats()
+            .as_integral()
             .map(|int| (int.min(), int.max()))
             .or_else(|| {
                 ty.is_char()
@@ -4160,7 +4158,7 @@ impl TypeChecker {
         span: Span,
     ) -> Option<BigInt> {
         let inner = target.strip_references();
-        let Some(stats) = inner.integer_stats() else {
+        let Some(stats) = inner.as_integral() else {
             let (ty, _) = self.get_int_type_and_val(None, base, width, value, span);
             if ty.is_unknown() {
                 return None;

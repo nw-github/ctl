@@ -244,12 +244,12 @@ pub enum CInt {
     LongLong,
 }
 
-pub struct IntStats {
+pub struct Integer {
     pub bits: u32,
     pub signed: bool,
 }
 
-impl IntStats {
+impl Integer {
     pub fn min(&self) -> BigInt {
         if self.signed {
             -(BigInt::from(1) << (self.bits - 1))
@@ -396,7 +396,7 @@ impl Type {
         use UnaryOp::*;
         match op {
             Neg => {
-                self.integer_stats().is_some_and(|s| s.signed)
+                self.as_integral().is_some_and(|s| s.signed)
                     || matches!(self, Type::F32 | Type::F64)
             }
             PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
@@ -481,7 +481,7 @@ impl Type {
         }
     }
 
-    pub fn as_dyn(&self) -> Option<&GenericTrait> {
+    pub fn as_dyn_pointee(&self) -> Option<&GenericTrait> {
         if let Type::DynMutPtr(tr) | Type::DynPtr(tr) = self {
             Some(&**tr)
         } else {
@@ -561,6 +561,14 @@ impl Type {
         matches!(self, Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_))
     }
 
+    pub fn as_pointee(&self) -> Option<&Type> {
+        if let Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) = self {
+            Some(&**inner)
+        } else {
+            None
+        }
+    }
+
     pub fn is_integral(&self) -> bool {
         matches!(
             self,
@@ -573,7 +581,7 @@ impl Type {
         )
     }
 
-    pub fn integer_stats(&self) -> Option<IntStats> {
+    pub fn as_integral(&self) -> Option<Integer> {
         use std::ffi::*;
 
         let (bits, signed) = match self {
@@ -593,7 +601,7 @@ impl Type {
             _ => return None,
         };
 
-        Some(IntStats { bits, signed })
+        Some(Integer { bits, signed })
     }
 
     pub fn from_int_name(name: &str, ty: bool) -> Option<Type> {

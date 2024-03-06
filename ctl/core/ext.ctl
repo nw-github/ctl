@@ -31,52 +31,52 @@ pub extension<T: Numeric> NumberExt for T {
     }
 
     impl Cmp<T> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn cmp(this, rhs: *T): Ordering { this <=> rhs }
 
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn ge(this, rhs: *T): bool { this >= rhs }
 
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn gt(this, rhs: *T): bool { this > rhs }
 
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn le(this, rhs: *T): bool { this <= rhs }
 
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn lt(this, rhs: *T): bool { this < rhs }
     }
 
     impl Eq<T> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn eq(this, rhs: *T): bool { this == rhs }
 
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn ne(this, rhs: *T): bool { this != rhs }
     }
 
     impl Add<T, T> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn add(this, rhs: T): T { this + rhs }
     }
 
     impl Sub<T, T> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn sub(this, rhs: T): T { this - rhs }
     }
 
     impl Mul<T, T> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn mul(this, rhs: T): T { this * rhs }
     }
 
     impl Div<T, T> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn div(this, rhs: T): T { this / rhs }
     }
 
     impl Rem<T, T> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn rem(this, rhs: T): T { this % rhs }
     }
 
@@ -87,56 +87,66 @@ pub extension<T: Numeric> NumberExt for T {
     pub fn min(this, rhs: T): T {
         if *this > rhs { rhs } else { *this }
     }
+
+    pub fn clamp(this, low: T, hi: T): T {
+        if *this < low {
+            low
+        } else if *this > hi {
+            hi
+        } else {
+            *this
+        }
+    }
 }
 
 pub extension<T: Integral> IntegralExt for T {
     impl And<T, T> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn and(this, rhs: T): T { this & rhs }
     }
 
     impl Or<T, T> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn or(this, rhs: T): T { this | rhs }
     }
 
     impl Xor<T, T> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn xor(this, rhs: T): T { this ^ rhs }
     }
 
     impl Shl<T, T> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn shl(this, rhs: T): T { this << rhs }
     }
 
     impl Shr<T, T> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn shr(this, rhs: T): T { this >> rhs }
     }
 
     impl Not<T> {
-        #(unary_op)
+        #(intrinsic(unary_op))
         fn not(this): T { !*this }
     }
 
     impl PostInc<T> {
-        #(unary_op)
+        #(intrinsic(unary_op))
         fn post_inc(mut this): T { (*this)++ }
     }
 
     impl PostDec<T> {
-        #(unary_op)
+        #(intrinsic(unary_op))
         fn post_dec(mut this): T { (*this)-- }
     }
 
     impl PreInc<T> {
-        #(unary_op)
+        #(intrinsic(unary_op))
         fn pre_inc(mut this): T { ++(*this) }
     }
 
     impl PreDec<T> {
-        #(unary_op)
+        #(intrinsic(unary_op))
         fn pre_dec(mut this): T { --(*this) }
     }
 }
@@ -174,7 +184,7 @@ pub extension<T: Numeric + Integral + Signed> SignedExt for T {
     }
 
     impl Neg<T> {
-        #(unary_op)
+        #(intrinsic(unary_op))
         fn neg(this): T { -*this }
     }
 }
@@ -212,27 +222,27 @@ pub extension CharExt for char {
     }
 
     impl Eq<This> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn eq(this, rhs: *This): bool { this == rhs }
 
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn ne(this, rhs: *This): bool { this != rhs }
     }
 
     impl Cmp<This> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn cmp(this, rhs: *This): Ordering { this <=> rhs }
 
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn ge(this, rhs: *This): bool { this >= rhs }
 
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn gt(this, rhs: *This): bool { this > rhs }
 
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn le(this, rhs: *This): bool { this <= rhs }
 
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn lt(this, rhs: *This): bool { this < rhs }
     }
 
@@ -305,15 +315,15 @@ pub extension BoolExt for bool {
     }
 
     impl Eq<This> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn eq(this, rhs: *This): bool { this == rhs }
 
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn ne(this, rhs: *This): bool { this != rhs }
     }
 
     impl Not<This> {
-        #(binary_op)
+        #(intrinsic(binary_op))
         fn not(this): This { !*this }
     }
 
