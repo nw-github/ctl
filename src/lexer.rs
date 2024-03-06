@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use enum_as_inner::EnumAsInner;
+use unicode_xid::UnicodeXID;
 
 use crate::{
     error::{Diagnostics, Error, FileId},
@@ -9,6 +10,9 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq, EnumAsInner)]
 pub enum Token<'a> {
+    LineComment(&'a str),
+    BlockComment(&'a str),
+
     LCurly,
     RCurly,
     LBrace,
@@ -66,6 +70,7 @@ pub enum Token<'a> {
     ShlAssign,
     Assign,
     Equal,
+    Spaceship,
 
     Let,
     Mut,
@@ -177,7 +182,7 @@ pub enum Precedence {
     LogicalOr,    // ||
     LogicalAnd,   // &&
     Eq,           // != ==
-    Comparison,   // < > <= >= is
+    Comparison,   // < > <= >= <=> is
     NoneCoalesce, // ??
     Or,           // |
     And,          // &
@@ -212,7 +217,7 @@ impl Token<'_> {
             LogicalAnd => Precedence::LogicalAnd,
             LogicalOr => Precedence::LogicalOr,
             Equal | NotEqual => Precedence::Eq,
-            LAngle | RAngle | GtEqual | LtEqual | Is => Precedence::Comparison,
+            LAngle | RAngle | GtEqual | LtEqual | Spaceship | Is => Precedence::Comparison,
             NoneCoalesce => Precedence::NoneCoalesce,
             As => Precedence::Cast,
             _ => Precedence::Min,
@@ -283,9 +288,247 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn token(&mut self, diag: &mut Diagnostics) -> Located<Token<'a>> {
-        self.next(diag)
-            .unwrap_or_else(|| Located::new(self.here(0), Token::Eof))
+    pub fn is_identifier_char(ch: char) -> bool {
+        ch.is_xid_continue()
+    }
+
+    pub fn is_identifier_first_char(ch: char) -> bool {
+        ch == '_' || ch.is_xid_start()
+    }
+
+    pub fn next(&mut self, diag: &mut Diagnostics) -> Located<Token<'a>> {
+        self.advance_while(char::is_whitespace);
+
+        let start = self.pos;
+        let Some(next) = self.advance() else {
+            return Located::new(self.here(0), Token::Eof);
+        };
+        let token = match next {
+            '{' => Token::LCurly,
+            '}' => {
+                if self.interpolating {
+                    self.string_literal(diag, start)
+                } else {
+                    Token::RCurly
+                }
+            }
+            '[' => Token::LBrace,
+            ']' => Token::RBrace,
+            '(' => Token::LParen,
+            ')' => Token::RParen,
+            ',' => Token::Comma,
+            ';' => Token::Semicolon,
+            '@' => Token::At,
+            '#' => {
+                if self.advance_if('(') {
+                    Token::HashLParen
+                } else {
+                    Token::Hash
+                }
+            }
+            '.' => {
+                if self.advance_if('.') {
+                    if self.advance_if('.') {
+                        Token::Ellipses
+                    } else if self.advance_if('=') {
+                        Token::RangeInclusive
+                    } else {
+                        Token::Range
+                    }
+                } else {
+                    Token::Dot
+                }
+            }
+            ':' => {
+                if self.advance_if(':') {
+                    Token::ScopeRes
+                } else {
+                    Token::Colon
+                }
+            }
+            '+' => {
+                if self.advance_if('=') {
+                    Token::AddAssign
+                } else if self.advance_if('+') {
+                    Token::Increment
+                } else {
+                    Token::Plus
+                }
+            }
+            '-' => {
+                if self.advance_if('=') {
+                    Token::SubAssign
+                } else if self.advance_if('-') {
+                    Token::Decrement
+                } else if self.advance_if('>') {
+                    Token::Arrow
+                } else {
+                    Token::Minus
+                }
+            }
+            '*' => {
+                if self.advance_if('=') {
+                    Token::MulAssign
+                } else {
+                    Token::Asterisk
+                }
+            }
+            '/' => match self.peek() {
+                Some('/') => {
+                    self.advance();
+                    Token::LineComment(self.advance_while(|ch| ch != '\n'))
+                }
+                Some('*') => {
+                    self.advance();
+                    let start = self.pos;
+                    let mut count = 1;
+                    while count > 0 {
+                        match self.advance() {
+                            Some('*') => {
+                                if self.advance_if('/') {
+                                    count -= 1;
+                                }
+                            }
+                            Some('/') => {
+                                if self.advance_if('*') {
+                                    count += 1;
+                                }
+                            }
+                            None => {
+                                diag.error(Error::new("unterminated block comment", self.here(0)));
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                    Token::BlockComment(&self.src[start..self.pos])
+                }
+                Some('=') => {
+                    self.advance();
+                    Token::DivAssign
+                }
+                _ => Token::Div,
+            },
+            '%' => {
+                if self.advance_if('=') {
+                    Token::RemAssign
+                } else {
+                    Token::Rem
+                }
+            }
+            '&' => {
+                if self.advance_if('=') {
+                    Token::AndAssign
+                } else if self.advance_if('&') {
+                    Token::LogicalAnd
+                } else {
+                    Token::Ampersand
+                }
+            }
+            '|' => {
+                if self.advance_if('=') {
+                    Token::OrAssign
+                } else if self.advance_if('|') {
+                    Token::LogicalOr
+                } else {
+                    Token::Or
+                }
+            }
+            '^' => {
+                if self.advance_if('=') {
+                    Token::XorAssign
+                } else {
+                    Token::Caret
+                }
+            }
+            '?' => {
+                if self.advance_if('?') {
+                    if self.advance_if('=') {
+                        Token::NoneCoalesceAssign
+                    } else {
+                        Token::NoneCoalesce
+                    }
+                } else {
+                    Token::Question
+                }
+            }
+            '!' => {
+                if self.advance_if('=') {
+                    Token::NotEqual
+                } else {
+                    Token::Exclamation
+                }
+            }
+            '>' => {
+                if self.advance_if('=') {
+                    Token::GtEqual
+                } else if self.advance_if('>') {
+                    if self.advance_if('=') {
+                        Token::ShrAssign
+                    } else {
+                        Token::Shr
+                    }
+                } else {
+                    Token::RAngle
+                }
+            }
+            '<' => {
+                if self.advance_if('=') {
+                    if self.advance_if('>') {
+                        Token::Spaceship
+                    } else {
+                        Token::LtEqual
+                    }
+                } else if self.advance_if('<') {
+                    if self.advance_if('=') {
+                        Token::ShlAssign
+                    } else {
+                        Token::Shl
+                    }
+                } else {
+                    Token::LAngle
+                }
+            }
+            '=' => {
+                if self.advance_if('=') {
+                    Token::Equal
+                } else if self.advance_if('>') {
+                    Token::FatArrow
+                } else {
+                    Token::Assign
+                }
+            }
+            '"' => self.string_literal(diag, start),
+            '\'' => Token::Char(self.char_literal(diag, false)),
+            ch @ '0'..='9' => self.numeric_literal(diag, ch, start),
+            'b' => self.maybe_byte_string(diag, start),
+            ch if Self::is_identifier_first_char(ch) => self.identifier(start),
+            ch => {
+                diag.error(Error::new(
+                    format!("unexpected character '{ch}'"),
+                    self.here(0),
+                ));
+                return self.next(diag);
+            }
+        };
+
+        Located::new(
+            Span {
+                pos: start,
+                len: self.pos - start,
+                file: self.file,
+            },
+            token,
+        )
+    }
+
+    pub fn next_skip_comments(&mut self, diag: &mut Diagnostics) -> Located<Token<'a>> {
+        loop {
+            let t = self.next(diag);
+            if !matches!(t.data, Token::LineComment(_) | Token::BlockComment(_)) {
+                break t;
+            }
+        }
     }
 
     #[inline]
@@ -307,12 +550,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn advance(&mut self) -> Option<char> {
-        if let Some(ch) = self.peek() {
-            self.pos += ch.len_utf8();
-            Some(ch)
-        } else {
-            None
-        }
+        self.peek().inspect(|ch| self.pos += ch.len_utf8())
     }
 
     fn advance_if(&mut self, ch: char) -> bool {
@@ -330,19 +568,6 @@ impl<'a> Lexer<'a> {
             self.advance();
         }
         &self.src[start..self.pos]
-    }
-
-    fn advance_match(&mut self, s: &str) -> bool {
-        let source = &self.src[self.pos..];
-        if s.len() <= source.len() && s == &source[..s.len()] {
-            for _ in 0..s.len() {
-                self.advance();
-            }
-
-            true
-        } else {
-            false
-        }
     }
 
     fn expect(&mut self, diag: &mut Diagnostics, c: char) {
@@ -649,221 +874,5 @@ impl<'a> Lexer<'a> {
             }
             _ => self.identifier(start),
         }
-    }
-
-    pub fn is_identifier_char(ch: char) -> bool {
-        matches!(ch, '_' | 'a'..='z' | 'A'..='Z' | '0'..='9')
-    }
-
-    pub fn is_identifier_first_char(ch: char) -> bool {
-        matches!(ch, '_' | 'a'..='z' | 'A'..='Z')
-    }
-
-    fn next(&mut self, diag: &mut Diagnostics) -> Option<Located<Token<'a>>> {
-        loop {
-            self.advance_while(char::is_whitespace);
-            if self.advance_match("//") {
-                self.advance_while(|ch| ch != '\n');
-            } else if self.advance_match("/*") {
-                let mut count = 1;
-                while count > 0 {
-                    if self.advance_match("*/") {
-                        count -= 1;
-                    } else if self.advance_match("/*") {
-                        count += 1;
-                    } else if self.pos >= self.src.len() {
-                        diag.error(Error::new("unterminated block comment", self.here(0)));
-                        return None;
-                    } else {
-                        self.advance();
-                    }
-                }
-            } else {
-                break;
-            }
-        }
-
-        let start = self.pos;
-        let token = match self.advance()? {
-            '{' => Token::LCurly,
-            '}' => {
-                if self.interpolating {
-                    self.string_literal(diag, start)
-                } else {
-                    Token::RCurly
-                }
-            }
-            '[' => Token::LBrace,
-            ']' => Token::RBrace,
-            '(' => Token::LParen,
-            ')' => Token::RParen,
-            ',' => Token::Comma,
-            ';' => Token::Semicolon,
-            '@' => Token::At,
-            '#' => {
-                if self.advance_if('(') {
-                    Token::HashLParen
-                } else {
-                    Token::Hash
-                }
-            }
-            '.' => {
-                if self.advance_if('.') {
-                    if self.advance_if('.') {
-                        Token::Ellipses
-                    } else if self.advance_if('=') {
-                        Token::RangeInclusive
-                    } else {
-                        Token::Range
-                    }
-                } else {
-                    Token::Dot
-                }
-            }
-            ':' => {
-                if self.advance_if(':') {
-                    Token::ScopeRes
-                } else {
-                    Token::Colon
-                }
-            }
-            '+' => {
-                if self.advance_if('=') {
-                    Token::AddAssign
-                } else if self.advance_if('+') {
-                    Token::Increment
-                } else {
-                    Token::Plus
-                }
-            }
-            '-' => {
-                if self.advance_if('=') {
-                    Token::SubAssign
-                } else if self.advance_if('-') {
-                    Token::Decrement
-                } else if self.advance_if('>') {
-                    Token::Arrow
-                } else {
-                    Token::Minus
-                }
-            }
-            '*' => {
-                if self.advance_if('=') {
-                    Token::MulAssign
-                } else {
-                    Token::Asterisk
-                }
-            }
-            '/' => {
-                if self.advance_if('=') {
-                    Token::DivAssign
-                } else {
-                    Token::Div
-                }
-            }
-            '%' => {
-                if self.advance_if('=') {
-                    Token::RemAssign
-                } else {
-                    Token::Rem
-                }
-            }
-            '&' => {
-                if self.advance_if('=') {
-                    Token::AndAssign
-                } else if self.advance_if('&') {
-                    Token::LogicalAnd
-                } else {
-                    Token::Ampersand
-                }
-            }
-            '|' => {
-                if self.advance_if('=') {
-                    Token::OrAssign
-                } else if self.advance_if('|') {
-                    Token::LogicalOr
-                } else {
-                    Token::Or
-                }
-            }
-            '^' => {
-                if self.advance_if('=') {
-                    Token::XorAssign
-                } else {
-                    Token::Caret
-                }
-            }
-            '?' => {
-                if self.advance_if('?') {
-                    if self.advance_if('=') {
-                        Token::NoneCoalesceAssign
-                    } else {
-                        Token::NoneCoalesce
-                    }
-                } else {
-                    Token::Question
-                }
-            }
-            '!' => {
-                if self.advance_if('=') {
-                    Token::NotEqual
-                } else {
-                    Token::Exclamation
-                }
-            }
-            '>' => {
-                if self.advance_if('=') {
-                    Token::GtEqual
-                } else if self.advance_if('>') {
-                    if self.advance_if('=') {
-                        Token::ShrAssign
-                    } else {
-                        Token::Shr
-                    }
-                } else {
-                    Token::RAngle
-                }
-            }
-            '<' => {
-                if self.advance_if('=') {
-                    Token::LtEqual
-                } else if self.advance_if('<') {
-                    if self.advance_if('=') {
-                        Token::ShlAssign
-                    } else {
-                        Token::Shl
-                    }
-                } else {
-                    Token::LAngle
-                }
-            }
-            '=' => {
-                if self.advance_if('=') {
-                    Token::Equal
-                } else if self.advance_if('>') {
-                    Token::FatArrow
-                } else {
-                    Token::Assign
-                }
-            }
-            '"' => self.string_literal(diag, start),
-            '\'' => Token::Char(self.char_literal(diag, false)),
-            ch @ '0'..='9' => self.numeric_literal(diag, ch, start),
-            'b' => self.maybe_byte_string(diag, start),
-            ch if Self::is_identifier_first_char(ch) => self.identifier(start),
-            _ => {
-                diag.error(Error::new("unexpected character", self.here(0)));
-                return self.next(diag);
-            }
-        };
-
-        Some(Located::new(
-            Span {
-                pos: start,
-                len: self.pos - start,
-                file: self.file,
-            },
-            token,
-        ))
     }
 }

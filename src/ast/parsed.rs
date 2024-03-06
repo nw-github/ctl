@@ -3,7 +3,7 @@ use crate::{
     THIS_TYPE,
 };
 
-use super::{Attribute, BinaryOp, UnaryOp};
+use super::{Attributes, BinaryOp, UnaryOp};
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Linkage {
@@ -47,7 +47,7 @@ pub struct UsePath {
 #[derive(Debug, Clone)]
 pub struct Stmt {
     pub data: StmtData,
-    pub attrs: Vec<Attribute>,
+    pub attrs: Attributes,
 }
 
 #[derive(Debug, Clone)]
@@ -65,8 +65,8 @@ pub enum StmtData {
         tag: Option<Located<Path>>,
         base: Struct,
         variants: Vec<Variant>,
-        is_unsafe: bool,
     },
+    UnsafeUnion(Struct),
     Trait {
         public: bool,
         name: Located<String>,
@@ -150,11 +150,6 @@ pub enum ExprData {
     Path(Path),
     Void,
     None,
-    Assign {
-        target: Box<Expr>,
-        binary: Option<BinaryOp>,
-        value: Box<Expr>,
-    },
     Block(Vec<Stmt>),
     If {
         cond: Box<Expr>,
@@ -412,6 +407,7 @@ pub struct Param {
 
 #[derive(Debug, Clone)]
 pub struct Fn {
+    pub attrs: Attributes,
     pub public: bool,
     pub name: Located<String>,
     pub linkage: Linkage,

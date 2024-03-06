@@ -1,19 +1,20 @@
 use std::hash::Hash;
 use std::ops::Eq;
+use std::map::Map;
 
 #(lang(set))
 pub struct Set<T: Hash + Eq<T>> {
-    inner: [T: void],
+    inner: Map<T, void>,
 
-    pub fn new(): Set<T> {
-        Set(inner: [:])
+    pub fn new(): This {
+        Set(inner: Map::new())
     }
 
-    pub fn with_capacity(cap: uint): Set<T> {
-        Set(inner: std::map::Map::with_capacity(cap:))
+    pub fn with_capacity(cap: uint): This {
+        Set(inner: Map::with_capacity(cap:))
     }
 
-    pub fn from_iter<I: Iterator<T>>(iter: I): Set<T> {
+    pub fn from_iter<I: Iterator<T>>(iter: I): This {
         mut self: {T} = #[]; // TODO: size hint
         for i in iter {
             self.insert(i);

@@ -1,7 +1,7 @@
-#(intrinsic(size_of))
+#(intrinsic)
 pub import fn size_of<T>(): uint;
 
-#(intrinsic(align_of))
+#(intrinsic)
 pub import fn align_of<T>(): uint;
 
 pub fn size_of_val<T>(_: *T): uint {
@@ -9,6 +9,9 @@ pub fn size_of_val<T>(_: *T): uint {
 }
 
 mod builtin {
+    #(c_opaque, c_name(CTL_MEMSET))
+    pub import fn memset(dst: *mut c_void, c: c_int, len: uint): *mut c_void;
+
     #(c_opaque, c_name(CTL_MEMCPY))
     pub import fn memcpy(dst: *mut c_void, src: *c_void, len: uint): *mut c_void;
 
@@ -32,6 +35,12 @@ pub unsafe fn copy_overlapping<T>(kw dst: *raw T, kw src: *raw T, kw num: uint) 
 
 pub unsafe fn compare<T>(lhs: *raw T, rhs: *raw T, num: uint): bool {
     unsafe builtin::memcmp(lhs as *c_void, rhs as *c_void, num * size_of::<T>()) == 0
+}
+
+pub unsafe fn zeroed<T>(): T {
+    mut t: T;
+    unsafe builtin::memset(&mut t as *mut c_void, 0, size_of::<T>());
+    t
 }
 
 pub fn swap<T>(lhs: *mut T, rhs: *mut T) {

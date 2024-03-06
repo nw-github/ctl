@@ -97,9 +97,8 @@ impl Compiler<Parsed> {
 }
 
 impl Compiler<Checked> {
-    pub fn codegen(self, flags: CodegenFlags) -> Result<(Diagnostics, String), Diagnostics> {
-        let module = self.state.0;
-        Codegen::build(self.diag, module.scope, &module.scopes, flags)
+    pub fn build(self, flags: CodegenFlags) -> Result<(Diagnostics, String), Diagnostics> {
+        Codegen::build(self.diag, self.state.0.scope, &self.state.0.scopes, flags)
     }
 }
 

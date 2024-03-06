@@ -7,11 +7,10 @@ use crate::{
     ast::{
         checked::{CheckedExpr, CheckedPattern, CheckedStmt},
         parsed::{Expr, Linkage, Path, Pattern, UsePath},
-        Attribute,
+        Attributes,
     },
     lexer::{Located, Span},
-    typeid::{GenericTrait, GenericUserType, Type},
-    THIS_PARAM,
+    typeid::{GenericExtension, GenericTrait, GenericUserType, Type, TypeArgs},
 };
 
 macro_rules! id {
@@ -127,8 +126,12 @@ pub enum ParamPattern {
 
 #[derive(Debug, Clone, EnumAsInner, Default)]
 pub enum TraitImpl {
-    Unchecked(ScopeId, Located<Path>),
-    Checked(GenericTrait),
+    Unchecked {
+        scope: ScopeId,
+        path: Located<Path>,
+        block: Option<ScopeId>,
+    },
+    Checked(GenericTrait, Option<ScopeId>),
     #[default]
     None,
 }
@@ -154,12 +157,13 @@ pub struct Variable {
 
 #[derive(Default, Debug)]
 pub struct Function {
-    pub attrs: Vec<Attribute>,
+    pub attrs: Attributes,
     pub name: Located<String>,
     pub linkage: Linkage,
     pub is_async: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
+    pub has_body: bool,
     pub type_params: Vec<UserTypeId>,
     pub params: Vec<CheckedParam>,
     pub ret: Type,
@@ -179,17 +183,10 @@ pub struct CheckedMember {
     pub ty: Type,
 }
 
-#[derive(Debug, Clone, Deref, DerefMut)]
-pub struct Union(pub IndexMap<String, Option<Type>>);
-
-impl Union {
-    pub fn tag_type(&self) -> Type {
-        Type::discriminant_for(self.0.len())
-    }
-
-    pub fn variant_tag(&self, name: &str) -> Option<usize> {
-        self.0.get_index_of(name)
-    }
+#[derive(Debug, Clone)]
+pub struct Union {
+    pub variants: IndexMap<String, Option<Type>>,
+    pub tag: Type,
 }
 
 #[derive(Debug, EnumAsInner)]
@@ -204,12 +201,12 @@ pub enum UserTypeData {
 
 #[derive(Debug)]
 pub struct UserType {
+    pub attrs: Attributes,
     pub name: Located<String>,
     pub body_scope: ScopeId,
     pub data: UserTypeData,
     pub impls: Vec<TraitImpl>,
     pub type_params: Vec<UserTypeId>,
-    pub attrs: Vec<Attribute>,
     pub fns: Vec<Vis<FunctionId>>,
     pub members: IndexMap<String, CheckedMember>,
 }
@@ -225,12 +222,13 @@ impl UserType {
 
 #[derive(Debug)]
 pub struct Trait {
+    pub attrs: Attributes,
     pub name: Located<String>,
     pub body_scope: ScopeId,
     pub impls: Vec<TraitImpl>,
     pub type_params: Vec<UserTypeId>,
-    pub attrs: Vec<Attribute>,
     pub fns: Vec<Vis<FunctionId>>,
+    pub this: UserTypeId,
 }
 
 #[derive(Debug)]
@@ -275,13 +273,6 @@ pub trait TypeLike: HasTypeParams {
     fn get_impls(&self) -> &[TraitImpl];
     fn get_impls_mut(&mut self) -> &mut [TraitImpl];
     fn get_fns(&self) -> &[Vis<FunctionId>];
-
-    fn vtable_methods(&self, scopes: &Scopes) -> impl Iterator<Item = &Vis<FunctionId>> {
-        self.get_fns().iter().filter(|f| {
-            let f = scopes.get(f.id);
-            f.type_params.is_empty() && f.params.first().is_some_and(|p| p.label == THIS_PARAM)
-        })
-    }
 }
 
 impl TypeLike for UserType {
@@ -342,18 +333,14 @@ pub struct Vis<T> {
     pub public: bool,
 }
 
-pub trait ItemId: Sized {
+pub trait ItemId: Sized + Copy + Clone {
     type Value;
 
     fn get(self, scopes: &Scopes) -> &Scoped<Self::Value>;
     fn get_mut(self, scopes: &mut Scopes) -> &mut Scoped<Self::Value>;
-    fn insert_in(
-        scopes: &mut Scopes,
-        value: Self::Value,
-        public: bool,
-        scope: ScopeId,
-    ) -> (Self, bool);
     fn name<'a>(&self, scopes: &'a Scopes) -> &'a Located<String>;
+
+    fn insert_in(scopes: &mut Scopes, val: Self::Value, public: bool, id: ScopeId) -> (Self, bool);
 }
 
 #[derive(Debug, Clone, Copy, EnumAsInner, From)]
@@ -378,7 +365,6 @@ pub struct Scope {
     pub parent: Option<ScopeId>,
     pub tns: HashMap<String, Vis<TypeItem>>,
     pub vns: HashMap<String, Vis<ValueItem>>,
-    pub children: Vec<ScopeId>,
     pub use_stmts: Vec<UsePath>,
 }
 
@@ -389,11 +375,6 @@ impl Scope {
 
     pub fn find_in_vns(&self, name: &str) -> Option<Vis<ValueItem>> {
         self.vns.get(name).copied()
-    }
-
-    pub fn find_module(&self, name: &str) -> Option<ScopeId> {
-        self.find_in_tns(name)
-            .and_then(|inner| inner.as_module().copied())
     }
 }
 
@@ -408,8 +389,8 @@ pub struct Scopes {
     structs: HashMap<Vec<String>, UserTypeId>,
     pub lang_types: HashMap<String, UserTypeId>,
     pub lang_traits: HashMap<String, TraitId>,
+    pub lang_fns: HashMap<String, FunctionId>,
     pub intrinsics: HashMap<FunctionId, String>,
-    pub panic_handler: Option<FunctionId>,
 }
 
 impl Scopes {
@@ -425,8 +406,8 @@ impl Scopes {
             structs: HashMap::new(),
             lang_types: HashMap::new(),
             lang_traits: HashMap::new(),
+            lang_fns: HashMap::new(),
             intrinsics: HashMap::new(),
-            panic_handler: None,
         }
     }
 
@@ -494,13 +475,6 @@ impl Scopes {
             .map(|(i, var)| (VariableId(i), var))
     }
 
-    pub fn extensions(&self) -> impl Iterator<Item = (ExtensionId, &Scoped<Extension>)> {
-        self.exts
-            .iter()
-            .enumerate()
-            .map(|(i, var)| (ExtensionId(i), var))
-    }
-
     pub fn functions(&self) -> impl Iterator<Item = (FunctionId, &Scoped<Function>)> {
         self.fns
             .iter()
@@ -524,86 +498,6 @@ impl Scopes {
         id.get_mut(self)
     }
 
-    pub fn implements_trait(
-        &self,
-        ty: &Type,
-        bound: &GenericTrait,
-        excl: Option<ExtensionId>,
-        scope: ScopeId,
-    ) -> bool {
-        if ty.is_unknown() {
-            return true;
-        }
-
-        let search = |this: Option<&GenericUserType>, impls: &[TraitImpl]| {
-            impls.iter().flat_map(|i| i.as_checked()).any(|tr| {
-                let mut tr = tr.clone();
-                if let Some(this) = this {
-                    for ty in tr.ty_args.values_mut() {
-                        ty.fill_templates(&this.ty_args);
-                    }
-                }
-                &tr == bound
-            })
-        };
-
-        if ty
-            .as_user()
-            .is_some_and(|this| search(Some(this), &self.get(this.id).impls))
-        {
-            return true;
-        }
-
-        self.extensions_in_scope_for(ty, excl, scope)
-            .any(|(_, ext)| search(ty.as_user().map(|ty| &**ty), &ext.impls))
-    }
-
-    pub fn extension_applies_to(
-        &self,
-        id: ExtensionId,
-        ext: &Extension,
-        rhs: &Type,
-        scope: ScopeId,
-    ) -> bool {
-        match &ext.ty {
-            Type::User(ut) if self.get(ut.id).data.is_template() => {
-                for bound in self
-                    .get(ut.id)
-                    .impls
-                    .iter()
-                    .flat_map(|bound| bound.as_checked())
-                {
-                    if !self.implements_trait(rhs, bound, Some(id), scope) {
-                        return false;
-                    }
-                }
-                true
-            }
-            ty => ty == rhs,
-        }
-    }
-
-    pub fn extensions_in_scope_for<'a, 'b>(
-        &'a self,
-        ty: &'b Type,
-        excl: Option<ExtensionId>,
-        current: ScopeId,
-    ) -> impl Iterator<Item = (ExtensionId, &Scoped<Extension>)> + 'b
-    where
-        'a: 'b,
-    {
-        self.walk(current).flat_map(move |(_, scope)| {
-            // TODO: maybe keep an extensions field to make this lookup faster
-            scope
-                .tns
-                .iter()
-                .filter_map(|id| id.1.as_extension())
-                .map(|ext| (*ext, self.get(*ext)))
-                .filter(move |(id, _)| Some(*id) != excl)
-                .filter(move |(id, ext)| self.extension_applies_to(*id, ext, ty, current))
-        })
-    }
-
     pub fn get_tuple(&mut self, ty_args: Vec<Type>) -> Type {
         let id = if let Some(id) = self.tuples.get(&ty_args.len()) {
             *id
@@ -618,7 +512,7 @@ impl Scopes {
                             data: UserTypeData::Template,
                             impls: Vec::new(),
                             type_params: Vec::new(),
-                            attrs: Vec::new(),
+                            attrs: Default::default(),
                             fns: Vec::new(),
                             members: IndexMap::new(),
                         },
@@ -648,8 +542,8 @@ impl Scopes {
                     body_scope: ScopeId::ROOT,
                     type_params,
                     data: UserTypeData::Tuple,
+                    attrs: Default::default(),
                     impls: vec![],
-                    attrs: vec![],
                     fns: vec![],
                 },
                 false,
@@ -676,7 +570,7 @@ impl Scopes {
                             data: UserTypeData::Template,
                             impls: Vec::new(),
                             type_params: Vec::new(),
-                            attrs: Vec::new(),
+                            attrs: Default::default(),
                             fns: Vec::new(),
                             members: IndexMap::new(),
                         },
@@ -706,8 +600,8 @@ impl Scopes {
                     body_scope: ScopeId::ROOT,
                     data: UserTypeData::AnonStruct,
                     type_params,
+                    attrs: Default::default(),
                     impls: vec![],
-                    attrs: vec![],
                     fns: vec![],
                 },
                 false,
@@ -720,22 +614,151 @@ impl Scopes {
         Type::User(GenericUserType::from_type_args(self, id, types).into())
     }
 
+    pub fn extensions_in_scope_for(&self, ty: &Type, scope: ScopeId) -> Vec<GenericExtension> {
+        fn implements_trait(
+            this: &Scopes,
+            ty: &Type,
+            bound: &GenericTrait,
+            ignore: &HashSet<ExtensionId>,
+            exts: &[ExtensionId],
+            results: &mut [Option<Option<GenericExtension>>],
+        ) -> bool {
+            if ty.is_unknown() || this.has_builtin_impl(ty, bound) {
+                return true;
+            }
+
+            let search = |this: Option<&TypeArgs>, impls: &[TraitImpl]| {
+                impls.iter().flat_map(|i| i.as_checked()).any(|(tr, _)| {
+                    let mut tr = tr.clone();
+                    this.inspect(|ty_args| tr.fill_templates(ty_args));
+                    &tr == bound
+                })
+            };
+
+            if ty
+                .as_user()
+                .is_some_and(|ut| search(Some(&ut.ty_args), &this.get(ut.id).impls))
+            {
+                return true;
+            }
+
+            for (i, &id) in exts
+                .iter()
+                .enumerate()
+                .filter(|(_, id)| !ignore.contains(id))
+            {
+                match &results[i] {
+                    Some(Some(ext)) => {
+                        if search(Some(&ext.ty_args), &this.get(ext.id).impls) {
+                            return true;
+                        }
+                    }
+                    Some(None) => continue,
+                    None => {
+                        let mut ignore = ignore.clone();
+                        ignore.insert(id);
+                        if let Some(args) =
+                            applies_to(this, ty, &this.get(id).ty, &ignore, exts, results)
+                        {
+                            if search(Some(&args), &this.get(id).impls) {
+                                return true;
+                            }
+                            results[i] = Some(Some(GenericExtension::new(id, args)))
+                        } else {
+                            results[i] = Some(None);
+                        }
+                    }
+                }
+            }
+
+            false
+        }
+
+        fn applies_to(
+            this: &Scopes,
+            ty: &Type,
+            ext_ty: &Type,
+            ignore: &HashSet<ExtensionId>,
+            exts: &[ExtensionId],
+            results: &mut [Option<Option<GenericExtension>>],
+        ) -> Option<TypeArgs> {
+            match ext_ty {
+                Type::User(ut) if this.get(ut.id).data.is_template() => {
+                    for (bound, _) in this
+                        .get(ut.id)
+                        .impls
+                        .iter()
+                        .flat_map(|bound| bound.as_checked())
+                    {
+                        if !implements_trait(this, ty, bound, ignore, exts, results) {
+                            return None;
+                        }
+                    }
+                    Some(TypeArgs([(ut.id, ty.clone())].into()))
+                }
+                rhs => (ty == rhs).then(Default::default),
+            }
+        }
+
+        let exts: Vec<_> = self
+            .walk(scope)
+            .flat_map(|(_, scope)| scope.tns.iter().flat_map(|s| s.1.as_extension().copied()))
+            .collect();
+        let mut results = vec![None; exts.len()];
+        for (i, &id) in exts.iter().enumerate() {
+            if results[i].is_none() {
+                results[i] = Some(
+                    applies_to(
+                        self,
+                        ty,
+                        &self.get(id).ty,
+                        &[id].into(),
+                        &exts,
+                        &mut results,
+                    )
+                    .map(|args| GenericExtension::new(id, args)),
+                );
+            }
+        }
+
+        results.into_iter().flatten().flatten().collect()
+    }
+
     pub fn get_trait_impls(&self, tr: TraitId) -> HashSet<TraitId> {
         fn inner(this: &Scopes, tr: TraitId, results: &mut HashSet<TraitId>) {
             if !results.insert(tr) {
                 return;
             }
-    
-            for imp in this.get(tr).impls.iter().flat_map(|tr| tr.as_checked()) {
+
+            for (imp, _) in this.get(tr).impls.iter().flat_map(|tr| tr.as_checked()) {
                 inner(this, imp.id, results);
             }
         }
-    
+
         let mut result = HashSet::new();
         inner(self, tr, &mut result);
         result
     }
-    
+
+    pub fn has_builtin_impl(&self, ty: &Type, bound: &GenericTrait) -> bool {
+        if ty.is_numeric() && Some(&bound.id) == self.lang_traits.get("numeric") {
+            return true;
+        }
+
+        if let Some(int) = ty.as_integral() {
+            if Some(&bound.id) == self.lang_traits.get("integral") {
+                return true;
+            }
+            if int.signed && Some(&bound.id) == self.lang_traits.get("signed") {
+                return true;
+            }
+            if !int.signed && Some(&bound.id) == self.lang_traits.get("unsigned") {
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 impl std::ops::Index<ScopeId> for Scopes {

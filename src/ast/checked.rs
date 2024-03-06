@@ -117,13 +117,14 @@ pub enum CheckedExprData {
     Call {
         func: GenericFunc,
         args: IndexMap<String, CheckedExpr>,
-        inst: Option<Type>,
-        trait_id: Option<TraitId>,
         scope: ScopeId,
     },
-    CallDyn {
+    MemberCall {
         func: GenericFunc,
         args: IndexMap<String, CheckedExpr>,
+        inst: Type,
+        trait_id: Option<TraitId>,
+        scope: ScopeId,
     },
     CallFnPtr {
         expr: Box<CheckedExpr>,
@@ -162,11 +163,6 @@ pub enum CheckedExprData {
     Char(char),
     Void,
     Symbol(Symbol, ScopeId),
-    Assign {
-        target: Box<CheckedExpr>,
-        binary: Option<BinaryOp>,
-        value: Box<CheckedExpr>,
-    },
     Block(Block),
     If {
         cond: Box<CheckedExpr>,
@@ -255,111 +251,56 @@ impl CheckedExpr {
         }
     }
 
-    pub fn coerce_to(
-        mut self,
-        scopes: &Scopes,
-        scope: ScopeId,
-        target: &Type,
-    ) -> Result<CheckedExpr, CheckedExpr> {
-        fn may_ptr_coerce(lhs: &Type, rhs: &Type) -> bool {
-            match (lhs, rhs) {
-                (Type::MutPtr(s), Type::Ptr(t) | Type::RawPtr(t)) if s == t => true,
-                (Type::MutPtr(s), Type::RawPtr(t) | Type::MutPtr(t) | Type::Ptr(t)) => {
-                    may_ptr_coerce(s, t)
-                }
-                (Type::Ptr(s), Type::Ptr(t)) => may_ptr_coerce(s, t),
-                _ => false,
-            }
+    pub fn auto_deref(self, target: &Type) -> CheckedExpr {
+        let mut needed = 0;
+        let mut current = target;
+        while let Type::Ptr(inner) | Type::MutPtr(inner) = current {
+            current = inner;
+            needed += 1;
         }
 
-        match (&self.ty, target) {
-            (Type::Never, Type::Never) => Ok(self),
-            (Type::Never, rhs) => Ok(CheckedExpr::new(
-                rhs.clone(),
-                CheckedExprData::NeverCoerce(self.into()),
-            )),
-            (Type::Unknown, _) | (_, Type::Unknown) => {
-                self.ty = target.clone();
-                Ok(self)
-            }
-            (Type::Ptr(lhs), Type::DynPtr(rhs))
-                if scopes.implements_trait(lhs, rhs, None, scope) =>
-            {
-                Ok(CheckedExpr::new(
-                    target.clone(),
-                    CheckedExprData::DynCoerce {
-                        expr: self.into(),
-                        scope,
-                    },
-                ))
-            }
-            (Type::MutPtr(lhs), Type::DynPtr(rhs) | Type::DynMutPtr(rhs))
-                if scopes.implements_trait(lhs, rhs, None, scope) =>
-            {
-                Ok(CheckedExpr::new(
-                    target.clone(),
-                    CheckedExprData::DynCoerce {
-                        expr: self.into(),
-                        scope,
-                    },
-                ))
-            }
-            (lhs, rhs) if may_ptr_coerce(lhs, rhs) => {
-                self.ty = target.clone();
-                Ok(self)
-            }
-            (lhs, rhs) if lhs != rhs => {
-                if let Some(inner) = rhs.as_option_inner(scopes) {
-                    match self.coerce_to(scopes, scope, inner) {
-                        Ok(expr) => Ok(CheckedExpr::new(
-                            rhs.clone(),
-                            CheckedExprData::Instance {
-                                members: [("0".into(), expr)].into(),
-                                variant: Some("Some".into()),
-                            },
-                        )),
-                        Err(expr) => Err(expr),
-                    }
-                } else {
-                    Err(self)
-                }
-            }
-            _ => Ok(self),
-        }
-    }
-
-    pub fn try_coerce_to(self, scopes: &Scopes, scope: ScopeId, target: &Type) -> CheckedExpr {
-        match self.coerce_to(scopes, scope, target) {
-            Ok(expr) => expr,
-            Err(expr) => expr,
-        }
-    }
-
-    pub fn auto_deref(self, mut target: &Type) -> CheckedExpr {
+        let mut prev = &self.ty;
+        let mut ty = &self.ty;
         let mut indirection = 0;
-        while let Type::Ptr(inner) | Type::MutPtr(inner) = target {
-            target = inner;
+        while let Type::Ptr(inner) | Type::MutPtr(inner) = ty {
+            prev = ty;
+            ty = inner;
             indirection += 1;
         }
 
-        let mut ty = &self.ty;
-        let mut my_indirection = 0;
-        while let Type::Ptr(inner) | Type::MutPtr(inner) = ty {
-            ty = inner;
-            my_indirection += 1;
-        }
-
         if let Type::DynMutPtr(_) | Type::DynPtr(_) = ty {
-            my_indirection += 1;
+            indirection += 1;
         }
 
-        if my_indirection != indirection {
-            CheckedExpr::new(
-                ty.clone(),
-                CheckedExprData::AutoDeref(self.into(), my_indirection - indirection),
-            )
-        } else {
-            self
+        match indirection.cmp(&needed) {
+            std::cmp::Ordering::Less => {
+                if matches!(target, Type::Ptr(_)) {
+                    CheckedExpr::new(
+                        Type::Ptr(self.ty.clone().into()),
+                        CheckedExprData::Unary {
+                            op: UnaryOp::Addr,
+                            expr: self.into(),
+                        },
+                    )
+                } else {
+                    CheckedExpr::new(
+                        Type::MutPtr(self.ty.clone().into()),
+                        CheckedExprData::Unary {
+                            op: UnaryOp::AddrMut,
+                            expr: self.into(),
+                        },
+                    )
+                }
+            }
+            std::cmp::Ordering::Equal => self,
+            std::cmp::Ordering::Greater => CheckedExpr::new(
+                if needed != 0 {
+                    prev.clone()
+                } else {
+                    ty.clone()
+                },
+                CheckedExprData::AutoDeref(self.into(), indirection - needed),
+            ),
         }
     }
 

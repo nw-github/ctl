@@ -33,15 +33,12 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
         StmtData::Union {
             tag,
             base,
-            is_unsafe,
             variants,
         } => {
             if let Some(tag) = tag {
                 print_struct(&format!("Union({tag:?})"), base, indent);
-                print_bool!(is_unsafe);
             } else {
                 print_struct("Union", base, indent);
-                print_bool!(is_unsafe);
             }
             let plus_1 = INDENT.repeat(indent + 1);
             if !variants.is_empty() {
@@ -51,6 +48,7 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
                 }
             }
         }
+        StmtData::UnsafeUnion(base) => print_struct("Union", base, indent),
         StmtData::Trait {
             public,
             name,
@@ -260,18 +258,6 @@ pub fn print_expr(expr: &Expr, indent: usize) {
         ExprData::Path(path) => {
             eprintln!("{tabs}Path[{path:?}]");
         }
-        ExprData::Assign {
-            target,
-            binary,
-            value,
-        } => {
-            eprintln!("{tabs}Assign({binary:?})");
-            let tabs = INDENT.repeat(indent + 1);
-            eprintln!("{tabs}Target: ");
-            print_expr(target, indent + 2);
-            eprintln!("{tabs}Value: ");
-            print_expr(value, indent + 2);
-        }
         ExprData::Block(expr) => {
             eprintln!("{tabs}Block");
             print_stmts(expr, indent + 1);
@@ -444,6 +430,7 @@ fn print_fn(
         ret,
         public,
         body,
+        attrs: _,
     }: &Fn,
     indent: usize,
 ) {

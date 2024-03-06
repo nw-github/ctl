@@ -1,7 +1,7 @@
 use crate::{
-    ast::{parsed::TypeHint, BinaryOp},
+    ast::{parsed::TypeHint, BinaryOp, UnaryOp},
     nearest_pow_of_two,
-    sym::{FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, TraitId, UserTypeId},
+    sym::{ExtensionId, FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, TraitId, UserTypeId},
 };
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
@@ -23,6 +23,10 @@ impl TypeArgs {
     pub fn copy_args(&mut self, rhs: &TypeArgs) {
         self.extend(rhs.iter().map(|(x, y)| (*x, y.clone())));
     }
+
+    pub fn copy_args_with(&mut self, rhs: &TypeArgs, map: &TypeArgs) {
+        self.extend(rhs.iter().map(|(x, y)| (*x, y.with_templates(map))));
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, Constructor)]
@@ -31,7 +35,7 @@ pub struct WithTypeArgs<T> {
     pub ty_args: TypeArgs,
 }
 
-impl<T: ItemId + Clone + Copy> WithTypeArgs<T>
+impl<T: ItemId> WithTypeArgs<T>
 where
     T::Value: HasTypeParams,
 {
@@ -45,6 +49,25 @@ where
                     .iter()
                     .copied()
                     .zip(types)
+                    .collect(),
+            ),
+        )
+    }
+
+    pub fn from_type_params(scopes: &Scopes, id: T) -> Self {
+        Self::new(
+            id,
+            TypeArgs(
+                scopes
+                    .get(id)
+                    .get_type_params()
+                    .iter()
+                    .map(|&id| {
+                        (
+                            id,
+                            Type::User(GenericUserType::new(id, Default::default()).into()),
+                        )
+                    })
                     .collect(),
             ),
         )
@@ -98,6 +121,12 @@ impl<T> WithTypeArgs<T> {
                 }
                 _ => break,
             }
+        }
+    }
+
+    pub fn fill_templates(&mut self, map: &TypeArgs) {
+        for ty in self.ty_args.values_mut() {
+            ty.fill_templates(map);
         }
     }
 }
@@ -180,17 +209,7 @@ impl GenericUserType {
     }
 
     pub fn from_id(scopes: &Scopes, id: UserTypeId) -> Self {
-        Self::new(
-            id,
-            TypeArgs(
-                scopes
-                    .get(id)
-                    .type_params
-                    .iter()
-                    .map(|&id| (id, Type::User(Self::new(id, Default::default()).into())))
-                    .collect(),
-            ),
-        )
+        Self::from_type_params(scopes, id)
     }
 }
 
@@ -214,6 +233,8 @@ impl GenericTrait {
     }
 }
 
+pub type GenericExtension = WithTypeArgs<ExtensionId>;
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
 pub enum CInt {
     Char,
@@ -223,12 +244,12 @@ pub enum CInt {
     LongLong,
 }
 
-pub struct IntStats {
+pub struct Integer {
     pub bits: u32,
     pub signed: bool,
 }
 
-impl IntStats {
+impl Integer {
     pub fn min(&self) -> BigInt {
         if self.signed {
             -(BigInt::from(1) << (self.bits - 1))
@@ -278,7 +299,6 @@ pub enum Type {
     DynPtr(Box<GenericTrait>),
     DynMutPtr(Box<GenericTrait>),
     Array(Box<(Type, usize)>),
-    TraitSelf,
 }
 
 impl PartialEq for Type {
@@ -321,21 +341,20 @@ impl std::hash::Hash for Type {
 impl Eq for Type {}
 
 impl Type {
-    pub fn discriminant_for(max: usize) -> Type {
-        Type::Uint((max as f64).log2().ceil() as u32)
-    }
+    pub fn supports_binary(&self, _scopes: &Scopes, op: BinaryOp) -> bool {
+        use BinaryOp::*;
+        if matches!(
+            (self, op),
+            (Type::RawPtr(_), Add | AddAssign | Sub | SubAssign)
+        ) {
+            return true;
+        }
 
-    pub fn supports_binop(&self, _scopes: &Scopes, op: BinaryOp) -> bool {
         match op {
-            BinaryOp::Add
-            | BinaryOp::Sub
-            | BinaryOp::Mul
-            | BinaryOp::Div
-            | BinaryOp::Rem
-            | BinaryOp::Gt
-            | BinaryOp::GtEqual
-            | BinaryOp::Lt
-            | BinaryOp::LtEqual => {
+            Assign => true,
+            Add | Sub | Mul | Div | Rem | AddAssign | SubAssign | MulAssign | DivAssign
+            | RemAssign => self.is_numeric(),
+            Gt | GtEqual | Lt | LtEqual | Cmp => {
                 matches!(
                     self,
                     Type::Int(_)
@@ -346,20 +365,13 @@ impl Type {
                         | Type::F64
                         | Type::CInt(_)
                         | Type::CUint(_)
+                        | Type::Char
+                        | Type::RawPtr(_)
                 )
             }
-            BinaryOp::And | BinaryOp::Xor | BinaryOp::Or | BinaryOp::Shl | BinaryOp::Shr => {
-                matches!(
-                    self,
-                    Type::Int(_)
-                        | Type::Uint(_)
-                        | Type::Isize
-                        | Type::Usize
-                        | Type::CInt(_)
-                        | Type::CUint(_)
-                )
-            }
-            BinaryOp::Equal | BinaryOp::NotEqual => {
+            And | Xor | Or | Shl | Shr | AndAssign | XorAssign | OrAssign | ShlAssign
+            | ShrAssign => self.is_integral(),
+            Equal | NotEqual => {
                 matches!(
                     self,
                     Type::Int(_)
@@ -375,8 +387,27 @@ impl Type {
                         | Type::RawPtr(_)
                 )
             }
-            BinaryOp::LogicalOr | BinaryOp::LogicalAnd => matches!(self, Type::Bool),
-            BinaryOp::NoneCoalesce => todo!(),
+            LogicalOr | LogicalAnd => matches!(self, Type::Bool),
+            NoneCoalesce | NoneCoalesceAssign => false,
+        }
+    }
+
+    pub fn supports_unary(&self, scopes: &Scopes, op: UnaryOp) -> bool {
+        use UnaryOp::*;
+        match op {
+            Neg => {
+                self.as_integral().is_some_and(|s| s.signed)
+                    || matches!(self, Type::F32 | Type::F64)
+            }
+            PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
+                self.is_integral() || self.is_raw_ptr()
+            }
+            Not => self.is_integral() || self.is_bool(),
+            Try => self.as_option_inner(scopes).is_some(),
+            Plus => self.is_numeric(),
+            Deref => self.is_any_ptr(),
+            Addr | AddrMut => true,
+            Unwrap => false,
         }
     }
 
@@ -413,42 +444,6 @@ impl Type {
         }
     }
 
-    pub fn fill_this(&mut self, this: &Type) {
-        let mut src = self;
-        loop {
-            match src {
-                Type::Array(t) => src = &mut t.0,
-                Type::Ptr(t) | Type::MutPtr(t) | Type::RawPtr(t) => src = t,
-                Type::User(ty) => {
-                    for ty in ty.ty_args.values_mut() {
-                        ty.fill_this(this);
-                    }
-
-                    break;
-                }
-                Type::TraitSelf => {
-                    *src = this.clone();
-                    break;
-                }
-                Type::FnPtr(f) => {
-                    for ty in f.params.iter_mut() {
-                        ty.fill_this(this);
-                    }
-
-                    f.ret.fill_this(this);
-                    break;
-                }
-                Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                    for ty in tr.ty_args.values_mut() {
-                        ty.fill_this(this);
-                    }
-                    break;
-                }
-                _ => break,
-            }
-        }
-    }
-
     pub fn fill_templates(&mut self, map: &TypeArgs) {
         if map.is_empty() {
             return;
@@ -465,9 +460,7 @@ impl Type {
                             *src = ty.clone();
                         }
                     } else if !ut.ty_args.is_empty() {
-                        for ty in ut.ty_args.values_mut() {
-                            ty.fill_templates(map);
-                        }
+                        ut.fill_templates(map);
                     }
                     break;
                 }
@@ -480,9 +473,7 @@ impl Type {
                     break;
                 }
                 Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                    for ty in tr.ty_args.values_mut() {
-                        ty.fill_templates(map);
-                    }
+                    tr.fill_templates(map);
                     break;
                 }
                 _ => break,
@@ -490,7 +481,7 @@ impl Type {
         }
     }
 
-    pub fn as_dyn(&self) -> Option<&GenericTrait> {
+    pub fn as_dyn_pointee(&self) -> Option<&GenericTrait> {
         if let Type::DynMutPtr(tr) | Type::DynPtr(tr) = self {
             Some(&**tr)
         } else {
@@ -532,24 +523,23 @@ impl Type {
             Type::Isize => "int".into(),
             Type::Usize => "uint".into(),
             Type::CInt(ty) | Type::CUint(ty) => {
-                let name = match ty {
-                    CInt::Char => "char",
-                    CInt::Short => "short",
-                    CInt::Int => "int",
-                    CInt::Long => "long",
-                    CInt::LongLong => "longlong",
-                };
                 format!(
-                    "c_{}{name}",
+                    "c_{}{}",
                     if matches!(self, Type::CUint(_)) {
                         "u"
                     } else {
                         ""
+                    },
+                    match ty {
+                        CInt::Char => "char",
+                        CInt::Short => "short",
+                        CInt::Int => "int",
+                        CInt::Long => "long",
+                        CInt::LongLong => "longlong",
                     }
                 )
             }
             Type::CVoid => "c_void".into(),
-            Type::TraitSelf => "This".into(),
         }
     }
 
@@ -571,7 +561,15 @@ impl Type {
         matches!(self, Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_))
     }
 
-    pub fn is_any_int(&self) -> bool {
+    pub fn as_pointee(&self) -> Option<&Type> {
+        if let Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) = self {
+            Some(&**inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn is_integral(&self) -> bool {
         matches!(
             self,
             Type::Int(_)
@@ -583,7 +581,7 @@ impl Type {
         )
     }
 
-    pub fn integer_stats(&self) -> Option<IntStats> {
+    pub fn as_integral(&self) -> Option<Integer> {
         use std::ffi::*;
 
         let (bits, signed) = match self {
@@ -603,7 +601,7 @@ impl Type {
             _ => return None,
         };
 
-        Some(IntStats { bits, signed })
+        Some(Integer { bits, signed })
     }
 
     pub fn from_int_name(name: &str, ty: bool) -> Option<Type> {
@@ -689,16 +687,22 @@ impl Type {
                 let mut sa = SizeAndAlign::new();
                 if let Some(union) = ty.data.as_union() {
                     if self.can_omit_tag(scopes).is_none() {
-                        sa.next(union.tag_type().size_and_align(scopes));
+                        sa.next(union.tag.size_and_align(scopes));
                     }
                     for member in ty.members.values() {
                         sa.next(member.ty.with_templates(&ut.ty_args).size_and_align(scopes));
                     }
 
-                    sa.next(union.values().flatten().fold((0, 1), |(sz, align), ty| {
-                        let (s, a) = ty.with_templates(&ut.ty_args).size_and_align(scopes);
-                        (sz.max(s), align.max(a))
-                    }));
+                    sa.next(
+                        union
+                            .variants
+                            .values()
+                            .flatten()
+                            .fold((0, 1), |(sz, align), ty| {
+                                let (s, a) = ty.with_templates(&ut.ty_args).size_and_align(scopes);
+                                (sz.max(s), align.max(a))
+                            }),
+                    );
                 } else {
                     for member in ty.members.values() {
                         sa.next(member.ty.with_templates(&ut.ty_args).size_and_align(scopes));

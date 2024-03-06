@@ -239,7 +239,7 @@ fn main() -> anyhow::Result<()> {
             }
         })
         .typecheck(libs)?
-        .codegen(CodegenFlags {
+        .build(CodegenFlags {
             leak: args.leak,
             no_bit_int: args.no_bit_int,
             lib: args.lib,

@@ -1,5 +1,3 @@
-#include <locale.h>
-
 #if !defined(CTL_NOGC)
 #include <gc.h>
 
@@ -24,12 +22,12 @@
 #define CTL_ZST
 #endif
 
-#define CTL_DUMMY_INIT \
-    { 0 }
-#define CTL_DUMMY_MEMBER  CTL_ZST char dummy0[1]
+#define CTL_DUMMY_INIT    0
+#define CTL_DUMMY_MEMBER  CTL_ZST char dummy
 #define CTL_NORETURN      __declspec(noreturn)
 #define CTL_FORCEINLINE   __forceinline
 #define CTL_MEMCPY        memcpy
+#define CTL_MEMSET        memset
 #define CTL_MEMMOVE       memmove
 #define CTL_MEMCMP        memcmp
 #define CTL_STRLEN        strlen
@@ -57,6 +55,7 @@
 #define CTL_NORETURN    _Noreturn
 #define CTL_FORCEINLINE __attribute__((always_inline))
 #define CTL_MEMCPY      __builtin_memcpy
+#define CTL_MEMSET      __builtin_memset
 #define CTL_MEMMOVE     __builtin_memmove
 #define CTL_MEMCMP      __builtin_memcmp
 #define CTL_STRLEN      __builtin_strlen
@@ -94,8 +93,6 @@
 #define UINT(bits) unsigned _BitInt(bits)
 #define STRLIT(s, data, n) (s){.$span={.$ptr=(u8 *)data, .$len=(usize)n}}
 
-static const char *oldlocale;
-
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wundefined-internal"
 static void $ctl_static_init(void);
@@ -105,9 +102,7 @@ static void $ctl_static_deinit(void);
 CTL_DEINIT($ctl_runtime_deinit) {
     $ctl_static_deinit();
 
-    setlocale(LC_ALL, oldlocale);
 #if !defined(CTL_NOGC)
-    // TODO: if linked as a dynamic library, unloaded, and reloaded, will this produce UB?
     GC_deinit();
 #endif
 }
@@ -116,8 +111,6 @@ CTL_INIT($ctl_runtime_init) {
 #if !defined(CTL_NOGC)
     GC_INIT();
 #endif
-    oldlocale = setlocale(LC_ALL, "C.UTF-8");
-
     $ctl_static_init();
 
 #if defined(_MSC_VER)

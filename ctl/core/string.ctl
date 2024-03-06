@@ -112,7 +112,7 @@ pub struct Chars {
                     cp += *this.s.get_unchecked(3) as u32 & 0x3f;
                     this.s = this.s.subspan(4u..);
                 } else {
-                    unreachable();
+                    core::unreachable_unchecked();
                 }
 
                 cp as! char

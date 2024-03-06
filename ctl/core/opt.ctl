@@ -5,14 +5,6 @@ pub union Option<T> {
     Some(T),
     None,
 
-    pub fn unwrap(this): T {
-        if (this is ?inner) {
-            *inner
-        } else {
-            panic("Option::unwrap(): value is null!");
-        }
-    }
-
     pub fn unwrap_or(this, or: T): T {
         if (this is ?val) {
             *val
@@ -33,6 +25,16 @@ pub union Option<T> {
         } else {
             *this = or;
             this.as_mut()!
+        }
+    }
+
+    impl core::ops::Unwrap<T> {
+        fn unwrap(this): T {
+            if (this is ?inner) {
+                *inner
+            } else {
+                panic("Option::unwrap(): value is null!");
+            }
         }
     }
 }
