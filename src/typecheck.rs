@@ -1148,6 +1148,10 @@ impl TypeChecker {
     ) -> Result<(), String> {
         let hfn = scopes.get(has);
         let wfn = scopes.get(wants);
+        if wfn.is_unsafe && !hfn.is_unsafe {
+            return Err(format!("function '{}' must be declared unsafe", hfn.name.data));
+        }
+
         let mut ty_args = ty_args.clone();
         for (i, &id) in wfn.type_params.iter().enumerate() {
             ty_args.insert(

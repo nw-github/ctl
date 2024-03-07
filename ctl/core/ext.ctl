@@ -327,6 +327,21 @@ pub extension BoolExt for bool {
         fn not(this): This { !*this }
     }
 
+    impl And<This, This> {
+        #(intrinsic(binary_op))
+        fn and(this, rhs: This): This { this & rhs }
+    }
+
+    impl Or<This, This> {
+        #(intrinsic(binary_op))
+        fn or(this, rhs: This): This { this | rhs }
+    }
+
+    impl Xor<This, This> {
+        #(intrinsic(binary_op))
+        fn xor(this, rhs: This): This { this ^ rhs }
+    }
+
     impl Format {
         fn format<F: Formatter>(this, f: *mut F) {
             if *this { "true".format(f) } else { "false".format(f) }

@@ -343,17 +343,14 @@ impl Eq for Type {}
 impl Type {
     pub fn supports_binary(&self, _scopes: &Scopes, op: BinaryOp) -> bool {
         use BinaryOp::*;
-        if matches!(
-            (self, op),
-            (Type::RawPtr(_), Add | AddAssign | Sub | SubAssign)
-        ) {
-            return true;
-        }
-
         match op {
             Assign => true,
-            Add | Sub | Mul | Div | Rem | AddAssign | SubAssign | MulAssign | DivAssign
-            | RemAssign => self.is_numeric(),
+            Add | AddAssign | Sub | SubAssign => self.is_numeric() || self.is_raw_ptr(),
+            Mul | Div | Rem | MulAssign | DivAssign | RemAssign => self.is_numeric(),
+            And | Xor | Or | AndAssign | XorAssign | OrAssign => {
+                self.is_integral() || self.is_bool()
+            }
+            Shl | Shr | ShlAssign | ShrAssign => self.is_integral(),
             Gt | GtEqual | Lt | LtEqual | Cmp => {
                 matches!(
                     self,
@@ -367,10 +364,9 @@ impl Type {
                         | Type::CUint(_)
                         | Type::Char
                         | Type::RawPtr(_)
+                        | Type::Bool,
                 )
             }
-            And | Xor | Or | Shl | Shr | AndAssign | XorAssign | OrAssign | ShlAssign
-            | ShrAssign => self.is_integral(),
             Equal | NotEqual => {
                 matches!(
                     self,
@@ -387,7 +383,7 @@ impl Type {
                         | Type::RawPtr(_)
                 )
             }
-            LogicalOr | LogicalAnd => matches!(self, Type::Bool),
+            LogicalOr | LogicalAnd => self.is_bool(),
             NoneCoalesce | NoneCoalesceAssign => false,
         }
     }
