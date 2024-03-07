@@ -1149,7 +1149,10 @@ impl TypeChecker {
         let hfn = scopes.get(has);
         let wfn = scopes.get(wants);
         if wfn.is_unsafe && !hfn.is_unsafe {
-            return Err(format!("function '{}' must be declared unsafe", hfn.name.data));
+            return Err(format!(
+                "function '{}' must be declared unsafe",
+                hfn.name.data
+            ));
         }
 
         let mut ty_args = ty_args.clone();
@@ -1556,7 +1559,7 @@ impl TypeChecker {
                 }
 
                 let left_span = left.span;
-                let left = self.check_expr(*left, None);
+                let left = self.check_expr(*left, target);
                 if left.ty.is_unknown() {
                     return Default::default();
                 }
@@ -1602,6 +1605,15 @@ impl TypeChecker {
                     (
                         Type::RawPtr(_),
                         BinaryOp::Add | BinaryOp::AddAssign | BinaryOp::SubAssign,
+                    )
+                    | (
+                        Type::Int(_)
+                        | Type::Uint(_)
+                        | Type::CInt(_)
+                        | Type::CUint(_)
+                        | Type::Isize
+                        | Type::Usize,
+                        BinaryOp::Shl | BinaryOp::Shr | BinaryOp::ShlAssign | BinaryOp::ShrAssign,
                     ) => {
                         let span = right.span;
                         let right = self.check_expr(*right, Some(&Type::Isize));

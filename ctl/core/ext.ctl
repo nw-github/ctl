@@ -99,7 +99,7 @@ pub extension<T: Numeric> NumberExt for T {
     }
 }
 
-pub extension<T: Integral> IntegralExt for T {
+pub extension<T: Numeric + Integral> IntegralExt for T {
     impl And<T, T> {
         #(intrinsic(binary_op))
         fn and(this, rhs: T): T { this & rhs }
@@ -149,6 +149,14 @@ pub extension<T: Integral> IntegralExt for T {
         #(intrinsic(unary_op))
         fn pre_dec(mut this): T { --(*this) }
     }
+
+    pub fn wrapping_add(this, rhs: T): T { *this + rhs }
+
+    pub fn wrapping_sub(this, rhs: T): T { *this - rhs }
+
+    pub fn wrapping_mul(this, rhs: T): T { *this * rhs }
+
+    pub fn wrapping_div(this, rhs: T): T { *this / rhs }
 }
 
 pub extension<T: Numeric + Integral + Signed> SignedExt for T {
@@ -366,5 +374,17 @@ pub extension VoidExt for void {
         fn format<F: Formatter>(this, f: *mut F) {
             "void".format(f);
         }
+    }
+}
+
+pub extension F32Ext for f32 {
+    pub fn to_bits(this): u32 {
+        unsafe core::mem::transmute(*this)
+    }
+}
+
+pub extension F64Ext for f64 {
+    pub fn to_bits(this): u64 {
+        unsafe core::mem::transmute(*this)
     }
 }

@@ -1473,7 +1473,11 @@ impl<'a> Codegen<'a> {
             }
             CheckedExprData::Integer(value) => {
                 self.emit_cast(&expr.ty);
-                self.buffer.emit(format!("{value}"));
+                if expr.ty.as_integral().is_some_and(|ty| ty.signed) {
+                    self.buffer.emit(format!("{value}ll"));
+                } else {
+                    self.buffer.emit(format!("{value}ull"));
+                }
             }
             CheckedExprData::Float(value) => {
                 self.emit_cast(&expr.ty);
@@ -2037,7 +2041,9 @@ impl<'a> Codegen<'a> {
                 ));
             }
             _ => {
-                if ret == Type::Bool {
+                lhs.ty.fill_templates(&state.func.ty_args);
+                let b = matches!(ret, Type::Bool) && !lhs.ty.is_bool();
+                if b {
                     self.emit_cast(&ret);
                     self.buffer.emit("(");
                 }
@@ -2046,8 +2052,7 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit(format!("{op}"));
                 self.emit_expr(rhs, state);
                 self.buffer.emit(")");
-
-                if ret == Type::Bool {
+                if b {
                     self.buffer.emit("?1:0)");
                 }
             }
