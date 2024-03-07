@@ -91,6 +91,7 @@ pub enum StmtData {
     },
     Module {
         public: bool,
+        file: bool,
         name: Located<String>,
         body: Vec<Stmt>,
     },

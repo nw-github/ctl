@@ -123,7 +123,7 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
             eprintln!("{tabs}Type: {ty:?}");
             print_expr(value, indent + 1);
         }
-        StmtData::Module { name, body, public } => {
+        StmtData::Module { name, body, public, file: _ } => {
             eprint!("{tabs}Module[{name}]");
             print_bool!(public);
             eprintln!();
@@ -136,11 +136,12 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
             components,
             tail,
         }) => {
-            eprintln!("{tabs}Use");
+            eprintln!("{tabs}Use[From = {origin:?}]");
             print_bool!(public);
-            eprintln!("\n{tabs}From = {origin:?}");
+
+            let plus_1 = INDENT.repeat(indent + 1);
             eprintln!(
-                "\n{tabs}Path = {}::{}",
+                "{plus_1}Path = {}::{}",
                 components
                     .iter()
                     .map(|x| &x.data[..])
@@ -461,7 +462,7 @@ fn print_fn(
     }
 
     eprintln!("{plus_1}Return Type: {ret:?}");
-    if let Some(body) = body {
+    if let Some(body) = body.as_ref().filter(|b| !b.is_empty()) {
         eprintln!("{}Body: ", INDENT.repeat(indent));
         print_stmts(body, indent + 1);
     }

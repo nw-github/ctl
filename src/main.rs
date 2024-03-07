@@ -231,8 +231,8 @@ fn main() -> anyhow::Result<()> {
         libs.push(root.join("ctl/std"));
     }
 
-    let result = Compiler::new(args.command.input().to_owned(), Default::default())
-        .parse()?
+    let result = Compiler::new(Default::default())
+        .parse(args.command.input().to_owned())?
         .inspect(|ast| {
             if args.dump_ast {
                 ast.dump()

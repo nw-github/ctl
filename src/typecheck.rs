@@ -100,8 +100,7 @@ pub struct TypeChecker {
 
 impl TypeChecker {
     pub fn check(
-        path: &std::path::Path,
-        module: Vec<Stmt>,
+        module: Stmt,
         libs: Vec<PathBuf>,
         diag: Diagnostics,
     ) -> anyhow::Result<(Module, Diagnostics)> {
@@ -113,12 +112,12 @@ impl TypeChecker {
             diag,
         };
         for lib in libs {
-            let parsed = Compiler::new(lib, this.diag).parse()?;
+            let parsed = Compiler::new(this.diag).parse(lib)?;
             this.diag = parsed.diag;
-            this.check_one(&parsed.path, parsed.state.0);
+            this.check_one(parsed.state.0);
         }
 
-        let scope = this.check_one(path, module);
+        let scope = this.check_one(module);
         for (_, var) in this
             .scopes
             .vars()
@@ -141,38 +140,14 @@ impl TypeChecker {
         ))
     }
 
-    fn check_one(&mut self, path: &std::path::Path, module: Vec<Stmt>) -> ScopeId {
-        let project = crate::derive_module_name(path);
-        let is_root_module = |name: &str| (path.is_file() && name == project) || name == "main";
+    fn check_one(&mut self, module: Stmt) -> ScopeId {
+        let mut autouse = vec![];
+        let stmt = self.declare_stmt(&mut autouse, module);
+        let scope = *stmt.as_module().unwrap().0;
+        self.check_stmt(stmt);
 
-        self.enter_mod(project.clone(), Span::default(), true, |this| {
-            let mut autouse = vec![];
-            let declared: Vec<_> = module
-                .into_iter()
-                .map(|ast| {
-                    let mut declared = Vec::new();
-                    match ast.data {
-                        StmtData::Module { name, body, .. } if is_root_module(&name.data) => {
-                            declared.extend(
-                                body.into_iter()
-                                    .map(|stmt| this.declare_stmt(&mut autouse, stmt)),
-                            );
-                        }
-                        _ => declared.push(this.declare_stmt(&mut autouse, ast)),
-                    }
-                    declared
-                })
-                .collect();
-
-            for ast in declared {
-                for stmt in ast {
-                    this.check_stmt(stmt);
-                }
-            }
-
-            this.universal.extend(autouse);
-            this.current
-        })
+        self.universal.extend(autouse);
+        scope
     }
 
     fn error<T: Default>(&mut self, error: Error) -> T {
@@ -602,7 +577,21 @@ impl TypeChecker {
 
     fn declare_stmt(&mut self, autouse: &mut Vec<ScopeId>, stmt: Stmt) -> DeclaredStmt {
         match stmt.data {
-            StmtData::Module { public, name, body } => {
+            StmtData::Module {
+                public,
+                name,
+                body,
+                file,
+            } => {
+                if file && name.data == "main" {
+                    return DeclaredStmt::Module {
+                        id: self.current,
+                        body: body
+                            .into_iter()
+                            .map(|stmt| self.declare_stmt(autouse, stmt))
+                            .collect(),
+                    };
+                }
                 self.enter_mod(name.data, name.span, public, |this| {
                     let core = this.scopes[ScopeId::ROOT]
                         .find_in_tns("core")
@@ -1002,9 +991,10 @@ impl TypeChecker {
     fn check_stmt(&mut self, stmt: DeclaredStmt) -> CheckedStmt {
         match stmt {
             DeclaredStmt::Module { id, body } => {
-                self.enter_id_and_resolve(id, |this| Block {
-                    body: body.into_iter().map(|stmt| this.check_stmt(stmt)).collect(),
-                    scope: this.current,
+                self.enter_id_and_resolve(id, |this| {
+                    for stmt in body {
+                        this.check_stmt(stmt);
+                    }
                 });
             }
             DeclaredStmt::Struct {

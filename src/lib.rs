@@ -17,7 +17,7 @@ use anyhow::Context;
 use ast::parsed::Stmt;
 use codegen::Codegen;
 use error::Diagnostics;
-use lexer::Lexer;
+use lexer::{Lexer, Span};
 use typecheck::Module;
 
 use crate::{parser::Parser, typecheck::TypeChecker};
@@ -28,7 +28,7 @@ pub(crate) const THIS_TYPE: &str = "This";
 pub trait CompileState {}
 
 pub struct Source;
-pub struct Parsed(Vec<Stmt>);
+pub struct Parsed(Stmt);
 pub struct Checked(Module);
 
 impl CompileState for Source {}
@@ -36,61 +36,71 @@ impl CompileState for Parsed {}
 impl CompileState for Checked {}
 
 pub struct Compiler<S: CompileState> {
-    path: PathBuf,
     diag: Diagnostics,
     state: S,
 }
 
 impl Compiler<Source> {
-    pub fn new(path: PathBuf, diag: Diagnostics) -> Self {
+    pub fn new(diag: Diagnostics) -> Self {
         Compiler {
-            path,
             diag,
             state: Source,
         }
     }
 
-    pub fn parse(mut self) -> anyhow::Result<Compiler<Parsed>> {
-        let mut sources = Vec::new();
-        if self.path.is_dir() {
-            for file in self
-                .path
-                .read_dir()
-                .with_context(|| format!("loading path {}", self.path.display()))?
-            {
-                let file = file?;
-                let path = file.path();
-                if file.file_type()?.is_file() && path.extension() == Some(OsStr::new("ctl")) {
-                    let buffer = std::fs::read_to_string(&path)?;
-                    sources.push(Parser::parse(&buffer, &mut self.diag, path));
+    pub fn parse(mut self, path: PathBuf) -> anyhow::Result<Compiler<Parsed>> {
+        fn gather_sources(path: PathBuf, diag: &mut Diagnostics) -> anyhow::Result<Option<Stmt>> {
+            if path.is_dir() {
+                let mut body = Vec::new();
+                for entry in path
+                    .read_dir()
+                    .with_context(|| format!("loading path {}", path.display()))?
+                {
+                    if let Some(stmt) = gather_sources(entry?.path(), diag)? {
+                        body.push(stmt);
+                    }
                 }
+                Ok(Some(Stmt {
+                    data: ast::parsed::StmtData::Module {
+                        public: true,
+                        file: false,
+                        name: lexer::Located::new(Span::default(), derive_module_name(&path)),
+                        body,
+                    },
+                    attrs: Default::default(),
+                }))
+            } else if path.extension() == Some(OsStr::new("ctl")) {
+                let buffer = std::fs::read_to_string(&path)
+                    .with_context(|| format!("loading path {}", path.display()))?;
+                let file_id = diag.add_file(path);
+                Ok(Some(Parser::parse(&buffer, diag, file_id)))
+            } else {
+                Ok(None)
             }
-        } else {
-            let buffer = std::fs::read_to_string(&self.path)
-                .with_context(|| format!("loading path {}", self.path.display()))?;
-            sources.push(Parser::parse(&buffer, &mut self.diag, self.path.clone()));
         }
 
-        Ok(Compiler {
-            path: self.path,
-            state: Parsed(sources),
-            diag: self.diag,
-        })
+        if let Some(stmt) = gather_sources(path, &mut self.diag)? {
+            Ok(Compiler {
+                state: Parsed(stmt),
+                diag: self.diag,
+            })
+        } else {
+            Err(anyhow::anyhow!(
+                "compile target must be directory or have extension '.ctl'",
+            ))
+        }
     }
 }
 
 impl Compiler<Parsed> {
     pub fn dump(&self) {
-        for source in self.state.0.iter() {
-            pretty::print_stmt(source, 0);
-        }
+        pretty::print_stmt(&self.state.0, 0);
     }
 
     pub fn typecheck(self, libs: Vec<PathBuf>) -> anyhow::Result<Compiler<Checked>> {
-        let (module, diag) = TypeChecker::check(&self.path, self.state.0, libs, self.diag)?;
+        let (module, diag) = TypeChecker::check(self.state.0, libs, self.diag)?;
         Ok(Compiler {
             state: Checked(module),
-            path: self.path,
             diag,
         })
     }

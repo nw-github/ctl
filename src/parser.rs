@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crate::{
     ast::{parsed::*, Attribute, Attributes, UnaryOp},
     error::{Diagnostics, Error, FileId},
@@ -33,8 +31,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
     }
 
-    pub fn parse(src: &'a str, diag: &'b mut Diagnostics, path: PathBuf) -> Stmt {
-        let file = diag.add_file(path);
+    pub fn parse(src: &'a str, diag: &'b mut Diagnostics, file: FileId) -> Stmt {
         let mut this = Self::new(src, diag, file);
         let mut stmts = Vec::new();
         while !this.matches_kind(Token::Eof) {
@@ -53,6 +50,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     },
                     crate::derive_module_name(this.diag.file_path(file)),
                 ),
+                file: true,
             },
             attrs: Default::default(),
         }
@@ -160,6 +158,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             Ok(Stmt {
                 data: StmtData::Module {
                     public: public.is_some(),
+                    file: false,
                     name,
                     body,
                 },

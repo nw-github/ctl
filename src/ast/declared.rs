@@ -1,3 +1,5 @@
+use enum_as_inner::EnumAsInner;
+
 use crate::{
     ast::parsed::{Expr, Pattern, TypeHint},
     lexer::{Located, Span},
@@ -17,6 +19,7 @@ pub struct DeclaredImplBlock {
     pub fns: Vec<DeclaredFn>,
 }
 
+#[derive(EnumAsInner)]
 pub enum DeclaredStmt {
     Expr(Expr),
     Let {
