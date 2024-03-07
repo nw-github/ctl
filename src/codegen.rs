@@ -2093,7 +2093,7 @@ impl<'a> Codegen<'a> {
                 self.emit_expr(lhs, state);
                 self.buffer.emit(")");
             }
-            UnaryOp::Addr | UnaryOp::AddrMut => {
+            UnaryOp::Addr | UnaryOp::AddrMut | UnaryOp::AddrRaw => {
                 lhs.ty.fill_templates(&state.func.ty_args);
 
                 let array = lhs.ty.is_array();

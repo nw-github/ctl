@@ -431,6 +431,8 @@ impl<'a, 'b> Parser<'a, 'b> {
             | Token::Exclamation => {
                 let op = if data == Token::Ampersand && self.next_if_kind(Token::Mut).is_some() {
                     UnaryOp::AddrMut
+                } else if data == Token::Ampersand && self.next_if_kind(Token::Raw).is_some() {
+                    UnaryOp::AddrRaw
                 } else {
                     UnaryOp::try_from_prefix(data).unwrap()
                 };
@@ -447,6 +449,8 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::LogicalAnd => {
                 let op = if self.next_if_kind(Token::Mut).is_some() {
                     UnaryOp::AddrMut
+                } else if self.next_if_kind(Token::Raw).is_some() {
+                    UnaryOp::AddrRaw
                 } else {
                     UnaryOp::Addr
                 };

@@ -1691,6 +1691,10 @@ impl TypeChecker {
 
                         (Type::MutPtr(expr.ty.clone().into()), expr)
                     }
+                    UnaryOp::AddrRaw => {
+                        let expr = self.check_expr(*expr, target.and_then(Type::as_pointee));
+                        (Type::RawPtr(expr.ty.clone().into()), expr)
+                    }
                     UnaryOp::Try => {
                         let expr = self.check_expr(
                             *expr,

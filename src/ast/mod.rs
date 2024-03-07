@@ -184,6 +184,8 @@ pub enum UnaryOp {
     Addr,
     #[display(fmt = "&mut")]
     AddrMut,
+    #[display(fmt = "&raw")]
+    AddrRaw,
     #[display(fmt = "!")]
     Unwrap,
     #[display(fmt = "?")]

@@ -402,7 +402,7 @@ impl Type {
             Try => self.as_option_inner(scopes).is_some(),
             Plus => self.is_numeric(),
             Deref => self.is_any_ptr(),
-            Addr | AddrMut => true,
+            Addr | AddrMut | AddrRaw => true,
             Unwrap => false,
         }
     }
