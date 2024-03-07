@@ -377,14 +377,29 @@ pub extension VoidExt for void {
     }
 }
 
+use super::ryu::Float32Ext;
+use super::ryu::Float64Ext;
+
 pub extension F32Ext for f32 {
     pub fn to_bits(this): u32 {
         unsafe core::mem::transmute(*this)
+    }
+
+    impl Format {
+        fn format<F: Formatter>(this, f: *mut F) {
+            super::ryu::Buffer::new().format(*this).format(f);
+        }
     }
 }
 
 pub extension F64Ext for f64 {
     pub fn to_bits(this): u64 {
         unsafe core::mem::transmute(*this)
+    }
+
+    impl Format {
+        fn format<F: Formatter>(this, f: *mut F) {
+            super::ryu::Buffer::new().format(*this).format(f);
+        }
     }
 }
