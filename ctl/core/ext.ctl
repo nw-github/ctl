@@ -380,9 +380,18 @@ pub extension VoidExt for void {
 use super::ryu::Float32Ext;
 use super::ryu::Float64Ext;
 
+mod libc {
+    pub import fn sqrt(num: f64): f64;
+    pub import fn sqrtf(num: f32): f32;
+}
+
 pub extension F32Ext for f32 {
     pub fn to_bits(this): u32 {
         unsafe core::mem::transmute(*this)
+    }
+
+    pub fn sqrt(this): f32 {
+        libc::sqrtf(*this)
     }
 
     impl Format {
@@ -395,6 +404,10 @@ pub extension F32Ext for f32 {
 pub extension F64Ext for f64 {
     pub fn to_bits(this): u64 {
         unsafe core::mem::transmute(*this)
+    }
+
+    pub fn sqrt(this): f64 {
+        libc::sqrt(*this)
     }
 
     impl Format {

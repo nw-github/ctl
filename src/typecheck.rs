@@ -13,7 +13,8 @@ use crate::{
     lexer::{Located, Span},
     sym::*,
     typeid::{
-        CInt, FnPtr, GenericFunc, GenericTrait, GenericUserType, Type, TypeArgs, WithTypeArgs,
+        CInt, FnPtr, GenericExtension, GenericFunc, GenericTrait, GenericUserType, Type, TypeArgs,
+        WithTypeArgs,
     },
     Compiler, THIS_PARAM, THIS_TYPE,
 };
@@ -2042,7 +2043,9 @@ impl TypeChecker {
                             span,
                         ));
                     }
-                    out_parts.push(expr);
+                    if !matches!(&expr.data, CheckedExprData::String(s) if s.is_empty()) {
+                        out_parts.push(expr);
+                    }
                 }
 
                 CheckedExpr::new(
@@ -3455,25 +3458,35 @@ impl TypeChecker {
         }
     }
 
-    fn implements_trait(&mut self, ty: &Type, bound: &GenericTrait) -> bool {
-        fn check(this: Option<&TypeArgs>, tr: &TraitImpl, bound: &GenericTrait) -> bool {
-            if let TraitImpl::Checked(tr, _) = tr {
-                let mut tr = tr.clone();
-                this.inspect(|ty_args| tr.fill_templates(ty_args));
-                &tr == bound
-            } else {
-                false
+    fn check_impl(this: Option<&TypeArgs>, tr: &TraitImpl, bound: &GenericTrait) -> bool {
+        if let TraitImpl::Checked(tr, _) = tr {
+            let mut tr = tr.clone();
+            this.inspect(|ty_args| tr.fill_templates(ty_args));
+            &tr == bound
+        } else {
+            false
+        }
+    }
+
+    fn check_extension(&mut self, ext: &GenericExtension, bound: &GenericTrait) -> bool {
+        for i in 0..self.scopes.get(ext.id).impls.len() {
+            resolve_impl!(self, self.scopes.get_mut(ext.id).impls[i]);
+            if Self::check_impl(Some(&ext.ty_args), &self.scopes.get(ext.id).impls[i], bound) {
+                return true;
             }
         }
+        false
+    }
 
+    fn implements_trait_helper(&mut self, ty: &Type, bound: &GenericTrait) -> bool {
         if ty.is_unknown() || self.scopes.has_builtin_impl(ty, bound) {
             return true;
         }
 
-        let has_impl = ty.as_user().is_some_and(|this| {
+        ty.as_user().is_some_and(|this| {
             for i in 0..self.scopes.get(this.id).impls.len() {
                 resolve_impl!(self, self.scopes.get_mut(this.id).impls[i]);
-                if check(
+                if Self::check_impl(
                     Some(&this.ty_args),
                     &self.scopes.get(this.id).impls[i],
                     bound,
@@ -3483,21 +3496,114 @@ impl TypeChecker {
             }
 
             false
-        });
-        if has_impl {
+        })
+    }
+
+    fn implements_trait(&mut self, ty: &Type, bound: &GenericTrait) -> bool {
+        if self.implements_trait_helper(ty, bound) {
             return true;
         }
 
-        for ext in self.scopes.extensions_in_scope_for(ty, self.current) {
-            for i in 0..self.scopes.get(ext.id).impls.len() {
-                resolve_impl!(self, self.scopes.get_mut(ext.id).impls[i]);
-                if check(Some(&ext.ty_args), &self.scopes.get(ext.id).impls[i], bound) {
-                    return true;
-                }
+        for ext in self.extensions_in_scope_for(ty, self.current) {
+            if self.check_extension(&ext, bound) {
+                return true;
             }
         }
 
         false
+    }
+
+    fn extensions_in_scope_for(&mut self, ty: &Type, scope: ScopeId) -> Vec<GenericExtension> {
+        fn implements_trait(
+            this: &mut TypeChecker,
+            ty: &Type,
+            bound: &GenericTrait,
+            ignore: &HashSet<ExtensionId>,
+            exts: &[ExtensionId],
+            results: &mut [Option<Option<GenericExtension>>],
+        ) -> bool {
+            if this.implements_trait_helper(ty, bound) {
+                return true;
+            }
+
+            for (i, &id) in exts
+                .iter()
+                .enumerate()
+                .filter(|(_, id)| !ignore.contains(id))
+            {
+                match &results[i] {
+                    Some(Some(ext)) => {
+                        if this.check_extension(ext, bound) {
+                            return true;
+                        }
+                    }
+                    Some(None) => continue,
+                    None => {
+                        let mut ignore = ignore.clone();
+                        ignore.insert(id);
+                        if let Some(args) = applies_to(this, ty, id, &ignore, exts, results) {
+                            let ext = GenericExtension::new(id, args);
+                            if this.check_extension(&ext, bound) {
+                                results[i] = Some(Some(ext));
+                                return true;
+                            }
+                            results[i] = Some(Some(ext));
+                        } else {
+                            results[i] = Some(None);
+                        }
+                    }
+                }
+            }
+
+            false
+        }
+
+        fn applies_to(
+            this: &mut TypeChecker,
+            ty: &Type,
+            ext: ExtensionId,
+            ignore: &HashSet<ExtensionId>,
+            exts: &[ExtensionId],
+            results: &mut [Option<Option<GenericExtension>>],
+        ) -> Option<TypeArgs> {
+            match &this.scopes.get(ext).ty {
+                Type::User(ut) if this.scopes.get(ut.id).data.is_template() => {
+                    let id = ut.id;
+                    for (bound, _) in this
+                        .scopes
+                        .get(id)
+                        .impls
+                        .clone()
+                        .iter()
+                        .flat_map(|bound| bound.as_checked())
+                    {
+                        if !implements_trait(this, ty, bound, ignore, exts, results) {
+                            return None;
+                        }
+                    }
+                    Some(TypeArgs([(id, ty.clone())].into()))
+                }
+                rhs => (ty == rhs).then(Default::default),
+            }
+        }
+
+        let exts: Vec<_> = self
+            .scopes
+            .walk(scope)
+            .flat_map(|(_, scope)| scope.tns.iter().flat_map(|s| s.1.as_extension().copied()))
+            .collect();
+        let mut results = vec![None; exts.len()];
+        for (i, &id) in exts.iter().enumerate() {
+            if results[i].is_none() {
+                resolve_type!(self, self.scopes.get_mut(id).ty);
+                results[i] = Some(
+                    applies_to(self, ty, id, &[id].into(), &exts, &mut results)
+                        .map(|args| GenericExtension::new(id, args)),
+                );
+            }
+        }
+
+        results.into_iter().flatten().flatten().collect()
     }
 
     fn get_trait_impl_helper<Id: ItemId>(&mut self, id: Id, target: TraitId) -> Option<GenericTrait>
@@ -3526,7 +3632,7 @@ impl TypeChecker {
         {
             Some(ut)
         } else {
-            for ext in self.scopes.extensions_in_scope_for(ty, self.current) {
+            for ext in self.extensions_in_scope_for(ty, self.current) {
                 if let Some(ut) = self.get_trait_impl_helper(ext.id, id) {
                     return Some(ut);
                 }
@@ -3563,7 +3669,7 @@ impl TypeChecker {
             generics: &[TypeHint],
             span: Span,
         ) -> Result<Option<MemberFn>, ()> {
-            for ext in this.scopes.extensions_in_scope_for(ty, this.current) {
+            for ext in this.extensions_in_scope_for(ty, this.current) {
                 let src_scope = this.scopes.get(ext.id).scope;
                 if let Some(func) = search(&this.scopes, &this.scopes.get(ext.id).fns, method) {
                     let mut func = make_func(this, func, ty, generics, src_scope, span)?;
