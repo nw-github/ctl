@@ -9,6 +9,16 @@
   "categories": [
     "Programming Languages"
   ],
+  "main": "./client/out/extension",
+  "scripts": {
+    "yaml-transpile": "js-yaml syntaxes/ctl.tmLanguage.yaml > syntaxes/ctl.tmLanguage.json",
+    "vscode:prepublish": "npm run compile",
+		"compile": "npm yaml-transpile && tsc -b",
+		"watch": "tsc -b -w",
+		"lint": "eslint ./client/src ./server/src --ext .ts,.tsx",
+		"postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
+		"test": "sh ./scripts/e2e.sh"
+  },
   "contributes": {
     "languages": [
       {
@@ -29,9 +39,43 @@
         "scopeName": "source.ctl",
         "path": "./syntaxes/ctl.tmLanguage.json"
       }
-    ]
+    ],
+    "configuration": {
+			"type": "object",
+			"title": "Example configuration",
+			"properties": {
+				"ctlsp.maxNumberOfProblems": {
+					"scope": "resource",
+					"type": "number",
+					"default": 100,
+					"description": "Controls the maximum number of problems produced by the server."
+				},
+				"ctlsp.trace.server": {
+					"scope": "window",
+					"type": "string",
+					"enum": [
+						"off",
+						"messages",
+						"verbose"
+					],
+					"default": "off",
+					"description": "Traces the communication between VS Code and the language server."
+				},
+        "ctlsp.compilerPath": {
+          "scope": "resource",
+          "type": "string",
+          "default": "ctl",
+          "description": "The path to the CTL compiler binary."
+        }
+			}
+		}
   },
   "devDependencies": {
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+		"@types/node": "^18.14.6",
+		"@typescript-eslint/eslint-plugin": "^7.1.0",
+		"@typescript-eslint/parser": "^7.1.0",
+		"eslint": "^8.57.0",
+		"typescript": "^5.3.3"
   }
 }
