@@ -1,6 +1,6 @@
 mod ast;
 mod codegen;
-mod error;
+pub mod error;
 mod lexer;
 mod parser;
 mod pretty;
@@ -18,6 +18,7 @@ use ast::parsed::Stmt;
 use codegen::Codegen;
 use error::{Diagnostics, FileId};
 use lexer::{Lexer, Span};
+use sym::Scopes;
 use typecheck::Module;
 
 use crate::{parser::Parser, typecheck::TypeChecker};
@@ -145,6 +146,10 @@ impl Compiler<Checked> {
         } else {
             Err(self)
         }
+    }
+
+    pub fn scopes(&self) -> &Scopes {
+        &self.state.0.scopes
     }
 }
 

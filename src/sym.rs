@@ -153,6 +153,7 @@ pub struct Variable {
     pub mutable: bool,
     pub value: Option<CheckedExpr>,
     pub unused: bool,
+    pub has_hint: bool,
 }
 
 #[derive(Default, Debug)]

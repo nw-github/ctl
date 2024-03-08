@@ -245,6 +245,10 @@ impl Span {
             ..self
         }
     }
+
+    pub fn includes(&self, pos: usize) -> bool {
+        pos >= self.pos && pos <= self.pos + self.len
+    }
 }
 
 #[derive(Default, Clone, derive_more::Constructor)]

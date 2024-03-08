@@ -1262,10 +1262,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             name: self.expect_id_l("expected name"),
             props: self
                 .next_if_kind(Token::LParen)
-                .map(|_| {
-                    self.csv_one(Token::RParen, Span::default(), Self::attribute)
-                        .data
-                })
+                .map(|tk| self.csv_one(Token::RParen, tk.span, Self::attribute).data)
                 .unwrap_or_default(),
         }
     }
@@ -1283,8 +1280,8 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn type_params(&mut self) -> Vec<(String, Vec<Located<Path>>)> {
         self.next_if_kind(Token::LAngle)
-            .map(|_| {
-                self.rangle_csv_one(Span::default(), |this| {
+            .map(|tk| {
+                self.rangle_csv_one(tk.span, |this| {
                     (this.expect_id("expected type name"), this.trait_impls())
                 })
                 .data
@@ -1367,11 +1364,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 TypeHint::Set(inner)
             }
             Token::LParen => {
-                self.next();
-                TypeHint::Tuple(
-                    self.csv_one(Token::RParen, Span::default(), Self::type_hint)
-                        .data,
-                )
+                let left = self.next();
+                TypeHint::Tuple(self.csv_one(Token::RParen, left.span, Self::type_hint).data)
             }
             Token::Void => {
                 self.next();
@@ -1380,9 +1374,9 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::ThisType => TypeHint::This(self.next().span),
             Token::Fn => {
                 self.next();
-                self.expect_kind(Token::LParen);
+                let left = self.expect_kind(Token::LParen);
                 let params = self
-                    .csv(Vec::new(), Token::RParen, Span::default(), Self::type_hint)
+                    .csv(Vec::new(), Token::RParen, left.span, Self::type_hint)
                     .data;
                 let ret = if self.next_if_kind(Token::FatArrow).is_some() {
                     self.type_hint()

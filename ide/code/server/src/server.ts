@@ -8,18 +8,25 @@ import {
     DidChangeConfigurationNotification,
     TextDocumentSyncKind,
     InitializeResult,
+    InlayHint,
+    InlayHintKind,
+    InlayHintParams,
 } from "vscode-languageserver/node";
 
 import { TextDocument } from "vscode-languageserver-textdocument";
 
 import { spawn } from "child_process";
 
+interface CtlTextDocument extends TextDocument {
+    inlayHints?: InlayHint[];
+}
+
 // Create a connection for the server, using Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
 const connection = createConnection(ProposedFeatures.all);
 
 // Create a simple text document manager.
-const documents = new TextDocuments<TextDocument>(TextDocument);
+const documents = new TextDocuments<CtlTextDocument>(TextDocument);
 
 let hasConfigurationCapability = false;
 let hasWorkspaceFolderCapability = false;
@@ -39,6 +46,9 @@ connection.onInitialize((params: InitializeParams) => {
     const result: InitializeResult = {
         capabilities: {
             textDocumentSync: TextDocumentSyncKind.Incremental,
+            inlayHintProvider: {
+                resolveProvider: true,
+            },
             // Tell the client that this server supports code completion.
             // completionProvider: {
             //     resolveProvider: true,
@@ -144,7 +154,7 @@ function debounce(func: (...args: any) => void, wait: number) {
     };
 }
 
-async function realValidateTextDocument(document: TextDocument) {
+async function realValidateTextDocument(document: CtlTextDocument) {
     type DiagnosticsResult = {
         files: string[];
         diagnostics: {
@@ -155,6 +165,10 @@ async function realValidateTextDocument(document: TextDocument) {
             sev: "warning" | "error";
         }[];
         input_file: number;
+        hints: {
+            pos: number;
+            name: string;
+        }[];
     };
 
     // In this simple example we get the settings for every validate run.
@@ -162,13 +176,15 @@ async function realValidateTextDocument(document: TextDocument) {
     const text = document.getText();
     const result = await invokeCompiler<DiagnosticsResult>(
         text,
-        ["--diagnostics"],
+        ["--diagnostics", "--type-hints"],
         settings,
         document.uri
     );
     if (!result) {
         return;
     }
+
+    document.inlayHints = [];
 
     const allDiagnostics: Record<string, Diagnostic[]> = {};
     for (const document of documents.all()) {
@@ -194,10 +210,16 @@ async function realValidateTextDocument(document: TextDocument) {
         });
     }
 
-    console.log("------------");
+    for (const { pos, name } of result.hints) {
+        document.inlayHints.push(
+            InlayHint.create(document.positionAt(pos), `: ${name}`, InlayHintKind.Type)
+        );
+    }
+
+    // console.log("------------");
     for (const uri in allDiagnostics) {
         connection.sendDiagnostics({ uri, diagnostics: allDiagnostics[uri] });
-        console.log(`sending ${allDiagnostics[uri].length} diagnostics for ${uri}`);
+        // console.log(`sending ${allDiagnostics[uri].length} diagnostics for ${uri}`);
     }
 }
 
@@ -239,6 +261,11 @@ async function invokeCompiler<T>(
 connection.onDidChangeWatchedFiles((_change) => {
     // Monitored files have change in VSCode
     connection.console.log("We received a file change event");
+});
+
+connection.languages.inlayHint.on((params: InlayHintParams) => {
+    const document = documents.get(params.textDocument.uri) as CtlTextDocument;
+    return document.inlayHints;
 });
 
 // This handler provides the initial list of the completion items.

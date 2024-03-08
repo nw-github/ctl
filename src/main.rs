@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueHint};
-use ctl::{Checked, CodegenFlags, Compiler};
+use ctl::{error::Error, Checked, CodegenFlags, Compiler};
 use std::{
     ffi::OsString,
     fs::File,
-    io::{stdin, Read, Write},
+    io::{stdin, stdout, Read, Write},
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -66,6 +67,17 @@ struct BuildOrRun {
     verbose: bool,
 }
 
+#[derive(Args)]
+struct LspCommands {
+    #[clap(action, long)]
+    type_hints: bool,
+
+    #[clap(action, long)]
+    diagnostics: bool,
+
+    hover: Option<usize>,
+}
+
 #[derive(Subcommand)]
 enum SubCommand {
     #[clap(alias = "p")]
@@ -110,8 +122,8 @@ enum SubCommand {
         #[clap(action, long)]
         has_file: bool,
 
-        #[clap(action, long)]
-        diagnostics: bool,
+        #[clap(flatten)]
+        flags: LspCommands,
     },
 }
 
@@ -217,6 +229,71 @@ fn transpile(compiler: Compiler<Checked>, flags: CodegenFlags) -> String {
     }
 }
 
+fn handle_lsp(checked: Compiler<Checked>, flags: LspCommands) {
+    fn format_json(stdout: &mut impl Write, written: &mut bool, msgs: &[Error], severity: &str) {
+        for Error { diagnostic, span } in msgs {
+            if *written {
+                _ = write!(stdout, ",");
+            }
+            _ = write!(
+                stdout,
+                "{{\"id\":{},\"pos\":{},\"len\":{},\"msg\":\"{}\",\"sev\":\"{}\"}}",
+                span.file, span.pos, span.len, diagnostic, severity,
+            );
+            *written = true;
+        }
+    }
+
+    let diag = checked.diagnostics();
+    let scopes = checked.scopes();
+    let lsp_file = checked.lsp_file();
+    let mut stdout = stdout().lock();
+
+    _ = write!(stdout, "{{\"dummy\":null");
+    if let Some((id, _)) = lsp_file {
+        _ = write!(stdout, ",\"input_file\":{id}");
+    }
+    if flags.diagnostics {
+        _ = write!(stdout, ",\"files\":[");
+        for (i, path) in diag.paths().iter().enumerate() {
+            if i > 0 {
+                _ = write!(stdout, ",");
+            }
+            _ = write!(stdout, "\"");
+            _ = stdout.write(path.as_os_str().as_bytes());
+            _ = write!(stdout, "\"");
+        }
+        _ = write!(stdout, "],\"diagnostics\":[");
+        let mut written = false;
+        format_json(&mut stdout, &mut written, diag.errors(), "error");
+        format_json(&mut stdout, &mut written, diag.warnings(), "warning");
+        _ = write!(stdout, "]");
+    }
+    if let Some((id, _)) = lsp_file.filter(|_| flags.type_hints) {
+        _ = write!(stdout, ",\"hints\":[");
+        let mut written = false;
+        for (_, var) in scopes.vars() {
+            if var.name.span.file != *id || var.has_hint || var.name.data.starts_with('$') {
+                continue;
+            }
+            if written {
+                _ = write!(stdout, ",");
+            }
+
+            _ = write!(
+                stdout,
+                "{{\"pos\":{},\"name\":\"{}\"}}",
+                var.name.span.pos + var.name.span.len,
+                var.ty.name(scopes),
+            );
+            written = true;
+        }
+        _ = write!(stdout, "]");
+    }
+
+    _ = write!(stdout, "}}");
+}
+
 fn main() -> Result<()> {
     let mut args = Arguments::parse();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -228,7 +305,7 @@ fn main() -> Result<()> {
             args.no_core = true;
             args.no_std = true;
         } else if path == std_path {
-            args.no_core = true;
+            args.no_std = true;
         }
     }
 
@@ -241,17 +318,19 @@ fn main() -> Result<()> {
         libs.push(root.join(std_path));
     }
 
-    let lsp_file = if let SubCommand::Lsp {
-        has_file: true,
-        path,
-        ..
-    } = &args.command
-    {
-        let mut buffer = String::new();
-        stdin()
-            .read_to_string(&mut buffer)
-            .context("reading stdin")?;
-        Some((path.clone(), buffer))
+    let lsp_file = if let SubCommand::Lsp { has_file, path, .. } = &args.command {
+        let path = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if *has_file {
+            let mut buffer = String::new();
+            stdin()
+                .read_to_string(&mut buffer)
+                .context("reading stdin")?;
+            Some((path, buffer))
+        } else {
+            let data = std::fs::read_to_string(&path)
+                .with_context(|| format!("loading path {}", path.display()))?;
+            Some((path, data))
+        }
     } else {
         None
     };
@@ -306,11 +385,7 @@ fn main() -> Result<()> {
                 std::process::exit(status.code().unwrap_or_default());
             }
         }
-        SubCommand::Lsp { diagnostics, .. } => {
-            if diagnostics {
-                checked.diagnostics().display_json(checked.lsp_file());
-            }
-        }
+        SubCommand::Lsp { flags, .. } => handle_lsp(checked, flags),
     }
 
     Ok(())

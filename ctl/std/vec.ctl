@@ -18,7 +18,7 @@ pub struct Vec<T> {
     }
 
     pub fn from_span(span: [T..]): This {
-        mut self: [T] = Vec::with_capacity(span.len());
+        mut self: This = Vec::with_capacity(span.len());
         unsafe {
             mem::copy(
                 dst: self.ptr,

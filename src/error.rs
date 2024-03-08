@@ -1,5 +1,3 @@
-use std::io::{stdout, Write};
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use crate::{
@@ -10,6 +8,12 @@ use crate::{
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 pub struct FileId(usize);
+
+impl std::fmt::Display for FileId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 #[derive(Default)]
 pub struct Diagnostics {
@@ -54,49 +58,6 @@ impl Diagnostics {
         }
     }
 
-    pub fn display_json(&self, lsp_file: Option<&(FileId, String)>) {
-        fn format_json(
-            stdout: &mut impl Write,
-            written: &mut bool,
-            msgs: &[Error],
-            severity: &str,
-        ) {
-            for Error { diagnostic, span } in msgs {
-                if *written {
-                    _ = write!(stdout, ",");
-                }
-                _ = write!(
-                    stdout,
-                    "{{\"id\":{},\"pos\":{},\"len\":{},\"msg\":\"{}\",\"sev\":\"{}\"}}",
-                    span.file.0, span.pos, span.len, diagnostic, severity,
-                );
-                *written = true;
-            }
-        }
-
-        let mut stdout = stdout().lock();
-
-        _ = write!(stdout, "{{\"files\":[");
-        for (i, path) in self.paths.iter().enumerate() {
-            if i > 0 {
-                _ = write!(stdout, ",");
-            }
-            _ = write!(stdout, "\"");
-            _ = stdout.write(path.as_os_str().as_bytes());
-            _ = write!(stdout, "\"");
-        }
-        _ = write!(stdout, "],\"diagnostics\":[");
-        let mut written = false;
-        format_json(&mut stdout, &mut written, &self.errors, "error");
-        format_json(&mut stdout, &mut written, &self.warnings, "warning");
-        _ = write!(stdout, "]");
-        if let Some((id, _)) = lsp_file {
-            _ = write!(stdout, ",\"input_file\":{}}}", id.0);
-        } else {
-            _ = write!(stdout, "}}");
-        }
-    }
-
     fn display_diagnostics(
         &self,
         id: FileId,
@@ -127,12 +88,24 @@ impl Diagnostics {
             format(diagnostic, row, col);
         }
     }
+    
+    pub fn paths(&self) -> &[PathBuf] {
+        &self.paths
+    }
+    
+    pub fn errors(&self) -> &[Error] {
+        &self.errors
+    }
+    
+    pub fn warnings(&self) -> &[Error] {
+        &self.warnings
+    }
 }
 
 #[derive(Debug)]
 pub struct Error {
-    diagnostic: String,
-    span: Span,
+    pub diagnostic: String,
+    pub span: Span,
 }
 
 impl Error {

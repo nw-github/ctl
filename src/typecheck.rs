@@ -189,6 +189,10 @@ impl TypeChecker {
         let (item, redef) = T::insert_in(&mut self.scopes, value, public, self.current);
         if redef && no_redef {
             let name = item.name(&self.scopes);
+            if name.data == "0" {
+                println!("inserting 0");
+            }
+
             self.error(Error::redefinition(&name.data, name.span))
         }
         item
@@ -439,7 +443,7 @@ impl TypeChecker {
                                 keyword: false,
                                 patt: Located::new(
                                     Span::default(),
-                                    Pattern::Path(Path::from(format!("{i}"))),
+                                    Pattern::Path(Path::from(format!("${i}"))),
                                 ),
                                 ty,
                                 default,
@@ -748,6 +752,7 @@ impl TypeChecker {
                         mutable: false,
                         value: None,
                         unused: true,
+                        has_hint: true,
                     },
                     public,
                     true,
@@ -1081,14 +1086,14 @@ impl TypeChecker {
                     let ty = self.resolve_typehint(ty);
                     if let Some(value) = value {
                         let value = self.type_check(value, &ty);
-                        let patt = self.check_pattern(true, &ty, false, patt, false);
+                        let patt = self.check_pattern(true, &ty, false, patt, false, true);
                         if !patt.irrefutable {
                             return self
                                 .error(Error::must_be_irrefutable("let binding pattern", span));
                         }
                         return CheckedStmt::Let(patt, Some(value));
                     } else {
-                        let patt = self.check_pattern(true, &ty, false, patt, false);
+                        let patt = self.check_pattern(true, &ty, false, patt, false, true);
                         if !patt.irrefutable {
                             return self
                                 .error(Error::must_be_irrefutable("let binding pattern", span));
@@ -1104,7 +1109,7 @@ impl TypeChecker {
                 } else if let Some(value) = value {
                     let value = self.check_expr(value, None);
                     let span = patt.span;
-                    let patt = self.check_pattern(true, &value.ty, false, patt, false);
+                    let patt = self.check_pattern(true, &value.ty, false, patt, false, false);
                     if !patt.irrefutable {
                         return self.error(Error::must_be_irrefutable("let binding pattern", span));
                     }
@@ -1305,7 +1310,7 @@ impl TypeChecker {
                 };
                 let ty = this.scopes.get(id).params[i].ty.clone();
                 let span = patt.span;
-                let patt = this.check_pattern(true, &ty, false, patt, body.is_none());
+                let patt = this.check_pattern(true, &ty, false, patt, body.is_none(), true);
                 if !patt.irrefutable {
                     this.error(Error::must_be_irrefutable("parameter patterns", span))
                 } else {
@@ -2302,7 +2307,7 @@ impl TypeChecker {
                     }
 
                     let patt_span = patt.span;
-                    let patt = this.check_pattern(true, &next_ty, false, patt, false);
+                    let patt = this.check_pattern(true, &next_ty, false, patt, false, false);
                     if !patt.irrefutable {
                         this.error(Error::must_be_irrefutable("for patterns", patt_span))
                     }
@@ -2553,9 +2558,9 @@ impl TypeChecker {
                 });
                 // TODO: lambdas should have a unique type
                 let (id, body) = self.enter(ScopeKind::Lambda(ret, false), |this| {
-                    for (i, param) in params.into_iter().enumerate() {
-                        let ty = param
-                            .1
+                    for (i, (name, hint)) in params.into_iter().enumerate() {
+                        let has_hint = hint.is_some();
+                        let ty = hint
                             .map(|ty| this.resolve_typehint(ty))
                             .or_else(|| {
                                 target
@@ -2567,20 +2572,21 @@ impl TypeChecker {
                             })
                             .unwrap_or_else(|| {
                                 this.error(Error::new(
-                                    format!("cannot infer type of parameter '{}'", param.0.data),
-                                    param.0.span,
+                                    format!("cannot infer type of parameter '{}'", name.data),
+                                    name.span,
                                 ))
                             });
 
                         lparams.push(ty.clone());
                         this.insert::<VariableId>(
                             Variable {
-                                name: param.0,
+                                name,
                                 ty,
                                 is_static: false,
                                 mutable: false,
                                 value: None,
                                 unused: true,
+                                has_hint,
                             },
                             false,
                             false,
@@ -4314,6 +4320,7 @@ impl TypeChecker {
                             mutable,
                             value: None,
                             unused: !param,
+                            has_hint: false,
                         },
                         false,
                         false,
@@ -4329,7 +4336,7 @@ impl TypeChecker {
                     rest = Some(RestPattern { id, pos: i });
                 }
             } else {
-                result.push(self.check_pattern(true, &inner_ptr, false, patt, param));
+                result.push(self.check_pattern(true, &inner_ptr, false, patt, param, false));
             }
         }
 
@@ -4414,6 +4421,7 @@ impl TypeChecker {
                             mutable,
                             value: None,
                             unused: !param,
+                            has_hint: false,
                         },
                         false,
                         false,
@@ -4429,7 +4437,7 @@ impl TypeChecker {
                     rest = Some(RestPattern { id, pos: i });
                 }
             } else {
-                let patt = self.check_pattern(true, &inner, false, patt, param);
+                let patt = self.check_pattern(true, &inner, false, patt, param, false);
                 if !patt.irrefutable {
                     irrefutable = false;
                 }
@@ -4517,6 +4525,7 @@ impl TypeChecker {
                 mutable || pm,
                 pattern,
                 param,
+                false,
             );
             if !patt.irrefutable {
                 irrefutable = false;
@@ -4570,7 +4579,7 @@ impl TypeChecker {
                 (Type::Unknown, Type::Unknown)
             };
 
-            let patt = self.check_pattern(true, &ty, mutable, patt, param);
+            let patt = self.check_pattern(true, &ty, mutable, patt, param, false);
             if !patt.irrefutable {
                 irrefutable = false;
             }
@@ -4647,6 +4656,7 @@ impl TypeChecker {
         mutable: bool,
         pattern: Located<Pattern>,
         param: bool,
+        has_hint: bool,
     ) -> CheckedPattern {
         let span = pattern.span;
         match pattern.data {
@@ -4713,6 +4723,7 @@ impl TypeChecker {
                                     mutable,
                                     value: None,
                                     unused: !param,
+                                    has_hint,
                                 },
                                 false,
                                 false,
@@ -4766,6 +4777,7 @@ impl TypeChecker {
                         mutable: true,
                         value: None,
                         unused: !param,
+                        has_hint,
                     },
                     false,
                     false,
@@ -4893,6 +4905,7 @@ impl TypeChecker {
             scrutinee,
             false,
             pattern.map(|inner| inner.data),
+            false,
             false,
         )
     }
