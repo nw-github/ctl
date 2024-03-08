@@ -23,7 +23,7 @@ const statusItem = window.createStatusBarItem(StatusBarAlignment.Left);
 export function activate(context: ExtensionContext) {
     client = new LanguageClient(
         "ctlsp",
-        "CTL Language Server",
+        "CTL Language",
         {
             debug: {
                 command: "$CARGO_TARGET_DIR/debug/ctl",

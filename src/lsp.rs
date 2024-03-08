@@ -48,12 +48,13 @@ impl LanguageServer for LspBackend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
-                inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
-                    InlayHintOptions {
-                        resolve_provider: Some(true),
-                        work_done_progress_options: Default::default(),
-                    },
-                ))),
+                inlay_hint_provider: Some(OneOf::Left(true)),
+                // inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
+                //     InlayHintOptions {
+                //         resolve_provider: Some(true),
+                //         work_done_progress_options: Default::default(),
+                //     },
+                // ))),
                 ..Default::default()
             },
         })

@@ -4941,19 +4941,23 @@ impl TypeChecker {
                 .map(|id| self.resolve_use_in(id, *public, components, tail))
                 .unwrap_or(Ok(())),
             PathOrigin::Normal => {
-                let (first, rest) = components.split_first().unwrap();
-                match self.find_in_tns(&first.data).map(|i| i.id) {
-                    Some(TypeItem::Module(next)) => self.resolve_use_in(next, *public, rest, tail),
-                    Some(TypeItem::Type(id)) => {
-                        if rest.is_empty() {
-                            self.resolve_use_union(*public, id, first, tail);
-                        } else {
-                            self.error(Error::new("expected module name", first.span))
+                if let Some((first, rest)) = components.split_first() {
+                    match self.find_in_tns(&first.data).map(|i| i.id) {
+                        Some(TypeItem::Module(next)) => {
+                            return self.resolve_use_in(next, *public, rest, tail)
                         }
-                        Ok(())
+                        Some(TypeItem::Type(id)) => {
+                            if rest.is_empty() {
+                                self.resolve_use_union(*public, id, first, tail);
+                            } else {
+                                self.error(Error::new("expected module name", first.span))
+                            }
+                            return Ok(());
+                        }
+                        _ => {}
                     }
-                    _ => self.resolve_use_in(ScopeId::ROOT, *public, components, tail),
                 }
+                self.resolve_use_in(ScopeId::ROOT, *public, components, tail)
             }
         }
     }
