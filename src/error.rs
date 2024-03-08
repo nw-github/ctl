@@ -1,3 +1,5 @@
+use std::io::{stdout, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use crate::{
@@ -40,20 +42,90 @@ impl Diagnostics {
 
     pub fn display(&self) {
         for (i, path) in self.paths.iter().enumerate() {
-            self.display_diagnostics("error: ", FileId(i), path, &self.errors);
+            self.display_diagnostics(FileId(i), &self.errors, |msg, row, col, _| {
+                eprintln!("error: {}:{row}:{col}: {msg}", path.display());
+            });
         }
 
         for (i, path) in self.paths.iter().enumerate() {
-            self.display_diagnostics("warning: ", FileId(i), path, &self.warnings);
+            self.display_diagnostics(FileId(i), &self.warnings, |msg, row, col, _| {
+                eprintln!("warning: {}:{row}:{col}: {msg}", path.display());
+            });
         }
     }
 
-    fn display_diagnostics(&self, prefix: &str, id: FileId, path: &Path, errors: &[Error]) {
+    pub fn display_json(&self) {
+        fn format_json(
+            this: &Diagnostics,
+            stdout: &mut impl Write,
+            written: &mut bool,
+            msgs: &[Error],
+            id: FileId,
+            severity: &str,
+        ) {
+            this.display_diagnostics(id, msgs, |msg, _, _, span| {
+                if *written {
+                    _ = write!(stdout, ",");
+                }
+                _ = write!(
+                    stdout,
+                    "{{\"id\":{},\"pos\":{},\"len\":{},\"msg\":\"{}\",\"sev\":\"{}\"}}",
+                    span.file.0,
+                    span.pos,
+                    span.len,
+                    msg,
+                    severity,
+                );
+                *written = true;
+            });
+        }
+
+        let mut stdout = stdout().lock();
+
+        _ = write!(stdout, "{{\"files\":[");
+        for (i, path) in self.paths.iter().enumerate() {
+            if i > 0 {
+                _ = write!(stdout, ",");
+            }
+            _ = write!(stdout, "\"");
+            _ = stdout.write(path.canonicalize().unwrap().as_os_str().as_bytes());
+            _ = write!(stdout, "\"");
+        }
+        _ = write!(stdout, "],\"diagnostics\":[");
+        let mut written = false;
+        for i in 0..self.paths.len() {
+            format_json(
+                self,
+                &mut stdout,
+                &mut written,
+                &self.errors,
+                FileId(i),
+                "error",
+            );
+            format_json(
+                self,
+                &mut stdout,
+                &mut written,
+                &self.warnings,
+                FileId(i),
+                "warning",
+            );
+        }
+        _ = write!(stdout, "]}}");
+    }
+
+    fn display_diagnostics(
+        &self,
+        id: FileId,
+        errors: &[Error],
+        mut format: impl FnMut(&str, usize, usize, &Span),
+    ) {
         let mut file = None;
         for Error { diagnostic, span } in errors.iter().filter(|err| err.span.file == id) {
             // TODO: report error instead of unwrapping
-            let data = file.get_or_insert_with(|| std::fs::read_to_string(path).unwrap());
-            let (mut row, mut col) = (1, 1);
+            let data =
+                file.get_or_insert_with(|| std::fs::read_to_string(&self.paths[id.0]).unwrap());
+            let (mut row, mut col) = (1usize, 1usize);
             // maybe do this first and keep a vector of positions?
             for ch in data.chars().take(span.pos) {
                 if ch == '\n' {
@@ -64,7 +136,7 @@ impl Diagnostics {
                 }
             }
 
-            eprintln!("{prefix}{}:{row}:{col}: {diagnostic}", path.display())
+            format(diagnostic, row, col, span);
         }
     }
 }

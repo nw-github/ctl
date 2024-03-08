@@ -2088,7 +2088,8 @@ impl TypeChecker {
             }
             ExprData::Float(value) => CheckedExpr::new(
                 target
-                    .filter(|t| matches!(t.strip_options(&self.scopes), Type::F32 | Type::F64))
+                    .map(|target| target.strip_options(&self.scopes))
+                    .filter(|t| matches!(t, Type::F32 | Type::F64))
                     .cloned()
                     .unwrap_or(Type::F64),
                 CheckedExprData::Float(value),
@@ -3836,17 +3837,8 @@ impl TypeChecker {
             }
         } else {
             target
-                .filter(|target| {
-                    matches!(
-                        target.strip_options(&self.scopes),
-                        Type::Int(_)
-                            | Type::Uint(_)
-                            | Type::Isize
-                            | Type::Usize
-                            | Type::CInt(_)
-                            | Type::CUint(_),
-                    )
-                })
+                .map(|target| target.strip_options(&self.scopes))
+                .filter(|target| target.is_integral())
                 .cloned()
                 .unwrap_or(Type::Isize)
         };

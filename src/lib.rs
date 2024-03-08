@@ -40,6 +40,15 @@ pub struct Compiler<S: CompileState> {
     state: S,
 }
 
+impl Default for Compiler<Source> {
+    fn default() -> Self {
+        Self {
+            diag: Default::default(),
+            state: Source,
+        }
+    }
+}
+
 impl Compiler<Source> {
     pub fn new(diag: Diagnostics) -> Self {
         Compiler {
@@ -116,6 +125,10 @@ impl<T: CompileState> Compiler<T> {
     pub fn inspect(self, f: impl FnOnce(&Self)) -> Self {
         f(&self);
         self
+    }
+
+    pub fn diagnostics(&self) -> &Diagnostics {
+        &self.diag
     }
 }
 

@@ -1,6 +1,6 @@
-use anyhow::Context;
+use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueHint};
-use ctl::{CodegenFlags, Compiler};
+use ctl::{Checked, CodegenFlags, Compiler};
 use std::{
     ffi::OsString,
     fs::File,
@@ -31,13 +31,13 @@ struct Arguments {
 
     /// Compile without libgc. By default, all memory allocations in this mode will use the libc
     /// allocator and will not be freed until the program exits.
-    #[clap(action, long)]
+    #[clap(action, short = 'g', long)]
     #[arg(global = true)]
     leak: bool,
 
     /// Compile without using _BitInt/_ExtInt. All integer types will use the type with the nearest
     /// power of two bit count. TODO: proper arithmetic wrapping in this mode
-    #[clap(action, long)]
+    #[clap(action, short = 'i', long)]
     #[arg(global = true)]
     no_bit_int: bool,
 
@@ -103,19 +103,38 @@ enum SubCommand {
         #[arg(trailing_var_arg = true, value_hint = ValueHint::CommandWithArguments)]
         targs: Vec<OsString>,
     },
+    #[clap(alias = "l")]
+    Lsp {
+        path: PathBuf,
+
+        #[clap(action, long)]
+        diagnostics: bool,
+    },
 }
 
 impl SubCommand {
     fn input(&self) -> &Path {
         match self {
             SubCommand::Print { input, .. } => input,
+            SubCommand::Lsp { path, .. } => {
+                let mut input = path.as_path();
+                let mut prev = input;
+                while let Some(parent) = prev.parent() {
+                    if parent.join("ctl.toml").exists() {
+                        input = parent;
+                        break;
+                    }
+                    prev = parent;
+                }
+                input
+            }
             SubCommand::Build { build, .. } => &build.input,
             SubCommand::Run { build, .. } => &build.input,
         }
     }
 }
 
-fn compile_results(src: &str, leak: bool, output: &Path, build: BuildOrRun) -> anyhow::Result<()> {
+fn compile_results(src: &str, leak: bool, output: &Path, build: BuildOrRun) -> Result<()> {
     let warnings = ["-Wall", "-Wextra"];
     let mut cc = Command::new(build.cc)
         .arg("-o")
@@ -153,7 +172,7 @@ fn compile_results(src: &str, leak: bool, output: &Path, build: BuildOrRun) -> a
     Ok(())
 }
 
-fn print_results(src: &[u8], pretty: bool, output: &mut impl Write) -> anyhow::Result<()> {
+fn print_results(src: &[u8], pretty: bool, output: &mut impl Write) -> Result<()> {
     if pretty {
         let mut cc = Command::new("clang-format")
             .stdin(Stdio::piped())
@@ -181,9 +200,52 @@ fn print_results(src: &[u8], pretty: bool, output: &mut impl Write) -> anyhow::R
     Ok(())
 }
 
-fn handle_results(args: Arguments, result: &str) -> anyhow::Result<()> {
+fn transpile(compiler: Compiler<Checked>, flags: CodegenFlags) -> String {
+    match compiler.build(flags) {
+        Ok((diagnostics, result)) => {
+            diagnostics.display();
+            result
+        }
+        Err(diagnostics) => {
+            eprintln!("Compilation failed: ");
+            diagnostics.display();
+            std::process::exit(1);
+        }
+    }
+}
+
+fn main() -> Result<()> {
+    let args = Arguments::parse();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    eprintln!("root: {}", root.display());
+
+    let mut libs = Vec::new();
+    if !args.no_core {
+        libs.push(root.join("ctl/core"));
+    }
+
+    if !args.no_std {
+        libs.push(root.join("ctl/std"));
+    }
+
+    let checked = Compiler::default()
+        .parse(args.command.input().to_owned())?
+        .inspect(|ast| {
+            if args.dump_ast {
+                ast.dump()
+            }
+        })
+        .typecheck(libs)?;
+    let flags = CodegenFlags {
+        leak: args.leak,
+        no_bit_int: args.no_bit_int,
+        lib: args.lib,
+        minify: !matches!(args.command, SubCommand::Print { minify: false, .. }),
+    };
+
     match args.command {
         SubCommand::Print { output, pretty, .. } => {
+            let result = transpile(checked, flags);
             if let Some(output) = output {
                 let mut output = File::create(output)?;
                 print_results(result.as_bytes(), pretty, &mut output)?;
@@ -192,12 +254,14 @@ fn handle_results(args: Arguments, result: &str) -> anyhow::Result<()> {
             }
         }
         SubCommand::Build { build, output } => {
-            compile_results(result, args.leak, &output, build)?;
+            let result = transpile(checked, flags);
+            compile_results(&result, args.leak, &output, build)?;
         }
         SubCommand::Run { build, targs } => {
+            let result = transpile(checked, flags);
             // TODO: safe?
             let output = Path::new("./a.out");
-            compile_results(result, args.leak, output, build)?;
+            compile_results(&result, args.leak, output, build)?;
             #[cfg(unix)]
             {
                 use std::os::unix::process::CommandExt;
@@ -214,47 +278,12 @@ fn handle_results(args: Arguments, result: &str) -> anyhow::Result<()> {
                 std::process::exit(status.code().unwrap_or_default());
             }
         }
+        SubCommand::Lsp { diagnostics, .. } => {
+            if diagnostics {
+                checked.diagnostics().display_json();
+            }
+        }
     }
 
     Ok(())
-}
-
-fn main() -> anyhow::Result<()> {
-    let args = Arguments::parse();
-    let root = Path::new(file!()).parent().unwrap().parent().unwrap();
-    let mut libs = Vec::new();
-    if !args.no_core {
-        libs.push(root.join("ctl/core"));
-    }
-
-    if !args.no_std {
-        libs.push(root.join("ctl/std"));
-    }
-
-    let result = Compiler::new(Default::default())
-        .parse(args.command.input().to_owned())?
-        .inspect(|ast| {
-            if args.dump_ast {
-                ast.dump()
-            }
-        })
-        .typecheck(libs)?
-        .build(CodegenFlags {
-            leak: args.leak,
-            no_bit_int: args.no_bit_int,
-            lib: args.lib,
-            minify: !matches!(args.command, SubCommand::Print { minify: false, .. }),
-        });
-
-    match result {
-        Ok((diagnostics, result)) => {
-            diagnostics.display();
-            handle_results(args, &result)
-        }
-        Err(diagnostics) => {
-            eprintln!("Compilation failed: ");
-            diagnostics.display();
-            std::process::exit(1);
-        }
-    }
 }
