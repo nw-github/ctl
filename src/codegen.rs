@@ -1835,7 +1835,9 @@ impl<'a, 'b> Codegen<'a, 'b> {
             }
             CheckedExprData::As(inner, _) => {
                 self.emit_cast(&expr.ty);
+                self.buffer.emit("(");
                 self.emit_expr(*inner, state);
+                self.buffer.emit(")");
             }
             CheckedExprData::Is(mut inner, patt) => {
                 inner.ty.fill_templates(&state.func.ty_args);
@@ -1849,9 +1851,9 @@ impl<'a, 'b> Codegen<'a, 'b> {
                 if matches!(expr.ty, Type::Void | Type::CVoid) {
                     self.emit_expr_inline(*inner, state);
                 } else {
-                    self.buffer.emit("/*never*/(");
+                    self.buffer.emit("/*never*/((");
                     self.emit_expr_inline(*inner, state);
-                    self.buffer.emit(",*(");
+                    self.buffer.emit("),*(");
                     self.emit_type(&expr.ty);
                     self.buffer.emit(format!("*){NULLPTR})"));
                 }
@@ -2083,9 +2085,9 @@ impl<'a, 'b> Codegen<'a, 'b> {
             UnaryOp::Not => {
                 if lhs.ty == Type::Bool {
                     self.emit_cast(&ret);
-                    self.buffer.emit("(");
+                    self.buffer.emit("((");
                     self.emit_expr(lhs, state);
-                    self.buffer.emit(" ^ 1)");
+                    self.buffer.emit(") ^ 1)");
                 } else {
                     self.buffer.emit("~");
                     self.emit_expr(lhs, state);
@@ -2833,8 +2835,7 @@ impl<'a, 'b> Codegen<'a, 'b> {
             } => true,
             CheckedExprData::Call { .. }
             | CheckedExprData::CallFnPtr { .. }
-            | CheckedExprData::MemberCall { .. }
-            | CheckedExprData::StringInterpolation { .. } => true,
+            | CheckedExprData::MemberCall { .. } => true,
             CheckedExprData::Binary { op, .. } if op.is_assignment() => true,
             _ => false,
         }
