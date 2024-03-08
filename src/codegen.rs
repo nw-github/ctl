@@ -867,9 +867,9 @@ struct Vtable {
     scope: ScopeId,
 }
 
-pub struct Codegen<'a> {
+pub struct Codegen<'a, 'b> {
     scopes: &'a Scopes,
-    diag: Diagnostics,
+    diag: &'b mut Diagnostics,
     buffer: Buffer,
     temporaries: Buffer,
     type_gen: TypeGen<'a>,
@@ -882,15 +882,15 @@ pub struct Codegen<'a> {
     emitted_vtables: HashSet<Vtable>,
 }
 
-impl<'a> Codegen<'a> {
+impl<'a, 'b> Codegen<'a, 'b> {
     pub fn build(
-        mut diag: Diagnostics,
+        diag: &'b mut Diagnostics,
         scope: ScopeId,
         scopes: &'a Scopes,
         flags: CodegenFlags,
-    ) -> Result<(Diagnostics, String), Diagnostics> {
+    ) -> Result<String, ()> {
         if diag.has_errors() {
-            return Err(diag);
+            return Err(());
         }
 
         let exports = scopes
@@ -902,7 +902,7 @@ impl<'a> Codegen<'a> {
         } else {
             let Some(main) = scopes[scope].vns.get("main").and_then(|id| id.as_fn()) else {
                 diag.error(Error::new("no main function found", Span::default()));
-                return Err(diag);
+                return Err(());
             };
             let main = State::new(GenericFunc::from_id(scopes, *main));
             (
@@ -978,7 +978,7 @@ impl<'a> Codegen<'a> {
         }
         this.buffer.emit(include_str!("../ctl/ctl.h"));
         if this.diag.has_errors() {
-            return Err(this.diag);
+            return Err(());
         }
         this.type_gen.finish(&mut this.buffer, &this.flags);
         this.buffer.emit(prototypes.finish());
@@ -992,7 +992,7 @@ impl<'a> Codegen<'a> {
             this.buffer.emit(main);
         }
 
-        Ok((this.diag, this.buffer.finish()))
+        Ok(this.buffer.finish())
     }
 
     fn emit_vtable(&mut self, vtable: Vtable) {

@@ -6,16 +6,13 @@ import {
     ProposedFeatures,
     InitializeParams,
     DidChangeConfigurationNotification,
-    CompletionItem,
-    CompletionItemKind,
-    TextDocumentPositionParams,
     TextDocumentSyncKind,
     InitializeResult,
-    DocumentDiagnosticReportKind,
-    type DocumentDiagnosticReport,
 } from "vscode-languageserver/node";
 
 import { TextDocument } from "vscode-languageserver-textdocument";
+
+import { spawn } from "child_process";
 
 // Create a connection for the server, using Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
@@ -26,7 +23,6 @@ const documents = new TextDocuments<TextDocument>(TextDocument);
 
 let hasConfigurationCapability = false;
 let hasWorkspaceFolderCapability = false;
-let hasDiagnosticRelatedInformationCapability = false;
 
 connection.onInitialize((params: InitializeParams) => {
     const capabilities = params.capabilities;
@@ -39,11 +35,6 @@ connection.onInitialize((params: InitializeParams) => {
     hasWorkspaceFolderCapability = !!(
         capabilities.workspace && !!capabilities.workspace.workspaceFolders
     );
-    hasDiagnosticRelatedInformationCapability = !!(
-        capabilities.textDocument &&
-        capabilities.textDocument.publishDiagnostics &&
-        capabilities.textDocument.publishDiagnostics.relatedInformation
-    );
 
     const result: InitializeResult = {
         capabilities: {
@@ -52,10 +43,10 @@ connection.onInitialize((params: InitializeParams) => {
             // completionProvider: {
             //     resolveProvider: true,
             // },
-            diagnosticProvider: {
-                interFileDependencies: false,
-                workspaceDiagnostics: false,
-            },
+            // diagnosticProvider: {
+            //     interFileDependencies: false,
+            //     workspaceDiagnostics: false,
+            // },
         },
     };
     if (hasWorkspaceFolderCapability) {
@@ -80,32 +71,36 @@ connection.onInitialized(() => {
     }
 });
 
-// The example settings
-interface ExampleSettings {
+type Configuration = {
     maxNumberOfProblems: number;
-	compilerPath: string;
-}
+    compiler: { path: string; maxInvocationTime: number; debounceMs: number };
+};
 
 // The global settings, used when the `workspace/configuration` request is not supported by the client.
 // Please note that this is not the case when using this server with the client provided in this example
 // but could happen with other clients.
-const defaultSettings: ExampleSettings = { maxNumberOfProblems: 1000, compilerPath: "ctl" };
+const defaultSettings: Configuration = {
+    maxNumberOfProblems: 1000,
+    compiler: { path: "ctl", maxInvocationTime: 5000, debounceMs: 250 },
+};
 let globalSettings = defaultSettings;
 
 // Cache the settings of all open documents
-const documentSettings = new Map<string, Thenable<ExampleSettings>>();
+const documentSettings = new Map<string, Thenable<Configuration>>();
+let validateTextDocument = debounce(realValidateTextDocument, globalSettings.compiler.debounceMs);
 
 connection.onDidChangeConfiguration((change) => {
     if (hasConfigurationCapability) {
         // Reset all cached document settings
         documentSettings.clear();
-    } else {
-        globalSettings = change.settings.ctlsp as ExampleSettings || defaultSettings;
     }
-    // Refresh the diagnostics since the `maxNumberOfProblems` could have changed.
-    // We could optimize things here and re-fetch the setting first can compare it
-    // to the existing setting, but this is out of scope for this example.
-    connection.languages.diagnostics.refresh();
+    globalSettings = (change.settings.ctlsp as Configuration) || defaultSettings;
+    validateTextDocument = debounce(realValidateTextDocument, globalSettings.compiler.debounceMs);
+
+    const first = documents.all()[0];
+    if (first) {
+        validateTextDocument(first);
+    }
 });
 
 function getDocumentSettings(resource: string) {
@@ -124,26 +119,8 @@ function getDocumentSettings(resource: string) {
     return result;
 }
 
-// Only keep settings for open documents
 documents.onDidClose((e) => {
     documentSettings.delete(e.document.uri);
-});
-
-connection.languages.diagnostics.on(async (params) => {
-    const document = documents.get(params.textDocument.uri);
-    if (document) {
-        return {
-            kind: DocumentDiagnosticReportKind.Full,
-            items: await validateTextDocument(document),
-        } satisfies DocumentDiagnosticReport;
-    } else {
-        // We don't know the document. We can either try to read it from disk
-        // or we don't report problems for it.
-        return {
-            kind: DocumentDiagnosticReportKind.Full,
-            items: [],
-        } satisfies DocumentDiagnosticReport;
-    }
 });
 
 // The content of a text document has changed. This event is emitted
@@ -152,49 +129,111 @@ documents.onDidChangeContent((change) => {
     validateTextDocument(change.document);
 });
 
-async function validateTextDocument(textDocument: TextDocument): Promise<Diagnostic[]> {
-    // In this simple example we get the settings for every validate run.
-    const settings = await getDocumentSettings(textDocument.uri);
-
-    // The validator creates diagnostics for all uppercase words length 2 and more
-    const text = textDocument.getText();
-    const pattern = /\b[A-Z]{2,}\b/g;
-    let m: RegExpExecArray | null;
-
-    let problems = 0;
-    const diagnostics: Diagnostic[] = [];
-    while ((m = pattern.exec(text)) && problems < settings.maxNumberOfProblems) {
-        problems++;
-        const diagnostic: Diagnostic = {
-            severity: DiagnosticSeverity.Warning,
-            range: {
-                start: textDocument.positionAt(m.index),
-                end: textDocument.positionAt(m.index + m[0].length),
-            },
-            message: `${m[0]} is all uppercase.`,
-            source: "ex",
-        };
-        if (hasDiagnosticRelatedInformationCapability) {
-            diagnostic.relatedInformation = [
-                {
-                    location: {
-                        uri: textDocument.uri,
-                        range: Object.assign({}, diagnostic.range),
-                    },
-                    message: "Spelling matters",
-                },
-                {
-                    location: {
-                        uri: textDocument.uri,
-                        range: Object.assign({}, diagnostic.range),
-                    },
-                    message: "Particularly for names",
-                },
-            ];
+function debounce(func: (...args: any) => void, wait: number) {
+    let timeout: NodeJS.Timeout | undefined;
+    return (...args: any) => {
+        clearTimeout(timeout);
+        if (!timeout) {
+            func(...args);
+        } else {
+            timeout = setTimeout(() => {
+                timeout = undefined;
+                func(...args);
+            }, wait);
         }
-        diagnostics.push(diagnostic);
+    };
+}
+
+async function realValidateTextDocument(document: TextDocument) {
+    type DiagnosticsResult = {
+        files: string[];
+        diagnostics: {
+            id: number;
+            pos: number;
+            len: number;
+            msg: string;
+            sev: "warning" | "error";
+        }[];
+        input_file: number;
+    };
+
+    // In this simple example we get the settings for every validate run.
+    const settings = await getDocumentSettings(document.uri);
+    const text = document.getText();
+    const result = await invokeCompiler<DiagnosticsResult>(
+        text,
+        ["--diagnostics"],
+        settings,
+        document.uri
+    );
+    if (!result) {
+        return;
     }
-    return diagnostics;
+
+    const allDiagnostics: Record<string, Diagnostic[]> = {};
+    for (const document of documents.all()) {
+        allDiagnostics[document.uri] = [];
+    }
+
+    for (const { id, pos, len, sev, msg } of result.diagnostics) {
+        const uri = id === result.input_file ? document.uri : "file://" + result.files[id];
+
+        let diagnostics: Diagnostic[];
+        if (!allDiagnostics[uri]) {
+            diagnostics = allDiagnostics[uri] = [];
+        } else {
+            diagnostics = allDiagnostics[uri];
+        }
+
+        const doc = documents.get(uri) ?? document;
+        diagnostics.push({
+            severity: sev === "warning" ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
+            range: { start: doc.positionAt(pos), end: doc.positionAt(pos + len) },
+            message: msg,
+            source: "ctlsp",
+        });
+    }
+
+    console.log("------------");
+    for (const uri in allDiagnostics) {
+        connection.sendDiagnostics({ uri, diagnostics: allDiagnostics[uri] });
+        console.log(`sending ${allDiagnostics[uri].length} diagnostics for ${uri}`);
+    }
+}
+
+async function invokeCompiler<T>(
+    text: string,
+    flags: string[],
+    settings: Configuration,
+    path: string
+) {
+    if (path.startsWith("file://")) {
+        path = path.slice(7);
+    }
+
+    const result = spawn(settings.compiler.path, ["lsp", path, "--has-file", ...flags], {
+        timeout: settings.compiler.maxInvocationTime,
+        shell: true,
+    });
+
+    return new Promise<T>((resolve, reject) => {
+        let [stdout, stderr] = ["", ""];
+        result.stdout.on("data", (data) => (stdout += data));
+        result.stderr.on("data", (data) => (stderr += data));
+        result.on("error", (err) => {
+            reject(err);
+        });
+        result.on("close", (code) => {
+            if (code) {
+                console.warn(`compiler returned error code ${code}. stderr: ${stderr}`);
+            }
+            resolve(JSON.parse(stdout) as T);
+        });
+        result.stdin.end(text, "utf-8");
+    }).catch((err) => {
+        console.error(`error invoking compiler: ${err}`);
+        return Promise.resolve(null);
+    });
 }
 
 connection.onDidChangeWatchedFiles((_change) => {

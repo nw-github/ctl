@@ -32,7 +32,7 @@ impl Diagnostics {
         FileId(self.paths.len() - 1)
     }
 
-    pub fn file_path(&mut self, file: FileId) -> &Path {
+    pub fn file_path(&self, file: FileId) -> &Path {
         &self.paths[file.0]
     }
 
@@ -40,44 +40,38 @@ impl Diagnostics {
         !self.errors.is_empty()
     }
 
-    pub fn display(&self) {
+    pub fn display(&self, lsp_file: Option<&(FileId, String)>) {
         for (i, path) in self.paths.iter().enumerate() {
-            self.display_diagnostics(FileId(i), &self.errors, |msg, row, col, _| {
+            self.display_diagnostics(FileId(i), &self.errors, lsp_file, |msg, row, col| {
                 eprintln!("error: {}:{row}:{col}: {msg}", path.display());
             });
         }
 
         for (i, path) in self.paths.iter().enumerate() {
-            self.display_diagnostics(FileId(i), &self.warnings, |msg, row, col, _| {
+            self.display_diagnostics(FileId(i), &self.warnings, lsp_file, |msg, row, col| {
                 eprintln!("warning: {}:{row}:{col}: {msg}", path.display());
             });
         }
     }
 
-    pub fn display_json(&self) {
+    pub fn display_json(&self, lsp_file: Option<&(FileId, String)>) {
         fn format_json(
-            this: &Diagnostics,
             stdout: &mut impl Write,
             written: &mut bool,
             msgs: &[Error],
-            id: FileId,
             severity: &str,
         ) {
-            this.display_diagnostics(id, msgs, |msg, _, _, span| {
+            for Error { diagnostic, span } in msgs {
                 if *written {
                     _ = write!(stdout, ",");
                 }
                 _ = write!(
                     stdout,
                     "{{\"id\":{},\"pos\":{},\"len\":{},\"msg\":\"{}\",\"sev\":\"{}\"}}",
-                    span.file.0,
-                    span.pos,
-                    span.len,
-                    msg,
-                    severity,
+                    span.file.0, span.pos, span.len, diagnostic, severity,
                 );
                 *written = true;
-            });
+            }
         }
 
         let mut stdout = stdout().lock();
@@ -88,43 +82,37 @@ impl Diagnostics {
                 _ = write!(stdout, ",");
             }
             _ = write!(stdout, "\"");
-            _ = stdout.write(path.canonicalize().unwrap().as_os_str().as_bytes());
+            _ = stdout.write(path.as_os_str().as_bytes());
             _ = write!(stdout, "\"");
         }
         _ = write!(stdout, "],\"diagnostics\":[");
         let mut written = false;
-        for i in 0..self.paths.len() {
-            format_json(
-                self,
-                &mut stdout,
-                &mut written,
-                &self.errors,
-                FileId(i),
-                "error",
-            );
-            format_json(
-                self,
-                &mut stdout,
-                &mut written,
-                &self.warnings,
-                FileId(i),
-                "warning",
-            );
+        format_json(&mut stdout, &mut written, &self.errors, "error");
+        format_json(&mut stdout, &mut written, &self.warnings, "warning");
+        _ = write!(stdout, "]");
+        if let Some((id, _)) = lsp_file {
+            _ = write!(stdout, ",\"input_file\":{}}}", id.0);
+        } else {
+            _ = write!(stdout, "}}");
         }
-        _ = write!(stdout, "]}}");
     }
 
     fn display_diagnostics(
         &self,
         id: FileId,
         errors: &[Error],
-        mut format: impl FnMut(&str, usize, usize, &Span),
+        lsp_file: Option<&(FileId, String)>,
+        mut format: impl FnMut(&str, usize, usize),
     ) {
         let mut file = None;
         for Error { diagnostic, span } in errors.iter().filter(|err| err.span.file == id) {
             // TODO: report error instead of unwrapping
-            let data =
-                file.get_or_insert_with(|| std::fs::read_to_string(&self.paths[id.0]).unwrap());
+            let data = lsp_file
+                .filter(|(rhs, _)| id == *rhs)
+                .map(|f| &f.1)
+                .unwrap_or_else(|| {
+                    file.get_or_insert_with(|| std::fs::read_to_string(&self.paths[id.0]).unwrap())
+                });
             let (mut row, mut col) = (1usize, 1usize);
             // maybe do this first and keep a vector of positions?
             for ch in data.chars().take(span.pos) {
@@ -136,7 +124,7 @@ impl Diagnostics {
                 }
             }
 
-            format(diagnostic, row, col, span);
+            format(diagnostic, row, col);
         }
     }
 }

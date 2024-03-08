@@ -18,8 +18,8 @@ pub fn void_assigns() {
 
     mut x = A(b: void);
     x.b = hello();
-    let y = x.b;
-    let x = if true { void } else { void };
+    let _y = x.b;
+    let _x = if true { void } else { void };
 }
 
 pub fn booleans() {

@@ -13,11 +13,10 @@
   "scripts": {
     "yaml-transpile": "js-yaml syntaxes/ctl.tmLanguage.yaml > syntaxes/ctl.tmLanguage.json",
     "vscode:prepublish": "npm run compile",
-		"compile": "npm yaml-transpile && tsc -b",
+		"compile": "npm run yaml-transpile && tsc -b",
 		"watch": "tsc -b -w",
 		"lint": "eslint ./client/src ./server/src --ext .ts,.tsx",
-		"postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
-		"test": "sh ./scripts/e2e.sh"
+		"postinstall": "cd client && npm install && cd ../server && npm install && cd .."
   },
   "contributes": {
     "languages": [
@@ -61,11 +60,23 @@
 					"default": "off",
 					"description": "Traces the communication between VS Code and the language server."
 				},
-        "ctlsp.compilerPath": {
+        "ctlsp.compiler.path": {
           "scope": "resource",
           "type": "string",
-          "default": "ctl",
+          "default": "$CARGO_TARGET_DIR/debug/ctl",
           "description": "The path to the CTL compiler binary."
+        },
+        "ctlsp.compiler.maxInvocationTime": {
+          "scope": "resource",
+          "type": "number",
+          "default": 5000,
+          "description": "The maximum the compiler is allowed to take to process a file (in ms)."
+        },
+        "ctlsp.compiler.debounceMs": {
+          "scope": "resource",
+          "type": "number",
+          "default": 250,
+          "description": "The minimum time required between invocations of the compiler (in ms)."
         }
 			}
 		}

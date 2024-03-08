@@ -4,7 +4,7 @@ use ctl::{Checked, CodegenFlags, Compiler};
 use std::{
     ffi::OsString,
     fs::File,
-    io::Write,
+    io::{stdin, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -108,6 +108,9 @@ enum SubCommand {
         path: PathBuf,
 
         #[clap(action, long)]
+        has_file: bool,
+
+        #[clap(action, long)]
         diagnostics: bool,
     },
 }
@@ -202,34 +205,59 @@ fn print_results(src: &[u8], pretty: bool, output: &mut impl Write) -> Result<()
 
 fn transpile(compiler: Compiler<Checked>, flags: CodegenFlags) -> String {
     match compiler.build(flags) {
-        Ok((diagnostics, result)) => {
-            diagnostics.display();
-            result
+        Ok(compiler) => {
+            compiler.diagnostics().display(compiler.lsp_file());
+            compiler.code()
         }
-        Err(diagnostics) => {
+        Err(compiler) => {
             eprintln!("Compilation failed: ");
-            diagnostics.display();
+            compiler.diagnostics().display(compiler.lsp_file());
             std::process::exit(1);
         }
     }
 }
 
 fn main() -> Result<()> {
-    let args = Arguments::parse();
+    let mut args = Arguments::parse();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    eprintln!("root: {}", root.display());
+    let core_path = root.join("ctl/core");
+    let std_path = root.join("ctl/std");
+    let input = args.command.input().to_owned();
+    if let Ok(path) = input.canonicalize() {
+        if path == core_path {
+            args.no_core = true;
+            args.no_std = true;
+        } else if path == std_path {
+            args.no_core = true;
+        }
+    }
 
     let mut libs = Vec::new();
     if !args.no_core {
-        libs.push(root.join("ctl/core"));
+        libs.push(root.join(core_path));
     }
 
     if !args.no_std {
-        libs.push(root.join("ctl/std"));
+        libs.push(root.join(std_path));
     }
 
-    let checked = Compiler::default()
-        .parse(args.command.input().to_owned())?
+    let lsp_file = if let SubCommand::Lsp {
+        has_file: true,
+        path,
+        ..
+    } = &args.command
+    {
+        let mut buffer = String::new();
+        stdin()
+            .read_to_string(&mut buffer)
+            .context("reading stdin")?;
+        Some((path.clone(), buffer))
+    } else {
+        None
+    };
+
+    let checked = Compiler::new(lsp_file)
+        .parse(input)?
         .inspect(|ast| {
             if args.dump_ast {
                 ast.dump()
@@ -280,7 +308,7 @@ fn main() -> Result<()> {
         }
         SubCommand::Lsp { diagnostics, .. } => {
             if diagnostics {
-                checked.diagnostics().display_json();
+                checked.diagnostics().display_json(checked.lsp_file());
             }
         }
     }

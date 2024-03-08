@@ -1,8 +1,13 @@
 import * as path from "path";
-import { workspace, ExtensionContext } from "vscode";
+import { workspace, ExtensionContext, window, StatusBarAlignment, MarkdownString, commands } from "vscode";
 import { LanguageClient, ServerOptions, TransportKind } from "vscode-languageclient/node";
 
 let client: LanguageClient;
+
+const CMD_STOP = "ctlsp.stop_server";
+const CMD_RESTART = "ctlsp.restart_server";
+
+const statusItem = window.createStatusBarItem(StatusBarAlignment.Left);
 
 export function activate(context: ExtensionContext) {
     // The server is implemented in node
@@ -19,7 +24,6 @@ export function activate(context: ExtensionContext) {
     };
 
     client = new LanguageClient("ctlsp", "CTL Language Server", serverOptions, {
-        // Register the server for plain text documents
         documentSelector: [{ scheme: "file", language: "ctl" }],
         synchronize: {
             // Notify the server about file changes to '.clientrc files contained in the workspace
@@ -27,10 +31,49 @@ export function activate(context: ExtensionContext) {
         },
     });
 
-    // Start the client. This will also launch the server
-    client.start();
+    context.subscriptions.push(commands.registerCommand(CMD_STOP, async () => {
+        await client?.stop();
+        updateTooltip();
+    }));
+
+    context.subscriptions.push(commands.registerCommand(CMD_RESTART, async () => {
+        if (!client) {
+            return;
+        }
+
+        await client.stop();
+        await client.start();
+        updateTooltip();
+    }));
+
+    (async () => {
+        await client.start();
+        updateTooltip();
+    })();
 }
 
 export function deactivate(): Thenable<void> | undefined {
     return client?.stop();
+}
+
+function updateTooltip() {
+    const running = client.isRunning();
+    statusItem.tooltip = new MarkdownString("", true);
+    statusItem.tooltip.isTrusted = true;
+
+    statusItem.tooltip.appendMarkdown(running ? "Running" : "Stopped");
+    statusItem.tooltip.appendMarkdown("\n\n---\n\n");
+    if (running) {
+        statusItem.text = "ctlsp";
+        statusItem.tooltip.appendMarkdown(`\n\n[Stop Server](command:${CMD_STOP})`);
+        statusItem.command = CMD_STOP;
+    } else {
+        statusItem.text = "$(stop-circle) ctlsp";
+        statusItem.command = CMD_RESTART;
+    }
+
+    statusItem.tooltip.appendMarkdown(
+        `\n\n[${running ? "Res" : "S"}tart Server](command:${CMD_RESTART})`
+    );
+    statusItem.show();
 }

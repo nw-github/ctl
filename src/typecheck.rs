@@ -113,7 +113,7 @@ impl TypeChecker {
             diag,
         };
         for lib in libs {
-            let parsed = Compiler::new(this.diag).parse(lib)?;
+            let parsed = Compiler::with_diagnostics(this.diag).parse(lib)?;
             this.diag = parsed.diag;
             this.check_one(parsed.state.0);
         }

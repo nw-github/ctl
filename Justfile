@@ -5,5 +5,4 @@ clean:
     rm flamegraph.svg
 
 code:
-    cd ide/code && npm yaml-transpile
-    cd ide/code && rsync -av . ~/.vscode-oss/extensions/ctl --exclude node_modules --exclude .vscode
+    cd ide/code && npm run compile && rsync -av . ~/.vscode-oss/extensions/ctl
