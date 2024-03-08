@@ -6,6 +6,12 @@ use crate::{
     typeid::Type,
 };
 
+pub enum OffsetMode {
+    Utf8,
+    Utf16,
+    Utf32,
+}
+
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 pub struct FileId(usize);
 
@@ -46,24 +52,37 @@ impl Diagnostics {
 
     pub fn display(&self, lsp_file: Option<&(FileId, String)>) {
         for (i, path) in self.paths.iter().enumerate() {
-            self.display_diagnostics(FileId(i), &self.errors, lsp_file, |msg, row, col| {
-                eprintln!("error: {}:{row}:{col}: {msg}", path.display());
-            });
+            self.format_diagnostics(
+                FileId(i),
+                &self.errors,
+                lsp_file,
+                OffsetMode::Utf32,
+                |msg, (row, col), _| {
+                    eprintln!("error: {}:{row}:{col}: {msg}", path.display());
+                },
+            );
         }
 
         for (i, path) in self.paths.iter().enumerate() {
-            self.display_diagnostics(FileId(i), &self.warnings, lsp_file, |msg, row, col| {
-                eprintln!("warning: {}:{row}:{col}: {msg}", path.display());
-            });
+            self.format_diagnostics(
+                FileId(i),
+                &self.warnings,
+                lsp_file,
+                OffsetMode::Utf32,
+                |msg, (row, col), _| {
+                    eprintln!("warning: {}:{row}:{col}: {msg}", path.display());
+                },
+            );
         }
     }
 
-    fn display_diagnostics(
+    pub fn format_diagnostics(
         &self,
         id: FileId,
         errors: &[Error],
         lsp_file: Option<&(FileId, String)>,
-        mut format: impl FnMut(&str, usize, usize),
+        offset_mode: OffsetMode,
+        mut format: impl FnMut(&str, (usize, usize), (usize, usize)),
     ) {
         let mut file = None;
         for Error { diagnostic, span } in errors.iter().filter(|err| err.span.file == id) {
@@ -74,29 +93,51 @@ impl Diagnostics {
                 .unwrap_or_else(|| {
                     file.get_or_insert_with(|| std::fs::read_to_string(&self.paths[id.0]).unwrap())
                 });
-            let (mut row, mut col) = (1usize, 1usize);
+            let mut start = (1usize, 1usize);
             // maybe do this first and keep a vector of positions?
-            for ch in data.chars().take(span.pos) {
+            let mut chars = data.chars();
+            for ch in (&mut chars).take(span.pos) {
                 if ch == '\n' {
-                    row += 1;
-                    col = 1;
+                    start.0 += 1;
+                    start.1 = 1;
                 } else {
-                    col += 1;
+                    start.1 += match offset_mode {
+                        OffsetMode::Utf8 => ch.len_utf8(),
+                        OffsetMode::Utf16 => ch.len_utf16(),
+                        OffsetMode::Utf32 => 1,
+                    };
                 }
             }
 
-            format(diagnostic, row, col);
+            let mut end = start;
+            for ch in chars.take(span.len) {
+                if ch == '\n' {
+                    end.0 += 1;
+                    end.1 = 1;
+                } else {
+                    end.1 += match offset_mode {
+                        OffsetMode::Utf8 => ch.len_utf8(),
+                        OffsetMode::Utf16 => ch.len_utf16(),
+                        OffsetMode::Utf32 => 1,
+                    };
+                }
+            }
+
+            format(diagnostic, start, end);
         }
     }
-    
-    pub fn paths(&self) -> &[PathBuf] {
-        &self.paths
+
+    pub fn paths(&self) -> impl Iterator<Item = (FileId, &PathBuf)> {
+        self.paths
+            .iter()
+            .enumerate()
+            .map(|(i, path)| (FileId(i), path))
     }
-    
+
     pub fn errors(&self) -> &[Error] {
         &self.errors
     }
-    
+
     pub fn warnings(&self) -> &[Error] {
         &self.warnings
     }

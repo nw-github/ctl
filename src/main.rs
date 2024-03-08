@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueHint};
-use ctl::{error::Error, Checked, CodegenFlags, Compiler};
+use ctl::{get_default_libs, lsp::LspBackend, CodegenFlags, Compiler};
 use std::{
     ffi::OsString,
     fs::File,
-    io::{stdin, stdout, Read, Write},
-    os::unix::ffi::OsStrExt,
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
+use tower_lsp::{LspService, Server};
 
 #[derive(Parser)]
 struct Arguments {
@@ -67,17 +67,6 @@ struct BuildOrRun {
     verbose: bool,
 }
 
-#[derive(Args)]
-struct LspCommands {
-    #[clap(action, long)]
-    type_hints: bool,
-
-    #[clap(action, long)]
-    diagnostics: bool,
-
-    hover: Option<usize>,
-}
-
 #[derive(Subcommand)]
 enum SubCommand {
     #[clap(alias = "p")]
@@ -116,35 +105,16 @@ enum SubCommand {
         targs: Vec<OsString>,
     },
     #[clap(alias = "l")]
-    Lsp {
-        path: PathBuf,
-
-        #[clap(action, long)]
-        has_file: bool,
-
-        #[clap(flatten)]
-        flags: LspCommands,
-    },
+    Lsp,
 }
 
 impl SubCommand {
     fn input(&self) -> &Path {
         match self {
             SubCommand::Print { input, .. } => input,
-            SubCommand::Lsp { path, .. } => {
-                let mut input = path.as_path();
-                let mut prev = input;
-                while let Some(parent) = prev.parent() {
-                    if parent.join("ctl.toml").exists() {
-                        input = parent;
-                        break;
-                    }
-                    prev = parent;
-                }
-                input
-            }
             SubCommand::Build { build, .. } => &build.input,
             SubCommand::Run { build, .. } => &build.input,
+            SubCommand::Lsp => unreachable!(),
         }
     }
 }
@@ -215,8 +185,33 @@ fn print_results(src: &[u8], pretty: bool, output: &mut impl Write) -> Result<()
     Ok(())
 }
 
-fn transpile(compiler: Compiler<Checked>, flags: CodegenFlags) -> String {
-    match compiler.build(flags) {
+#[tokio::main]
+async fn main() -> Result<()> {
+    let args = Arguments::parse();
+    if matches!(args.command, SubCommand::Lsp) {
+        let stdin = tokio::io::stdin();
+        let stdout = tokio::io::stdout();
+        let (service, socket) = LspService::new(LspBackend::new);
+        Server::new(stdin, stdout, socket).serve(service).await;
+        return Ok(());
+    }
+
+    let (path, libs) = get_default_libs(args.command.input(), vec![], args.no_core, args.no_std);
+    let compiler = Compiler::new()
+        .parse(path, libs)?
+        .inspect(|ast| {
+            if args.dump_ast {
+                ast.dump()
+            }
+        })
+        .typecheck()?
+        .build(CodegenFlags {
+            leak: args.leak,
+            no_bit_int: args.no_bit_int,
+            lib: args.lib,
+            minify: !matches!(args.command, SubCommand::Print { minify: false, .. }),
+        });
+    let result = match compiler {
         Ok(compiler) => {
             compiler.diagnostics().display(compiler.lsp_file());
             compiler.code()
@@ -226,133 +221,9 @@ fn transpile(compiler: Compiler<Checked>, flags: CodegenFlags) -> String {
             compiler.diagnostics().display(compiler.lsp_file());
             std::process::exit(1);
         }
-    }
-}
-
-fn handle_lsp(checked: Compiler<Checked>, flags: LspCommands) {
-    fn format_json(stdout: &mut impl Write, written: &mut bool, msgs: &[Error], severity: &str) {
-        for Error { diagnostic, span } in msgs {
-            if *written {
-                _ = write!(stdout, ",");
-            }
-            _ = write!(
-                stdout,
-                "{{\"id\":{},\"pos\":{},\"len\":{},\"msg\":\"{}\",\"sev\":\"{}\"}}",
-                span.file, span.pos, span.len, diagnostic, severity,
-            );
-            *written = true;
-        }
-    }
-
-    let diag = checked.diagnostics();
-    let scopes = checked.scopes();
-    let lsp_file = checked.lsp_file();
-    let mut stdout = stdout().lock();
-
-    _ = write!(stdout, "{{\"dummy\":null");
-    if let Some((id, _)) = lsp_file {
-        _ = write!(stdout, ",\"input_file\":{id}");
-    }
-    if flags.diagnostics {
-        _ = write!(stdout, ",\"files\":[");
-        for (i, path) in diag.paths().iter().enumerate() {
-            if i > 0 {
-                _ = write!(stdout, ",");
-            }
-            _ = write!(stdout, "\"");
-            _ = stdout.write(path.as_os_str().as_bytes());
-            _ = write!(stdout, "\"");
-        }
-        _ = write!(stdout, "],\"diagnostics\":[");
-        let mut written = false;
-        format_json(&mut stdout, &mut written, diag.errors(), "error");
-        format_json(&mut stdout, &mut written, diag.warnings(), "warning");
-        _ = write!(stdout, "]");
-    }
-    if let Some((id, _)) = lsp_file.filter(|_| flags.type_hints) {
-        _ = write!(stdout, ",\"hints\":[");
-        let mut written = false;
-        for (_, var) in scopes.vars() {
-            if var.name.span.file != *id || var.has_hint || var.name.data.starts_with('$') {
-                continue;
-            }
-            if written {
-                _ = write!(stdout, ",");
-            }
-
-            _ = write!(
-                stdout,
-                "{{\"pos\":{},\"name\":\"{}\"}}",
-                var.name.span.pos + var.name.span.len,
-                var.ty.name(scopes),
-            );
-            written = true;
-        }
-        _ = write!(stdout, "]");
-    }
-
-    _ = write!(stdout, "}}");
-}
-
-fn main() -> Result<()> {
-    let mut args = Arguments::parse();
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let core_path = root.join("ctl/core");
-    let std_path = root.join("ctl/std");
-    let input = args.command.input().to_owned();
-    if let Ok(path) = input.canonicalize() {
-        if path == core_path {
-            args.no_core = true;
-            args.no_std = true;
-        } else if path == std_path {
-            args.no_std = true;
-        }
-    }
-
-    let mut libs = Vec::new();
-    if !args.no_core {
-        libs.push(root.join(core_path));
-    }
-
-    if !args.no_std {
-        libs.push(root.join(std_path));
-    }
-
-    let lsp_file = if let SubCommand::Lsp { has_file, path, .. } = &args.command {
-        let path = path.canonicalize().unwrap_or_else(|_| path.clone());
-        if *has_file {
-            let mut buffer = String::new();
-            stdin()
-                .read_to_string(&mut buffer)
-                .context("reading stdin")?;
-            Some((path, buffer))
-        } else {
-            let data = std::fs::read_to_string(&path)
-                .with_context(|| format!("loading path {}", path.display()))?;
-            Some((path, data))
-        }
-    } else {
-        None
     };
-
-    let checked = Compiler::new(lsp_file)
-        .parse(input)?
-        .inspect(|ast| {
-            if args.dump_ast {
-                ast.dump()
-            }
-        })
-        .typecheck(libs)?;
-    let flags = CodegenFlags {
-        leak: args.leak,
-        no_bit_int: args.no_bit_int,
-        lib: args.lib,
-        minify: !matches!(args.command, SubCommand::Print { minify: false, .. }),
-    };
-
     match args.command {
         SubCommand::Print { output, pretty, .. } => {
-            let result = transpile(checked, flags);
             if let Some(output) = output {
                 let mut output = File::create(output)?;
                 print_results(result.as_bytes(), pretty, &mut output)?;
@@ -361,11 +232,9 @@ fn main() -> Result<()> {
             }
         }
         SubCommand::Build { build, output } => {
-            let result = transpile(checked, flags);
             compile_results(&result, args.leak, &output, build)?;
         }
         SubCommand::Run { build, targs } => {
-            let result = transpile(checked, flags);
             // TODO: safe?
             let output = Path::new("./a.out");
             compile_results(&result, args.leak, output, build)?;
@@ -385,7 +254,7 @@ fn main() -> Result<()> {
                 std::process::exit(status.code().unwrap_or_default());
             }
         }
-        SubCommand::Lsp { flags, .. } => handle_lsp(checked, flags),
+        SubCommand::Lsp => {}
     }
 
     Ok(())

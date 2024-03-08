@@ -1,7 +1,8 @@
 mod ast;
 mod codegen;
-pub mod error;
+mod error;
 mod lexer;
+pub mod lsp;
 mod parser;
 mod pretty;
 mod sym;
@@ -29,7 +30,7 @@ pub(crate) const THIS_TYPE: &str = "This";
 pub trait CompileState {}
 
 pub struct Source;
-pub struct Parsed(Stmt);
+pub struct Parsed(Stmt, Vec<PathBuf>);
 pub struct Checked(Module);
 pub struct Built(String);
 
@@ -45,14 +46,25 @@ pub struct Compiler<S: CompileState> {
 }
 
 impl Compiler<Source> {
-    pub fn new(lsp_file: Option<(PathBuf, String)>) -> Self {
-        let mut diag = Diagnostics::default();
-        let lsp_file = lsp_file.map(|(path, data)| (diag.add_file(path), data));
+    pub fn new() -> Self {
         Self {
             state: Source,
-            diag,
-            lsp_file,
+            diag: Diagnostics::default(),
+            lsp_file: None,
         }
+    }
+
+    pub fn new_lsp(path: PathBuf, buf: String) -> (Self, FileId) {
+        let mut diag = Diagnostics::default();
+        let fileid = diag.add_file(path);
+        (
+            Self {
+                state: Source,
+                diag,
+                lsp_file: Some((fileid, buf)),
+            },
+            fileid,
+        )
     }
 
     pub fn with_diagnostics(diag: Diagnostics) -> Self {
@@ -63,10 +75,10 @@ impl Compiler<Source> {
         }
     }
 
-    pub fn parse(mut self, path: PathBuf) -> anyhow::Result<Compiler<Parsed>> {
-        if let Some(stmt) = self.gather_sources(path.canonicalize().unwrap_or(path))? {
+    pub fn parse(mut self, path: PathBuf, libs: Vec<PathBuf>) -> anyhow::Result<Compiler<Parsed>> {
+        if let Some(stmt) = self.gather_sources(path)? {
             Ok(Compiler {
-                state: Parsed(stmt),
+                state: Parsed(stmt, libs),
                 diag: self.diag,
                 lsp_file: self.lsp_file,
             })
@@ -115,13 +127,19 @@ impl Compiler<Source> {
     }
 }
 
+impl Default for Compiler<Source> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Compiler<Parsed> {
     pub fn dump(&self) {
         pretty::print_stmt(&self.state.0, 0);
     }
 
-    pub fn typecheck(self, libs: Vec<PathBuf>) -> anyhow::Result<Compiler<Checked>> {
-        let (module, diag) = TypeChecker::check(self.state.0, libs, self.diag)?;
+    pub fn typecheck(self) -> anyhow::Result<Compiler<Checked>> {
+        let (module, diag) = TypeChecker::check(self.state.0, self.state.1, self.diag)?;
         Ok(Compiler {
             state: Checked(module),
             diag,
@@ -198,6 +216,33 @@ pub(crate) fn derive_module_name(path: &Path) -> String {
             _ => '_',
         })
         .collect()
+}
+
+pub fn get_default_libs(
+    path: &Path,
+    mut libs: Vec<PathBuf>,
+    mut no_core: bool,
+    mut no_std: bool,
+) -> (PathBuf, Vec<PathBuf>) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let core_path = root.join("ctl/core");
+    let std_path = root.join("ctl/std");
+    let path = path.canonicalize().unwrap_or_else(|_| path.into());
+    if path == core_path {
+        no_core = true;
+        no_std = true;
+    } else if path == std_path {
+        no_std = true;
+    }
+
+    if !no_std {
+        libs.insert(0, root.join(std_path));
+    }
+
+    if !no_core {
+        libs.insert(0, root.join(core_path));
+    }
+    (path, libs)
 }
 
 fn nearest_pow_of_two(bits: u32) -> usize {

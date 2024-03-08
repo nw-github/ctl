@@ -113,7 +113,7 @@ impl TypeChecker {
             diag,
         };
         for lib in libs {
-            let parsed = Compiler::with_diagnostics(this.diag).parse(lib)?;
+            let parsed = Compiler::with_diagnostics(this.diag).parse(lib, vec![])?;
             this.diag = parsed.diag;
             this.check_one(parsed.state.0);
         }
@@ -443,7 +443,7 @@ impl TypeChecker {
                                 keyword: false,
                                 patt: Located::new(
                                     Span::default(),
-                                    Pattern::Path(Path::from(format!("${i}"))),
+                                    Pattern::Path(Path::from(format!("{i}"))),
                                 ),
                                 ty,
                                 default,

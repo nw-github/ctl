@@ -365,9 +365,9 @@ pub extension VoidExt for void {
     }
 
     impl Eq<This> {
-        fn eq(this, rhs: *This): bool { true }
+        fn eq(this, _rhs: *This): bool { true }
 
-        fn ne(this, rhs: *This): bool { false }
+        fn ne(this, _rhs: *This): bool { false }
     }
 
     impl Format {

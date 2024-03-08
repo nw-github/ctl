@@ -9,14 +9,14 @@
   "categories": [
     "Programming Languages"
   ],
-  "main": "./client/out/extension",
+  "main": "./out/extension",
   "scripts": {
     "yaml-transpile": "js-yaml syntaxes/ctl.tmLanguage.yaml > syntaxes/ctl.tmLanguage.json",
     "vscode:prepublish": "npm run compile",
 		"compile": "npm run yaml-transpile && tsc -b",
 		"watch": "tsc -b -w",
-		"lint": "eslint ./client/src ./server/src --ext .ts,.tsx",
-		"postinstall": "cd client && npm install && cd ../server && npm install && cd .."
+		"lint": "eslint ./src --ext .ts,.tsx",
+		"postinstall": "npm run yaml-transpile"
   },
   "contributes": {
     "languages": [
@@ -41,7 +41,7 @@
     ],
     "configuration": {
 			"type": "object",
-			"title": "Example configuration",
+			"title": "CTL Extension Configuration",
 			"properties": {
 				"ctlsp.maxNumberOfProblems": {
 					"scope": "resource",
@@ -63,16 +63,10 @@
         "ctlsp.compiler.path": {
           "scope": "resource",
           "type": "string",
-          "default": "$CARGO_TARGET_DIR/debug/ctl",
+          "default": "ctl",
           "description": "The path to the CTL compiler binary."
         },
-        "ctlsp.compiler.maxInvocationTime": {
-          "scope": "resource",
-          "type": "number",
-          "default": 5000,
-          "description": "The maximum the compiler is allowed to take to process a file (in ms)."
-        },
-        "ctlsp.compiler.debounceMs": {
+        "ctlsp.debounceMs": {
           "scope": "resource",
           "type": "number",
           "default": 250,
@@ -81,11 +75,15 @@
 			}
 		}
   },
+  "dependencies": {
+		"vscode-languageclient": "^9.0.1"
+	},
   "devDependencies": {
     "js-yaml": "^4.1.0",
 		"@types/node": "^18.14.6",
 		"@typescript-eslint/eslint-plugin": "^7.1.0",
 		"@typescript-eslint/parser": "^7.1.0",
+		"@types/vscode": "^1.75.1",
 		"eslint": "^8.57.0",
 		"typescript": "^5.3.3"
   }
