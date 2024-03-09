@@ -262,6 +262,15 @@ impl LspBackend {
                     let ty = ut.members.get(name).map(|m| &m.ty).unwrap_or(&unk);
                     Some(format!("{name}: {}", ty.name(scopes)))
                 }
+                HoverItem::Module(id) => {
+                    Some(format!("mod {}", scopes[*id].kind.name(scopes).unwrap()))
+                }
+                HoverItem::Trait(id) => {
+                    let tr = scopes.get(*id);
+                    let mut res = format!("trait {}", tr.name.data);
+                    visualize_type_params(&mut res, &tr.type_params, scopes);
+                    Some(res)
+                }
                 _ => None,
             })
             .map(|value| Hover {

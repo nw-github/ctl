@@ -217,6 +217,8 @@ impl TypeChecker {
         let id = self
             .scopes
             .create_scope(self.current, ScopeKind::Module(name.clone()));
+        self.check_hover(span, id.into());
+
         if self.scopes[self.current]
             .tns
             .insert(name.clone(), Vis::new(id.into(), public))
@@ -5018,9 +5020,11 @@ impl TypeChecker {
                 if let Some((first, rest)) = components.split_first() {
                     match self.find_in_tns(&first.data).map(|i| i.id) {
                         Some(TypeItem::Module(next)) => {
+                            self.check_hover(first.span, next.into());
                             return self.resolve_use_in(next, *public, rest, tail)
                         }
                         Some(TypeItem::Type(id)) => {
+                            self.check_hover(first.span, id.into());
                             if rest.is_empty() {
                                 self.resolve_use_union(*public, id, first, tail);
                             } else {
@@ -5046,9 +5050,11 @@ impl TypeChecker {
         for (i, comp) in components.iter().enumerate() {
             match self.scopes[scope].find_in_tns(&comp.data).as_deref() {
                 Some(&TypeItem::Module(next)) => {
+                    self.check_hover(comp.span, next.into());
                     scope = next;
                 }
                 Some(&TypeItem::Type(id)) => {
+                    self.check_hover(comp.span, id.into());
                     if i != components.len() - 1 {
                         self.error(Error::new("expected module name", comp.span))
                     } else {
@@ -5064,6 +5070,7 @@ impl TypeChecker {
             // TODO: check privacy
             let mut found = false;
             if let Some(item) = self.scopes[scope].find_in_tns(&tail.data) {
+                self.check_hover(tail.span, (*item).into());
                 if !item.public && !self.can_access_privates(scope) {
                     self.diag
                         .error(Error::new(format!("'{}' is private", tail.data), tail.span));
@@ -5079,6 +5086,7 @@ impl TypeChecker {
                 found = true;
             }
             if let Some(item) = self.scopes[scope].find_in_vns(&tail.data) {
+                self.check_hover(tail.span, (*item).into());
                 if !item.public && !self.can_access_privates(scope) {
                     self.diag
                         .error(Error::new(format!("'{}' is private", tail.data), tail.span));
@@ -5152,6 +5160,7 @@ impl TypeChecker {
             else {
                 return self.error(Error::new("expected variant name", comp.span));
             };
+            self.check_hover(tail.span, (*id).into());
 
             if self.scopes[self.current]
                 .vns
