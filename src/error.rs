@@ -51,9 +51,14 @@ impl Diagnostics {
     }
 
     pub fn display(&self, lsp_file: Option<&(FileId, String)>) {
-        for (i, path) in self.paths.iter().enumerate() {
+        let cwd = std::env::current_dir().ok();
+        for (id, path) in self.paths() {
+            let path = cwd
+                .as_ref()
+                .and_then(|cwd| path.strip_prefix(cwd).ok())
+                .unwrap_or(path);
             self.format_diagnostics(
-                FileId(i),
+                id,
                 &self.errors,
                 lsp_file,
                 OffsetMode::Utf32,
@@ -63,9 +68,13 @@ impl Diagnostics {
             );
         }
 
-        for (i, path) in self.paths.iter().enumerate() {
+        for (id, path) in self.paths() {
+            let path = cwd
+                .as_ref()
+                .and_then(|cwd| path.strip_prefix(cwd).ok())
+                .unwrap_or(path);
             self.format_diagnostics(
-                FileId(i),
+                id,
                 &self.warnings,
                 lsp_file,
                 OffsetMode::Utf32,
