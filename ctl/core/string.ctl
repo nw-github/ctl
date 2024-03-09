@@ -52,12 +52,12 @@ pub struct str {
 
     pub fn substr<R: RangeBounds<uint>>(this, range: R): str {
         let span = this.span.subspan(range);
-        if (span.get(0) is ?ch) {
+        if span.get(0) is ?ch {
             if !is_char_boundary(*ch) {
                 panic("str::substr(): range does not start at char boundary");
             }
         }
-        if (span.get(span.len()) is ?ch) {
+        if span.get(span.len()) is ?ch {
             if !is_char_boundary(*ch) {
                 panic("str::substr(): range does not end at char boundary");
             }
@@ -89,7 +89,7 @@ pub struct Chars {
 
     impl Iterator<char> {
         fn next(mut this): ?char {
-            unsafe if (this.s.get(0) is ?cp) {
+            unsafe if this.s.get(0) is ?cp {
                 mut cp = *cp as u32 & 0xff;
                 if cp < 0x80 {
                     this.s = this.s.subspan(1u..);

@@ -9,19 +9,19 @@ mod builtin {
 }
 
 pub fn alloc<T>(count: uint): ?*raw T {
-    if (builtin::malloc(size_of::<T>() * count) is ?ptr) {
+    if builtin::malloc(size_of::<T>() * count) is ?ptr {
         ptr as *raw T
     }
 }
 
 pub fn realloc<T>(addr: *mut T, count: uint): ?*raw T {
-    if (builtin::realloc(unsafe addr as *mut c_void, size_of::<T>() * count) is ?ptr) {
+    if builtin::realloc(unsafe addr as *mut c_void, size_of::<T>() * count) is ?ptr {
         ptr as *raw T
     }
 }
 
 pub fn new<T>(t: T): *mut T {
-    if (alloc::<T>(1) is ?ptr) {
+    if alloc::<T>(1) is ?ptr {
         unsafe {
             *ptr = t;
             ptr as *mut T

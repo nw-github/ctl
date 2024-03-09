@@ -14,6 +14,13 @@ struct FnConfig {
     body: Option<bool>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EvalContext {
+    For,
+    IfWhile,
+    Normal,
+}
+
 pub struct Parser<'a, 'b> {
     lexer: Lexer<'a>,
     peek: Option<Located<Token<'a>>>,
@@ -339,18 +346,18 @@ impl<'a, 'b> Parser<'a, 'b> {
     //
 
     fn expression(&mut self) -> Expr {
-        self.precedence(Precedence::Min)
+        self.precedence(Precedence::Min, EvalContext::Normal)
     }
 
-    fn precedence(&mut self, prec: Precedence) -> Expr {
-        let mut expr = self.prefix();
+    fn precedence(&mut self, prec: Precedence, ctx: EvalContext) -> Expr {
+        let mut expr = self.prefix(ctx);
         while let Some(token) = self.next_if(|tk| prec < tk.precedence()) {
-            expr = self.infix(expr, token);
+            expr = self.infix(expr, token, ctx);
         }
         expr
     }
 
-    fn prefix(&mut self) -> Expr {
+    fn prefix(&mut self, ctx: EvalContext) -> Expr {
         let Located { mut span, data } = self.next();
         match data {
             // Literals
@@ -442,7 +449,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     UnaryOp::try_from_prefix(data).unwrap()
                 };
 
-                let expr = self.precedence(Precedence::Prefix);
+                let expr = self.precedence(Precedence::Prefix, ctx);
                 Expr::new(
                     span.extended_to(expr.span),
                     ExprData::Unary {
@@ -460,7 +467,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     UnaryOp::Addr
                 };
 
-                let expr = self.precedence(Precedence::Prefix);
+                let expr = self.precedence(Precedence::Prefix, ctx);
                 Expr::new(
                     span.extended_to(expr.span),
                     ExprData::Unary {
@@ -487,7 +494,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 }
             }
             Token::Range => {
-                if self.is_range_end() {
+                if self.is_range_end(ctx) {
                     Expr::new(
                         span,
                         ExprData::Range {
@@ -497,7 +504,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         },
                     )
                 } else {
-                    let end = self.precedence(data.precedence());
+                    let end = self.precedence(data.precedence(), ctx);
                     Expr::new(
                         span.extended_to(end.span),
                         ExprData::Range {
@@ -509,7 +516,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 }
             }
             Token::RangeInclusive => {
-                let end = self.precedence(data.precedence());
+                let end = self.precedence(data.precedence(), ctx);
                 Expr::new(
                     span.extended_to(end.span),
                     ExprData::Range {
@@ -605,7 +612,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::Or => self.lambda_expr(Located::new(span, data), false),
             Token::LogicalOr => self.lambda_expr(Located::new(span, data), false),
             Token::Return => {
-                let (span, expr) = if !self.is_range_end() {
+                let (span, expr) = if !self.is_range_end(EvalContext::Normal) {
                     let expr = self.expression();
                     (span.extended_to(expr.span), expr.into())
                 } else {
@@ -615,7 +622,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 Expr::new(span, ExprData::Return(expr))
             }
             Token::Break => {
-                let (span, expr) = if !self.is_range_end() {
+                let (span, expr) = if !self.is_range_end(EvalContext::Normal) {
                     let expr = self.expression();
                     (span.extended_to(expr.span), Some(expr.into()))
                 } else {
@@ -636,7 +643,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
     }
 
-    fn infix(&mut self, left: Expr, op: Located<Token>) -> Expr {
+    fn infix(&mut self, left: Expr, op: Located<Token>, ctx: EvalContext) -> Expr {
         match op.data {
             Token::Increment | Token::Decrement | Token::Exclamation | Token::Question => {
                 Expr::new(
@@ -679,7 +686,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             | Token::ShlAssign
             | Token::ShrAssign
             | Token::NoneCoalesceAssign => {
-                let right = self.precedence(op.data.precedence());
+                let right = self.precedence(op.data.precedence(), ctx);
                 Expr::new(
                     left.span.extended_to(right.span),
                     ExprData::Binary {
@@ -691,7 +698,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
             Token::Range | Token::RangeInclusive => {
                 let inclusive = op.data == Token::RangeInclusive;
-                if self.is_range_end() {
+                if self.is_range_end(ctx) {
                     Expr::new(
                         left.span.extended_to(op.span),
                         ExprData::Range {
@@ -701,7 +708,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         },
                     )
                 } else {
-                    let right = self.precedence(op.data.precedence());
+                    let right = self.precedence(op.data.precedence(), ctx);
                     Expr::new(
                         left.span.extended_to(right.span),
                         ExprData::Range {
@@ -716,7 +723,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 left.span,
                 ExprData::Is {
                     expr: left.into(),
-                    pattern: self.full_pattern(),
+                    pattern: self.full_pattern(ctx),
                 },
             ),
             Token::As => {
@@ -835,7 +842,7 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn if_expr(&mut self, token: Span) -> Expr {
-        let cond = self.expression();
+        let cond = self.precedence(Precedence::Min, EvalContext::IfWhile);
         let lcurly = self.expect_kind(Token::LCurly);
         let if_branch = self.block_expr(lcurly.span);
         let else_branch = self.next_if_kind(Token::Else).map(|_| {
@@ -843,7 +850,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let lcurly = self.expect_kind(Token::LCurly);
                 self.block_expr(lcurly.span)
             } else {
-                self.expression()
+                self.precedence(Precedence::Min, EvalContext::IfWhile)
             }
         });
         Expr::new(
@@ -857,7 +864,7 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn while_expr(&mut self, token: Span) -> Expr {
-        let cond = self.expression();
+        let cond = self.precedence(Precedence::Min, EvalContext::IfWhile);
         let Located { span, data: body } = self.block();
         Expr::new(
             token.extended_to(span),
@@ -893,8 +900,7 @@ impl<'a, 'b> Parser<'a, 'b> {
     fn for_expr(&mut self, token: Span) -> Expr {
         let patt = self.pattern(false);
         self.expect_kind(Token::In);
-        // TODO: parse for foo in 0.. {} as |0..| |{}| instead of |0..{}|
-        let iter = self.expression();
+        let iter = self.precedence(Precedence::Min, EvalContext::For);
         let Located { span, data: body } = self.block();
         Expr::new(
             token.extended_to(span),
@@ -911,7 +917,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.expect_kind(Token::LCurly);
         let mut body = Vec::new();
         let span = self.next_until(Token::RCurly, token, |this| {
-            let pattern = this.full_pattern();
+            let pattern = this.full_pattern(EvalContext::Normal);
             this.expect_kind(Token::FatArrow);
             let (needs_comma, expr) = this.block_or_normal_expr();
             if needs_comma {
@@ -1178,11 +1184,11 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.csv_one(Token::RParen, span, |this| this.pattern(mut_var))
     }
 
-    fn pattern(&mut self, mut_var: bool) -> Located<Pattern> {
+    fn pattern_ex(&mut self, mut_var: bool, ctx: EvalContext) -> Located<Pattern> {
         match self.peek().data {
             Token::Question => {
                 self.next();
-                self.pattern(false)
+                self.pattern_ex(false, ctx)
                     .map(|inner| Pattern::Option(inner.into()))
             }
             Token::None => Located::new(self.next().span, Pattern::Null),
@@ -1234,7 +1240,9 @@ impl<'a, 'b> Parser<'a, 'b> {
                         self.tuple_like(span, mut_var)
                             .map(|subpatterns| Pattern::TupleLike { path, subpatterns })
                     }
-                    Token::LCurly => {
+                    Token::LCurly
+                        if path.as_identifier().is_none() || ctx != EvalContext::IfWhile =>
+                    {
                         let span = self.next().span;
                         self.struct_like(span, mut_var)
                             .map(|subpatterns| Pattern::StructLike { path, subpatterns })
@@ -1245,8 +1253,12 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
     }
 
-    fn full_pattern(&mut self) -> Located<FullPattern> {
-        self.pattern(false).map(|data| FullPattern {
+    fn pattern(&mut self, mut_var: bool) -> Located<Pattern> {
+        self.pattern_ex(mut_var, EvalContext::Normal)
+    }
+
+    fn full_pattern(&mut self, ctx: EvalContext) -> Located<FullPattern> {
+        self.pattern_ex(false, ctx).map(|data| FullPattern {
             data,
             if_expr: self
                 .next_if_kind(Token::If)
@@ -1254,12 +1266,12 @@ impl<'a, 'b> Parser<'a, 'b> {
         })
     }
 
-    fn is_range_end(&mut self) -> bool {
+    fn is_range_end(&mut self, ctx: EvalContext) -> bool {
         self.matches(|k| {
             matches!(
                 k,
                 Token::Semicolon | Token::Comma | Token::RBrace | Token::RParen
-            )
+            ) || matches!((k, ctx), (Token::LCurly, EvalContext::For))
         })
     }
 

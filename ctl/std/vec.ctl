@@ -211,7 +211,7 @@ pub struct Vec<T> {
         } else {
             std::alloc::realloc(unsafe this.ptr as *mut T, cap)
         };
-        if (ptr is ?ptr) {
+        if ptr is ?ptr {
             this.ptr = ptr;
             this.cap = cap;
         } else {

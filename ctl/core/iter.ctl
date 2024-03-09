@@ -21,7 +21,7 @@ pub struct Enumerate<T, I: Iterator<T>> {
 
     impl Iterator<(uint, T)> {
         fn next(mut this): ?(uint, T) {
-            if (this.iter.next() is ?val) {
+            if this.iter.next() is ?val {
                 (this.idx++, val)
             }
         }
