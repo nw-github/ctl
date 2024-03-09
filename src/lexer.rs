@@ -227,8 +227,8 @@ impl Token<'_> {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Span {
-    pub pos: usize,
-    pub len: usize,
+    pub pos: u32,
+    pub len: u32,
     pub file: FileId,
 }
 
@@ -246,7 +246,7 @@ impl Span {
         }
     }
 
-    pub fn includes(&self, pos: usize) -> bool {
+    pub fn includes(&self, pos: u32) -> bool {
         pos >= self.pos && pos < self.pos + self.len
     }
 }
@@ -518,8 +518,8 @@ impl<'a> Lexer<'a> {
 
         Located::new(
             Span {
-                pos: start,
-                len: self.pos - start,
+                pos: start as u32,
+                len: (self.pos - start) as u32,
                 file: self.file,
             },
             token,
@@ -547,9 +547,9 @@ impl<'a> Lexer<'a> {
 
     fn here(&self, len: usize) -> Span {
         Span {
-            pos: self.pos,
+            pos: self.pos as u32,
             file: self.file,
-            len,
+            len: len as u32,
         }
     }
 
@@ -601,9 +601,9 @@ impl<'a> Lexer<'a> {
                     result
                 });
                 let span = Span {
-                    pos: self.pos - chars.len(),
+                    pos: (self.pos - chars.len()) as u32,
                     file: self.file,
-                    len: chars.len(),
+                    len: chars.len() as u32,
                 };
                 if chars.len() < 2 {
                     diag.error(Error::new("hexadecimal literal is too short", span));
@@ -634,9 +634,9 @@ impl<'a> Lexer<'a> {
                     diag.error(Error::new(
                         "invalid unicode literal",
                         Span {
-                            pos: self.pos - chars.len(),
+                            pos: (self.pos - chars.len())  as u32,
                             file: self.file,
-                            len: chars.len(),
+                            len: chars.len() as u32,
                         },
                     ));
                     self.expect(diag, '}');
@@ -697,8 +697,8 @@ impl<'a> Lexer<'a> {
             diag.error(Error::new(
                 "char literal must only contain one character",
                 Span {
-                    pos: self.pos - ch.len() - 1,
-                    len: ch.len(),
+                    pos: (self.pos - ch.len() - 1) as u32,
+                    len: ch.len() as u32,
                     file: self.file,
                 },
             ));
@@ -761,8 +761,8 @@ impl<'a> Lexer<'a> {
                 diag.warn(Error::new(
                     "leading zero in decimal literal (use 0o to create an octal literal)",
                     Span {
-                        pos: start,
-                        len: value.len(),
+                        pos: start as u32,
+                        len: value.len() as u32,
                         file: self.file,
                     },
                 ));

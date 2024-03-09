@@ -198,10 +198,7 @@ impl LspBackend {
             let errors = diag.errors();
             diag.format_diagnostics(id, errors, l, OffsetMode::Utf16, |msg, start, end| {
                 entry.push(Diagnostic {
-                    range: Range::new(
-                        Position::new(start.0 as u32, start.1 as u32),
-                        Position::new(end.0 as u32, end.1 as u32),
-                    ),
+                    range: Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)),
                     severity: Some(DiagnosticSeverity::ERROR),
                     source: Some("ctllsp".into()),
                     message: msg.into(),
@@ -211,10 +208,7 @@ impl LspBackend {
             let warnings = diag.warnings();
             diag.format_diagnostics(id, warnings, l, OffsetMode::Utf16, |msg, start, end| {
                 entry.push(Diagnostic {
-                    range: Range::new(
-                        Position::new(start.0 as u32, start.1 as u32),
-                        Position::new(end.0 as u32, end.1 as u32),
-                    ),
+                    range: Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)),
                     severity: Some(DiagnosticSeverity::WARNING),
                     source: Some("ctllsp".into()),
                     message: msg.into(),
@@ -237,7 +231,7 @@ impl LspBackend {
 
             let (_, pos) = Diagnostics::get_span_range(&doc.text, var.name.span, OffsetMode::Utf16);
             doc.inlay_hints.push(InlayHint {
-                position: Position::new(pos.0 as u32, pos.1 as u32),
+                position: Position::new(pos.0, pos.1),
                 label: InlayHintLabel::String(format!(": {}", var.ty.name(scopes))),
                 kind: Some(InlayHintKind::TYPE),
                 text_edits: Default::default(),
@@ -315,7 +309,7 @@ fn position_to_span(text: &str, file: FileId, line: u32, character: u32) -> Span
         } else {
             col += ch.len_utf16() as u32;
         }
-        pos += ch.len_utf8();
+        pos += ch.len_utf8() as u32;
     }
     Span::default()
 }

@@ -14,7 +14,7 @@ pub enum OffsetMode {
 }
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
-pub struct FileId(usize);
+pub struct FileId(u32);
 
 impl std::fmt::Display for FileId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -40,11 +40,11 @@ impl Diagnostics {
 
     pub fn add_file(&mut self, path: PathBuf) -> FileId {
         self.paths.push(path);
-        FileId(self.paths.len() - 1)
+        FileId(self.paths.len() as u32 - 1)
     }
 
     pub fn file_path(&self, file: FileId) -> &Path {
-        &self.paths[file.0]
+        &self.paths[file.0 as usize]
     }
 
     pub fn has_errors(&self) -> bool {
@@ -92,7 +92,7 @@ impl Diagnostics {
         errors: &[Error],
         lsp_file: Option<&(FileId, String)>,
         mode: OffsetMode,
-        mut format: impl FnMut(&str, (usize, usize), (usize, usize)),
+        mut format: impl FnMut(&str, (u32, u32), (u32, u32)),
     ) {
         let mut file = None;
         for Error { diagnostic, span } in errors.iter().filter(|err| err.span.file == id) {
@@ -101,7 +101,9 @@ impl Diagnostics {
                 .filter(|(rhs, _)| id == *rhs)
                 .map(|f| &f.1)
                 .unwrap_or_else(|| {
-                    file.get_or_insert_with(|| std::fs::read_to_string(&self.paths[id.0]).unwrap())
+                    file.get_or_insert_with(|| {
+                        std::fs::read_to_string(&self.paths[id.0 as usize]).unwrap()
+                    })
                 });
             let (start, end) = Self::get_span_range(data, *span, mode);
             format(diagnostic, start, end);
@@ -112,7 +114,7 @@ impl Diagnostics {
         self.paths
             .iter()
             .enumerate()
-            .map(|(i, path)| (FileId(i), path))
+            .map(|(i, path)| (FileId(i as u32), path))
     }
 
     pub fn errors(&self) -> &[Error] {
@@ -123,16 +125,12 @@ impl Diagnostics {
         &self.warnings
     }
 
-    pub fn get_span_range(
-        data: &str,
-        span: Span,
-        mode: OffsetMode,
-    ) -> ((usize, usize), (usize, usize)) {
+    pub fn get_span_range(data: &str, span: Span, mode: OffsetMode) -> ((u32, u32), (u32, u32)) {
         // maybe do this first and keep a vector of positions?
-        let mut start = (0usize, 0usize);
+        let mut start = (0u32, 0u32);
         let mut chars = data.char_indices();
         for (i, ch) in &mut chars {
-            if i >= span.pos {
+            if i as u32 >= span.pos {
                 break;
             }
 
@@ -144,13 +142,13 @@ impl Diagnostics {
                     OffsetMode::Utf8 => ch.len_utf8(),
                     OffsetMode::Utf16 => ch.len_utf16(),
                     OffsetMode::Utf32 => 1,
-                };
+                } as u32;
             }
         }
 
         let mut end = start;
         for (i, ch) in chars {
-            if i > span.pos + span.len {
+            if i as u32 > span.pos + span.len {
                 break;
             }
 
@@ -162,7 +160,7 @@ impl Diagnostics {
                     OffsetMode::Utf8 => ch.len_utf8(),
                     OffsetMode::Utf16 => ch.len_utf16(),
                     OffsetMode::Utf32 => 1,
-                };
+                } as u32;
             }
         }
 
