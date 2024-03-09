@@ -263,7 +263,12 @@ impl LspBackend {
                     Some(format!("{name}: {}", ty.name(scopes)))
                 }
                 HoverItem::Module(id) => {
-                    Some(format!("mod {}", scopes[*id].kind.name(scopes).unwrap()))
+                    let scope = &scopes[*id];
+                    Some(format!(
+                        "{}mod {}",
+                        if scope.public { "pub " } else { "" },
+                        scope.kind.name(scopes).unwrap()
+                    ))
                 }
                 HoverItem::Trait(id) => {
                     let tr = scopes.get(*id);
@@ -344,8 +349,11 @@ fn visualize_type_params(res: &mut String, params: &[UserTypeId], scopes: &Scope
 
 fn visualize_func(id: FunctionId, scopes: &Scopes) -> String {
     let func = scopes.get(id);
-
     let mut res = String::new();
+    if func.public {
+        res += "pub ";
+    }
+
     match func.linkage {
         Linkage::Import => res += "import ",
         Linkage::Export => res += "export ",
@@ -408,7 +416,8 @@ fn visualize_func(id: FunctionId, scopes: &Scopes) -> String {
 fn visualize_var(id: VariableId, scopes: &Scopes) -> String {
     let var = scopes.get(id);
     format!(
-        "{} {}: {}",
+        "{}{} {}: {}",
+        if var.public { "pub " } else { "" },
         match (var.is_static, var.mutable) {
             (true, true) => "static mut",
             (true, false) => "static",
@@ -448,6 +457,9 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
         }
     };
 
+    if ut.public {
+        res += "pub ";
+    }
     match &ut.data {
         UserTypeData::Struct => {
             res += "struct ";
@@ -522,7 +534,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
                         if i > 0 {
                             res.push_str(", ");
                         }
-            
+
                         res += &id.1.name(scopes);
                     }
                     res += ">";

@@ -203,29 +203,7 @@ impl TypeChecker {
     }
 
     fn enter<T>(&mut self, kind: ScopeKind, f: impl FnOnce(&mut Self) -> T) -> T {
-        let id = self.scopes.create_scope(self.current, kind);
-        self.enter_id(id, f)
-    }
-
-    fn enter_mod<T>(
-        &mut self,
-        name: String,
-        span: Span,
-        public: bool,
-        f: impl FnOnce(&mut Self) -> T,
-    ) -> T {
-        let id = self
-            .scopes
-            .create_scope(self.current, ScopeKind::Module(name.clone()));
-        self.check_hover(span, id.into());
-
-        if self.scopes[self.current]
-            .tns
-            .insert(name.clone(), Vis::new(id.into(), public))
-            .is_some()
-        {
-            self.error(Error::redefinition(&name, span))
-        }
+        let id = self.scopes.create_scope(self.current, kind, false);
         self.enter_id(id, f)
     }
 
@@ -351,6 +329,7 @@ impl TypeChecker {
                 .collect();
             let ut = UserType {
                 members,
+                public: base.public,
                 body_scope: this.current,
                 name: base.name,
                 data: UserTypeData::Struct,
@@ -526,6 +505,7 @@ impl TypeChecker {
 
             let ut = UserType {
                 members,
+                public: base.public,
                 name: base.name,
                 body_scope: this.current,
                 type_params: this.declare_type_params(base.type_params),
@@ -595,6 +575,7 @@ impl TypeChecker {
                 .collect();
             let ut = UserType {
                 members,
+                public: base.public,
                 body_scope: this.current,
                 name: base.name,
                 data: UserTypeData::UnsafeUnion,
@@ -655,7 +636,20 @@ impl TypeChecker {
                             .collect(),
                     };
                 }
-                self.enter_mod(name.data, name.span, public, |this| {
+                let id = self.scopes.create_scope(
+                    self.current,
+                    ScopeKind::Module(name.data.clone()),
+                    public,
+                );
+                self.check_hover(name.span, id.into());
+                if self.scopes[self.current]
+                    .tns
+                    .insert(name.data.clone(), Vis::new(id.into(), public))
+                    .is_some()
+                {
+                    self.error(Error::redefinition(&name.data, name.span))
+                }
+                self.enter_id(id, |this| {
                     let core = this.scopes[ScopeId::ROOT]
                         .find_in_tns("core")
                         .and_then(|inner| inner.as_module().copied());
@@ -713,6 +707,7 @@ impl TypeChecker {
                         .collect();
                     let this_ty = this.insert(
                         UserType {
+                            public,
                             name: Located::new(name.span, THIS_TYPE.into()),
                             body_scope: this.current,
                             data: UserTypeData::Template,
@@ -730,6 +725,7 @@ impl TypeChecker {
                         .map(|f| this.declare_fn(autouse, f))
                         .collect();
                     let tr = Trait {
+                        public,
                         name,
                         body_scope: this.current,
                         type_params: this.declare_type_params(type_params),
@@ -772,6 +768,7 @@ impl TypeChecker {
                         .collect();
                     let ext = Extension {
                         name,
+                        public,
                         ty: this.declare_type_hint(ty),
                         impls,
                         type_params: this.declare_type_params(type_params),
@@ -804,6 +801,7 @@ impl TypeChecker {
             } => DeclaredStmt::Static {
                 id: self.insert::<VariableId>(
                     Variable {
+                        public,
                         name,
                         ty: self.declare_type_hint(ty),
                         is_static: true,
@@ -844,6 +842,7 @@ impl TypeChecker {
 
         let id = self.insert::<FunctionId>(
             Function {
+                public: f.public,
                 attrs: f.attrs,
                 name: f.name,
                 linkage: f.linkage,
@@ -936,6 +935,7 @@ impl TypeChecker {
                 self.insert(
                     UserType {
                         name,
+                        public: false,
                         body_scope: self.current,
                         data: UserTypeData::Template,
                         type_params: Vec::new(),
@@ -2654,6 +2654,7 @@ impl TypeChecker {
                         lparams.push(ty.clone());
                         this.insert::<VariableId>(
                             Variable {
+                                public: false,
                                 name,
                                 ty,
                                 is_static: false,
@@ -4392,6 +4393,7 @@ impl TypeChecker {
                 let id = var.map(|(mutable, name)| {
                     self.insert(
                         Variable {
+                            public: false,
                             name,
                             ty: Type::Unknown,
                             is_static: false,
@@ -4493,6 +4495,7 @@ impl TypeChecker {
                 let id = var.map(|(mutable, name)| {
                     self.insert(
                         Variable {
+                            public: false,
                             name,
                             ty: Type::Unknown,
                             is_static: false,
@@ -4795,6 +4798,7 @@ impl TypeChecker {
                         Err(Some(_)) => {
                             CheckedPattern::irrefutable(CheckedPatternData::Variable(self.insert(
                                 Variable {
+                                    public: false,
                                     name: Located::new(span, ident.into()),
                                     ty: scrutinee.clone(),
                                     is_static: false,
@@ -4847,6 +4851,7 @@ impl TypeChecker {
             Pattern::MutBinding(name) => {
                 CheckedPattern::irrefutable(CheckedPatternData::Variable(self.insert(
                     Variable {
+                        public: false,
                         name: Located::new(span, name),
                         ty: scrutinee.clone(),
                         is_static: false,
@@ -5021,7 +5026,7 @@ impl TypeChecker {
                     match self.find_in_tns(&first.data).map(|i| i.id) {
                         Some(TypeItem::Module(next)) => {
                             self.check_hover(first.span, next.into());
-                            return self.resolve_use_in(next, *public, rest, tail)
+                            return self.resolve_use_in(next, *public, rest, tail);
                         }
                         Some(TypeItem::Type(id)) => {
                             self.check_hover(first.span, id.into());

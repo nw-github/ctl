@@ -165,6 +165,7 @@ pub struct CheckedParam {
 
 #[derive(Debug, Clone)]
 pub struct Variable {
+    pub public: bool,
     pub name: Located<String>,
     pub ty: Type,
     pub is_static: bool,
@@ -176,6 +177,7 @@ pub struct Variable {
 
 #[derive(Default, Debug)]
 pub struct Function {
+    pub public: bool,
     pub attrs: Attributes,
     pub name: Located<String>,
     pub linkage: Linkage,
@@ -221,6 +223,7 @@ pub enum UserTypeData {
 #[derive(Debug)]
 pub struct UserType {
     pub attrs: Attributes,
+    pub public: bool,
     pub name: Located<String>,
     pub body_scope: ScopeId,
     pub data: UserTypeData,
@@ -242,6 +245,7 @@ impl UserType {
 #[derive(Debug)]
 pub struct Trait {
     pub attrs: Attributes,
+    pub public: bool,
     pub name: Located<String>,
     pub body_scope: ScopeId,
     pub impls: Vec<TraitImpl>,
@@ -252,6 +256,7 @@ pub struct Trait {
 
 #[derive(Debug)]
 pub struct Extension {
+    pub public: bool,
     pub ty: Type,
     pub name: Located<String>,
     pub impls: Vec<TraitImpl>,
@@ -380,6 +385,7 @@ pub enum ValueItem {
 
 #[derive(Default, Debug)]
 pub struct Scope {
+    pub public: bool,
     pub kind: ScopeKind,
     pub parent: Option<ScopeId>,
     pub tns: HashMap<String, Vis<TypeItem>>,
@@ -430,11 +436,12 @@ impl Scopes {
         }
     }
 
-    pub fn create_scope(&mut self, parent: ScopeId, kind: ScopeKind) -> ScopeId {
+    pub fn create_scope(&mut self, parent: ScopeId, kind: ScopeKind, public: bool) -> ScopeId {
         let id = ScopeId(self.scopes.len());
         self.scopes.push(Scope {
             parent: Some(parent),
             kind,
+            public,
             ..Default::default()
         });
         id
@@ -526,6 +533,7 @@ impl Scopes {
                     UserTypeId::insert_in(
                         self,
                         UserType {
+                            public: false,
                             name: Default::default(),
                             body_scope: ScopeId::ROOT,
                             data: UserTypeData::Template,
@@ -544,6 +552,7 @@ impl Scopes {
             let res = UserTypeId::insert_in(
                 self,
                 UserType {
+                    public: false,
                     members: type_params
                         .iter()
                         .enumerate()
@@ -584,6 +593,7 @@ impl Scopes {
                     UserTypeId::insert_in(
                         self,
                         UserType {
+                            public: false,
                             name: Default::default(),
                             body_scope: ScopeId::ROOT,
                             data: UserTypeData::Template,
@@ -602,6 +612,7 @@ impl Scopes {
             let res = UserTypeId::insert_in(
                 self,
                 UserType {
+                    public: false,
                     members: type_params
                         .iter()
                         .enumerate()

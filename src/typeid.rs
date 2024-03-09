@@ -191,6 +191,26 @@ impl GenericUserType {
                 format!("{result})")
             }
             _ => {
+                let is_lang_type =
+                    |name: &str| scopes.lang_types.get(name).is_some_and(|&id| id == self.id);
+                if is_lang_type("option") {
+                    return format!("?{}", self.ty_args[0].name(scopes));
+                } else if is_lang_type("span") {
+                    return format!("[{}..]", self.ty_args[0].name(scopes));
+                } else if is_lang_type("span_mut") {
+                    return format!("[mut {}..]", self.ty_args[0].name(scopes));
+                } else if is_lang_type("vector") {
+                    return format!("[{}]", self.ty_args[0].name(scopes));
+                } else if is_lang_type("set") {
+                    return format!("{{{}}}", self.ty_args[0].name(scopes));
+                } else if is_lang_type("map") {
+                    return format!(
+                        "[{}: {}]",
+                        self.ty_args[0].name(scopes),
+                        self.ty_args[1].name(scopes)
+                    );
+                }
+
                 let mut result = scopes.get(self.id).name.data.clone();
                 if !self.ty_args.is_empty() {
                     result.push('<');
