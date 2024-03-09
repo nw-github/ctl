@@ -36,19 +36,24 @@ macro_rules! id {
                 value: Self::Value,
                 public: bool,
                 scope: ScopeId,
-            ) -> (Self, bool) {
+            ) -> InsertionResult<Self> {
                 let index = scopes.$vec.len();
                 scopes.$vec.push(Scoped::new(value, scope));
                 let id = $name(index);
                 let name = (scopes.$vec[id.0].name.data).clone();
-                let res = scopes[scope].$namespace.insert(
+                let kind = id.into();
+                let prev = scopes[scope].$namespace.insert(
                     name,
                     Vis {
-                        id: id.into(),
+                        id: kind,
                         public,
                     },
                 );
-                (id, res.is_some())
+                InsertionResult {
+                    id,
+                    existed: prev.is_some(),
+                    item: kind.into(),
+                }
             }
 
             fn name<'a>(&self, scopes: &'a Scopes) -> &'a Located<String> {
@@ -69,6 +74,19 @@ pub struct ScopeId(pub usize);
 
 impl ScopeId {
     pub const ROOT: ScopeId = ScopeId(0);
+}
+
+#[derive(Debug, Clone, Copy, From, EnumAsInner)]
+pub enum InsertedItem {
+    TypeLike(TypeItem),
+    ValueLike(ValueItem),
+}
+
+#[derive(Debug, Clone, Copy, From)]
+pub struct InsertionResult<T> {
+    pub id: T,
+    pub item: InsertedItem,
+    pub existed: bool,
 }
 
 id!(FunctionId => Function, fns, vns);
@@ -128,7 +146,7 @@ pub enum ParamPattern {
 pub enum TraitImpl {
     Unchecked {
         scope: ScopeId,
-        path: Located<Path>,
+        path: Path,
         block: Option<ScopeId>,
     },
     Checked(GenericTrait, Option<ScopeId>),
@@ -341,7 +359,7 @@ pub trait ItemId: Sized + Copy + Clone {
     fn get_mut(self, scopes: &mut Scopes) -> &mut Scoped<Self::Value>;
     fn name<'a>(&self, scopes: &'a Scopes) -> &'a Located<String>;
 
-    fn insert_in(scopes: &mut Scopes, val: Self::Value, public: bool, id: ScopeId) -> (Self, bool);
+    fn insert_in(scopes: &mut Scopes, val: Self::Value, public: bool, id: ScopeId) -> InsertionResult<Self>;
 }
 
 #[derive(Debug, Clone, Copy, EnumAsInner, From)]
@@ -520,10 +538,10 @@ impl Scopes {
                         false,
                         ScopeId::ROOT,
                     )
-                    .0
+                    .id
                 })
                 .collect();
-            let (id, _) = UserTypeId::insert_in(
+            let res = UserTypeId::insert_in(
                 self,
                 UserType {
                     members: type_params
@@ -551,8 +569,8 @@ impl Scopes {
                 ScopeId::ROOT,
             );
 
-            self.tuples.insert(ty_args.len(), id);
-            id
+            self.tuples.insert(ty_args.len(), res.id);
+            res.id
         };
         Type::User(GenericUserType::from_type_args(self, id, ty_args).into())
     }
@@ -578,10 +596,10 @@ impl Scopes {
                         false,
                         ScopeId::ROOT,
                     )
-                    .0
+                    .id
                 })
                 .collect();
-            let (id, _) = UserTypeId::insert_in(
+            let res = UserTypeId::insert_in(
                 self,
                 UserType {
                     members: type_params
@@ -609,8 +627,8 @@ impl Scopes {
                 ScopeId::ROOT,
             );
 
-            self.structs.insert(names, id);
-            id
+            self.structs.insert(names, res.id);
+            res.id
         };
         Type::User(GenericUserType::from_type_args(self, id, types).into())
     }

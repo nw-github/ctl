@@ -247,7 +247,7 @@ impl Span {
     }
 
     pub fn includes(&self, pos: usize) -> bool {
-        pos >= self.pos && pos <= self.pos + self.len
+        pos >= self.pos && pos < self.pos + self.len
     }
 }
 

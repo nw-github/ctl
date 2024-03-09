@@ -39,12 +39,12 @@ macro_rules! resolve_impl {
                     ResolvedType::UserType(ut) => this.error(Error::expected_found(
                         "trait",
                         &format!("type '{}'", ut.name(&this.scopes)),
-                        path.span,
+                        path.final_component_span(),
                     )),
                     ResolvedType::Builtin(ty) => this.error(Error::expected_found(
                         "trait",
                         &format!("type '{}'", ty.name(&this.scopes)),
-                        path.span,
+                        path.final_component_span(),
                     )),
                     ResolvedType::Error => Default::default(),
                 })
@@ -57,6 +57,7 @@ macro_rules! resolve_impl {
 pub struct Module {
     pub scopes: Scopes,
     pub scope: ScopeId,
+    pub hover_item: Option<HoverItem>,
 }
 
 pub struct MemberFn {
@@ -91,12 +92,49 @@ pub enum Safety {
     Unsafe,
 }
 
+#[derive(Clone, derive_more::From)]
+pub enum HoverItem {
+    Type(UserTypeId),
+    Trait(TraitId),
+    Extension(ExtensionId),
+    Module(ScopeId),
+    Literal(CheckedExpr),
+    Fn(FunctionId),
+    Var(VariableId),
+    Attribute(String),
+    Member(UserTypeId, String),
+}
+
+impl From<TypeItem> for HoverItem {
+    fn from(value: TypeItem) -> Self {
+        match value {
+            TypeItem::Type(item) => HoverItem::Type(item),
+            TypeItem::Trait(item) => HoverItem::Trait(item),
+            TypeItem::Extension(item) => HoverItem::Extension(item),
+            TypeItem::Module(item) => HoverItem::Module(item),
+        }
+    }
+}
+
+impl From<ValueItem> for HoverItem {
+    fn from(value: ValueItem) -> Self {
+        match value {
+            ValueItem::Fn(id) => HoverItem::Fn(id),
+            ValueItem::Var(id) => HoverItem::Var(id),
+            ValueItem::StructConstructor(_, id) => HoverItem::Fn(id),
+            ValueItem::UnionConstructor(id) => HoverItem::Type(id),
+        }
+    }
+}
+
 pub struct TypeChecker {
     universal: Vec<ScopeId>,
     safety: Safety,
     diag: Diagnostics,
     current: ScopeId,
     scopes: Scopes,
+    hover_span: Option<Span>,
+    hover_item: Option<HoverItem>,
 }
 
 impl TypeChecker {
@@ -104,12 +142,15 @@ impl TypeChecker {
         module: Stmt,
         libs: Vec<PathBuf>,
         diag: Diagnostics,
+        hover_span: Option<Span>,
     ) -> anyhow::Result<(Module, Diagnostics)> {
         let mut this = Self {
             universal: Vec::new(),
             scopes: Scopes::new(),
             safety: Safety::Safe,
             current: ScopeId::ROOT,
+            hover_item: None,
+            hover_span,
             diag,
         };
         for lib in libs {
@@ -136,6 +177,7 @@ impl TypeChecker {
             Module {
                 scope,
                 scopes: this.scopes,
+                hover_item: this.hover_item,
             },
             this.diag,
         ))
@@ -186,16 +228,20 @@ impl TypeChecker {
     }
 
     fn insert<T: ItemId>(&mut self, value: T::Value, public: bool, no_redef: bool) -> T {
-        let (item, redef) = T::insert_in(&mut self.scopes, value, public, self.current);
-        if redef && no_redef {
-            let name = item.name(&self.scopes);
-            if name.data == "0" {
-                println!("inserting 0");
-            }
+        let res = T::insert_in(&mut self.scopes, value, public, self.current);
+        self.check_hover(
+            res.id.name(&self.scopes).span,
+            match res.item {
+                InsertedItem::TypeLike(item) => item.into(),
+                InsertedItem::ValueLike(item) => item.into(),
+            },
+        );
 
+        if res.existed && no_redef {
+            let name = res.id.name(&self.scopes);
             self.error(Error::redefinition(&name.data, name.span))
         }
-        item
+        res.id
     }
 
     fn find_in_tns(&self, name: &str) -> Option<Vis<TypeItem>> {
@@ -268,7 +314,7 @@ impl TypeChecker {
                                 keyword: true,
                                 patt: Located::new(
                                     member.name.span,
-                                    Pattern::Path(Path::from(member.name.data.clone())),
+                                    Pattern::Path(Path::from(member.name.clone())),
                                 ),
                                 ty: member.ty.clone(),
                                 default: member.default.clone(),
@@ -350,7 +396,7 @@ impl TypeChecker {
     fn declare_union(
         &mut self,
         autouse: &mut Vec<ScopeId>,
-        tag: Option<Located<Path>>,
+        tag: Option<Path>,
         base: Struct,
         variants: Vec<Variant>,
         attrs: Attributes,
@@ -381,10 +427,7 @@ impl TypeChecker {
 
                 params.push(Param {
                     keyword: true,
-                    patt: Located::new(
-                        member.name.span,
-                        Pattern::Path(Path::from(member.name.data)),
-                    ),
+                    patt: Located::new(member.name.span, Pattern::Path(Path::from(member.name))),
                     ty: member.ty,
                     default: member.default,
                 });
@@ -423,7 +466,7 @@ impl TypeChecker {
                                 keyword: true,
                                 patt: Located::new(
                                     member.name.span,
-                                    Pattern::Path(Path::from(member.name.data)),
+                                    Pattern::Path(Path::from(member.name)),
                                 ),
                                 ty: member.ty,
                                 default: member.default,
@@ -443,7 +486,10 @@ impl TypeChecker {
                                 keyword: false,
                                 patt: Located::new(
                                     Span::default(),
-                                    Pattern::Path(Path::from(format!("{i}"))),
+                                    Pattern::Path(Path::from(Located::new(
+                                        Span::default(),
+                                        format!("{i}"),
+                                    ))),
                                 ),
                                 ty,
                                 default,
@@ -514,7 +560,7 @@ impl TypeChecker {
     fn declare_unsafe_union(
         &mut self,
         autouse: &mut Vec<ScopeId>,
-        base: Struct,
+        mut base: Struct,
         attrs: Attributes,
     ) -> DeclaredStmt {
         let lang_item = attrs.val("lang").map(String::from);
@@ -522,10 +568,13 @@ impl TypeChecker {
         let public = base.public;
         let (ut, fns, impls) = self.enter(ScopeKind::None, |this| {
             let mut members = IndexMap::with_capacity(base.members.len());
-            for member in base.members {
+            for member in base.members.iter_mut() {
                 let prev = members.insert(
                     member.name.data.clone(),
-                    CheckedMember::new(member.public, this.declare_type_hint(member.ty)),
+                    CheckedMember::new(
+                        member.public,
+                        this.declare_type_hint(std::mem::take(&mut member.ty)),
+                    ),
                 );
                 if prev.is_some() {
                     this.error(Error::redefinition_k(
@@ -562,6 +611,13 @@ impl TypeChecker {
 
         let scope = ut.body_scope;
         let id = self.insert::<UserTypeId>(ut, public, true);
+        for member in base.members.iter() {
+            self.check_hover(
+                member.name.span,
+                HoverItem::Member(id, member.name.data.clone()),
+            );
+        }
+
         if let Some(name) = lang_item {
             self.scopes.lang_types.insert(name, id);
         }
@@ -872,12 +928,12 @@ impl TypeChecker {
         })
     }
 
-    fn declare_type_params(&mut self, vec: Vec<(String, Vec<Located<Path>>)>) -> Vec<UserTypeId> {
+    fn declare_type_params(&mut self, vec: Vec<(Located<String>, Vec<Path>)>) -> Vec<UserTypeId> {
         vec.into_iter()
             .map(|(name, impls)| {
                 self.insert(
                     UserType {
-                        name: Located::new(Span::default(), name),
+                        name,
                         body_scope: self.current,
                         data: UserTypeData::Template,
                         type_params: Vec::new(),
@@ -915,7 +971,7 @@ impl TypeChecker {
         {
             let block = self.enter(ScopeKind::None, |this| DeclaredImplBlock {
                 impl_index: impls.len(),
-                span: path.span,
+                span: path.final_component_span(),
                 scope: this.current,
                 fns: functions
                     .into_iter()
@@ -938,27 +994,34 @@ impl TypeChecker {
     }
 
     fn typehint_for_struct(
-        Located { span, data }: &Located<String>,
-        type_params: &[(String, Vec<Located<Path>>)],
+        name: &Located<String>,
+        type_params: &[(Located<String>, Vec<Path>)],
     ) -> TypeHint {
-        TypeHint::Regular(Located::new(
-            *span,
-            Path::new(
-                PathOrigin::Normal,
-                vec![(
-                    data.into(),
-                    type_params
-                        .iter()
-                        .map(|(n, _)| TypeHint::Regular(Located::new(*span, Path::from(n.clone()))))
-                        .collect(),
-                )],
-            ),
+        TypeHint::Regular(Path::new(
+            PathOrigin::Normal,
+            vec![(
+                name.clone(),
+                type_params
+                    .iter()
+                    .map(|(n, _)| TypeHint::Regular(Path::from(n.clone())))
+                    .collect(),
+            )],
         ))
     }
 }
 
 /// Typechecking pass routines
 impl TypeChecker {
+    #[inline]
+    fn check_hover(&mut self, span: Span, item: HoverItem) {
+        if self
+            .hover_span
+            .is_some_and(|h| h.file == span.file && span.includes(h.pos))
+        {
+            self.hover_item = Some(item);
+        }
+    }
+
     fn enter_id<T>(&mut self, id: ScopeId, f: impl FnOnce(&mut Self) -> T) -> T {
         let prev = self.current;
         self.current = id;
@@ -1323,7 +1386,7 @@ impl TypeChecker {
                 let body = body.into_iter().map(|stmt| this.check_stmt(stmt)).collect();
                 let func = this.scopes.get_mut(id);
                 func.body = Some(body);
-                if !func.returns && !func.ret.is_void() {
+                if !func.returns && !matches!(func.ret, Type::Void | Type::Unknown) {
                     let span = func.name.span;
                     let name = func.name.data.clone();
                     let ret = func.ret.clone().name(&this.scopes);
@@ -2099,7 +2162,7 @@ impl TypeChecker {
                     .unwrap_or(Type::F64),
                 CheckedExprData::Float(value),
             ),
-            ExprData::Path(path) => match self.resolve_value_path(&path, span, true) {
+            ExprData::Path(path) => match self.resolve_value_path(&path, true) {
                 ResolvedValue::Var(id) => {
                     let var = self.scopes.get(id);
                     if !var.is_static
@@ -2351,22 +2414,27 @@ impl TypeChecker {
                     Type::User(data) => data.id,
                     Type::Unknown => return Default::default(),
                     _ => {
-                        return self.error(Error::no_member(&id.name(&self.scopes), &name, span));
+                        return self.error(Error::no_member(
+                            &id.name(&self.scopes),
+                            &name.data,
+                            name.span,
+                        ));
                     }
                 };
                 self.resolve_members(ut_id);
+                self.check_hover(name.span, HoverItem::Member(ut_id, name.data.clone()));
 
                 let ut = self.scopes.get(ut_id);
-                let Some(member) = ut.members.get(&name) else {
+                let Some(member) = ut.members.get(&name.data) else {
                     return self.error(Error::no_member(
                         &source.ty.name(&self.scopes),
-                        &name,
-                        span,
+                        &name.data,
+                        name.span,
                     ));
                 };
 
                 if ut.data.is_unsafe_union() && self.safety != Safety::Unsafe {
-                    self.diag.error(Error::is_unsafe(span));
+                    self.diag.error(Error::is_unsafe(name.span));
                 }
 
                 let mut ty = member.ty.clone();
@@ -2375,7 +2443,11 @@ impl TypeChecker {
                 }
 
                 if !member.public && !self.can_access_privates(ut.scope) {
-                    self.error(Error::private_member(&id.name(&self.scopes), &name, span))
+                    self.error(Error::private_member(
+                        &id.name(&self.scopes),
+                        &name.data,
+                        name.span,
+                    ))
                 }
 
                 let id = id.clone();
@@ -2383,7 +2455,7 @@ impl TypeChecker {
                     ty,
                     CheckedExprData::Member {
                         source: source.auto_deref(&id).into(),
-                        member: name,
+                        member: name.data,
                     },
                 )
             }
@@ -2888,11 +2960,12 @@ impl TypeChecker {
                 }
 
                 let Ok(MemberFn { mut func, tr }) =
-                    self.get_member_fn(&id, &member, &generics, span)
+                    self.get_member_fn(&id, &member.data, &generics, span)
                 else {
                     return Default::default();
                 };
                 self.resolve_proto(func.id);
+                self.check_hover(member.span, HoverItem::Fn(func.id));
 
                 let f = self.scopes.get(func.id);
                 let Some(this_param) = f.params.first().filter(|p| p.label == THIS_PARAM) else {
@@ -2940,11 +3013,12 @@ impl TypeChecker {
                     },
                 );
             }
-            ExprData::Path(ref path) => match self.resolve_value_path(path, callee.span, false) {
+            ExprData::Path(ref path) => match self.resolve_value_path(path, false) {
                 ResolvedValue::UnionConstructor(ut) => {
                     return self.check_unsafe_union_constructor(target, ut, args, span);
                 }
                 ResolvedValue::StructConstructor(_, mut init) => {
+                    let span = path.components.last().map(|c| c.0.span).unwrap_or(span);
                     let (args, ret) = self.check_fn_args(&mut init, None, args, target, span);
                     return CheckedExpr::new(
                         ret,
@@ -2955,6 +3029,7 @@ impl TypeChecker {
                     );
                 }
                 ResolvedValue::Func(mut func) => {
+                    let span = path.components.last().map(|c| c.0.span).unwrap_or(span);
                     let f = self.scopes.get(func.id);
                     let constructor = f.constructor;
                     if let Some(id) = constructor {
@@ -3239,6 +3314,7 @@ impl TypeChecker {
     }
 
     fn resolve_lang_type(&mut self, name: &str, args: &[TypeHint]) -> Type {
+        let span = Span::default();
         if let Some(id) = self.scopes.lang_types.get(name).copied() {
             Type::User(
                 GenericUserType::new(
@@ -3247,13 +3323,13 @@ impl TypeChecker {
                         &self.scopes.get(id).type_params.clone(),
                         args,
                         true,
-                        Span::default(),
+                        span,
                     ),
                 )
                 .into(),
             )
         } else {
-            self.error(Error::no_lang_item(name, Span::default()))
+            self.error(Error::no_lang_item(name, span))
         }
     }
 
@@ -3284,17 +3360,17 @@ impl TypeChecker {
         Type::User(GenericUserType::from_type_args(&self.scopes, id, args).into())
     }
 
-    fn resolve_dyn_ptr(&mut self, path: Located<Path>) -> Option<GenericTrait> {
+    fn resolve_dyn_ptr(&mut self, path: Path) -> Option<GenericTrait> {
         match self.resolve_type_path(&path) {
             ResolvedType::UserType(ut) => self.error(Error::expected_found(
                 "trait",
                 &format!("type '{}'", ut.name(&self.scopes)),
-                path.span,
+                path.final_component_span(),
             )),
             ResolvedType::Builtin(ty) => self.error(Error::expected_found(
                 "trait",
                 &format!("type '{}'", ty.name(&self.scopes)),
-                path.span,
+                path.final_component_span(),
             )),
             ResolvedType::Trait(tr) => Some(tr),
             ResolvedType::Error => None,
@@ -3309,7 +3385,7 @@ impl TypeChecker {
                 ResolvedType::Trait(tr) => self.error(Error::expected_found(
                     "type",
                     &format!("trait '{}'", tr.name(&self.scopes)),
-                    path.span,
+                    path.final_component_span(),
                 )),
                 ResolvedType::Error => Type::Unknown,
             },
@@ -3931,7 +4007,7 @@ impl TypeChecker {
             }
             ExprData::Call { callee, args: _ } => {
                 if let ExprData::Path(path) = &callee.data {
-                    match self.resolve_value_path(path, callee.span, false) {
+                    match self.resolve_value_path(path, false) {
                         ResolvedValue::Func(func) => {
                             if self.scopes.intrinsics.get(&func.id).is_some()
                                 && self.scopes.get(func.id).name.data == "size_of"
@@ -4661,11 +4737,11 @@ impl TypeChecker {
         let span = pattern.span;
         match pattern.data {
             Pattern::TupleLike { path, subpatterns } => {
-                let value = self.resolve_value_path(&path.data, path.span, false);
+                let value = self.resolve_value_path(&path, false);
                 self.check_tuple_union_pattern(scrutinee, mutable, value, subpatterns, span, param)
             }
             Pattern::StructLike { path, subpatterns } => {
-                let value = self.resolve_value_path(&path.data, path.span, false);
+                let value = self.resolve_value_path(&path, false);
                 match self.get_union_variant(scrutinee, value, span) {
                     Ok((Some(scrutinee), variant)) => {
                         CheckedPattern::refutable(CheckedPatternData::UnionMember {
@@ -4694,7 +4770,7 @@ impl TypeChecker {
                 }
             }
             Pattern::Path(path) => {
-                let value = self.resolve_value_path(&path, span, false);
+                let value = self.resolve_value_path(&path, false);
                 if let Some(ident) = path.as_identifier() {
                     match self.get_union_variant(scrutinee, value, span) {
                         Ok(_) if binding => self.error(Error::new(
@@ -4740,11 +4816,10 @@ impl TypeChecker {
                     return self.error(Error::no_lang_item("option", pattern.span));
                 };
                 let value = self.resolve_value_path_in(
-                    &[("Some".into(), vec![])],
+                    &[(Located::new(pattern.span, "Some".into()), vec![])],
                     Default::default(),
                     self.scopes.get(id).body_scope,
                     false,
-                    pattern.span,
                 );
                 self.check_tuple_union_pattern(
                     scrutinee,
@@ -4760,11 +4835,10 @@ impl TypeChecker {
                     return self.error(Error::no_lang_item("option", pattern.span));
                 };
                 let value = self.resolve_value_path_in(
-                    &[("None".into(), vec![])],
+                    &[(Located::new(pattern.span, "None".into()), vec![])],
                     Default::default(),
                     self.scopes.get(id).body_scope,
                     false,
-                    pattern.span,
                 );
                 self.check_empty_union_pattern(scrutinee, value, pattern.span)
             }
@@ -5097,100 +5171,89 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_type_path(&mut self, path: &Located<Path>) -> ResolvedType {
-        let span = path.span;
-        let path = &path.data;
+    fn resolve_type_path(&mut self, path: &Path) -> ResolvedType {
         match path.origin {
             PathOrigin::Root => {
-                self.resolve_type_path_in(&path.components, Default::default(), ScopeId::ROOT, span)
+                self.resolve_type_path_in(&path.components, Default::default(), ScopeId::ROOT)
             }
             PathOrigin::Super(span) => self
                 .get_super(span)
-                .map(|id| self.resolve_type_path_in(&path.components, Default::default(), id, span))
+                .map(|id| self.resolve_type_path_in(&path.components, Default::default(), id))
                 .unwrap_or_default(),
             PathOrigin::Normal => {
                 let ((name, ty_args), rest) = path.components.split_first().unwrap();
-                if let Some(builtin) = self.builtin_type_path(name) {
+                if let Some(builtin) = self.builtin_type_path(&name.data) {
                     if rest.is_empty() {
                         return ResolvedType::Builtin(builtin);
                     }
-                    return self.error(Error::new("", span));
+                    return self.error(Error::new(
+                        format!("cannot enter namespace of built-in type '{}'", name.data),
+                        name.span,
+                    ));
                 }
 
-                match self.find_in_tns(name).map(|t| t.id) {
+                match self.find_in_tns(&name.data).map(|t| t.id) {
                     Some(TypeItem::Type(id)) => {
+                        self.check_hover(name.span, id.into());
                         let ty_args = self.resolve_type_args(
                             &self.scopes.get(id).type_params.clone(),
                             ty_args,
                             true,
-                            span,
+                            name.span,
                         );
                         if rest.is_empty() {
                             return ResolvedType::UserType(GenericUserType::new(id, ty_args));
                         }
 
-                        self.resolve_type_path_in(
-                            rest,
-                            ty_args,
-                            self.scopes.get(id).body_scope,
-                            span,
-                        )
+                        self.resolve_type_path_in(rest, ty_args, self.scopes.get(id).body_scope)
                     }
                     Some(TypeItem::Trait(id)) => {
+                        self.check_hover(name.span, id.into());
                         let ty_args = self.resolve_type_args(
                             &self.scopes.get(id).type_params.clone(),
                             ty_args,
                             true,
-                            span,
+                            name.span,
                         );
                         if rest.is_empty() {
                             return ResolvedType::Trait(GenericTrait::new(id, ty_args));
                         }
 
-                        self.resolve_type_path_in(
-                            rest,
-                            ty_args,
-                            self.scopes.get(id).body_scope,
-                            span,
-                        )
+                        self.resolve_type_path_in(rest, ty_args, self.scopes.get(id).body_scope)
                     }
                     Some(TypeItem::Module(id)) if !rest.is_empty() => {
+                        self.check_hover(name.span, id.into());
                         if !ty_args.is_empty() {
                             return self.error(Error::new(
                                 "modules cannot be parameterized with type arguments",
-                                span,
+                                name.span,
                             ));
                         }
 
-                        self.resolve_type_path_in(rest, Default::default(), id, span)
+                        self.resolve_type_path_in(rest, Default::default(), id)
                     }
                     Some(TypeItem::Extension(id)) => {
+                        self.check_hover(name.span, id.into());
                         let ty_args = self.resolve_type_args(
                             &self.scopes.get(id).type_params.clone(),
                             ty_args,
                             true,
-                            span,
+                            name.span,
                         );
                         if rest.is_empty() {
                             return self.error(Error::expected_found(
                                 "type",
                                 &format!("extension '{}'", self.scopes.get(id).name.data),
-                                span,
+                                name.span,
                             ));
                         }
 
-                        self.resolve_type_path_in(
-                            rest,
-                            ty_args,
-                            self.scopes.get(id).body_scope,
-                            span,
-                        )
+                        self.resolve_type_path_in(rest, ty_args, self.scopes.get(id).body_scope)
                     }
                     _ => self.resolve_type_path_in(
                         &path.components,
                         Default::default(),
                         ScopeId::ROOT,
-                        span,
                     ),
                 }
             }
@@ -5202,22 +5265,22 @@ impl TypeChecker {
         data: &[PathComponent],
         mut ty_args: TypeArgs,
         mut scope: ScopeId,
-        span: Span,
     ) -> ResolvedType {
         for (i, (name, args)) in data.iter().enumerate() {
             let is_end = i + 1 == data.len();
-            if let Some(item) = self.scopes[scope].find_in_tns(name) {
+            if let Some(item) = self.scopes[scope].find_in_tns(&name.data) {
                 if !item.public && !self.can_access_privates(scope) {
-                    self.error(Error::new(format!("'{name}' is private"), span))
+                    self.error(Error::new(format!("'{name}' is private"), name.span))
                 }
 
                 match *item {
                     TypeItem::Type(id) => {
+                        self.check_hover(name.span, id.into());
                         let ty = self.scopes.get(id);
                         scope = ty.body_scope;
 
                         let args =
-                            self.resolve_type_args(&ty.type_params.clone(), args, true, span);
+                            self.resolve_type_args(&ty.type_params.clone(), args, true, name.span);
                         if is_end {
                             return ResolvedType::UserType(GenericUserType::new(id, args));
                         }
@@ -5226,18 +5289,19 @@ impl TypeChecker {
                         continue;
                     }
                     TypeItem::Extension(id) => {
+                        self.check_hover(name.span, id.into());
                         scope = self.scopes.get(id).body_scope;
                         let args = self.resolve_type_args(
                             &self.scopes.get(id).type_params.clone(),
                             args,
                             true,
-                            span,
+                            name.span,
                         );
                         if is_end {
                             return self.error(Error::expected_found(
                                 "type",
                                 &format!("extension '{}'", self.scopes.get(id).name.data),
-                                span,
+                                name.span,
                             ));
                         }
 
@@ -5245,14 +5309,15 @@ impl TypeChecker {
                         continue;
                     }
                     TypeItem::Module(id) => {
+                        self.check_hover(name.span, id.into());
                         if is_end {
-                            return self.error(Error::no_symbol(name, span));
+                            return self.error(Error::no_symbol(&name.data, name.span));
                         }
 
                         if !args.is_empty() {
                             return self.error(Error::new(
                                 "modules cannot be parameterized with type arguments",
-                                span,
+                                name.span,
                             ));
                         }
 
@@ -5260,11 +5325,12 @@ impl TypeChecker {
                         continue;
                     }
                     TypeItem::Trait(id) => {
+                        self.check_hover(name.span, id.into());
                         let ty = self.scopes.get(id);
                         scope = ty.body_scope;
 
                         let args =
-                            self.resolve_type_args(&ty.type_params.clone(), args, true, span);
+                            self.resolve_type_args(&ty.type_params.clone(), args, true, name.span);
                         if is_end {
                             return ResolvedType::Trait(GenericTrait::new(id, args));
                         }
@@ -5275,41 +5341,44 @@ impl TypeChecker {
                 }
             }
 
-            return self.error(Error::no_symbol(name, span));
+            return self.error(Error::no_symbol(&name.data, name.span));
         }
 
         unreachable!()
     }
 
-    fn resolve_value_path(&mut self, path: &Path, span: Span, args: bool) -> ResolvedValue {
+    fn resolve_value_path(&mut self, path: &Path, args: bool) -> ResolvedValue {
         match path.origin {
             PathOrigin::Root => self.resolve_value_path_in(
                 &path.components,
                 Default::default(),
                 ScopeId::ROOT,
                 args,
-                span,
             ),
             PathOrigin::Super(span) => self
                 .get_super(span)
                 .map(|id| {
-                    self.resolve_value_path_in(&path.components, Default::default(), id, args, span)
+                    self.resolve_value_path_in(&path.components, Default::default(), id, args)
                 })
                 .unwrap_or_default(),
             PathOrigin::Normal => {
                 let ((name, ty_args), rest) = path.components.split_first().unwrap();
                 if rest.is_empty() {
-                    match self.find_in_vns(name).map(|f| f.id) {
-                        Some(ValueItem::Fn(id)) => ResolvedValue::Func(GenericFunc::new(
-                            id,
-                            self.resolve_type_args(
-                                &self.scopes.get(id).type_params.clone(),
-                                ty_args,
-                                args,
-                                span,
-                            ),
-                        )),
+                    match self.find_in_vns(&name.data).map(|f| f.id) {
+                        Some(ValueItem::Fn(id)) => {
+                            self.check_hover(name.span, id.into());
+                            ResolvedValue::Func(GenericFunc::new(
+                                id,
+                                self.resolve_type_args(
+                                    &self.scopes.get(id).type_params.clone(),
+                                    ty_args,
+                                    args,
+                                    name.span,
+                                ),
+                            ))
+                        }
                         Some(ValueItem::StructConstructor(id, init)) => {
+                            self.check_hover(name.span, init.into());
                             ResolvedValue::StructConstructor(
                                 id,
                                 GenericFunc::new(
@@ -5318,28 +5387,30 @@ impl TypeChecker {
                                         &self.scopes.get(id).type_params.clone(),
                                         ty_args,
                                         args,
-                                        span,
+                                        name.span,
                                     ),
                                 ),
                             )
                         }
                         Some(ValueItem::UnionConstructor(id)) => {
+                            self.check_hover(name.span, id.into());
                             ResolvedValue::UnionConstructor(GenericUserType::new(
                                 id,
                                 self.resolve_type_args(
                                     &self.scopes.get(id).type_params.clone(),
                                     ty_args,
                                     args,
-                                    span,
+                                    name.span,
                                 ),
                             ))
                         }
                         Some(ValueItem::Var(id)) => {
+                            self.check_hover(name.span, id.into());
                             resolve_type!(self, self.scopes.get_mut::<VariableId>(id).ty);
                             if !ty_args.is_empty() {
                                 return self.error(Error::new(
                                     "variables cannot have type arguments",
-                                    span,
+                                    name.span,
                                 ));
                             }
 
@@ -5350,17 +5421,17 @@ impl TypeChecker {
                             Default::default(),
                             ScopeId::ROOT,
                             args,
-                            span,
                         ),
                     }
                 } else {
-                    match self.find_in_tns(name).map(|t| t.id) {
+                    match self.find_in_tns(&name.data).map(|t| t.id) {
                         Some(TypeItem::Type(id)) => {
+                            self.check_hover(name.span, id.into());
                             let ty_args = self.resolve_type_args(
                                 &self.scopes.get(id).type_params.clone(),
                                 ty_args,
                                 args,
-                                span,
+                                name.span,
                             );
 
                             self.resolve_value_path_in(
@@ -5368,15 +5439,15 @@ impl TypeChecker {
                                 ty_args,
                                 self.scopes.get(id).body_scope,
                                 args,
-                                span,
                             )
                         }
                         Some(TypeItem::Trait(id)) => {
+                            self.check_hover(name.span, id.into());
                             let mut ty_args = self.resolve_type_args(
                                 &self.scopes.get(id).type_params.clone(),
                                 ty_args,
                                 args,
-                                span,
+                                name.span,
                             );
                             ty_args.insert(self.scopes.get(id).this, Type::Unknown);
 
@@ -5385,15 +5456,15 @@ impl TypeChecker {
                                 ty_args,
                                 self.scopes.get(id).body_scope,
                                 args,
-                                span,
                             )
                         }
                         Some(TypeItem::Extension(id)) => {
+                            self.check_hover(name.span, id.into());
                             let ty_args = self.resolve_type_args(
                                 &self.scopes.get(id).type_params.clone(),
                                 ty_args,
                                 args,
-                                span,
+                                name.span,
                             );
 
                             self.resolve_value_path_in(
@@ -5401,25 +5472,24 @@ impl TypeChecker {
                                 ty_args,
                                 self.scopes.get(id).body_scope,
                                 args,
-                                span,
                             )
                         }
                         Some(TypeItem::Module(id)) => {
+                            self.check_hover(name.span, id.into());
                             if !ty_args.is_empty() {
                                 return self.error(Error::new(
                                     "modules cannot be parameterized with type arguments",
-                                    span,
+                                    name.span,
                                 ));
                             }
 
-                            self.resolve_value_path_in(rest, Default::default(), id, args, span)
+                            self.resolve_value_path_in(rest, Default::default(), id, args)
                         }
                         None => self.resolve_value_path_in(
                             &path.components,
                             Default::default(),
                             ScopeId::ROOT,
                             args,
-                            span,
                         ),
                     }
                 }
@@ -5433,50 +5503,53 @@ impl TypeChecker {
         mut ty_args: TypeArgs,
         mut scope: ScopeId,
         typehint: bool,
-        span: Span,
     ) -> ResolvedValue {
         let ((last_name, last_args), rest) = data.split_last().unwrap();
         for (name, args) in rest.iter() {
-            let Some(item) = self.scopes[scope].find_in_tns(name) else {
-                return ResolvedValue::NotFound(Error::no_symbol(name, span));
+            let Some(item) = self.scopes[scope].find_in_tns(&name.data) else {
+                return ResolvedValue::NotFound(Error::no_symbol(&name.data, name.span));
             };
 
             if !item.public && !self.can_access_privates(scope) {
-                self.error(Error::new(format!("'{name}' is private"), span))
+                self.error(Error::new(format!("'{name}' is private"), name.span))
             }
 
             match *item {
                 TypeItem::Type(id) => {
+                    self.check_hover(name.span, id.into());
                     let ty = self.scopes.get(id);
                     scope = ty.body_scope;
                     ty_args.copy_args(&self.resolve_type_args(
                         &ty.type_params.clone(),
                         args,
                         typehint,
-                        span,
+                        name.span,
                     ));
                 }
                 TypeItem::Extension(id) => {
+                    self.check_hover(name.span, id.into());
                     let ty = self.scopes.get(id);
                     scope = ty.body_scope;
                     ty_args.copy_args(&self.resolve_type_args(
                         &ty.type_params.clone(),
                         args,
                         typehint,
-                        span,
+                        name.span,
                     ));
                 }
                 TypeItem::Module(id) => {
+                    self.check_hover(name.span, id.into());
                     if !args.is_empty() {
                         return self.error(Error::new(
                             "modules cannot be parameterized with type arguments",
-                            span,
+                            name.span,
                         ));
                     }
 
                     scope = id;
                 }
                 TypeItem::Trait(id) => {
+                    self.check_hover(name.span, id.into());
                     let ty = self.scopes.get(id);
                     scope = ty.body_scope;
                     ty_args.insert(self.scopes.get(id).this, Type::Unknown);
@@ -5484,56 +5557,63 @@ impl TypeChecker {
                         &ty.type_params.clone(),
                         args,
                         typehint,
-                        span,
+                        name.span,
                     ));
                 }
             }
         }
 
-        let Some(item) = self.scopes[scope].find_in_vns(last_name) else {
-            return ResolvedValue::NotFound(Error::no_symbol(last_name, span));
+        let Some(item) = self.scopes[scope].find_in_vns(&last_name.data) else {
+            return ResolvedValue::NotFound(Error::no_symbol(&last_name.data, last_name.span));
         };
 
         if !item.public && !self.can_access_privates(scope) {
-            self.error(Error::new(format!("'{last_name}' is private"), span))
+            self.error(Error::new(
+                format!("'{last_name}' is private"),
+                last_name.span,
+            ))
         }
 
         match *item {
             ValueItem::Fn(id) => {
+                self.check_hover(last_name.span, id.into());
                 ty_args.copy_args(&self.resolve_type_args(
                     &self.scopes.get(id).type_params.clone(),
                     last_args,
                     typehint,
-                    span,
+                    last_name.span,
                 ));
 
                 ResolvedValue::Func(GenericFunc::new(id, ty_args))
             }
             ValueItem::StructConstructor(id, init) => {
+                self.check_hover(last_name.span, init.into());
                 ty_args.copy_args(&self.resolve_type_args(
                     &self.scopes.get(id).type_params.clone(),
                     last_args,
                     typehint,
-                    span,
+                    last_name.span,
                 ));
 
                 ResolvedValue::StructConstructor(id, GenericFunc::new(init, ty_args))
             }
             ValueItem::UnionConstructor(id) => {
+                self.check_hover(last_name.span, id.into());
                 ty_args.copy_args(&self.resolve_type_args(
                     &self.scopes.get(id).type_params.clone(),
                     last_args,
                     typehint,
-                    span,
+                    last_name.span,
                 ));
                 ResolvedValue::UnionConstructor(GenericUserType::new(id, ty_args))
             }
             ValueItem::Var(id) => {
+                self.check_hover(last_name.span, id.into());
                 resolve_type!(self, self.scopes.get_mut(id).ty);
                 if !last_args.is_empty() {
                     self.error(Error::new(
                         "variables cannot be parameterized with type arguments",
-                        span,
+                        last_name.span,
                     ))
                 }
 

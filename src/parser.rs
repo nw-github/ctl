@@ -372,14 +372,20 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::ByteString(value) => Expr::new(span, ExprData::ByteString(value)),
             Token::ByteChar(value) => Expr::new(span, ExprData::ByteChar(value)),
             Token::Ident(ident) => {
-                let data = self.path_components(Some(ident), &mut span);
+                let data = self.path_components(Some(Located::new(span, ident.into())), &mut span);
                 Expr::new(span, ExprData::Path(Path::new(PathOrigin::Normal, data)))
             }
-            Token::This => Expr::new(span, ExprData::Path(THIS_PARAM.to_owned().into())),
-            Token::ThisType => Expr::new(span, ExprData::Path(THIS_TYPE.to_owned().into())),
+            Token::This => Expr::new(
+                span,
+                ExprData::Path(Located::new(span, THIS_PARAM.to_owned()).into()),
+            ),
+            Token::ThisType => Expr::new(
+                span,
+                ExprData::Path(Located::new(span, THIS_TYPE.to_owned()).into()),
+            ),
             Token::ScopeRes => {
-                let ident = self.expect_id("expected name");
-                let data = self.path_components(Some(&ident), &mut span);
+                let ident = self.expect_id_l("expected name");
+                let data = self.path_components(Some(ident), &mut span);
                 Expr::new(span, ExprData::Path(Path::new(PathOrigin::Root, data)))
             }
             Token::Super => {
@@ -728,6 +734,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::Dot => {
                 let token = self.peek();
                 if let Token::Int { base, value, width } = token.data {
+                    let member = Located::new(token.span, value.into());
                     if base != 10 || width.is_some() || (value.starts_with('0') && value.len() > 1)
                     {
                         let span = token.span;
@@ -736,14 +743,12 @@ impl<'a, 'b> Parser<'a, 'b> {
                             span,
                         ));
                     }
-                    let value = value.into();
                     let span = self.next().span;
-
                     return Expr::new(
                         left.span.extended_to(span),
                         ExprData::Member {
                             source: left.into(),
-                            member: value,
+                            member,
                             generics: Vec::new(),
                         },
                     );
@@ -759,7 +764,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
                 generics.map(|generics| ExprData::Member {
                     source: left.into(),
-                    member: member.data,
+                    member,
                     generics,
                 })
             }
@@ -969,10 +974,12 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     //
 
-    fn path_components(&mut self, first: Option<&str>, outspan: &mut Span) -> Vec<PathComponent> {
-        let mut data = first
-            .map(|s| vec![(s.into(), Vec::new())])
-            .unwrap_or_default();
+    fn path_components(
+        &mut self,
+        first: Option<Located<String>>,
+        outspan: &mut Span,
+    ) -> Vec<PathComponent> {
+        let mut data = first.map(|s| vec![(s, Vec::new())]).unwrap_or_default();
         while self.next_if_kind(Token::ScopeRes).is_some() {
             if self.next_if_kind(Token::LAngle).is_some() {
                 let params = self.rangle_csv_one(*outspan, Self::type_hint);
@@ -980,37 +987,35 @@ impl<'a, 'b> Parser<'a, 'b> {
                 *outspan = params.span;
             } else {
                 let name = self.expect_id_l("expected name");
-                data.push((name.data.to_owned(), Vec::new()));
                 outspan.extend_to(name.span);
+                data.push((name, Vec::new()));
             }
         }
 
         data
     }
 
-    fn type_path(&mut self) -> Located<Path> {
-        let (origin, mut span) = match self.peek().data {
+    fn type_path(&mut self) -> Path {
+        let origin = match self.peek().data {
             Token::ScopeRes => {
-                let span = self.next().span;
-                (PathOrigin::Root, span)
+                self.next();
+                PathOrigin::Root
             }
             Token::Super => {
                 let span = self.next().span;
                 self.expect_kind(Token::ScopeRes);
-                (PathOrigin::Super(span), span)
+                PathOrigin::Super(span)
             }
-            _ => (PathOrigin::Normal, self.peek().span),
+            _ => PathOrigin::Normal,
         };
         let mut data = Vec::new();
         loop {
             let ident = self.expect_id_l("expected type name");
-            span.extend_to(ident.span);
             if self.next_if_kind(Token::LAngle).is_some() {
-                let params = self.rangle_csv_one(span, Self::type_hint);
-                data.push((ident.data, params.data));
-                span = params.span;
+                let params = self.rangle_csv_one(ident.span, Self::type_hint);
+                data.push((ident, params.data));
             } else {
-                data.push((ident.data, Vec::new()));
+                data.push((ident, Vec::new()));
             }
 
             if self.next_if_kind(Token::ScopeRes).is_none() {
@@ -1018,7 +1023,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
         }
 
-        Located::new(span, Path::new(origin, data))
+        Path::new(origin, data)
     }
 
     //
@@ -1153,10 +1158,11 @@ impl<'a, 'b> Parser<'a, 'b> {
             let mutable = mutable.is_some();
             let name = this.expect_id_l("expected name");
             if mutable || this.next_if_kind(Token::Colon).is_none() {
+                let span = name.span;
                 Destructure {
                     name: name.clone(),
                     mutable,
-                    pattern: name.map(|name| Pattern::Path(Path::from(name))),
+                    pattern: name.map(|name| Pattern::Path(Path::from(Located::new(span, name)))),
                 }
             } else {
                 Destructure {
@@ -1233,7 +1239,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         self.struct_like(span, mut_var)
                             .map(|subpatterns| Pattern::StructLike { path, subpatterns })
                     }
-                    _ => path.map(Pattern::Path),
+                    _ => Located::new(path.span(), Pattern::Path(path)),
                 }
             }
         }
@@ -1278,18 +1284,18 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     //
 
-    fn type_params(&mut self) -> Vec<(String, Vec<Located<Path>>)> {
+    fn type_params(&mut self) -> TypeParams {
         self.next_if_kind(Token::LAngle)
             .map(|tk| {
                 self.rangle_csv_one(tk.span, |this| {
-                    (this.expect_id("expected type name"), this.trait_impls())
+                    (this.expect_id_l("expected type name"), this.trait_impls())
                 })
                 .data
             })
             .unwrap_or_default()
     }
 
-    fn trait_impls(&mut self) -> Vec<Located<Path>> {
+    fn trait_impls(&mut self) -> Vec<Path> {
         let mut impls = Vec::new();
         if self.next_if_kind(Token::Colon).is_some() {
             loop {
@@ -1727,7 +1733,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     keyword,
                     patt: Located::new(
                         token.span,
-                        Pattern::Path(Path::from(THIS_PARAM.to_string())),
+                        Pattern::Path(Path::from(Located::new(token.span, THIS_PARAM.to_string()))),
                     ),
                     ty: if mutable {
                         TypeHint::MutPtr(TypeHint::This(token.span).into())
@@ -1740,8 +1746,9 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let patt = if mutable {
                     self.expect_id_l("expected name").map(Pattern::MutBinding)
                 } else if keyword {
-                    self.expect_id_l("expected name")
-                        .map(|name| Pattern::Path(Path::from(name)))
+                    let t = self.expect_id_l("expected name");
+                    let span = t.span;
+                    t.map(|name| Pattern::Path(Path::from(Located::new(span, name))))
                 } else {
                     self.pattern(false)
                 };

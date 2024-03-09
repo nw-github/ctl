@@ -204,7 +204,7 @@ async fn main() -> Result<()> {
                 ast.dump()
             }
         })
-        .typecheck()?
+        .typecheck(None)?
         .build(CodegenFlags {
             leak: args.leak,
             no_bit_int: args.no_bit_int,

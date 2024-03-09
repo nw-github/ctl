@@ -138,8 +138,8 @@ impl Compiler<Parsed> {
         pretty::print_stmt(&self.state.0, 0);
     }
 
-    pub fn typecheck(self) -> anyhow::Result<Compiler<Checked>> {
-        let (module, diag) = TypeChecker::check(self.state.0, self.state.1, self.diag)?;
+    pub fn typecheck(self, hover_span: Option<Span>) -> anyhow::Result<Compiler<Checked>> {
+        let (module, diag) = TypeChecker::check(self.state.0, self.state.1, self.diag, hover_span)?;
         Ok(Compiler {
             state: Checked(module),
             diag,
@@ -168,6 +168,10 @@ impl Compiler<Checked> {
 
     pub fn scopes(&self) -> &Scopes {
         &self.state.0.scopes
+    }
+
+    pub fn module(&self) -> &Module {
+        &self.state.0
     }
 }
 
