@@ -1456,7 +1456,7 @@ impl TypeChecker {
             return self.error(Error::invalid_operator(
                 BinaryOp::NoneCoalesce,
                 &lhs.ty.name(&self.scopes),
-                span,
+                lhs_span,
             ));
         };
         if op.is_assignment() && !lhs.is_assignable(&self.scopes) {
@@ -1480,6 +1480,7 @@ impl TypeChecker {
 
     fn check_binary(
         &mut self,
+        lhs_span: Span,
         lhs: CheckedExpr,
         rhs: Expr,
         op: BinaryOp,
@@ -1515,7 +1516,7 @@ impl TypeChecker {
         };
 
         let Some(tr_id) = self.scopes.lang_traits.get(trait_name).copied() else {
-            return self.error(Error::no_lang_item(trait_name, span));
+            return self.error(Error::no_lang_item(trait_name, lhs_span));
         };
 
         let stripped = lhs.ty.strip_references();
@@ -1523,10 +1524,10 @@ impl TypeChecker {
             return self.error(Error::doesnt_implement(
                 &stripped.name(&self.scopes),
                 &self.scopes.get(tr_id).name.data,
-                span,
+                lhs_span,
             ));
         }
-        let Ok(MemberFn { func, tr }) = self.get_member_fn(stripped, fn_name, &[], span) else {
+        let Ok(MemberFn { func, tr }) = self.get_member_fn(stripped, fn_name, &[], lhs_span) else {
             return Default::default();
         };
         self.resolve_proto(func.id);
@@ -1631,7 +1632,7 @@ impl TypeChecker {
                 }
 
                 if op != BinaryOp::Assign && !left.ty.supports_binary(&self.scopes, op) {
-                    return self.check_binary(left, *right, op, span);
+                    return self.check_binary(left_span, left, *right, op, span);
                 }
 
                 match (&left.ty, op) {
