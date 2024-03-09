@@ -8,7 +8,6 @@ import {
 } from "vscode";
 import { LanguageClient, State } from "vscode-languageclient/node";
 
-let client: LanguageClient;
 
 const CMD_STOP = "ctlsp.stop_server";
 const CMD_RESTART = "ctlsp.restart_server";
@@ -20,7 +19,50 @@ const message = {
 
 const statusItem = window.createStatusBarItem(StatusBarAlignment.Left);
 
+let client: LanguageClient;
+
 export function activate(context: ExtensionContext) {
+    context.subscriptions.push(
+        commands.registerCommand(CMD_STOP, async () => {
+            await client.stop();
+        })
+    );
+
+    context.subscriptions.push(
+        commands.registerCommand(CMD_RESTART, async () => {
+            if (client.isRunning()) {
+                await client.stop();
+            }
+            await client.start();
+        })
+    );
+
+    initClient();
+
+    workspace.onDidChangeConfiguration(async (e) => {
+        if (e.affectsConfiguration("ctlsp.compiler")) {
+            const result = await window.showInformationMessage(
+                "Compiler path changed. Restart server?",
+                "Restart",
+                "Cancel"
+            );
+
+            if (result === "Restart") {
+                if (client.isRunning()) {
+                    await client.stop();
+                }
+
+                initClient();
+            }
+        }
+    });
+}
+
+export function deactivate() {
+    return client?.stop();
+}
+
+function initClient() {
     client = new LanguageClient(
         "ctlsp",
         "CTL Language",
@@ -38,7 +80,7 @@ export function activate(context: ExtensionContext) {
                 },
             },
             run: {
-                command: (workspace.getConfiguration("ctlsp").get("compiler") as any).path,
+                command: workspace.getConfiguration("ctlsp.compiler").get<string>("path"),
                 args: ["lsp"],
                 options: {
                     env: {
@@ -57,28 +99,8 @@ export function activate(context: ExtensionContext) {
             },
         }
     );
-
-    context.subscriptions.push(
-        commands.registerCommand(CMD_STOP, async () => {
-            await client.stop();
-        })
-    );
-
-    context.subscriptions.push(
-        commands.registerCommand(CMD_RESTART, async () => {
-            if (client.isRunning()) {
-                await client.stop();
-            }
-            await client.start();
-        })
-    );
-
     client.onDidChangeState((e) => updateTooltip(e.newState));
     client.start();
-}
-
-export function deactivate() {
-    return client?.stop();
 }
 
 function updateTooltip(state: State) {
