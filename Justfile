@@ -1,3 +1,11 @@
+VSCODE_HOME := if path_exists(home_directory() / ".vscode-server") == "true" {
+    home_directory() / ".vscode-server"
+} else if path_exists(home_directory() / ".vscode-oss") == "true" {
+    home_directory() / ".vscode-oss"
+} else {
+    home_directory() / ".vscode"
+}
+
 clean:
     rm main.c
     rm a.out
@@ -5,4 +13,4 @@ clean:
     rm flamegraph.svg
 
 code:
-    cd ide/code && npm run compile && rsync -av . ~/.vscode-oss/extensions/ctl
+    cd ide/code && npm install && npm run compile && rsync -av . {{VSCODE_HOME}}/extensions/ctl
