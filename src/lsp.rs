@@ -7,7 +7,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 use crate::ast::parsed::Linkage;
-use crate::error::{FileId, OffsetMode};
+use crate::error::{Diagnostics, FileId, OffsetMode};
 use crate::lexer::Span;
 use crate::sym::{FunctionId, Scopes, UserTypeData, UserTypeId, VariableId};
 use crate::typecheck::HoverItem;
@@ -199,8 +199,8 @@ impl LspBackend {
             diag.format_diagnostics(id, errors, l, OffsetMode::Utf16, |msg, start, end| {
                 entry.push(Diagnostic {
                     range: Range::new(
-                        Position::new(start.0 as u32 - 1, start.1 as u32 - 1),
-                        Position::new(end.0 as u32 - 1, end.1 as u32 - 1),
+                        Position::new(start.0 as u32, start.1 as u32),
+                        Position::new(end.0 as u32, end.1 as u32),
                     ),
                     severity: Some(DiagnosticSeverity::ERROR),
                     source: Some("ctllsp".into()),
@@ -212,8 +212,8 @@ impl LspBackend {
             diag.format_diagnostics(id, warnings, l, OffsetMode::Utf16, |msg, start, end| {
                 entry.push(Diagnostic {
                     range: Range::new(
-                        Position::new(start.0 as u32 - 1, start.1 as u32 - 1),
-                        Position::new(end.0 as u32 - 1, end.1 as u32 - 1),
+                        Position::new(start.0 as u32, start.1 as u32),
+                        Position::new(end.0 as u32, end.1 as u32),
                     ),
                     severity: Some(DiagnosticSeverity::WARNING),
                     source: Some("ctllsp".into()),
@@ -235,9 +235,9 @@ impl LspBackend {
                 continue;
             }
 
-            let position = span_to_position(&doc.text, var.name.span.pos + var.name.span.len);
+            let (_, pos) = Diagnostics::get_span_range(&doc.text, var.name.span, OffsetMode::Utf16);
             doc.inlay_hints.push(InlayHint {
-                position,
+                position: Position::new(pos.0 as u32, pos.1 as u32),
                 label: InlayHintLabel::String(format!(": {}", var.ty.name(scopes))),
                 kind: Some(InlayHintKind::TYPE),
                 text_edits: Default::default(),
@@ -297,19 +297,6 @@ fn get_file_project(input: &Path) -> &Path {
         prev = parent;
     }
     input
-}
-
-fn span_to_position(text: &str, offset: usize) -> Position {
-    let (mut row, mut col) = (1, 1);
-    for ch in text.chars().take(offset) {
-        if ch == '\n' {
-            row += 1;
-            col = 1;
-        } else {
-            col += ch.len_utf16() as u32;
-        }
-    }
-    Position::new(row - 1, col - 1)
 }
 
 fn position_to_span(text: &str, file: FileId, line: u32, character: u32) -> Span {

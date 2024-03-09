@@ -6,6 +6,7 @@ use crate::{
     typeid::Type,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum OffsetMode {
     Utf8,
     Utf16,
@@ -63,7 +64,7 @@ impl Diagnostics {
                 lsp_file,
                 OffsetMode::Utf32,
                 |msg, (row, col), _| {
-                    eprintln!("error: {}:{row}:{col}: {msg}", path.display());
+                    eprintln!("error: {}:{}:{}: {msg}", path.display(), row + 1, col + 1);
                 },
             );
         }
@@ -79,7 +80,7 @@ impl Diagnostics {
                 lsp_file,
                 OffsetMode::Utf32,
                 |msg, (row, col), _| {
-                    eprintln!("warning: {}:{row}:{col}: {msg}", path.display());
+                    eprintln!("warning: {}:{}:{}: {msg}", path.display(), row + 1, col + 1);
                 },
             );
         }
@@ -90,7 +91,7 @@ impl Diagnostics {
         id: FileId,
         errors: &[Error],
         lsp_file: Option<&(FileId, String)>,
-        offset_mode: OffsetMode,
+        mode: OffsetMode,
         mut format: impl FnMut(&str, (usize, usize), (usize, usize)),
     ) {
         let mut file = None;
@@ -102,36 +103,7 @@ impl Diagnostics {
                 .unwrap_or_else(|| {
                     file.get_or_insert_with(|| std::fs::read_to_string(&self.paths[id.0]).unwrap())
                 });
-            let mut start = (1usize, 1usize);
-            // maybe do this first and keep a vector of positions?
-            let mut chars = data.chars();
-            for ch in (&mut chars).take(span.pos) {
-                if ch == '\n' {
-                    start.0 += 1;
-                    start.1 = 1;
-                } else {
-                    start.1 += match offset_mode {
-                        OffsetMode::Utf8 => ch.len_utf8(),
-                        OffsetMode::Utf16 => ch.len_utf16(),
-                        OffsetMode::Utf32 => 1,
-                    };
-                }
-            }
-
-            let mut end = start;
-            for ch in chars.take(span.len) {
-                if ch == '\n' {
-                    end.0 += 1;
-                    end.1 = 1;
-                } else {
-                    end.1 += match offset_mode {
-                        OffsetMode::Utf8 => ch.len_utf8(),
-                        OffsetMode::Utf16 => ch.len_utf16(),
-                        OffsetMode::Utf32 => 1,
-                    };
-                }
-            }
-
+            let (start, end) = Self::get_span_range(data, *span, mode);
             format(diagnostic, start, end);
         }
     }
@@ -149,6 +121,52 @@ impl Diagnostics {
 
     pub fn warnings(&self) -> &[Error] {
         &self.warnings
+    }
+
+    pub fn get_span_range(
+        data: &str,
+        span: Span,
+        mode: OffsetMode,
+    ) -> ((usize, usize), (usize, usize)) {
+        // maybe do this first and keep a vector of positions?
+        let mut start = (0usize, 0usize);
+        let mut chars = data.char_indices();
+        for (i, ch) in &mut chars {
+            if i >= span.pos {
+                break;
+            }
+
+            if ch == '\n' {
+                start.0 += 1;
+                start.1 = 0;
+            } else {
+                start.1 += match mode {
+                    OffsetMode::Utf8 => ch.len_utf8(),
+                    OffsetMode::Utf16 => ch.len_utf16(),
+                    OffsetMode::Utf32 => 1,
+                };
+            }
+        }
+
+        let mut end = start;
+        for (i, ch) in chars {
+            if i > span.pos + span.len {
+                break;
+            }
+
+            if ch == '\n' {
+                end.0 += 1;
+                end.1 = 0;
+            } else {
+                end.1 += match mode {
+                    OffsetMode::Utf8 => ch.len_utf8(),
+                    OffsetMode::Utf16 => ch.len_utf16(),
+                    OffsetMode::Utf32 => 1,
+                };
+            }
+        }
+
+        (start, end)
     }
 }
 
