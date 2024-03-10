@@ -88,12 +88,6 @@ impl Default for CheckedPattern {
     }
 }
 
-#[derive(Debug, Clone, EnumAsInner)]
-pub enum Symbol {
-    Func(GenericFunc),
-    Var(VariableId),
-}
-
 #[derive(Debug, Default, Clone)]
 pub enum CheckedStmt {
     Expr(CheckedExpr),
@@ -134,10 +128,11 @@ pub enum CheckedExprData {
         expr: Box<CheckedExpr>,
         scope: ScopeId,
     },
-    Instance {
+    VariantInstance {
         members: IndexMap<String, CheckedExpr>,
-        variant: Option<String>,
+        variant: String,
     },
+    Instance(IndexMap<String, CheckedExpr>),
     Array(Vec<CheckedExpr>),
     ArrayWithInit {
         init: Box<CheckedExpr>,
@@ -162,7 +157,8 @@ pub enum CheckedExprData {
     ByteString(Vec<u8>),
     Char(char),
     Void,
-    Symbol(Symbol, ScopeId),
+    Func(GenericFunc, ScopeId),
+    Var(VariableId),
     Block(Block),
     If {
         cond: Box<CheckedExpr>,
@@ -218,11 +214,9 @@ impl CheckedExpr {
             CheckedExprData::Unary { op, expr } => {
                 matches!(op, UnaryOp::Deref) && matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
             }
-            CheckedExprData::Symbol(_, _) | CheckedExprData::Member { .. } => {
-                self.can_addrmut(scopes)
-            }
+            CheckedExprData::Var(_) | CheckedExprData::Member { .. } => self.can_addrmut(scopes),
             CheckedExprData::Subscript { callee, .. } => match &callee.data {
-                CheckedExprData::Symbol(Symbol::Var(id), _) => {
+                CheckedExprData::Var(id) => {
                     matches!(callee.ty, Type::MutPtr(_) | Type::RawPtr(_))
                         || scopes.get(*id).mutable
                 }
@@ -242,10 +236,7 @@ impl CheckedExpr {
             CheckedExprData::AutoDeref(expr, _) => {
                 matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
             }
-            CheckedExprData::Symbol(symbol, _) => match symbol {
-                Symbol::Func(_) => false,
-                Symbol::Var(var) => scopes.get(*var).mutable,
-            },
+            CheckedExprData::Var(id) => scopes.get(*id).mutable,
             CheckedExprData::Member { source, .. } => {
                 matches!(source.ty, Type::MutPtr(_)) || source.can_addrmut(scopes)
             }
@@ -310,9 +301,9 @@ impl CheckedExpr {
     pub fn option_null(opt: Type) -> CheckedExpr {
         CheckedExpr::new(
             opt,
-            CheckedExprData::Instance {
+            CheckedExprData::VariantInstance {
                 members: Default::default(),
-                variant: Some("None".into()),
+                variant: "None".into(),
             },
         )
     }

@@ -58,7 +58,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
             Bucket::Tombstone => null,
             entry => {
                 this.len--;
-                if std::mem::replace(entry, Bucket::Tombstone()) is Bucket::Some(_, v) {
+                if std::mem::replace(entry, Bucket::Tombstone) is Bucket::Some(_, v) {
                     v
                 } else {
                     unreachable();
@@ -71,7 +71,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         if this.len > 0 {
             for entry in this.buckets.iter_mut() {
                 if !(entry is Bucket::None) {
-                    *entry = Bucket::None();
+                    *entry = Bucket::None;
                 }
             }
 
@@ -132,7 +132,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         let old = this.buckets.len();
         this.buckets.reserve(cap - old);
         while this.buckets.len() < cap {
-            this.buckets.push(Bucket::None());
+            this.buckets.push(Bucket::None);
         }
 
         this.len = 0;

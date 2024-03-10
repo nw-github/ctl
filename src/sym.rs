@@ -42,13 +42,9 @@ macro_rules! id {
                 let id = $name(index);
                 let name = (scopes.$vec[id.0].name.data).clone();
                 let kind = id.into();
-                let prev = scopes[scope].$namespace.insert(
-                    name,
-                    Vis {
-                        id: kind,
-                        public,
-                    },
-                );
+                let prev = scopes[scope]
+                    .$namespace
+                    .insert(name, Vis { id: kind, public });
                 InsertionResult {
                     id,
                     existed: prev.is_some(),
@@ -240,6 +236,15 @@ impl UserType {
             .map(|f| f.id)
             .find(|&id| scopes.get(id).name.data == name)
     }
+
+    pub fn is_empty_variant(&self, variant: &str) -> bool {
+        self.members.is_empty()
+            && self
+                .data
+                .as_union()
+                .and_then(|u| u.variants.get(variant))
+                .is_some_and(|u| u.is_none())
+    }
 }
 
 #[derive(Debug)]
@@ -364,7 +369,12 @@ pub trait ItemId: Sized + Copy + Clone {
     fn get_mut(self, scopes: &mut Scopes) -> &mut Scoped<Self::Value>;
     fn name<'a>(&self, scopes: &'a Scopes) -> &'a Located<String>;
 
-    fn insert_in(scopes: &mut Scopes, val: Self::Value, public: bool, id: ScopeId) -> InsertionResult<Self>;
+    fn insert_in(
+        scopes: &mut Scopes,
+        val: Self::Value,
+        public: bool,
+        id: ScopeId,
+    ) -> InsertionResult<Self>;
 }
 
 #[derive(Debug, Clone, Copy, EnumAsInner, From)]

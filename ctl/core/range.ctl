@@ -16,7 +16,7 @@ pub struct RangeTo<T> {
 
     impl RangeBounds<T> {
         fn begin(this): Bound<T> {
-            Bound::Unbounded()
+            Bound::Unbounded
         }
 
         fn end(this): Bound<T> {
@@ -32,7 +32,7 @@ pub struct RangeToInclusive<T> {
 
     impl RangeBounds<T> {
         fn begin(this): Bound<T> {
-            Bound::Unbounded()
+            Bound::Unbounded
         }
 
         fn end(this): Bound<T> {
@@ -52,7 +52,7 @@ pub struct RangeFrom<T> {
         }
 
         fn end(this): Bound<T> {
-            Bound::Unbounded()
+            Bound::Unbounded
         }
     }
 }

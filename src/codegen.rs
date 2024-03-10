@@ -1512,22 +1512,38 @@ impl<'a, 'b> Codegen<'a, 'b> {
                 self.buffer.emit(format!("0x{:x}", value as u32));
             }
             CheckedExprData::Void => self.buffer.emit(VOID_INSTANCE),
-            CheckedExprData::Symbol(symbol, scope) => match symbol {
-                Symbol::Func(func) => {
-                    let state = State::new_with_caller(func, scope);
-                    self.buffer
-                        .emit_fn_name(self.scopes, &state.func, self.flags.minify);
-                    self.funcs.insert(state);
+            CheckedExprData::Func(func, scope) => {
+                let state = State::new_with_caller(func, scope);
+                self.buffer
+                    .emit_fn_name(self.scopes, &state.func, self.flags.minify);
+                self.funcs.insert(state);
+            }
+            CheckedExprData::Var(id) => {
+                if self.scopes.get(id).is_static {
+                    self.statics.insert(id);
                 }
-                Symbol::Var(id) => {
-                    if self.scopes.get(id).is_static {
-                        self.statics.insert(id);
-                    }
+                self.emit_var_name(id, state);
+            }
+            CheckedExprData::Instance(members) => {
+                self.emit_cast(&expr.ty);
+                self.buffer.emit("{");
+                let ut_id = expr.ty.as_user().unwrap().id;
+                if members.is_empty() {
+                    self.buffer.emit("CTL_DUMMY_INIT");
+                }
 
-                    self.emit_var_name(id, state);
+                for (name, mut value) in members {
+                    value.ty.fill_templates(&state.func.ty_args);
+                    self.buffer.emit(format!(
+                        ".{}=",
+                        member_name(self.scopes, Some(ut_id), &name)
+                    ));
+                    self.emit_expr(value, state);
+                    self.buffer.emit(",");
                 }
-            },
-            CheckedExprData::Instance {
+                self.buffer.emit("}");
+            }
+            CheckedExprData::VariantInstance {
                 mut members,
                 variant,
             } => {
@@ -1542,54 +1558,39 @@ impl<'a, 'b> Codegen<'a, 'b> {
                     self.buffer.emit("{");
                     let ut_id = expr.ty.as_user().unwrap().id;
                     let ut = self.scopes.get(ut_id);
-                    if let Some((variant, union)) = variant.zip(ut.data.as_union()) {
-                        let members: Vec<_> = members
-                            .into_iter()
-                            .map(|(name, mut expr)| {
-                                expr.ty.fill_templates(&state.func.ty_args);
-                                // TODO: dont emit temporaries for expressions that cant have side effects
-                                (name, hoist!(self, state, self.emit_tmpvar(expr, state)))
-                            })
-                            .collect();
-                        self.buffer.emit(format!(
-                            ".{UNION_TAG_NAME}={},",
-                            Self::variant_tag(union, &variant).unwrap()
-                        ));
+                    let union = ut.data.as_union().unwrap();
+                    let members: Vec<_> = members
+                        .into_iter()
+                        .map(|(name, mut expr)| {
+                            expr.ty.fill_templates(&state.func.ty_args);
+                            // TODO: dont emit temporaries for expressions that cant have side effects
+                            (name, hoist!(self, state, self.emit_tmpvar(expr, state)))
+                        })
+                        .collect();
+                    self.buffer.emit(format!(
+                        ".{UNION_TAG_NAME}={},",
+                        Self::variant_tag(union, &variant).unwrap()
+                    ));
 
+                    for (name, value) in members
+                        .iter()
+                        .filter(|(name, _)| ut.members.contains_key(name))
+                    {
+                        self.buffer.emit(format!(
+                            ".{}={value},",
+                            member_name(self.scopes, Some(ut_id), name)
+                        ));
+                    }
+
+                    if union.variants.get(&variant).is_some_and(|v| v.is_some()) {
+                        self.buffer.emit(format!(".${variant}={{"));
                         for (name, value) in members
                             .iter()
-                            .filter(|(name, _)| ut.members.contains_key(name))
+                            .filter(|(name, _)| !ut.members.contains_key(name))
                         {
-                            self.buffer.emit(format!(
-                                ".{}={value},",
-                                member_name(self.scopes, Some(ut_id), name)
-                            ));
+                            self.buffer.emit(format!(".${name}={value},"));
                         }
-
-                        if union.variants.get(&variant).is_some_and(|v| v.is_some()) {
-                            self.buffer.emit(format!(".${variant}={{"));
-                            for (name, value) in members
-                                .iter()
-                                .filter(|(name, _)| !ut.members.contains_key(name))
-                            {
-                                self.buffer.emit(format!(".${name}={value},"));
-                            }
-                            self.buffer.emit("}");
-                        }
-                    } else {
-                        if members.is_empty() {
-                            self.buffer.emit("CTL_DUMMY_INIT");
-                        }
-
-                        for (name, mut value) in members {
-                            value.ty.fill_templates(&state.func.ty_args);
-                            self.buffer.emit(format!(
-                                ".{}=",
-                                member_name(self.scopes, Some(ut_id), &name)
-                            ));
-                            self.emit_expr(value, state);
-                            self.buffer.emit(",");
-                        }
+                        self.buffer.emit("}");
                     }
                     self.buffer.emit("}");
                 }
@@ -2856,7 +2857,7 @@ impl<'a, 'b> Codegen<'a, 'b> {
             CheckedExprData::Unary {
                 op: UnaryOp::Deref,
                 ..
-            } | CheckedExprData::Symbol(_, _)
+            } | CheckedExprData::Var(_)
                 | CheckedExprData::Member { .. }
                 | CheckedExprData::Subscript { .. }
         )
