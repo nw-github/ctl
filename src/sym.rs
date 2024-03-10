@@ -206,6 +206,12 @@ pub struct Union {
     pub tag: Type,
 }
 
+impl Union {
+    pub fn variant_tag(&self, name: &str) -> Option<usize> {
+        self.variants.get_index_of(name)
+    }
+}
+
 #[derive(Debug, EnumAsInner)]
 pub enum UserTypeData {
     Struct,

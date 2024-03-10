@@ -10,7 +10,7 @@ use tower_lsp::{Client, LanguageServer};
 use crate::ast::parsed::Linkage;
 use crate::error::{Diagnostics, FileId, OffsetMode};
 use crate::lexer::Span;
-use crate::sym::{FunctionId, Scopes, UserTypeData, UserTypeId, VariableId};
+use crate::sym::{FunctionId, Scopes, Union, UserTypeData, UserTypeId, VariableId};
 use crate::typecheck::HoverItem;
 use crate::typeid::{GenericUserType, Type};
 use crate::{get_default_libs, Compiler};
@@ -287,6 +287,18 @@ impl LspBackend {
                     visualize_type_params(&mut res, &tr.type_params, scopes);
                     Some(res)
                 }
+                HoverItem::Extension(id) => {
+                    let ext = scopes.get(*id);
+                    let mut res = format!(
+                        "{}extension {}",
+                        if ext.public { "pub " } else { "" },
+                        ext.name.data
+                    );
+                    visualize_type_params(&mut res, &ext.type_params, scopes);
+                    write_de!(res, " for {}", ext.ty.name(scopes));
+
+                    Some(res)
+                }
                 _ => None,
             })
             .map(|value| Hover {
@@ -348,6 +360,21 @@ fn visualize_type_params(res: &mut String, params: &[UserTypeId], scopes: &Scope
 fn visualize_func(id: FunctionId, scopes: &Scopes) -> String {
     let func = scopes.get(id);
     let mut res = String::new();
+    if let Some(u) = func
+        .constructor
+        .and_then(|id| scopes.get(id).data.as_union())
+    {
+        let variant = &func.name.data;
+        visualize_variant_body(
+            &mut res,
+            u,
+            variant,
+            u.variants.get(variant).and_then(|inner| inner.as_ref()),
+            scopes,
+        );
+        return res;
+    }
+
     if func.public {
         res += "pub ";
     }
@@ -480,44 +507,8 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
             visualize_type_params(&mut res, &ut.type_params, scopes);
             write_de!(res, ": {} {{", union.tag.name(scopes));
             for (name, ty) in union.variants.iter() {
-                write_de!(res, "\n\t{name}");
-                match ty {
-                    Some(Type::User(ut)) => {
-                        let inner = scopes.get(ut.id);
-                        if inner.data.is_anon_struct() {
-                            res += " {";
-                            for (i, (name, _)) in inner.members.iter().enumerate() {
-                                write_de!(
-                                    res,
-                                    "{}{name}: {}",
-                                    if i > 0 { ", " } else { " " },
-                                    ut.ty_args
-                                        .get_index(i)
-                                        .map(|v| v.1)
-                                        .unwrap_or(&Type::Unknown)
-                                        .name(scopes)
-                                )
-                            }
-                            res += " }";
-                        } else if inner.data.is_tuple() {
-                            res += "(";
-                            for i in 0..inner.members.len() {
-                                if i > 0 {
-                                    res += ", ";
-                                }
-                                res += &ut
-                                    .ty_args
-                                    .get_index(i)
-                                    .map(|v| v.1)
-                                    .unwrap_or(&Type::Unknown)
-                                    .name(scopes)
-                            }
-                            res += ")";
-                        }
-                    }
-                    Some(ty) => write_de!(res, "({})", ty.name(scopes)),
-                    None => {}
-                }
+                res += "\n\t";
+                visualize_variant_body(&mut res, union, name, ty.as_ref(), scopes);
                 res += ",";
             }
             print_body(&mut res, !union.variants.is_empty());
@@ -550,4 +541,52 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
     }
 
     res
+}
+
+fn visualize_variant_body(
+    res: &mut String,
+    union: &Union,
+    name: &str,
+    ty: Option<&Type>,
+    scopes: &Scopes,
+) {
+    *res += name;
+    match ty {
+        Some(Type::User(ut)) => {
+            let inner = scopes.get(ut.id);
+            if inner.data.is_anon_struct() {
+                *res += " {";
+                for (i, (name, _)) in inner.members.iter().enumerate() {
+                    write_de!(
+                        res,
+                        "{}{name}: {}",
+                        if i > 0 { ", " } else { " " },
+                        ut.ty_args
+                            .get_index(i)
+                            .map(|v| v.1)
+                            .unwrap_or(&Type::Unknown)
+                            .name(scopes)
+                    )
+                }
+                *res += " }";
+            } else if inner.data.is_tuple() {
+                *res += "(";
+                for i in 0..inner.members.len() {
+                    if i > 0 {
+                        *res += ", ";
+                    }
+                    *res += &ut
+                        .ty_args
+                        .get_index(i)
+                        .map(|v| v.1)
+                        .unwrap_or(&Type::Unknown)
+                        .name(scopes)
+                }
+                *res += ")";
+            }
+        }
+        Some(ty) => write_de!(res, "({})", ty.name(scopes)),
+        None => {}
+    }
+    write_de!(res, " = {}", union.variant_tag(name).unwrap());
 }

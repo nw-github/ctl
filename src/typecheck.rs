@@ -87,7 +87,6 @@ pub enum ResolvedType {
 
 #[derive(Default)]
 pub enum ResolvedValue {
-    StructConstructor(UserTypeId, GenericFunc),
     UnionConstructor(GenericUserType),
     Func(GenericFunc),
     Var(VariableId),
@@ -2174,7 +2173,7 @@ impl TypeChecker {
                     self.scopes.get_mut(id).unused = false;
                     CheckedExpr::new(ty, CheckedExprData::Var(id))
                 }
-                ResolvedValue::Func(mut func) | ResolvedValue::StructConstructor(_, mut func) => {
+                ResolvedValue::Func(mut func) => {
                     let unknowns: HashSet<_> = func
                         .ty_args
                         .iter()
@@ -3031,11 +3030,6 @@ impl TypeChecker {
             ExprData::Path(ref path) => match self.resolve_value_path(path) {
                 ResolvedValue::UnionConstructor(ut) => {
                     return self.check_unsafe_union_constructor(target, ut, args, span);
-                }
-                ResolvedValue::StructConstructor(_, mut init) => {
-                    let span = path.components.last().map(|c| c.0.span).unwrap_or(span);
-                    let (args, ret) = self.check_fn_args(&mut init, None, args, target, span);
-                    return CheckedExpr::new(ret, CheckedExprData::Instance(args));
                 }
                 ResolvedValue::Func(mut func) => {
                     let span = path.components.last().map(|c| c.0.span).unwrap_or(span);
@@ -4349,6 +4343,12 @@ impl TypeChecker {
                         &f.ret.name(&self.scopes),
                         span,
                     )))
+                } else if f.constructor.is_some() {
+                    Err(Some(Error::type_mismatch_s(
+                        &scrutinee.name(&self.scopes),
+                        &f.ret.name(&self.scopes),
+                        span,
+                    )))
                 } else {
                     Err(Some(Error::expected_found(
                         &scrutinee.name(&self.scopes),
@@ -4357,14 +4357,9 @@ impl TypeChecker {
                     )))
                 }
             }
-            ResolvedValue::StructConstructor(id, _) => Err(Some(Error::expected_found(
+            ResolvedValue::UnionConstructor(ut) => Err(Some(Error::type_mismatch_s(
                 &scrutinee.name(&self.scopes),
-                &format!("type '{}'", self.scopes.get(id).name),
-                span,
-            ))),
-            ResolvedValue::UnionConstructor(ut) => Err(Some(Error::expected_found(
-                &scrutinee.name(&self.scopes),
-                &format!("type '{}'", self.scopes.get(ut.id).name),
+                &ut.name(&self.scopes),
                 span,
             ))),
             ResolvedValue::Var(id) => Err(Some(Error::expected_found(
@@ -5424,18 +5419,15 @@ impl TypeChecker {
                         }
                         Some(ValueItem::StructConstructor(id, init)) => {
                             self.check_hover(name.span, init.into());
-                            ResolvedValue::StructConstructor(
-                                id,
-                                GenericFunc::new(
-                                    init,
-                                    self.resolve_type_args(
-                                        &self.scopes.get(id).type_params.clone(),
-                                        ty_args,
-                                        false,
-                                        name.span,
-                                    ),
+                            ResolvedValue::Func(GenericFunc::new(
+                                init,
+                                self.resolve_type_args(
+                                    &self.scopes.get(id).type_params.clone(),
+                                    ty_args,
+                                    false,
+                                    name.span,
                                 ),
-                            )
+                            ))
                         }
                         Some(ValueItem::UnionConstructor(id)) => {
                             self.check_hover(name.span, id.into());
@@ -5633,8 +5625,7 @@ impl TypeChecker {
                     false,
                     last_name.span,
                 ));
-
-                ResolvedValue::StructConstructor(id, GenericFunc::new(init, ty_args))
+                ResolvedValue::Func(GenericFunc::new(init, ty_args))
             }
             ValueItem::UnionConstructor(id) => {
                 self.check_hover(last_name.span, id.into());

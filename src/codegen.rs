@@ -1569,7 +1569,7 @@ impl<'a, 'b> Codegen<'a, 'b> {
                         .collect();
                     self.buffer.emit(format!(
                         ".{UNION_TAG_NAME}={},",
-                        Self::variant_tag(union, &variant).unwrap()
+                        union.variant_tag(&variant).unwrap()
                     ));
 
                     for (name, value) in members
@@ -1968,7 +1968,7 @@ impl<'a, 'b> Codegen<'a, 'b> {
                                 .unwrap();
                             self.buffer.emit(format!(
                                 "{left}.{UNION_TAG_NAME}={}",
-                                Self::variant_tag(union, "Some").unwrap()
+                                union.variant_tag("Some").unwrap()
                             ));
                         }
                         self.buffer.emit(";}");
@@ -2037,17 +2037,17 @@ impl<'a, 'b> Codegen<'a, 'b> {
                 self.emit_cast(&ret);
                 self.buffer.emit(format!(
                     "{{.{UNION_TAG_NAME}={}}}:({tmp}>0?",
-                    Self::variant_tag(union, "Less").unwrap()
+                    union.variant_tag("Less").unwrap()
                 ));
                 self.emit_cast(&ret);
                 self.buffer.emit(format!(
                     "{{.{UNION_TAG_NAME}={}}}:",
-                    Self::variant_tag(union, "Greater").unwrap()
+                    union.variant_tag("Greater").unwrap()
                 ));
                 self.emit_cast(&ret);
                 self.buffer.emit(format!(
                     "{{.{UNION_TAG_NAME}={}}}))",
-                    Self::variant_tag(union, "Equal").unwrap()
+                    union.variant_tag("Equal").unwrap()
                 ));
             }
             _ => {
@@ -2481,7 +2481,7 @@ impl<'a, 'b> Codegen<'a, 'b> {
                     let tag = base
                         .as_user()
                         .and_then(|ut| self.scopes.get(ut.id).data.as_union())
-                        .and_then(|union| Self::variant_tag(union, variant))
+                        .and_then(|union| union.variant_tag(variant))
                         .unwrap();
                     conditions.next_str(format!("{src}.{UNION_TAG_NAME}=={tag}"));
 
@@ -2940,10 +2940,6 @@ impl<'a, 'b> Codegen<'a, 'b> {
             count += 1;
         }
         count
-    }
-
-    fn variant_tag(union: &Union, name: &str) -> Option<usize> {
-        union.variants.get_index_of(name)
     }
 }
 
