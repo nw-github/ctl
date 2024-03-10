@@ -682,7 +682,7 @@ impl<'a> Lexer<'a> {
             Some('\\') => self.escape_char(diag, byte),
             Some('\'') => {
                 diag.error(Error::new("empty char literal", self.here(1)));
-                '\0'
+                return '\0';
             }
             Some(any) => any,
             None => {

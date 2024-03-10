@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::path::Path;
 
 use dashmap::DashMap;
@@ -11,8 +12,20 @@ use crate::error::{Diagnostics, FileId, OffsetMode};
 use crate::lexer::Span;
 use crate::sym::{FunctionId, Scopes, UserTypeData, UserTypeId, VariableId};
 use crate::typecheck::HoverItem;
-use crate::typeid::Type;
+use crate::typeid::{GenericUserType, Type};
 use crate::{get_default_libs, Compiler};
+
+macro_rules! write_de {
+    ($dst:expr, $($arg:tt)*) => {
+        _ = write!($dst, $($arg)*)
+    };
+}
+
+macro_rules! writeln_de {
+    ($dst:expr, $($arg:tt)*) => {
+        _ = writeln!($dst, $($arg)*)
+    };
+}
 
 #[derive(serde::Deserialize, Clone, Copy, Debug)]
 struct Configuration {
@@ -418,16 +431,15 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
             *res += "\n";
         }
         for (name, member) in ut.members.iter() {
-            *res += "\n\t";
-            if ut.data.is_union() {
-                *res += "shared ";
+            let header = if ut.data.is_union() {
+                "shared "
             } else if member.public {
-                *res += "pub ";
-            }
-            *res += &name;
-            *res += ": ";
-            *res += &member.ty.name(scopes);
-            *res += ",";
+                "pub "
+            } else {
+                ""
+            };
+
+            write_de!(res, "\n\t{header}{name}: {},", &member.ty.name(scopes));
             wrote = true;
         }
 
@@ -438,26 +450,31 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
         }
     };
 
+    if ut.type_params.is_empty() && !ut.data.is_template() {
+        let (sz, align) = GenericUserType::new(id, Default::default()).size_and_align(scopes);
+        writeln_de!(res, "// size = {sz}, align = {align}");
+    }
+
     if ut.public {
         res += "pub ";
     }
     match &ut.data {
         UserTypeData::Struct => {
-            res += "struct ";
-            res += &ut.item.name.data;
+            write_de!(res, "struct {}", &ut.item.name.data);
+            visualize_type_params(&mut res, &ut.type_params, scopes);
             res += " {";
             print_body(&mut res, false);
         }
         UserTypeData::UnsafeUnion => {
-            res += "unsafe union ";
-            res += &ut.item.name.data;
+            write_de!(res, "unsafe union {}", &ut.item.name.data);
+            visualize_type_params(&mut res, &ut.type_params, scopes);
             res += " {";
             print_body(&mut res, false);
         }
         UserTypeData::Union(union) => {
-            res += "union ";
-            res += &ut.item.name.data;
-            res += " {";
+            write_de!(res, "union {}", &ut.item.name.data);
+            visualize_type_params(&mut res, &ut.type_params, scopes);
+            write_de!(res, ": {} {{", union.tag.name(scopes));
             for (name, ty) in union.variants.iter() {
                 res += "\n\t";
                 res += &name;

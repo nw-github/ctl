@@ -199,7 +199,7 @@ impl GenericUserType {
                     return format!("[{}..]", self.ty_args[0].name(scopes));
                 } else if is_lang_type("span_mut") {
                     return format!("[mut {}..]", self.ty_args[0].name(scopes));
-                } else if is_lang_type("vector") {
+                } else if is_lang_type("vec") {
                     return format!("[{}]", self.ty_args[0].name(scopes));
                 } else if is_lang_type("set") {
                     return format!("{{{}}}", self.ty_args[0].name(scopes));
@@ -230,6 +230,78 @@ impl GenericUserType {
 
     pub fn from_id(scopes: &Scopes, id: UserTypeId) -> Self {
         Self::from_type_params(scopes, id)
+    }
+
+    pub fn size_and_align(&self, scopes: &Scopes) -> (usize, usize) {
+        struct SizeAndAlign {
+            size: usize,
+            align: usize,
+        }
+
+        impl SizeAndAlign {
+            fn new() -> Self {
+                Self { size: 0, align: 1 }
+            }
+
+            fn next(&mut self, (s, a): (usize, usize)) {
+                self.size += (a - self.size % a) % a + s;
+                self.align = self.align.max(a);
+            }
+        }
+
+        let mut sa = SizeAndAlign::new();
+        let ut = scopes.get(self.id);
+        if let Some(union) = ut.data.as_union() {
+            if self.can_omit_tag(scopes).is_none() {
+                sa.next(union.tag.size_and_align(scopes));
+            }
+            for member in ut.members.values() {
+                sa.next(
+                    member
+                        .ty
+                        .with_templates(&self.ty_args)
+                        .size_and_align(scopes),
+                );
+            }
+
+            sa.next(
+                union
+                    .variants
+                    .values()
+                    .flatten()
+                    .fold((0, 1), |(sz, align), ty| {
+                        let (s, a) = ty.with_templates(&self.ty_args).size_and_align(scopes);
+                        (sz.max(s), align.max(a))
+                    }),
+            );
+        } else {
+            for member in ut.members.values() {
+                sa.next(
+                    member
+                        .ty
+                        .with_templates(&self.ty_args)
+                        .size_and_align(scopes),
+                );
+            }
+        }
+        sa.next((0, sa.align));
+        (sa.size, sa.align)
+    }
+
+    pub fn as_option_inner(&self, scopes: &Scopes) -> Option<&Type> {
+        scopes
+            .get_option_id()
+            .filter(|opt| self.id == *opt)
+            .and_then(|_| self.first_type_arg())
+    }
+
+    pub fn can_omit_tag(&self, scopes: &Scopes) -> Option<&Type> {
+        self.as_option_inner(scopes).filter(|inner| {
+            matches!(
+                inner,
+                Type::FnPtr(_) | Type::RawPtr(_) | Type::Ptr(_) | Type::MutPtr(_)
+            )
+        })
     }
 }
 
@@ -648,11 +720,7 @@ impl Type {
     }
 
     pub fn as_option_inner<'a>(&'a self, scopes: &Scopes) -> Option<&'a Type> {
-        scopes.get_option_id().and_then(|opt| {
-            self.as_user()
-                .filter(|ut| ut.id == opt)
-                .and_then(|ut| ut.first_type_arg())
-        })
+        self.as_user().and_then(|s| s.as_option_inner(scopes))
     }
 
     pub fn with_templates(&self, args: &TypeArgs) -> Type {
@@ -682,51 +750,7 @@ impl Type {
             Type::Bool => std::mem::size_of::<bool>(),
             Type::Char => std::mem::size_of::<char>(),
             Type::FnPtr(_) => std::mem::size_of::<fn()>(),
-            Type::User(ut) => {
-                struct SizeAndAlign {
-                    size: usize,
-                    align: usize,
-                }
-
-                impl SizeAndAlign {
-                    fn new() -> Self {
-                        Self { size: 0, align: 1 }
-                    }
-
-                    fn next(&mut self, (s, a): (usize, usize)) {
-                        self.size += (a - self.size % a) % a + s;
-                        self.align = self.align.max(a);
-                    }
-                }
-
-                let ty = scopes.get(ut.id);
-                let mut sa = SizeAndAlign::new();
-                if let Some(union) = ty.data.as_union() {
-                    if self.can_omit_tag(scopes).is_none() {
-                        sa.next(union.tag.size_and_align(scopes));
-                    }
-                    for member in ty.members.values() {
-                        sa.next(member.ty.with_templates(&ut.ty_args).size_and_align(scopes));
-                    }
-
-                    sa.next(
-                        union
-                            .variants
-                            .values()
-                            .flatten()
-                            .fold((0, 1), |(sz, align), ty| {
-                                let (s, a) = ty.with_templates(&ut.ty_args).size_and_align(scopes);
-                                (sz.max(s), align.max(a))
-                            }),
-                    );
-                } else {
-                    for member in ty.members.values() {
-                        sa.next(member.ty.with_templates(&ut.ty_args).size_and_align(scopes));
-                    }
-                }
-                sa.next((0, sa.align));
-                return (sa.size, sa.align);
-            }
+            Type::User(ut) => return ut.size_and_align(scopes),
             Type::Array(data) => {
                 let (s, a) = data.0.size_and_align(scopes);
                 return (s * data.1, a);
@@ -739,11 +763,6 @@ impl Type {
     }
 
     pub fn can_omit_tag(&self, scopes: &Scopes) -> Option<&Type> {
-        self.as_option_inner(scopes).filter(|inner| {
-            matches!(
-                inner,
-                Type::FnPtr(_) | Type::RawPtr(_) | Type::Ptr(_) | Type::MutPtr(_)
-            )
-        })
+        self.as_user().and_then(|s| s.can_omit_tag(scopes))
     }
 }

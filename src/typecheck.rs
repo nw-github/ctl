@@ -54,6 +54,17 @@ macro_rules! resolve_impl {
     };
 }
 
+macro_rules! check_hover {
+    ($self: expr, $span: expr, $item: expr) => {
+        if $self
+            .hover_span
+            .is_some_and(|h| h.file == $span.file && $span.includes(h.pos))
+        {
+            $self.hover_item = Some($item);
+        }
+    };
+}
+
 pub struct Module {
     pub scopes: Scopes,
     pub scope: ScopeId,
@@ -1016,12 +1027,7 @@ impl TypeChecker {
 impl TypeChecker {
     #[inline]
     fn check_hover(&mut self, span: Span, item: HoverItem) {
-        if self
-            .hover_span
-            .is_some_and(|h| h.file == span.file && span.includes(h.pos))
-        {
-            self.hover_item = Some(item);
-        }
+        check_hover!(self, span, item);
     }
 
     fn enter_id<T>(&mut self, id: ScopeId, f: impl FnOnce(&mut Self) -> T) -> T {
@@ -3416,15 +3422,20 @@ impl TypeChecker {
                 for (_, scope) in self.scopes.walk(self.current) {
                     match scope.kind {
                         ScopeKind::Trait(id) => {
+                            check_hover!(self, span, id.into());
                             return Type::User(
                                 GenericUserType::from_id(&self.scopes, self.scopes.get(id).this)
                                     .into(),
-                            )
+                            );
                         }
                         ScopeKind::UserType(id) => {
-                            return Type::User(GenericUserType::from_id(&self.scopes, id).into())
+                            check_hover!(self, span, id.into());
+                            return Type::User(GenericUserType::from_id(&self.scopes, id).into());
                         }
-                        ScopeKind::Extension(id) => return self.scopes.get(id).ty.clone(),
+                        ScopeKind::Extension(id) => {
+                            check_hover!(self, span, id.into());
+                            return self.scopes.get(id).ty.clone();
+                        }
                         ScopeKind::Function(f) if Some(f) != current => break,
                         _ => {}
                     }
