@@ -12,6 +12,10 @@ pub struct Span<T> {
         Span(ptr:, len:)
     }
 
+    pub fn empty(): [T..] {
+        Span(ptr: core::ptr::raw_dangling(), len: 0)
+    }
+
     pub fn len(this): uint {
         this.len
     }
@@ -66,6 +70,10 @@ pub struct SpanMut<T> {
 
     pub unsafe fn new(ptr: *raw T, len: uint): [mut T..] {
         SpanMut(ptr:, len:)
+    }
+
+    pub fn empty(): [T..] {
+        Span(ptr: core::ptr::raw_dangling(), len: 0)
     }
 
     pub fn len(this): uint {

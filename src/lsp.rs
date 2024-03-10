@@ -219,7 +219,7 @@ impl LspBackend {
                 entry.push(Diagnostic {
                     range,
                     severity: Some(DiagnosticSeverity::ERROR),
-                    source: Some("ctllsp".into()),
+                    source: Some("ctlsp".into()),
                     message: msg.into(),
                     ..Diagnostic::default()
                 });
@@ -229,7 +229,7 @@ impl LspBackend {
                 entry.push(Diagnostic {
                     range,
                     severity: Some(DiagnosticSeverity::WARNING),
-                    source: Some("ctllsp".into()),
+                    source: Some("ctlsp".into()),
                     message: msg.into(),
                     ..Diagnostic::default()
                 });

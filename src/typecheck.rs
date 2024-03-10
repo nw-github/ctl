@@ -658,18 +658,17 @@ impl TypeChecker {
                             .collect(),
                     };
                 }
-                let id =
-                    self.scopes
-                        .create_scope(self.current, ScopeKind::Module(name.clone()), public);
-                self.check_hover(name.span, id.into());
-                if self.scopes[self.current]
-                    .tns
-                    .insert(name.data.clone(), Vis::new(id.into(), public))
-                    .is_some()
-                {
-                    self.error(Error::redefinition(&name.data, name.span))
-                }
-                self.enter_id(id, |this| {
+                let parent = self.current;
+                self.enter(ScopeKind::Module(name.clone()), |this| {
+                    this.check_hover(name.span, this.current.into());
+                    if this.scopes[parent]
+                        .tns
+                        .insert(name.data.clone(), Vis::new(this.current.into(), public))
+                        .is_some()
+                    {
+                        this.error(Error::redefinition(&name.data, name.span))
+                    }
+
                     let core = this.scopes[ScopeId::ROOT]
                         .find_in_tns("core")
                         .and_then(|inner| inner.as_module().copied());
@@ -2108,7 +2107,7 @@ impl TypeChecker {
                 let mut out_parts = Vec::with_capacity(parts.len() * 2 + 1);
                 for expr in parts {
                     let span = expr.span;
-                    let expr = self.check_expr(expr, target);
+                    let expr = self.check_expr(expr, None);
                     if !expr.ty.is_unknown() && self.get_trait_impl(&expr.ty, write_id).is_none() {
                         self.diag.error(Error::doesnt_implement(
                             &expr.ty.name(&self.scopes),
@@ -2271,7 +2270,7 @@ impl TypeChecker {
                         Some(expr)
                     } else {
                         let span = expr.span;
-                        let source = self.check_expr_inner(*expr, Some(&out_type));
+                        let source = self.check_expr_inner(*expr, target.or(Some(&out_type)));
                         Some(self.type_check_checked(source, &out_type, span))
                     }
                 } else {
@@ -5118,8 +5117,7 @@ impl TypeChecker {
             if let Some(item) = self.scopes[scope].find_in_tns(&tail.data) {
                 self.check_hover(tail.span, (*item).into());
                 if !item.public && !self.can_access_privates(scope) {
-                    self.diag
-                        .error(Error::new(format!("'{}' is private", tail.data), tail.span));
+                    self.error(Error::private(&tail.data, tail.span))
                 }
 
                 if self.scopes[self.current]
@@ -5140,8 +5138,7 @@ impl TypeChecker {
                     },
                 );
                 if !item.public && !self.can_access_privates(scope) {
-                    self.diag
-                        .error(Error::new(format!("'{}' is private", tail.data), tail.span));
+                    self.error(Error::private(&tail.data, tail.span))
                 }
 
                 if self.scopes[self.current]
@@ -5331,7 +5328,7 @@ impl TypeChecker {
             let is_end = i + 1 == data.len();
             if let Some(item) = self.scopes[scope].find_in_tns(&name.data) {
                 if !item.public && !self.can_access_privates(scope) {
-                    self.error(Error::new(format!("'{name}' is private"), name.span))
+                    self.error(Error::private(&name.data, name.span))
                 }
 
                 match *item {
@@ -5558,7 +5555,7 @@ impl TypeChecker {
             };
 
             if !item.public && !self.can_access_privates(scope) {
-                self.error(Error::new(format!("'{name}' is private"), name.span))
+                self.error(Error::private(&name.data, name.span))
             }
 
             match *item {
@@ -5615,10 +5612,7 @@ impl TypeChecker {
         };
 
         if !item.public && !self.can_access_privates(scope) {
-            self.error(Error::new(
-                format!("'{last_name}' is private"),
-                last_name.span,
-            ))
+            self.error(Error::private(&last_name.data, last_name.span))
         }
 
         match *item {

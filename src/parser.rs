@@ -112,7 +112,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
             Ok(Stmt {
                 attrs,
-                data: StmtData::Struct(self.structure(public.is_some(), token.span)),
+                data: StmtData::Struct(self.structure(public.is_some(), token.span, false)),
             })
         } else if let Some(token) = self.next_if_kind(Token::Union) {
             if let Some(token) = is_import.or(is_export) {
@@ -122,7 +122,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             Ok(Stmt {
                 attrs,
                 data: if is_unsafe.is_some() {
-                    StmtData::UnsafeUnion(self.structure(public.is_some(), token.span))
+                    StmtData::UnsafeUnion(self.structure(public.is_some(), token.span, true))
                 } else {
                     self.union(public.is_some(), token.span)
                 },
@@ -413,11 +413,17 @@ impl<'a, 'b> Parser<'a, 'b> {
                         .as_string_part()
                         .map(|s| Located::new(t.span, s.clone().into_owned()))
                 }) {
-                    let expr = self.expression();
-                    span.extend_to(expr.span);
-                    parts.push(part.map(ExprData::String));
-                    parts.push(expr);
-                    // TODO: ':' format options
+                    if self.matches(|t| matches!(t, Token::StringPart(_) | Token::String(_))) {
+                        let span = self.peek().span;
+                        self.error(Error::new("expected expression", span));
+                        parts.push(part.map(ExprData::String));
+                    } else {
+                        let expr = self.expression();
+                        span.extend_to(expr.span);
+                        parts.push(part.map(ExprData::String));
+                        parts.push(expr);
+                        // TODO: ':' format options
+                    }
                 }
 
                 match self.next() {
@@ -1434,7 +1440,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         Located::new(span, stmts)
     }
 
-    fn structure(&mut self, public: bool, span: Span) -> Struct {
+    fn structure(&mut self, public: bool, span: Span, union: bool) -> Struct {
         let name = self.expect_id_l("expected name");
         let type_params = self.type_params();
 
@@ -1445,6 +1451,10 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut impls = Vec::new();
         self.next_until(Token::RCurly, span, |this| {
             let public = this.next_if_kind(Token::Pub);
+            if let Some(token) = public.as_ref().filter(|_| union) {
+                this.error_no_sync(Error::not_valid_here(token));
+            }
+
             let config = FnConfig {
                 allow_method: true,
                 is_public: public.is_some(),
@@ -1802,10 +1812,23 @@ impl<'a, 'b> Parser<'a, 'b> {
         };
 
         let body = match body {
-            Some(true) => Some(self.block().data),
+            Some(true) => {
+                if let Some(semi) = self.next_if_kind(Token::Semicolon) {
+                    self.error(Error::new("expected '{'", semi.span));
+                    None
+                } else {
+                    Some(self.block().data)
+                }
+            }
             Some(false) => {
-                self.expect_kind(Token::Semicolon);
-                None
+                if self.matches_kind(Token::LCurly) {
+                    let span = self.peek().span;
+                    self.error(Error::new("expected ';'", span));
+                    Some(self.block().data)
+                } else {
+                    self.expect_kind(Token::Semicolon);
+                    None
+                }
             }
             None => {
                 if self.next_if_kind(Token::Semicolon).is_some() {

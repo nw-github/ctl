@@ -240,6 +240,10 @@ impl Error {
         )
     }
 
+    pub fn private(item: &str, span: Span) -> Self {
+        Self::new(format!("'{item}' is private"), span)
+    }
+
     pub fn private_member(ty: &str, member: &str, span: Span) -> Self {
         Self::new(
             format!("cannot access private member '{member}' of type '{ty}'"),
