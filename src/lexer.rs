@@ -678,15 +678,21 @@ impl<'a> Lexer<'a> {
     }
 
     fn char_literal(&mut self, diag: &mut Diagnostics, byte: bool) -> char {
+        let mut here = Span {
+            pos: self.pos as u32 - 1 - byte as u32,
+            len: 1 + byte as u32,
+            file: self.file,
+        };
         let ch = match self.advance() {
             Some('\\') => self.escape_char(diag, byte),
             Some('\'') => {
-                diag.error(Error::new("empty char literal", self.here(1)));
+                here.len += 1;
+                diag.error(Error::new("empty char literal", here));
                 return '\0';
             }
             Some(any) => any,
             None => {
-                diag.error(Error::new("unterminated char literal", self.here(1)));
+                diag.error(Error::new("unterminated char literal", here));
                 '\0'
             }
         };

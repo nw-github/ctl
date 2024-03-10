@@ -952,12 +952,19 @@ impl<'a, 'b> Codegen<'a, 'b> {
                     this.buffer.emit(";");
                 });
 
-                usebuf!(this, &mut static_init, {
-                    this.emit_var_name(id, static_state);
-                    this.buffer.emit("=");
-                    this.emit_expr_inner(this.scopes.get(id).value.clone().unwrap(), static_state);
-                    this.buffer.emit(";");
-                });
+                usebuf!(
+                    this,
+                    &mut static_init,
+                    hoist_point!(this, {
+                        this.emit_var_name(id, static_state);
+                        this.buffer.emit("=");
+                        this.emit_expr_inner(
+                            this.scopes.get(id).value.clone().unwrap(),
+                            static_state,
+                        );
+                        this.buffer.emit(";");
+                    })
+                );
             }
         }
         let functions = std::mem::take(&mut this.buffer);
@@ -2119,7 +2126,7 @@ impl<'a, 'b> Codegen<'a, 'b> {
                 tmpbuf_emit!(self, state, |tmp| {
                     lhs.ty.fill_templates(&state.func.ty_args);
 
-                    self.emit_type(&lhs.ty);
+                    self.emit_type(&ret);
                     self.buffer.emit(format!(" {tmp};"));
 
                     let inner_ty = lhs.ty.clone();

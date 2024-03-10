@@ -174,7 +174,7 @@ impl GenericUserType {
                     }
                     result.push_str(&format!(
                         " {}: {}",
-                        scopes.get(self.id).members.get_index(i).unwrap().0,
+                        scopes.get(self.id).members.get_index(i).map(|m| &m.0[..]).unwrap_or("???"),
                         concrete.name(scopes)
                     ));
                 }

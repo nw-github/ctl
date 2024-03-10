@@ -476,22 +476,23 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
             visualize_type_params(&mut res, &ut.type_params, scopes);
             write_de!(res, ": {} {{", union.tag.name(scopes));
             for (name, ty) in union.variants.iter() {
-                res += "\n\t";
-                res += &name;
+                write_de!(res, "\n\t{name}");
                 match ty {
                     Some(Type::User(ut)) => {
                         let inner = scopes.get(ut.id);
                         if inner.data.is_anon_struct() {
                             res += " {";
                             for (i, (name, _)) in inner.members.iter().enumerate() {
-                                if i > 0 {
-                                    res += ", ";
-                                } else {
-                                    res += " ";
-                                }
-                                res += name;
-                                res += ": ";
-                                res += &ut.ty_args.get_index(i).unwrap().1.name(scopes);
+                                write_de!(
+                                    res,
+                                    "{}{name}: {}",
+                                    if i > 0 { ", " } else { " " },
+                                    ut.ty_args
+                                        .get_index(i)
+                                        .map(|v| v.1)
+                                        .unwrap_or(&Type::Unknown)
+                                        .name(scopes)
+                                )
                             }
                             res += " }";
                         } else if inner.data.is_tuple() {
@@ -500,16 +501,17 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
                                 if i > 0 {
                                     res += ", ";
                                 }
-                                res += &ut.ty_args.get_index(i).unwrap().1.name(scopes);
+                                res += &ut
+                                    .ty_args
+                                    .get_index(i)
+                                    .map(|v| v.1)
+                                    .unwrap_or(&Type::Unknown)
+                                    .name(scopes)
                             }
                             res += ")";
                         }
                     }
-                    Some(ty) => {
-                        res += "(";
-                        res += &ty.name(scopes);
-                        res += ")";
-                    }
+                    Some(ty) => write_de!(res, "({})", ty.name(scopes)),
                     None => {}
                 }
                 res += ",";
