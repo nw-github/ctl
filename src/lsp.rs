@@ -279,7 +279,11 @@ impl LspBackend {
                 }
                 HoverItem::Trait(id) => {
                     let tr = scopes.get(*id);
-                    let mut res = format!("trait {}", tr.name.data);
+                    let mut res = format!(
+                        "{}trait {}",
+                        if tr.public { "pub " } else { "" },
+                        tr.name.data
+                    );
                     visualize_type_params(&mut res, &tr.type_params, scopes);
                     Some(res)
                 }

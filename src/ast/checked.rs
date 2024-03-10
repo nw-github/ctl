@@ -239,6 +239,9 @@ impl CheckedExpr {
                 !matches!(op, UnaryOp::Deref)
                     || matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
             }
+            CheckedExprData::AutoDeref(expr, _) => {
+                matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
+            }
             CheckedExprData::Symbol(symbol, _) => match symbol {
                 Symbol::Func(_) => false,
                 Symbol::Var(var) => scopes.get(*var).mutable,
