@@ -174,7 +174,12 @@ impl GenericUserType {
                     }
                     result.push_str(&format!(
                         " {}: {}",
-                        scopes.get(self.id).members.get_index(i).map(|m| &m.0[..]).unwrap_or("???"),
+                        scopes
+                            .get(self.id)
+                            .members
+                            .get_index(i)
+                            .map(|m| &m.0[..])
+                            .unwrap_or("???"),
                         concrete.name(scopes)
                     ));
                 }
@@ -268,7 +273,7 @@ impl GenericUserType {
                 union
                     .variants
                     .values()
-                    .flatten()
+                    .flat_map(|v| &v.0)
                     .fold((0, 1), |(sz, align), ty| {
                         let (s, a) = ty.with_templates(&self.ty_args).size_and_align(scopes);
                         (sz.max(s), align.max(a))

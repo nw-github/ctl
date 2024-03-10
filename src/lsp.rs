@@ -284,7 +284,14 @@ impl LspBackend {
             &HoverItem::Extension(id) => module.scopes.get(id).name.span,
             &HoverItem::Module(id) => module.scopes[id].kind.name(&module.scopes).unwrap().span,
             &HoverItem::Fn(id) => module.scopes.get(id).name.span,
-            HoverItem::Member(_, _) => todo!(),
+            HoverItem::Member(id, member) => {
+                let ut = checked.scopes().get(*id);
+                ut.members.get(member).map(|m| m.span).or_else(|| {
+                    ut.data
+                        .as_union()
+                        .and_then(|u| u.variants.get(member).map(|v| v.1))
+                })?
+            }
             _ => return None,
         };
 
@@ -294,7 +301,7 @@ impl LspBackend {
         {
             Diagnostics::get_span_range(&doc.text, span, OffsetMode::Utf16)
         } else {
-            let file = std::fs::read_to_string(checked.diagnostics().file_path(span.file)).unwrap();
+            let file = std::fs::read_to_string(checked.diagnostics().file_path(span.file)).ok()?;
             Diagnostics::get_span_range(&file, span, OffsetMode::Utf16)
         };
         Some(Location::new(
@@ -426,7 +433,7 @@ fn visualize_func(id: FunctionId, scopes: &Scopes) -> String {
             &mut res,
             u,
             variant,
-            u.variants.get(variant).and_then(|inner| inner.as_ref()),
+            u.variants.get(variant).and_then(|inner| inner.0.as_ref()),
             scopes,
         );
         return res;
@@ -563,7 +570,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
             write_de!(res, "union {}", &ut.item.name.data);
             visualize_type_params(&mut res, &ut.type_params, scopes);
             write_de!(res, ": {} {{", union.tag.name(scopes));
-            for (name, ty) in union.variants.iter() {
+            for (name, (ty, _)) in union.variants.iter() {
                 res += "\n\t";
                 visualize_variant_body(&mut res, union, name, ty.as_ref(), scopes);
                 res += ",";

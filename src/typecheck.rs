@@ -320,7 +320,11 @@ impl TypeChecker {
             for member in base.members {
                 let prev = members.insert(
                     member.name.data.clone(),
-                    CheckedMember::new(member.public, this.declare_type_hint(member.ty)),
+                    CheckedMember::new(
+                        member.public,
+                        this.declare_type_hint(member.ty),
+                        member.name.span,
+                    ),
                 );
                 if prev.is_some() {
                     this.error(Error::redefinition_k(
@@ -405,6 +409,7 @@ impl TypeChecker {
                         CheckedMember::new(
                             member.public,
                             this.declare_type_hint(member.ty.clone()),
+                            member.name.span,
                         ),
                     )
                     .is_some()
@@ -430,18 +435,21 @@ impl TypeChecker {
                 let mut params = params.clone();
                 match variant.data {
                     VariantData::Empty => {
-                        rvariants.insert(variant.name.data.clone(), None);
+                        rvariants.insert(variant.name.data.clone(), (None, variant.name.span));
                     }
                     VariantData::StructLike(smembers) => {
                         rvariants.insert(
                             variant.name.data.clone(),
-                            Some(
-                                this.declare_type_hint(TypeHint::AnonStruct(
-                                    smembers
-                                        .iter()
-                                        .map(|m| (m.name.data.clone(), m.ty.clone()))
-                                        .collect(),
-                                )),
+                            (
+                                Some(
+                                    this.declare_type_hint(TypeHint::AnonStruct(
+                                        smembers
+                                            .iter()
+                                            .map(|m| (m.name.data.clone(), m.ty.clone()))
+                                            .collect(),
+                                    )),
+                                ),
+                                variant.name.span,
                             ),
                         );
 
@@ -467,9 +475,12 @@ impl TypeChecker {
                     VariantData::TupleLike(members) => {
                         rvariants.insert(
                             variant.name.data.clone(),
-                            Some(this.declare_type_hint(TypeHint::Tuple(
-                                members.iter().map(|(ty, _)| ty.clone()).collect(),
-                            ))),
+                            (
+                                Some(this.declare_type_hint(TypeHint::Tuple(
+                                    members.iter().map(|(ty, _)| ty.clone()).collect(),
+                                ))),
+                                variant.name.span,
+                            ),
                         );
 
                         for (i, (ty, default)) in members.into_iter().enumerate() {
@@ -566,6 +577,7 @@ impl TypeChecker {
                     CheckedMember::new(
                         member.public,
                         this.declare_type_hint(std::mem::take(&mut member.ty)),
+                        member.name.span,
                     ),
                 );
                 if prev.is_some() {
@@ -3514,7 +3526,7 @@ impl TypeChecker {
 
         if let Some(mut union) = self.scopes.get(id).data.as_union().cloned() {
             resolve_type!(self, union.tag);
-            for variant in union.variants.values_mut().flatten() {
+            for variant in union.variants.values_mut().flat_map(|v| &mut v.0) {
                 resolve_type!(self, *variant);
             }
             self.scopes.get_mut(id).data = UserTypeData::Union(union);
@@ -4326,7 +4338,7 @@ impl TypeChecker {
                             .get(ut.id)
                             .data
                             .as_union()
-                            .and_then(|union| union.variants.get(&variant))
+                            .and_then(|union| union.variants.get(&variant).map(|v| &v.0))
                             .unwrap()
                             .clone()
                             .map(|ty| scrutinee.matched_inner_type(ty.with_templates(&ut.ty_args))),

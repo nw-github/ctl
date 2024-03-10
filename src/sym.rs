@@ -198,11 +198,12 @@ impl FunctionId {
 pub struct CheckedMember {
     pub public: bool,
     pub ty: Type,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct Union {
-    pub variants: IndexMap<String, Option<Type>>,
+    pub variants: IndexMap<String, (Option<Type>, Span)>,
     pub tag: Type,
 }
 
@@ -249,7 +250,7 @@ impl UserType {
                 .data
                 .as_union()
                 .and_then(|u| u.variants.get(variant))
-                .is_some_and(|u| u.is_none())
+                .is_some_and(|u| u.0.is_none())
     }
 }
 
@@ -578,6 +579,7 @@ impl Scopes {
                                 CheckedMember::new(
                                     true,
                                     Type::User(GenericUserType::from_id(self, *id).into()),
+                                    Span::default(),
                                 ),
                             )
                         })
@@ -638,6 +640,7 @@ impl Scopes {
                                 CheckedMember::new(
                                     true,
                                     Type::User(GenericUserType::from_id(self, *id).into()),
+                                    Span::default(),
                                 ),
                             )
                         })
