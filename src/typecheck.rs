@@ -5122,7 +5122,10 @@ impl TypeChecker {
                 found = true;
             }
             if let Some(item) = self.scopes[scope].find_in_vns(&tail.data) {
-                self.check_hover(tail.span, (*item).into());
+                self.check_hover(tail.span, match item.id {
+                    ValueItem::StructConstructor(id, _) => id.into(),
+                    _ => (*item).into(),
+                });
                 if !item.public && !self.can_access_privates(scope) {
                     self.diag
                         .error(Error::new(format!("'{}' is private", tail.data), tail.span));
