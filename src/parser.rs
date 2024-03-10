@@ -662,7 +662,6 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
             Token::LogicalOr
             | Token::LogicalAnd
-            | Token::NoneCoalesce
             | Token::Or
             | Token::Ampersand
             | Token::Caret
@@ -679,7 +678,18 @@ impl<'a, 'b> Parser<'a, 'b> {
             | Token::LtEqual
             | Token::Equal
             | Token::NotEqual
-            | Token::Spaceship
+            | Token::Spaceship => {
+                let right = self.precedence(op.data.precedence(), ctx);
+                Expr::new(
+                    left.span.extended_to(right.span),
+                    ExprData::Binary {
+                        op: op.data.try_into().unwrap(),
+                        left: left.into(),
+                        right: right.into(),
+                    },
+                )
+            }
+            Token::NoneCoalesce
             | Token::Assign
             | Token::AddAssign
             | Token::SubAssign
@@ -692,7 +702,14 @@ impl<'a, 'b> Parser<'a, 'b> {
             | Token::ShlAssign
             | Token::ShrAssign
             | Token::NoneCoalesceAssign => {
-                let right = self.precedence(op.data.precedence(), ctx);
+                let right = self.precedence(
+                    match op.data.precedence() {
+                        Precedence::NoneCoalesce => Precedence::Comparison,
+                        Precedence::Assignment => Precedence::Min,
+                        prec => prec,
+                    },
+                    ctx,
+                );
                 Expr::new(
                     left.span.extended_to(right.span),
                     ExprData::Binary {
