@@ -247,7 +247,9 @@ impl Span {
     }
 
     pub fn includes(&self, pos: u32) -> bool {
-        pos >= self.pos && pos < self.pos + self.len
+        // include the right hand side since the cursor is often placed one character after, like
+        // when selecting
+        pos >= self.pos && pos <= self.pos + self.len
     }
 }
 

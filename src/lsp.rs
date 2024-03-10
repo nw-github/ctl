@@ -13,7 +13,7 @@ use crate::lexer::Span;
 use crate::sym::{FunctionId, Scopes, Union, UserTypeData, UserTypeId, VariableId};
 use crate::typecheck::HoverItem;
 use crate::typeid::{GenericUserType, Type};
-use crate::{get_default_libs, Compiler};
+use crate::{get_default_libs, Checked, Compiler};
 
 macro_rules! write_de {
     ($dst:expr, $($arg:tt)*) => {
@@ -68,6 +68,7 @@ impl LanguageServer for LspBackend {
                 )),
                 inlay_hint_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                definition_provider: Some(OneOf::Left(true)),
                 // inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
                 //     InlayHintOptions {
                 //         resolve_provider: Some(true),
@@ -108,9 +109,7 @@ impl LanguageServer for LspBackend {
             .on_document_change(&params.text_document.uri, None)
             .await
         {
-            self.client
-                .log_message(MessageType::ERROR, format!("{err}"))
-                .await;
+            _ = self.on_error::<()>(err).await;
         }
     }
 
@@ -126,9 +125,7 @@ impl LanguageServer for LspBackend {
             .on_document_change(&params.text_document.uri, None)
             .await
         {
-            self.client
-                .log_message(MessageType::ERROR, format!("{err}"))
-                .await;
+            _ = self.on_error::<()>(err).await;
         }
     }
 
@@ -143,6 +140,22 @@ impl LanguageServer for LspBackend {
             .map(|c| c.inlay_hints.clone()))
     }
 
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        match self
+            .on_document_change(uri, Some(params.text_document_position_params.position))
+            .await
+        {
+            Ok((file, checked)) => Ok(self
+                .goto_definition((file, uri), &checked)
+                .map(GotoDefinitionResponse::Scalar)),
+            Err(err) => self.on_error(err).await,
+        }
+    }
+
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         match self
             .on_document_change(
@@ -151,13 +164,12 @@ impl LanguageServer for LspBackend {
             )
             .await
         {
-            Ok(hover) => Ok(hover),
-            Err(err) => {
-                self.client
-                    .log_message(MessageType::ERROR, format!("{err}"))
-                    .await;
-                Err(Error::internal_error())
-            }
+            Ok((_, checked)) => Ok(checked
+                .module()
+                .hover_item
+                .as_ref()
+                .and_then(|item| hover_item_to_hover(item, checked.scopes()))),
+            Err(err) => self.on_error(err).await,
         }
     }
 
@@ -179,7 +191,7 @@ impl LspBackend {
         &self,
         uri: &Url,
         hover: Option<Position>,
-    ) -> anyhow::Result<Option<Hover>> {
+    ) -> anyhow::Result<(FileId, Compiler<Checked>)> {
         let path = if !uri.scheme().is_empty() {
             Path::new(&uri.as_str()[uri.scheme().len() + 3..])
         } else {
@@ -201,17 +213,11 @@ impl LspBackend {
         let mut all = HashMap::<Url, Vec<Diagnostic>>::new();
         for (id, path) in diag.paths() {
             let l = checked.lsp_file();
-            let entry = all
-                .entry(if id == file {
-                    uri.clone()
-                } else {
-                    Url::from_file_path(path).unwrap()
-                })
-                .or_default();
+            let entry = all.entry(get_uri((file, uri), (id, path))).or_default();
             let errors = diag.errors();
-            diag.format_diagnostics(id, errors, l, OffsetMode::Utf16, |msg, start, end| {
+            diag.format_diagnostics(id, errors, l, OffsetMode::Utf16, |msg, range| {
                 entry.push(Diagnostic {
-                    range: Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)),
+                    range,
                     severity: Some(DiagnosticSeverity::ERROR),
                     source: Some("ctllsp".into()),
                     message: msg.into(),
@@ -219,9 +225,9 @@ impl LspBackend {
                 });
             });
             let warnings = diag.warnings();
-            diag.format_diagnostics(id, warnings, l, OffsetMode::Utf16, |msg, start, end| {
+            diag.format_diagnostics(id, warnings, l, OffsetMode::Utf16, |msg, range| {
                 entry.push(Diagnostic {
-                    range: Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)),
+                    range,
                     severity: Some(DiagnosticSeverity::WARNING),
                     source: Some("ctllsp".into()),
                     message: msg.into(),
@@ -242,9 +248,9 @@ impl LspBackend {
                 continue;
             }
 
-            let (_, pos) = Diagnostics::get_span_range(&doc.text, var.name.span, OffsetMode::Utf16);
+            let range = Diagnostics::get_span_range(&doc.text, var.name.span, OffsetMode::Utf16);
             doc.inlay_hints.push(InlayHint {
-                position: Position::new(pos.0, pos.1),
+                position: range.end,
                 label: InlayHintLabel::String(format!(": {}", var.ty.name(scopes))),
                 kind: Some(InlayHintKind::TYPE),
                 text_edits: Default::default(),
@@ -255,59 +261,57 @@ impl LspBackend {
             });
         }
 
-        Ok(checked
-            .module()
-            .hover_item
-            .as_ref()
-            .and_then(|item| match item {
-                &HoverItem::Var(id) => Some(visualize_var(id, scopes)),
-                &HoverItem::Fn(id) => Some(visualize_func(id, scopes)),
-                &HoverItem::Type(id) => Some(visualize_type(id, scopes)),
-                HoverItem::Member(id, name) => {
-                    let ut = scopes.get(*id);
-                    let unk = Type::Unknown;
-                    let ty = ut.members.get(name).map(|m| &m.ty).unwrap_or(&unk);
-                    Some(format!("{name}: {}", ty.name(scopes)))
-                }
-                HoverItem::Module(id) => {
-                    let scope = &scopes[*id];
-                    Some(format!(
-                        "{}mod {}",
-                        if scope.public { "pub " } else { "" },
-                        scope.kind.name(scopes).unwrap()
-                    ))
-                }
-                HoverItem::Trait(id) => {
-                    let tr = scopes.get(*id);
-                    let mut res = format!(
-                        "{}trait {}",
-                        if tr.public { "pub " } else { "" },
-                        tr.name.data
-                    );
-                    visualize_type_params(&mut res, &tr.type_params, scopes);
-                    Some(res)
-                }
-                HoverItem::Extension(id) => {
-                    let ext = scopes.get(*id);
-                    let mut res = format!(
-                        "{}extension {}",
-                        if ext.public { "pub " } else { "" },
-                        ext.name.data
-                    );
-                    visualize_type_params(&mut res, &ext.type_params, scopes);
-                    write_de!(res, " for {}", ext.ty.name(scopes));
+        Ok((file, checked))
+    }
 
-                    Some(res)
-                }
-                _ => None,
-            })
-            .map(|value| Hover {
-                range: None,
-                contents: HoverContents::Scalar(MarkedString::LanguageString(LanguageString {
-                    language: "ctl".into(),
-                    value,
-                })),
-            }))
+    async fn on_error<T>(&self, err: anyhow::Error) -> Result<T> {
+        self.client
+            .log_message(MessageType::ERROR, format!("{err}"))
+            .await;
+        Err(Error::internal_error())
+    }
+
+    fn goto_definition(
+        &self,
+        current: (FileId, &Url),
+        checked: &Compiler<Checked>,
+    ) -> Option<Location> {
+        let module = checked.module();
+        let span = match module.hover_item.as_ref()? {
+            &HoverItem::Var(id) => module.scopes.get(id).name.span,
+            &HoverItem::Type(id) => module.scopes.get(id).name.span,
+            &HoverItem::Trait(id) => module.scopes.get(id).name.span,
+            &HoverItem::Extension(id) => module.scopes.get(id).name.span,
+            &HoverItem::Module(id) => module.scopes[id].kind.name(&module.scopes).unwrap().span,
+            &HoverItem::Fn(id) => module.scopes.get(id).name.span,
+            HoverItem::Member(_, _) => todo!(),
+            _ => return None,
+        };
+
+        let range = if let Some(doc) = (span.file == current.0)
+            .then(|| self.documents.get(current.1))
+            .flatten()
+        {
+            Diagnostics::get_span_range(&doc.text, span, OffsetMode::Utf16)
+        } else {
+            let file = std::fs::read_to_string(checked.diagnostics().file_path(span.file)).unwrap();
+            Diagnostics::get_span_range(&file, span, OffsetMode::Utf16)
+        };
+        Some(Location::new(
+            get_uri(
+                current,
+                (span.file, checked.diagnostics().file_path(span.file)),
+            ),
+            range,
+        ))
+    }
+}
+
+fn get_uri((file, furi): (FileId, &Url), (spanid, path): (FileId, &Path)) -> Url {
+    if spanid == file {
+        furi.clone()
+    } else {
+        Url::from_file_path(path).unwrap()
     }
 }
 
@@ -341,6 +345,59 @@ fn position_to_span(text: &str, file: FileId, line: u32, character: u32) -> Span
         pos += ch.len_utf8() as u32;
     }
     Span::default()
+}
+
+fn hover_item_to_hover(item: &HoverItem, scopes: &Scopes) -> Option<Hover> {
+    let str = match item {
+        &HoverItem::Var(id) => Some(visualize_var(id, scopes)),
+        &HoverItem::Fn(id) => Some(visualize_func(id, scopes)),
+        &HoverItem::Type(id) => Some(visualize_type(id, scopes)),
+        HoverItem::Member(id, name) => {
+            let ut = scopes.get(*id);
+            let unk = Type::Unknown;
+            let ty = ut.members.get(name).map(|m| &m.ty).unwrap_or(&unk);
+            Some(format!("{name}: {}", ty.name(scopes)))
+        }
+        &HoverItem::Module(id) => {
+            let scope = &scopes[id];
+            Some(format!(
+                "{}mod {}",
+                if scope.public { "pub " } else { "" },
+                scope.kind.name(scopes).unwrap()
+            ))
+        }
+        &HoverItem::Trait(id) => {
+            let tr = scopes.get(id);
+            let mut res = format!(
+                "{}trait {}",
+                if tr.public { "pub " } else { "" },
+                tr.name.data
+            );
+            visualize_type_params(&mut res, &tr.type_params, scopes);
+            Some(res)
+        }
+        &HoverItem::Extension(id) => {
+            let ext = scopes.get(id);
+            let mut res = format!(
+                "{}extension {}",
+                if ext.public { "pub " } else { "" },
+                ext.name.data
+            );
+            visualize_type_params(&mut res, &ext.type_params, scopes);
+            write_de!(res, " for {}", ext.ty.name(scopes));
+
+            Some(res)
+        }
+        _ => None,
+    };
+
+    str.map(|value| Hover {
+        range: None,
+        contents: HoverContents::Scalar(MarkedString::LanguageString(LanguageString {
+            language: "ctl".into(),
+            value,
+        })),
+    })
 }
 
 fn visualize_type_params(res: &mut String, params: &[UserTypeId], scopes: &Scopes) {

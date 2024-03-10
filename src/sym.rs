@@ -103,7 +103,7 @@ pub enum ScopeKind {
     Function(FunctionId),
     UserType(UserTypeId),
     Trait(TraitId),
-    Module(String),
+    Module(Located<String>),
     Impl(TraitId),
     Extension(ExtensionId),
     #[default]
@@ -111,15 +111,15 @@ pub enum ScopeKind {
 }
 
 impl ScopeKind {
-    pub fn name<'a, 'b>(&'a self, scopes: &'b Scopes) -> Option<&'b str>
+    pub fn name<'a, 'b>(&'a self, scopes: &'b Scopes) -> Option<&'b Located<String>>
     where
         'a: 'b,
     {
         match self {
-            &ScopeKind::Function(id) => Some(&scopes.get(id).name.data),
-            &ScopeKind::UserType(id) => Some(&scopes.get(id).name.data),
-            &ScopeKind::Trait(id) => Some(&scopes.get(id).name.data),
-            &ScopeKind::Extension(id) => Some(&scopes.get(id).name.data),
+            &ScopeKind::Function(id) => Some(&scopes.get(id).name),
+            &ScopeKind::UserType(id) => Some(&scopes.get(id).name),
+            &ScopeKind::Trait(id) => Some(&scopes.get(id).name),
+            &ScopeKind::Extension(id) => Some(&scopes.get(id).name),
             ScopeKind::Module(name) => Some(name),
             _ => None,
         }
@@ -489,9 +489,9 @@ impl Scopes {
     pub fn full_name(&self, id: ScopeId, ident: &str) -> String {
         let mut name: String = ident.chars().rev().collect();
         for scope_name in self.walk(id).flat_map(|(_, scope)| scope.kind.name(self)) {
-            name.reserve(scope_name.len() + 1);
+            name.reserve(scope_name.data.len() + 1);
             name.push('_');
-            for c in scope_name.chars().rev() {
+            for c in scope_name.data.chars().rev() {
                 name.push(c);
             }
         }

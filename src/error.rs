@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use tower_lsp::lsp_types::{Position, Range};
+
 use crate::{
     lexer::{Located, Span, Token},
     sym::Scopes,
@@ -63,8 +65,13 @@ impl Diagnostics {
                 &self.errors,
                 lsp_file,
                 OffsetMode::Utf32,
-                |msg, (row, col), _| {
-                    eprintln!("error: {}:{}:{}: {msg}", path.display(), row + 1, col + 1);
+                |msg, range| {
+                    eprintln!(
+                        "error: {}:{}:{}: {msg}",
+                        path.display(),
+                        range.start.line + 1,
+                        range.start.character + 1
+                    );
                 },
             );
         }
@@ -79,8 +86,13 @@ impl Diagnostics {
                 &self.warnings,
                 lsp_file,
                 OffsetMode::Utf32,
-                |msg, (row, col), _| {
-                    eprintln!("warning: {}:{}:{}: {msg}", path.display(), row + 1, col + 1);
+                |msg, range| {
+                    eprintln!(
+                        "warning: {}:{}:{}: {msg}",
+                        path.display(),
+                        range.start.line + 1,
+                        range.start.character + 1
+                    );
                 },
             );
         }
@@ -92,7 +104,7 @@ impl Diagnostics {
         errors: &[Error],
         lsp_file: Option<&(FileId, String)>,
         mode: OffsetMode,
-        mut format: impl FnMut(&str, (u32, u32), (u32, u32)),
+        mut format: impl FnMut(&str, Range),
     ) {
         let mut file = None;
         for Error { diagnostic, span } in errors.iter().filter(|err| err.span.file == id) {
@@ -105,8 +117,7 @@ impl Diagnostics {
                         std::fs::read_to_string(&self.paths[id.0 as usize]).unwrap()
                     })
                 });
-            let (start, end) = Self::get_span_range(data, *span, mode);
-            format(diagnostic, start, end);
+            format(diagnostic, Self::get_span_range(data, *span, mode));
         }
     }
 
@@ -125,7 +136,7 @@ impl Diagnostics {
         &self.warnings
     }
 
-    pub fn get_span_range(data: &str, span: Span, mode: OffsetMode) -> ((u32, u32), (u32, u32)) {
+    pub fn get_span_range(data: &str, span: Span, mode: OffsetMode) -> Range {
         // maybe do this first and keep a vector of positions?
         let mut start = (0u32, 0u32);
         let mut chars = data.char_indices();
@@ -164,7 +175,7 @@ impl Diagnostics {
             }
         }
 
-        (start, end)
+        Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1))
     }
 }
 
