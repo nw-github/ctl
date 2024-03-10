@@ -2011,6 +2011,8 @@ impl<'a, 'b> Codegen<'a, 'b> {
                 let tmp = tmpbuf!(self, state, |tmp| {
                     if matches!(lhs.ty, Type::RawPtr(_)) {
                         self.emit_type(&Type::Isize);
+                    } else if let Some(int) = lhs.ty.as_integral() {
+                        self.emit_type(&Type::Int(int.bits + int.signed as u32));
                     } else {
                         self.emit_type(&lhs.ty);
                     }
