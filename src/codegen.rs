@@ -968,15 +968,6 @@ impl<'a, 'b> Codegen<'a, 'b> {
             }
         }
         let functions = std::mem::take(&mut this.buffer);
-        for (_, var) in this
-            .scopes
-            .vars()
-            .filter(|(id, var)| var.is_static && !emitted_statics.contains(id))
-        {
-            usebuf!(this, &mut static_init, {
-                this.emit_expr_stmt(var.value.clone().unwrap(), static_state);
-            });
-        }
         if this.flags.leak {
             this.buffer.emit("#define CTL_NOGC\n");
         }
