@@ -22,6 +22,7 @@
 #define CTL_ZST
 #endif
 
+#define CTL_NONNULL()
 #define CTL_DUMMY_INIT    0
 #define CTL_DUMMY_MEMBER  CTL_ZST char dummy
 #define CTL_NORETURN      __declspec(noreturn)
@@ -49,6 +50,7 @@
 
 #define CTL_DEINIT(f) static void f(void)
 #else
+#define CTL_NONNULL(...) __attribute__((nonnull(__VA_ARGS__)))
 #define CTL_DUMMY_INIT
 #define CTL_DUMMY_MEMBER
 #define CTL_ZST
@@ -91,13 +93,14 @@
 
 #define SINT(bits) _BitInt(bits)
 #define UINT(bits) unsigned _BitInt(bits)
-#define STRLIT(s, data, n) (s){.$span={.$ptr=(u8 *)data, .$len=(usize)n}}
+#define STRLIT(s, data, n)                               \
+    (s) {                                                \
+        .$span = {.$ptr = (u8 *)data, .$len = (usize)n } \
+    }
 
-#pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wundefined-internal"
 static void $ctl_static_init(void);
 static void $ctl_static_deinit(void);
-#pragma clang diagnostic pop
 
 CTL_DEINIT($ctl_runtime_deinit) {
     $ctl_static_deinit();

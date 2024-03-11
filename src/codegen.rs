@@ -1172,9 +1172,14 @@ impl<'a, 'b> Codegen<'a, 'b> {
             }
 
             hoist_point!(self, {
-                self.buffer.emit("return ");
-                self.emit_expr_inline(body, state);
-                self.buffer.emit(";}");
+                if !func.ret.is_never() {
+                    self.buffer.emit("return ");
+                    self.emit_expr_inline(body, state);
+                    self.buffer.emit(";}");
+                } else {
+                    self.emit_expr_stmt(body, state);
+                    self.buffer.emit("}");
+                }
             });
         }
     }
@@ -1606,7 +1611,7 @@ impl<'a, 'b> Codegen<'a, 'b> {
                     let scope = block.scope;
                     self.buffer.emit_info("{", self.flags.minify);
                     self.emit_block(block, state);
-                    if matches!(self.scopes[scope].kind, ScopeKind::Block(_, yields) if !yields) {
+                    if matches!(self.scopes[scope].kind, ScopeKind::Block(_, false)) {
                         self.buffer
                             .emit(format!("{}={VOID_INSTANCE};", self.cur_block));
                     }
@@ -2235,10 +2240,15 @@ impl<'a, 'b> Codegen<'a, 'b> {
     }
 
     fn leave_scope(&mut self, state: &mut State, exit: &str, scope: ScopeId) {
-        self.buffer
-            .emit_info(format!("/* begin defers {:?} */", scope), self.flags.minify);
+        let mut emitted = false;
         for i in (0..self.defers.len()).rev() {
             for j in (0..self.defers[i].1.len()).rev() {
+                if !emitted {
+                    self.buffer
+                        .emit_info(format!("/* begin defers {:?} */", scope), self.flags.minify);
+                    emitted = true;
+                }
+
                 self.emit_expr_stmt(self.defers[i].1[j].clone(), state)
             }
 
@@ -2246,8 +2256,10 @@ impl<'a, 'b> Codegen<'a, 'b> {
                 break;
             }
         }
-        self.buffer
-            .emit_info(format!("/* end defers {:?} */", scope), self.flags.minify);
+        if emitted {
+            self.buffer
+                .emit_info(format!("/* end defers {:?} */", scope), self.flags.minify);
+        }
         self.buffer.emit(format!("{exit};"));
     }
 
@@ -2787,11 +2799,16 @@ impl<'a, 'b> Codegen<'a, 'b> {
         self.buffer.emit("(");
 
         let mut unused = vec![];
+        let mut nonnull = vec![];
         for (i, param) in f.params.iter().enumerate() {
             let mut ty = param.ty.clone();
             ty.fill_templates(&state.func.ty_args);
             if i > 0 {
                 self.buffer.emit(",");
+            }
+
+            if ty.is_any_ptr() && is_prototype {
+                nonnull.push(format!("{}", i + 1));
             }
 
             if !is_prototype && needs_wrapper {
@@ -2825,6 +2842,11 @@ impl<'a, 'b> Codegen<'a, 'b> {
             self.buffer.emit("void)");
         } else {
             self.buffer.emit(")");
+        }
+
+        if !nonnull.is_empty() {
+            self.buffer
+                .emit(format!("CTL_NONNULL({})", nonnull.join(",")));
         }
 
         unused
