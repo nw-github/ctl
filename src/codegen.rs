@@ -1843,7 +1843,7 @@ impl<'a, 'b> Codegen<'a, 'b> {
                 hoist!(
                     self,
                     state,
-                    self.leave_scope(state, "continue;", self.cur_loop.0)
+                    self.leave_scope(state, "continue", self.cur_loop.0)
                 );
                 self.buffer.emit(VOID_INSTANCE);
             }
@@ -2183,7 +2183,6 @@ impl<'a, 'b> Codegen<'a, 'b> {
                             let mut ret_type = self.scopes.get(state.func.id).ret.clone();
                             ret_type.fill_templates(&state.func.ty_args);
                             self.emit_expr_inner(CheckedExpr::option_null(ret_type), state);
-                            self.buffer.emit(";");
                         });
                         self.leave_scope(
                             state,

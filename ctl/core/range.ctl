@@ -62,8 +62,7 @@ pub struct RangeFrom<T: Numeric + Integral> {
 
     impl Iterator<T> {
         fn next(mut this): ?T {
-            let val = this.start.wrapping_add(core::intrin::numeric_cast(1));
-            if this.start < val {
+            if this.start < this.start.wrapping_add(core::intrin::numeric_cast(1)) {
                 this.start++
             }
         }
