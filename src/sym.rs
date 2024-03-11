@@ -106,6 +106,7 @@ pub enum ScopeKind {
     Module(Located<String>),
     Impl(TraitId),
     Extension(ExtensionId),
+    Defer,
     #[default]
     None,
 }
@@ -464,23 +465,7 @@ impl Scopes {
         id
     }
 
-    pub fn walk(&self, id: ScopeId) -> impl Iterator<Item = (ScopeId, &Scope)> {
-        pub struct ScopeIter<'a> {
-            scopes: &'a Scopes,
-            next: Option<ScopeId>,
-        }
-
-        impl<'a> Iterator for ScopeIter<'a> {
-            type Item = (ScopeId, &'a Scope);
-
-            fn next(&mut self) -> Option<Self::Item> {
-                self.next.map(|i| {
-                    self.next = self.scopes[i].parent;
-                    (i, &self.scopes[i])
-                })
-            }
-        }
-
+    pub fn walk(&self, id: ScopeId) -> ScopeIter {
         ScopeIter {
             scopes: self,
             next: Some(id),
@@ -827,5 +812,21 @@ impl std::ops::IndexMut<ScopeId> for Scopes {
 impl Default for Scopes {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub struct ScopeIter<'a> {
+    scopes: &'a Scopes,
+    next: Option<ScopeId>,
+}
+
+impl<'a> Iterator for ScopeIter<'a> {
+    type Item = (ScopeId, &'a Scope);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next.map(|i| {
+            self.next = self.scopes[i].parent;
+            (i, &self.scopes[i])
+        })
     }
 }

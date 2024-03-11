@@ -53,6 +53,7 @@ pub struct Stmt {
 #[derive(Debug, Clone)]
 pub enum StmtData {
     Expr(Expr),
+    Defer(Expr),
     Use(UsePath),
     Let {
         patt: Located<Pattern>,

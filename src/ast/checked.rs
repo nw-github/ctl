@@ -92,6 +92,7 @@ impl Default for CheckedPattern {
 pub enum CheckedStmt {
     Expr(CheckedExpr),
     Let(CheckedPattern, Option<CheckedExpr>),
+    Defer(CheckedExpr),
     #[default]
     None,
 }
@@ -174,9 +175,8 @@ pub enum CheckedExprData {
     For {
         iter: Box<CheckedExpr>,
         patt: CheckedPattern,
-        body: Vec<CheckedStmt>,
+        body: Block,
         optional: bool,
-        scope: ScopeId,
     },
     Match {
         expr: Box<CheckedExpr>,

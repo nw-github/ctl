@@ -119,6 +119,7 @@ pub enum Token<'a> {
     Use,
     Try,
     Catch,
+    Defer,
 
     Ident(&'a str),
     Int {
@@ -793,6 +794,7 @@ impl<'a> Lexer<'a> {
             "break" => Token::Break,
             "catch" => Token::Catch,
             "continue" => Token::Continue,
+            "defer" => Token::Defer,
             "dyn" => Token::Dyn,
             "else" => Token::Else,
             "enum" => Token::Enum,

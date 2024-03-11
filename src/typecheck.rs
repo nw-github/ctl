@@ -842,6 +842,7 @@ impl TypeChecker {
             }
             StmtData::Let { ty, value, patt } => DeclaredStmt::Let { ty, value, patt },
             StmtData::Expr(expr) => DeclaredStmt::Expr(expr),
+            StmtData::Defer(expr) => DeclaredStmt::Defer(expr),
             StmtData::Error => DeclaredStmt::None,
         }
     }
@@ -1197,6 +1198,11 @@ impl TypeChecker {
                 } else {
                     return self.error(Error::new("cannot infer type", patt.span));
                 }
+            }
+            DeclaredStmt::Defer(expr) => {
+                return CheckedStmt::Defer(
+                    self.enter(ScopeKind::Defer, |this| this.check_expr(expr, None)),
+                );
             }
             DeclaredStmt::Fn(f) => self.check_fn(f),
             DeclaredStmt::Static { id, value } => {
@@ -2402,6 +2408,7 @@ impl TypeChecker {
                     if !patt.irrefutable {
                         this.error(Error::must_be_irrefutable("for patterns", patt_span))
                     }
+
                     let body = body
                         .into_iter()
                         .map(|stmt| {
@@ -2416,10 +2423,12 @@ impl TypeChecker {
                         out,
                         CheckedExprData::For {
                             patt,
-                            body,
+                            body: Block {
+                                body,
+                                scope: this.current,
+                            },
                             optional,
                             iter: iter.into(),
-                            scope: this.current,
                         },
                     )
                 })
@@ -2515,9 +2524,9 @@ impl TypeChecker {
                     ))
                 }
             }
-            ExprData::Return(expr) => self.check_return(*expr),
+            ExprData::Return(expr) => self.check_return(*expr, span),
             ExprData::Tail(expr) => match &self.scopes[self.current].kind {
-                ScopeKind::Function(_) | ScopeKind::Lambda(_, _) => self.check_return(*expr),
+                ScopeKind::Function(_) | ScopeKind::Lambda(_, _) => self.check_return(*expr, span),
                 ScopeKind::Loop { .. } => self.type_check(*expr, &Type::Void),
                 _ => self.check_yield(*expr),
             },
@@ -2525,6 +2534,7 @@ impl TypeChecker {
                 let Some(((target, _, &infinite), id)) = self
                     .scopes
                     .walk(self.current)
+                    .take_while(|(_, scope)| !scope.kind.is_defer())
                     .find_map(|(id, scope)| scope.kind.as_loop().zip(Some(id)))
                 else {
                     if let Some(expr) = expr {
@@ -2572,6 +2582,7 @@ impl TypeChecker {
                 if !self
                     .scopes
                     .walk(self.current)
+                    .take_while(|(_, scope)| !scope.kind.is_defer())
                     .any(|(_, scope)| matches!(scope.kind, ScopeKind::Loop { .. }))
                 {
                     return self.error(Error::new("continue outside of loop", span));
@@ -2875,32 +2886,43 @@ impl TypeChecker {
         CheckedExpr::new(Type::Never, CheckedExprData::Yield(expr.into()))
     }
 
-    fn check_return(&mut self, expr: Expr) -> CheckedExpr {
-        let lambda = self
-            .scopes
-            .walk(self.current)
-            .find_map(|(id, scope)| scope.kind.as_lambda().map(|(t, _)| (id, t.clone())));
-        if let Some((id, target)) = lambda {
-            let span = expr.span;
-            let mut expr = self.check_expr(expr, target.as_ref());
-            self.scopes[id].kind = if let Some(target) = &target {
-                expr = self.type_check_checked(expr, target, span);
-                ScopeKind::Lambda(Some(target.clone()), true)
-            } else {
-                ScopeKind::Lambda(Some(expr.ty.clone()), true)
-            };
+    fn check_return(&mut self, expr: Expr, span: Span) -> CheckedExpr {
+        for (id, scope) in self.scopes.walk(self.current) {
+            match &scope.kind {
+                ScopeKind::Lambda(target, _) => {
+                    let target = target.clone();
+                    let span = expr.span;
+                    let mut expr = self.check_expr(expr, target.as_ref());
+                    self.scopes[id].kind = if let Some(target) = &target {
+                        expr = self.type_check_checked(expr, target, span);
+                        ScopeKind::Lambda(Some(target.clone()), true)
+                    } else {
+                        ScopeKind::Lambda(Some(expr.ty.clone()), true)
+                    };
 
-            CheckedExpr::new(Type::Never, CheckedExprData::Return(expr.into()))
-        } else {
-            let target = self
-                .current_function()
-                .map(|id| self.scopes.get(id).ret.clone())
-                .expect("return should only be possible inside functions");
-            CheckedExpr::new(
-                Type::Never,
-                CheckedExprData::Return(self.type_check(expr, &target).into()),
-            )
+                    return CheckedExpr::new(Type::Never, CheckedExprData::Return(expr.into()));
+                }
+                &ScopeKind::Function(id) => {
+                    let target = self.scopes.get(id).ret.clone();
+                    return CheckedExpr::new(
+                        Type::Never,
+                        CheckedExprData::Return(self.type_check(expr, &target).into()),
+                    );
+                }
+                ScopeKind::Defer => {
+                    self.diag
+                        .error(Error::new("cannot return in defer block", span));
+                    return self.check_expr(expr, None);
+                }
+                _ => {}
+            }
         }
+
+        // this should never be possible, but report error instead of crashing for LSP reasons
+        self.error(Error::new(
+            "return expression outside of function",
+            expr.span,
+        ))
     }
 
     fn check_unsafe_union_constructor(

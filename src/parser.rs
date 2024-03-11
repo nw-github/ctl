@@ -311,6 +311,17 @@ impl<'a, 'b> Parser<'a, 'b> {
                         data: StmtData::Let { ty, value, patt },
                         attrs,
                     }
+                } else if self.next_if_kind(Token::Defer).is_some() {
+                    let (needs_semicolon, expr) = self.block_or_normal_expr();
+                    if needs_semicolon {
+                        self.expect_kind(Token::Semicolon);
+                    } else {
+                        self.next_if_kind(Token::Semicolon);
+                    }
+                    Stmt {
+                        attrs,
+                        data: StmtData::Defer(expr),
+                    }
                 } else {
                     let (needs_semicolon, mut expr) = self.block_or_normal_expr();
                     if self.matches_kind(Token::RCurly) {
@@ -639,7 +650,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
             Token::Unsafe => {
                 let expr = self.expression();
-                Expr::new(span.extended_to(expr.span), ExprData::Unsafe(expr.into()))
+                Expr::new(span, ExprData::Unsafe(expr.into()))
             }
             Token::Continue => Expr::new(span, ExprData::Continue),
             _ => {

@@ -287,7 +287,7 @@ repository:
       -
         comment: control flow keywords
         name: keyword.control.ctl
-        match: \b(await|break|continue|do|else|for|if|loop|match|return|try|while|yield)\b
+        match: \b(await|break|continue|do|else|for|if|loop|match|return|defer|try|while|yield)\b
       -
         comment: storage keywords
         name: keyword.other.ctl storage.type.ctl

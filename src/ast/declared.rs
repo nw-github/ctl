@@ -22,6 +22,7 @@ pub struct DeclaredImplBlock {
 #[derive(EnumAsInner)]
 pub enum DeclaredStmt {
     Expr(Expr),
+    Defer(Expr),
     Let {
         patt: Located<Pattern>,
         ty: Option<TypeHint>,

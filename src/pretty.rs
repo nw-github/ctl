@@ -16,7 +16,11 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
     let tabs = INDENT.repeat(indent);
     match &stmt.data {
         StmtData::Expr(expr) => {
-            eprintln!("{tabs}StmtExpr");
+            eprintln!("{tabs}ExprStmt");
+            print_expr(expr, indent + 1);
+        }
+        StmtData::Defer(expr) => {
+            eprintln!("{tabs}Defer");
             print_expr(expr, indent + 1);
         }
         StmtData::Let { ty, value, patt } => {
