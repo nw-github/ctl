@@ -12,5 +12,10 @@ clean:
     rm perf.data*
     rm flamegraph.svg
 
+sync:
+    git pull
+    just code
+    cargo b -r
+
 code:
     cd ide/code && npm install && npm run compile && rsync -av . {{VSCODE_HOME}}/extensions/ctl

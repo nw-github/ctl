@@ -2244,12 +2244,11 @@ impl<'a, 'b> Codegen<'a, 'b> {
         if optional {
             self.buffer.emit(format!("{}=", self.cur_loop.1));
             self.emit_expr_inline(CheckedExpr::option_null(ty), state);
-            self.buffer.emit(";");
         } else {
             self.buffer
-                .emit(format!("{}={VOID_INSTANCE};", self.cur_loop.1));
+                .emit(format!("{}={VOID_INSTANCE}", self.cur_loop.1));
         }
-        self.leave_scope(state, "break", self.cur_loop.0);
+        self.buffer.emit(";break;");
     }
 
     fn leave_scope(&mut self, state: &mut State, exit: &str, scope: ScopeId) {
