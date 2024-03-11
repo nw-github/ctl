@@ -1378,14 +1378,27 @@ impl<'a, 'b> Codegen<'a, 'b> {
                 self.buffer.emit("}}");
             }
             CheckedExprData::ArrayWithInit { init, count } => {
-                self.buffer.emit("(");
-                self.emit_type(&expr.ty);
-                self.buffer.emit(format!("){{.{ARRAY_DATA_NAME}={{"));
-                for _ in 0..count {
-                    self.emit_expr((*init).clone(), state);
-                    self.buffer.emit(",");
+                // number chosen arbitrarily
+                if count <= 32 {
+                    self.buffer.emit("(");
+                    self.emit_type(&expr.ty);
+                    self.buffer.emit(format!("){{.{ARRAY_DATA_NAME}={{"));
+                    for _ in 0..count {
+                        self.emit_expr((*init).clone(), state);
+                        self.buffer.emit(",");
+                    }
+                    self.buffer.emit("}}");
+                } else {
+                    tmpbuf_emit!(self, state, |tmp| {
+                        self.emit_type(&expr.ty);
+                        self.buffer.emit(format!(" {tmp};"));
+                        self.buffer.emit(format!(
+                            "for(usize i=0;i<{count};i++){{{tmp}.{ARRAY_DATA_NAME}[i]="
+                        ));
+                        self.emit_expr_inline(*init, state);
+                        self.buffer.emit(";}");
+                    })
                 }
-                self.buffer.emit("}}");
             }
             CheckedExprData::Vec(exprs) => {
                 let ut = (**expr.ty.as_user().unwrap()).clone();
