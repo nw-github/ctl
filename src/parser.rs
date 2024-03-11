@@ -1274,9 +1274,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         self.tuple_like(span, mut_var)
                             .map(|subpatterns| Pattern::TupleLike { path, subpatterns })
                     }
-                    Token::LCurly
-                        if path.as_identifier().is_none() || ctx != EvalContext::IfWhile =>
-                    {
+                    Token::LCurly if ctx != EvalContext::IfWhile => {
                         let span = self.next().span;
                         self.struct_like(span, mut_var)
                             .map(|subpatterns| Pattern::StructLike { path, subpatterns })
