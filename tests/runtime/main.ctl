@@ -5,221 +5,221 @@ fn assert(cond: bool, msg: str) {
 }
 
 fn main() {
-    std::println("span: ");
+    println("span: ");
     {
-        std::println("running ranges()...");
+        println("running ranges()...");
         span::ranges();
 
-        std::println("pattern()...");
+        println("pattern()...");
         span::pattern();
 
-        std::println("pattern_destructure()...");
+        println("pattern_destructure()...");
         span::pattern_destructure();
 
-        std::println("pattern_destructure_2()...");
+        println("pattern_destructure_2()...");
         span::pattern_destructure_2();
     }
 
-    std::println("\nvec: ");
+    println("\nvec: ");
     {
-        std::println("running init1()...");
+        println("running init1()...");
         vec::init1();
 
-        std::println("running init2()...");
+        println("running init2()...");
         vec::init2();
         
-        std::println("running push_pop()...");
+        println("running push_pop()...");
         vec::push_pop();
 
-        std::println("running insert()...");
+        println("running insert()...");
         vec::insert();
 
-        std::println("running remove()...");
+        println("running remove()...");
         vec::remove();
 
-        std::println("running swap_remove()...");
+        println("running swap_remove()...");
         vec::swap_remove();
     }
 
-    std::println("\nhash: ");
+    println("\nhash: ");
     {
-        std::println("running map()...");
+        println("running map()...");
         hash::map();
 
-        std::println("running set()...");
+        println("running set()...");
         hash::set();
 
-        std::println("running map_builtin()...");
+        println("running map_builtin()...");
         hash::map_builtin();
     }
 
-    std::println("\norder of evaluation: ");
+    println("\norder of evaluation: ");
     {
-        std::println("blocks(trigger_else: false)...");
+        println("blocks(trigger_else: false)...");
         ordering::blocks(false);
 
-        std::println("blocks(trigger_else: true)...");
+        println("blocks(trigger_else: true)...");
         ordering::blocks(true);
 
-        std::println("positional_call()...");
+        println("positional_call()...");
         ordering::positional_call();
 
-        std::println("increment()...");
+        println("increment()...");
         ordering::increment();
 
-        std::println("instance_ordering()...");
+        println("instance_ordering()...");
         ordering::instance_ordering();
 
-        std::println("keyword_call()...");
+        println("keyword_call()...");
         ordering::keyword_call();
     }
 
-    std::println("\narray: ");
+    println("\narray: ");
     {
-        std::println("pattern_stuff()...");
+        println("pattern_stuff()...");
         array::pattern_stuff();
     
-        std::println("nested_ptr()...");
+        println("nested_ptr()...");
         array::nested_ptr();
 
-        std::println("nested_destructure_1()...");
+        println("nested_destructure_1()...");
         array::nested_destructure_1();
 
-        std::println("nested_destructure_2()...");
+        println("nested_destructure_2()...");
         array::nested_destructure_2();
 
-        std::println("nested_destructure_3()...");
+        println("nested_destructure_3()...");
         array::nested_destructure_3();
 
-        std::println("nested_destructure_4()...");
+        println("nested_destructure_4()...");
         array::nested_destructure_4();
 
-        std::println("nested_destructure_5()...");
+        println("nested_destructure_5()...");
         array::nested_destructure_5();
     }
 
-    std::println("\npatterns: ");
+    println("\npatterns: ");
     {
-        std::println("struct_pattern()...");
+        println("struct_pattern()...");
         patterns::struct_pattern();
 
-        std::println("union_pattern()...");
+        println("union_pattern()...");
         patterns::union_pattern();
 
-        std::println("union_struct_pattern()...");
+        println("union_struct_pattern()...");
         patterns::union_struct_pattern();
 
-        std::println("option_struct_pattern()...");
+        println("option_struct_pattern()...");
         patterns::option_struct_pattern();
 
-        std::println("integer_pattern()...");
+        println("integer_pattern()...");
         patterns::integer_pattern();
 
-        std::println("string_pattern()...");
+        println("string_pattern()...");
         patterns::string_pattern();
     }
 
-    std::println("\nmisc: ");
+    println("\nmisc: ");
     {
-        std::println("booleans()...");
+        println("booleans()...");
         misc::booleans();
 
-        std::println("positional::start()...");
+        println("positional::start()...");
         positional::start();
 
-        std::println("positional::middle()...");
+        println("positional::middle()...");
         positional::middle();
 
-        std::println("positional::end()...");
+        println("positional::end()...");
         positional::end();
 
-        std::println("struct_order()...");
+        println("struct_order()...");
         struct_order::test();
 
-        std::println("modules()...");
+        println("modules()...");
         modules::test();
 
-        std::println("statics()...");
+        println("statics()...");
         misc::statics();
 
-        std::println("void_assigns()...");
+        println("void_assigns()...");
         misc::void_assigns();
 
-        std::println("sizes()...");
+        println("sizes()...");
         misc::sizes();
     }
 
-    std::println("\nloops: ");
+    println("\nloops: ");
     {
-        std::println("while_loop()...");
+        println("while_loop()...");
         loops::while_loop();
 
-        std::println("for_loop()...");
+        println("for_loop()...");
         loops::for_loop();
 
-        std::println("infinite_loop()...");
+        println("infinite_loop()...");
         loops::infinite_loop();
     }
 
-    std::println("\ndynamic dispatch: ");
+    println("\ndynamic dispatch: ");
     {
-        std::println("normal()...");
+        println("normal()...");
         traits::dd::normal();
 
-        std::println("dependant()...");
+        println("dependant()...");
         traits::dd::dependant();
 
-        std::println("recursive()...");
+        println("recursive()...");
         traits::dd::recursive();
     }
 
-    std::println("\ntrait default: ");
+    println("\ntrait default: ");
     {
-        std::println("nooverride_direct()...");
+        println("nooverride_direct()...");
         traits::default::nooverride_direct();
 
-        std::println("nooverride_dyn()...");
+        println("nooverride_dyn()...");
         traits::default::nooverride_dyn();
 
-        std::println("nooverride_generic()...");
+        println("nooverride_generic()...");
         traits::default::nooverride_generic();
 
-        std::println("override_direct()...");
+        println("override_direct()...");
         traits::default::override_direct();
 
-        std::println("override_dyn()...");
+        println("override_dyn()...");
         traits::default::override_dyn();
 
-        std::println("override_generic()...");
+        println("override_generic()...");
         traits::default::override_generic();
     }
 
-    std::println("\ntrait default by extension: ");
+    println("\ntrait default by extension: ");
     {
-        std::println("nooverride_direct()...");
+        println("nooverride_direct()...");
         traits::default_ext::nooverride_direct();
 
-        std::println("nooverride_dyn()...");
+        println("nooverride_dyn()...");
         traits::default_ext::nooverride_dyn();
 
-        std::println("nooverride_generic()...");
+        println("nooverride_generic()...");
         traits::default_ext::nooverride_generic();
 
-        std::println("override_direct()...");
+        println("override_direct()...");
         traits::default_ext::override_direct();
 
-        std::println("override_dyn()...");
+        println("override_dyn()...");
         traits::default_ext::override_dyn();
 
-        std::println("override_generic()...");
+        println("override_generic()...");
         traits::default_ext::override_generic();
     }
 
-    std::println("\noperator overloading: ");
+    println("\noperator overloading: ");
     {
-        std::println("cmp_eq()...");
+        println("cmp_eq()...");
         ops::cmp_eq();
     }
 
-    std::println("\nall tests passed!");
+    println("\nall tests passed!");
 }

@@ -14,7 +14,7 @@ struct Cat {
 
     impl Animal {
         fn make_sound(this, kw _loud: bool) {
-            std::println("{this.name} said: purr...");
+            println("{this.name} said: purr...");
         }
     }
 }
@@ -25,7 +25,7 @@ struct Dog {
     impl Animal {
         fn make_sound(this, kw loud: bool) {
             let msg = if loud { "WOOF! WOOF!" } else { "woof..." };
-            std::println("{this.name} said: {msg}");
+            println("{this.name} said: {msg}");
         }
     }
 }
@@ -48,6 +48,7 @@ fn main(): c_int {
 ```
 
 ### Build
+
 ```
 cargo r -r -- run main.ctl
 ```
