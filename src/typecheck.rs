@@ -276,45 +276,37 @@ impl TypeChecker {
 
 /// Forward declaration pass routines
 impl TypeChecker {
-    fn declare_struct(
-        &mut self,
-        autouse: &mut Vec<ScopeId>,
-        base: Struct,
-        attrs: Attributes,
-    ) -> DeclaredStmt {
+    fn declare_struct(&mut self, base: Struct, attrs: Attributes) -> DeclaredStmt {
         let name = base.name.clone();
         let public = base.public;
         let lang_item = attrs.val("lang").map(String::from);
         let (ut, init, fns, impls) = self.enter(ScopeKind::None, |this| {
             let init = this.enter(ScopeKind::None, |this| {
-                this.declare_fn(
-                    autouse,
-                    Fn {
-                        public: base.public && !base.members.iter().any(|m| !m.public),
-                        name: base.name.clone(),
-                        is_async: false,
-                        linkage: Linkage::Internal,
-                        variadic: false,
-                        is_unsafe: false,
-                        type_params: vec![],
-                        params: base
-                            .members
-                            .iter()
-                            .map(|member| Param {
-                                keyword: true,
-                                patt: Located::new(
-                                    member.name.span,
-                                    Pattern::Path(Path::from(member.name.clone())),
-                                ),
-                                ty: member.ty.clone(),
-                                default: member.default.clone(),
-                            })
-                            .collect(),
-                        ret: Self::typehint_for_struct(&base.name, &base.type_params),
-                        body: None,
-                        attrs: Default::default(),
-                    },
-                )
+                this.declare_fn(Fn {
+                    public: base.public && !base.members.iter().any(|m| !m.public),
+                    name: base.name.clone(),
+                    is_async: false,
+                    linkage: Linkage::Internal,
+                    variadic: false,
+                    is_unsafe: false,
+                    type_params: vec![],
+                    params: base
+                        .members
+                        .iter()
+                        .map(|member| Param {
+                            keyword: true,
+                            patt: Located::new(
+                                member.name.span,
+                                Pattern::Path(Path::from(member.name.clone())),
+                            ),
+                            ty: member.ty.clone(),
+                            default: member.default.clone(),
+                        })
+                        .collect(),
+                    ret: Self::typehint_for_struct(&base.name, &base.type_params),
+                    body: None,
+                    attrs: Default::default(),
+                })
             });
             let mut members = IndexMap::with_capacity(base.members.len());
             for member in base.members {
@@ -335,11 +327,11 @@ impl TypeChecker {
                 }
             }
 
-            let (impls, impl_blocks) = this.declare_impl_blocks(autouse, base.impls);
+            let (impls, impl_blocks) = this.declare_impl_blocks(base.impls);
             let fns: Vec<_> = base
                 .functions
                 .into_iter()
-                .map(|f| this.declare_fn(autouse, f))
+                .map(|f| this.declare_fn(f))
                 .collect();
             let ut = UserType {
                 members,
@@ -390,7 +382,6 @@ impl TypeChecker {
 
     fn declare_union(
         &mut self,
-        autouse: &mut Vec<ScopeId>,
         tag: Option<Path>,
         base: Struct,
         variants: Vec<Variant>,
@@ -429,7 +420,7 @@ impl TypeChecker {
                 });
             }
 
-            let (impls, impl_blocks) = this.declare_impl_blocks(autouse, base.impls);
+            let (impls, impl_blocks) = this.declare_impl_blocks(base.impls);
             let ret = Self::typehint_for_struct(&base.name, &base.type_params);
             for variant in variants {
                 let mut params = params.clone();
@@ -500,29 +491,22 @@ impl TypeChecker {
                     }
                 }
 
-                fns.push(this.declare_fn(
-                    autouse,
-                    Fn {
-                        public: base.public,
-                        name: Located::new(variant.name.span, variant.name.data),
-                        linkage: Linkage::Internal,
-                        is_async: false,
-                        variadic: false,
-                        is_unsafe: false,
-                        type_params: vec![],
-                        params,
-                        ret: ret.clone(),
-                        body: None,
-                        attrs: Default::default(),
-                    },
-                ));
+                fns.push(this.declare_fn(Fn {
+                    public: base.public,
+                    name: Located::new(variant.name.span, variant.name.data),
+                    linkage: Linkage::Internal,
+                    is_async: false,
+                    variadic: false,
+                    is_unsafe: false,
+                    type_params: vec![],
+                    params,
+                    ret: ret.clone(),
+                    body: None,
+                    attrs: Default::default(),
+                }));
             }
             let member_cons_len = fns.len();
-            fns.extend(
-                base.functions
-                    .into_iter()
-                    .map(|f| this.declare_fn(autouse, f)),
-            );
+            fns.extend(base.functions.into_iter().map(|f| this.declare_fn(f)));
 
             let ut = UserType {
                 members,
@@ -560,12 +544,7 @@ impl TypeChecker {
         DeclaredStmt::Union { id, impls, fns }
     }
 
-    fn declare_unsafe_union(
-        &mut self,
-        autouse: &mut Vec<ScopeId>,
-        mut base: Struct,
-        attrs: Attributes,
-    ) -> DeclaredStmt {
+    fn declare_unsafe_union(&mut self, mut base: Struct, attrs: Attributes) -> DeclaredStmt {
         let lang_item = attrs.val("lang").map(String::from);
         let name = base.name.clone();
         let public = base.public;
@@ -589,11 +568,11 @@ impl TypeChecker {
                 }
             }
 
-            let (impls, impl_blocks) = this.declare_impl_blocks(autouse, base.impls);
+            let (impls, impl_blocks) = this.declare_impl_blocks(base.impls);
             let fns: Vec<_> = base
                 .functions
                 .into_iter()
-                .map(|f| this.declare_fn(autouse, f))
+                .map(|f| this.declare_fn(f))
                 .collect();
             let ut = UserType {
                 members,
@@ -699,13 +678,13 @@ impl TypeChecker {
                     }
                 })
             }
-            StmtData::Struct(base) => self.declare_struct(autouse, base, stmt.attrs),
+            StmtData::Struct(base) => self.declare_struct(base, stmt.attrs),
             StmtData::Union {
                 tag,
                 base,
                 variants,
-            } => self.declare_union(autouse, tag, base, variants, stmt.attrs),
-            StmtData::UnsafeUnion(base) => self.declare_unsafe_union(autouse, base, stmt.attrs),
+            } => self.declare_union(tag, base, variants, stmt.attrs),
+            StmtData::UnsafeUnion(base) => self.declare_unsafe_union(base, stmt.attrs),
             StmtData::Trait {
                 public,
                 name,
@@ -739,10 +718,7 @@ impl TypeChecker {
                         false,
                         false,
                     );
-                    let fns: Vec<_> = functions
-                        .into_iter()
-                        .map(|f| this.declare_fn(autouse, f))
-                        .collect();
+                    let fns: Vec<_> = functions.into_iter().map(|f| this.declare_fn(f)).collect();
                     let tr = Trait {
                         public,
                         name,
@@ -780,11 +756,8 @@ impl TypeChecker {
                 functions,
             } => {
                 let (ext, impl_blocks, fns) = self.enter(ScopeKind::None, |this| {
-                    let (impls, impl_blocks) = this.declare_impl_blocks(autouse, impls);
-                    let fns: Vec<_> = functions
-                        .into_iter()
-                        .map(|f| this.declare_fn(autouse, f))
-                        .collect();
+                    let (impls, impl_blocks) = this.declare_impl_blocks(impls);
+                    let fns: Vec<_> = functions.into_iter().map(|f| this.declare_fn(f)).collect();
                     let ext = Extension {
                         name,
                         public,
@@ -811,7 +784,7 @@ impl TypeChecker {
                     fns,
                 }
             }
-            StmtData::Fn(f) => DeclaredStmt::Fn(self.declare_fn(autouse, f)),
+            StmtData::Fn(f) => DeclaredStmt::Fn(self.declare_fn(f)),
             StmtData::Static {
                 public,
                 name,
@@ -847,7 +820,7 @@ impl TypeChecker {
         }
     }
 
-    fn declare_fn(&mut self, autouse: &mut Vec<ScopeId>, f: Fn) -> DeclaredFn {
+    fn declare_fn(&mut self, f: Fn) -> DeclaredFn {
         let span = f.name.span;
         if f.variadic && f.linkage != Linkage::Import {
             self.error(Error::new("only import functions may be variadic", span))
@@ -875,7 +848,6 @@ impl TypeChecker {
                 ret: Type::Unknown,
                 body: None,
                 body_scope: ScopeId::ROOT,
-                returns: false,
                 constructor: None,
             },
             f.public,
@@ -940,11 +912,7 @@ impl TypeChecker {
             DeclaredFn {
                 id,
                 public: f.public,
-                body: f.body.map(|body| {
-                    body.into_iter()
-                        .map(|stmt| this.declare_stmt(autouse, stmt))
-                        .collect()
-                }),
+                body: f.body,
             }
         })
     }
@@ -980,7 +948,6 @@ impl TypeChecker {
 
     fn declare_impl_blocks(
         &mut self,
-        autouse: &mut Vec<ScopeId>,
         blocks: Vec<ImplBlock>,
     ) -> (Vec<TraitImpl>, Vec<DeclaredImplBlock>) {
         let mut impls = Vec::new();
@@ -995,10 +962,7 @@ impl TypeChecker {
                 impl_index: impls.len(),
                 span: path.final_component_span(),
                 scope: this.current,
-                fns: functions
-                    .into_iter()
-                    .map(|f| this.declare_fn(autouse, f))
-                    .collect(),
+                fns: functions.into_iter().map(|f| this.declare_fn(f)).collect(),
             });
             impls.push(TraitImpl::Unchecked {
                 scope: self.current,
@@ -1403,23 +1367,33 @@ impl TypeChecker {
                 }
             }
 
-            if let Some(body) = body {
-                let old_safety = std::mem::take(&mut this.safety);
-                let body = body.into_iter().map(|stmt| this.check_stmt(stmt)).collect();
-                let func = this.scopes.get_mut(id);
-                func.body = Some(body);
-                if !func.returns && !matches!(func.ret, Type::Void | Type::Unknown) {
-                    let span = func.name.span;
-                    let name = func.name.data.clone();
-                    let ret = func.ret.clone().name(&this.scopes);
-                    this.error(Error::new(
-                        format!("function '{name}' must return a value of type '{ret}' from all code paths"),
-                        span,
-                    ))
-                }
+            let Some(body) = body else {
+                return;
+            };
 
-                this.safety = old_safety;
-            }
+            let old_safety = std::mem::take(&mut this.safety);
+            let target = this.scopes.get_mut(id).ret.clone();
+            let body = this.check_expr(body, Some(&target));
+            let body = this.coerce(body, &target);
+            this.scopes.get_mut(id).body = Some(match body {
+                Ok(body) => body,
+                Err(body) => {
+                    if !body.data.is_yielding_block(&this.scopes) && 
+                        !matches!(target, Type::Void | Type::Unknown) {
+                        let func = this.scopes.get(id);
+                        let err = Error::new(
+                            format!("function '{}' must return a value of type '{}' from all code paths",
+                                func.name.data,
+                                func.ret.name(&this.scopes),
+                            ),
+                            func.name.span,
+                        );
+                        this.error(err)
+                    }
+                    body
+                }
+            });
+            this.safety = old_safety;
         });
     }
 
@@ -2283,9 +2257,7 @@ impl TypeChecker {
                     // this separates these two cases:
                     //   let x /* void? */ = if whatever { yield void; };
                     //   let x /* void */ = if whatever { };
-                    if matches!(&if_branch.data, CheckedExprData::Block(b) if
-                        matches!(self.scopes[b.scope].kind, ScopeKind::Block(_, yields) if yields))
-                    {
+                    if if_branch.data.is_yielding_block(&self.scopes) {
                         if out_type.is_never() {
                             out_type = Type::Void;
                             Some(CheckedExpr::new(Type::Void, CheckedExprData::Void))
@@ -2386,11 +2358,7 @@ impl TypeChecker {
                 };
                 self.enter(kind, |this| {
                     let Some(ut) = this.get_trait_impl(&iter.ty, iter_id) else {
-                        for stmt in body {
-                            let stmt = this.declare_stmt(&mut vec![], stmt);
-                            this.check_stmt(stmt);
-                        }
-
+                        this.check_block(body);
                         return this.error(Error::doesnt_implement(
                             &iter.ty.name(&this.scopes),
                             "Iterator",
@@ -2409,14 +2377,7 @@ impl TypeChecker {
                         this.error(Error::must_be_irrefutable("for patterns", patt_span))
                     }
 
-                    let body = body
-                        .into_iter()
-                        .map(|stmt| {
-                            let stmt = this.declare_stmt(&mut vec![], stmt);
-                            this.check_stmt(stmt)
-                        })
-                        .collect();
-
+                    let body = this.check_block(body);
                     let (out, optional) =
                         this.loop_out_type(&this.scopes[this.current].kind.clone(), span);
                     CheckedExpr::new(
@@ -2528,7 +2489,23 @@ impl TypeChecker {
             ExprData::Tail(expr) => match &self.scopes[self.current].kind {
                 ScopeKind::Function(_) | ScopeKind::Lambda(_, _) => self.check_return(*expr, span),
                 ScopeKind::Loop { .. } => self.type_check(*expr, &Type::Void),
-                _ => self.check_yield(*expr),
+                _ => {
+                    let ScopeKind::Block(target, _) =
+                        std::mem::take(&mut self.scopes[self.current].kind)
+                    else {
+                        return self.error(Error::new("yield outside of block", expr.span));
+                    };
+                    let span = expr.span;
+                    let mut expr = self.check_expr(*expr, target.as_ref());
+                    self.scopes[self.current].kind = if let Some(target) = target {
+                        expr = self.type_check_checked(expr, &target, span);
+                        ScopeKind::Block(Some(target), true)
+                    } else {
+                        ScopeKind::Block(Some(expr.ty.clone()), true)
+                    };
+
+                    CheckedExpr::new(Type::Never, CheckedExprData::Yield(expr.into()))
+                }
             },
             ExprData::Break(expr) => {
                 let Some(((target, _, &infinite), id)) = self
@@ -2706,12 +2683,7 @@ impl TypeChecker {
                     }
 
                     let body = if let ExprData::Block(body) = body.data {
-                        body.into_iter()
-                            .map(|stmt| {
-                                let stmt = this.declare_stmt(&mut vec![], stmt);
-                                this.check_stmt(stmt)
-                            })
-                            .collect()
+                        this.check_block(body)
                     } else {
                         vec![CheckedStmt::Expr(this.check_expr(
                             Expr::new(body.span, ExprData::Return(body)),
@@ -2755,15 +2727,9 @@ impl TypeChecker {
         let expr = self.check_expr_inner(expr, target);
         if expr.ty.is_never() && !matches!(expr.data, CheckedExprData::Yield(_)) {
             // TODO: lambdas
-            match &mut self.scopes[self.current].kind {
-                ScopeKind::Block(target, yields @ false) => {
-                    *target = Some(Type::Never);
-                    *yields = true;
-                }
-                &mut ScopeKind::Function(id) => {
-                    self.scopes.get_mut(id).returns = true;
-                }
-                _ => {}
+            if let ScopeKind::Block(target, yields @ false) = &mut self.scopes[self.current].kind {
+                *target = Some(Type::Never);
+                *yields = true;
             }
         }
         expr
@@ -2867,23 +2833,6 @@ impl TypeChecker {
                 CheckedExpr::new(Type::Bool, CheckedExprData::Is(expr.into(), patt)),
             )
         })
-    }
-
-    fn check_yield(&mut self, expr: Expr) -> CheckedExpr {
-        let ScopeKind::Block(target, _) = std::mem::take(&mut self.scopes[self.current].kind)
-        else {
-            return self.error(Error::new("yield outside of block", expr.span));
-        };
-        let span = expr.span;
-        let mut expr = self.check_expr(expr, target.as_ref());
-        self.scopes[self.current].kind = if let Some(target) = target {
-            expr = self.type_check_checked(expr, &target, span);
-            ScopeKind::Block(Some(target), true)
-        } else {
-            ScopeKind::Block(Some(expr.ty.clone()), true)
-        };
-
-        CheckedExpr::new(Type::Never, CheckedExprData::Yield(expr.into()))
     }
 
     fn check_return(&mut self, expr: Expr, span: Span) -> CheckedExpr {
@@ -3349,15 +3298,21 @@ impl TypeChecker {
         }
     }
 
+    fn check_block(&mut self, body: Vec<Stmt>) -> Vec<CheckedStmt> {
+        // TODO: do this in forward decl pass
+        let declared: Vec<_> = body
+            .into_iter()
+            .map(|stmt| self.declare_stmt(&mut vec![], stmt))
+            .collect();
+        declared
+            .into_iter()
+            .map(|stmt| self.check_stmt(stmt))
+            .collect()
+    }
+
     fn create_block(&mut self, body: Vec<Stmt>, kind: ScopeKind) -> Block {
         self.enter(kind, |this| Block {
-            body: body
-                .into_iter()
-                .map(|stmt| {
-                    let stmt = this.declare_stmt(&mut vec![], stmt);
-                    this.check_stmt(stmt)
-                })
-                .collect(),
+            body: this.check_block(body),
             scope: this.current,
         })
     }

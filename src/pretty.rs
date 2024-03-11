@@ -466,9 +466,9 @@ fn print_fn(
     }
 
     eprintln!("{plus_1}Return Type: {ret:?}");
-    if let Some(body) = body.as_ref().filter(|b| !b.is_empty()) {
-        eprintln!("{}Body: ", INDENT.repeat(indent));
-        print_stmts(body, indent + 1);
+    if let Some(body) = body.as_ref() {
+        eprintln!("{plus_1}Body: ");
+        print_expr(body, indent);
     }
 }
 

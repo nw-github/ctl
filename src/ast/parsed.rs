@@ -433,7 +433,7 @@ pub struct Fn {
     pub type_params: TypeParams,
     pub params: Vec<Param>,
     pub ret: TypeHint,
-    pub body: Option<Vec<Stmt>>,
+    pub body: Option<Expr>,
 }
 
 #[derive(Debug, Clone, Default)]

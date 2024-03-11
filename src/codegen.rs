@@ -1152,37 +1152,30 @@ impl<'a, 'b> Codegen<'a, 'b> {
         });
         if let Some(body) = func.body.clone() {
             let unused = self.emit_prototype(state, false, false);
-            self.emit_block_ex(
-                Block {
-                    body,
-                    scope: func.body_scope,
-                },
-                state,
-                |this, state| {
-                    for id in unused {
-                        this.buffer.emit("(void)");
-                        this.emit_var_name(id, state);
-                        this.buffer.emit(";");
-                    }
+            self.buffer.emit("{");
+            for id in unused {
+                self.buffer.emit("(void)");
+                self.emit_var_name(id, state);
+                self.buffer.emit(";");
+            }
 
-                    for param in func.params.iter() {
-                        let Some(patt) = param
-                            .patt
-                            .as_checked()
-                            .filter(|patt| !matches!(patt.data, CheckedPatternData::Variable(_)))
-                        else {
-                            continue;
-                        };
+            for param in func.params.iter() {
+                let Some(patt) = param
+                    .patt
+                    .as_checked()
+                    .filter(|patt| !matches!(patt.data, CheckedPatternData::Variable(_)))
+                else {
+                    continue;
+                };
 
-                        this.emit_pattern_bindings(state, &patt.data, &param.label, &param.ty);
-                    }
-                },
-                |this, _state| {
-                    if !func.returns {
-                        this.buffer.emit(format!("return {VOID_INSTANCE};"));
-                    }
-                },
-            );
+                self.emit_pattern_bindings(state, &patt.data, &param.label, &param.ty);
+            }
+
+            hoist_point!(self, {
+                self.buffer.emit("return ");
+                self.emit_expr_inline(body, state);
+                self.buffer.emit(";}");
+            });
         }
     }
 
@@ -1611,11 +1604,13 @@ impl<'a, 'b> Codegen<'a, 'b> {
             CheckedExprData::Block(block) => {
                 enter_block!(self, state, &expr.ty, {
                     let scope = block.scope;
+                    self.buffer.emit_info("{", self.flags.minify);
                     self.emit_block(block, state);
                     if matches!(self.scopes[scope].kind, ScopeKind::Block(_, yields) if !yields) {
                         self.buffer
                             .emit(format!("{}={VOID_INSTANCE};", self.cur_block));
                     }
+                    self.buffer.emit_info("}", self.flags.minify);
                 });
             }
             CheckedExprData::If {
@@ -2240,6 +2235,8 @@ impl<'a, 'b> Codegen<'a, 'b> {
     }
 
     fn leave_scope(&mut self, state: &mut State, exit: &str, scope: ScopeId) {
+        self.buffer
+            .emit_info(format!("/* begin defers {:?} */", scope), self.flags.minify);
         for i in (0..self.defers.len()).rev() {
             for j in (0..self.defers[i].1.len()).rev() {
                 self.emit_expr_stmt(self.defers[i].1[j].clone(), state)
@@ -2249,7 +2246,8 @@ impl<'a, 'b> Codegen<'a, 'b> {
                 break;
             }
         }
-
+        self.buffer
+            .emit_info(format!("/* end defers {:?} */", scope), self.flags.minify);
         self.buffer.emit(format!("{exit};"));
     }
 
@@ -2719,37 +2717,24 @@ impl<'a, 'b> Codegen<'a, 'b> {
     }
 
     fn emit_block(&mut self, block: Block, state: &mut State) {
-        self.emit_block_ex(block, state, |_, _| {}, |_, _| {})
-    }
-
-    fn emit_block_ex(
-        &mut self,
-        block: Block,
-        state: &mut State,
-        pre: impl FnOnce(&mut Self, &mut State),
-        post: impl FnOnce(&mut Self, &mut State),
-    ) {
-        self.buffer.emit("{");
-        pre(self, state);
         hoist_point!(self, {
             self.defers.push((block.scope, vec![]));
             for stmt in block.body.into_iter() {
                 self.emit_stmt(stmt, state);
             }
         });
-        let (_, defers) = self.defers.pop().unwrap();
+        let (id, defers) = self.defers.pop().unwrap();
         if !defers.is_empty() {
             self.buffer
-                .emit_info("/* begin defers */", self.flags.minify);
+                .emit_info(format!("/* begin defers {:?} */", id), self.flags.minify);
             hoist_point!(self, {
                 for expr in defers.into_iter().rev() {
                     self.emit_expr_stmt(expr, state);
                 }
             });
-            self.buffer.emit_info("/* end defers */", self.flags.minify);
+            self.buffer
+                .emit_info(format!("/* end defers {:?} */", id), self.flags.minify);
         }
-        post(self, state);
-        self.buffer.emit("}");
     }
 
     fn emit_type(&mut self, id: &Type) {

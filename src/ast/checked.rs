@@ -4,7 +4,7 @@ use num_bigint::BigInt;
 
 use crate::{
     ast::{BinaryOp, UnaryOp},
-    sym::{ScopeId, Scopes, TraitId, VariableId},
+    sym::{ScopeId, ScopeKind, Scopes, TraitId, VariableId},
     typeid::{GenericFunc, Type},
 };
 
@@ -200,6 +200,13 @@ pub enum CheckedExprData {
     Continue,
     #[default]
     Error,
+}
+
+impl CheckedExprData {
+    pub fn is_yielding_block(&self, scopes: &Scopes) -> bool {
+        matches!(self, CheckedExprData::Block(block) if
+            matches!(scopes[block.scope].kind, ScopeKind::Block(_, true)))
+    }
 }
 
 #[derive(Debug, Default, Clone, derive_more::Constructor)]

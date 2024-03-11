@@ -9,7 +9,7 @@ use crate::{
 pub struct DeclaredFn {
     pub public: bool,
     pub id: FunctionId,
-    pub body: Option<Vec<DeclaredStmt>>,
+    pub body: Option<Expr>,
 }
 
 pub struct DeclaredImplBlock {

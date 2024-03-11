@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     ast::{
-        checked::{CheckedExpr, CheckedPattern, CheckedStmt},
+        checked::{CheckedExpr, CheckedPattern},
         parsed::{Expr, Linkage, Path, Pattern, UsePath},
         Attributes,
     },
@@ -181,14 +181,14 @@ pub struct Function {
     pub is_async: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
+    /// Is this a trait function with a body
     pub has_body: bool,
     pub type_params: Vec<UserTypeId>,
     pub params: Vec<CheckedParam>,
     pub ret: Type,
-    pub body: Option<Vec<CheckedStmt>>,
+    pub body: Option<CheckedExpr>,
     pub constructor: Option<UserTypeId>,
     pub body_scope: ScopeId,
-    pub returns: bool,
 }
 
 impl FunctionId {

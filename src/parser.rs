@@ -1845,14 +1845,14 @@ impl<'a, 'b> Parser<'a, 'b> {
                     self.error(Error::new("expected '{'", semi.span));
                     None
                 } else {
-                    Some(self.block().data)
+                    let lcurly = self.expect_kind(Token::LCurly);
+                    Some(self.block_expr(lcurly.span))
                 }
             }
             Some(false) => {
-                if self.matches_kind(Token::LCurly) {
-                    let span = self.peek().span;
-                    self.error(Error::new("expected ';'", span));
-                    Some(self.block().data)
+                if let Some(lcurly) = self.next_if_kind(Token::LCurly) {
+                    self.error(Error::new("expected ';'", lcurly.span));
+                    Some(self.block_expr(lcurly.span))
                 } else {
                     self.expect_kind(Token::Semicolon);
                     None
@@ -1862,7 +1862,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 if self.next_if_kind(Token::Semicolon).is_some() {
                     None
                 } else {
-                    Some(self.block().data)
+                    let lcurly = self.expect_kind(Token::LCurly);
+                    Some(self.block_expr(lcurly.span))
                 }
             }
         };
