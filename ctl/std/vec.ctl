@@ -134,7 +134,7 @@ pub struct Vec<T> {
 
         unsafe {
             let dst = this.ptr + idx;
-            let t   = unsafe *dst;
+            let res = *dst;
             if idx + 1 < this.len {
                 mem::copy_overlapping(
                     dst:,
@@ -144,7 +144,7 @@ pub struct Vec<T> {
             }
 
             this.len--;
-            t
+            res
         }
     }
 
@@ -157,7 +157,7 @@ pub struct Vec<T> {
 
         let ptr = this.ptr + idx;
         if idx < this.len {
-            unsafe mem::replace(ptr as *mut T, unsafe *(this.ptr + this.len))
+            unsafe mem::replace(ptr as *mut T, *(this.ptr + this.len))
         } else {
             unsafe *ptr
         }

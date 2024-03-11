@@ -2726,6 +2726,12 @@ impl TypeChecker {
                 )
             }
             ExprData::Unsafe(expr) => {
+                // for unsafe specifically, span is only the keyword
+                if self.safety == Safety::Unsafe {
+                    self.diag
+                        .warn(Error::new("unsafe expression in unsafe context", span))
+                }
+
                 let old_safety = std::mem::replace(&mut self.safety, Safety::Unsafe);
                 let expr = self.check_expr(*expr, target);
                 self.safety = old_safety;
