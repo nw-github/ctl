@@ -2488,6 +2488,11 @@ impl TypeChecker {
                         "multidimensional subscript is not supported",
                         args[1].span,
                     ))
+                } else if args.is_empty() {
+                    return self.error(Error::new(
+                        "subscript requires at least one argument",
+                        callee.span,
+                    ));
                 }
 
                 let callee = self.check_expr(*callee, None);
