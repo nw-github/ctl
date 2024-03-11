@@ -1,3 +1,10 @@
+use core::iter::Iterator;
+use core::reflect::*;
+use core::ext::*;
+
+#(intrinsic)
+import fn numeric_cast<T: Numeric, U: Numeric>(_: T): U;
+
 pub trait RangeBounds<T> {
     fn begin(this): Bound<T>;
     fn end(this): Bound<T>;
@@ -43,7 +50,7 @@ pub struct RangeToInclusive<T> {
 
 // foo..
 #(lang(range_from))
-pub struct RangeFrom<T> {
+pub struct RangeFrom<T: Numeric + Integral> {
     pub start: T,
 
     impl RangeBounds<T> {
@@ -55,11 +62,20 @@ pub struct RangeFrom<T> {
             Bound::Unbounded
         }
     }
+
+    impl Iterator<T> {
+        fn next(mut this): ?T {
+            let val = this.start.wrapping_add(numeric_cast(1));
+            if this.start < val {
+                this.start++
+            }
+        }
+    }
 }
 
 // foo..bar
 #(lang(range))
-pub struct Range<T> {
+pub struct Range<T: Numeric + Integral> {
     pub start: T,
     pub end: T,
 
@@ -72,11 +88,23 @@ pub struct Range<T> {
             Bound::Exclusive(this.end)
         }
     }
+
+    impl Iterator<T> {
+        fn next(mut this): ?T {
+            if this.start < this.end {
+                this.start++
+            }
+        }
+    }
 }
+
+// extension<T: Numeric> RangeExt for Range<T> {
+//     
+// }
 
 // foo..=bar
 #(lang(range_inclusive))
-pub struct RangeInclusive<T> {
+pub struct RangeInclusive<T: Numeric + Integral> {
     pub start: T,
     pub end: T,
 
@@ -87,6 +115,18 @@ pub struct RangeInclusive<T> {
 
         fn end(this): Bound<T> {
             Bound::Inclusive(this.end)
+        }
+    }
+
+    impl Iterator<T> {
+        fn next(mut this): ?T {
+            if this.start < this.end {
+                this.start++
+            } else if this.start == this.end {
+                // avoid overflow at the upper end
+                this.end--;
+                this.start
+            }
         }
     }
 }

@@ -1869,7 +1869,7 @@ impl TypeChecker {
 
                 checked.extend(elements.map(|e| self.type_check(e, &ty)));
                 CheckedExpr::new(
-                    Type::User(self.make_lang_type(vec, [ty], span).into()),
+                    self.make_lang_type(vec, [ty], span),
                     CheckedExprData::Vec(checked),
                 )
             }
@@ -1897,7 +1897,7 @@ impl TypeChecker {
 
                 checked.extend(elements.map(|e| self.type_check(e, &ty)));
                 CheckedExpr::new(
-                    Type::User(self.make_lang_type(set, [ty], span).into()),
+                    self.make_lang_type(set, [ty], span),
                     CheckedExprData::Set(checked),
                 )
             }
@@ -1946,7 +1946,7 @@ impl TypeChecker {
                 };
 
                 CheckedExpr::new(
-                    Type::User(self.make_lang_type(vec, [ty], span).into()),
+                    self.make_lang_type(vec, [ty], span),
                     CheckedExprData::VecWithInit {
                         init: init.into(),
                         count: self.type_check(*count, &Type::Usize).into(),
@@ -2005,7 +2005,7 @@ impl TypeChecker {
                     elements.map(|(key, val)| (self.type_check(key, &k), self.type_check(val, &v))),
                 );
                 CheckedExpr::new(
-                    Type::User(self.make_lang_type(map, [k, v], span).into()),
+                    self.make_lang_type(map, [k, v], span),
                     CheckedExprData::Map(result),
                 )
             }
@@ -2013,46 +2013,46 @@ impl TypeChecker {
                 start,
                 end,
                 inclusive,
-            } => match (start, end) {
-                // this could be skipped by just transforming these expressions to calls
-                (Some(start), Some(end)) => {
-                    let start = self.check_expr(*start, None);
-                    let end = self.type_check(*end, &start.ty);
-                    let item = if inclusive {
-                        "range_inclusive"
-                    } else {
-                        "range"
-                    };
-                    CheckedExpr::new(
-                        self.make_lang_type_by_name(item, [start.ty.clone()], span),
-                        CheckedExprData::Instance(
-                            [("start".into(), start), ("end".into(), end)].into(),
-                        ),
-                    )
-                }
-                (None, Some(end)) => {
-                    let end = self.check_expr(*end, None);
-                    let item = if inclusive {
-                        "range_to_inclusive"
-                    } else {
-                        "range_to"
-                    };
-                    CheckedExpr::new(
-                        self.make_lang_type_by_name(item, [end.ty.clone()], span),
-                        CheckedExprData::Instance([("end".into(), end)].into()),
-                    )
-                }
-                (Some(start), None) => {
-                    let start = self.check_expr(*start, None);
-                    CheckedExpr::new(
-                        self.make_lang_type_by_name("range_from", [start.ty.clone()], span),
-                        CheckedExprData::Instance([("start".into(), start)].into()),
-                    )
-                }
-                (None, None) => CheckedExpr::new(
-                    self.make_lang_type_by_name("range_full", [], span),
-                    CheckedExprData::Instance(Default::default()),
-                ),
+            } => {
+                let (item, ty, inst) = match (start, end) {
+                    // this could be skipped by just transforming these expressions to calls
+                    (Some(start), Some(end)) => {
+                        let start = self.check_expr(*start, None);
+                        let end = self.type_check(*end, &start.ty);
+                        let item = if inclusive {
+                            "range_inclusive"
+                        } else {
+                            "range"
+                        };
+                        (item, start.ty.clone(), [("start".into(), start), ("end".into(), end)].into())
+                    }
+                    (None, Some(end)) => {
+                        let end = self.check_expr(*end, None);
+                        let item = if inclusive {
+                            "range_to_inclusive"
+                        } else {
+                            "range_to"
+                        };
+                        (item, end.ty.clone(), [("end".into(), end)].into())
+                    }
+                    (Some(start), None) => {
+                        let start = self.check_expr(*start, None);
+                        ("range_from", start.ty.clone(), [("start".into(), start)].into())
+                    }
+                    (None, None) => {
+                        return CheckedExpr::new(
+                            self.make_lang_type_by_name("range_full", [], span),
+                            CheckedExprData::Instance(Default::default()),
+                        );
+                    },
+                };
+                let Some(id) = self.scopes.lang_types.get(item).copied() else {
+                    return self.error(Error::no_lang_item(item, expr.span));
+                };
+                CheckedExpr::new(
+                    self.make_lang_type(id, [ty], span),
+                    CheckedExprData::Instance(inst),
+                )
             },
             ExprData::String(s) => CheckedExpr::new(
                 self.make_lang_type_by_name("string", [], span),
@@ -3360,13 +3360,13 @@ impl TypeChecker {
         id: UserTypeId,
         args: impl IntoIterator<Item = Type>,
         span: Span,
-    ) -> GenericUserType {
+    ) -> Type {
         let ty = GenericUserType::from_type_args(&self.scopes, id, args);
         for (id, param) in ty.ty_args.iter() {
             self.resolve_impls(*id);
             self.check_bounds(&ty.ty_args, param, self.scopes.get(*id).impls.clone(), span);
         }
-        ty
+        Type::User(ty.into())
     }
 
     fn make_lang_type_by_name(

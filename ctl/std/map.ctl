@@ -137,17 +137,14 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
 
         this.len = 0;
 
-        mut i = 0u;
-        while i < old {
+        for i in 0u..old {
             if this.buckets.get(i)! is Bucket::Some(key, _) {
                 this.len++;
                 let j = this.entry_pos(key);
                 if i != j {
                     std::mem::swap(this.buckets.get_mut(i)!, this.buckets.get_mut(j)!);
                 }
-            }
-
-            i++;
+            };
         }
     }
 }

@@ -113,7 +113,7 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
                 vm_is_trailing_zeros = mm_shift == 1;
             } else {
                 // mp = mv + 2, so it always has at least one trailing 0 bit.
-                vp -= 1;
+                vp--;
             }
         } else if q < 63 {
             // TODO(ulfjack): Use a tighter bound here.
@@ -146,7 +146,7 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
             vr = vr_div10;
             vp = vp_div10;
             vm = vm_div10;
-            removed += 1;
+            removed++;
         }
         if vm_is_trailing_zeros {
             loop {
@@ -163,7 +163,7 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
                 vr = vr_div10;
                 vp = vp_div10;
                 vm = vm_div10;
-                removed += 1;
+                removed++;
             }
         }
         if vr_is_trailing_zeros && last_removed_digit == 5 && vr % 2 == 0 {
@@ -204,7 +204,7 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
             vr = vr_div10;
             vp = vp_div10;
             vm = vm_div10;
-            removed += 1;
+            removed++;
         }
         // We need to take vr + 1 if vr is outside bounds or we need to round up.
         vr + (vr == vm || round_up) as u64

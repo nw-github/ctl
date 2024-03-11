@@ -29,14 +29,9 @@ pub unsafe fn format32(f: f32, res: *raw u8): uint {
         if 0 <= k && kk <= 13 {
             // 1234e7 -> 12340000000.0
             write_mantissa(mantissa, res + index + length);
-            // for i in length..kk {
-            //     *(res + index + i) = b'0';
-            // }
-            mut i = length;
-            while i < kk {
-                *(res + index + i++) = b'0';
+            for i in length..kk {
+                *(res + index + i) = b'0';
             }
-
             *(res + index + kk) = b'.';
             *(res + index + kk + 1) = b'0';
             index as uint + kk as uint + 2
@@ -55,14 +50,9 @@ pub unsafe fn format32(f: f32, res: *raw u8): uint {
             *(res + index) = b'0';
             *(res + index + 1) = b'.';
             let offset = 2 - kk;
-            // for i in 2..offset {
-            //     *(res + index + i) = b'0';
-            // }
-            mut i = 2;
-            while i < offset {
-                *(res + index + i++) = b'0';
+            for i in 2..offset {
+                *(res + index + i) = b'0';
             }
-
             write_mantissa(mantissa, res + index + length + offset);
             index as uint + length as uint + offset as uint
         } else if length == 1 {
@@ -112,13 +102,8 @@ pub unsafe fn format64(f: f64, res: *raw u8): uint {
         if 0 <= k && kk <= 16 {
             // 1234e7 -> 12340000000.0
             write_mantissa_long(mantissa, res + index + length);
-
-            // for i in length..kk {
-            //     *(res + index + i++) = b'0';
-            // }
-            mut i = length;
-            while i < kk {
-                *(res + index + i++) = b'0';
+            for i in length..kk {
+                *(res + index + i) = b'0';
             }
             *(res + index + kk) = b'.';
             *(res + index + kk + 1) = b'0';
@@ -138,12 +123,8 @@ pub unsafe fn format64(f: f64, res: *raw u8): uint {
             *(res + index) = b'0';
             *(res + index + 1) = b'.';
             let offset = 2 - kk;
-            // for i in 2..offset {
-            //     *(res + index + i) = b'0';
-            // }
-            mut i = 2;
-            while i < offset {
-                *(res + index + i++) = b'0';
+            for i in 2..offset {
+                *(res + index + i) = b'0';
             }
             write_mantissa_long(mantissa, res + index + length + offset);
             index as uint + length as uint + offset as uint
