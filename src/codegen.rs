@@ -2262,7 +2262,10 @@ impl<'a, 'b> Codegen<'a, 'b> {
                     emitted = true;
                 }
 
-                self.emit_expr_stmt(self.defers[i].1[j].clone(), state)
+                hoist_point!(
+                    self,
+                    self.emit_expr_stmt(self.defers[i].1[j].clone(), state)
+                );
             }
 
             if self.defers[i].0 == scope {
@@ -2752,11 +2755,10 @@ impl<'a, 'b> Codegen<'a, 'b> {
         if !defers.is_empty() {
             self.buffer
                 .emit_info(format!("/* begin defers {:?} */", id), self.flags.minify);
-            hoist_point!(self, {
-                for expr in defers.into_iter().rev() {
-                    self.emit_expr_stmt(expr, state);
-                }
-            });
+
+            for expr in defers.into_iter().rev() {
+                hoist_point!(self, self.emit_expr_stmt(expr, state));
+            }
             self.buffer
                 .emit_info(format!("/* end defers {:?} */", id), self.flags.minify);
         }
@@ -2879,7 +2881,13 @@ impl<'a, 'b> Codegen<'a, 'b> {
         } else {
             let mut emit = || {
                 self.buffer.emit("$");
-                if var.name.data.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                if var
+                    .name
+                    .data
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_digit())
+                {
                     self.buffer.emit("p");
                 }
                 self.buffer.emit(&var.name.data);
