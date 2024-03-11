@@ -2864,10 +2864,16 @@ impl<'a, 'b> Codegen<'a, 'b> {
             self.buffer
                 .emit(self.scopes.full_name(var.scope, &var.name.data));
         } else {
+            let mut emit = || {
+                self.buffer.emit("$");
+                if var.name.data.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                    self.buffer.emit("p");
+                }
+                self.buffer.emit(&var.name.data);
+            };
             match state.emitted_names.entry(var.name.data.clone()) {
                 Entry::Occupied(entry) if *entry.get() == id => {
-                    self.buffer.emit("$");
-                    self.buffer.emit(&var.name.data);
+                    emit();
                 }
                 Entry::Occupied(_) => {
                     let len = state.renames.len();
@@ -2880,8 +2886,7 @@ impl<'a, 'b> Codegen<'a, 'b> {
                 }
                 Entry::Vacant(entry) => {
                     entry.insert(id);
-                    self.buffer.emit("$");
-                    self.buffer.emit(&var.name.data);
+                    emit();
                 }
             }
         }

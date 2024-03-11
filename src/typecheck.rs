@@ -1367,6 +1367,31 @@ impl TypeChecker {
                 }
             }
 
+            let func = this.scopes.get(id);
+            if let Some(ut_id) = func.constructor {
+                let ut = Type::User(GenericUserType::from_id(&this.scopes, ut_id).into());
+                let args = func
+                    .params
+                    .iter()
+                    .map(|param| (param.label.clone(), CheckedExpr::new(
+                        param.ty.clone(),
+                        CheckedExprData::Var(*param.patt.as_checked().and_then(|p| p.data.as_variable()).unwrap())
+                    )))
+                    .collect();
+                this.scopes.get_mut(id).body = Some(CheckedExpr::new(
+                    ut, 
+                    if this.scopes.get(ut_id).data.is_union() {
+                        CheckedExprData::VariantInstance {
+                            variant: func.name.data.clone(),
+                            members: args,
+                        }
+                    } else {
+                        CheckedExprData::Instance(args)
+                    },
+                ));
+                return;
+            }
+
             let Some(body) = body else {
                 return;
             };
