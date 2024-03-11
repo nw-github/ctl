@@ -698,29 +698,36 @@ impl Type {
     }
 
     pub fn from_int_name(name: &str, ty: bool) -> Option<Type> {
-        let mut chars = name.chars();
-        let (i, result): (_, fn(u32) -> Type) = match chars.next()? {
-            'i' => (true, Type::Int),
-            'u' => (false, Type::Uint),
+        let result = match name.chars().next()? {
+            'i' => Type::Int,
+            'u' => Type::Uint,
             _ => return None,
         };
 
-        match (
-            chars.next().and_then(|c| c.to_digit(10)),
-            chars.next().and_then(|c| c.to_digit(10)),
-            chars.next().and_then(|c| c.to_digit(10)),
-            chars.next(),
-        ) {
-            (Some(a), None, None, None) => (!i || a > 1).then_some(result(a)),
-            (Some(a), Some(b), None, None) => Some(result(a * 10 + b)),
-            (Some(a), Some(b), Some(c), None) => Some(result(a * 100 + b * 10 + c)),
-            _ => match name {
-                "u" if !ty => Some(Type::Usize),
-                "i" if !ty => Some(Type::Isize),
-                "uint" if ty => Some(Type::Usize),
-                "int" if ty => Some(Type::Isize),
+        if let Ok(bits) = name[1..].parse::<u32>() {
+            Some(result(bits))
+        } else if ty {
+            match name {
+                "uint" => Some(Type::Usize),
+                "int" => Some(Type::Isize),
                 _ => None,
-            },
+            }
+        } else {
+            match name {
+                "u" => Some(Type::Usize),
+                "i" => Some(Type::Isize),
+                "icc" => Some(Type::CInt(CInt::Char)),
+                "ics" => Some(Type::CInt(CInt::Short)),
+                "ic" => Some(Type::CInt(CInt::Int)),
+                "icl" => Some(Type::CInt(CInt::Long)),
+                "icll" => Some(Type::CInt(CInt::LongLong)),
+                "ucc" => Some(Type::CUint(CInt::Char)),
+                "ucs" => Some(Type::CUint(CInt::Short)),
+                "uci" => Some(Type::CUint(CInt::Int)),
+                "ucl" => Some(Type::CUint(CInt::Long)),
+                "ucll" => Some(Type::CUint(CInt::LongLong)),
+                _ => None,
+            }
         }
     }
 

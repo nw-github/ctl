@@ -245,7 +245,7 @@
         {
           "comment": "decimal integers and floats",
           "name": "constant.numeric.decimal.ctl",
-          "match": "\\b\\d[\\d_]*(\\.?)[\\d_]*(?:(E)([+-])([\\d_]+))?(f32|f64|u\\d+|i\\d+|u|i)?\\b",
+          "match": "\\b\\d[\\d_]*(\\.?)[\\d_]*(?:(E)([+-])([\\d_]+))?(f32|f64|u\\d+|i\\d+|u\\w+|i\\w+)?\\b",
           "captures": {
             "1": {
               "name": "punctuation.separator.dot.decimal.ctl"
@@ -267,7 +267,7 @@
         {
           "comment": "hexadecimal integers",
           "name": "constant.numeric.hex.ctl",
-          "match": "\\b0x[\\da-fA-F_]+(u\\d+|i\\d+|u|i)?\\b",
+          "match": "\\b0x[\\da-fA-F_]+(u\\d+|i\\d+|u\\w+|i\\w+)?\\b",
           "captures": {
             "1": {
               "name": "entity.name.type.numeric.ctl"
@@ -277,7 +277,7 @@
         {
           "comment": "octal integers",
           "name": "constant.numeric.oct.ctl",
-          "match": "\\b0o[0-7_]+(u\\d+|i\\d+|u|i)?\\b",
+          "match": "\\b0o[0-7_]+(u\\d+|i\\d+|u\\w+|i\\w+)?\\b",
           "captures": {
             "1": {
               "name": "entity.name.type.numeric.ctl"
@@ -287,7 +287,7 @@
         {
           "comment": "binary integers",
           "name": "constant.numeric.bin.ctl",
-          "match": "\\b0b[01_]+(u\\d+|i\\d+|int|uint)?\\b",
+          "match": "\\b0b[01_]+(u\\d+|i\\d+|i\\w+|u\\w+)?\\b",
           "captures": {
             "1": {
               "name": "entity.name.type.numeric.ctl"
