@@ -4,12 +4,7 @@ use core::fmt::*;
 use core::span::*;
 use core::reflect::*;
 use core::string::str;
-
-#(intrinsic)
-import fn numeric_abs<T: Signed>(_: T): T;
-
-#(intrinsic)
-import fn numeric_cast<T: Numeric, U: Numeric>(_: T): U;
+use core::intrin;
 
 static DIGITS: *[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -161,7 +156,7 @@ pub extension<T: Numeric + Integral> IntegralExt for T {
 
 pub extension<T: Numeric + Integral + Signed> SignedExt for T {
     pub fn abs(this): T {
-        numeric_abs(*this)
+        intrin::numeric_abs(*this)
     }
 
     pub fn to_str_radix_ex(this, radix: u32, buf: [mut u8..]): str {
@@ -169,15 +164,15 @@ pub extension<T: Numeric + Integral + Signed> SignedExt for T {
             core::panic("to_str_radix(): invalid radix");
         }
 
-        let radix: T = numeric_cast(radix);
+        let radix: T = intrin::numeric_cast(radix);
         mut pos = buf.len();
         mut val = this.abs();
         loop {
-            *buf.get_mut(--pos)! = DIGITS[numeric_cast::<T, int>(val % radix)];
+            *buf.get_mut(--pos)! = DIGITS[intrin::numeric_cast::<T, int>(val % radix)];
             val = val / radix;
-        } while val != numeric_cast(0);
+        } while val != intrin::numeric_cast(0);
 
-        if this < numeric_cast(0) {
+        if this < intrin::numeric_cast(0) {
             *buf.get_mut(--pos)! = b'-';
         }
 
@@ -203,13 +198,13 @@ pub extension<T: Numeric + Integral + Unsigned> UnsignedExt for T {
             core::panic("to_str_radix(): invalid radix");
         }
 
-        let radix: T = numeric_cast(radix);
+        let radix: T = intrin::numeric_cast(radix);
         mut pos = buf.len();
         mut val = *this;
         loop {
-            *buf.get_mut(--pos)! = DIGITS[numeric_cast::<T, int>(val % radix)];
+            *buf.get_mut(--pos)! = DIGITS[intrin::numeric_cast::<T, int>(val % radix)];
             val = val / radix;
-        } while val != numeric_cast(0);
+        } while val != intrin::numeric_cast(0);
 
         unsafe str::from_utf8_unchecked(buf.as_span().subspan(pos..))
     }

@@ -7,11 +7,7 @@ use core::iter::Iterator;
 use core::panic;
 use core::unreachable;
 use core::fmt::*;
-
-mod builtin {
-    #(c_opaque, c_name(CTL_STRLEN))
-    pub import fn strlen(ptr: *c_char): uint;
-}
+use core::intrin;
 
 #(lang(string))
 pub struct str {
@@ -19,7 +15,7 @@ pub struct str {
 
     pub fn from_c_str(ptr: *c_char): str {
         // TODO: validate UTF-8
-        str(span: unsafe Span::new(ptr as *raw u8, builtin::strlen(ptr)))
+        str(span: unsafe Span::new(ptr as *raw u8, intrin::strlen(ptr)))
     }
 
     pub unsafe fn from_utf8_unchecked(span: [u8..]): str {

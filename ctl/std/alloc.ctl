@@ -1,21 +1,14 @@
 use std::mem::size_of;
-
-mod builtin {
-    #(c_opaque, c_name(CTL_MALLOC))
-    pub import fn malloc(size: uint): ?*raw c_void;
-
-    #(c_opaque, c_name(CTL_REALLOC))
-    pub import fn realloc(addr: *mut c_void, size: uint): ?*raw c_void;
-}
+use std::intrin;
 
 pub fn alloc<T>(count: uint): ?*raw T {
-    if builtin::malloc(size_of::<T>() * count) is ?ptr {
+    if intrin::malloc(size_of::<T>() * count) is ?ptr {
         ptr as *raw T
     }
 }
 
 pub fn realloc<T>(addr: *mut T, count: uint): ?*raw T {
-    if builtin::realloc(unsafe addr as *mut c_void, size_of::<T>() * count) is ?ptr {
+    if intrin::realloc(unsafe addr as *mut c_void, size_of::<T>() * count) is ?ptr {
         ptr as *raw T
     }
 }

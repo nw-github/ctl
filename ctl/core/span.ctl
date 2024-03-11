@@ -72,8 +72,8 @@ pub struct SpanMut<T> {
         SpanMut(ptr:, len:)
     }
 
-    pub fn empty(): [T..] {
-        Span(ptr: core::ptr::raw_dangling(), len: 0)
+    pub fn empty(): [mut T..] {
+        SpanMut(ptr: core::ptr::raw_dangling(), len: 0)
     }
 
     pub fn len(this): uint {

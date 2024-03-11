@@ -2,9 +2,6 @@ use core::iter::Iterator;
 use core::reflect::*;
 use core::ext::*;
 
-#(intrinsic)
-import fn numeric_cast<T: Numeric, U: Numeric>(_: T): U;
-
 pub trait RangeBounds<T> {
     fn begin(this): Bound<T>;
     fn end(this): Bound<T>;
@@ -65,7 +62,7 @@ pub struct RangeFrom<T: Numeric + Integral> {
 
     impl Iterator<T> {
         fn next(mut this): ?T {
-            let val = this.start.wrapping_add(numeric_cast(1));
+            let val = this.start.wrapping_add(core::intrin::numeric_cast(1));
             if this.start < val {
                 this.start++
             }
