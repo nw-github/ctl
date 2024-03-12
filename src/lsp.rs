@@ -206,54 +206,51 @@ impl LanguageServer for LspBackend {
         let Some(completions) = project.lsp.completions.as_ref() else {
             return Ok(None);
         };
-        Ok(Some(CompletionResponse::Array(
-            completions
-                .iter()
-                .map(|completion| match completion {
-                    Completion::Property(id, name) => {
-                        let ut = scopes.get(*id);
-                        let member = ut.members.get(name).unwrap();
-                        CompletionItem {
-                            label: name.clone(),
-                            kind: Some(CompletionItemKind::FIELD),
-                            detail: Some(member.ty.name(scopes)),
-                            ..Default::default()
+        let completions = completions
+            .iter()
+            .map(|completion| match completion {
+                Completion::Property(id, name) => {
+                    let ut = scopes.get(*id);
+                    let member = ut.members.get(name).unwrap();
+                    CompletionItem {
+                        label: name.clone(),
+                        kind: Some(CompletionItemKind::FIELD),
+                        detail: Some(member.ty.name(scopes)),
+                        ..Default::default()
+                    }
+                }
+                &Completion::Method(id, ext) => {
+                    let f = scopes.get(id);
+                    let label = f.name.data.clone();
+                    let mut insertion = format!("{label}(");
+                    for (i, param) in f.params.iter().skip(1).enumerate() {
+                        if i > 0 {
+                            insertion += ", ";
+                        }
+                        if param.keyword {
+                            write_de!(insertion, "{}: ${{{}:{}}}", param.label, i + 1, param.label);
+                        } else {
+                            write_de!(insertion, "${{{}:{}}}", i + 1, param.label);
                         }
                     }
-                    &Completion::Method(id) => {
-                        let f = scopes.get(id);
-                        let label = f.name.data.clone();
-                        let mut insertion = format!("{label}(");
-                        for (i, param) in f.params.iter().skip(1).enumerate() {
-                            if i > 0 {
-                                insertion += ", ";
-                            }
-                            if param.keyword {
-                                write_de!(
-                                    insertion,
-                                    "{}: ${{{}:{}}}",
-                                    param.label,
-                                    i + 1,
-                                    param.label
-                                );
-                            } else {
-                                write_de!(insertion, "${{{}:{}}}", i + 1, param.label);
-                            }
-                        }
-                        insertion += ")";
-
-                        CompletionItem {
-                            label,
-                            kind: Some(CompletionItemKind::METHOD),
-                            detail: Some(visualize_func(id, true, scopes)),
-                            insert_text: Some(insertion),
-                            insert_text_format: Some(InsertTextFormat::SNIPPET),
-                            ..Default::default()
-                        }
+                    insertion += ")";
+                    let detail = Some(visualize_func(id, true, scopes));
+                    CompletionItem {
+                        label,
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: ext.map(|ext| format!(" (from {})", scopes.get(ext).name.data)),
+                            description: detail.clone(),
+                        }),
+                        kind: Some(CompletionItemKind::METHOD),
+                        detail,
+                        insert_text: Some(insertion),
+                        insert_text_format: Some(InsertTextFormat::SNIPPET),
+                        ..Default::default()
                     }
-                })
-                .collect(),
-        )))
+                }
+            })
+            .collect();
+        Ok(Some(CompletionResponse::Array(completions)))
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -576,7 +573,7 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes) -> String {
     } else {
         visualize_location(func.scope, scopes)
     };
-    if func.public {
+    if !small && func.public {
         res += "pub ";
     }
 

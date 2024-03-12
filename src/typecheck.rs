@@ -138,7 +138,7 @@ impl From<ValueItem> for HoverItem {
 
 pub enum Completion {
     Property(UserTypeId, String),
-    Method(FunctionId),
+    Method(FunctionId, Option<ExtensionId>),
 }
 
 #[derive(Default)]
@@ -307,11 +307,11 @@ impl TypeChecker {
         }
 
         let mut completions = vec![];
-        let add_methods = |scopes: &Scopes, c: &mut Vec<Completion>, fns: &[Vis<FunctionId>], cap: bool| {
+        let add_methods = |scopes: &Scopes, c: &mut Vec<Completion>, fns: &[Vis<FunctionId>], cap: bool, ext: Option<ExtensionId>| {
             for func in fns {
                 let f = scopes.get(func.id);
                 if (f.public || cap) && f.params.first().is_some_and(|p| p.label == THIS_PARAM) {
-                    c.push(Completion::Method(func.id))
+                    c.push(Completion::Method(func.id, ext))
                 }
             }
         };
@@ -323,12 +323,12 @@ impl TypeChecker {
                 completions.push(Completion::Property(ut.id, name.clone()))
             }
 
-            add_methods(&self.scopes, &mut completions, &data.fns, cap);
+            add_methods(&self.scopes, &mut completions, &data.fns, cap, None);
         }
 
         for ext in self.extensions_in_scope_for(ty, self.current) {
-            let ext = self.scopes.get(ext.id);
-            add_methods(&self.scopes, &mut completions, &ext.fns, self.can_access_privates(ext.scope));
+            let data = self.scopes.get(ext.id);
+            add_methods(&self.scopes, &mut completions, &data.fns, self.can_access_privates(data.scope), Some(ext.id));
         }
 
         self.lsp_output.completions = Some(completions);
