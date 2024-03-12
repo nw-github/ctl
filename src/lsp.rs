@@ -13,7 +13,10 @@ use crate::lexer::Span;
 use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeData, UserTypeId, VariableId};
 use crate::typecheck::{Completion, HoverItem, LspInput};
 use crate::typeid::{GenericUserType, Type};
-use crate::{get_default_libs, Checked, Compiler, THIS_PARAM};
+use crate::{
+    project_from_file, CachingSourceProvider, Checked, Compiler, FileSourceProvider,
+    SourceProvider, THIS_PARAM,
+};
 
 macro_rules! write_de {
     ($dst:expr, $($arg:tt)*) => {
@@ -99,9 +102,7 @@ impl LanguageServer for LspBackend {
         *self.config.lock().await = serde_json::from_value(params.settings).unwrap_or_default();
         if let Some(entry) = self.documents.iter().next() {
             if let Err(err) = self.on_document_change(entry.key(), None, None).await {
-                self.client
-                    .log_message(MessageType::ERROR, format!("{err}"))
-                    .await;
+                _ = self.on_error::<()>(err).await;
             }
         }
     }
@@ -175,12 +176,14 @@ impl LanguageServer for LspBackend {
         let uri = &params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
         match self.on_document_change(uri, None, Some(pos)).await {
-            Ok((_, checked)) => Ok(checked
-                .project()
-                .lsp
-                .completions
-                .as_ref()
-                .map(|c| CompletionResponse::Array(convert_completions(c, checked.scopes())))),
+            Ok((_, checked)) => {
+                let project = checked.project();
+                Ok(project
+                    .lsp
+                    .completions
+                    .as_ref()
+                    .map(|c| CompletionResponse::Array(convert_completions(c, &project.scopes))))
+            }
             Err(err) => self.on_error(err).await,
         }
     }
@@ -189,12 +192,14 @@ impl LanguageServer for LspBackend {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
         match self.on_document_change(uri, Some(pos), None).await {
-            Ok((_, checked)) => Ok(checked
-                .project()
-                .lsp
-                .hover
-                .as_ref()
-                .and_then(|item| hover_item_to_hover(item, checked.scopes()))),
+            Ok((_, checked)) => {
+                let proj = checked.project();
+                Ok(proj
+                    .lsp
+                    .hover
+                    .as_ref()
+                    .and_then(|item| hover_item_to_hover(item, &proj.scopes)))
+            }
             Err(err) => self.on_error(err).await,
         }
     }
@@ -224,10 +229,16 @@ impl LspBackend {
         } else {
             Path::new(uri.as_str())
         };
-        let (project, libs) = get_default_libs(get_file_project(path), vec![], false, false);
-        let (compiler, file) =
-            Compiler::new_lsp(path.into(), self.documents.get(uri).unwrap().text.clone());
-        let checked = compiler.parse(project, libs)?.typecheck(LspInput {
+        let project = project_from_file(get_file_project(path), vec![], false, false);
+        let parsed =
+            Compiler::with_provider(LspFileProvider::new(&self.documents)).parse(project)?;
+        let file = parsed
+            .diagnostics()
+            .paths()
+            .find(|p| p.1 == path)
+            .unwrap()
+            .0;
+        let checked = parsed.typecheck(LspInput {
             hover: hover.map(|p| {
                 position_to_span(
                     &self.documents.get(uri).unwrap().text,
@@ -244,40 +255,57 @@ impl LspBackend {
                     p.character,
                 )
             }),
-        })?;
+        });
 
-        let diag = checked.diagnostics();
+        let diag = &checked.project().diag;
         let mut all = HashMap::<Url, Vec<Diagnostic>>::new();
-        for (id, path) in diag.paths() {
-            let l = checked.lsp_file();
-            let entry = all.entry(get_uri((file, uri), (id, path))).or_default();
-            let errors = diag.errors();
-            diag.format_diagnostics(id, errors, l, OffsetMode::Utf16, |msg, range| {
-                entry.push(Diagnostic {
-                    range,
-                    severity: Some(DiagnosticSeverity::ERROR),
-                    source: Some("ctlsp".into()),
-                    message: msg.into(),
-                    ..Diagnostic::default()
-                });
+        let mut cache = CachingSourceProvider::new();
+        for (severity, err) in diag
+            .errors()
+            .iter()
+            .map(|err| (DiagnosticSeverity::ERROR, err))
+            .chain(
+                diag.warnings()
+                    .iter()
+                    .map(|err| (DiagnosticSeverity::WARNING, err)),
+            )
+        {
+            let path = diag.file_path(err.span.file);
+            let range = if let Some(doc) = Url::from_file_path(path)
+                .ok()
+                .and_then(|uri| self.documents.get(&uri))
+            {
+                Diagnostics::get_span_range(&doc.text, err.span, OffsetMode::Utf16)
+            } else if let Ok(Some(range)) = cache.get_source(path, |data| {
+                Diagnostics::get_span_range(data, err.span, OffsetMode::Utf16)
+            }) {
+                range
+            } else {
+                continue;
+            };
+
+            let entry = all
+                .entry(get_uri((file, uri), (err.span.file, path)))
+                .or_default();
+            entry.push(Diagnostic {
+                range,
+                severity: Some(severity),
+                source: Some("ctlsp".into()),
+                message: err.message.clone(),
+                ..Diagnostic::default()
             });
-            let warnings = diag.warnings();
-            diag.format_diagnostics(id, warnings, l, OffsetMode::Utf16, |msg, range| {
-                entry.push(Diagnostic {
-                    range,
-                    severity: Some(DiagnosticSeverity::WARNING),
-                    source: Some("ctlsp".into()),
-                    message: msg.into(),
-                    ..Diagnostic::default()
-                });
-            });
+        }
+        for (_, path) in diag.paths() {
+            if let Ok(uri) = Url::from_file_path(path) {
+                all.entry(uri).or_default();
+            }
         }
 
         for (uri, diags) in all.into_iter() {
             self.client.publish_diagnostics(uri, diags, None).await;
         }
 
-        let scopes = checked.scopes();
+        let scopes = &checked.project().scopes;
         let mut doc = self.documents.entry(uri.clone()).or_default();
         doc.inlay_hints.clear();
         for (_, var) in scopes.vars() {
@@ -322,7 +350,7 @@ impl LspBackend {
             &HoverItem::Module(id) => proj.scopes[id].kind.name(&proj.scopes).unwrap().span,
             &HoverItem::Fn(id) => proj.scopes.get(id).name.span,
             HoverItem::Member(id, member) => {
-                let ut = checked.scopes().get(*id);
+                let ut = proj.scopes.get(*id);
                 ut.members.get(member).map(|m| m.span).or_else(|| {
                     ut.data
                         .as_union()
@@ -332,22 +360,38 @@ impl LspBackend {
             _ => return None,
         };
 
-        let range = if let Some(doc) = (span.file == current.0)
-            .then(|| self.documents.get(current.1))
-            .flatten()
-        {
+        let diag = &checked.project().diag;
+        let path = diag.file_path(span.file);
+        let uri = get_uri(current, (span.file, path));
+        let range = if let Some(doc) = self.documents.get(&uri) {
             Diagnostics::get_span_range(&doc.text, span, OffsetMode::Utf16)
         } else {
-            let file = std::fs::read_to_string(checked.diagnostics().file_path(span.file)).ok()?;
+            let file = std::fs::read_to_string(path).ok()?;
             Diagnostics::get_span_range(&file, span, OffsetMode::Utf16)
         };
-        Some(Location::new(
-            get_uri(
-                current,
-                (span.file, checked.diagnostics().file_path(span.file)),
-            ),
-            range,
-        ))
+        Some(Location::new(uri, range))
+    }
+}
+
+#[derive(derive_more::Constructor)]
+pub struct LspFileProvider<'a> {
+    documents: &'a DashMap<Url, Document>,
+}
+
+impl SourceProvider for LspFileProvider<'_> {
+    fn get_source<T>(
+        &mut self,
+        path: &Path,
+        get: impl FnOnce(&str) -> T,
+    ) -> anyhow::Result<Option<T>> {
+        if let Some(doc) = Url::from_file_path(path)
+            .ok()
+            .and_then(|uri| self.documents.get(&uri))
+        {
+            Ok(Some(get(&doc.text)))
+        } else {
+            FileSourceProvider.get_source(path, get)
+        }
     }
 }
 

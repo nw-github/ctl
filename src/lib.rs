@@ -2,108 +2,85 @@ mod ast;
 mod codegen;
 mod error;
 mod lexer;
-pub mod lsp;
+mod lsp;
 mod parser;
 mod pretty;
+mod source;
 mod sym;
 mod typecheck;
 mod typeid;
 
-use std::{
-    ffi::OsStr,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use anyhow::{Context, Result};
 use ast::parsed::Stmt;
 use codegen::Codegen;
-use error::{Diagnostics, FileId};
+pub use error::*;
 use lexer::{Lexer, Span};
-use sym::Scopes;
+pub use source::*;
 use typecheck::{LspInput, Project};
 
 use crate::{parser::Parser, typecheck::TypeChecker};
+
+pub use lsp::LspBackend;
 
 pub(crate) const THIS_PARAM: &str = "this";
 pub(crate) const THIS_TYPE: &str = "This";
 
 pub trait CompileState {}
 
-pub struct Source;
-pub struct Parsed(Stmt, Vec<PathBuf>);
+pub struct Source<T>(T);
+pub struct Parsed(Vec<Stmt>, Diagnostics);
 pub struct Checked(Project);
-pub struct Built(String);
 
-impl CompileState for Source {}
+impl<T> CompileState for Source<T> {}
 impl CompileState for Parsed {}
 impl CompileState for Checked {}
-impl CompileState for Built {}
 
 pub struct Compiler<S: CompileState> {
-    diag: Diagnostics,
     state: S,
-    lsp_file: Option<(FileId, String)>,
 }
 
-impl Compiler<Source> {
-    pub fn new() -> Self {
+impl Compiler<Source<FileSourceProvider>> {
+    pub fn new() -> Compiler<Source<FileSourceProvider>> {
+        Self::with_provider(FileSourceProvider)
+    }
+}
+
+impl<T: SourceProvider> Compiler<Source<T>> {
+    pub fn with_provider(provider: T) -> Self {
         Self {
-            state: Source,
-            diag: Diagnostics::default(),
-            lsp_file: None,
+            state: Source(provider),
         }
     }
 
-    pub fn new_lsp(path: PathBuf, buf: String) -> (Self, FileId) {
+    pub fn parse(mut self, project: Vec<PathBuf>) -> Result<Compiler<Parsed>> {
         let mut diag = Diagnostics::default();
-        let fileid = diag.add_file(path);
-        (
-            Self {
-                state: Source,
-                diag,
-                lsp_file: Some((fileid, buf)),
-            },
-            fileid,
-        )
-    }
-
-    pub fn with_diagnostics(diag: Diagnostics) -> Self {
-        Compiler {
-            diag,
-            state: Source,
-            lsp_file: None,
-        }
-    }
-
-    pub fn parse(mut self, path: PathBuf, libs: Vec<PathBuf>) -> anyhow::Result<Compiler<Parsed>> {
-        if let Some(stmt) = self.gather_sources(path)? {
-            Ok(Compiler {
-                state: Parsed(stmt, libs),
-                diag: self.diag,
-                lsp_file: self.lsp_file,
+        let project = project
+            .into_iter()
+            .map(|path| {
+                self.load_module(&mut diag, path).and_then(|ast| {
+                    ast.context("compile target must be directory or have extension '.ctl'")
+                })
             })
-        } else {
-            Err(anyhow::anyhow!(
-                "compile target must be directory or have extension '.ctl'",
-            ))
-        }
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Compiler {
+            state: Parsed(project, diag),
+        })
     }
 
-    fn gather_sources(&mut self, path: PathBuf) -> anyhow::Result<Option<Stmt>> {
-        if let Some((file_id, data)) = self
-            .lsp_file
-            .as_ref()
-            .filter(|(rhs, _)| path == self.diag.file_path(*rhs))
-        {
-            Ok(Some(Parser::parse(data, &mut self.diag, *file_id)))
-        } else if path.is_dir() {
+    fn load_module(&mut self, diag: &mut Diagnostics, path: PathBuf) -> Result<Option<Stmt>> {
+        if path.is_dir() {
             let mut body = Vec::new();
             for entry in path
                 .read_dir()
                 .with_context(|| format!("loading path {}", path.display()))?
             {
                 let path = entry?.path();
-                if let Some(stmt) = self.gather_sources(path.canonicalize().unwrap_or(path))? {
+                if let Some(stmt) =
+                    self.load_module(diag, path.canonicalize().unwrap_or(path))?
+                {
                     body.push(stmt);
                 }
             }
@@ -111,23 +88,41 @@ impl Compiler<Source> {
                 data: ast::parsed::StmtData::Module {
                     public: true,
                     file: false,
-                    name: lexer::Located::new(Span::default(), derive_module_name(&path)),
+                    name: lexer::Located::new(Span::default(), Self::derive_module_name(&path)),
                     body,
                 },
                 attrs: Default::default(),
             }))
-        } else if path.extension() == Some(OsStr::new("ctl")) {
-            let buffer = std::fs::read_to_string(&path)
-                .with_context(|| format!("loading path {}", path.display()))?;
-            let file_id = self.diag.add_file(path);
-            Ok(Some(Parser::parse(&buffer, &mut self.diag, file_id)))
         } else {
-            Ok(None)
+            let name = Self::derive_module_name(&path);
+            self.state.0.get_source(&path, |src| {
+                let file_id = diag.add_file(path.clone());
+                Parser::parse(src, name, diag, file_id)
+            })
         }
+    }
+
+    fn derive_module_name(path: &Path) -> String {
+        let base = if path.is_file() {
+            path.file_stem()
+        } else {
+            path.file_name()
+        };
+
+        base.unwrap()
+            .to_string_lossy()
+            .chars()
+            .enumerate()
+            .map(|(i, ch)| match (i, ch) {
+                (0, ch) if Lexer::is_identifier_first_char(ch) => ch,
+                (_, ch) if Lexer::is_identifier_char(ch) => ch,
+                _ => '_',
+            })
+            .collect()
     }
 }
 
-impl Default for Compiler<Source> {
+impl Default for Compiler<Source<FileSourceProvider>> {
     fn default() -> Self {
         Self::new()
     }
@@ -135,39 +130,29 @@ impl Default for Compiler<Source> {
 
 impl Compiler<Parsed> {
     pub fn dump(&self) {
-        pretty::print_stmt(&self.state.0, 0);
+        if let Some(ast) = self.state.0.last() {
+            pretty::print_stmt(ast, 0);
+        }
     }
 
-    pub fn typecheck(self, lsp: LspInput) -> anyhow::Result<Compiler<Checked>> {
-        let (module, diag) = TypeChecker::check(self.state.0, self.state.1, self.diag, lsp)?;
-        Ok(Compiler {
-            state: Checked(module),
-            diag,
-            lsp_file: self.lsp_file,
-        })
+    pub fn diagnostics(&self) -> &Diagnostics {
+        &self.state.1
+    }
+
+    pub fn typecheck(self, lsp: LspInput) -> Compiler<Checked> {
+        Compiler {
+            state: Checked(TypeChecker::check(self.state.0, self.state.1, lsp)),
+        }
     }
 }
 
 impl Compiler<Checked> {
-    pub fn build(mut self, flags: CodegenFlags) -> Result<Compiler<Built>, Self> {
-        if let Ok(code) = Codegen::build(
-            &mut self.diag,
-            self.state.0.scope,
-            &self.state.0.scopes,
-            flags,
-        ) {
-            Ok(Compiler {
-                state: Built(code),
-                diag: self.diag,
-                lsp_file: self.lsp_file,
-            })
+    pub fn build(mut self, flags: CodegenFlags) -> Result<(Diagnostics, String), Diagnostics> {
+        if let Ok(code) = Codegen::build(&mut self.state.0, flags) {
+            Ok((self.state.0.diag, code))
         } else {
-            Err(self)
+            Err(self.state.0.diag)
         }
-    }
-
-    pub fn scopes(&self) -> &Scopes {
-        &self.state.0.scopes
     }
 
     pub fn project(&self) -> &Project {
@@ -175,24 +160,10 @@ impl Compiler<Checked> {
     }
 }
 
-impl Compiler<Built> {
-    pub fn code(self) -> String {
-        self.state.0
-    }
-}
-
 impl<T: CompileState> Compiler<T> {
     pub fn inspect(self, f: impl FnOnce(&Self)) -> Self {
         f(&self);
         self
-    }
-
-    pub fn diagnostics(&self) -> &Diagnostics {
-        &self.diag
-    }
-
-    pub fn lsp_file(&self) -> Option<&(FileId, String)> {
-        self.lsp_file.as_ref()
     }
 }
 
@@ -203,31 +174,12 @@ pub struct CodegenFlags {
     pub minify: bool,
 }
 
-pub(crate) fn derive_module_name(path: &Path) -> String {
-    let base = if path.is_file() {
-        path.file_stem()
-    } else {
-        path.file_name()
-    };
-
-    base.unwrap()
-        .to_string_lossy()
-        .chars()
-        .enumerate()
-        .map(|(i, ch)| match (i, ch) {
-            (0, ch) if Lexer::is_identifier_first_char(ch) => ch,
-            (_, ch) if Lexer::is_identifier_char(ch) => ch,
-            _ => '_',
-        })
-        .collect()
-}
-
-pub fn get_default_libs(
+pub fn project_from_file(
     path: &Path,
     mut libs: Vec<PathBuf>,
     mut no_core: bool,
     mut no_std: bool,
-) -> (PathBuf, Vec<PathBuf>) {
+) -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let core_path = root.join("ctl/core");
     let std_path = root.join("ctl/std");
@@ -246,7 +198,9 @@ pub fn get_default_libs(
     if !no_core {
         libs.insert(0, root.join(core_path));
     }
-    (path, libs)
+
+    libs.push(path);
+    libs
 }
 
 fn nearest_pow_of_two(bits: u32) -> usize {

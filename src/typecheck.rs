@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-};
+use std::collections::{HashMap, HashSet};
 
 use indexmap::{map::Entry, IndexMap};
 use num_bigint::BigInt;
@@ -16,7 +13,7 @@ use crate::{
         CInt, FnPtr, GenericExtension, GenericFunc, GenericTrait, GenericUserType, Type, TypeArgs,
         WithTypeArgs,
     },
-    Compiler, THIS_PARAM, THIS_TYPE,
+    THIS_PARAM, THIS_TYPE,
 };
 
 macro_rules! resolve_type {
@@ -70,6 +67,7 @@ pub struct Project {
     pub scopes: Scopes,
     pub scope: ScopeId,
     pub lsp: LspOutput,
+    pub diag: Diagnostics,
 }
 
 pub struct MemberFn {
@@ -166,28 +164,26 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
-    pub fn check(
-        project: Stmt,
-        libs: Vec<PathBuf>,
-        diag: Diagnostics,
-        lsp_input: LspInput,
-    ) -> anyhow::Result<(Project, Diagnostics)> {
+    pub fn check(project: Vec<Stmt>, diag: Diagnostics, lsp: LspInput) -> Project {
         let mut this = Self {
             universal: Vec::new(),
             scopes: Scopes::new(),
             safety: Safety::Safe,
             current: ScopeId::ROOT,
-            lsp_input,
+            lsp_input: lsp,
             lsp_output: Default::default(),
             diag,
         };
-        for lib in libs {
-            let parsed = Compiler::with_diagnostics(this.diag).parse(lib, vec![])?;
-            this.diag = parsed.diag;
-            this.check_one(parsed.state.0);
+
+        let mut scope = ScopeId::ROOT;
+        for module in project {
+            let mut autouse = vec![];
+            let stmt = this.declare_stmt(&mut autouse, module);
+            scope = *stmt.as_module().unwrap().0;
+            this.check_stmt(stmt);
+            this.universal.extend(autouse);
         }
 
-        let scope = this.check_one(project);
         for (_, var) in this
             .scopes
             .vars()
@@ -201,24 +197,12 @@ impl TypeChecker {
             }
         }
 
-        Ok((
-            Project {
-                scope,
-                scopes: this.scopes,
-                lsp: this.lsp_output,
-            },
-            this.diag,
-        ))
-    }
-
-    fn check_one(&mut self, module: Stmt) -> ScopeId {
-        let mut autouse = vec![];
-        let stmt = self.declare_stmt(&mut autouse, module);
-        let scope = *stmt.as_module().unwrap().0;
-        self.check_stmt(stmt);
-
-        self.universal.extend(autouse);
-        scope
+        Project {
+            scope,
+            scopes: this.scopes,
+            lsp: this.lsp_output,
+            diag: this.diag,
+        }
     }
 
     fn error<T: Default>(&mut self, error: Error) -> T {
@@ -300,6 +284,54 @@ impl TypeChecker {
             .module_of(scope)
             .map(|target| self.scopes.walk(self.current).any(|(id, _)| id == target))
             .unwrap_or_default()
+    }
+
+    #[inline]
+    fn check_hover(&mut self, span: Span, item: HoverItem) {
+        check_hover!(self, span, item);
+    }
+
+    #[inline]
+    fn check_type_completions(&mut self, span: Span, ty: &Type) {
+        if self.lsp_output.completions.is_some() {
+            return;
+        }
+
+        if !self.lsp_input.completion.is_some_and(|rhs| span.includes(rhs.pos)) {
+            return;
+        }
+
+        let ty = ty.strip_references();
+        if ty.is_unknown() {
+            return;
+        }
+
+        let mut completions = vec![];
+        let add_methods = |scopes: &Scopes, c: &mut Vec<Completion>, fns: &[Vis<FunctionId>], cap: bool| {
+            for func in fns {
+                let f = scopes.get(func.id);
+                if (f.public || cap) && f.params.first().is_some_and(|p| p.label == THIS_PARAM) {
+                    c.push(Completion::Method(func.id))
+                }
+            }
+        };
+
+        if let Some(ut) = ty.as_user() {
+            let data = self.scopes.get(ut.id);
+            let cap = self.can_access_privates(data.scope);
+            for (name, _) in data.members.iter().filter(|(_, m)| m.public || cap) {
+                completions.push(Completion::Property(ut.id, name.clone()))
+            }
+
+            add_methods(&self.scopes, &mut completions, &data.fns, cap);
+        }
+
+        for ext in self.extensions_in_scope_for(ty, self.current) {
+            let ext = self.scopes.get(ext.id);
+            add_methods(&self.scopes, &mut completions, &ext.fns, self.can_access_privates(ext.scope));
+        }
+
+        self.lsp_output.completions = Some(completions);
     }
 }
 
@@ -1006,53 +1038,6 @@ impl TypeChecker {
 
 /// Typechecking pass routines
 impl TypeChecker {
-    #[inline]
-    fn check_hover(&mut self, span: Span, item: HoverItem) {
-        check_hover!(self, span, item);
-    }
-
-    fn check_type_completions(&mut self, span: Span, ty: &Type) {
-        if self.lsp_output.completions.is_some() {
-            return;
-        }
-
-        if !self.lsp_input.completion.is_some_and(|rhs| span.includes(rhs.pos)) {
-            return;
-        }
-
-        let ty = ty.strip_references();
-        if ty.is_unknown() {
-            return;
-        }
-
-        let mut completions = vec![];
-        let add_methods = |scopes: &Scopes, c: &mut Vec<Completion>, fns: &[Vis<FunctionId>], cap: bool| {
-            for func in fns {
-                let f = scopes.get(func.id);
-                if (f.public || cap) && f.params.first().is_some_and(|p| p.label == THIS_PARAM) {
-                    c.push(Completion::Method(func.id))
-                }
-            }
-        };
-
-        if let Some(ut) = ty.as_user() {
-            let data = self.scopes.get(ut.id);
-            let cap = self.can_access_privates(data.scope);
-            for (name, _) in data.members.iter().filter(|(_, m)| m.public || cap) {
-                completions.push(Completion::Property(ut.id, name.clone()))
-            }
-
-            add_methods(&self.scopes, &mut completions, &data.fns, cap);
-        }
-
-        for ext in self.extensions_in_scope_for(ty, self.current) {
-            let ext = self.scopes.get(ext.id);
-            add_methods(&self.scopes, &mut completions, &ext.fns, self.can_access_privates(ext.scope));
-        }
-
-        self.lsp_output.completions = Some(completions);
-    }
-
     fn enter_id<T>(&mut self, id: ScopeId, f: impl FnOnce(&mut Self) -> T) -> T {
         let prev = self.current;
         self.current = id;

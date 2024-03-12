@@ -53,74 +53,6 @@ impl Diagnostics {
         !self.errors.is_empty()
     }
 
-    pub fn display(&self, lsp_file: Option<&(FileId, String)>) {
-        let cwd = std::env::current_dir().ok();
-        for (id, path) in self.paths() {
-            let path = cwd
-                .as_ref()
-                .and_then(|cwd| path.strip_prefix(cwd).ok())
-                .unwrap_or(path);
-            self.format_diagnostics(
-                id,
-                &self.errors,
-                lsp_file,
-                OffsetMode::Utf32,
-                |msg, range| {
-                    eprintln!(
-                        "error: {}:{}:{}: {msg}",
-                        path.display(),
-                        range.start.line + 1,
-                        range.start.character + 1
-                    );
-                },
-            );
-        }
-
-        for (id, path) in self.paths() {
-            let path = cwd
-                .as_ref()
-                .and_then(|cwd| path.strip_prefix(cwd).ok())
-                .unwrap_or(path);
-            self.format_diagnostics(
-                id,
-                &self.warnings,
-                lsp_file,
-                OffsetMode::Utf32,
-                |msg, range| {
-                    eprintln!(
-                        "warning: {}:{}:{}: {msg}",
-                        path.display(),
-                        range.start.line + 1,
-                        range.start.character + 1
-                    );
-                },
-            );
-        }
-    }
-
-    pub fn format_diagnostics(
-        &self,
-        id: FileId,
-        errors: &[Error],
-        lsp_file: Option<&(FileId, String)>,
-        mode: OffsetMode,
-        mut format: impl FnMut(&str, Range),
-    ) {
-        let mut file = None;
-        for Error { diagnostic, span } in errors.iter().filter(|err| err.span.file == id) {
-            // TODO: report error instead of unwrapping
-            let data = lsp_file
-                .filter(|(rhs, _)| id == *rhs)
-                .map(|f| &f.1)
-                .unwrap_or_else(|| {
-                    file.get_or_insert_with(|| {
-                        std::fs::read_to_string(&self.paths[id.0 as usize]).unwrap()
-                    })
-                });
-            format(diagnostic, Self::get_span_range(data, *span, mode));
-        }
-    }
-
     pub fn paths(&self) -> impl Iterator<Item = (FileId, &PathBuf)> {
         self.paths
             .iter()
@@ -181,14 +113,14 @@ impl Diagnostics {
 
 #[derive(Debug)]
 pub struct Error {
-    pub diagnostic: String,
+    pub message: String,
     pub span: Span,
 }
 
 impl Error {
-    pub fn new(diagnostic: impl Into<String>, span: impl Into<Span>) -> Self {
+    pub fn new(message: impl Into<String>, span: impl Into<Span>) -> Self {
         Self {
-            diagnostic: diagnostic.into(),
+            message: message.into(),
             span: span.into(),
         }
     }

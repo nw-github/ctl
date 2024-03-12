@@ -12,6 +12,7 @@ use crate::{
     lexer::Span,
     nearest_pow_of_two,
     sym::*,
+    typecheck::Project,
     typeid::{CInt, FnPtr, GenericFunc, GenericTrait, GenericUserType, Type, TypeArgs},
     CodegenFlags, THIS_PARAM,
 };
@@ -873,9 +874,9 @@ struct Vtable {
     scope: ScopeId,
 }
 
-pub struct Codegen<'a, 'b> {
+pub struct Codegen<'a> {
     scopes: &'a Scopes,
-    diag: &'b mut Diagnostics,
+    diag: &'a mut Diagnostics,
     buffer: Buffer,
     temporaries: Buffer,
     type_gen: TypeGen<'a>,
@@ -889,11 +890,14 @@ pub struct Codegen<'a, 'b> {
     defers: Vec<(ScopeId, Vec<CheckedExpr>)>,
 }
 
-impl<'a, 'b> Codegen<'a, 'b> {
+impl<'a> Codegen<'a> {
     pub fn build(
-        diag: &'b mut Diagnostics,
-        scope: ScopeId,
-        scopes: &'a Scopes,
+        Project {
+            scopes,
+            scope,
+            diag,
+            ..
+        }: &'a mut Project,
         flags: CodegenFlags,
     ) -> Result<String, ()> {
         if diag.has_errors() {
@@ -907,7 +911,7 @@ impl<'a, 'b> Codegen<'a, 'b> {
         let (funcs, main) = if flags.lib {
             (exports.collect(), None)
         } else {
-            let Some(main) = scopes[scope].vns.get("main").and_then(|id| id.as_fn()) else {
+            let Some(main) = scopes[*scope].vns.get("main").and_then(|id| id.as_fn()) else {
                 diag.error(Error::new("no main function found", Span::default()));
                 return Err(());
             };

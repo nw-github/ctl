@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueHint};
-use ctl::{get_default_libs, lsp::LspBackend, CodegenFlags, Compiler};
+use ctl::{
+    project_from_file, CachingSourceProvider, CodegenFlags, Compiler, Diagnostics, Error, FileId,
+    LspBackend, OffsetMode, SourceProvider,
+};
 use std::{
     ffi::OsString,
     fs::File,
@@ -8,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
-use tower_lsp::{LspService, Server};
+use tower_lsp::{lsp_types::Range, LspService, Server};
 
 #[derive(Parser)]
 struct Arguments {
@@ -108,17 +111,6 @@ enum SubCommand {
     Lsp,
 }
 
-impl SubCommand {
-    fn input(&self) -> &Path {
-        match self {
-            SubCommand::Print { input, .. } => input,
-            SubCommand::Build { build, .. } => &build.input,
-            SubCommand::Run { build, .. } => &build.input,
-            SubCommand::Lsp => unreachable!(),
-        }
-    }
-}
-
 fn compile_results(src: &str, leak: bool, output: &Path, build: BuildOrRun) -> Result<()> {
     let warnings = ["-Wall", "-Wextra"];
     let mut cc = Command::new(build.cc)
@@ -185,40 +177,100 @@ fn print_results(src: &[u8], pretty: bool, output: &mut impl Write) -> Result<()
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let args = Arguments::parse();
-    if matches!(args.command, SubCommand::Lsp) {
-        let stdin = tokio::io::stdin();
-        let stdout = tokio::io::stdout();
-        let (service, socket) = LspService::new(LspBackend::new);
-        Server::new(stdin, stdout, socket).serve(service).await;
-        return Ok(());
+fn display_diagnostics(diag: &Diagnostics) {
+    fn format<S: SourceProvider>(
+        provider: &mut S,
+        diag: &Diagnostics,
+        id: FileId,
+        errors: &[Error],
+        mut format: impl FnMut(&str, Range),
+    ) {
+        for err in errors.iter().filter(|err| err.span.file == id) {
+            // TODO: do something with the errors
+            _ = provider.get_source(diag.file_path(err.span.file), |data| {
+                format(
+                    &err.message,
+                    Diagnostics::get_span_range(data, err.span, OffsetMode::Utf32),
+                );
+            });
+        }
     }
 
-    let (path, libs) = get_default_libs(args.command.input(), vec![], args.no_core, args.no_std);
-    let compiler = Compiler::new()
-        .parse(path, libs)?
+    let cwd = std::env::current_dir().ok();
+    let mut provider = CachingSourceProvider::new();
+    for (id, path) in diag.paths() {
+        let path = cwd
+            .as_ref()
+            .and_then(|cwd| path.strip_prefix(cwd).ok())
+            .unwrap_or(path);
+        format(&mut provider, diag, id, diag.errors(), |msg, range| {
+            eprintln!(
+                "error: {}:{}:{}: {msg}",
+                path.display(),
+                range.start.line + 1,
+                range.start.character + 1
+            );
+        });
+    }
+
+    for (id, path) in diag.paths() {
+        let path = cwd
+            .as_ref()
+            .and_then(|cwd| path.strip_prefix(cwd).ok())
+            .unwrap_or(path);
+        format(&mut provider, diag, id, diag.warnings(), |msg, range| {
+            eprintln!(
+                "warning: {}:{}:{}: {msg}",
+                path.display(),
+                range.start.line + 1,
+                range.start.character + 1
+            );
+        });
+    }
+}
+
+fn main() -> Result<()> {
+    let args = Arguments::parse();
+    let input = match &args.command {
+        SubCommand::Print { input, .. } => input,
+        SubCommand::Build { build, .. } => &build.input,
+        SubCommand::Run { build, .. } => &build.input,
+        SubCommand::Lsp => {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let stdin = tokio::io::stdin();
+                    let stdout = tokio::io::stdout();
+                    let (service, socket) = LspService::new(LspBackend::new);
+                    Server::new(stdin, stdout, socket).serve(service).await
+                });
+            return Ok(());
+        }
+    };
+    let result = Compiler::new()
+        .parse(project_from_file(input, vec![], args.no_core, args.no_std))?
         .inspect(|ast| {
             if args.dump_ast {
                 ast.dump()
             }
         })
-        .typecheck(Default::default())?
+        .typecheck(Default::default())
         .build(CodegenFlags {
             leak: args.leak,
             no_bit_int: args.no_bit_int,
             lib: args.lib,
             minify: !matches!(args.command, SubCommand::Print { minify: false, .. }),
         });
-    let result = match compiler {
-        Ok(compiler) => {
-            compiler.diagnostics().display(compiler.lsp_file());
-            compiler.code()
+    let result = match result {
+        Ok((diag, code)) => {
+            display_diagnostics(&diag);
+            code
         }
-        Err(compiler) => {
+        Err(diag) => {
             eprintln!("Compilation failed: ");
-            compiler.diagnostics().display(compiler.lsp_file());
+            display_diagnostics(&diag);
             std::process::exit(1);
         }
     };

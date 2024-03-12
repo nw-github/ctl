@@ -38,7 +38,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
     }
 
-    pub fn parse(src: &'a str, diag: &'b mut Diagnostics, file: FileId) -> Stmt {
+    pub fn parse(src: &'a str, name: String, diag: &'b mut Diagnostics, file: FileId) -> Stmt {
         let mut this = Self::new(src, diag, file);
         let mut stmts = Vec::new();
         while !this.matches_kind(Token::Eof) {
@@ -55,7 +55,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         pos: 0,
                         len: 0,
                     },
-                    crate::derive_module_name(this.diag.file_path(file)),
+                    name,
                 ),
                 file: true,
             },
