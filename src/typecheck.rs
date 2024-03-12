@@ -136,9 +136,16 @@ impl From<ValueItem> for HoverItem {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum CompletionMethod {
+    Type(UserTypeId),
+    Extension(ExtensionId),
+    Trait(TraitId),
+}
+
 pub enum Completion {
     Property(UserTypeId, String),
-    Method(FunctionId, Option<ExtensionId>),
+    Method(FunctionId, CompletionMethod),
 }
 
 #[derive(Default)]
@@ -307,11 +314,17 @@ impl TypeChecker {
         }
 
         let mut completions = vec![];
-        let add_methods = |scopes: &Scopes, c: &mut Vec<Completion>, fns: &[Vis<FunctionId>], cap: bool, ext: Option<ExtensionId>| {
+        let mut added = HashSet::new();
+        let mut add_methods = |scopes: &Scopes, c: &mut Vec<Completion>, fns: &[Vis<FunctionId>], cap: bool, m: CompletionMethod| {
             for func in fns {
                 let f = scopes.get(func.id);
+                if added.contains(&f.name.data) {
+                    continue;
+                }
+
                 if (f.public || cap) && f.params.first().is_some_and(|p| p.label == THIS_PARAM) {
-                    c.push(Completion::Method(func.id, ext))
+                    c.push(Completion::Method(func.id, m));
+                    added.insert(f.name.data.clone());
                 }
             }
         };
@@ -323,12 +336,38 @@ impl TypeChecker {
                 completions.push(Completion::Property(ut.id, name.clone()))
             }
 
-            add_methods(&self.scopes, &mut completions, &data.fns, cap, None);
+            add_methods(&self.scopes, &mut completions, &data.fns, cap, CompletionMethod::Type(ut.id));
         }
 
-        for ext in self.extensions_in_scope_for(ty, self.current) {
+        let extensions = self.extensions_in_scope_for(ty, self.current);
+        for ext in extensions.iter() {
             let data = self.scopes.get(ext.id);
-            add_methods(&self.scopes, &mut completions, &data.fns, self.can_access_privates(data.scope), Some(ext.id));
+            add_methods(
+                &self.scopes, 
+                &mut completions, 
+                &data.fns, 
+                self.can_access_privates(data.scope), 
+                CompletionMethod::Extension(ext.id),
+            );
+        }
+
+        // add traits last in case they were overriden
+        if let Some(ut) = ty.as_user() {
+            let data = self.scopes.get(ut.id);
+            let cap = self.can_access_privates(data.scope);
+            for (imp, _) in data.impls.iter().flat_map(|imp| imp.as_checked()) {
+                let data = self.scopes.get(imp.id);
+                add_methods(&self.scopes, &mut completions, &data.fns, cap, CompletionMethod::Trait(imp.id));
+            }
+        }
+
+        for ext in extensions.iter() {
+            let data = self.scopes.get(ext.id);
+            let cap = self.can_access_privates(data.scope);
+            for (imp, _) in data.impls.iter().flat_map(|imp| imp.as_checked()) {
+                let data = self.scopes.get(imp.id);
+                add_methods(&self.scopes, &mut completions, &data.fns, cap, CompletionMethod::Trait(imp.id));
+            }
         }
 
         self.lsp_output.completions = Some(completions);

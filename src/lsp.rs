@@ -11,7 +11,7 @@ use crate::ast::parsed::Linkage;
 use crate::error::{Diagnostics, FileId, OffsetMode};
 use crate::lexer::Span;
 use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeData, UserTypeId, VariableId};
-use crate::typecheck::{Completion, HoverItem, LspInput};
+use crate::typecheck::{Completion, CompletionMethod, HoverItem, LspInput};
 use crate::typeid::{GenericUserType, Type};
 use crate::{
     project_from_file, CachingSourceProvider, Checked, Compiler, FileSourceProvider,
@@ -219,7 +219,7 @@ impl LanguageServer for LspBackend {
                         ..Default::default()
                     }
                 }
-                &Completion::Method(id, ext) => {
+                &Completion::Method(id, from) => {
                     let f = scopes.get(id);
                     let label = f.name.data.clone();
                     let mut insertion = format!("{label}(");
@@ -238,7 +238,15 @@ impl LanguageServer for LspBackend {
                     CompletionItem {
                         label,
                         label_details: Some(CompletionItemLabelDetails {
-                            detail: ext.map(|ext| format!(" (from {})", scopes.get(ext).name.data)),
+                            detail: match from {
+                                CompletionMethod::Type(_) => None,
+                                CompletionMethod::Extension(id) => {
+                                    Some(format!(" (from {})", scopes.get(id).name.data))
+                                }
+                                CompletionMethod::Trait(id) => {
+                                    Some(format!(" (as {})", scopes.get(id).name.data))
+                                }
+                            },
                             description: detail.clone(),
                         }),
                         kind: Some(CompletionItemKind::METHOD),
