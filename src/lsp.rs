@@ -47,7 +47,7 @@ impl Default for Configuration {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Document {
     text: String,
     inlay_hints: Vec<InlayHint>,
@@ -437,24 +437,25 @@ impl LspBackend {
         }
 
         let scopes = &checked.project().scopes;
-        let mut doc = self.documents.entry(uri.clone()).or_default();
-        doc.inlay_hints.clear();
-        for (_, var) in scopes.vars() {
-            if var.name.span.file != file || var.has_hint || var.name.data.starts_with('$') {
-                continue;
-            }
+        if let Some(mut doc) = self.documents.get_mut(uri) {
+            doc.inlay_hints.clear();
+            for (_, var) in scopes.vars() {
+                if var.name.span.file != file || var.has_hint || var.name.data.starts_with('$') {
+                    continue;
+                }
 
-            let range = Diagnostics::get_span_range(&doc.text, var.name.span, OffsetMode::Utf16);
-            doc.inlay_hints.push(InlayHint {
-                position: range.end,
-                label: InlayHintLabel::String(format!(": {}", var.ty.name(scopes))),
-                kind: Some(InlayHintKind::TYPE),
-                text_edits: Default::default(),
-                tooltip: Default::default(),
-                padding_left: Default::default(),
-                padding_right: Default::default(),
-                data: Default::default(),
-            });
+                let r = Diagnostics::get_span_range(&doc.text, var.name.span, OffsetMode::Utf16);
+                doc.inlay_hints.push(InlayHint {
+                    position: r.end,
+                    label: InlayHintLabel::String(format!(": {}", var.ty.name(scopes))),
+                    kind: Some(InlayHintKind::TYPE),
+                    text_edits: Default::default(),
+                    tooltip: Default::default(),
+                    padding_left: Default::default(),
+                    padding_right: Default::default(),
+                    data: Default::default(),
+                });
+            }
         }
 
         Ok((file, checked))
