@@ -56,7 +56,7 @@ macro_rules! resolve_impl {
 
 macro_rules! check_hover {
     ($self: expr, $span: expr, $item: expr) => {
-        if $self
+        if $self.hover_item.is_none() && $self
             .hover_span
             .is_some_and(|h| h.file == $span.file && $span.includes(h.pos))
         {
@@ -234,6 +234,17 @@ impl TypeChecker {
         res.id
     }
 
+    fn insert_user_type(&mut self, value: UserType, public: bool) -> UserTypeId {
+        let id = self.insert::<UserTypeId>(value, public, true);
+        if let Some(name) = self.scopes.get(id).attrs.val("lang") {
+            self.scopes.lang_types.insert(name.into(), id);
+        }
+        for (name, m) in self.scopes.get(id).members.iter() {
+            check_hover!(self, m.span, HoverItem::Member(id, name.clone()));
+        }
+        id
+    }
+
     fn find_in_tns(&self, name: &str) -> Option<Vis<TypeItem>> {
         for (id, scope) in self.scopes.walk(self.current) {
             if let Some(item) = self.scopes[id].find_in_tns(name) {
@@ -278,8 +289,6 @@ impl TypeChecker {
 impl TypeChecker {
     fn declare_struct(&mut self, base: Struct, attrs: Attributes) -> DeclaredStmt {
         let name = base.name.clone();
-        let public = base.public;
-        let lang_item = attrs.val("lang").map(String::from);
         let (ut, init, fns, impls) = self.enter(ScopeKind::None, |this| {
             let init = this.enter(ScopeKind::None, |this| {
                 this.declare_fn(Fn {
@@ -354,10 +363,7 @@ impl TypeChecker {
         });
 
         let scope = ut.body_scope;
-        let id = self.insert::<UserTypeId>(ut, public, true);
-        if let Some(name) = lang_item {
-            self.scopes.lang_types.insert(name, id);
-        }
+        let id = self.insert_user_type(ut, base.public);
         let prev = self.scopes[self.current].vns.insert(
             name.data,
             Vis::new(ValueItem::StructConstructor(id, init.id), base.public),
@@ -387,7 +393,6 @@ impl TypeChecker {
         variants: Vec<Variant>,
         attrs: Attributes,
     ) -> DeclaredStmt {
-        let lang_item = attrs.val("lang").map(String::from);
         let (ut, impls, fns, member_cons_len) = self.enter(ScopeKind::None, |this| {
             let mut rvariants = IndexMap::with_capacity(base.members.len());
             let mut members = IndexMap::with_capacity(base.members.len());
@@ -532,10 +537,7 @@ impl TypeChecker {
             (ut, impl_blocks, fns, member_cons_len)
         });
         let scope = ut.body_scope;
-        let id = self.insert::<UserTypeId>(ut, base.public, true);
-        if let Some(name) = lang_item {
-            self.scopes.lang_types.insert(name, id);
-        }
+        let id = self.insert_user_type(ut, base.public);
         self.scopes[scope].kind = ScopeKind::UserType(id);
         for c in fns.iter().take(member_cons_len) {
             self.scopes.get_mut(c.id).constructor = Some(id);
@@ -545,9 +547,7 @@ impl TypeChecker {
     }
 
     fn declare_unsafe_union(&mut self, mut base: Struct, attrs: Attributes) -> DeclaredStmt {
-        let lang_item = attrs.val("lang").map(String::from);
         let name = base.name.clone();
-        let public = base.public;
         let (ut, fns, impls) = self.enter(ScopeKind::None, |this| {
             let mut members = IndexMap::with_capacity(base.members.len());
             for member in base.members.iter_mut() {
@@ -594,17 +594,7 @@ impl TypeChecker {
         });
 
         let scope = ut.body_scope;
-        let id = self.insert::<UserTypeId>(ut, public, true);
-        for member in base.members.iter() {
-            self.check_hover(
-                member.name.span,
-                HoverItem::Member(id, member.name.data.clone()),
-            );
-        }
-
-        if let Some(name) = lang_item {
-            self.scopes.lang_types.insert(name, id);
-        }
+        let id = self.insert_user_type(ut, base.public);
         let prev = self.scopes[self.current].vns.insert(
             name.data,
             Vis::new(ValueItem::UnionConstructor(id), base.public),

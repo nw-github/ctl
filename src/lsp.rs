@@ -10,7 +10,7 @@ use tower_lsp::{Client, LanguageServer};
 use crate::ast::parsed::Linkage;
 use crate::error::{Diagnostics, FileId, OffsetMode};
 use crate::lexer::Span;
-use crate::sym::{FunctionId, Scopes, Union, UserTypeData, UserTypeId, VariableId};
+use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeData, UserTypeId, VariableId};
 use crate::typecheck::HoverItem;
 use crate::typeid::{GenericUserType, Type};
 use crate::{get_default_libs, Checked, Compiler};
@@ -363,20 +363,28 @@ fn hover_item_to_hover(item: &HoverItem, scopes: &Scopes) -> Option<Hover> {
             let ut = scopes.get(*id);
             let unk = Type::Unknown;
             let ty = ut.members.get(name).map(|m| &m.ty).unwrap_or(&unk);
-            Some(format!("{name}: {}", ty.name(scopes)))
+            Some(format!(
+                "{}{name}: {}",
+                visualize_location(ut.body_scope, scopes),
+                ty.name(scopes)
+            ))
         }
         &HoverItem::Module(id) => {
             let scope = &scopes[id];
-            Some(format!(
-                "{}mod {}",
-                if scope.public { "pub " } else { "" },
-                scope.kind.name(scopes).unwrap()
-            ))
+            let mut res = String::new();
+            if let Some(parent) = scope.parent.filter(|parent| *parent != ScopeId::ROOT) {
+                res += &visualize_location(parent, scopes);
+            }
+            if scope.public {
+                res += "pub ";
+            }
+            Some(format!("{res}mod {}", scope.kind.name(scopes).unwrap()))
         }
         &HoverItem::Trait(id) => {
             let tr = scopes.get(id);
             let mut res = format!(
-                "{}trait {}",
+                "{}{}trait {}",
+                visualize_location(tr.scope, scopes),
                 if tr.public { "pub " } else { "" },
                 tr.name.data
             );
@@ -386,7 +394,8 @@ fn hover_item_to_hover(item: &HoverItem, scopes: &Scopes) -> Option<Hover> {
         &HoverItem::Extension(id) => {
             let ext = scopes.get(id);
             let mut res = format!(
-                "{}extension {}",
+                "{}{}extension {}",
+                visualize_location(ext.scope, scopes),
                 if ext.public { "pub " } else { "" },
                 ext.name.data
             );
@@ -407,6 +416,18 @@ fn hover_item_to_hover(item: &HoverItem, scopes: &Scopes) -> Option<Hover> {
     })
 }
 
+fn visualize_location(scope: ScopeId, scopes: &Scopes) -> String {
+    let mut backward = vec![];
+    for (_, scope) in scopes.walk(scope) {
+        if let Some(name) = scope.kind.name(scopes) {
+            backward.push(name.data.to_owned());
+        }
+    }
+
+    backward.reverse();
+    backward.join("::") + "\n"
+}
+
 fn visualize_type_params(res: &mut String, params: &[UserTypeId], scopes: &Scopes) {
     if !params.is_empty() {
         *res += "<";
@@ -423,22 +444,26 @@ fn visualize_type_params(res: &mut String, params: &[UserTypeId], scopes: &Scope
 
 fn visualize_func(id: FunctionId, scopes: &Scopes) -> String {
     let func = scopes.get(id);
-    let mut res = String::new();
-    if let Some(u) = func
+    if let Some((union, id)) = func
         .constructor
-        .and_then(|id| scopes.get(id).data.as_union())
+        .and_then(|id| scopes.get(id).data.as_union().zip(Some(id)))
     {
+        let mut res = visualize_location(scopes.get(id).body_scope, scopes);
         let variant = &func.name.data;
         visualize_variant_body(
             &mut res,
-            u,
+            union,
             variant,
-            u.variants.get(variant).and_then(|inner| inner.0.as_ref()),
+            union
+                .variants
+                .get(variant)
+                .and_then(|inner| inner.0.as_ref()),
             scopes,
         );
         return res;
     }
 
+    let mut res = visualize_location(func.scope, scopes);
     if func.public {
         res += "pub ";
     }
@@ -504,23 +529,26 @@ fn visualize_func(id: FunctionId, scopes: &Scopes) -> String {
 
 fn visualize_var(id: VariableId, scopes: &Scopes) -> String {
     let var = scopes.get(id);
-    format!(
-        "{}{} {}: {}",
-        if var.public { "pub " } else { "" },
-        match (var.is_static, var.mutable) {
-            (true, true) => "static mut",
-            (true, false) => "static",
-            (false, true) => "mut",
-            (false, false) => "let",
-        },
-        var.name.data,
-        var.ty.name(scopes)
-    )
+    let mut res = String::new();
+    if var.is_static {
+        res += &visualize_location(var.scope, scopes);
+    }
+    if var.public {
+        res += "pub ";
+    }
+    res += match (var.is_static, var.mutable) {
+        (true, true) => "static mut",
+        (true, false) => "static",
+        (false, true) => "mut",
+        (false, false) => "let",
+    };
+    write_de!(res, " {}: {}", var.name.data, var.ty.name(scopes));
+    res
 }
 
 fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
-    let mut res = String::new();
     let ut = scopes.get(id);
+    let mut res = String::new();
     let print_body = |res: &mut String, mut wrote: bool| {
         if wrote && !ut.members.is_empty() {
             *res += "\n";
@@ -544,6 +572,10 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
             *res += "}";
         }
     };
+
+    if !ut.data.is_template() {
+        res += &visualize_location(ut.scope, scopes);
+    }
 
     if ut.type_params.is_empty() && !ut.data.is_template() {
         let (sz, align) = GenericUserType::new(id, Default::default()).size_and_align(scopes);
