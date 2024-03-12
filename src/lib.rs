@@ -94,10 +94,9 @@ impl<T: SourceProvider> Compiler<Source<T>> {
                 attrs: Default::default(),
             }))
         } else {
-            let name = Self::derive_module_name(&path);
             self.state.0.get_source(&path, |src| {
                 let file_id = diag.add_file(path.clone());
-                Parser::parse(src, name, diag, file_id)
+                Parser::parse(src, Self::derive_module_name(&path), diag, file_id)
             })
         }
     }
