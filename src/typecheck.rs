@@ -53,7 +53,7 @@ macro_rules! resolve_impl {
 
 macro_rules! check_hover {
     ($self: expr, $span: expr, $item: expr) => {
-        if $self.lsp_output.hover.is_none() && $self
+        if $self
             .lsp_input
             .hover
             .is_some_and(|h| h.file == $span.file && $span.includes(h.pos))
@@ -308,7 +308,6 @@ impl TypeChecker {
             return;
         }
 
-        let ty = ty.strip_references();
         if ty.is_unknown() {
             return;
         }
@@ -394,7 +393,7 @@ impl TypeChecker {
                         .map(|member| Param {
                             keyword: true,
                             patt: Located::new(
-                                member.name.span,
+                                Span::default(), // use default span so hovers ignore this
                                 Pattern::Path(Path::from(member.name.clone())),
                             ),
                             ty: member.ty.clone(),
@@ -549,7 +548,7 @@ impl TypeChecker {
                             params.push(Param {
                                 keyword: true,
                                 patt: Located::new(
-                                    member.name.span,
+                                    Span::default(), // use default span so hovers ignore this
                                     Pattern::Path(Path::from(member.name)),
                                 ),
                                 ty: member.ty,
@@ -2506,9 +2505,8 @@ impl TypeChecker {
                 }
 
                 let source = self.check_expr(*source, None);
-                self.check_type_completions(span, &source.ty);
-
                 let id = source.ty.strip_references();
+                self.check_type_completions(span, id);
                 let ut_id = match &id {
                     Type::User(data) => data.id,
                     Type::Unknown => return Default::default(),
@@ -3653,6 +3651,12 @@ impl TypeChecker {
     }
 
     fn resolve_proto(&mut self, id: FunctionId) {
+        // disable errors to avoid duplicate errors when the struct and the constructor
+        // are typechecked
+        if self.scopes.get(id).constructor.is_some() {
+            self.diag.set_errors_enabled(false);
+        }
+
         for i in 0..self.scopes.get(id).params.len() {
             resolve_type!(self, self.scopes.get_mut(id).params[i].ty);
             match std::mem::take(&mut self.scopes.get_mut(id).params[i].default) {
@@ -3672,6 +3676,8 @@ impl TypeChecker {
         for i in 0..self.scopes.get(id).type_params.len() {
             self.resolve_impls(self.scopes.get(id).type_params[i]);
         }
+
+        self.diag.set_errors_enabled(true);
     }
 
     fn check_impl(this: Option<&TypeArgs>, tr: &TraitImpl, bound: &GenericTrait) -> bool {

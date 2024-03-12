@@ -29,11 +29,14 @@ pub struct Diagnostics {
     errors: Vec<Error>,
     warnings: Vec<Error>,
     paths: Vec<PathBuf>,
+    errors_disabled: bool,
 }
 
 impl Diagnostics {
     pub fn error(&mut self, err: Error) {
-        self.errors.push(err);
+        if !self.errors_disabled {
+            self.errors.push(err);
+        }
     }
 
     pub fn warn(&mut self, err: Error) {
@@ -108,6 +111,10 @@ impl Diagnostics {
         }
 
         Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1))
+    }
+
+    pub fn set_errors_enabled(&mut self, enabled: bool) {
+        self.errors_disabled = !enabled;
     }
 }
 
