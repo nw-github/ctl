@@ -9,6 +9,10 @@ pub trait Iterator<T> {
     fn take(this, count: uint): Take<T, This> {
         Take::new(*this, count)
     }
+
+    fn zip<U, I: Iterator<U>>(this, rhs: I): Zip<T, U, This, I> {
+        Zip::new(*this, rhs)
+    }
 }
 
 pub struct Enumerate<T, I: Iterator<T>> {
@@ -44,6 +48,23 @@ pub struct Take<T, I: Iterator<T>> {
 
             this.count--;
             this.iter.next()
+        }
+    }
+}
+
+pub struct Zip<T, U, I: Iterator<T>, J: Iterator<U>> {
+    iter1: I,
+    iter2: J,
+
+    pub fn new(iter1: I, iter2: J): This {
+        Zip(iter1:, iter2:)
+    }
+
+    impl Iterator<(T, U)> {
+        fn next(mut this): ?(T, U) {
+            if (this.iter1.next(), this.iter2.next()) is (?a, ?b) {
+                (a, b)
+            }
         }
     }
 }
