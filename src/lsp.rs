@@ -212,10 +212,15 @@ impl LanguageServer for LspBackend {
                 Completion::Property(id, name) => {
                     let ut = scopes.get(*id);
                     let member = ut.members.get(name).unwrap();
+                    let detail = member.ty.name(scopes);
                     CompletionItem {
                         label: name.clone(),
                         kind: Some(CompletionItemKind::FIELD),
-                        detail: Some(member.ty.name(scopes)),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some(detail.clone()),
+                        }),
+                        detail: Some(detail),
                         ..Default::default()
                     }
                 }

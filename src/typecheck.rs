@@ -304,7 +304,7 @@ impl TypeChecker {
             return;
         }
 
-        if !self.lsp_input.completion.is_some_and(|rhs| span.includes(rhs.pos)) {
+        if !self.lsp_input.completion.is_some_and(|rhs| span.file == rhs.file && span.includes(rhs.pos)) {
             return;
         }
 
@@ -335,10 +335,24 @@ impl TypeChecker {
                 completions.push(Completion::Property(ut.id, name.clone()))
             }
 
+            for (imp, _) in data.impls.iter().flat_map(|imp| imp.as_checked()) {
+                let data = self.scopes.get(imp.id);
+                add_methods(&self.scopes, &mut completions, &data.fns, cap, CompletionMethod::Trait(imp.id));
+            }
+
             add_methods(&self.scopes, &mut completions, &data.fns, cap, CompletionMethod::Type(ut.id));
         }
 
         let extensions = self.extensions_in_scope_for(ty, self.current);
+        for ext in extensions.iter() {
+            let data = self.scopes.get(ext.id);
+            let cap = self.can_access_privates(data.scope);
+            for (imp, _) in data.impls.iter().flat_map(|imp| imp.as_checked()) {
+                let data = self.scopes.get(imp.id);
+                add_methods(&self.scopes, &mut completions, &data.fns, cap, CompletionMethod::Trait(imp.id));
+            }
+        }
+
         for ext in extensions.iter() {
             let data = self.scopes.get(ext.id);
             add_methods(
@@ -348,25 +362,6 @@ impl TypeChecker {
                 self.can_access_privates(data.scope), 
                 CompletionMethod::Extension(ext.id),
             );
-        }
-
-        // add traits last in case they were overriden
-        if let Some(ut) = ty.as_user() {
-            let data = self.scopes.get(ut.id);
-            let cap = self.can_access_privates(data.scope);
-            for (imp, _) in data.impls.iter().flat_map(|imp| imp.as_checked()) {
-                let data = self.scopes.get(imp.id);
-                add_methods(&self.scopes, &mut completions, &data.fns, cap, CompletionMethod::Trait(imp.id));
-            }
-        }
-
-        for ext in extensions.iter() {
-            let data = self.scopes.get(ext.id);
-            let cap = self.can_access_privates(data.scope);
-            for (imp, _) in data.impls.iter().flat_map(|imp| imp.as_checked()) {
-                let data = self.scopes.get(imp.id);
-                add_methods(&self.scopes, &mut completions, &data.fns, cap, CompletionMethod::Trait(imp.id));
-            }
         }
 
         self.lsp_output.completions = Some(completions);
@@ -3610,7 +3605,7 @@ impl TypeChecker {
             resolve_type!(self, self.scopes.get_mut(id).members[i].ty);
         }
 
-        if let Some(mut union) = self.scopes.get(id).data.as_union().cloned() {
+        if let Some(mut union) = self.scopes.get_mut(id).data.as_union().cloned() {
             resolve_type!(self, union.tag);
             for variant in union.variants.values_mut().flat_map(|v| &mut v.0) {
                 resolve_type!(self, *variant);
