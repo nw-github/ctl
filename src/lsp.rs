@@ -11,7 +11,7 @@ use crate::ast::parsed::Linkage;
 use crate::error::{Diagnostics, FileId, OffsetMode};
 use crate::lexer::Span;
 use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeData, UserTypeId, VariableId};
-use crate::typecheck::HoverItem;
+use crate::typecheck::{Completion, HoverItem, LspInput};
 use crate::typeid::{GenericUserType, Type};
 use crate::{get_default_libs, Checked, Compiler};
 
@@ -69,6 +69,15 @@ impl LanguageServer for LspBackend {
                 inlay_hint_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                completion_provider: Some(CompletionOptions {
+                    resolve_provider: None,
+                    trigger_characters: Some(vec![".".into()]),
+                    all_commit_characters: None,
+                    work_done_progress_options: Default::default(),
+                    completion_item: Some(CompletionOptionsCompletionItem {
+                        label_details_support: Some(true),
+                    }),
+                }),
                 // inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
                 //     InlayHintOptions {
                 //         resolve_provider: Some(true),
@@ -89,7 +98,7 @@ impl LanguageServer for LspBackend {
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         *self.config.lock().await = serde_json::from_value(params.settings).unwrap_or_default();
         if let Some(entry) = self.documents.iter().next() {
-            if let Err(err) = self.on_document_change(entry.key(), None).await {
+            if let Err(err) = self.on_document_change(entry.key(), None, None).await {
                 self.client
                     .log_message(MessageType::ERROR, format!("{err}"))
                     .await;
@@ -106,7 +115,7 @@ impl LanguageServer for LspBackend {
                 inlay_hints: vec![],
             });
         if let Err(err) = self
-            .on_document_change(&params.text_document.uri, None)
+            .on_document_change(&params.text_document.uri, None, None)
             .await
         {
             _ = self.on_error::<()>(err).await;
@@ -122,7 +131,7 @@ impl LanguageServer for LspBackend {
                 inlay_hints: vec![],
             });
         if let Err(err) = self
-            .on_document_change(&params.text_document.uri, None)
+            .on_document_change(&params.text_document.uri, None, None)
             .await
         {
             _ = self.on_error::<()>(err).await;
@@ -145,10 +154,8 @@ impl LanguageServer for LspBackend {
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = &params.text_document_position_params.text_document.uri;
-        match self
-            .on_document_change(uri, Some(params.text_document_position_params.position))
-            .await
-        {
+        let pos = params.text_document_position_params.position;
+        match self.on_document_change(uri, Some(pos), None).await {
             Ok((file, checked)) => Ok(self
                 .goto_definition((file, uri), &checked)
                 .map(GotoDefinitionResponse::Scalar)),
@@ -156,17 +163,36 @@ impl LanguageServer for LspBackend {
         }
     }
 
-    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        match self
-            .on_document_change(
-                &params.text_document_position_params.text_document.uri,
-                Some(params.text_document_position_params.position),
-            )
-            .await
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        if !params
+            .context
+            .and_then(|ctx| ctx.trigger_character)
+            .is_some_and(|c| c == ".")
         {
+            return Ok(None);
+        }
+
+        let uri = &params.text_document_position.text_document.uri;
+        let pos = params.text_document_position.position;
+        match self.on_document_change(uri, None, Some(pos)).await {
             Ok((_, checked)) => Ok(checked
-                .module()
-                .hover_item
+                .project()
+                .lsp
+                .completions
+                .as_ref()
+                .map(|c| CompletionResponse::Array(convert_completions(c, checked.scopes())))),
+            Err(err) => self.on_error(err).await,
+        }
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        match self.on_document_change(uri, Some(pos), None).await {
+            Ok((_, checked)) => Ok(checked
+                .project()
+                .lsp
+                .hover
                 .as_ref()
                 .and_then(|item| hover_item_to_hover(item, checked.scopes()))),
             Err(err) => self.on_error(err).await,
@@ -191,6 +217,7 @@ impl LspBackend {
         &self,
         uri: &Url,
         hover: Option<Position>,
+        completion: Option<Position>,
     ) -> anyhow::Result<(FileId, Compiler<Checked>)> {
         let path = if !uri.scheme().is_empty() {
             Path::new(&uri.as_str()[uri.scheme().len() + 3..])
@@ -200,14 +227,24 @@ impl LspBackend {
         let (project, libs) = get_default_libs(get_file_project(path), vec![], false, false);
         let (compiler, file) =
             Compiler::new_lsp(path.into(), self.documents.get(uri).unwrap().text.clone());
-        let checked = compiler.parse(project, libs)?.typecheck(hover.map(|p| {
-            position_to_span(
-                &self.documents.get(uri).unwrap().text,
-                file,
-                p.line,
-                p.character,
-            )
-        }))?;
+        let checked = compiler.parse(project, libs)?.typecheck(LspInput {
+            hover: hover.map(|p| {
+                position_to_span(
+                    &self.documents.get(uri).unwrap().text,
+                    file,
+                    p.line,
+                    p.character,
+                )
+            }),
+            completion: completion.map(|p| {
+                position_to_span(
+                    &self.documents.get(uri).unwrap().text,
+                    file,
+                    p.line,
+                    p.character,
+                )
+            }),
+        })?;
 
         let diag = checked.diagnostics();
         let mut all = HashMap::<Url, Vec<Diagnostic>>::new();
@@ -276,14 +313,14 @@ impl LspBackend {
         current: (FileId, &Url),
         checked: &Compiler<Checked>,
     ) -> Option<Location> {
-        let module = checked.module();
-        let span = match module.hover_item.as_ref()? {
-            &HoverItem::Var(id) => module.scopes.get(id).name.span,
-            &HoverItem::Type(id) => module.scopes.get(id).name.span,
-            &HoverItem::Trait(id) => module.scopes.get(id).name.span,
-            &HoverItem::Extension(id) => module.scopes.get(id).name.span,
-            &HoverItem::Module(id) => module.scopes[id].kind.name(&module.scopes).unwrap().span,
-            &HoverItem::Fn(id) => module.scopes.get(id).name.span,
+        let proj = checked.project();
+        let span = match proj.lsp.hover.as_ref()? {
+            &HoverItem::Var(id) => proj.scopes.get(id).name.span,
+            &HoverItem::Type(id) => proj.scopes.get(id).name.span,
+            &HoverItem::Trait(id) => proj.scopes.get(id).name.span,
+            &HoverItem::Extension(id) => proj.scopes.get(id).name.span,
+            &HoverItem::Module(id) => proj.scopes[id].kind.name(&proj.scopes).unwrap().span,
+            &HoverItem::Fn(id) => proj.scopes.get(id).name.span,
             HoverItem::Member(id, member) => {
                 let ut = checked.scopes().get(*id);
                 ut.members.get(member).map(|m| m.span).or_else(|| {
@@ -354,10 +391,60 @@ fn position_to_span(text: &str, file: FileId, line: u32, character: u32) -> Span
     Span::default()
 }
 
+fn convert_completions(completions: &[Completion], scopes: &Scopes) -> Vec<CompletionItem> {
+    completions
+        .iter()
+        .map(|completion| match completion {
+            Completion::Property(id, name) => {
+                let ut = scopes.get(*id);
+                let member = ut.members.get(name).unwrap();
+                CompletionItem {
+                    label: name.clone(),
+                    kind: Some(CompletionItemKind::FIELD),
+                    detail: Some(member.ty.name(scopes)),
+                    ..Default::default()
+                }
+            }
+            &Completion::Method(id) => {
+                let f = scopes.get(id);
+                let label = f.name.data.clone();
+                let mut insertion = format!("{label}(");
+                for (i, param) in f
+                    .params
+                    .iter()
+                    .skip(1)
+                    .filter(|p| !p.keyword)
+                    .chain(f.params.iter().skip(1).filter(|p| p.keyword))
+                    .enumerate()
+                {
+                    if i > 0 {
+                        insertion += ", ";
+                    }
+                    if param.keyword {
+                        write_de!(insertion, "{}: ${{{}:{}}}", param.label, i + 1, param.label);
+                    } else {
+                        write_de!(insertion, "${{{}:{}}}", i + 1, param.label);
+                    }
+                }
+                insertion += ")";
+
+                CompletionItem {
+                    label,
+                    kind: Some(CompletionItemKind::METHOD),
+                    detail: Some(visualize_func(id, true, scopes)),
+                    insert_text: Some(insertion),
+                    insert_text_format: Some(InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                }
+            }
+        })
+        .collect()
+}
+
 fn hover_item_to_hover(item: &HoverItem, scopes: &Scopes) -> Option<Hover> {
     let str = match item {
         &HoverItem::Var(id) => Some(visualize_var(id, scopes)),
-        &HoverItem::Fn(id) => Some(visualize_func(id, scopes)),
+        &HoverItem::Fn(id) => Some(visualize_func(id, false, scopes)),
         &HoverItem::Type(id) => Some(visualize_type(id, scopes)),
         HoverItem::Member(id, name) => {
             let ut = scopes.get(*id);
@@ -442,7 +529,7 @@ fn visualize_type_params(res: &mut String, params: &[UserTypeId], scopes: &Scope
     }
 }
 
-fn visualize_func(id: FunctionId, scopes: &Scopes) -> String {
+fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes) -> String {
     let func = scopes.get(id);
     if let Some((union, id)) = func
         .constructor
@@ -463,7 +550,11 @@ fn visualize_func(id: FunctionId, scopes: &Scopes) -> String {
         return res;
     }
 
-    let mut res = visualize_location(func.scope, scopes);
+    let mut res = if small {
+        String::new()
+    } else {
+        visualize_location(func.scope, scopes)
+    };
     if func.public {
         res += "pub ";
     }
@@ -474,13 +565,13 @@ fn visualize_func(id: FunctionId, scopes: &Scopes) -> String {
         Linkage::Internal => {}
     }
 
-    if func.is_unsafe {
-        res += "unsafe fn ";
-    } else {
-        res += "fn ";
+    match (small, func.is_unsafe) {
+        (false, false) => write_de!(res, "fn {}", func.name.data),
+        (false, true) => write_de!(res, "unsafe fn {}", func.name.data),
+        (true, false) => write_de!(res, "fn"),
+        (true, true) => write_de!(res, "unsafe fn"),
     }
 
-    res += &func.name.data;
     visualize_type_params(&mut res, &func.type_params, scopes);
 
     res += "(";

@@ -20,7 +20,7 @@ use codegen::Codegen;
 use error::{Diagnostics, FileId};
 use lexer::{Lexer, Span};
 use sym::Scopes;
-use typecheck::Module;
+use typecheck::{LspInput, Project};
 
 use crate::{parser::Parser, typecheck::TypeChecker};
 
@@ -31,7 +31,7 @@ pub trait CompileState {}
 
 pub struct Source;
 pub struct Parsed(Stmt, Vec<PathBuf>);
-pub struct Checked(Module);
+pub struct Checked(Project);
 pub struct Built(String);
 
 impl CompileState for Source {}
@@ -138,8 +138,8 @@ impl Compiler<Parsed> {
         pretty::print_stmt(&self.state.0, 0);
     }
 
-    pub fn typecheck(self, hover_span: Option<Span>) -> anyhow::Result<Compiler<Checked>> {
-        let (module, diag) = TypeChecker::check(self.state.0, self.state.1, self.diag, hover_span)?;
+    pub fn typecheck(self, lsp: LspInput) -> anyhow::Result<Compiler<Checked>> {
+        let (module, diag) = TypeChecker::check(self.state.0, self.state.1, self.diag, lsp)?;
         Ok(Compiler {
             state: Checked(module),
             diag,
@@ -170,7 +170,7 @@ impl Compiler<Checked> {
         &self.state.0.scopes
     }
 
-    pub fn module(&self) -> &Module {
+    pub fn project(&self) -> &Project {
         &self.state.0
     }
 }
