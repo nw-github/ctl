@@ -13,7 +13,7 @@ use crate::lexer::Span;
 use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeData, UserTypeId, VariableId};
 use crate::typecheck::{Completion, HoverItem, LspInput};
 use crate::typeid::{GenericUserType, Type};
-use crate::{get_default_libs, Checked, Compiler};
+use crate::{get_default_libs, Checked, Compiler, THIS_PARAM};
 
 macro_rules! write_de {
     ($dst:expr, $($arg:tt)*) => {
@@ -409,14 +409,7 @@ fn convert_completions(completions: &[Completion], scopes: &Scopes) -> Vec<Compl
                 let f = scopes.get(id);
                 let label = f.name.data.clone();
                 let mut insertion = format!("{label}(");
-                for (i, param) in f
-                    .params
-                    .iter()
-                    .skip(1)
-                    .filter(|p| !p.keyword)
-                    .chain(f.params.iter().skip(1).filter(|p| p.keyword))
-                    .enumerate()
-                {
+                for (i, param) in f.params.iter().skip(1).enumerate() {
                     if i > 0 {
                         insertion += ", ";
                     }
@@ -595,11 +588,13 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes) -> String {
             res += &param.label;
         }
 
-        if param.default.is_some() {
-            res += "?";
+        if param.label != THIS_PARAM {
+            if param.default.is_some() {
+                res += "?";
+            }
+            res += ": ";
+            res += &param.ty.name(scopes);
         }
-        res += ": ";
-        res += &param.ty.name(scopes);
     }
     if func.variadic {
         if func.params.is_empty() {
