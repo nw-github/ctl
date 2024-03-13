@@ -308,7 +308,9 @@ impl TypeChecker {
     }
 
     fn check_type_completions(&mut self, span: Span, ty: &Type) {
-        if self.lsp_output.completions.is_some() || !LspInput::matches(self.lsp_input.completion, span) {
+        if self.lsp_output.completions.is_some()
+            || !LspInput::matches(self.lsp_input.completion, span)
+        {
             return;
         }
 
@@ -318,7 +320,11 @@ impl TypeChecker {
 
         let mut completions = vec![];
         let mut added = HashSet::new();
-        let mut add_methods = |scopes: &Scopes, c: &mut Vec<LspItem>, fns: &[Vis<FunctionId>], cap: bool, m: UserTypeId| {
+        let mut add_methods = |scopes: &Scopes,
+                               c: &mut Vec<LspItem>,
+                               fns: &[Vis<FunctionId>],
+                               cap: bool,
+                               m: UserTypeId| {
             for func in fns {
                 let f = scopes.get(func.id);
                 if added.contains(&f.name.data) {
@@ -360,10 +366,10 @@ impl TypeChecker {
         for ext in extensions.iter() {
             let data = self.scopes.get(ext.id);
             add_methods(
-                &self.scopes, 
-                &mut completions, 
-                &data.fns, 
-                self.can_access_privates(data.scope), 
+                &self.scopes,
+                &mut completions,
+                &data.fns,
+                self.can_access_privates(data.scope),
                 ext.id,
             );
         }
@@ -372,7 +378,9 @@ impl TypeChecker {
     }
 
     fn check_current_completions(&mut self, span: Span) {
-        if self.lsp_output.completions.is_some() || !LspInput::matches(self.lsp_input.completion, span) {
+        if self.lsp_output.completions.is_some()
+            || !LspInput::matches(self.lsp_input.completion, span)
+        {
             return;
         }
 
@@ -405,9 +413,9 @@ impl TypeChecker {
         self.lsp_output.completions = Some(completions);
     }
 
-//     fn check_scope_completions(&mut self, span: Span, scope: ScopeId) {
-// 
-//     }
+    //     fn check_scope_completions(&mut self, span: Span, scope: ScopeId) {
+    //
+    //     }
 }
 
 /// Forward declaration pass routines
@@ -1227,7 +1235,7 @@ impl TypeChecker {
             DeclaredStmt::Extension { id, impls, fns } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
                     let ty = resolve_type_and_clone!(
-                        this, 
+                        this,
                         *this.scopes.get_mut(id).kind.as_extension_mut().unwrap()
                     );
                     this.resolve_impls(id);
@@ -1493,7 +1501,7 @@ impl TypeChecker {
                     )))
                     .collect();
                 this.scopes.get_mut(id).body = Some(CheckedExpr::new(
-                    ut, 
+                    ut,
                     if this.scopes.get(ut_id).kind.is_union() {
                         CheckedExprData::VariantInstance {
                             variant: func.name.data.clone(),
@@ -1517,7 +1525,7 @@ impl TypeChecker {
             this.scopes.get_mut(id).body = Some(match body {
                 Ok(body) => body,
                 Err(body) => {
-                    if !body.data.is_yielding_block(&this.scopes) && 
+                    if !body.data.is_yielding_block(&this.scopes) &&
                         !matches!(target, Type::Void | Type::Unknown) {
                         let func = this.scopes.get(id);
                         let err = Error::new(
@@ -2158,7 +2166,11 @@ impl TypeChecker {
                         } else {
                             "range"
                         };
-                        (item, start.ty.clone(), [("start".into(), start), ("end".into(), end)].into())
+                        (
+                            item,
+                            start.ty.clone(),
+                            [("start".into(), start), ("end".into(), end)].into(),
+                        )
                     }
                     (None, Some(end)) => {
                         let end = self.check_expr(*end, None);
@@ -2171,14 +2183,18 @@ impl TypeChecker {
                     }
                     (Some(start), None) => {
                         let start = self.check_expr(*start, None);
-                        ("range_from", start.ty.clone(), [("start".into(), start)].into())
+                        (
+                            "range_from",
+                            start.ty.clone(),
+                            [("start".into(), start)].into(),
+                        )
                     }
                     (None, None) => {
                         return CheckedExpr::new(
                             self.make_lang_type_by_name("range_full", [], span),
                             CheckedExprData::Instance(Default::default()),
                         );
-                    },
+                    }
                 };
                 let Some(id) = self.scopes.lang_types.get(item).copied() else {
                     return self.error(Error::no_lang_item(item, expr.span));
@@ -2187,7 +2203,7 @@ impl TypeChecker {
                     self.make_lang_type(id, [ty], span),
                     CheckedExprData::Instance(inst),
                 )
-            },
+            }
             ExprData::String(s) => CheckedExpr::new(
                 self.make_lang_type_by_name("string", [], span),
                 CheckedExprData::String(s),
@@ -3479,16 +3495,7 @@ impl TypeChecker {
         let span = Span::default();
         if let Some(id) = self.scopes.lang_types.get(name).copied() {
             Type::User(
-                GenericUserType::new(
-                    id,
-                    self.resolve_type_args(
-                        &self.scopes.get(id).type_params.clone(),
-                        args,
-                        true,
-                        span,
-                    ),
-                )
-                .into(),
+                GenericUserType::new(id, self.resolve_type_args(id, args, true, span)).into(),
             )
         } else {
             self.error(Error::no_lang_item(name, span))
@@ -3534,7 +3541,7 @@ impl TypeChecker {
                         path.final_component_span(),
                     ))
                 }
-            },
+            }
             ResolvedType::Builtin(ty) => self.error(Error::expected_found(
                 "trait",
                 &format!("type '{}'", ty.name(&self.scopes)),
@@ -3594,7 +3601,7 @@ impl TypeChecker {
                                 UserTypeKind::Extension(ty) => return ty.clone(),
                                 _ => {
                                     return Type::User(
-                                        GenericUserType::from_id(&self.scopes, id).into()
+                                        GenericUserType::from_id(&self.scopes, id).into(),
                                     );
                                 }
                             }
@@ -3682,7 +3689,10 @@ impl TypeChecker {
     fn resolve_impls_recursive(&mut self, id: UserTypeId) {
         for i in 0..self.scopes.get(id).impls.len() {
             resolve_impl!(self, self.scopes.get_mut(id).impls[i]);
-            if let Some(id) = self.scopes.get_mut(id).impls[i].as_checked().map(|(tr, _)| tr.id) {
+            if let Some(id) = self.scopes.get_mut(id).impls[i]
+                .as_checked()
+                .map(|(tr, _)| tr.id)
+            {
                 self.resolve_impls(id);
             }
         }
@@ -3850,14 +3860,21 @@ impl TypeChecker {
         let exts: Vec<_> = self
             .scopes
             .walk(scope)
-            .flat_map(|(_, scope)| scope.tns.iter().flat_map(|s| {
-                s.1.as_type().filter(|&&id| self.scopes.get(id).kind.is_extension()).cloned()
-            }))
+            .flat_map(|(_, scope)| {
+                scope.tns.iter().flat_map(|s| {
+                    s.1.as_type()
+                        .filter(|&&id| self.scopes.get(id).kind.is_extension())
+                        .cloned()
+                })
+            })
             .collect();
         let mut results = vec![None; exts.len()];
         for (i, &id) in exts.iter().enumerate() {
             if results[i].is_none() {
-                resolve_type!(self, *self.scopes.get_mut(id).kind.as_extension_mut().unwrap());
+                resolve_type!(
+                    self,
+                    *self.scopes.get_mut(id).kind.as_extension_mut().unwrap()
+                );
                 results[i] = Some(
                     applies_to(self, ty, id, &[id].into(), &exts, &mut results)
                         .map(|args| GenericExtension::new(id, args)),
@@ -3954,7 +3971,10 @@ impl TypeChecker {
                             if let Type::User(ut) = ty {
                                 func.ty_args.copy_args_with(&ty_args, &ut.ty_args);
                             }
-                            func.ty_args.insert(*this.scopes.get(tr_id).kind.as_trait().unwrap(), ty.clone());
+                            func.ty_args.insert(
+                                *this.scopes.get(tr_id).kind.as_trait().unwrap(),
+                                ty.clone(),
+                            );
                             return Ok(Some(MemberFn {
                                 func,
                                 tr: Some(imp),
@@ -3975,15 +3995,7 @@ impl TypeChecker {
             scope: ScopeId,
             span: Span,
         ) -> Result<GenericFunc, ()> {
-            let func = GenericFunc::new(
-                f.id,
-                this.resolve_type_args(
-                    &this.scopes.get(f.id).type_params.clone(),
-                    generics,
-                    false,
-                    span,
-                ),
-            );
+            let func = GenericFunc::new(f.id, this.resolve_type_args(f.id, generics, false, span));
             if !f.public && !this.can_access_privates(scope) {
                 this.diag.error(Error::new(
                     format!(
@@ -4028,7 +4040,8 @@ impl TypeChecker {
                         let ty_args = tr.ty_args.clone();
                         let mut func = make_func(self, func, ty, generics, src_scope, span)?;
                         func.ty_args.copy_args_with(&ty_args, &ut.ty_args);
-                        func.ty_args.insert(*self.scopes.get(tr_id).kind.as_trait().unwrap(), ty.clone());
+                        func.ty_args
+                            .insert(*self.scopes.get(tr_id).kind.as_trait().unwrap(), ty.clone());
                         return Ok(MemberFn {
                             func,
                             tr: self.scopes.get(ut.id).kind.is_template().then_some(imp),
@@ -5385,12 +5398,7 @@ impl TypeChecker {
                 match self.find_in_tns(&name.data).map(|t| t.id) {
                     Some(TypeItem::Type(id)) => {
                         self.check_hover(name.span, id.into());
-                        let ty_args = self.resolve_type_args(
-                            &self.scopes.get(id).type_params.clone(),
-                            ty_args,
-                            true,
-                            name.span,
-                        );
+                        let ty_args = self.resolve_type_args(id, ty_args, true, name.span);
                         if rest.is_empty() {
                             if self.scopes.get(id).kind.is_extension() {
                                 return self.error(Error::expected_found(
@@ -5445,8 +5453,7 @@ impl TypeChecker {
                         let ty = self.scopes.get(id);
                         scope = ty.body_scope;
 
-                        let args =
-                            self.resolve_type_args(&ty.type_params.clone(), args, true, name.span);
+                        let args = self.resolve_type_args(id, args, true, name.span);
                         if is_end {
                             if self.scopes.get(id).kind.is_extension() {
                                 return self.error(Error::expected_found(
@@ -5505,36 +5512,21 @@ impl TypeChecker {
                             self.check_hover(name.span, id.into());
                             ResolvedValue::Func(GenericFunc::new(
                                 id,
-                                self.resolve_type_args(
-                                    &self.scopes.get(id).type_params.clone(),
-                                    ty_args,
-                                    false,
-                                    name.span,
-                                ),
+                                self.resolve_type_args(id, ty_args, false, name.span),
                             ))
                         }
                         Some(ValueItem::StructConstructor(id, init)) => {
                             self.check_hover(name.span, init.into());
                             ResolvedValue::Func(GenericFunc::new(
                                 init,
-                                self.resolve_type_args(
-                                    &self.scopes.get(id).type_params.clone(),
-                                    ty_args,
-                                    false,
-                                    name.span,
-                                ),
+                                self.resolve_type_args(id, ty_args, false, name.span),
                             ))
                         }
                         Some(ValueItem::UnionConstructor(id)) => {
                             self.check_hover(name.span, id.into());
                             ResolvedValue::UnionConstructor(GenericUserType::new(
                                 id,
-                                self.resolve_type_args(
-                                    &self.scopes.get(id).type_params.clone(),
-                                    ty_args,
-                                    false,
-                                    name.span,
-                                ),
+                                self.resolve_type_args(id, ty_args, false, name.span),
                             ))
                         }
                         Some(ValueItem::Var(id)) => {
@@ -5559,12 +5551,7 @@ impl TypeChecker {
                     match self.find_in_tns(&name.data).map(|t| t.id) {
                         Some(TypeItem::Type(id)) => {
                             self.check_hover(name.span, id.into());
-                            let mut ty_args = self.resolve_type_args(
-                                &self.scopes.get(id).type_params.clone(),
-                                ty_args,
-                                false,
-                                name.span,
-                            );
+                            let mut ty_args = self.resolve_type_args(id, ty_args, false, name.span);
                             if let Some(&this) = self.scopes.get(id).kind.as_trait() {
                                 ty_args.insert(this, Type::Unknown);
                             }
@@ -5621,12 +5608,7 @@ impl TypeChecker {
                     if let Some(&this) = ty.kind.as_trait() {
                         ty_args.insert(this, Type::Unknown);
                     }
-                    ty_args.copy_args(&self.resolve_type_args(
-                        &ty.type_params.clone(),
-                        args,
-                        false,
-                        name.span,
-                    ));
+                    ty_args.copy_args(&self.resolve_type_args(id, args, false, name.span));
                 }
                 TypeItem::Module(id) => {
                     self.check_hover(name.span, id.into());
@@ -5653,33 +5635,18 @@ impl TypeChecker {
         match *item {
             ValueItem::Fn(id) => {
                 self.check_hover(last_name.span, id.into());
-                ty_args.copy_args(&self.resolve_type_args(
-                    &self.scopes.get(id).type_params.clone(),
-                    last_args,
-                    false,
-                    last_name.span,
-                ));
+                ty_args.copy_args(&self.resolve_type_args(id, last_args, false, last_name.span));
 
                 ResolvedValue::Func(GenericFunc::new(id, ty_args))
             }
             ValueItem::StructConstructor(id, init) => {
                 self.check_hover(last_name.span, init.into());
-                ty_args.copy_args(&self.resolve_type_args(
-                    &self.scopes.get(id).type_params.clone(),
-                    last_args,
-                    false,
-                    last_name.span,
-                ));
+                ty_args.copy_args(&self.resolve_type_args(id, last_args, false, last_name.span));
                 ResolvedValue::Func(GenericFunc::new(init, ty_args))
             }
             ValueItem::UnionConstructor(id) => {
                 self.check_hover(last_name.span, id.into());
-                ty_args.copy_args(&self.resolve_type_args(
-                    &self.scopes.get(id).type_params.clone(),
-                    last_args,
-                    false,
-                    last_name.span,
-                ));
+                ty_args.copy_args(&self.resolve_type_args(id, last_args, false, last_name.span));
                 ResolvedValue::UnionConstructor(GenericUserType::new(id, ty_args))
             }
             ValueItem::Var(id) => {
@@ -5697,13 +5664,17 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_type_args(
+    fn resolve_type_args<T: ItemId>(
         &mut self,
-        params: &[UserTypeId],
+        id: T,
         args: &[TypeHint],
         typehint: bool,
         span: Span,
-    ) -> TypeArgs {
+    ) -> TypeArgs
+    where
+        T::Value: HasTypeParams,
+    {
+        let params = self.scopes.get(id).get_type_params().to_vec();
         if (typehint || !args.is_empty()) && args.len() != params.len() {
             self.error(Error::new(
                 format!(
