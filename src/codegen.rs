@@ -13,7 +13,9 @@ use crate::{
     nearest_pow_of_two,
     sym::*,
     typecheck::Project,
-    typeid::{CInt, FnPtr, GenericFunc, GenericTrait, GenericUserType, Type, TypeArgs},
+    typeid::{
+        CInt, FnPtr, GenericExtension, GenericFunc, GenericTrait, GenericUserType, Type, TypeArgs,
+    },
     CodegenFlags, THIS_PARAM,
 };
 
@@ -141,11 +143,11 @@ impl<'a> TypeGen<'a> {
             buffer.emit_vtable_struct_name(self.scopes, &tr, flags.minify);
 
             buffer.emit(";typedef struct ");
-            buffer.emit_trait_name(self.scopes, &tr, flags.minify);
+            buffer.emit_type_name(self.scopes, &tr, flags.minify);
             buffer.emit("{void*self;");
             buffer.emit_vtable_struct_name(self.scopes, &tr, flags.minify);
             buffer.emit(" const*vtable;}");
-            buffer.emit_trait_name(self.scopes, &tr, flags.minify);
+            buffer.emit_type_name(self.scopes, &tr, flags.minify);
             buffer.emit(";");
 
             defs.emit("struct ");
@@ -190,7 +192,7 @@ impl<'a> TypeGen<'a> {
         let mut emitted_arrays = HashSet::new();
         for ut in Self::get_struct_order(&self.structs) {
             let ut_data = self.scopes.get(ut.id);
-            buffer.emit(if ut_data.data.is_unsafe_union() {
+            buffer.emit(if ut_data.kind.is_unsafe_union() {
                 "typedef union "
             } else {
                 "typedef struct "
@@ -203,7 +205,7 @@ impl<'a> TypeGen<'a> {
                 continue;
             }
 
-            defs.emit(if ut_data.data.is_unsafe_union() {
+            defs.emit(if ut_data.kind.is_unsafe_union() {
                 "union "
             } else {
                 "struct "
@@ -212,7 +214,7 @@ impl<'a> TypeGen<'a> {
             defs.emit("{");
 
             let members = &self.scopes.get(ut.id).members;
-            if let UserTypeData::Union(union) = &ut_data.data {
+            if let UserTypeKind::Union(union) = &ut_data.kind {
                 defs.emit_type(self.scopes, &union.tag, None, flags.minify);
                 defs.emit(format!(" {UNION_TAG_NAME};"));
 
@@ -334,7 +336,7 @@ impl<'a> TypeGen<'a> {
             self.check_member_dep(diag, &ut, &m.ty, adding, &mut deps, sty.name.span);
         }
 
-        if let Some(union) = sty.data.as_union() {
+        if let Some(union) = sty.kind.as_union() {
             self.add_type(diag, &union.tag, None);
             for ty in union.variants.values().flat_map(|v| &v.0) {
                 self.check_member_dep(diag, &ut, ty, adding, &mut deps, sty.name.span);
@@ -541,7 +543,7 @@ impl Buffer {
                 }
             }
             Type::User(ut) => {
-                if scopes.get(ut.id).data.is_template() {
+                if scopes.get(ut.id).kind.is_template() {
                     eprintln!("ICE: Template type in emit_type");
                     self.emit(&scopes.get(ut.id).name.data);
                     return;
@@ -563,7 +565,7 @@ impl Buffer {
                 }
             }
             Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                self.emit_trait_name(scopes, tr, min);
+                self.emit_type_name(scopes, tr, min);
                 if let Some((diag, tg)) = tg {
                     tg.add_dynptr(diag, (**tr).clone());
                 }
@@ -612,7 +614,7 @@ impl Buffer {
                 self.emit_generic_mangled_name(scopes, inner, min);
             }
             Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                self.emit_trait_name(scopes, tr, min);
+                self.emit_type_name(scopes, tr, min);
             }
             Type::FnPtr(f) => self.emit_fnptr_name(scopes, f, min),
             Type::User(ut) => {
@@ -647,7 +649,7 @@ impl Buffer {
         generic: bool,
     ) {
         let ty = scopes.get(ut.id);
-        if ty.data.is_template() && !cfg!(debug_assertions) {
+        if ty.kind.is_template() && !cfg!(debug_assertions) {
             eprintln!("ICE: Template type in emit_type");
         }
 
@@ -669,26 +671,6 @@ impl Buffer {
             if !ut.ty_args.is_empty() {
                 self.emit("$");
                 for ty in ut.ty_args.values() {
-                    self.emit("$");
-                    self.emit_generic_mangled_name(scopes, ty, min);
-                }
-                self.emit("$$");
-            }
-        }
-    }
-
-    fn emit_trait_name(&mut self, scopes: &Scopes, tr: &GenericTrait, min: bool) {
-        let ty = scopes.get(tr.id);
-        if min {
-            self.emit(format!("t{}", tr.id));
-            for ty in tr.ty_args.values() {
-                self.emit_generic_mangled_name(scopes, ty, min);
-            }
-        } else {
-            self.emit(scopes.full_name(ty.scope, &ty.name.data));
-            if !tr.ty_args.is_empty() {
-                self.emit("$");
-                for ty in tr.ty_args.values() {
                     self.emit("$");
                     self.emit_generic_mangled_name(scopes, ty, min);
                 }
@@ -748,7 +730,7 @@ impl Buffer {
 
     fn emit_vtable_struct_name(&mut self, scopes: &Scopes, tr: &GenericTrait, min: bool) {
         self.emit(if min { "v" } else { "$vtable_" });
-        self.emit_trait_name(scopes, tr, min);
+        self.emit_type_name(scopes, tr, min);
     }
 
     fn finish(self) -> String {
@@ -1580,7 +1562,7 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit("{");
                     let ut_id = expr.ty.as_user().unwrap().id;
                     let ut = self.scopes.get(ut_id);
-                    let union = ut.data.as_union().unwrap();
+                    let union = ut.kind.as_union().unwrap();
                     let members: Vec<_> = members
                         .into_iter()
                         .map(|(name, mut expr)| {
@@ -1998,7 +1980,7 @@ impl<'a> Codegen<'a> {
                             let union = self
                                 .scopes
                                 .get(opt_type.as_user().unwrap().id)
-                                .data
+                                .kind
                                 .as_union()
                                 .unwrap();
                             self.buffer.emit(format!(
@@ -2064,7 +2046,7 @@ impl<'a> Codegen<'a> {
                 let union = self
                     .scopes
                     .get(ret.as_user().unwrap().id)
-                    .data
+                    .kind
                     .as_union()
                     .unwrap();
 
@@ -2460,7 +2442,7 @@ impl<'a> Codegen<'a> {
             self.buffer.emit("_");
         }
         self.buffer
-            .emit_trait_name(self.scopes, &vtable.tr, self.flags.minify);
+            .emit_type_name(self.scopes, &vtable.tr, self.flags.minify);
         self.buffer
             .emit(if self.flags.minify { "v" } else { "_$vtable" });
         self.buffer.emit(format!("{}", vtable.scope.0));
@@ -2552,7 +2534,7 @@ impl<'a> Codegen<'a> {
                 } else {
                     let tag = base
                         .as_user()
-                        .and_then(|ut| self.scopes.get(ut.id).data.as_union())
+                        .and_then(|ut| self.scopes.get(ut.id).kind.as_union())
                         .and_then(|union| union.variant_tag(variant))
                         .unwrap();
                     conditions.next_str(format!("{src}.{UNION_TAG_NAME}=={tag}"));
@@ -2989,7 +2971,6 @@ impl<'a> Codegen<'a> {
         {
             return finish(id);
         } else if let Some((id, ext)) = self
-            .scopes
             .extensions_in_scope_for(this, scope)
             .iter()
             .find_map(|ext| search(&self.scopes.get(ext.id).impls).zip(Some(ext)))
@@ -3015,8 +2996,15 @@ impl<'a> Codegen<'a> {
                 )
             });
         let mut f = finish(default.id);
-        f.ty_args
-            .insert(self.scopes.get(trait_id).this, this.clone());
+        f.ty_args.insert(
+            *self
+                .scopes
+                .get(trait_id)
+                .kind
+                .as_trait()
+                .expect("TraitId passed to find_implementation was not actually a trait"),
+            this.clone(),
+        );
         f
     }
 
@@ -3040,6 +3028,114 @@ impl<'a> Codegen<'a> {
         }
         count
     }
+
+    fn extensions_in_scope_for(&self, ty: &Type, scope: ScopeId) -> Vec<GenericExtension> {
+        fn implements_trait(
+            this: &Scopes,
+            ty: &Type,
+            bound: &GenericTrait,
+            ignore: &HashSet<ExtensionId>,
+            exts: &[(&Type, ExtensionId)],
+            results: &mut [Option<Option<GenericExtension>>],
+        ) -> bool {
+            if ty.is_unknown() || this.has_builtin_impl(ty, bound) {
+                return true;
+            }
+
+            let search = |this: Option<&TypeArgs>, impls: &[TraitImpl]| {
+                impls.iter().flat_map(|i| i.as_checked()).any(|(tr, _)| {
+                    let mut tr = tr.clone();
+                    this.inspect(|ty_args| tr.fill_templates(ty_args));
+                    &tr == bound
+                })
+            };
+
+            if ty
+                .as_user()
+                .is_some_and(|ut| search(Some(&ut.ty_args), &this.get(ut.id).impls))
+            {
+                return true;
+            }
+
+            for (i, &(rhs, id)) in exts
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, id))| !ignore.contains(id))
+            {
+                match &results[i] {
+                    Some(Some(ext)) => {
+                        if search(Some(&ext.ty_args), &this.get(ext.id).impls) {
+                            return true;
+                        }
+                    }
+                    Some(None) => continue,
+                    None => {
+                        let mut ignore = ignore.clone();
+                        ignore.insert(id);
+                        if let Some(args) = applies_to(this, ty, rhs, &ignore, exts, results) {
+                            if search(Some(&args), &this.get(id).impls) {
+                                return true;
+                            }
+                            results[i] = Some(Some(GenericExtension::new(id, args)))
+                        } else {
+                            results[i] = Some(None);
+                        }
+                    }
+                }
+            }
+
+            false
+        }
+
+        fn applies_to(
+            this: &Scopes,
+            ty: &Type,
+            ext_ty: &Type,
+            ignore: &HashSet<ExtensionId>,
+            exts: &[(&Type, ExtensionId)],
+            results: &mut [Option<Option<GenericExtension>>],
+        ) -> Option<TypeArgs> {
+            match ext_ty {
+                Type::User(ut) if this.get(ut.id).kind.is_template() => {
+                    for (bound, _) in this
+                        .get(ut.id)
+                        .impls
+                        .iter()
+                        .flat_map(|bound| bound.as_checked())
+                    {
+                        if !implements_trait(this, ty, bound, ignore, exts, results) {
+                            return None;
+                        }
+                    }
+                    Some(TypeArgs([(ut.id, ty.clone())].into()))
+                }
+                rhs => (ty == rhs).then(Default::default),
+            }
+        }
+
+        let exts: Vec<_> = self
+            .scopes
+            .walk(scope)
+            .flat_map(|(_, scope)| {
+                scope.tns.iter().flat_map(|s| {
+                    s.1.as_type()
+                        .copied()
+                        .and_then(|id| self.scopes.get(id).kind.as_extension().zip(Some(id)))
+                })
+            })
+            .collect();
+        let mut results = vec![None; exts.len()];
+        for (i, &(rhs, id)) in exts.iter().enumerate() {
+            if results[i].is_none() {
+                results[i] = Some(
+                    applies_to(self.scopes, ty, rhs, &[id].into(), &exts, &mut results)
+                        .map(|args| GenericExtension::new(id, args)),
+                );
+            }
+        }
+
+        results.into_iter().flatten().flatten().collect()
+    }
 }
 
 fn needs_fn_wrapper(f: &Function) -> bool {
@@ -3048,15 +3144,19 @@ fn needs_fn_wrapper(f: &Function) -> bool {
 
 fn vtable_methods<'a>(
     scopes: &'a Scopes,
-    tr: &'a Trait,
+    tr: &'a UserType,
 ) -> impl Iterator<Item = &'a Vis<FunctionId>> {
-    tr.fns.iter().filter(|f| {
+    let this = *tr
+        .kind
+        .as_trait()
+        .expect("UserType passed to vtable_methods was not a trait");
+    tr.fns.iter().filter(move |f| {
         let f = scopes.get(f.id);
         f.type_params.is_empty()
             && f.params.first().is_some_and(|p| p.label == THIS_PARAM)
             && f.params
                 .iter()
-                .all(|p| !p.ty.as_user().is_some_and(|ty| ty.id == tr.this))
+                .all(|p| !p.ty.as_user().is_some_and(|ty| ty.id == this))
     })
 }
 

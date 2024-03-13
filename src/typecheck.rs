@@ -27,17 +27,35 @@ macro_rules! resolve_type {
     };
 }
 
+macro_rules! resolve_type_and_clone {
+    ($self: expr, $ty: expr) => {{
+        let ty = match std::mem::take(&mut $ty) {
+            Type::Unresolved(hint) => {
+                $self.enter_id_and_resolve(hint.1, |this| this.resolve_typehint(hint.0))
+            }
+            ty => ty,
+        };
+        $ty = ty.clone();
+        ty
+    }};
+}
+
 macro_rules! resolve_impl {
     ($self: expr, $tr: expr) => {
         $tr = match std::mem::take(&mut $tr) {
             TraitImpl::Unchecked { scope, path, block } => {
                 $self.enter_id_and_resolve(scope, |this| match this.resolve_type_path(&path) {
-                    ResolvedType::Trait(tr) => TraitImpl::Checked(tr, block),
-                    ResolvedType::UserType(ut) => this.error(Error::expected_found(
-                        "trait",
-                        &format!("type '{}'", ut.name(&this.scopes)),
-                        path.final_component_span(),
-                    )),
+                    ResolvedType::UserType(ut) => {
+                        if this.scopes.get(ut.id).kind.is_trait() {
+                            TraitImpl::Checked(ut, block)
+                        } else {
+                            this.error(Error::expected_found(
+                                "trait",
+                                &format!("type '{}'", ut.name(&this.scopes)),
+                                path.final_component_span(),
+                            ))
+                        }
+                    }
                     ResolvedType::Builtin(ty) => this.error(Error::expected_found(
                         "trait",
                         &format!("type '{}'", ty.name(&this.scopes)),
@@ -74,7 +92,6 @@ pub struct MemberFn {
 #[derive(Default)]
 pub enum ResolvedType {
     UserType(GenericUserType),
-    Trait(GenericTrait),
     Builtin(Type),
     #[default]
     Error,
@@ -100,11 +117,9 @@ pub enum Safety {
 #[derive(Clone, derive_more::From)]
 pub enum LspItem {
     Type(UserTypeId),
-    Trait(TraitId),
-    Extension(ExtensionId),
     Module(ScopeId),
     Literal(CheckedExpr),
-    Fn(FunctionId, Option<CompletionMethod>),
+    Fn(FunctionId, Option<UserTypeId>),
     Var(VariableId),
     Attribute(String),
     Property(UserTypeId, String),
@@ -114,8 +129,6 @@ impl From<TypeItem> for LspItem {
     fn from(value: TypeItem) -> Self {
         match value {
             TypeItem::Type(item) => Self::Type(item),
-            TypeItem::Trait(item) => Self::Trait(item),
-            TypeItem::Extension(item) => Self::Extension(item),
             TypeItem::Module(item) => Self::Module(item),
         }
     }
@@ -136,13 +149,6 @@ impl From<FunctionId> for LspItem {
     fn from(value: FunctionId) -> Self {
         Self::Fn(value, None)
     }
-}
-
-#[derive(Clone, Copy)]
-pub enum CompletionMethod {
-    Type(UserTypeId),
-    Extension(ExtensionId),
-    Trait(TraitId),
 }
 
 #[derive(Default)]
@@ -274,7 +280,7 @@ impl TypeChecker {
     fn find_in_vns(&self, name: &str) -> Option<Vis<ValueItem>> {
         for (id, scope) in self.scopes.walk(self.current) {
             if let Some(item) = self.scopes[id].find_in_vns(name) {
-                if item.is_fn() &&matches!(scope.kind, ScopeKind::UserType(_) | ScopeKind::Extension(_) | ScopeKind::Trait(_)) {
+                if item.is_fn() && matches!(scope.kind, ScopeKind::UserType(_)) {
                     continue;
                 }
 
@@ -312,7 +318,7 @@ impl TypeChecker {
 
         let mut completions = vec![];
         let mut added = HashSet::new();
-        let mut add_methods = |scopes: &Scopes, c: &mut Vec<LspItem>, fns: &[Vis<FunctionId>], cap: bool, m: CompletionMethod| {
+        let mut add_methods = |scopes: &Scopes, c: &mut Vec<LspItem>, fns: &[Vis<FunctionId>], cap: bool, m: UserTypeId| {
             for func in fns {
                 let f = scopes.get(func.id);
                 if added.contains(&f.name.data) {
@@ -335,10 +341,10 @@ impl TypeChecker {
 
             for (imp, _) in data.impls.iter().flat_map(|imp| imp.as_checked()) {
                 let data = self.scopes.get(imp.id);
-                add_methods(&self.scopes, &mut completions, &data.fns, cap, CompletionMethod::Trait(imp.id));
+                add_methods(&self.scopes, &mut completions, &data.fns, cap, imp.id);
             }
 
-            add_methods(&self.scopes, &mut completions, &data.fns, cap, CompletionMethod::Type(ut.id));
+            add_methods(&self.scopes, &mut completions, &data.fns, cap, ut.id);
         }
 
         let extensions = self.extensions_in_scope_for(ty, self.current);
@@ -347,7 +353,7 @@ impl TypeChecker {
             let cap = self.can_access_privates(data.scope);
             for (imp, _) in data.impls.iter().flat_map(|imp| imp.as_checked()) {
                 let data = self.scopes.get(imp.id);
-                add_methods(&self.scopes, &mut completions, &data.fns, cap, CompletionMethod::Trait(imp.id));
+                add_methods(&self.scopes, &mut completions, &data.fns, cap, imp.id);
             }
         }
 
@@ -358,7 +364,7 @@ impl TypeChecker {
                 &mut completions, 
                 &data.fns, 
                 self.can_access_privates(data.scope), 
-                CompletionMethod::Extension(ext.id),
+                ext.id,
             );
         }
 
@@ -375,7 +381,7 @@ impl TypeChecker {
             for (_, var) in scope.vns.iter() {
                 match var.id {
                     ValueItem::Fn(id) => {
-                        if matches!(scope.kind, ScopeKind::UserType(_) | ScopeKind::Extension(_) | ScopeKind::Trait(_)) {
+                        if matches!(scope.kind, ScopeKind::UserType(_)) {
                             continue;
                         }
                         completions.push(LspItem::Fn(id, None))
@@ -466,7 +472,7 @@ impl TypeChecker {
                 public: base.public,
                 body_scope: this.current,
                 name: base.name,
-                data: UserTypeData::Struct,
+                kind: UserTypeKind::Struct,
                 type_params: this.declare_type_params(base.type_params),
                 impls,
                 attrs,
@@ -638,7 +644,7 @@ impl TypeChecker {
                 name: base.name,
                 body_scope: this.current,
                 type_params: this.declare_type_params(base.type_params),
-                data: UserTypeData::Union(Union {
+                kind: UserTypeKind::Union(Union {
                     tag: tag
                         .map(|tag| this.declare_type_hint(TypeHint::Regular(tag)))
                         .unwrap_or(Type::Uint(discriminant_bits(rvariants.len()))),
@@ -698,7 +704,7 @@ impl TypeChecker {
                 public: base.public,
                 body_scope: this.current,
                 name: base.name,
-                data: UserTypeData::UnsafeUnion,
+                kind: UserTypeKind::UnsafeUnion,
                 type_params: this.declare_type_params(base.type_params),
                 impls,
                 attrs,
@@ -803,7 +809,7 @@ impl TypeChecker {
                 is_unsafe: _,
             } => {
                 let lang_item = stmt.attrs.val("lang").map(String::from);
-                let (tr, fns) = self.enter(ScopeKind::None, |this| {
+                let (tr, fns, this_id) = self.enter(ScopeKind::None, |this| {
                     let impls: Vec<_> = impls
                         .into_iter()
                         .map(|path| TraitImpl::Unchecked {
@@ -812,12 +818,12 @@ impl TypeChecker {
                             block: None,
                         })
                         .collect();
-                    let this_ty = this.insert(
+                    let this_id = this.insert(
                         UserType {
                             public,
                             name: Located::new(name.span, THIS_TYPE.into()),
                             body_scope: this.current,
-                            data: UserTypeData::Template,
+                            kind: UserTypeKind::Template,
                             type_params: Vec::new(),
                             impls: impls.clone(),
                             fns: vec![],
@@ -828,7 +834,7 @@ impl TypeChecker {
                         false,
                     );
                     let fns: Vec<_> = functions.into_iter().map(|f| this.declare_fn(f)).collect();
-                    let tr = Trait {
+                    let tr = UserType {
                         public,
                         name,
                         body_scope: this.current,
@@ -836,24 +842,23 @@ impl TypeChecker {
                         impls,
                         attrs: stmt.attrs,
                         fns: fns.iter().map(|f| Vis::new(f.id, f.public)).collect(),
-                        this: this_ty,
+                        kind: UserTypeKind::Trait(this_id),
+                        members: Default::default(),
                     };
-                    (tr, fns)
+                    (tr, fns, this_id)
                 });
 
                 let scope = tr.body_scope;
-                let id = self.insert::<TraitId>(tr, public, true);
+                let id = self.insert::<UserTypeId>(tr, public, true);
                 if let Some(name) = lang_item {
                     self.scopes.lang_traits.insert(name, id);
                 }
-                let tr = self.scopes.get(id);
                 let imp = GenericTrait::from_type_params(&self.scopes, id);
                 self.scopes
-                    .get_mut(tr.this)
+                    .get_mut(this_id)
                     .impls
                     .push(TraitImpl::Checked(imp, None));
-
-                self.scopes[scope].kind = ScopeKind::Trait(id);
+                self.scopes[scope].kind = ScopeKind::UserType(id);
                 DeclaredStmt::Trait { id, fns }
             }
             StmtData::Extension {
@@ -867,10 +872,11 @@ impl TypeChecker {
                 let (ext, impl_blocks, fns) = self.enter(ScopeKind::None, |this| {
                     let (impls, impl_blocks) = this.declare_impl_blocks(impls);
                     let fns: Vec<_> = functions.into_iter().map(|f| this.declare_fn(f)).collect();
-                    let ext = Extension {
+                    let ext = UserType {
+                        attrs: stmt.attrs,
                         name,
                         public,
-                        ty: this.declare_type_hint(ty),
+                        kind: UserTypeKind::Extension(this.declare_type_hint(ty)),
                         impls,
                         type_params: this.declare_type_params(type_params),
                         body_scope: this.current,
@@ -879,14 +885,15 @@ impl TypeChecker {
                             .chain(impl_blocks.iter().flat_map(|block| block.fns.iter()))
                             .map(|f| Vis::new(f.id, f.public))
                             .collect(),
+                        members: Default::default(),
                     };
 
                     (ext, impl_blocks, fns)
                 });
 
                 let scope = ext.body_scope;
-                let id = self.insert::<ExtensionId>(ext, public, true);
-                self.scopes[scope].kind = ScopeKind::Extension(id);
+                let id = self.insert::<UserTypeId>(ext, public, true);
+                self.scopes[scope].kind = ScopeKind::UserType(id);
                 DeclaredStmt::Extension {
                     id,
                     impls: impl_blocks,
@@ -1034,7 +1041,7 @@ impl TypeChecker {
                         name,
                         public: false,
                         body_scope: self.current,
-                        data: UserTypeData::Template,
+                        kind: UserTypeKind::Template,
                         type_params: Vec::new(),
                         impls: impls
                             .into_iter()
@@ -1186,7 +1193,7 @@ impl TypeChecker {
                         this.check_fn(f);
                     }
 
-                    let Some(union) = &this.scopes.get(id).data.as_union() else {
+                    let Some(union) = &this.scopes.get(id).kind.as_union() else {
                         return;
                     };
                     if let Some(stats) = union.tag.as_integral() {
@@ -1209,7 +1216,7 @@ impl TypeChecker {
             }
             DeclaredStmt::Trait { id, fns } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
-                    this.resolve_impls(this.scopes.get(id).this);
+                    this.resolve_impls(*this.scopes.get(id).kind.as_trait().unwrap());
                     // TODO: disable errors so this doesn't cause duplicate errors
                     this.resolve_impls(id);
                     for f in fns {
@@ -1219,9 +1226,12 @@ impl TypeChecker {
             }
             DeclaredStmt::Extension { id, impls, fns } => {
                 self.enter_id(self.scopes.get(id).body_scope, |this| {
-                    resolve_type!(this, this.scopes.get_mut(id).ty);
+                    let ty = resolve_type_and_clone!(
+                        this, 
+                        *this.scopes.get_mut(id).kind.as_extension_mut().unwrap()
+                    );
                     this.resolve_impls(id);
-                    this.check_impl_blocks(this.scopes.get(id).ty.clone(), id, impls);
+                    this.check_impl_blocks(ty, id, impls);
                     for f in fns {
                         this.check_fn(f);
                     }
@@ -1276,8 +1286,8 @@ impl TypeChecker {
             DeclaredStmt::Static { id, value } => {
                 // FIXME: detect cycles like static X: usize = X;
                 // FIXME: non-const statics should be disallowed
-                resolve_type!(self, self.scopes.get_mut(id).ty);
-                let value = self.type_check(value, &self.scopes.get(id).ty.clone());
+                let ty = resolve_type_and_clone!(self, self.scopes.get_mut(id).ty);
+                let value = self.type_check(value, &ty);
                 let var = self.scopes.get_mut(id);
                 var.value = Some(value);
             }
@@ -1311,7 +1321,7 @@ impl TypeChecker {
                 Type::User(GenericUserType::from_id(scopes, hfn.type_params[i]).into()),
             );
         }
-        ty_args.insert(scopes.get(tr).this, this.clone());
+        ty_args.insert(*scopes.get(tr).kind.as_trait().unwrap(), this.clone());
 
         let compare_types = |has: &Type, mut wants: Type| {
             wants.fill_templates(&ty_args);
@@ -1484,7 +1494,7 @@ impl TypeChecker {
                     .collect();
                 this.scopes.get_mut(id).body = Some(CheckedExpr::new(
                     ut, 
-                    if this.scopes.get(ut_id).data.is_union() {
+                    if this.scopes.get(ut_id).kind.is_union() {
                         CheckedExprData::VariantInstance {
                             variant: func.name.data.clone(),
                             members: args,
@@ -1526,18 +1536,13 @@ impl TypeChecker {
         });
     }
 
-    fn check_impl_blocks<T: ItemId>(&mut self, this_ty: Type, id: T, impls: Vec<DeclaredImplBlock>)
-    where
-        T::Value: TypeLike,
-    {
+    fn check_impl_blocks(&mut self, this_ty: Type, id: UserTypeId, impls: Vec<DeclaredImplBlock>) {
         for block in impls {
             // TODO:
             // - impl type params (impl<T> Trait<T>)
             // - implement the same trait more than once
             self.enter_id(block.scope, |this| {
-                if let Some((gtr, _)) =
-                    this.scopes.get(id).get_impls()[block.impl_index].as_checked()
-                {
+                if let Some((gtr, _)) = this.scopes.get(id).impls[block.impl_index].as_checked() {
                     let gtr = gtr.clone();
                     this.check_impl_block(&this_ty, &gtr, block);
                     this.scopes[this.current].kind = ScopeKind::Impl(gtr.id);
@@ -2088,7 +2093,7 @@ impl TypeChecker {
                 for (i, expr) in elements.into_iter().enumerate() {
                     let result = if let Some(target) = target
                         .and_then(|t| t.as_user())
-                        .filter(|t| self.scopes.get(t.id).data.is_tuple())
+                        .filter(|t| self.scopes.get(t.id).kind.is_tuple())
                         .and_then(|ut| ut.ty_args.get_index(i).map(|(_, v)| v))
                     {
                         self.type_check(expr, target)
@@ -2561,7 +2566,7 @@ impl TypeChecker {
                     ));
                 };
 
-                if ut.data.is_unsafe_union() && self.safety != Safety::Unsafe {
+                if ut.kind.is_unsafe_union() && self.safety != Safety::Unsafe {
                     self.diag.error(Error::is_unsafe(name.span));
                 }
 
@@ -2767,7 +2772,7 @@ impl TypeChecker {
             } => {
                 let ty_is_generic = |scopes: &Scopes, ty: &Type| {
                     !ty.as_user()
-                        .is_some_and(|ut| scopes.get(ut.id).data.is_template())
+                        .is_some_and(|ut| scopes.get(ut.id).kind.is_template())
                 };
 
                 let mut lparams = Vec::new();
@@ -3162,7 +3167,7 @@ impl TypeChecker {
                             func.ty_args.entry(*id).or_insert(Type::Unknown);
                         }
 
-                        let variant = if ut.data.is_union() {
+                        let variant = if ut.kind.is_union() {
                             if ut.is_empty_variant(&self.scopes.get(func.id).name.data) {
                                 return self.error(Error::expected_found(
                                     "function",
@@ -3519,17 +3524,22 @@ impl TypeChecker {
 
     fn resolve_dyn_ptr(&mut self, path: Path) -> Option<GenericTrait> {
         match self.resolve_type_path(&path) {
-            ResolvedType::UserType(ut) => self.error(Error::expected_found(
-                "trait",
-                &format!("type '{}'", ut.name(&self.scopes)),
-                path.final_component_span(),
-            )),
+            ResolvedType::UserType(ut) => {
+                if self.scopes.get(ut.id).kind.is_trait() {
+                    Some(ut)
+                } else {
+                    self.error(Error::expected_found(
+                        "trait",
+                        &format!("type '{}'", ut.name(&self.scopes)),
+                        path.final_component_span(),
+                    ))
+                }
+            },
             ResolvedType::Builtin(ty) => self.error(Error::expected_found(
                 "trait",
                 &format!("type '{}'", ty.name(&self.scopes)),
                 path.final_component_span(),
             )),
-            ResolvedType::Trait(tr) => Some(tr),
             ResolvedType::Error => None,
         }
     }
@@ -3538,12 +3548,17 @@ impl TypeChecker {
         match hint {
             TypeHint::Regular(path) => match self.resolve_type_path(&path) {
                 ResolvedType::Builtin(ty) => ty,
-                ResolvedType::UserType(ut) => Type::User(ut.into()),
-                ResolvedType::Trait(tr) => self.error(Error::expected_found(
-                    "type",
-                    &format!("trait '{}'", tr.name(&self.scopes)),
-                    path.final_component_span(),
-                )),
+                ResolvedType::UserType(ut) => {
+                    if !self.scopes.get(ut.id).kind.is_trait() {
+                        Type::User(ut.into())
+                    } else {
+                        self.error(Error::expected_found(
+                            "type",
+                            &format!("trait '{}'", ut.name(&self.scopes)),
+                            path.final_component_span(),
+                        ))
+                    }
+                }
                 ResolvedType::Error => Type::Unknown,
             },
             TypeHint::Void => Type::Void,
@@ -3568,20 +3583,21 @@ impl TypeChecker {
                 let current = self.current_function();
                 for (_, scope) in self.scopes.walk(self.current) {
                     match scope.kind {
-                        ScopeKind::Trait(id) => {
-                            check_hover!(self, span, id.into());
-                            return Type::User(
-                                GenericUserType::from_id(&self.scopes, self.scopes.get(id).this)
-                                    .into(),
-                            );
-                        }
                         ScopeKind::UserType(id) => {
                             check_hover!(self, span, id.into());
-                            return Type::User(GenericUserType::from_id(&self.scopes, id).into());
-                        }
-                        ScopeKind::Extension(id) => {
-                            check_hover!(self, span, id.into());
-                            return self.scopes.get(id).ty.clone();
+                            match &self.scopes.get(id).kind {
+                                &UserTypeKind::Trait(this) => {
+                                    return Type::User(
+                                        GenericUserType::from_id(&self.scopes, this).into(),
+                                    );
+                                }
+                                UserTypeKind::Extension(ty) => return ty.clone(),
+                                _ => {
+                                    return Type::User(
+                                        GenericUserType::from_id(&self.scopes, id).into()
+                                    );
+                                }
+                            }
                         }
                         ScopeKind::Function(f) if Some(f) != current => break,
                         _ => {}
@@ -3641,41 +3657,32 @@ impl TypeChecker {
             resolve_type!(self, self.scopes.get_mut(id).members[i].ty);
         }
 
-        if let Some(mut union) = self.scopes.get_mut(id).data.as_union().cloned() {
+        if let Some(mut union) = self.scopes.get_mut(id).kind.as_union().cloned() {
             resolve_type!(self, union.tag);
             for variant in union.variants.values_mut().flat_map(|v| &mut v.0) {
                 resolve_type!(self, *variant);
             }
-            self.scopes.get_mut(id).data = UserTypeData::Union(union);
+            self.scopes.get_mut(id).kind = UserTypeKind::Union(union);
         }
     }
 
-    fn resolve_impls<T: ItemId>(&mut self, id: T)
-    where
-        T::Value: TypeLike,
-    {
+    fn resolve_impls(&mut self, id: UserTypeId) {
         for i in 0..self.scopes.get(id).get_type_params().len() {
             self.resolve_impls(self.scopes.get(id).get_type_params()[i]);
         }
 
-        for i in 0..self.scopes.get(id).get_impls().len() {
-            resolve_impl!(self, self.scopes.get_mut(id).get_impls_mut()[i]);
-            // if let Some(id) = self.scopes.get_mut(id).get_impls_mut()[i].as_checked().map(|tr| tr.id) {
+        for i in 0..self.scopes.get(id).impls.len() {
+            resolve_impl!(self, self.scopes.get_mut(id).impls[i]);
+            // if let Some(id) = self.scopes.get_mut(id).impls[i].as_checked().map(|tr| tr.id) {
             //     self.resolve_impls(id);
             // }
         }
     }
 
-    fn resolve_impls_recursive<T: ItemId>(&mut self, id: T)
-    where
-        T::Value: TypeLike,
-    {
-        for i in 0..self.scopes.get(id).get_impls().len() {
-            resolve_impl!(self, self.scopes.get_mut(id).get_impls_mut()[i]);
-            if let Some(id) = self.scopes.get_mut(id).get_impls_mut()[i]
-                .as_checked()
-                .map(|(tr, _)| tr.id)
-            {
+    fn resolve_impls_recursive(&mut self, id: UserTypeId) {
+        for i in 0..self.scopes.get(id).impls.len() {
+            resolve_impl!(self, self.scopes.get_mut(id).impls[i]);
+            if let Some(id) = self.scopes.get_mut(id).impls[i].as_checked().map(|(tr, _)| tr.id) {
                 self.resolve_impls(id);
             }
         }
@@ -3819,8 +3826,8 @@ impl TypeChecker {
             exts: &[ExtensionId],
             results: &mut [Option<Option<GenericExtension>>],
         ) -> Option<TypeArgs> {
-            match &this.scopes.get(ext).ty {
-                Type::User(ut) if this.scopes.get(ut.id).data.is_template() => {
+            match this.scopes.get(ext).kind.as_extension().unwrap() {
+                Type::User(ut) if this.scopes.get(ut.id).kind.is_template() => {
                     let id = ut.id;
                     for (bound, _) in this
                         .scopes
@@ -3843,12 +3850,14 @@ impl TypeChecker {
         let exts: Vec<_> = self
             .scopes
             .walk(scope)
-            .flat_map(|(_, scope)| scope.tns.iter().flat_map(|s| s.1.as_extension().copied()))
+            .flat_map(|(_, scope)| scope.tns.iter().flat_map(|s| {
+                s.1.as_type().filter(|&&id| self.scopes.get(id).kind.is_extension()).cloned()
+            }))
             .collect();
         let mut results = vec![None; exts.len()];
         for (i, &id) in exts.iter().enumerate() {
             if results[i].is_none() {
-                resolve_type!(self, self.scopes.get_mut(id).ty);
+                resolve_type!(self, *self.scopes.get_mut(id).kind.as_extension_mut().unwrap());
                 results[i] = Some(
                     applies_to(self, ty, id, &[id].into(), &exts, &mut results)
                         .map(|args| GenericExtension::new(id, args)),
@@ -3859,13 +3868,10 @@ impl TypeChecker {
         results.into_iter().flatten().flatten().collect()
     }
 
-    fn get_trait_impl_helper<Id: ItemId>(&mut self, id: Id, target: TraitId) -> Option<GenericTrait>
-    where
-        Id::Value: TypeLike,
-    {
-        for i in 0..self.scopes.get(id).get_impls().len() {
-            resolve_impl!(self, self.scopes.get_mut(id).get_impls_mut()[i]);
-            if let Some(ut) = self.scopes.get(id).get_impls()[i]
+    fn get_trait_impl_helper(&mut self, id: UserTypeId, target: TraitId) -> Option<GenericTrait> {
+        for i in 0..self.scopes.get(id).impls.len() {
+            resolve_impl!(self, self.scopes.get_mut(id).impls[i]);
+            if let Some(ut) = self.scopes.get(id).impls[i]
                 .as_checked()
                 .map(|(ut, _)| ut)
                 .filter(|ut| ut.id == target)
@@ -3948,7 +3954,7 @@ impl TypeChecker {
                             if let Type::User(ut) = ty {
                                 func.ty_args.copy_args_with(&ty_args, &ut.ty_args);
                             }
-                            func.ty_args.insert(this.scopes.get(tr_id).this, ty.clone());
+                            func.ty_args.insert(*this.scopes.get(tr_id).kind.as_trait().unwrap(), ty.clone());
                             return Ok(Some(MemberFn {
                                 func,
                                 tr: Some(imp),
@@ -4022,10 +4028,10 @@ impl TypeChecker {
                         let ty_args = tr.ty_args.clone();
                         let mut func = make_func(self, func, ty, generics, src_scope, span)?;
                         func.ty_args.copy_args_with(&ty_args, &ut.ty_args);
-                        func.ty_args.insert(self.scopes.get(tr_id).this, ty.clone());
+                        func.ty_args.insert(*self.scopes.get(tr_id).kind.as_trait().unwrap(), ty.clone());
                         return Ok(MemberFn {
                             func,
-                            tr: self.scopes.get(ut.id).data.is_template().then_some(imp),
+                            tr: self.scopes.get(ut.id).kind.is_template().then_some(imp),
                         });
                     }
                 }
@@ -4396,7 +4402,7 @@ impl TypeChecker {
             }
         } else if let Some(union) = ty
             .as_user()
-            .and_then(|ut| self.scopes.get(ut.id).data.as_union())
+            .and_then(|ut| self.scopes.get(ut.id).kind.as_union())
         {
             let mut missing = vec![];
             'outer: for (name, _) in union.variants.iter() {
@@ -4441,7 +4447,7 @@ impl TypeChecker {
         let Some(ut) = scrutinee
             .strip_references()
             .as_user()
-            .filter(|ut| self.scopes.get(ut.id).data.is_union())
+            .filter(|ut| self.scopes.get(ut.id).kind.is_union())
         else {
             return Err(Some(Error::new(
                 format!(
@@ -4461,7 +4467,7 @@ impl TypeChecker {
                     Ok((
                         self.scopes
                             .get(ut.id)
-                            .data
+                            .kind
                             .as_union()
                             .and_then(|union| union.variants.get(&variant).map(|v| &v.0))
                             .unwrap()
@@ -4471,7 +4477,7 @@ impl TypeChecker {
                     ))
                 } else if f
                     .constructor
-                    .is_some_and(|id| self.scopes.get(id).data.is_union())
+                    .is_some_and(|id| self.scopes.get(id).kind.is_union())
                 {
                     Err(self.error(Error::type_mismatch_s(
                         &scrutinee.name(&self.scopes),
@@ -4731,8 +4737,8 @@ impl TypeChecker {
     ) -> CheckedPattern {
         let Some(ut) = scrutinee.strip_references().as_user().filter(|ut| {
             matches!(
-                self.scopes.get(ut.id).data,
-                UserTypeData::Struct | UserTypeData::Union(_) | UserTypeData::AnonStruct
+                self.scopes.get(ut.id).kind,
+                UserTypeKind::Struct | UserTypeKind::Union(_) | UserTypeKind::AnonStruct
             )
         }) else {
             return self.error(Error::bad_destructure(&scrutinee.name(&self.scopes), span));
@@ -4802,7 +4808,7 @@ impl TypeChecker {
         let Some(ut) = scrutinee
             .strip_references()
             .as_user()
-            .filter(|ut| self.scopes.get(ut.id).data.is_tuple())
+            .filter(|ut| self.scopes.get(ut.id).kind.is_tuple())
         else {
             return self.error(Error::expected_found(
                 &scrutinee.name(&self.scopes),
@@ -5318,7 +5324,7 @@ impl TypeChecker {
         tail: &UsePathTail,
     ) {
         let ut = self.scopes.get(id);
-        if !ut.data.is_union() {
+        if !ut.kind.is_union() {
             return self.error(Error::expected_found(
                 "module or union type",
                 &comp.data,
@@ -5386,21 +5392,15 @@ impl TypeChecker {
                             name.span,
                         );
                         if rest.is_empty() {
-                            return ResolvedType::UserType(GenericUserType::new(id, ty_args));
-                        }
+                            if self.scopes.get(id).kind.is_extension() {
+                                return self.error(Error::expected_found(
+                                    "type",
+                                    &format!("extension '{}'", self.scopes.get(id).name.data),
+                                    name.span,
+                                ));
+                            }
 
-                        self.resolve_type_path_in(rest, ty_args, self.scopes.get(id).body_scope)
-                    }
-                    Some(TypeItem::Trait(id)) => {
-                        self.check_hover(name.span, id.into());
-                        let ty_args = self.resolve_type_args(
-                            &self.scopes.get(id).type_params.clone(),
-                            ty_args,
-                            true,
-                            name.span,
-                        );
-                        if rest.is_empty() {
-                            return ResolvedType::Trait(GenericTrait::new(id, ty_args));
+                            return ResolvedType::UserType(GenericUserType::new(id, ty_args));
                         }
 
                         self.resolve_type_path_in(rest, ty_args, self.scopes.get(id).body_scope)
@@ -5415,24 +5415,6 @@ impl TypeChecker {
                         }
 
                         self.resolve_type_path_in(rest, Default::default(), id)
-                    }
-                    Some(TypeItem::Extension(id)) => {
-                        self.check_hover(name.span, id.into());
-                        let ty_args = self.resolve_type_args(
-                            &self.scopes.get(id).type_params.clone(),
-                            ty_args,
-                            true,
-                            name.span,
-                        );
-                        if rest.is_empty() {
-                            return self.error(Error::expected_found(
-                                "type",
-                                &format!("extension '{}'", self.scopes.get(id).name.data),
-                                name.span,
-                            ));
-                        }
-
-                        self.resolve_type_path_in(rest, ty_args, self.scopes.get(id).body_scope)
                     }
                     _ => self.resolve_type_path_in(
                         &path.components,
@@ -5466,27 +5448,15 @@ impl TypeChecker {
                         let args =
                             self.resolve_type_args(&ty.type_params.clone(), args, true, name.span);
                         if is_end {
-                            return ResolvedType::UserType(GenericUserType::new(id, args));
-                        }
+                            if self.scopes.get(id).kind.is_extension() {
+                                return self.error(Error::expected_found(
+                                    "type",
+                                    &format!("extension '{}'", self.scopes.get(id).name.data),
+                                    name.span,
+                                ));
+                            }
 
-                        ty_args.copy_args(&args);
-                        continue;
-                    }
-                    TypeItem::Extension(id) => {
-                        self.check_hover(name.span, id.into());
-                        scope = self.scopes.get(id).body_scope;
-                        let args = self.resolve_type_args(
-                            &self.scopes.get(id).type_params.clone(),
-                            args,
-                            true,
-                            name.span,
-                        );
-                        if is_end {
-                            return self.error(Error::expected_found(
-                                "type",
-                                &format!("extension '{}'", self.scopes.get(id).name.data),
-                                name.span,
-                            ));
+                            return ResolvedType::UserType(GenericUserType::new(id, args));
                         }
 
                         ty_args.copy_args(&args);
@@ -5506,20 +5476,6 @@ impl TypeChecker {
                         }
 
                         scope = id;
-                        continue;
-                    }
-                    TypeItem::Trait(id) => {
-                        self.check_hover(name.span, id.into());
-                        let ty = self.scopes.get(id);
-                        scope = ty.body_scope;
-
-                        let args =
-                            self.resolve_type_args(&ty.type_params.clone(), args, true, name.span);
-                        if is_end {
-                            return ResolvedType::Trait(GenericTrait::new(id, args));
-                        }
-
-                        ty_args.copy_args(&args);
                         continue;
                     }
                 }
@@ -5603,43 +5559,15 @@ impl TypeChecker {
                     match self.find_in_tns(&name.data).map(|t| t.id) {
                         Some(TypeItem::Type(id)) => {
                             self.check_hover(name.span, id.into());
-                            let ty_args = self.resolve_type_args(
-                                &self.scopes.get(id).type_params.clone(),
-                                ty_args,
-                                false,
-                                name.span,
-                            );
-
-                            self.resolve_value_path_in(
-                                rest,
-                                ty_args,
-                                self.scopes.get(id).body_scope,
-                            )
-                        }
-                        Some(TypeItem::Trait(id)) => {
-                            self.check_hover(name.span, id.into());
                             let mut ty_args = self.resolve_type_args(
                                 &self.scopes.get(id).type_params.clone(),
                                 ty_args,
                                 false,
                                 name.span,
                             );
-                            ty_args.insert(self.scopes.get(id).this, Type::Unknown);
-
-                            self.resolve_value_path_in(
-                                rest,
-                                ty_args,
-                                self.scopes.get(id).body_scope,
-                            )
-                        }
-                        Some(TypeItem::Extension(id)) => {
-                            self.check_hover(name.span, id.into());
-                            let ty_args = self.resolve_type_args(
-                                &self.scopes.get(id).type_params.clone(),
-                                ty_args,
-                                false,
-                                name.span,
-                            );
+                            if let Some(&this) = self.scopes.get(id).kind.as_trait() {
+                                ty_args.insert(this, Type::Unknown);
+                            }
 
                             self.resolve_value_path_in(
                                 rest,
@@ -5690,17 +5618,9 @@ impl TypeChecker {
                     self.check_hover(name.span, id.into());
                     let ty = self.scopes.get(id);
                     scope = ty.body_scope;
-                    ty_args.copy_args(&self.resolve_type_args(
-                        &ty.type_params.clone(),
-                        args,
-                        false,
-                        name.span,
-                    ));
-                }
-                TypeItem::Extension(id) => {
-                    self.check_hover(name.span, id.into());
-                    let ty = self.scopes.get(id);
-                    scope = ty.body_scope;
+                    if let Some(&this) = ty.kind.as_trait() {
+                        ty_args.insert(this, Type::Unknown);
+                    }
                     ty_args.copy_args(&self.resolve_type_args(
                         &ty.type_params.clone(),
                         args,
@@ -5718,18 +5638,6 @@ impl TypeChecker {
                     }
 
                     scope = id;
-                }
-                TypeItem::Trait(id) => {
-                    self.check_hover(name.span, id.into());
-                    let ty = self.scopes.get(id);
-                    scope = ty.body_scope;
-                    ty_args.insert(self.scopes.get(id).this, Type::Unknown);
-                    ty_args.copy_args(&self.resolve_type_args(
-                        &ty.type_params.clone(),
-                        args,
-                        false,
-                        name.span,
-                    ));
                 }
             }
         }

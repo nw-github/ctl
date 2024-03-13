@@ -10,8 +10,8 @@ use tower_lsp::{Client, LanguageServer};
 use crate::ast::parsed::Linkage;
 use crate::error::{Diagnostics, FileId, OffsetMode};
 use crate::lexer::Span;
-use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeData, UserTypeId, VariableId};
-use crate::typecheck::{CompletionMethod, LspInput, LspItem};
+use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeId, UserTypeKind, VariableId};
+use crate::typecheck::{LspInput, LspItem};
 use crate::typeid::{GenericUserType, Type};
 use crate::{
     project_from_file, CachingSourceProvider, Checked, Compiler, FileSourceProvider,
@@ -154,14 +154,12 @@ impl LanguageServer for LspBackend {
             Some(match hover {
                 &LspItem::Var(id) => proj.scopes.get(id).name.span,
                 &LspItem::Type(id) => proj.scopes.get(id).name.span,
-                &LspItem::Trait(id) => proj.scopes.get(id).name.span,
-                &LspItem::Extension(id) => proj.scopes.get(id).name.span,
                 &LspItem::Module(id) => proj.scopes[id].kind.name(&proj.scopes).unwrap().span,
                 &LspItem::Fn(id, _) => proj.scopes.get(id).name.span,
                 LspItem::Property(id, member) => {
                     let ut = proj.scopes.get(*id);
                     return ut.members.get(member).map(|m| m.span).or_else(|| {
-                        ut.data
+                        ut.kind
                             .as_union()
                             .and_then(|u| u.variants.get(member).map(|v| v.1))
                     });
@@ -200,130 +198,118 @@ impl LanguageServer for LspBackend {
         };
         let completions = completions
             .iter()
-            .flat_map(|completion| Some(match completion {
-                LspItem::Property(id, name) => {
-                    let ut = scopes.get(*id);
-                    let member = ut.members.get(name).unwrap();
-                    let detail = member.ty.name(scopes);
-                    CompletionItem {
-                        label: name.clone(),
-                        kind: Some(CompletionItemKind::FIELD),
-                        label_details: Some(CompletionItemLabelDetails {
-                            detail: None,
-                            description: Some(detail.clone()),
-                        }),
-                        detail: Some(detail),
-                        ..Default::default()
-                    }
-                }
-                &LspItem::Fn(id, from) => {
-                    let f = scopes.get(id);
-                    let label = f.name.data.clone();
-                    let mut insertion = format!("{label}(");
-                    for (i, param) in f.params.iter().skip(from.is_some() as _).enumerate() {
-                        if i > 0 {
-                            insertion += ", ";
-                        }
-                        if param.keyword {
-                            write_de!(insertion, "{}: ${{{}:{}}}", param.label, i + 1, param.label);
-                        } else {
-                            write_de!(insertion, "${{{}:{}}}", i + 1, param.label);
-                        }
-                    }
-                    insertion += ")";
-                    let detail = Some(visualize_func(id, true, scopes));
-                    CompletionItem {
-                        label,
-                        label_details: Some(CompletionItemLabelDetails {
-                            detail: from.and_then(|method| match method {
-                                CompletionMethod::Type(_) => None,
-                                CompletionMethod::Extension(id) => {
-                                    Some(format!(" (from {})", scopes.get(id).name.data))
-                                }
-                                CompletionMethod::Trait(id) => {
-                                    Some(format!(" (as {})", scopes.get(id).name.data))
-                                }
+            .flat_map(|completion| {
+                Some(match completion {
+                    LspItem::Property(id, name) => {
+                        let ut = scopes.get(*id);
+                        let member = ut.members.get(name).unwrap();
+                        let detail = member.ty.name(scopes);
+                        CompletionItem {
+                            label: name.clone(),
+                            kind: Some(CompletionItemKind::FIELD),
+                            label_details: Some(CompletionItemLabelDetails {
+                                detail: None,
+                                description: Some(detail.clone()),
                             }),
-                            description: detail.clone(),
-                        }),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail,
-                        insert_text: Some(insertion),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
+                            detail: Some(detail),
+                            ..Default::default()
+                        }
                     }
-                }
-                &LspItem::Type(id) => {
-                    let ut = scopes.get(id);
-                    CompletionItem {
-                        label: ut.name.data.clone(),
-                        kind: Some(match ut.data {
-                            UserTypeData::Union(_) => CompletionItemKind::ENUM,
-                            _ => CompletionItemKind::STRUCT,
-                        }),
-                        label_details: Some(CompletionItemLabelDetails {
-                            detail: None,
-                            description: Some(ut.name.data.clone()),
-                        }),
-                        detail: Some(ut.name.data.clone()),
-                        ..Default::default()
+                    &LspItem::Fn(id, owner) => {
+                        let f = scopes.get(id);
+                        let label = f.name.data.clone();
+                        let mut insertion = format!("{label}(");
+                        for (i, param) in f
+                            .params
+                            .iter()
+                            .filter(|p| p.label != THIS_PARAM)
+                            .enumerate()
+                        {
+                            if i > 0 {
+                                insertion += ", ";
+                            }
+                            if param.keyword {
+                                write_de!(
+                                    insertion,
+                                    "{}: ${{{}:{}}}",
+                                    param.label,
+                                    i + 1,
+                                    param.label
+                                );
+                            } else {
+                                write_de!(insertion, "${{{}:{}}}", i + 1, param.label);
+                            }
+                        }
+                        insertion += ")";
+                        let detail = Some(visualize_func(id, true, scopes));
+                        CompletionItem {
+                            label,
+                            label_details: Some(CompletionItemLabelDetails {
+                                detail: owner.and_then(|owner| match &scopes.get(owner).kind {
+                                    UserTypeKind::Extension(_) => {
+                                        Some(format!(" (from {})", scopes.get(owner).name.data))
+                                    }
+                                    UserTypeKind::Trait(_) => {
+                                        Some(format!(" (as {})", scopes.get(owner).name.data))
+                                    }
+                                    _ => None,
+                                }),
+                                description: detail.clone(),
+                            }),
+                            kind: Some(CompletionItemKind::METHOD),
+                            detail,
+                            insert_text: Some(insertion),
+                            insert_text_format: Some(InsertTextFormat::SNIPPET),
+                            ..Default::default()
+                        }
                     }
-                }
-                &LspItem::Trait(id) => {
-                    let tr = scopes.get(id);
-                    CompletionItem {
-                        label: tr.name.data.clone(),
-                        kind: Some(CompletionItemKind::INTERFACE),
-                        label_details: Some(CompletionItemLabelDetails {
-                            detail: None,
-                            description: Some(tr.name.data.clone()),
-                        }),
-                        detail: Some(tr.name.data.clone()),
-                        ..Default::default()
+                    &LspItem::Type(id) => {
+                        let ut = scopes.get(id);
+                        CompletionItem {
+                            label: ut.name.data.clone(),
+                            kind: Some(match ut.kind {
+                                UserTypeKind::Union(_) => CompletionItemKind::ENUM,
+                                UserTypeKind::Trait(_) => CompletionItemKind::INTERFACE,
+                                _ => CompletionItemKind::STRUCT,
+                            }),
+                            label_details: Some(CompletionItemLabelDetails {
+                                detail: None,
+                                description: Some(ut.name.data.clone()),
+                            }),
+                            detail: Some(ut.name.data.clone()),
+                            ..Default::default()
+                        }
                     }
-                }
-                &LspItem::Extension(id) => {
-                    let ext = scopes.get(id);
-                    CompletionItem {
-                        label: ext.name.data.clone(),
-                        kind: Some(CompletionItemKind::INTERFACE),
-                        label_details: Some(CompletionItemLabelDetails {
-                            detail: None,
-                            description: Some(ext.name.data.clone()),
-                        }),
-                        detail: Some(ext.name.data.clone()),
-                        ..Default::default()
+                    &LspItem::Module(id) => {
+                        let scope = &scopes[id];
+                        let name = scope.kind.name(scopes).unwrap().data.clone();
+                        CompletionItem {
+                            label: name.clone(),
+                            kind: Some(CompletionItemKind::MODULE),
+                            label_details: Some(CompletionItemLabelDetails {
+                                detail: None,
+                                description: Some(name.clone()),
+                            }),
+                            detail: Some(name),
+                            ..Default::default()
+                        }
                     }
-                }
-                &LspItem::Module(id) => {
-                    let scope = &scopes[id];
-                    let name = scope.kind.name(scopes).unwrap().data.clone();
-                    CompletionItem {
-                        label: name.clone(),
-                        kind: Some(CompletionItemKind::MODULE),
-                        label_details: Some(CompletionItemLabelDetails {
-                            detail: None,
-                            description: Some(name.clone()),
-                        }),
-                        detail: Some(name),
-                        ..Default::default()
+                    &LspItem::Var(id) => {
+                        let var = scopes.get(id);
+                        CompletionItem {
+                            label: var.name.data.clone(),
+                            kind: Some(CompletionItemKind::VARIABLE),
+                            label_details: Some(CompletionItemLabelDetails {
+                                detail: None,
+                                description: Some(var.name.data.clone()),
+                            }),
+                            detail: Some(var.name.data.clone()),
+                            ..Default::default()
+                        }
                     }
-                }
-                &LspItem::Var(id) => {
-                    let var = scopes.get(id);
-                    CompletionItem {
-                        label: var.name.data.clone(),
-                        kind: Some(CompletionItemKind::VARIABLE),
-                        label_details: Some(CompletionItemLabelDetails {
-                            detail: None,
-                            description: Some(var.name.data.clone()),
-                        }),
-                        detail: Some(var.name.data.clone()),
-                        ..Default::default()
-                    }
-                }
-                _ => return None,
-            }))
+                    _ => return None,
+                })
+            })
             .collect();
         Ok(Some(CompletionResponse::Array(completions)))
     }
@@ -361,30 +347,6 @@ impl LanguageServer for LspBackend {
                     res += "pub ";
                 }
                 Some(format!("{res}mod {}", scope.kind.name(scopes).unwrap()))
-            }
-            &LspItem::Trait(id) => {
-                let tr = scopes.get(id);
-                let mut res = format!(
-                    "{}{}trait {}",
-                    visualize_location(tr.scope, scopes),
-                    if tr.public { "pub " } else { "" },
-                    tr.name.data
-                );
-                visualize_type_params(&mut res, &tr.type_params, scopes);
-                Some(res)
-            }
-            &LspItem::Extension(id) => {
-                let ext = scopes.get(id);
-                let mut res = format!(
-                    "{}{}extension {}",
-                    visualize_location(ext.scope, scopes),
-                    if ext.public { "pub " } else { "" },
-                    ext.name.data
-                );
-                visualize_type_params(&mut res, &ext.type_params, scopes);
-                write_de!(res, " for {}", ext.ty.name(scopes));
-
-                Some(res)
             }
             _ => None,
         };
@@ -626,7 +588,7 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes) -> String {
     let func = scopes.get(id);
     if let Some((union, id)) = func
         .constructor
-        .and_then(|id| scopes.get(id).data.as_union().zip(Some(id)))
+        .and_then(|id| scopes.get(id).kind.as_union().zip(Some(id)))
     {
         let mut res = visualize_location(scopes.get(id).body_scope, scopes);
         let variant = &func.name.data;
@@ -740,7 +702,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
             *res += "\n";
         }
         for (name, member) in ut.members.iter() {
-            let header = if ut.data.is_union() {
+            let header = if ut.kind.is_union() {
                 "shared "
             } else if member.public {
                 "pub "
@@ -759,11 +721,12 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
         }
     };
 
-    if !ut.data.is_template() {
+    if !ut.kind.is_template() {
         res += &visualize_location(ut.scope, scopes);
     }
 
-    if ut.type_params.is_empty() && !ut.data.is_template() {
+    if ut.type_params.is_empty() && matches!(ut.kind, UserTypeKind::Struct | UserTypeKind::Union(_))
+    {
         let (sz, align) = GenericUserType::new(id, Default::default()).size_and_align(scopes);
         writeln_de!(res, "// size = {sz}, align = {align}");
     }
@@ -771,20 +734,20 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
     if ut.public {
         res += "pub ";
     }
-    match &ut.data {
-        UserTypeData::Struct => {
+    match &ut.kind {
+        UserTypeKind::Struct => {
             write_de!(res, "struct {}", &ut.item.name.data);
             visualize_type_params(&mut res, &ut.type_params, scopes);
             res += " {";
             print_body(&mut res, false);
         }
-        UserTypeData::UnsafeUnion => {
+        UserTypeKind::UnsafeUnion => {
             write_de!(res, "unsafe union {}", &ut.item.name.data);
             visualize_type_params(&mut res, &ut.type_params, scopes);
             res += " {";
             print_body(&mut res, false);
         }
-        UserTypeData::Union(union) => {
+        UserTypeKind::Union(union) => {
             write_de!(res, "union {}", &ut.item.name.data);
             visualize_type_params(&mut res, &ut.type_params, scopes);
             write_de!(res, ": {} {{", union.tag.name(scopes));
@@ -795,7 +758,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
             }
             print_body(&mut res, !union.variants.is_empty());
         }
-        UserTypeData::Template => {
+        UserTypeKind::Template => {
             res += &ut.name.data;
             for (i, (tr, _)) in ut.impls.iter().flat_map(|imp| imp.as_checked()).enumerate() {
                 if i > 0 {
@@ -818,8 +781,17 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
                 }
             }
         }
-        UserTypeData::AnonStruct => todo!(),
-        UserTypeData::Tuple => todo!(),
+        UserTypeKind::Trait(_) => {
+            write_de!(res, "trait {}", ut.name.data);
+            visualize_type_params(&mut res, &ut.type_params, scopes);
+        }
+        UserTypeKind::Extension(ty) => {
+            write_de!(res, "extension {}", ut.name.data);
+            visualize_type_params(&mut res, &ut.type_params, scopes);
+            write_de!(res, " for {}", ty.name(scopes));
+        }
+        UserTypeKind::AnonStruct => {}
+        UserTypeKind::Tuple => {}
     }
 
     res
@@ -836,7 +808,7 @@ fn visualize_variant_body(
     match ty {
         Some(Type::User(ut)) => {
             let inner = scopes.get(ut.id);
-            if inner.data.is_anon_struct() {
+            if inner.kind.is_anon_struct() {
                 *res += " {";
                 for (i, (name, _)) in inner.members.iter().enumerate() {
                     write_de!(
@@ -851,7 +823,7 @@ fn visualize_variant_body(
                     )
                 }
                 *res += " }";
-            } else if inner.data.is_tuple() {
+            } else if inner.kind.is_tuple() {
                 *res += "(";
                 for i in 0..inner.members.len() {
                     if i > 0 {

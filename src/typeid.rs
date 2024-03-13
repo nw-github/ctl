@@ -165,8 +165,8 @@ pub type GenericUserType = WithTypeArgs<UserTypeId>;
 
 impl GenericUserType {
     pub fn name(&self, scopes: &Scopes) -> String {
-        match &scopes.get(self.id).data {
-            crate::sym::UserTypeData::AnonStruct => {
+        match &scopes.get(self.id).kind {
+            crate::sym::UserTypeKind::AnonStruct => {
                 let mut result = "struct {".to_string();
                 for (i, concrete) in self.ty_args.values().enumerate() {
                     if i > 0 {
@@ -185,7 +185,7 @@ impl GenericUserType {
                 }
                 format!("{result} }}")
             }
-            crate::sym::UserTypeData::Tuple => {
+            crate::sym::UserTypeKind::Tuple => {
                 let mut result = "(".to_string();
                 for (i, concrete) in self.ty_args.values().enumerate() {
                     if i > 0 {
@@ -256,7 +256,7 @@ impl GenericUserType {
 
         let mut sa = SizeAndAlign::new();
         let ut = scopes.get(self.id);
-        if let Some(union) = ut.data.as_union() {
+        if let Some(union) = ut.kind.as_union() {
             if self.can_omit_tag(scopes).is_none() {
                 sa.next(union.tag.size_and_align(scopes));
             }
@@ -311,24 +311,6 @@ impl GenericUserType {
 }
 
 pub type GenericTrait = WithTypeArgs<TraitId>;
-
-impl GenericTrait {
-    pub fn name(&self, scopes: &Scopes) -> String {
-        let mut result = scopes.get(self.id).name.data.clone();
-        if !self.ty_args.is_empty() {
-            result.push('<');
-            for (i, concrete) in self.ty_args.values().enumerate() {
-                if i > 0 {
-                    result.push_str(", ");
-                }
-                result.push_str(&concrete.name(scopes));
-            }
-            result.push('>');
-        }
-
-        result
-    }
-}
 
 pub type GenericExtension = WithTypeArgs<ExtensionId>;
 
