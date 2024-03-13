@@ -242,7 +242,7 @@ impl LanguageServer for LspBackend {
                             }
                         }
                         insertion += ")";
-                        let detail = Some(visualize_func(id, true, scopes));
+                        let desc = visualize_func(id, true, scopes);
                         CompletionItem {
                             label,
                             label_details: Some(CompletionItemLabelDetails {
@@ -255,10 +255,10 @@ impl LanguageServer for LspBackend {
                                     }
                                     _ => None,
                                 }),
-                                description: detail.clone(),
+                                description: desc.clone().into(),
                             }),
                             kind: Some(CompletionItemKind::METHOD),
-                            detail,
+                            detail: desc.into(),
                             insert_text: Some(insertion),
                             insert_text_format: Some(InsertTextFormat::SNIPPET),
                             ..Default::default()
@@ -591,7 +591,11 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes) -> String {
         .constructor
         .and_then(|id| scopes.get(id).kind.as_union().zip(Some(id)))
     {
-        let mut res = visualize_location(scopes.get(id).body_scope, scopes);
+        let mut res = if small {
+            String::new()
+        } else {
+            visualize_location(scopes.get(id).body_scope, scopes)
+        };
         let variant = &func.name.data;
         visualize_variant_body(
             &mut res,
@@ -602,6 +606,7 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes) -> String {
                 .get(variant)
                 .and_then(|inner| inner.0.as_ref()),
             scopes,
+            small,
         );
         return res;
     }
@@ -611,21 +616,27 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes) -> String {
     } else {
         visualize_location(func.scope, scopes)
     };
-    if !small && func.public {
-        res += "pub ";
-    }
 
-    match func.linkage {
-        Linkage::Import => res += "import ",
-        Linkage::Export => res += "export ",
-        Linkage::Internal => {}
-    }
+    if !small {
+        if func.public {
+            res += "pub ";
+        }
 
-    match (small, func.is_unsafe) {
-        (false, false) => write_de!(res, "fn {}", func.name.data),
-        (false, true) => write_de!(res, "unsafe fn {}", func.name.data),
-        (true, false) => write_de!(res, "fn"),
-        (true, true) => write_de!(res, "unsafe fn"),
+        match func.linkage {
+            Linkage::Import => res += "import ",
+            Linkage::Export => res += "export ",
+            Linkage::Internal => {}
+        }
+
+        if func.is_unsafe {
+            write_de!(res, "unsafe fn {}", func.name.data)
+        } else {
+            write_de!(res, "fn {}", func.name.data)
+        }
+    } else if func.is_unsafe {
+        write_de!(res, "unsafe fn ")
+    } else {
+        write_de!(res, "fn ")
     }
 
     visualize_type_params(&mut res, &func.type_params, scopes);
@@ -754,7 +765,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
             write_de!(res, ": {} {{", union.tag.name(scopes));
             for (name, (ty, _)) in union.variants.iter() {
                 res += "\n\t";
-                visualize_variant_body(&mut res, union, name, ty.as_ref(), scopes);
+                visualize_variant_body(&mut res, union, name, ty.as_ref(), scopes, false);
                 res += ",";
             }
             print_body(&mut res, !union.variants.is_empty());
@@ -804,6 +815,7 @@ fn visualize_variant_body(
     name: &str,
     ty: Option<&Type>,
     scopes: &Scopes,
+    small: bool,
 ) {
     *res += name;
     match ty {
@@ -843,5 +855,7 @@ fn visualize_variant_body(
         Some(ty) => write_de!(res, "({})", ty.name(scopes)),
         None => {}
     }
-    write_de!(res, " = {}", union.variant_tag(name).unwrap());
+    if !small {
+        write_de!(res, " = {}", union.variant_tag(name).unwrap());
+    }
 }

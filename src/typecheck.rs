@@ -303,7 +303,7 @@ impl TypeChecker {
         check_hover!(self, span, item);
     }
 
-    fn check_type_completions(&mut self, span: Span, ty: &Type) {
+    fn check_dot_completions(&mut self, span: Span, ty: &Type) {
         if self.lsp_output.completions.is_some()
             || !LspInput::matches(self.lsp_input.completion, span)
         {
@@ -373,7 +373,7 @@ impl TypeChecker {
         self.lsp_output.completions = Some(completions);
     }
 
-    fn check_current_completions(&mut self, span: Span) {
+    fn check_cursor_completions(&mut self, span: Span) {
         if self.lsp_output.completions.is_some()
             || !LspInput::matches(self.lsp_input.completion, span)
         {
@@ -393,21 +393,31 @@ impl TypeChecker {
                     }
                     ValueItem::Var(id) => {
                         let var = self.scopes.get(id);
-                        if (var.is_static
-                            || self.current_function() == self.scopes.function_of(var.scope)) &&
-                            !emitted_vars.contains(&var.name.data)
+                        if !var.is_static
+                            && self.current_function() != self.scopes.function_of(var.scope)
                         {
-                            completions.push(LspItem::Var(id));
-                            emitted_vars.insert(var.name.data.clone());
+                            continue;
                         }
+                        if emitted_vars.contains(&var.name.data) {
+                            continue;
+                        }
+                        completions.push(LspItem::Var(id));
+                        emitted_vars.insert(var.name.data.clone());
                     }
                     ValueItem::StructConstructor(_, id) => completions.push(LspItem::Fn(id, None)),
                     ValueItem::UnionConstructor(_) => {}
                 }
             }
 
-            for (_, ty) in scope.tns.iter() {
-                completions.push(ty.id.into());
+            for (_, item) in scope.tns.iter() {
+                if item
+                    .as_type()
+                    .is_some_and(|&id| self.scopes.get(id).name.data.starts_with('$'))
+                {
+                    continue;
+                }
+
+                completions.push(item.id.into());
             }
         }
 
@@ -2575,7 +2585,7 @@ impl TypeChecker {
 
                 let source = self.check_expr(*source, None);
                 let id = source.ty.strip_references();
-                self.check_type_completions(span, id);
+                self.check_dot_completions(span, id);
                 let ut_id = match &id {
                     Type::User(data) => data.id,
                     Type::Unknown => return Default::default(),
@@ -3132,6 +3142,10 @@ impl TypeChecker {
                     return Default::default();
                 }
 
+                // most of the time, the dot span will be inside a non-call member expression.
+                // however, if you start editing a function call, it is possible for the span
+                // to end up here
+                self.check_dot_completions(member.span, &id);
                 let Some(mut memfn) =
                     self.get_member_fn(&id, None, &member.data, &generics, span, self.current)
                 else {
@@ -5588,7 +5602,7 @@ impl TypeChecker {
             PathOrigin::Normal => {
                 let ((name, ty_args), rest) = path.components.split_first().unwrap();
                 if rest.is_empty() {
-                    self.check_current_completions(name.span);
+                    self.check_cursor_completions(name.span);
                     match self.find_in_vns(&name.data).map(|f| f.id) {
                         Some(ValueItem::Fn(id)) => {
                             self.check_hover(name.span, id.into());
