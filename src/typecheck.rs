@@ -53,11 +53,7 @@ macro_rules! resolve_impl {
 
 macro_rules! check_hover {
     ($self: expr, $span: expr, $item: expr) => {
-        if $self
-            .lsp_input
-            .hover
-            .is_some_and(|h| h.file == $span.file && $span.includes(h.pos))
-        {
+        if LspInput::matches($self.lsp_input.hover, $span) {
             $self.lsp_output.hover = Some($item);
         }
     };
@@ -102,37 +98,43 @@ pub enum Safety {
 }
 
 #[derive(Clone, derive_more::From)]
-pub enum HoverItem {
+pub enum LspItem {
     Type(UserTypeId),
     Trait(TraitId),
     Extension(ExtensionId),
     Module(ScopeId),
     Literal(CheckedExpr),
-    Fn(FunctionId),
+    Fn(FunctionId, Option<CompletionMethod>),
     Var(VariableId),
     Attribute(String),
-    Member(UserTypeId, String),
+    Property(UserTypeId, String),
 }
 
-impl From<TypeItem> for HoverItem {
+impl From<TypeItem> for LspItem {
     fn from(value: TypeItem) -> Self {
         match value {
-            TypeItem::Type(item) => HoverItem::Type(item),
-            TypeItem::Trait(item) => HoverItem::Trait(item),
-            TypeItem::Extension(item) => HoverItem::Extension(item),
-            TypeItem::Module(item) => HoverItem::Module(item),
+            TypeItem::Type(item) => Self::Type(item),
+            TypeItem::Trait(item) => Self::Trait(item),
+            TypeItem::Extension(item) => Self::Extension(item),
+            TypeItem::Module(item) => Self::Module(item),
         }
     }
 }
 
-impl From<ValueItem> for HoverItem {
+impl From<ValueItem> for LspItem {
     fn from(value: ValueItem) -> Self {
         match value {
-            ValueItem::Fn(id) => HoverItem::Fn(id),
-            ValueItem::Var(id) => HoverItem::Var(id),
-            ValueItem::StructConstructor(_, id) => HoverItem::Fn(id),
-            ValueItem::UnionConstructor(id) => HoverItem::Type(id),
+            ValueItem::Fn(id) => Self::Fn(id, None),
+            ValueItem::Var(id) => Self::Var(id),
+            ValueItem::StructConstructor(_, id) => Self::Fn(id, None),
+            ValueItem::UnionConstructor(id) => Self::Type(id),
         }
+    }
+}
+
+impl From<FunctionId> for LspItem {
+    fn from(value: FunctionId) -> Self {
+        Self::Fn(value, None)
     }
 }
 
@@ -143,21 +145,22 @@ pub enum CompletionMethod {
     Trait(TraitId),
 }
 
-pub enum Completion {
-    Property(UserTypeId, String),
-    Method(FunctionId, CompletionMethod),
-}
-
 #[derive(Default)]
 pub struct LspInput {
     pub hover: Option<Span>,
     pub completion: Option<Span>,
 }
 
+impl LspInput {
+    pub fn matches(user: Option<Span>, ast: Span) -> bool {
+        user.is_some_and(|user| user.file == ast.file && ast.includes(user.pos))
+    }
+}
+
 #[derive(Default)]
 pub struct LspOutput {
-    pub hover: Option<HoverItem>,
-    pub completions: Option<Vec<Completion>>,
+    pub hover: Option<LspItem>,
+    pub completions: Option<Vec<LspItem>>,
 }
 
 pub struct TypeChecker {
@@ -249,7 +252,7 @@ impl TypeChecker {
             self.scopes.lang_types.insert(name.into(), id);
         }
         for (name, m) in self.scopes.get(id).members.iter() {
-            check_hover!(self, m.span, HoverItem::Member(id, name.clone()));
+            check_hover!(self, m.span, LspItem::Property(id, name.clone()));
         }
         id
     }
@@ -271,7 +274,7 @@ impl TypeChecker {
     fn find_in_vns(&self, name: &str) -> Option<Vis<ValueItem>> {
         for (id, scope) in self.scopes.walk(self.current) {
             if let Some(item) = self.scopes[id].find_in_vns(name) {
-                if item.is_fn() && matches!(scope.kind, ScopeKind::UserType(_)) {
+                if item.is_fn() &&matches!(scope.kind, ScopeKind::UserType(_) | ScopeKind::Extension(_) | ScopeKind::Trait(_)) {
                     continue;
                 }
 
@@ -294,17 +297,12 @@ impl TypeChecker {
     }
 
     #[inline]
-    fn check_hover(&mut self, span: Span, item: HoverItem) {
+    fn check_hover(&mut self, span: Span, item: LspItem) {
         check_hover!(self, span, item);
     }
 
-    #[inline]
     fn check_type_completions(&mut self, span: Span, ty: &Type) {
-        if self.lsp_output.completions.is_some() {
-            return;
-        }
-
-        if !self.lsp_input.completion.is_some_and(|rhs| span.file == rhs.file && span.includes(rhs.pos)) {
+        if self.lsp_output.completions.is_some() || !LspInput::matches(self.lsp_input.completion, span) {
             return;
         }
 
@@ -314,7 +312,7 @@ impl TypeChecker {
 
         let mut completions = vec![];
         let mut added = HashSet::new();
-        let mut add_methods = |scopes: &Scopes, c: &mut Vec<Completion>, fns: &[Vis<FunctionId>], cap: bool, m: CompletionMethod| {
+        let mut add_methods = |scopes: &Scopes, c: &mut Vec<LspItem>, fns: &[Vis<FunctionId>], cap: bool, m: CompletionMethod| {
             for func in fns {
                 let f = scopes.get(func.id);
                 if added.contains(&f.name.data) {
@@ -322,7 +320,7 @@ impl TypeChecker {
                 }
 
                 if (f.public || cap) && f.params.first().is_some_and(|p| p.label == THIS_PARAM) {
-                    c.push(Completion::Method(func.id, m));
+                    c.push(LspItem::Fn(func.id, Some(m)));
                     added.insert(f.name.data.clone());
                 }
             }
@@ -332,7 +330,7 @@ impl TypeChecker {
             let data = self.scopes.get(ut.id);
             let cap = self.can_access_privates(data.scope);
             for (name, _) in data.members.iter().filter(|(_, m)| m.public || cap) {
-                completions.push(Completion::Property(ut.id, name.clone()))
+                completions.push(LspItem::Property(ut.id, name.clone()))
             }
 
             for (imp, _) in data.impls.iter().flat_map(|imp| imp.as_checked()) {
@@ -366,6 +364,44 @@ impl TypeChecker {
 
         self.lsp_output.completions = Some(completions);
     }
+
+    fn check_current_completions(&mut self, span: Span) {
+        if self.lsp_output.completions.is_some() || !LspInput::matches(self.lsp_input.completion, span) {
+            return;
+        }
+
+        let mut completions = vec![];
+        for (scope_id, scope) in self.scopes.walk(self.current) {
+            for (_, var) in scope.vns.iter() {
+                match var.id {
+                    ValueItem::Fn(id) => {
+                        if matches!(scope.kind, ScopeKind::UserType(_) | ScopeKind::Extension(_) | ScopeKind::Trait(_)) {
+                            continue;
+                        }
+                        completions.push(LspItem::Fn(id, None))
+                    }
+                    ValueItem::Var(id) => {
+                        // TODO: inside lambdas, we should include outer local variables
+                        if self.scopes.get(id).is_static || scope_id == self.current {
+                            completions.push(LspItem::Var(id));
+                        }
+                    }
+                    ValueItem::StructConstructor(_, id) => completions.push(LspItem::Fn(id, None)),
+                    ValueItem::UnionConstructor(_) => {}
+                }
+            }
+
+            for (_, ty) in scope.tns.iter() {
+                completions.push(ty.id.into());
+            }
+        }
+
+        self.lsp_output.completions = Some(completions);
+    }
+
+//     fn check_scope_completions(&mut self, span: Span, scope: ScopeId) {
+// 
+//     }
 }
 
 /// Forward declaration pass routines
@@ -2514,7 +2550,7 @@ impl TypeChecker {
                     }
                 };
                 self.resolve_members(ut_id);
-                self.check_hover(name.span, HoverItem::Member(ut_id, name.data.clone()));
+                self.check_hover(name.span, LspItem::Property(ut_id, name.data.clone()));
 
                 let ut = self.scopes.get(ut_id);
                 let Some(member) = ut.members.get(&name.data) else {
@@ -3064,7 +3100,7 @@ impl TypeChecker {
                     return Default::default();
                 };
                 self.resolve_proto(func.id);
-                self.check_hover(member.span, HoverItem::Fn(func.id));
+                self.check_hover(member.span, LspItem::Fn(func.id, None));
 
                 let f = self.scopes.get(func.id);
                 let Some(this_param) = f.params.first().filter(|p| p.label == THIS_PARAM) else {
@@ -5507,6 +5543,7 @@ impl TypeChecker {
             PathOrigin::Normal => {
                 let ((name, ty_args), rest) = path.components.split_first().unwrap();
                 if rest.is_empty() {
+                    self.check_current_completions(name.span);
                     match self.find_in_vns(&name.data).map(|f| f.id) {
                         Some(ValueItem::Fn(id)) => {
                             self.check_hover(name.span, id.into());

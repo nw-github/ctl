@@ -11,7 +11,7 @@ use crate::ast::parsed::Linkage;
 use crate::error::{Diagnostics, FileId, OffsetMode};
 use crate::lexer::Span;
 use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeData, UserTypeId, VariableId};
-use crate::typecheck::{Completion, CompletionMethod, HoverItem, LspInput};
+use crate::typecheck::{CompletionMethod, LspInput, LspItem};
 use crate::typeid::{GenericUserType, Type};
 use crate::{
     project_from_file, CachingSourceProvider, Checked, Compiler, FileSourceProvider,
@@ -152,13 +152,13 @@ impl LanguageServer for LspBackend {
         let proj = checked.project();
         let Some(span) = proj.lsp.hover.as_ref().and_then(|hover| {
             Some(match hover {
-                &HoverItem::Var(id) => proj.scopes.get(id).name.span,
-                &HoverItem::Type(id) => proj.scopes.get(id).name.span,
-                &HoverItem::Trait(id) => proj.scopes.get(id).name.span,
-                &HoverItem::Extension(id) => proj.scopes.get(id).name.span,
-                &HoverItem::Module(id) => proj.scopes[id].kind.name(&proj.scopes).unwrap().span,
-                &HoverItem::Fn(id) => proj.scopes.get(id).name.span,
-                HoverItem::Member(id, member) => {
+                &LspItem::Var(id) => proj.scopes.get(id).name.span,
+                &LspItem::Type(id) => proj.scopes.get(id).name.span,
+                &LspItem::Trait(id) => proj.scopes.get(id).name.span,
+                &LspItem::Extension(id) => proj.scopes.get(id).name.span,
+                &LspItem::Module(id) => proj.scopes[id].kind.name(&proj.scopes).unwrap().span,
+                &LspItem::Fn(id, _) => proj.scopes.get(id).name.span,
+                LspItem::Property(id, member) => {
                     let ut = proj.scopes.get(*id);
                     return ut.members.get(member).map(|m| m.span).or_else(|| {
                         ut.data
@@ -190,14 +190,6 @@ impl LanguageServer for LspBackend {
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        if !params
-            .context
-            .and_then(|ctx| ctx.trigger_character)
-            .is_some_and(|c| c == ".")
-        {
-            return Ok(None);
-        }
-
         let uri = &params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
         let (_, checked) = self.check_project(uri, None, Some(pos)).await?;
@@ -208,8 +200,8 @@ impl LanguageServer for LspBackend {
         };
         let completions = completions
             .iter()
-            .map(|completion| match completion {
-                Completion::Property(id, name) => {
+            .flat_map(|completion| Some(match completion {
+                LspItem::Property(id, name) => {
                     let ut = scopes.get(*id);
                     let member = ut.members.get(name).unwrap();
                     let detail = member.ty.name(scopes);
@@ -224,11 +216,11 @@ impl LanguageServer for LspBackend {
                         ..Default::default()
                     }
                 }
-                &Completion::Method(id, from) => {
+                &LspItem::Fn(id, from) => {
                     let f = scopes.get(id);
                     let label = f.name.data.clone();
                     let mut insertion = format!("{label}(");
-                    for (i, param) in f.params.iter().skip(1).enumerate() {
+                    for (i, param) in f.params.iter().skip(from.is_some() as _).enumerate() {
                         if i > 0 {
                             insertion += ", ";
                         }
@@ -243,7 +235,7 @@ impl LanguageServer for LspBackend {
                     CompletionItem {
                         label,
                         label_details: Some(CompletionItemLabelDetails {
-                            detail: match from {
+                            detail: from.and_then(|method| match method {
                                 CompletionMethod::Type(_) => None,
                                 CompletionMethod::Extension(id) => {
                                     Some(format!(" (from {})", scopes.get(id).name.data))
@@ -251,7 +243,7 @@ impl LanguageServer for LspBackend {
                                 CompletionMethod::Trait(id) => {
                                     Some(format!(" (as {})", scopes.get(id).name.data))
                                 }
-                            },
+                            }),
                             description: detail.clone(),
                         }),
                         kind: Some(CompletionItemKind::METHOD),
@@ -261,7 +253,77 @@ impl LanguageServer for LspBackend {
                         ..Default::default()
                     }
                 }
-            })
+                &LspItem::Type(id) => {
+                    let ut = scopes.get(id);
+                    CompletionItem {
+                        label: ut.name.data.clone(),
+                        kind: Some(match ut.data {
+                            UserTypeData::Union(_) => CompletionItemKind::ENUM,
+                            _ => CompletionItemKind::STRUCT,
+                        }),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some(ut.name.data.clone()),
+                        }),
+                        detail: Some(ut.name.data.clone()),
+                        ..Default::default()
+                    }
+                }
+                &LspItem::Trait(id) => {
+                    let tr = scopes.get(id);
+                    CompletionItem {
+                        label: tr.name.data.clone(),
+                        kind: Some(CompletionItemKind::INTERFACE),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some(tr.name.data.clone()),
+                        }),
+                        detail: Some(tr.name.data.clone()),
+                        ..Default::default()
+                    }
+                }
+                &LspItem::Extension(id) => {
+                    let ext = scopes.get(id);
+                    CompletionItem {
+                        label: ext.name.data.clone(),
+                        kind: Some(CompletionItemKind::INTERFACE),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some(ext.name.data.clone()),
+                        }),
+                        detail: Some(ext.name.data.clone()),
+                        ..Default::default()
+                    }
+                }
+                &LspItem::Module(id) => {
+                    let scope = &scopes[id];
+                    let name = scope.kind.name(scopes).unwrap().data.clone();
+                    CompletionItem {
+                        label: name.clone(),
+                        kind: Some(CompletionItemKind::MODULE),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some(name.clone()),
+                        }),
+                        detail: Some(name),
+                        ..Default::default()
+                    }
+                }
+                &LspItem::Var(id) => {
+                    let var = scopes.get(id);
+                    CompletionItem {
+                        label: var.name.data.clone(),
+                        kind: Some(CompletionItemKind::VARIABLE),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some(var.name.data.clone()),
+                        }),
+                        detail: Some(var.name.data.clone()),
+                        ..Default::default()
+                    }
+                }
+                _ => return None,
+            }))
             .collect();
         Ok(Some(CompletionResponse::Array(completions)))
     }
@@ -276,10 +338,10 @@ impl LanguageServer for LspBackend {
         };
         let scopes = &proj.scopes;
         let str = match item {
-            &HoverItem::Var(id) => Some(visualize_var(id, scopes)),
-            &HoverItem::Fn(id) => Some(visualize_func(id, false, scopes)),
-            &HoverItem::Type(id) => Some(visualize_type(id, scopes)),
-            HoverItem::Member(id, name) => {
+            &LspItem::Var(id) => Some(visualize_var(id, scopes)),
+            &LspItem::Fn(id, _) => Some(visualize_func(id, false, scopes)),
+            &LspItem::Type(id) => Some(visualize_type(id, scopes)),
+            LspItem::Property(id, name) => {
                 let ut = scopes.get(*id);
                 let unk = Type::Unknown;
                 let ty = ut.members.get(name).map(|m| &m.ty).unwrap_or(&unk);
@@ -289,7 +351,7 @@ impl LanguageServer for LspBackend {
                     ty.name(scopes)
                 ))
             }
-            &HoverItem::Module(id) => {
+            &LspItem::Module(id) => {
                 let scope = &scopes[id];
                 let mut res = String::new();
                 if let Some(parent) = scope.parent.filter(|parent| *parent != ScopeId::ROOT) {
@@ -300,7 +362,7 @@ impl LanguageServer for LspBackend {
                 }
                 Some(format!("{res}mod {}", scope.kind.name(scopes).unwrap()))
             }
-            &HoverItem::Trait(id) => {
+            &LspItem::Trait(id) => {
                 let tr = scopes.get(id);
                 let mut res = format!(
                     "{}{}trait {}",
@@ -311,7 +373,7 @@ impl LanguageServer for LspBackend {
                 visualize_type_params(&mut res, &tr.type_params, scopes);
                 Some(res)
             }
-            &HoverItem::Extension(id) => {
+            &LspItem::Extension(id) => {
                 let ext = scopes.get(id);
                 let mut res = format!(
                     "{}{}extension {}",
