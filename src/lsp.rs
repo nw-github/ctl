@@ -150,14 +150,15 @@ impl LanguageServer for LspBackend {
         let pos = params.text_document_position_params.position;
         let (file, checked) = self.check_project(uri, Some(pos), None).await?;
         let proj = checked.project();
-        let Some(span) = proj.lsp.hover.as_ref().and_then(|hover| {
+        let scopes = proj.tc.scopes();
+        let Some(span) = proj.tc.lsp().hover.as_ref().and_then(|hover| {
             Some(match hover {
-                &LspItem::Var(id) => proj.scopes.get(id).name.span,
-                &LspItem::Type(id) => proj.scopes.get(id).name.span,
-                &LspItem::Module(id) => proj.scopes[id].kind.name(&proj.scopes).unwrap().span,
-                &LspItem::Fn(id, _) => proj.scopes.get(id).name.span,
+                &LspItem::Var(id) => scopes.get(id).name.span,
+                &LspItem::Type(id) => scopes.get(id).name.span,
+                &LspItem::Module(id) => scopes[id].kind.name(scopes).unwrap().span,
+                &LspItem::Fn(id, _) => scopes.get(id).name.span,
                 LspItem::Property(id, member) => {
-                    let ut = proj.scopes.get(*id);
+                    let ut = scopes.get(*id);
                     return ut.members.get(member).map(|m| m.span).or_else(|| {
                         ut.kind
                             .as_union()
@@ -170,7 +171,7 @@ impl LanguageServer for LspBackend {
             return Ok(None);
         };
 
-        let diag = &checked.project().diag;
+        let diag = checked.project().tc.diagnostics();
         let path = diag.file_path(span.file);
         let uri = get_uri((file, uri), (span.file, path));
         let range = if let Some(doc) = self.documents.get(&uri) {
@@ -192,8 +193,8 @@ impl LanguageServer for LspBackend {
         let pos = params.text_document_position.position;
         let (_, checked) = self.check_project(uri, None, Some(pos)).await?;
         let project = checked.project();
-        let scopes = &project.scopes;
-        let Some(completions) = project.lsp.completions.as_ref() else {
+        let scopes = &project.tc.scopes();
+        let Some(completions) = project.tc.lsp().completions.as_ref() else {
             return Ok(None);
         };
         let completions = completions
@@ -319,10 +320,10 @@ impl LanguageServer for LspBackend {
         let pos = params.text_document_position_params.position;
         let (_, checked) = self.check_project(uri, Some(pos), None).await?;
         let proj = checked.project();
-        let Some(item) = proj.lsp.hover.as_ref() else {
+        let Some(item) = proj.tc.lsp().hover.as_ref() else {
             return Ok(None);
         };
-        let scopes = &proj.scopes;
+        let scopes = &proj.tc.scopes();
         let str = match item {
             &LspItem::Var(id) => Some(visualize_var(id, scopes)),
             &LspItem::Fn(id, _) => Some(visualize_func(id, false, scopes)),
@@ -422,7 +423,7 @@ impl LspBackend {
             }),
         });
 
-        let diag = &checked.project().diag;
+        let diag = checked.project().tc.diagnostics();
         let mut all = HashMap::<Url, Vec<Diagnostic>>::new();
         let mut cache = CachingSourceProvider::new();
         for (severity, err) in diag
@@ -470,7 +471,7 @@ impl LspBackend {
             self.client.publish_diagnostics(uri, diags, None).await;
         }
 
-        let scopes = &checked.project().scopes;
+        let scopes = &checked.project().tc.scopes();
         if let Some(mut doc) = self.documents.get_mut(uri) {
             doc.inlay_hints.clear();
             for (_, var) in scopes.vars() {

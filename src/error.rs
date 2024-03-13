@@ -118,7 +118,7 @@ impl Diagnostics {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Error {
     pub message: String,
     pub span: Span,

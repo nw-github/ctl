@@ -12,10 +12,8 @@ use crate::{
     lexer::Span,
     nearest_pow_of_two,
     sym::*,
-    typecheck::Project,
-    typeid::{
-        CInt, FnPtr, GenericExtension, GenericFunc, GenericTrait, GenericUserType, Type, TypeArgs,
-    },
+    typecheck::{Project, TypeChecker},
+    typeid::{CInt, FnPtr, GenericFunc, GenericTrait, GenericUserType, Type, TypeArgs},
     CodegenFlags, THIS_PARAM,
 };
 
@@ -857,6 +855,7 @@ struct Vtable {
 }
 
 pub struct Codegen<'a> {
+    tc: &'a mut TypeChecker,
     scopes: &'a Scopes,
     diag: &'a mut Diagnostics,
     buffer: Buffer,
@@ -872,14 +871,28 @@ pub struct Codegen<'a> {
     defers: Vec<(ScopeId, Vec<CheckedExpr>)>,
 }
 
+pub fn build(
+    Project { tc, scope, .. }: &mut Project,
+    flags: CodegenFlags,
+) -> Result<(Diagnostics, String), Diagnostics> {
+    let mut diag = std::mem::take(tc.diagnostics_mut());
+    if diag.has_errors() {
+        return Err(diag);
+    }
+
+    let scopes = tc.scopes().clone();
+    match Codegen::build(tc, &mut diag, &scopes, *scope, flags) {
+        Ok(code) => Ok((diag, code)),
+        Err(_) => Err(diag),
+    }
+}
+
 impl<'a> Codegen<'a> {
     pub fn build(
-        Project {
-            scopes,
-            scope,
-            diag,
-            ..
-        }: &'a mut Project,
+        tc: &'a mut TypeChecker,
+        diag: &'a mut Diagnostics,
+        scopes: &'a Scopes,
+        scope: ScopeId,
         flags: CodegenFlags,
     ) -> Result<String, ()> {
         if diag.has_errors() {
@@ -893,7 +906,7 @@ impl<'a> Codegen<'a> {
         let (funcs, main) = if flags.lib {
             (exports.collect(), None)
         } else {
-            let Some(main) = scopes[*scope].vns.get("main").and_then(|id| id.as_fn()) else {
+            let Some(main) = scopes[scope].vns.get("main").and_then(|id| id.as_fn()) else {
                 diag.error(Error::new("no main function found", Span::default()));
                 return Err(());
             };
@@ -904,6 +917,7 @@ impl<'a> Codegen<'a> {
             )
         };
         let mut this = Self {
+            tc,
             scopes,
             diag,
             funcs,
@@ -2945,7 +2959,7 @@ impl<'a> Codegen<'a> {
     }
 
     fn find_implementation(
-        &self,
+        &mut self,
         this: &Type,
         trait_id: TraitId,
         method: &str,
@@ -2971,6 +2985,7 @@ impl<'a> Codegen<'a> {
         {
             return finish(id);
         } else if let Some((id, ext)) = self
+            .tc
             .extensions_in_scope_for(this, scope)
             .iter()
             .find_map(|ext| search(&self.scopes.get(ext.id).impls).zip(Some(ext)))
@@ -3027,114 +3042,6 @@ impl<'a> Codegen<'a> {
             count += 1;
         }
         count
-    }
-
-    fn extensions_in_scope_for(&self, ty: &Type, scope: ScopeId) -> Vec<GenericExtension> {
-        fn implements_trait(
-            this: &Scopes,
-            ty: &Type,
-            bound: &GenericTrait,
-            ignore: &HashSet<ExtensionId>,
-            exts: &[(&Type, ExtensionId)],
-            results: &mut [Option<Option<GenericExtension>>],
-        ) -> bool {
-            if ty.is_unknown() || this.has_builtin_impl(ty, bound) {
-                return true;
-            }
-
-            let search = |this: Option<&TypeArgs>, impls: &[TraitImpl]| {
-                impls.iter().flat_map(|i| i.as_checked()).any(|(tr, _)| {
-                    let mut tr = tr.clone();
-                    this.inspect(|ty_args| tr.fill_templates(ty_args));
-                    &tr == bound
-                })
-            };
-
-            if ty
-                .as_user()
-                .is_some_and(|ut| search(Some(&ut.ty_args), &this.get(ut.id).impls))
-            {
-                return true;
-            }
-
-            for (i, &(rhs, id)) in exts
-                .iter()
-                .enumerate()
-                .filter(|(_, (_, id))| !ignore.contains(id))
-            {
-                match &results[i] {
-                    Some(Some(ext)) => {
-                        if search(Some(&ext.ty_args), &this.get(ext.id).impls) {
-                            return true;
-                        }
-                    }
-                    Some(None) => continue,
-                    None => {
-                        let mut ignore = ignore.clone();
-                        ignore.insert(id);
-                        if let Some(args) = applies_to(this, ty, rhs, &ignore, exts, results) {
-                            if search(Some(&args), &this.get(id).impls) {
-                                return true;
-                            }
-                            results[i] = Some(Some(GenericExtension::new(id, args)))
-                        } else {
-                            results[i] = Some(None);
-                        }
-                    }
-                }
-            }
-
-            false
-        }
-
-        fn applies_to(
-            this: &Scopes,
-            ty: &Type,
-            ext_ty: &Type,
-            ignore: &HashSet<ExtensionId>,
-            exts: &[(&Type, ExtensionId)],
-            results: &mut [Option<Option<GenericExtension>>],
-        ) -> Option<TypeArgs> {
-            match ext_ty {
-                Type::User(ut) if this.get(ut.id).kind.is_template() => {
-                    for (bound, _) in this
-                        .get(ut.id)
-                        .impls
-                        .iter()
-                        .flat_map(|bound| bound.as_checked())
-                    {
-                        if !implements_trait(this, ty, bound, ignore, exts, results) {
-                            return None;
-                        }
-                    }
-                    Some(TypeArgs([(ut.id, ty.clone())].into()))
-                }
-                rhs => (ty == rhs).then(Default::default),
-            }
-        }
-
-        let exts: Vec<_> = self
-            .scopes
-            .walk(scope)
-            .flat_map(|(_, scope)| {
-                scope.tns.iter().flat_map(|s| {
-                    s.1.as_type()
-                        .copied()
-                        .and_then(|id| self.scopes.get(id).kind.as_extension().zip(Some(id)))
-                })
-            })
-            .collect();
-        let mut results = vec![None; exts.len()];
-        for (i, &(rhs, id)) in exts.iter().enumerate() {
-            if results[i].is_none() {
-                results[i] = Some(
-                    applies_to(self.scopes, ty, rhs, &[id].into(), &exts, &mut results)
-                        .map(|args| GenericExtension::new(id, args)),
-                );
-            }
-        }
-
-        results.into_iter().flatten().flatten().collect()
     }
 }
 

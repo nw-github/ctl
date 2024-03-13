@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use ast::parsed::{Stmt, StmtData};
-use codegen::Codegen;
 pub use error::*;
 use lexer::Lexer;
 pub use source::*;
@@ -156,11 +155,7 @@ impl Compiler<Parsed> {
 
 impl Compiler<Checked> {
     pub fn build(mut self, flags: CodegenFlags) -> Result<(Diagnostics, String), Diagnostics> {
-        if let Ok(code) = Codegen::build(&mut self.state.0, flags) {
-            Ok((self.state.0.diag, code))
-        } else {
-            Err(self.state.0.diag)
-        }
+        codegen::build(&mut self.state.0, flags)
     }
 
     pub fn project(&self) -> &Project {

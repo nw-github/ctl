@@ -103,7 +103,7 @@ pub enum ScopeKind {
     Lambda(Option<Type>, bool),
     Function(FunctionId),
     UserType(UserTypeId),
-    Impl(TraitId),
+    Impl(TraitImpl),
     Module(Located<String>),
     Defer,
     #[default]
@@ -169,7 +169,7 @@ pub struct Variable {
     pub has_hint: bool,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Function {
     pub public: bool,
     pub attrs: Attributes,
@@ -211,7 +211,7 @@ impl Union {
     }
 }
 
-#[derive(Debug, EnumAsInner)]
+#[derive(Debug, EnumAsInner, Clone)]
 pub enum UserTypeKind {
     Struct,
     Union(Union),
@@ -223,7 +223,7 @@ pub enum UserTypeKind {
     Extension(Type),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UserType {
     pub attrs: Attributes,
     pub public: bool,
@@ -270,7 +270,7 @@ impl HasTypeParams for Function {
     }
 }
 
-#[derive(Deref, DerefMut, Constructor)]
+#[derive(Deref, DerefMut, Constructor, Clone)]
 pub struct Scoped<T> {
     #[deref]
     #[deref_mut]
@@ -315,7 +315,7 @@ pub enum ValueItem {
     UnionConstructor(UserTypeId),
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Scope {
     pub public: bool,
     pub kind: ScopeKind,
@@ -335,6 +335,7 @@ impl Scope {
     }
 }
 
+#[derive(Clone)]
 pub struct Scopes {
     scopes: Vec<Scope>,
     fns: Vec<Scoped<Function>>,
