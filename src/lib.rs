@@ -13,10 +13,10 @@ mod typeid;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use ast::parsed::Stmt;
+use ast::parsed::{Stmt, StmtData};
 use codegen::Codegen;
 pub use error::*;
-use lexer::{Lexer, Span};
+use lexer::Lexer;
 pub use source::*;
 use typecheck::{LspInput, Project};
 
@@ -73,14 +73,20 @@ impl<T: SourceProvider> Compiler<Source<T>> {
     fn load_module(&mut self, diag: &mut Diagnostics, path: PathBuf) -> Result<Option<Stmt>> {
         if path.is_dir() {
             let mut body = Vec::new();
+            let mut main = None;
             for entry in path
                 .read_dir()
                 .with_context(|| format!("loading path {}", path.display()))?
             {
                 let path = entry?.path();
-                if let Some(stmt) =
-                    self.load_module(diag, path.canonicalize().unwrap_or(path))?
-                {
+                if let Some(stmt) = self.load_module(diag, path.canonicalize().unwrap_or(path))? {
+                    match &stmt.data {
+                        StmtData::Module { name, .. } if name.data == "main" => {
+                            main = Some(name.span);
+                        }
+                        _ => {}
+                    }
+
                     body.push(stmt);
                 }
             }
@@ -88,7 +94,10 @@ impl<T: SourceProvider> Compiler<Source<T>> {
                 data: ast::parsed::StmtData::Module {
                     public: true,
                     file: false,
-                    name: lexer::Located::new(Span::default(), Self::derive_module_name(&path)),
+                    name: lexer::Located::new(
+                        main.unwrap_or_default(),
+                        Self::derive_module_name(&path),
+                    ),
                     body,
                 },
                 attrs: Default::default(),
