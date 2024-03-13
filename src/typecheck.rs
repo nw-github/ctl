@@ -381,9 +381,10 @@ impl TypeChecker {
         }
 
         let mut completions = vec![];
-        for (scope_id, scope) in self.scopes.walk(self.current) {
-            for (_, var) in scope.vns.iter() {
-                match var.id {
+        let mut emitted_vars = HashSet::new();
+        for (_, scope) in self.scopes.walk(self.current) {
+            for (_, item) in scope.vns.iter() {
+                match item.id {
                     ValueItem::Fn(id) => {
                         if matches!(scope.kind, ScopeKind::UserType(_)) {
                             continue;
@@ -391,9 +392,13 @@ impl TypeChecker {
                         completions.push(LspItem::Fn(id, None))
                     }
                     ValueItem::Var(id) => {
-                        // TODO: inside lambdas, we should include outer local variables
-                        if self.scopes.get(id).is_static || scope_id == self.current {
+                        let var = self.scopes.get(id);
+                        if (var.is_static
+                            || self.current_function() == self.scopes.function_of(var.scope)) &&
+                            !emitted_vars.contains(&var.name.data)
+                        {
                             completions.push(LspItem::Var(id));
+                            emitted_vars.insert(var.name.data.clone());
                         }
                     }
                     ValueItem::StructConstructor(_, id) => completions.push(LspItem::Fn(id, None)),
