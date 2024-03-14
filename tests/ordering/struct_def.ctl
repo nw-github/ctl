@@ -1,4 +1,14 @@
-use super::assert;
+// Output: 6
+
+fn main() {
+    let x = A(
+        x: B(d: D(e: E(x: 1))),
+        y: B(d: D(e: E(x: 2))),
+        z: B(d: D(e: E(x: 3))),
+    );
+
+    println("{x.get()}");
+}
 
 struct A {
     pub x: B,
@@ -40,14 +50,4 @@ struct E {
     fn get(this): int {
         this.x
     }
-}
-
-pub fn test() {
-    let x = A(
-        x: B(d: D(e: E(x: 1))),
-        y: B(d: D(e: E(x: 2))),
-        z: B(d: D(e: E(x: 3))),
-    );
-
-    assert(x.get() == 6, "x != 6");
 }

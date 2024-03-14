@@ -29,12 +29,17 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
         let output = data.trim_start_matches("Output:");
         if output != data {
             expected.push_str(output.trim());
+            expected.push('\n');
         }
 
         let output = data.trim_start_matches("Error:");
         if output != data {
             errors.push(output.trim());
         }
+    }
+
+    if expected.is_empty() && errors.is_empty() {
+        Err("no requirements specified!")?;
     }
 
     let proj = project_from_file(path, vec![], false, false);
@@ -91,8 +96,8 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
                 String::from_utf8(result.stdout).context("parsing output of test program")?
             };
             let output = output.trim();
-
-            if !output.contains(&expected) {
+            let expected = expected.trim();
+            if !output.contains(expected) {
                 Err(format!(
                     "output didn't match! expected '{expected}', got '{output}'"
                 ))?;
@@ -103,4 +108,4 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
     }
 }
 
-datatest_stable::harness!(compile_test, "dt", r".*/**/*.ctl");
+datatest_stable::harness!(compile_test, "tests", r".*/**/*.ctl");

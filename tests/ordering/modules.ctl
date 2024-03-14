@@ -1,4 +1,11 @@
-use super::assert;
+// Output: 22
+
+pub fn main() {
+    let a = A(foo: inner::A(foo: 10));
+    let b = inner::B(foo: a, bar: inner::A(foo: 12));
+    let c = b.get_value();
+    println("{c}");
+}
 
 struct A {
     pub foo: inner::A,
@@ -18,19 +25,11 @@ mod inner {
     }
 
     pub struct B {
-        pub foo: ::runtime::modules::A,
+        pub foo: super::A,
         pub bar: A,
 
         pub fn get_value(this): int {
             this.bar.get_value() + this.foo.get_value()
         }
     }
-}
-
-pub fn test() {
-    let a = A(foo: inner::A(foo: 10));
-    let b = inner::B(foo: a, bar: inner::A(foo: 12));
-    let c = b.get_value();
-
-    assert(c == 22, "c != 22");
 }
