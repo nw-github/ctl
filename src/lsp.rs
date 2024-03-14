@@ -634,9 +634,9 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes) -> String {
             write_de!(res, "fn {}", func.name.data)
         }
     } else if func.is_unsafe {
-        write_de!(res, "unsafe fn ")
+        write_de!(res, "unsafe fn")
     } else {
-        write_de!(res, "fn ")
+        write_de!(res, "fn")
     }
 
     visualize_type_params(&mut res, &func.type_params, scopes);

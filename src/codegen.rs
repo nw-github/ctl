@@ -3003,9 +3003,9 @@ impl<'a> Codegen<'a> {
             .find(|f| self.scopes.get(f.id).name.data == method)
             .filter(|f| self.scopes.get(f.id).body.is_some())
             .unwrap_or_else(|| {
-                eprintln!("searching from scope: {}", self.scopes.full_name(scope, ""));
                 panic!(
-                    "cannot find implementation for method '{}::{method}' for type '{}'",
+                    "searching from scope: '{}', cannot find implementation for method '{}::{method}' for type '{}'",
+                    self.scopes.full_name(scope, ""),
                     self.scopes.get(trait_id).name.data,
                     this.name(self.scopes)
                 )

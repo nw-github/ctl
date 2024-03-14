@@ -335,27 +335,60 @@ impl TypeChecker {
         };
 
         if let Some(ut) = ty.as_user() {
+            self.resolve_impls_recursive(ut.id);
+
             let data = self.scopes.get(ut.id);
             let cap = self.can_access_privates(data.scope);
             for (name, _) in data.members.iter().filter(|(_, m)| m.public || cap) {
                 completions.push(LspItem::Property(ut.id, name.clone()))
             }
 
-            for (imp, _) in data.impls.iter().flat_map(|imp| imp.as_checked()) {
-                let data = self.scopes.get(imp.id);
-                add_methods(&self.scopes, &mut completions, &data.fns, cap, imp.id);
+            for (tr, _) in self
+                .scopes
+                .get(ut.id)
+                .impls
+                .iter()
+                .flat_map(|ut| ut.as_checked())
+            {
+                for tr in self.scopes.get_trait_impls(tr.id) {
+                    let data = self.scopes.get(tr);
+                    add_methods(&self.scopes, &mut completions, &data.fns, cap, tr);
+                }
             }
 
             add_methods(&self.scopes, &mut completions, &data.fns, cap, ut.id);
+        } else if let Some(tr) = ty.as_dyn_pointee() {
+            self.resolve_impls_recursive(tr.id);
+            for tr in self.scopes.get_trait_impls(tr.id) {
+                add_methods(
+                    &self.scopes,
+                    &mut completions,
+                    &self.scopes.get(tr).fns,
+                    true,
+                    tr,
+                );
+            }
         }
 
         let extensions = self.extensions_in_scope_for(ty, self.current);
         for ext in extensions.iter() {
-            let data = self.scopes.get(ext.id);
-            let cap = self.can_access_privates(data.scope);
-            for (imp, _) in data.impls.iter().flat_map(|imp| imp.as_checked()) {
-                let data = self.scopes.get(imp.id);
-                add_methods(&self.scopes, &mut completions, &data.fns, cap, imp.id);
+            self.resolve_impls_recursive(ext.id);
+            for (imp, _) in self
+                .scopes
+                .get(ext.id)
+                .impls
+                .iter()
+                .flat_map(|imp| imp.as_checked())
+            {
+                for tr in self.scopes.get_trait_impls(imp.id) {
+                    add_methods(
+                        &self.scopes,
+                        &mut completions,
+                        &self.scopes.get(tr).fns,
+                        true,
+                        tr,
+                    );
+                }
             }
         }
 
@@ -1694,7 +1727,6 @@ impl TypeChecker {
                 lhs_span,
             ));
         };
-        self.resolve_proto(func.id);
 
         let f = self.scopes.get(func.id);
         let [p0, p1, ..] = &f.params[..] else {
@@ -1760,7 +1792,6 @@ impl TypeChecker {
                 span,
             ));
         };
-        self.resolve_proto(func.id);
 
         let f = self.scopes.get(func.id);
         CheckedExpr::new(
@@ -3155,7 +3186,6 @@ impl TypeChecker {
                         span,
                     ));
                 };
-                self.resolve_proto(memfn.func.id);
                 self.check_hover(member.span, LspItem::Fn(memfn.func.id, None));
                 if memfn.dynamic && !self.scopes.get(memfn.func.id).type_params.is_empty() {
                     self.error(Error::new(
@@ -3893,6 +3923,10 @@ impl TypeChecker {
             exts: &[ExtensionId],
             results: &mut [Option<Option<GenericExtension>>],
         ) -> Option<TypeArgs> {
+            resolve_type!(
+                this,
+                *this.scopes.get_mut(ext).kind.as_extension_mut().unwrap()
+            );
             match this.scopes.get(ext).kind.as_extension().unwrap() {
                 Type::User(ut) if this.scopes.get(ut.id).kind.is_template() => {
                     let id = ut.id;
@@ -3928,10 +3962,6 @@ impl TypeChecker {
         let mut results = vec![None; exts.len()];
         for (i, &id) in exts.iter().enumerate() {
             if results[i].is_none() {
-                resolve_type!(
-                    self,
-                    *self.scopes.get_mut(id).kind.as_extension_mut().unwrap()
-                );
                 results[i] = Some(
                     applies_to(self, ty, id, &[id].into(), &exts, &mut results)
                         .map(|args| GenericExtension::new(id, args)),
@@ -4141,30 +4171,21 @@ impl TypeChecker {
             return None;
         } else if let Some(tr) = ty.as_dyn_pointee() {
             // TODO: wanted_tr
+            self.resolve_impls_recursive(tr.id);
             let data = self.scopes.get(tr.id);
-            let func = search(&self.scopes, &data.fns, method).or_else(|| {
-                for (tr, _) in data.impls.iter().flat_map(|ut| ut.as_checked()) {
-                    for imp in self.scopes.get_trait_impls(tr.id) {
-                        if let Some(func) = search(&self.scopes, &self.scopes.get(imp).fns, method)
-                        {
-                            return Some(func);
-                        }
-                    }
+            for imp in self.scopes.get_trait_impls(tr.id) {
+                if let Some(f) = search(&self.scopes, &self.scopes.get(imp).fns, method) {
+                    let src_scope = data.scope;
+                    let mut func = GenericFunc::new(f.id, finish(self, f.id));
+                    func.ty_args.copy_args(&tr.ty_args);
+                    return Some(MemberFn {
+                        func,
+                        tr: None,
+                        owner: src_scope,
+                        dynamic: true,
+                        public: f.public,
+                    });
                 }
-                None
-            });
-
-            if let Some(f) = func {
-                let src_scope = data.scope;
-                let mut func = GenericFunc::new(f.id, finish(self, f.id));
-                func.ty_args.copy_args(&tr.ty_args);
-                return Some(MemberFn {
-                    func,
-                    tr: None,
-                    owner: src_scope,
-                    dynamic: true,
-                    public: f.public,
-                });
             }
         }
 
@@ -4183,6 +4204,7 @@ impl TypeChecker {
         self.get_member_fn_ex(ty, wanted_tr, method, scope, |this, id| {
             this.resolve_type_args(id, generics, false, span)
         })
+        .inspect(|memfn| self.resolve_proto(memfn.func.id))
     }
 
     fn get_int_type_and_val(
