@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use ast::parsed::{Stmt, StmtData};
 pub use error::*;
-use lexer::Lexer;
+pub use lexer::*;
 pub use source::*;
 use typecheck::{LspInput, Project};
 
@@ -170,6 +170,7 @@ impl<T: CompileState> Compiler<T> {
     }
 }
 
+#[derive(Default, Clone, Copy)]
 pub struct CodegenFlags {
     pub leak: bool,
     pub no_bit_int: bool,
