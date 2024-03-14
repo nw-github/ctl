@@ -101,7 +101,7 @@ pub enum ResolvedType {
 #[derive(Default)]
 pub enum ResolvedValue {
     UnionConstructor(GenericUserType),
-    Func(GenericFunc),
+    Fn(GenericFunc),
     Var(VariableId),
     NotFound(Error),
     #[default]
@@ -2339,7 +2339,7 @@ impl TypeChecker {
                     self.scopes.get_mut(id).unused = false;
                     CheckedExpr::new(ty, CheckedExprData::Var(id))
                 }
-                ResolvedValue::Func(mut func) => {
+                ResolvedValue::Fn(mut func) => {
                     let unknowns: HashSet<_> = func
                         .ty_args
                         .iter()
@@ -3226,7 +3226,7 @@ impl TypeChecker {
                 ResolvedValue::UnionConstructor(ut) => {
                     return self.check_unsafe_union_constructor(target, ut, args, span);
                 }
-                ResolvedValue::Func(mut func) => {
+                ResolvedValue::Fn(mut func) => {
                     let span = path.components.last().map(|c| c.0.span).unwrap_or(span);
                     let f = self.scopes.get(func.id);
                     let constructor = f.constructor;
@@ -4293,7 +4293,7 @@ impl TypeChecker {
             ExprData::Call { callee, args: _ } => {
                 if let ExprData::Path(path) = &callee.data {
                     match self.resolve_value_path(path) {
-                        ResolvedValue::Func(func) => {
+                        ResolvedValue::Fn(func) => {
                             if self.scopes.intrinsics.get(&func.id).is_some()
                                 && self.scopes.get(func.id).name.data == "size_of"
                             {
@@ -4568,8 +4568,7 @@ impl TypeChecker {
         };
         self.resolve_members(ut.id);
         match path {
-            ResolvedValue::Func(f) => {
-                self.resolve_proto(f.id);
+            ResolvedValue::Fn(f) => {
                 let f = self.scopes.get(f.id);
                 if f.constructor.is_some_and(|id| id == ut.id) {
                     let variant = f.name.data.clone();
@@ -5605,15 +5604,17 @@ impl TypeChecker {
                     self.check_cursor_completions(name.span);
                     match self.find_in_vns(&name.data).map(|f| f.id) {
                         Some(ValueItem::Fn(id)) => {
+                            self.resolve_proto(id);
                             self.check_hover(name.span, id.into());
-                            ResolvedValue::Func(GenericFunc::new(
+                            ResolvedValue::Fn(GenericFunc::new(
                                 id,
                                 self.resolve_type_args(id, ty_args, false, name.span),
                             ))
                         }
                         Some(ValueItem::StructConstructor(id, init)) => {
+                            self.resolve_proto(init);
                             self.check_hover(name.span, init.into());
-                            ResolvedValue::Func(GenericFunc::new(
+                            ResolvedValue::Fn(GenericFunc::new(
                                 init,
                                 self.resolve_type_args(id, ty_args, false, name.span),
                             ))
@@ -5730,15 +5731,17 @@ impl TypeChecker {
 
         match *item {
             ValueItem::Fn(id) => {
+                self.resolve_proto(id);
                 self.check_hover(last_name.span, id.into());
                 ty_args.copy_args(&self.resolve_type_args(id, last_args, false, last_name.span));
 
-                ResolvedValue::Func(GenericFunc::new(id, ty_args))
+                ResolvedValue::Fn(GenericFunc::new(id, ty_args))
             }
             ValueItem::StructConstructor(id, init) => {
+                self.resolve_proto(init);
                 self.check_hover(last_name.span, init.into());
                 ty_args.copy_args(&self.resolve_type_args(id, last_args, false, last_name.span));
-                ResolvedValue::Func(GenericFunc::new(init, ty_args))
+                ResolvedValue::Fn(GenericFunc::new(init, ty_args))
             }
             ValueItem::UnionConstructor(id) => {
                 self.check_hover(last_name.span, id.into());
