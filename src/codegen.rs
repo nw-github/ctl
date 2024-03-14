@@ -48,10 +48,6 @@ impl State {
         }
     }
 
-    pub fn with_inst(func: GenericFunc, inst: &Type) -> Self {
-        Self::with_inst_and_scope(func, inst, ScopeId::ROOT)
-    }
-
     pub fn with_inst_and_scope(mut func: GenericFunc, inst: &Type, caller: ScopeId) -> Self {
         if let Some(ut) = inst.as_user() {
             func.ty_args.copy_args(&ut.ty_args);
@@ -1059,7 +1055,7 @@ impl<'a> Codegen<'a> {
                     self.buffer
                         .emit_fn_name(self.scopes, &func, self.flags.minify);
                     self.buffer.emit(",");
-                    self.funcs.insert(State::new(func));
+                    self.funcs.insert(State::new_with_caller(func, vtable.scope));
                 }
             }
             self.buffer.emit("};");
@@ -1432,7 +1428,7 @@ impl<'a> Codegen<'a> {
                     });
                 });
             }
-            CheckedExprData::Set(exprs) => {
+            CheckedExprData::Set(exprs, scope) => {
                 let ut = (**expr.ty.as_user().unwrap()).clone();
                 if exprs.is_empty() {
                     return self.emit_new(&ut);
@@ -1440,7 +1436,7 @@ impl<'a> Codegen<'a> {
 
                 tmpbuf_emit!(self, state, |tmp| {
                     self.emit_with_capacity(&expr.ty, &tmp, &ut, exprs.len());
-                    let insert = State::with_inst(
+                    let insert = State::with_inst_and_scope(
                         GenericFunc::from_id(
                             self.scopes,
                             self.scopes
@@ -1449,6 +1445,7 @@ impl<'a> Codegen<'a> {
                                 .unwrap(),
                         ),
                         &expr.ty,
+                        scope,
                     );
 
                     for val in exprs {
@@ -1461,14 +1458,14 @@ impl<'a> Codegen<'a> {
                     self.funcs.insert(insert);
                 });
             }
-            CheckedExprData::Map(exprs) => {
+            CheckedExprData::Map(exprs, scope) => {
                 let ut = (**expr.ty.as_user().unwrap()).clone();
                 if exprs.is_empty() {
                     return self.emit_new(&ut);
                 }
 
                 tmpbuf_emit!(self, state, |tmp| {
-                    let insert = State::with_inst(
+                    let insert = State::with_inst_and_scope(
                         GenericFunc::from_id(
                             self.scopes,
                             self.scopes
@@ -1477,6 +1474,7 @@ impl<'a> Codegen<'a> {
                                 .unwrap(),
                         ),
                         &expr.ty,
+                        scope,
                     );
 
                     self.emit_with_capacity(&expr.ty, &tmp, &ut, exprs.len());

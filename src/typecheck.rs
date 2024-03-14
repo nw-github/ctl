@@ -2098,7 +2098,7 @@ impl TypeChecker {
                 checked.extend(elements.map(|e| self.type_check(e, &ty)));
                 CheckedExpr::new(
                     self.make_lang_type(set, [ty], span),
-                    CheckedExprData::Set(checked),
+                    CheckedExprData::Set(checked, self.current),
                 )
             }
             ExprData::ArrayWithInit { init, count } => {
@@ -2206,7 +2206,7 @@ impl TypeChecker {
                 );
                 CheckedExpr::new(
                     self.make_lang_type(map, [k, v], span),
-                    CheckedExprData::Map(result),
+                    CheckedExprData::Map(result, self.current),
                 )
             }
             ExprData::Range {
