@@ -203,6 +203,7 @@ pub struct CheckedMember {
 pub struct Union {
     pub variants: IndexMap<String, (Option<Type>, Span)>,
     pub tag: Type,
+    pub enum_union: bool,
 }
 
 impl Union {

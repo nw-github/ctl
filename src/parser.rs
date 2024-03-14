@@ -763,8 +763,11 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::As => {
                 let bang = self.next_if_kind(Token::Exclamation);
                 let ty = self.type_hint();
+                // FIXME: type_hint should just be located
+                let mut next = self.peek().span;
+                next.len = 0;
                 Expr::new(
-                    left.span,
+                    left.span.extended_to(next),
                     ExprData::As {
                         expr: left.into(),
                         ty,

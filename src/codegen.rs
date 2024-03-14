@@ -1870,11 +1870,19 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit("else{CTL_UNREACHABLE();}");
                 })
             }
-            CheckedExprData::As(inner, _) => {
-                self.emit_cast(&expr.ty);
-                self.buffer.emit("(");
-                self.emit_expr(*inner, state);
-                self.buffer.emit(")");
+            CheckedExprData::As(mut inner, _) => {
+                inner.ty.fill_templates(&state.func.ty_args);
+                // enum tag cast
+                if inner.ty.is_user() {
+                    self.buffer.emit("(");
+                    self.emit_expr(*inner, state);
+                    self.buffer.emit(format!(").{UNION_TAG_NAME}"));
+                } else {
+                    self.emit_cast(&expr.ty);
+                    self.buffer.emit("(");
+                    self.emit_expr(*inner, state);
+                    self.buffer.emit(")");
+                }
             }
             CheckedExprData::Is(mut inner, patt) => {
                 inner.ty.fill_templates(&state.func.ty_args);

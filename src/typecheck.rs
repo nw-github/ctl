@@ -620,6 +620,7 @@ impl TypeChecker {
 
             let (impls, impl_blocks) = this.declare_impl_blocks(base.impls);
             let ret = Self::typehint_for_struct(&base.name, &base.type_params);
+            let mut enum_union = true;
             for variant in variants {
                 let mut params = params.clone();
                 match variant.data {
@@ -627,6 +628,7 @@ impl TypeChecker {
                         rvariants.insert(variant.name.data.clone(), (None, variant.name.span));
                     }
                     VariantData::StructLike(smembers) => {
+                        enum_union = false;
                         rvariants.insert(
                             variant.name.data.clone(),
                             (
@@ -662,6 +664,7 @@ impl TypeChecker {
                         }
                     }
                     VariantData::TupleLike(members) => {
+                        enum_union = false;
                         rvariants.insert(
                             variant.name.data.clone(),
                             (
@@ -717,6 +720,7 @@ impl TypeChecker {
                         .map(|tag| this.declare_type_hint(TypeHint::Regular(tag)))
                         .unwrap_or(Type::Uint(discriminant_bits(rvariants.len()))),
                     variants: rvariants,
+                    enum_union,
                 }),
                 impls,
                 attrs,
@@ -2957,6 +2961,14 @@ impl TypeChecker {
             if (!a.signed && b.signed) && a.bits < b.bits {
                 return;
             }
+        }
+
+        if let Some(u) = lhs
+            .as_user()
+            .and_then(|u| self.scopes.get(u.id).kind.as_union())
+            .filter(|u| u.enum_union)
+        {
+            return self.check_cast(&u.tag.clone(), rhs, throwing, span);
         }
 
         match (lhs, rhs) {
