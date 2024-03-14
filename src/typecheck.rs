@@ -5570,54 +5570,52 @@ impl TypeChecker {
         mut scope: ScopeId,
     ) -> ResolvedType {
         for (i, (name, args)) in data.iter().enumerate() {
-            let is_end = i + 1 == data.len();
-            if let Some(item) = self.scopes[scope].find_in_tns(&name.data) {
-                if !item.public && !self.can_access_privates(scope) {
-                    self.error(Error::private(&name.data, name.span))
-                }
+            let done = i + 1 == data.len();
+            let Some(item) = self.scopes[scope].find_in_tns(&name.data) else {
+                return self.error(Error::no_symbol(&name.data, name.span));
+            };
 
-                match *item {
-                    TypeItem::Type(id) => {
-                        self.check_hover(name.span, id.into());
-                        let ty = self.scopes.get(id);
-                        scope = ty.body_scope;
+            if !item.public && !self.can_access_privates(scope) {
+                self.error(Error::private(&name.data, name.span))
+            }
 
-                        let args = self.resolve_type_args(id, args, true, name.span);
-                        if is_end {
-                            if self.scopes.get(id).kind.is_extension() {
-                                return self.error(Error::expected_found(
-                                    "type",
-                                    &format!("extension '{}'", self.scopes.get(id).name.data),
-                                    name.span,
-                                ));
-                            }
+            match *item {
+                TypeItem::Type(id) => {
+                    self.check_hover(name.span, id.into());
+                    let ty = self.scopes.get(id);
+                    scope = ty.body_scope;
 
-                            return ResolvedType::UserType(GenericUserType::new(id, args));
-                        }
-
-                        ty_args.copy_args(&args);
-                        continue;
-                    }
-                    TypeItem::Module(id) => {
-                        self.check_hover(name.span, id.into());
-                        if is_end {
-                            return self.error(Error::no_symbol(&name.data, name.span));
-                        }
-
-                        if !args.is_empty() {
-                            return self.error(Error::new(
-                                "modules cannot be parameterized with type arguments",
+                    let args = self.resolve_type_args(id, args, true, name.span);
+                    if done {
+                        if self.scopes.get(id).kind.is_extension() {
+                            return self.error(Error::expected_found(
+                                "type",
+                                &format!("extension '{}'", self.scopes.get(id).name.data),
                                 name.span,
                             ));
                         }
 
-                        scope = id;
-                        continue;
+                        return ResolvedType::UserType(GenericUserType::new(id, args));
                     }
+
+                    ty_args.copy_args(&args);
+                }
+                TypeItem::Module(id) => {
+                    self.check_hover(name.span, id.into());
+                    if done {
+                        return self.error(Error::no_symbol(&name.data, name.span));
+                    }
+
+                    if !args.is_empty() {
+                        return self.error(Error::new(
+                            "modules cannot be parameterized with type arguments",
+                            name.span,
+                        ));
+                    }
+
+                    scope = id;
                 }
             }
-
-            return self.error(Error::no_symbol(&name.data, name.span));
         }
 
         unreachable!()
@@ -5721,7 +5719,10 @@ impl TypeChecker {
         mut ty_args: TypeArgs,
         mut scope: ScopeId,
     ) -> ResolvedValue {
-        let ((last_name, last_args), rest) = data.split_last().unwrap();
+        let Some(((last_name, last_args), rest)) = data.split_last() else {
+            // the only way for this to be empty is for a prior error to have occured
+            return ResolvedValue::Error;
+        };
         for (name, args) in rest.iter() {
             let Some(item) = self.scopes[scope].find_in_tns(&name.data) else {
                 return ResolvedValue::NotFound(Error::no_symbol(&name.data, name.span));
