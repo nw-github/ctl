@@ -8,10 +8,17 @@ use std::{
 use tempfile::NamedTempFile;
 
 fn test_diagnostics(diag: Diagnostics, expected: &[&str]) -> datatest_stable::Result<()> {
+    let mut errors: Vec<_> = diag.errors().iter().map(|e| e.message.clone()).collect();
     for line in expected {
-        if !diag.errors().iter().any(|err| err.message.contains(line)) {
-            return Err(format!("missing error output: '{line}'").into());
+        if let Some(pos) = errors.iter().position(|err| err.contains(line)) {
+            errors.swap_remove(pos);
+        } else {
+            Err(format!("missing error output: '{line}'"))?;
         }
+    }
+
+    if !errors.is_empty() {
+        Err(format!("unexpected errors: '{}'", errors.join("\n")))?;
     }
 
     Ok(())
@@ -23,13 +30,12 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
     let mut lexer = Lexer::new(&file, FileId::default());
 
     let mut errors = vec![];
-    let mut expected = String::new();
+    let mut expected = vec![];
     while let Token::LineComment(data) = lexer.next(&mut diag).data {
         let data = data.trim();
         let output = data.trim_start_matches("Output:");
         if output != data {
-            expected.push_str(output.trim());
-            expected.push('\n');
+            expected.push(output.trim());
         }
 
         let output = data.trim_start_matches("Error:");
@@ -52,7 +58,7 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
             test_diagnostics(diag, &errors)?;
 
             let tmpfile = NamedTempFile::new()?.into_temp_path();
-            let output = {
+            let stdout = {
                 let mut cc = Command::new("clang")
                     .arg("-o")
                     .arg(&tmpfile)
@@ -95,16 +101,24 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
 
                 String::from_utf8(result.stdout).context("parsing output of test program")?
             };
-            let output = output.trim();
-            let expected = expected.trim();
-            if !output.contains(expected) {
+            let output: Vec<_> = stdout.trim().split('\n').map(|s| s.trim()).collect();
+            if output != expected {
                 Err(format!(
-                    "output didn't match! expected '{expected}', got '{output}'"
+                    "expected '{}', got '{}'",
+                    expected.join("\n"),
+                    output.join("\n"),
                 ))?;
             }
             Ok(())
         }
-        Err(diag) => test_diagnostics(diag, &errors),
+        Err(diag) => {
+            test_diagnostics(diag, &errors)?;
+            if !expected.is_empty() {
+                Err(format!("expected '{}', but build failed", expected.join("\n")))?;
+            }
+
+            Ok(())
+        }
     }
 }
 
