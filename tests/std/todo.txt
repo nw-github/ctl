@@ -1,0 +1,1 @@
+When a builtin testing framework is implemented, the tests in this directory should be integrated into that system
