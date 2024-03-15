@@ -651,6 +651,10 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes) -> String {
             res += "kw ";
         }
 
+        if param.label == THIS_PARAM && param.ty.is_mut_ptr() {
+            res += "mut ";
+        }
+
         if param
             .label
             .chars()
