@@ -226,7 +226,14 @@ impl CheckedExpr {
             }
             CheckedExprData::Var(id) => scopes.get(*id).mutable,
             CheckedExprData::Member { source, .. } => source.is_assignable(scopes),
-            CheckedExprData::Subscript { callee, .. } => callee.is_assignable(scopes),
+            CheckedExprData::Subscript { callee, .. } => match &callee.data {
+                CheckedExprData::Var(id) => {
+                    matches!(callee.ty, Type::MutPtr(_) | Type::RawPtr(_))
+                        || scopes.get(*id).mutable
+                }
+                CheckedExprData::Member { source, .. } => source.is_assignable(scopes),
+                _ => true,
+            },
             _ => false,
         }
     }
@@ -241,7 +248,9 @@ impl CheckedExpr {
                     || matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
             }
             CheckedExprData::Var(id) => scopes.get(*id).mutable,
-            CheckedExprData::Member { source, .. } => source.can_addrmut(scopes),
+            CheckedExprData::Member { source, .. } => {
+                matches!(source.ty, Type::MutPtr(_)) || source.can_addrmut(scopes)
+            }
             CheckedExprData::Subscript { callee, .. } => callee.can_addrmut(scopes),
             _ => true,
         }
