@@ -27,6 +27,25 @@ impl TypeArgs {
     pub fn copy_args_with(&mut self, rhs: &TypeArgs, map: &TypeArgs) {
         self.extend(rhs.iter().map(|(x, y)| (*x, y.with_templates(map))));
     }
+
+    pub fn in_order<T: ItemId>(
+        scopes: &Scopes,
+        id: T,
+        types: impl IntoIterator<Item = Type>,
+    ) -> Self
+    where
+        T::Value: HasTypeParams,
+    {
+        TypeArgs(
+            scopes
+                .get(id)
+                .get_type_params()
+                .iter()
+                .copied()
+                .zip(types)
+                .collect(),
+        )
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, Constructor)]
@@ -40,18 +59,7 @@ where
     T::Value: HasTypeParams,
 {
     pub fn from_type_args(scopes: &Scopes, id: T, types: impl IntoIterator<Item = Type>) -> Self {
-        Self::new(
-            id,
-            TypeArgs(
-                scopes
-                    .get(id)
-                    .get_type_params()
-                    .iter()
-                    .copied()
-                    .zip(types)
-                    .collect(),
-            ),
-        )
+        Self::new(id, TypeArgs::in_order(scopes, id, types))
     }
 
     pub fn from_type_params(scopes: &Scopes, id: T) -> Self {

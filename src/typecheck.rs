@@ -3769,15 +3769,12 @@ impl TypeChecker {
     }
 
     fn resolve_impls(&mut self, id: UserTypeId) {
-        for i in 0..self.scopes.get(id).get_type_params().len() {
-            self.resolve_impls(self.scopes.get(id).get_type_params()[i]);
+        for i in 0..self.scopes.get(id).type_params.len() {
+            self.resolve_impls(self.scopes.get(id).type_params[i]);
         }
 
         for i in 0..self.scopes.get(id).impls.len() {
             resolve_impl!(self, self.scopes.get_mut(id).impls[i]);
-            // if let Some(id) = self.scopes.get_mut(id).impls[i].as_checked().map(|tr| tr.id) {
-            //     self.resolve_impls(id);
-            // }
         }
     }
 
@@ -3878,7 +3875,7 @@ impl TypeChecker {
         false
     }
 
-    pub(crate) fn extensions_in_scope_for(
+    fn extensions_in_scope_for(
         &mut self,
         ty: &Type,
         scope: ScopeId,

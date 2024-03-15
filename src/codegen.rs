@@ -34,11 +34,7 @@ struct State {
 }
 
 impl State {
-    pub fn new(func: GenericFunc) -> Self {
-        Self::new_with_caller(func, ScopeId::ROOT)
-    }
-
-    pub fn new_with_caller(func: GenericFunc, caller: ScopeId) -> Self {
+    pub fn new(func: GenericFunc, caller: ScopeId) -> Self {
         Self {
             func,
             caller,
@@ -48,12 +44,17 @@ impl State {
         }
     }
 
-    pub fn with_inst_and_scope(mut func: GenericFunc, inst: &Type, caller: ScopeId) -> Self {
+    pub fn in_body_scope(func: GenericFunc, scopes: &Scopes) -> Self {
+        let scope = scopes.get(func.id).body_scope;
+        Self::new(func, scope)
+    }
+
+    pub fn with_inst(mut func: GenericFunc, inst: &Type, caller: ScopeId) -> Self {
         if let Some(ut) = inst.as_user() {
             func.ty_args.copy_args(&ut.ty_args);
         }
 
-        Self::new_with_caller(func, caller)
+        Self::new(func, caller)
     }
 
     pub fn tmpvar(&mut self) -> String {
@@ -898,7 +899,7 @@ impl<'a> Codegen<'a> {
         let exports = scopes
             .functions()
             .filter(|(_, f)| f.linkage == Linkage::Export)
-            .map(|(id, _)| State::new(GenericFunc::from_id(scopes, id)));
+            .map(|(id, _)| State::in_body_scope(GenericFunc::from_id(scopes, id), scopes));
         let (funcs, main) = if flags.lib {
             (exports.collect(), None)
         } else {
@@ -906,7 +907,7 @@ impl<'a> Codegen<'a> {
                 diag.error(Error::new("no main function found", Span::default()));
                 return Err(());
             };
-            let main = State::new(GenericFunc::from_id(scopes, *main));
+            let main = State::in_body_scope(GenericFunc::from_id(scopes, *main), scopes);
             (
                 exports.chain(std::iter::once(main.clone())).collect(),
                 Some(main),
@@ -931,8 +932,6 @@ impl<'a> Codegen<'a> {
         let main = main.map(|mut main| this.gen_c_main(&mut main));
         let mut static_defs = Buffer::default();
         let mut static_init = Buffer::default();
-        let static_state = &mut State::new(GenericFunc::from_id(this.scopes, FunctionId::RESERVED));
-
         let mut prototypes = Buffer::default();
         let mut emitted = HashSet::new();
         let mut emitted_statics = HashSet::new();
@@ -951,8 +950,12 @@ impl<'a> Codegen<'a> {
                 .collect::<Vec<_>>();
             emitted_statics.extend(this.statics.drain());
             for id in sdiff {
+                let state = &mut State::new(
+                    GenericFunc::from_id(this.scopes, FunctionId::RESERVED),
+                    this.scopes.get(id).scope,
+                );
                 usebuf!(this, &mut static_defs, {
-                    this.emit_var_decl(id, static_state);
+                    this.emit_var_decl(id, state);
                     this.buffer.emit(";");
                 });
 
@@ -960,12 +963,9 @@ impl<'a> Codegen<'a> {
                     this,
                     &mut static_init,
                     hoist_point!(this, {
-                        this.emit_var_name(id, static_state);
+                        this.emit_var_name(id, state);
                         this.buffer.emit("=");
-                        this.emit_expr_inner(
-                            this.scopes.get(id).value.clone().unwrap(),
-                            static_state,
-                        );
+                        this.emit_expr_inner(this.scopes.get(id).value.clone().unwrap(), state);
                         this.buffer.emit(";");
                     })
                 );
@@ -1050,12 +1050,12 @@ impl<'a> Codegen<'a> {
                         tr,
                         &self.scopes.get(f.id).name.data,
                         vtable.scope,
-                        |id| GenericFunc::new(id, func.ty_args),
+                        |_, _| Default::default(),
                     );
                     self.buffer
                         .emit_fn_name(self.scopes, &func, self.flags.minify);
                     self.buffer.emit(",");
-                    self.funcs.insert(State::new_with_caller(func, vtable.scope));
+                    self.funcs.insert(State::new(func, vtable.scope));
                 }
             }
             self.buffer.emit("};");
@@ -1075,7 +1075,7 @@ impl<'a> Codegen<'a> {
             .cloned()
             .filter(|_| self.scopes.get(main.func.id).params.len() == 1)
         {
-            let state = State::new(GenericFunc::from_id(self.scopes, id));
+            let state = State::in_body_scope(GenericFunc::from_id(self.scopes, id), self.scopes);
             if returns {
                 self.buffer.emit("return ");
             }
@@ -1257,7 +1257,7 @@ impl<'a> Codegen<'a> {
                     return self.emit_intrinsic(name, expr.ty, &func, args, state);
                 }
 
-                let next_state = State::new_with_caller(func, scope);
+                let next_state = State::new(func, scope);
                 self.buffer
                     .emit_fn_name(self.scopes, &next_state.func, self.flags.minify);
                 self.buffer.emit("(");
@@ -1295,17 +1295,11 @@ impl<'a> Codegen<'a> {
                         trait_id,
                         &self.scopes.get(func.id).name.data,
                         state.caller,
-                        |id| {
-                            GenericFunc::new(
+                        |tc, id| {
+                            TypeArgs::in_order(
+                                tc.scopes(),
                                 id,
-                                TypeArgs(
-                                    func.ty_args
-                                        .0
-                                        .into_iter()
-                                        .zip(self.scopes.get(id).type_params.iter())
-                                        .map(|((_, ty), ut)| (*ut, ty))
-                                        .collect(),
-                                ),
+                                func.ty_args.0.into_iter().map(|kv| kv.1),
                             )
                         },
                     );
@@ -1316,7 +1310,7 @@ impl<'a> Codegen<'a> {
                     return self.emit_intrinsic(name, expr.ty, &func, args, state);
                 }
 
-                let next_state = State::with_inst_and_scope(func, &inst, scope);
+                let next_state = State::with_inst(func, &inst, scope);
                 self.buffer
                     .emit_fn_name(self.scopes, &next_state.func, self.flags.minify);
                 self.buffer.emit("(");
@@ -1436,7 +1430,7 @@ impl<'a> Codegen<'a> {
 
                 tmpbuf_emit!(self, state, |tmp| {
                     self.emit_with_capacity(&expr.ty, &tmp, &ut, exprs.len());
-                    let insert = State::with_inst_and_scope(
+                    let insert = State::with_inst(
                         GenericFunc::from_id(
                             self.scopes,
                             self.scopes
@@ -1465,7 +1459,7 @@ impl<'a> Codegen<'a> {
                 }
 
                 tmpbuf_emit!(self, state, |tmp| {
-                    let insert = State::with_inst_and_scope(
+                    let insert = State::with_inst(
                         GenericFunc::from_id(
                             self.scopes,
                             self.scopes
@@ -1529,7 +1523,7 @@ impl<'a> Codegen<'a> {
             }
             CheckedExprData::Void => self.buffer.emit(VOID_INSTANCE),
             CheckedExprData::Func(func, scope) => {
-                let state = State::new_with_caller(func, scope);
+                let state = State::new(func, scope);
                 self.buffer
                     .emit_fn_name(self.scopes, &state.func, self.flags.minify);
                 self.funcs.insert(state);
@@ -1722,10 +1716,10 @@ impl<'a> Codegen<'a> {
                         self.scopes.lang_traits.get("iter").copied().unwrap(),
                         "next",
                         body.scope,
-                        |id| GenericFunc::new(id, Default::default()),
+                        |_, _| Default::default(),
                     );
 
-                    let next_state = State::with_inst_and_scope(next, &iter.ty, body.scope);
+                    let next_state = State::with_inst(next, &iter.ty, body.scope);
                     let mut next_ty = self.scopes.get(next_state.func.id).ret.clone();
                     if let Some(ut) = iter.ty.as_user() {
                         next_ty.fill_templates(&ut.ty_args);
@@ -1915,10 +1909,16 @@ impl<'a> Codegen<'a> {
                     let formatter = self.emit_tmpvar(*formatter, state);
                     for mut expr in parts {
                         expr.ty.fill_templates(&state.func.ty_args);
-                        let format_state = State::with_inst_and_scope(
-                            self.find_implementation(&expr.ty, format_id, "format", scope, |id| {
-                                GenericFunc::from_type_args(self.scopes, id, [formatter_ty.clone()])
-                            }),
+                        let format_state = State::with_inst(
+                            self.find_implementation(
+                                &expr.ty,
+                                format_id,
+                                "format",
+                                scope,
+                                |tc, id| {
+                                    TypeArgs::in_order(tc.scopes(), id, [formatter_ty.clone()])
+                                },
+                            ),
                             &expr.ty,
                             scope,
                         );
@@ -1936,10 +1936,14 @@ impl<'a> Codegen<'a> {
                     formatter
                 });
                 let formatter_id = self.scopes.lang_traits.get("formatter").copied().unwrap();
-                let finish_state = State::with_inst_and_scope(
-                    self.find_implementation(&formatter_ty, formatter_id, "written", scope, |id| {
-                        GenericFunc::new(id, Default::default())
-                    }),
+                let finish_state = State::with_inst(
+                    self.find_implementation(
+                        &formatter_ty,
+                        formatter_id,
+                        "written",
+                        scope,
+                        |_, _| Default::default(),
+                    ),
                     &formatter_ty,
                     scope,
                 );
@@ -2284,13 +2288,19 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_new(&mut self, ut: &GenericUserType) {
-        let new_state = State::new(GenericFunc::new(
-            self.scopes
-                .get(ut.id)
-                .find_associated_fn(self.scopes, "new")
-                .unwrap(),
-            ut.ty_args.clone(),
-        ));
+        // FIXME: this should technically use the scope that is creating the literal, but since
+        // none of the constructors for literals use trait functions in any way, it doesn't matter
+        // right now
+        let new_state = State::in_body_scope(
+            GenericFunc::new(
+                self.scopes
+                    .get(ut.id)
+                    .find_associated_fn(self.scopes, "new")
+                    .unwrap(),
+                ut.ty_args.clone(),
+            ),
+            self.scopes,
+        );
 
         self.buffer
             .emit_fn_name(self.scopes, &new_state.func, self.flags.minify);
@@ -2307,13 +2317,19 @@ impl<'a> Codegen<'a> {
     ) {
         self.emit_type(ty);
         self.buffer.emit(format!(" {tmp}="));
-        let state = State::new(GenericFunc::new(
-            self.scopes
-                .get(ut.id)
-                .find_associated_fn(self.scopes, "with_capacity")
-                .unwrap(),
-            ut.ty_args.clone(),
-        ));
+        // FIXME: this should technically use the scope that is creating the literal, but since
+        // none of the constructors for literals use trait functions in any way, it doesn't matter
+        // right now
+        let state = State::in_body_scope(
+            GenericFunc::new(
+                self.scopes
+                    .get(ut.id)
+                    .find_associated_fn(self.scopes, "with_capacity")
+                    .unwrap(),
+                ut.ty_args.clone(),
+            ),
+            self.scopes,
+        );
 
         self.buffer
             .emit_fn_name(self.scopes, &state.func, self.flags.minify);
@@ -2354,14 +2370,17 @@ impl<'a> Codegen<'a> {
                 ));
             }
             "panic" => {
-                let panic = State::new(GenericFunc::from_id(
+                let panic = State::in_body_scope(
+                    GenericFunc::from_id(
+                        self.scopes,
+                        self.scopes
+                            .lang_fns
+                            .get("panic_handler")
+                            .cloned()
+                            .expect("a panic handler should exist"),
+                    ),
                     self.scopes,
-                    self.scopes
-                        .lang_fns
-                        .get("panic_handler")
-                        .cloned()
-                        .expect("a panic handler should exist"),
-                ));
+                );
 
                 self.buffer
                     .emit_fn_name(self.scopes, &panic.func, self.flags.minify);
@@ -2970,63 +2989,30 @@ impl<'a> Codegen<'a> {
         trait_id: TraitId,
         method: &str,
         scope: ScopeId,
-        finish: impl FnOnce(FunctionId) -> GenericFunc,
+        finish: impl FnOnce(&mut TypeChecker, FunctionId) -> TypeArgs + Clone,
     ) -> GenericFunc {
-        // FIXME: in the very specific case where two extensions exist for the same type that
-        // implement the same trait, and they are both used to call the trait in two different
-        // places, this function will pick the wrong one for one of them. either fix this lookup or
-        // reject duplicate trait implementation in extensions
-        let search = |impls: &[TraitImpl]| {
-            impls
-                .iter()
-                .flat_map(|imp| imp.as_checked())
-                .find_map(|(imp, scope)| scope.filter(|_| imp.id == trait_id))
-                .and_then(|id| self.scopes[id].find_in_vns(method))
-                .and_then(|f| f.as_fn().copied())
+        let Some(m) = self
+            .tc
+            .get_member_fn_ex(this, Some(trait_id), method, scope, finish)
+        else {
+            panic!(
+                "searching from scope: '{}', cannot find implementation for method '{}::{method}' for type '{}'",
+                self.scopes.full_name(scope, ""),
+                self.scopes.get(trait_id).name.data,
+                this.name(self.scopes)
+            )
         };
 
-        if let Some(id) = this
-            .as_user()
-            .and_then(|ut| search(&self.scopes.get(ut.id).impls))
-        {
-            return finish(id);
-        } else if let Some((id, ext)) = self
-            .tc
-            .extensions_in_scope_for(this, scope)
-            .iter()
-            .find_map(|ext| search(&self.scopes.get(ext.id).impls).zip(Some(ext)))
-        {
-            let mut f = finish(id);
-            f.ty_args.copy_args(&ext.ty_args);
-            return f;
+        if m.tr.is_some_and(|_| !self.scopes.get(m.func.id).has_body) {
+            panic!(
+                "searching from scope: '{}', get_member_fn_ex picked invalid function for implementation for method '{}::{method}' for type '{}'",
+                self.scopes.full_name(scope, ""),
+                self.scopes.get(trait_id).name.data,
+                this.name(self.scopes)
+            )
         }
 
-        let default = self
-            .scopes
-            .get(trait_id)
-            .fns
-            .iter()
-            .find(|f| self.scopes.get(f.id).name.data == method)
-            .filter(|f| self.scopes.get(f.id).body.is_some())
-            .unwrap_or_else(|| {
-                panic!(
-                    "searching from scope: '{}', cannot find implementation for method '{}::{method}' for type '{}'",
-                    self.scopes.full_name(scope, ""),
-                    self.scopes.get(trait_id).name.data,
-                    this.name(self.scopes)
-                )
-            });
-        let mut f = finish(default.id);
-        f.ty_args.insert(
-            *self
-                .scopes
-                .get(trait_id)
-                .kind
-                .as_trait()
-                .expect("TraitId passed to find_implementation was not actually a trait"),
-            this.clone(),
-        );
-        f
+        m.func
     }
 
     fn deref(src: &str, ty: &Type) -> String {
