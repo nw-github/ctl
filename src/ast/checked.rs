@@ -218,35 +218,30 @@ pub struct CheckedExpr {
 impl CheckedExpr {
     pub fn is_assignable(&self, scopes: &Scopes) -> bool {
         match &self.data {
+            CheckedExprData::AutoDeref(expr, _) => {
+                matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
+            }
             CheckedExprData::Unary { op, expr } => {
                 matches!(op, UnaryOp::Deref) && matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
             }
-            CheckedExprData::Var(_) | CheckedExprData::Member { .. } => self.can_addrmut(scopes),
-            CheckedExprData::Subscript { callee, .. } => match &callee.data {
-                CheckedExprData::Var(id) => {
-                    matches!(callee.ty, Type::MutPtr(_) | Type::RawPtr(_))
-                        || scopes.get(*id).mutable
-                }
-                CheckedExprData::Member { source, .. } => source.is_assignable(scopes),
-                _ => true,
-            },
+            CheckedExprData::Var(id) => scopes.get(*id).mutable,
+            CheckedExprData::Member { source, .. } => source.is_assignable(scopes),
+            CheckedExprData::Subscript { callee, .. } => callee.is_assignable(scopes),
             _ => false,
         }
     }
 
     pub fn can_addrmut(&self, scopes: &Scopes) -> bool {
         match &self.data {
+            CheckedExprData::AutoDeref(expr, _) => {
+                matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
+            }
             CheckedExprData::Unary { op, expr } => {
                 !matches!(op, UnaryOp::Deref)
                     || matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
             }
-            CheckedExprData::AutoDeref(expr, _) => {
-                matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
-            }
             CheckedExprData::Var(id) => scopes.get(*id).mutable,
-            CheckedExprData::Member { source, .. } => {
-                matches!(source.ty, Type::MutPtr(_)) || source.can_addrmut(scopes)
-            }
+            CheckedExprData::Member { source, .. } => source.can_addrmut(scopes),
             CheckedExprData::Subscript { callee, .. } => callee.can_addrmut(scopes),
             _ => true,
         }
