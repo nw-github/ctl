@@ -10,22 +10,16 @@ struct StringFormatter {
 
     impl Write {
         fn write(mut this, data: [u8..]): ?uint {
-            // TODO: utf8 validation
+            this.write_str(str::from_utf8(data)?)
+        }
+
+        fn write_str(mut this, data: str): ?uint {
             if data.is_empty() {
-                return null;
+                return 0;
             }
 
-            let len = data.len();
-            let new_len = this.buffer.len() + len;
-            this.buffer.reserve(new_len);
             unsafe {
-                core::mem::copy(
-                    dst: this.buffer.as_span().subspan(this.buffer.len()..).as_raw(),
-                    src: data.as_raw(),
-                    num: len,
-                );
-                this.buffer.set_len(new_len);
-                len
+                this.write_unchecked(data.as_bytes())
             }
         }
     }
@@ -33,6 +27,21 @@ struct StringFormatter {
     impl Formatter {
         fn written(this): str {
             unsafe str::from_utf8_unchecked(this.buffer.as_span())
+        }
+    }
+
+    unsafe fn write_unchecked(mut this, data: [u8..]): ?uint {
+        let len = data.len();
+        let new_len = this.buffer.len() + len;
+        this.buffer.reserve(new_len);
+        unsafe {
+            core::mem::copy(
+                dst: this.buffer.as_raw() + this.buffer.len(),
+                src: data.as_raw(),
+                num: len,
+            );
+            this.buffer.set_len(new_len);
+            len
         }
     }
 }

@@ -7,7 +7,7 @@ pub extension StringExt for str {
         for i in 0u..n {
             unsafe std::mem::copy(
                 dst: buf.as_raw() + num * i,
-                src: this.as_ptr() as *raw u8,
+                src: this.as_raw(),
                 num:,
             );
         }
@@ -20,14 +20,26 @@ pub extension StringExt for str {
 
 pub extension<T: Numeric + Integral + Signed> StdSignedExt for T {
     pub fn to_str_radix(this, radix: u32): str {
+        if radix < 2 || radix > 36 {
+            core::panic("to_str_radix(): invalid radix");
+        }
+
         mut buffer = @[b'0'; core::mem::size_of::<i32>() * 8 + 1];
-        this.to_str_radix_ex(radix, buffer.as_span_mut())
+        unsafe {
+            this.to_str_radix_unchecked(radix, buffer.as_span_mut())
+        }
     }
 }
 
 pub extension<T: Numeric + Integral + Unsigned> StdUnsignedExt for T {
     pub fn to_str_radix(this, radix: u32): str {
+        if radix < 2 || radix > 36 {
+            core::panic("to_str_radix(): invalid radix");
+        }
+
         mut buffer = @[b'0'; core::mem::size_of::<i32>() * 8];
-        this.to_str_radix_ex(radix, buffer.as_span_mut())
+        unsafe {
+            this.to_str_radix_unchecked(radix, buffer.as_span_mut())
+        }
     }
 }

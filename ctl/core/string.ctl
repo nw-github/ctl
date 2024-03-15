@@ -5,7 +5,6 @@ use core::ops::Eq;
 use core::range::RangeBounds;
 use core::iter::Iterator;
 use core::panic;
-use core::unreachable;
 use core::fmt::*;
 use core::intrin;
 
@@ -13,9 +12,12 @@ use core::intrin;
 pub struct str {
     span: [u8..],
 
-    pub fn from_c_str(ptr: *c_char): str {
-        // TODO: validate UTF-8
-        str(span: unsafe Span::new(ptr as *raw u8, intrin::strlen(ptr)))
+    pub fn from_utf8(span: [u8..]): ?str {
+        // TODO: actually validate
+
+        unsafe {
+            str::from_utf8_unchecked(span)
+        }
     }
 
     pub unsafe fn from_utf8_unchecked(span: [u8..]): str {
@@ -30,12 +32,8 @@ pub struct str {
         this.span.is_empty()
     }
 
-    pub fn as_ptr(this): *u8 {
-        unsafe this.span.as_raw() as *u8
-    }
-
-    pub fn as_c_str(this): *c_char {
-        unsafe this.span.as_raw() as *c_char
+    pub fn as_raw(this): *raw u8 {
+        this.span.as_raw()
     }
 
     pub fn as_bytes(this): [u8..] {
@@ -75,7 +73,7 @@ pub struct str {
 
     impl Format {
         fn format<F: Formatter>(this, f: *mut F) {
-            f.write(this.as_bytes());
+            f.write_str(*this);
         }
     }
 }

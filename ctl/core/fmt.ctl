@@ -1,5 +1,9 @@
 pub trait Write {
     fn write(mut this, data: [u8..]): ?uint;
+
+    fn write_str(mut this, data: core::string::str): ?uint {
+        this.write(data.as_bytes())
+    }
 }
 
 #(lang(formatter))

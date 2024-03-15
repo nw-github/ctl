@@ -3,8 +3,15 @@ import fn abort(): never;
 #(lang(convert_argv))
 fn convert_argv(argc: c_int, argv: **c_char): [str..] {
     mut result: [str] = std::vec::Vec::with_capacity(argc as! uint);
-    for arg in (unsafe std::span::Span::new(ptr: argv as *raw *c_char, len: argc as! uint)).iter() {
-        result.push(str::from_c_str(*arg));
+    unsafe {
+        for arg in std::span::Span::new(ptr: argv as *raw *c_char, len: argc as! uint).iter() {
+            result.push(
+                str::from_utf8_unchecked(core::span::Span::new(
+                    *arg as *raw u8,
+                    core::intrin::strlen(*arg)
+                ))
+            );
+        }
     }
     result.as_span()
 }
