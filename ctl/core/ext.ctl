@@ -8,7 +8,7 @@ use core::intrin;
 
 static DIGITS: *[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-extension<T> _ for T {
+extension _<T> for T {
     pub fn as_byte_span(this): [u8..] {
         unsafe Span::new(this as *raw u8, core::mem::size_of::<T>())
     }
@@ -18,7 +18,7 @@ extension<T> _ for T {
     }
 }
 
-pub extension<T: Numeric> NumericExt for T {
+pub extension NumericExt<T: Numeric> for T {
     impl Hash {
         fn hash<H: Hasher>(this, h: *mut H) {
             h.hash(this.as_byte_span());
@@ -94,7 +94,7 @@ pub extension<T: Numeric> NumericExt for T {
     }
 }
 
-pub extension<T: Numeric + Integral> IntegralExt for T {
+pub extension IntegralExt<T: Numeric + Integral> for T {
     impl And<T, T> {
         #(intrinsic(binary_op))
         fn and(this, rhs: T): T { this & rhs }
@@ -154,7 +154,7 @@ pub extension<T: Numeric + Integral> IntegralExt for T {
     pub fn wrapping_div(this, rhs: T): T { *this / rhs }
 }
 
-pub extension<T: Numeric + Signed> SignedExt for T {
+pub extension SignedExt<T: Numeric + Signed> for T {
     pub fn abs(this): T {
         intrin::numeric_abs(*this)
     }
@@ -188,7 +188,7 @@ pub extension<T: Numeric + Signed> SignedExt for T {
     }
 }
 
-pub extension<T: Numeric + Unsigned> UnsignedExt for T {
+pub extension UnsignedExt<T: Numeric + Unsigned> for T {
     pub unsafe fn to_str_radix_unchecked(this, radix: u32, buf: [mut u8..]): str {
         let radix: T = intrin::numeric_cast(radix);
         mut pos = buf.len();

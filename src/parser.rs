@@ -1666,8 +1666,8 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn extension(&mut self, public: bool, span: Span) -> StmtData {
-        let type_params = self.type_params();
         let name = self.expect_id_l("expected name");
+        let type_params = self.type_params();
 
         self.expect_kind(Token::For);
         let ty = self.type_hint();

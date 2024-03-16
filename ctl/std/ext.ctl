@@ -18,7 +18,7 @@ pub extension StringExt for str {
     }
 }
 
-pub extension<T: Numeric + Integral + Signed> StdSignedExt for T {
+pub extension StdSignedExt<T: Numeric + Signed> for T {
     pub fn to_str_radix(this, radix: u32): str {
         if radix < 2 || radix > 36 {
             core::panic("to_str_radix(): invalid radix");
@@ -31,7 +31,7 @@ pub extension<T: Numeric + Integral + Signed> StdSignedExt for T {
     }
 }
 
-pub extension<T: Numeric + Integral + Unsigned> StdUnsignedExt for T {
+pub extension StdUnsignedExt<T: Numeric + Unsigned> for T {
     pub fn to_str_radix(this, radix: u32): str {
         if radix < 2 || radix > 36 {
             core::panic("to_str_radix(): invalid radix");

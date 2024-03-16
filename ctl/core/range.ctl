@@ -94,7 +94,7 @@ pub struct Range<T: Numeric + Integral> {
     }
 }
 
-// extension<T: Numeric> RangeExt for Range<T> {
+// extension RangeExt<T: Numeric> for Range<T> {
 //     
 // }
 
