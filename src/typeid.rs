@@ -378,6 +378,7 @@ pub enum Type {
     F64,
     Bool,
     Char,
+    Func(Box<GenericFunc>),
     FnPtr(Box<FnPtr>),
     User(Box<GenericUserType>),
     Ptr(Box<Type>),
@@ -600,6 +601,18 @@ impl Type {
                     result.push_str(&param.name(scopes));
                 }
                 format!("{result}) => {}", f.ret.name(scopes))
+            }
+            Type::Func(func) => {
+                let f = scopes.get(func.id);
+                let mut result = format!("fn {}(", f.name.data);
+                for (i, param) in f.params.iter().enumerate() {
+                    if i > 0 {
+                        result.push_str(", ");
+                    }
+
+                    result.push_str(&param.ty.with_templates(&func.ty_args).name(scopes));
+                }
+                format!("{result}): {}", f.ret.with_templates(&func.ty_args).name(scopes))
             }
             Type::User(ty) => ty.name(scopes),
             Type::Array(inner) => format!("[{}; {}]", inner.0.name(scopes), inner.1),

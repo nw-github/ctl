@@ -4,7 +4,8 @@ use num_bigint::BigInt;
 
 use crate::{
     ast::{BinaryOp, UnaryOp},
-    sym::{ScopeId, ScopeKind, Scopes, TraitId, VariableId},
+    sym::{ScopeId, ScopeKind, Scopes, VariableId},
+    typecheck::MemberFn,
     typeid::{GenericFunc, Type},
 };
 
@@ -115,10 +116,8 @@ pub enum CheckedExprData {
         scope: ScopeId,
     },
     MemberCall {
-        func: GenericFunc,
+        mfn: MemberFn,
         args: IndexMap<String, CheckedExpr>,
-        inst: Type,
-        trait_id: Option<TraitId>,
         scope: ScopeId,
     },
     CallFnPtr {
