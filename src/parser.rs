@@ -485,30 +485,6 @@ impl<'a, 'b> Parser<'a, 'b> {
                     },
                 )
             }
-            Token::LogicalAnd => {
-                let op = if self.next_if_kind(Token::Mut).is_some() {
-                    UnaryOp::AddrMut
-                } else if self.next_if_kind(Token::Raw).is_some() {
-                    UnaryOp::AddrRaw
-                } else {
-                    UnaryOp::Addr
-                };
-
-                let expr = self.precedence(Precedence::Prefix, ctx);
-                Expr::new(
-                    span.extended_to(expr.span),
-                    ExprData::Unary {
-                        op: UnaryOp::Addr,
-                        expr: Box::new(Located::new(
-                            span,
-                            ExprData::Unary {
-                                op,
-                                expr: expr.into(),
-                            },
-                        )),
-                    },
-                )
-            }
             // complex expressions
             Token::LParen => {
                 let expr = self.expression();
@@ -630,14 +606,13 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
             Token::Move => {
                 let token = self.next();
-                if !matches!(token.data, Token::Or | Token::LogicalOr) {
+                if !matches!(token.data, Token::BitOr) {
                     self.error_no_sync(Error::new("expected '|'", token.span));
                 }
 
                 self.lambda_expr(token, true)
             }
-            Token::Or => self.lambda_expr(Located::new(span, data), false),
-            Token::LogicalOr => self.lambda_expr(Located::new(span, data), false),
+            Token::BitOr => self.lambda_expr(Located::new(span, data), false),
             Token::Return => {
                 let (span, expr) = if !self.is_range_end(EvalContext::Normal) {
                     let expr = self.expression();
@@ -681,9 +656,9 @@ impl<'a, 'b> Parser<'a, 'b> {
                     },
                 )
             }
-            Token::LogicalOr
-            | Token::LogicalAnd
-            | Token::Or
+            Token::Or
+            | Token::And
+            | Token::BitOr
             | Token::Ampersand
             | Token::Caret
             | Token::Shl
@@ -717,8 +692,8 @@ impl<'a, 'b> Parser<'a, 'b> {
             | Token::MulAssign
             | Token::DivAssign
             | Token::RemAssign
-            | Token::AndAssign
-            | Token::OrAssign
+            | Token::BitAndAssign
+            | Token::BitOrAssign
             | Token::XorAssign
             | Token::ShlAssign
             | Token::ShrAssign
@@ -994,8 +969,8 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn lambda_expr(&mut self, head: Located<Token>, moves: bool) -> Expr {
-        let params = if head.data == Token::Or {
-            self.csv(Vec::new(), Token::Or, head.span, |this| {
+        let params = if head.data == Token::BitOr {
+            self.csv(Vec::new(), Token::BitOr, head.span, |this| {
                 (
                     this.expect_id_l("expected parameter name"),
                     this.next_if_kind(Token::Colon).map(|_| this.type_hint()),
@@ -1961,8 +1936,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 Token::Asterisk => Right(OperatorFnType::Mul), // binary *
                 Token::Div => Right(OperatorFnType::Div),
                 Token::Rem => Right(OperatorFnType::Rem),
-                Token::Ampersand => Right(OperatorFnType::And), // bitwise &
-                Token::Or => Right(OperatorFnType::Or),
+                Token::Ampersand => Right(OperatorFnType::BitAnd), // bitwise &
+                Token::BitOr => Right(OperatorFnType::BitOr),
                 Token::Caret => Right(OperatorFnType::Xor),
                 Token::Shl => Right(OperatorFnType::Shl),
                 Token::Shr => Right(OperatorFnType::Shr),

@@ -600,9 +600,19 @@
           "match": "\\bkw\\b"
         },
         {
+          "comment": "logical and",
+          "name": "keyword.other.and.ctl",
+          "match": "\\band\\b"
+        },
+        {
+          "comment": "logical or",
+          "name": "keyword.other.and.ctl",
+          "match": "\\bor\\b"
+        },
+        {
           "comment": "logical operators",
           "name": "keyword.operator.logical.ctl",
-          "match": "(\\^|\\||\\|\\||&&|<<|>>|!)(?!=)"
+          "match": "(\\^|\\||<<|>>|!)(?!=)"
         },
         {
           "comment": "logical AND, borrow references",

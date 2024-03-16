@@ -435,7 +435,7 @@ impl Type {
             Assign => true,
             Add | AddAssign | Sub | SubAssign => self.is_numeric() || self.is_raw_ptr(),
             Mul | Div | Rem | MulAssign | DivAssign | RemAssign => self.is_numeric(),
-            And | Xor | Or | AndAssign | XorAssign | OrAssign => {
+            BitAnd | Xor | BitOr | BitAndAssign | XorAssign | BitOrAssign => {
                 self.is_integral() || self.is_bool()
             }
             Shl | Shr | ShlAssign | ShrAssign => self.is_integral(),
@@ -612,7 +612,10 @@ impl Type {
 
                     result.push_str(&param.ty.with_templates(&func.ty_args).name(scopes));
                 }
-                format!("{result}): {}", f.ret.with_templates(&func.ty_args).name(scopes))
+                format!(
+                    "{result}): {}",
+                    f.ret.with_templates(&func.ty_args).name(scopes)
+                )
             }
             Type::User(ty) => ty.name(scopes),
             Type::Array(inner) => format!("[{}; {}]", inner.0.name(scopes), inner.1),

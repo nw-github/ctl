@@ -117,6 +117,6 @@ pub struct Chars {
 
 fn is_char_boundary(b: u8): bool {
     // From the Rust standard library:
-    // This is bit magic equivalent to: b < 128 || b >= 192
+    // This is bit magic equivalent to: b < 128 or b >= 192
     b as! i8 >= -0x40
 }

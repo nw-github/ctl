@@ -50,11 +50,9 @@ pub enum Token<'a> {
     Rem,
     RemAssign,
     Ampersand,
-    AndAssign,
-    LogicalAnd,
-    Or,
-    OrAssign,
-    LogicalOr,
+    BitAndAssign,
+    BitOr,
+    BitOrAssign,
     Caret,
     XorAssign,
     Question,
@@ -120,6 +118,8 @@ pub enum Token<'a> {
     Try,
     Catch,
     Defer,
+    And,
+    Or,
 
     Ident(&'a str),
     Int {
@@ -206,17 +206,17 @@ impl Token<'_> {
             Range | RangeInclusive => Precedence::Range,
             Plus | Minus => Precedence::Term,
             Asterisk | Div | Rem => Precedence::Factor,
-            Assign | AddAssign | SubAssign | MulAssign | DivAssign | RemAssign | AndAssign
-            | OrAssign | XorAssign | NoneCoalesceAssign | ShrAssign | ShlAssign => {
+            Assign | AddAssign | SubAssign | MulAssign | DivAssign | RemAssign | BitAndAssign
+            | BitOrAssign | XorAssign | NoneCoalesceAssign | ShrAssign | ShlAssign => {
                 Precedence::Assignment
             }
             Increment | Decrement | Exclamation | Question => Precedence::Postfix,
             Ampersand => Precedence::And,
-            Or => Precedence::Or,
+            BitOr => Precedence::Or,
             Caret => Precedence::Xor,
             Shr | Shl => Precedence::Shift,
-            LogicalAnd => Precedence::LogicalAnd,
-            LogicalOr => Precedence::LogicalOr,
+            And => Precedence::LogicalAnd,
+            Or => Precedence::LogicalOr,
             Equal | NotEqual => Precedence::Eq,
             LAngle | RAngle | GtEqual | LtEqual | Spaceship | Is => Precedence::Comparison,
             NoneCoalesce => Precedence::NoneCoalesce,
@@ -425,20 +425,16 @@ impl<'a> Lexer<'a> {
             }
             '&' => {
                 if self.advance_if('=') {
-                    Token::AndAssign
-                } else if self.advance_if('&') {
-                    Token::LogicalAnd
+                    Token::BitAndAssign
                 } else {
                     Token::Ampersand
                 }
             }
             '|' => {
                 if self.advance_if('=') {
-                    Token::OrAssign
-                } else if self.advance_if('|') {
-                    Token::LogicalOr
+                    Token::BitOrAssign
                 } else {
-                    Token::Or
+                    Token::BitOr
                 }
             }
             '^' => {
@@ -637,7 +633,7 @@ impl<'a> Lexer<'a> {
                     diag.error(Error::new(
                         "invalid unicode literal",
                         Span {
-                            pos: (self.pos - chars.len())  as u32,
+                            pos: (self.pos - chars.len()) as u32,
                             file: self.file,
                             len: chars.len() as u32,
                         },
@@ -788,6 +784,7 @@ impl<'a> Lexer<'a> {
     fn identifier(&mut self, start: usize) -> Token<'a> {
         self.advance_while(Self::is_identifier_char);
         match &self.src[start..self.pos] {
+            "and" => Token::And,
             "as" => Token::As,
             "async" => Token::Async,
             "await" => Token::Await,
@@ -817,6 +814,7 @@ impl<'a> Lexer<'a> {
             "move" => Token::Move,
             "mut" => Token::Mut,
             "null" => Token::None,
+            "or" => Token::Or,
             "pub" => Token::Pub,
             "raise" => Token::Raise,
             "raw" => Token::Raw,

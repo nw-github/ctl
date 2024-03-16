@@ -15,7 +15,7 @@ pub unsafe fn format32(f: f32, res: *raw u8): uint {
             index++;
         }
 
-        if ieee_exponent == 0 && ieee_mantissa == 0 {
+        if ieee_exponent == 0 and ieee_mantissa == 0 {
             core::mem::copy(dst: res + index, src: b"0.0" as *raw u8, num: 3);
             return sign as uint + 3;
         }
@@ -26,7 +26,7 @@ pub unsafe fn format32(f: f32, res: *raw u8): uint {
         let kk = length + k; // 10^(kk-1) <= v < 10^kk
         debug_assert(k >= -45);
 
-        if 0 <= k && kk <= 13 {
+        if 0 <= k and kk <= 13 {
             // 1234e7 -> 12340000000.0
             write_mantissa(mantissa, res + index + length);
             for i in length..kk {
@@ -35,7 +35,7 @@ pub unsafe fn format32(f: f32, res: *raw u8): uint {
             *(res + index + kk) = b'.';
             *(res + index + kk + 1) = b'0';
             index as uint + kk as uint + 2
-        } else if 0 < kk && kk <= 13 {
+        } else if 0 < kk and kk <= 13 {
             // 1234e-2 -> 12.34
             write_mantissa(mantissa, (res + index + length + 1));
             core::mem::copy_overlapping(
@@ -45,7 +45,7 @@ pub unsafe fn format32(f: f32, res: *raw u8): uint {
             );
             *(res + index + kk) = b'.';
             index as uint + length as uint + 1
-        } else if -6 < kk && kk <= 0 {
+        } else if -6 < kk and kk <= 0 {
             // 1234e-6 -> 0.001234
             *(res + index) = b'0';
             *(res + index + 1) = b'.';
@@ -88,7 +88,7 @@ pub unsafe fn format64(f: f64, res: *raw u8): uint {
             index++;
         }
 
-        if ieee_exponent == 0 && ieee_mantissa == 0 {
+        if ieee_exponent == 0 and ieee_mantissa == 0 {
             core::mem::copy(dst: res + index, src: b"0.0" as *raw u8, num: 3);
             return sign as uint + 3;
         }
@@ -99,7 +99,7 @@ pub unsafe fn format64(f: f64, res: *raw u8): uint {
         let kk = length + k; // 10^(kk-1) <= v < 10^kk
         debug_assert(k >= -324);
 
-        if 0 <= k && kk <= 16 {
+        if 0 <= k and kk <= 16 {
             // 1234e7 -> 12340000000.0
             write_mantissa_long(mantissa, res + index + length);
             for i in length..kk {
@@ -108,7 +108,7 @@ pub unsafe fn format64(f: f64, res: *raw u8): uint {
             *(res + index + kk) = b'.';
             *(res + index + kk + 1) = b'0';
             index as uint + kk as uint + 2
-        } else if 0 < kk && kk <= 16 {
+        } else if 0 < kk and kk <= 16 {
             // 1234e-2 -> 12.34
             write_mantissa_long(mantissa, res + index + length + 1);
             core::mem::copy_overlapping(
@@ -118,7 +118,7 @@ pub unsafe fn format64(f: f64, res: *raw u8): uint {
             );
             *(res + index + kk) = b'.';
             index as uint + length as uint + 1
-        } else if -5 < kk && kk <= 0 {
+        } else if -5 < kk and kk <= 0 {
             // 1234e-6 -> 0.001234
             *(res + index) = b'0';
             *(res + index + 1) = b'.';

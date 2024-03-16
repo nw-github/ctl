@@ -2122,7 +2122,11 @@ impl<'a> Codegen<'a> {
                 }
                 self.buffer.emit("(");
                 self.emit_expr(lhs, state);
-                self.buffer.emit(format!("{op}"));
+                match op {
+                    BinaryOp::LogicalAnd => self.buffer.emit("&&"),
+                    BinaryOp::LogicalOr => self.buffer.emit("||"),
+                    _ => self.buffer.emit(format!("{op}")),
+                }
                 self.emit_expr(rhs, state);
                 self.buffer.emit(")");
                 if b {
@@ -2435,8 +2439,8 @@ impl<'a> Codegen<'a> {
                         "mul" => BinaryOp::Mul,
                         "div" => BinaryOp::Div,
                         "rem" => BinaryOp::Rem,
-                        "and" => BinaryOp::And,
-                        "or" => BinaryOp::Or,
+                        "and" => BinaryOp::BitAnd,
+                        "or" => BinaryOp::BitOr,
                         "xor" => BinaryOp::Xor,
                         "shl" => BinaryOp::Shl,
                         "shr" => BinaryOp::Shr,

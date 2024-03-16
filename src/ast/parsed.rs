@@ -435,9 +435,9 @@ pub enum OperatorFnType {
     #[display(fmt = "%")]
     Rem,
     #[display(fmt = "&")]
-    And,
+    BitAnd,
     #[display(fmt = "|")]
-    Or,
+    BitOr,
     #[display(fmt = "^")]
     Xor,
     #[display(fmt = "<<")]

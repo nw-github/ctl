@@ -5,11 +5,11 @@ pub union Option<T> {
     Some(T),
     None,
 
-    pub fn unwrap_or(this, or: T): T {
+    pub fn unwrap_or(this, rhs: T): T {
         if this is ?val {
             *val
         } else {
-            or
+            rhs
         }
     }
 
@@ -19,11 +19,11 @@ pub union Option<T> {
         }
     }
 
-    pub fn get_or_insert(mut this, or: T): *mut T {
+    pub fn get_or_insert(mut this, rhs: T): *mut T {
         if this is ?val {
             val
         } else {
-            *this = or;
+            *this = rhs;
             this.as_mut()!
         }
     }

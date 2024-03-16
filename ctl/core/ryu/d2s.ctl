@@ -35,7 +35,7 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
     // Step 2: Determine the interval of valid decimal representations.
     let mv = m2 * 4;
     // Implicit bool -> int conversion. True is 1, false is 0.
-    let mm_shift = (ieee_mantissa != 0 || ieee_exponent <= 1) as u32;
+    let mm_shift = (ieee_mantissa != 0 or ieee_exponent <= 1) as u32;
     // We would compute mp and mm like this:
     // uint64_t mp = 4 * m2 + 2;
     // uint64_t mm = mv - 1 - mm_shift;
@@ -76,8 +76,8 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
                 vr_is_trailing_zeros = multiple_of_power_of_5(mv, q);
             } else if accept_bounds {
                 // Same as min(e2 + (~mm & 1), pow5_factor(mm)) >= q
-                // <=> e2 + (~mm & 1) >= q && pow5_factor(mm) >= q
-                // <=> true && pow5_factor(mm) >= q, since e2 >= q.
+                // <=> e2 + (~mm & 1) >= q and pow5_factor(mm) >= q
+                // <=> true and pow5_factor(mm) >= q, since e2 >= q.
                 vm_is_trailing_zeros = multiple_of_power_of_5(mv - 1 - mm_shift as u64, q);
             } else {
                 // Same as min(e2 + 1, pow5_factor(mp)) >= q.
@@ -119,7 +119,7 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
             // TODO(ulfjack): Use a tighter bound here.
             // We want to know if the full product has at least q trailing zeros.
             // We need to compute min(p2(mv), p5(mv) - e2) >= q
-            // <=> p2(mv) >= q && p5(mv) - e2 >= q
+            // <=> p2(mv) >= q and p5(mv) - e2 >= q
             // <=> p2(mv) >= q (because -e2 >= q)
             vr_is_trailing_zeros = multiple_of_power_of_2(mv, q);
         }
@@ -129,7 +129,7 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
     mut removed = 0i32;
     mut last_removed_digit = 0u8;
     // On average, we remove ~2 digits.
-    let output = if vm_is_trailing_zeros || vr_is_trailing_zeros {
+    let output = if vm_is_trailing_zeros or vr_is_trailing_zeros {
         // General case, which happens rarely (~0.7%).
         loop {
             let vp_div10 = vp / 10;
@@ -166,12 +166,12 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
                 removed++;
             }
         }
-        if vr_is_trailing_zeros && last_removed_digit == 5 && vr % 2 == 0 {
+        if vr_is_trailing_zeros and last_removed_digit == 5 and vr % 2 == 0 {
             // Round even if the exact number is .....50..0.
             last_removed_digit = 4;
         }
         // We need to take vr + 1 if vr is outside bounds or we need to round up.
-        vr + ((vr == vm && (!accept_bounds || !vm_is_trailing_zeros)) || last_removed_digit >= 5)
+        vr + ((vr == vm and (!accept_bounds or !vm_is_trailing_zeros)) or last_removed_digit >= 5)
             as u64
     } else {
         // Specialized for the common case (~99.3%). Percentages below are relative to this.
@@ -207,7 +207,7 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
             removed++;
         }
         // We need to take vr + 1 if vr is outside bounds or we need to round up.
-        vr + (vr == vm || round_up) as u64
+        vr + (vr == vm or round_up) as u64
     };
     FloatingDecimal64(
         exponent: e10 + removed,

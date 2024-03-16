@@ -69,13 +69,13 @@ pub trait Rem<T, R> {
 }
 
 #(lang(op_and))
-pub trait And<T, R> {
-    fn and(this, rhs: T): R;
+pub trait BitAnd<T, R> {
+    fn bit_and(this, rhs: T): R;
 }
 
 #(lang(op_or))
-pub trait Or<T, R> {
-    fn or(this, rhs: T): R;
+pub trait BitOr<T, R> {
+    fn bit_or(this, rhs: T): R;
 }
 
 #(lang(op_xor))

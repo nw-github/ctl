@@ -1138,8 +1138,8 @@ impl TypeChecker {
             | O::Mul
             | O::Div
             | O::Rem
-            | O::And
-            | O::Or
+            | O::BitAnd
+            | O::BitOr
             | O::Xor
             | O::Shl
             | O::Shr
@@ -3724,7 +3724,7 @@ impl TypeChecker {
     }
 
     fn resolve_lang_type(&mut self, name: &str, args: &[TypeHint]) -> Type {
-        let span = Span::default();
+        let span = Span::default(); // FIXME: be at least somewhat related to the cause
         if let Some(id) = self.scopes.lang_types.get(name).copied() {
             Type::User(
                 GenericUserType::new(id, self.resolve_type_args(id, args, true, span)).into(),
@@ -4441,9 +4441,9 @@ impl TypeChecker {
                     BinaryOp::Mul => lhs * rhs,
                     BinaryOp::Div => lhs / rhs,
                     BinaryOp::Rem => lhs % rhs,
-                    BinaryOp::And => lhs & rhs,
+                    BinaryOp::BitAnd => lhs & rhs,
                     BinaryOp::Xor => lhs ^ rhs,
-                    BinaryOp::Or => lhs | rhs,
+                    BinaryOp::BitOr => lhs | rhs,
                     BinaryOp::Shl => lhs << rhs,
                     BinaryOp::Shr => lhs >> rhs,
                     op => {
@@ -6068,8 +6068,8 @@ static BINARY_OP_TRAITS: Lazy<HashMap<BinaryOp, (&str, &str)>> = Lazy::new(|| {
         (BinaryOp::Mul, ("op_mul", "mul")),
         (BinaryOp::Div, ("op_div", "div")),
         (BinaryOp::Rem, ("op_rem", "rem")),
-        (BinaryOp::And, ("op_and", "and")),
-        (BinaryOp::Or, ("op_or", "or")),
+        (BinaryOp::BitAnd, ("op_and", "bit_and")),
+        (BinaryOp::BitOr, ("op_or", "bit_or")),
         (BinaryOp::Xor, ("op_xor", "xor")),
         (BinaryOp::Shl, ("op_shl", "shl")),
         (BinaryOp::Shr, ("op_shr", "shr")),

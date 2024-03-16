@@ -49,11 +49,11 @@ pub enum BinaryOp {
     #[display(fmt = "%")]
     Rem,
     #[display(fmt = "&")]
-    And,
+    BitAnd,
     #[display(fmt = "^")]
     Xor,
     #[display(fmt = "|")]
-    Or,
+    BitOr,
     #[display(fmt = "<<")]
     Shl,
     #[display(fmt = ">>")]
@@ -74,9 +74,9 @@ pub enum BinaryOp {
     Equal,
     #[display(fmt = "!=")]
     NotEqual,
-    #[display(fmt = "||")]
+    #[display(fmt = "or")]
     LogicalOr,
-    #[display(fmt = "&&")]
+    #[display(fmt = "and")]
     LogicalAnd,
     #[display(fmt = "=")]
     Assign,
@@ -91,11 +91,11 @@ pub enum BinaryOp {
     #[display(fmt = "%=")]
     RemAssign,
     #[display(fmt = "&=")]
-    AndAssign,
+    BitAndAssign,
     #[display(fmt = "^=")]
     XorAssign,
     #[display(fmt = "|=")]
-    OrAssign,
+    BitOrAssign,
     #[display(fmt = "<<=")]
     ShlAssign,
     #[display(fmt = ">>=")]
@@ -114,9 +114,9 @@ impl TryFrom<Token<'_>> for BinaryOp {
             Token::Asterisk => Ok(BinaryOp::Mul),
             Token::Div => Ok(BinaryOp::Div),
             Token::Rem => Ok(BinaryOp::Rem),
-            Token::Ampersand => Ok(BinaryOp::And),
+            Token::Ampersand => Ok(BinaryOp::BitAnd),
             Token::Caret => Ok(BinaryOp::Xor),
-            Token::Or => Ok(BinaryOp::Or),
+            Token::BitOr => Ok(BinaryOp::BitOr),
             Token::NoneCoalesce => Ok(BinaryOp::NoneCoalesce),
             Token::RAngle => Ok(BinaryOp::Gt),
             Token::GtEqual => Ok(BinaryOp::GtEqual),
@@ -126,8 +126,8 @@ impl TryFrom<Token<'_>> for BinaryOp {
             Token::LtEqual => Ok(BinaryOp::LtEqual),
             Token::Equal => Ok(BinaryOp::Equal),
             Token::NotEqual => Ok(BinaryOp::NotEqual),
-            Token::LogicalAnd => Ok(BinaryOp::LogicalAnd),
-            Token::LogicalOr => Ok(BinaryOp::LogicalOr),
+            Token::And => Ok(BinaryOp::LogicalAnd),
+            Token::Or => Ok(BinaryOp::LogicalOr),
             Token::Spaceship => Ok(BinaryOp::Cmp),
             Token::Assign => Ok(BinaryOp::Assign),
             Token::AddAssign => Ok(BinaryOp::AddAssign),
@@ -135,9 +135,9 @@ impl TryFrom<Token<'_>> for BinaryOp {
             Token::MulAssign => Ok(BinaryOp::MulAssign),
             Token::DivAssign => Ok(BinaryOp::DivAssign),
             Token::RemAssign => Ok(BinaryOp::RemAssign),
-            Token::AndAssign => Ok(BinaryOp::AndAssign),
+            Token::BitAndAssign => Ok(BinaryOp::BitAndAssign),
             Token::XorAssign => Ok(BinaryOp::XorAssign),
-            Token::OrAssign => Ok(BinaryOp::OrAssign),
+            Token::BitOrAssign => Ok(BinaryOp::BitOrAssign),
             Token::NoneCoalesceAssign => Ok(BinaryOp::NoneCoalesceAssign),
             _ => Err(()),
         }
@@ -154,8 +154,8 @@ impl TryFrom<OperatorFnType> for BinaryOp {
             OperatorFnType::Mul => Ok(BinaryOp::Mul),
             OperatorFnType::Div => Ok(BinaryOp::Div),
             OperatorFnType::Rem => Ok(BinaryOp::Rem),
-            OperatorFnType::And => Ok(BinaryOp::And),
-            OperatorFnType::Or => Ok(BinaryOp::Or),
+            OperatorFnType::BitAnd => Ok(BinaryOp::BitAnd),
+            OperatorFnType::BitOr => Ok(BinaryOp::BitOr),
             OperatorFnType::Xor => Ok(BinaryOp::Xor),
             OperatorFnType::Shl => Ok(BinaryOp::Shl),
             OperatorFnType::Shr => Ok(BinaryOp::Shr),
@@ -178,8 +178,8 @@ impl BinaryOp {
                 | BinaryOp::MulAssign
                 | BinaryOp::DivAssign
                 | BinaryOp::RemAssign
-                | BinaryOp::AndAssign
-                | BinaryOp::OrAssign
+                | BinaryOp::BitAndAssign
+                | BinaryOp::BitOrAssign
                 | BinaryOp::XorAssign
                 | BinaryOp::ShlAssign
                 | BinaryOp::ShrAssign

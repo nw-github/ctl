@@ -55,7 +55,7 @@ pub struct Span<T> {
             Bound::Unbounded => this.len(),
         };
 
-        if end < start || start > this.len || end > this.len {
+        if end < start or start > this.len or end > this.len {
             panic("Span::subspan(): invalid range!");
         }
 
@@ -133,7 +133,7 @@ pub struct SpanMut<T> {
             Bound::Unbounded => this.len(),
         };
 
-        if end < start || start > this.len || end > this.len {
+        if end < start or start > this.len or end > this.len {
             panic("SpanMut::subspan(): invalid range!");
         }
 
