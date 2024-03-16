@@ -1,6 +1,7 @@
 use std::hash::Hash;
 use std::ops::Eq;
 use std::map::Map;
+use std::iter::FromIter;
 
 #(lang(set))
 pub struct Set<T: Hash + Eq<T>> {
@@ -12,14 +13,6 @@ pub struct Set<T: Hash + Eq<T>> {
 
     pub fn with_capacity(cap: uint): This {
         Set(inner: Map::with_capacity(cap:))
-    }
-
-    pub fn from_iter<I: Iterator<T>>(iter: I): This {
-        mut self: {T} = #[]; // TODO: size hint
-        for i in iter {
-            self.insert(i);
-        }
-        self
     }
 
     pub fn insert(mut this, key: T): bool {
@@ -42,19 +35,17 @@ pub struct Set<T: Hash + Eq<T>> {
         this.inner.len()
     }
 
-    pub fn iter(this): Iter<T> {
-        Iter(iter: this.inner.iter())
+    pub fn iter(this): std::map::Keys<T, void> {
+        this.inner.keys()
     }
-}
 
-pub struct Iter<T> {
-    iter: std::map::Iter<T, void>,
-
-    impl Iterator<*T> {
-        fn next(mut this): ?*T {
-            if this.iter.next() is ?item {
-                item.0
+    impl FromIter<T> {
+        fn from_iter<I: Iterator<T>>(iter: I): This {
+            mut self: {T} = #[]; // TODO: size hint
+            for i in iter {
+                self.insert(i);
             }
+            self
         }
     }
 }

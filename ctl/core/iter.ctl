@@ -13,6 +13,14 @@ pub trait Iterator<T> {
     fn zip<U, I: Iterator<U>>(this, rhs: I): Zip<T, U, This, I> {
         Zip::new(*this, rhs)
     }
+
+    fn collect<I: FromIter<T>>(this): I {
+        I::from_iter(*this)
+    }
+}
+
+pub trait FromIter<T> {
+    fn from_iter<I: Iterator<T>>(t: I): This;
 }
 
 pub struct Enumerate<T, I: Iterator<T>> {

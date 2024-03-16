@@ -95,6 +95,18 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         IterMut(buckets: this.buckets.as_span_mut())
     }
 
+    pub fn keys(this): Keys<K, V> {
+        Keys(iter: this.iter())
+    }
+
+    pub fn values(this): Values<K, V> {
+        Values(iter: this.iter())
+    }
+
+    pub fn values_mut(mut this): ValuesMut<K, V> {
+        ValuesMut(iter: this.iter_mut())
+    }
+
     fn entry_pos(this, k: *K): uint {
         if this.buckets.is_empty() {
             return 0;
@@ -174,6 +186,42 @@ pub struct IterMut<K, V> {
                     this.buckets = this.buckets.subspan(i + 1..);
                     break (key, val);
                 }
+            }
+        }
+    }
+}
+
+pub struct Keys<K, V> {
+    iter: Iter<K, V>,
+
+    impl Iterator<*K> {
+        fn next(mut this): ?*K {
+            if this.iter.next() is ?item {
+                item.0
+            }
+        }
+    }
+}
+
+pub struct Values<K, V> {
+    iter: Iter<K, V>,
+
+    impl Iterator<*V> {
+        fn next(mut this): ?*V {
+            if this.iter.next() is ?item {
+                item.1
+            }
+        }
+    }
+}
+
+pub struct ValuesMut<K, V> {
+    iter: IterMut<K, V>,
+
+    impl Iterator<*mut V> {
+        fn next(mut this): ?*mut V {
+            if this.iter.next() is ?item {
+                item.1
             }
         }
     }
