@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     ast::{
         checked::{CheckedExpr, CheckedPattern},
-        parsed::{Expr, Linkage, Path, Pattern, UsePath},
+        parsed::{Expr, Linkage, Path, Pattern, TypeHint, UsePath},
         Attributes,
     },
     lexer::{Located, Span},
@@ -141,9 +141,14 @@ pub enum TraitImpl {
     Unchecked {
         scope: ScopeId,
         path: Path,
-        block: Option<ScopeId>,
     },
-    Checked(GenericTrait, Option<ScopeId>),
+    Known {
+        scope: ScopeId,
+        tr: &'static str,
+        ty_args: Vec<TypeHint>,
+        span: Span,
+    },
+    Checked(GenericTrait),
     #[default]
     None,
 }
@@ -566,8 +571,8 @@ impl Scopes {
                 return;
             }
 
-            for (imp, _) in this.get(tr).impls.iter().flat_map(|tr| tr.as_checked()) {
-                inner(this, imp.id, results);
+            for tr in this.get(tr).impls.iter().flat_map(|tr| tr.as_checked()) {
+                inner(this, tr.id, results);
             }
         }
 

@@ -1,3 +1,5 @@
+use either::{Either, Either::*};
+
 use crate::{
     ast::{parsed::*, Attribute, Attributes, UnaryOp},
     error::{Diagnostics, Error, FileId},
@@ -7,7 +9,6 @@ use crate::{
 
 #[derive(Clone, Copy)]
 struct FnConfig {
-    allow_method: bool,
     linkage: Linkage,
     is_public: bool,
     is_unsafe: bool,
@@ -80,7 +81,6 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         let attrs = match self.try_function(
             FnConfig {
-                allow_method: false,
                 linkage: match (&is_export, &is_import) {
                     (Some(_), None) => Linkage::Export,
                     (None, Some(_)) => Linkage::Import,
@@ -95,7 +95,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             Ok(func) => {
                 return Ok(Stmt {
                     attrs: Default::default(),
-                    data: StmtData::Fn(func.data),
+                    data: StmtData::Fn(func.unwrap_left()),
                 })
             }
             Err(attrs) => attrs,
@@ -1476,6 +1476,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.expect_kind(Token::LCurly);
 
         let mut functions = Vec::new();
+        let mut operators = Vec::new();
         let mut members = Vec::new();
         let mut impls = Vec::new();
         self.next_until(Token::RCurly, span, |this| {
@@ -1485,18 +1486,22 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
 
             let config = FnConfig {
-                allow_method: true,
                 is_public: public.is_some(),
                 linkage: Linkage::Internal,
                 is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
                 body: Some(true),
             };
             if config.is_unsafe {
-                if let Ok(func) = this.expect_fn(config, Default::default()) {
-                    functions.push(func.data);
+                match this.expect_fn(config, Default::default()) {
+                    Ok(Left(func)) => functions.push(func),
+                    Ok(Right(func)) => operators.push(func),
+                    _ => {}
                 }
             } else if let Ok(func) = this.try_function(config, Default::default()) {
-                functions.push(func.data);
+                match func {
+                    Left(func) => functions.push(func),
+                    Right(func) => operators.push(func),
+                }
             } else if let Some(token) = this.next_if_kind(Token::Impl) {
                 if let Some(token) = public {
                     this.error_no_sync(Error::not_valid_here(&token));
@@ -1528,6 +1533,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             members,
             impls,
             functions,
+            operators,
         }
     }
 
@@ -1536,6 +1542,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let type_params = self.type_params();
         let tag = self.next_if_kind(Token::Colon).map(|_| self.type_path());
         let mut functions = Vec::new();
+        let mut operators = Vec::new();
         let mut members = Vec::new();
         let mut impls = Vec::new();
         let mut variants = Vec::new();
@@ -1543,18 +1550,22 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.expect_kind(Token::LCurly);
         self.next_until(Token::RCurly, span, |this| {
             let config = FnConfig {
-                allow_method: true,
                 linkage: Linkage::Internal,
                 is_public: this.next_if_kind(Token::Pub).is_some(),
                 is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
                 body: Some(true),
             };
             if config.is_public || config.is_unsafe {
-                if let Ok(func) = this.expect_fn(config, Default::default()) {
-                    functions.push(func.data);
+                match this.expect_fn(config, Default::default()) {
+                    Ok(Left(func)) => functions.push(func),
+                    Ok(Right(func)) => operators.push(func),
+                    _ => {}
                 }
             } else if let Ok(func) = this.try_function(config, Default::default()) {
-                functions.push(func.data);
+                match func {
+                    Left(func) => functions.push(func),
+                    Right(func) => operators.push(func),
+                }
             } else if this.next_if_kind(Token::Shared).is_some() {
                 // warn if pub was specified that it is useless
                 let name = this.expect_id_l("expected name");
@@ -1628,6 +1639,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 members,
                 functions,
                 impls,
+                operators,
             },
         }
     }
@@ -1641,17 +1653,21 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut functions = Vec::new();
         self.next_until(Token::RCurly, span, |this| {
             let is_unsafe = this.next_if_kind(Token::Unsafe).is_some();
-            if let Ok(proto) = this.expect_fn(
-                FnConfig {
-                    body: None,
-                    allow_method: true,
-                    linkage: Linkage::Internal,
-                    is_public: true,
-                    is_unsafe,
-                },
-                Default::default(),
-            ) {
-                functions.push(proto.data);
+            let config = FnConfig {
+                body: None,
+                linkage: Linkage::Internal,
+                is_public: true,
+                is_unsafe,
+            };
+            match this.expect_fn(config, Default::default()) {
+                Ok(Left(func)) => functions.push(func),
+                Ok(Right(func)) => {
+                    this.error(Error::new(
+                        "operator functions are not allowed here",
+                        func.name.span,
+                    ));
+                }
+                _ => {}
             }
         });
 
@@ -1674,20 +1690,22 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.expect_kind(Token::LCurly);
 
         let mut functions = Vec::new();
+        let mut operators = Vec::new();
         let mut impls = Vec::new();
         self.next_until(Token::RCurly, span, |this| {
             if let Some(token) = this.next_if_kind(Token::Impl) {
                 impls.push(this.impl_block(token.span));
             } else {
                 let config = FnConfig {
-                    allow_method: true,
                     body: Some(true),
                     linkage: Linkage::Internal,
                     is_public: this.next_if_kind(Token::Pub).is_some(),
                     is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
                 };
-                if let Ok(func) = this.expect_fn(config, Default::default()) {
-                    functions.push(func.data);
+                match this.expect_fn(config, Default::default()) {
+                    Ok(Left(func)) => functions.push(func),
+                    Ok(Right(func)) => operators.push(func),
+                    _ => {}
                 }
             }
         });
@@ -1699,6 +1717,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             type_params,
             impls,
             functions,
+            operators,
         }
     }
 
@@ -1715,17 +1734,21 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
 
             let is_unsafe = this.next_if_kind(Token::Unsafe).is_some();
-            if let Ok(func) = this.expect_fn(
-                FnConfig {
-                    allow_method: true,
-                    is_public: true,
-                    body: Some(true),
-                    linkage: Linkage::Internal,
-                    is_unsafe,
-                },
-                attrs,
-            ) {
-                functions.push(func.data);
+            let config = FnConfig {
+                is_public: true,
+                body: Some(true),
+                linkage: Linkage::Internal,
+                is_unsafe,
+            };
+            match this.expect_fn(config, attrs) {
+                Ok(Left(func)) => functions.push(func),
+                Ok(Right(func)) => {
+                    this.error(Error::new(
+                        "operator functions are not allowed here",
+                        func.name.span,
+                    ));
+                }
+                _ => {}
             }
         });
 
@@ -1739,24 +1762,23 @@ impl<'a, 'b> Parser<'a, 'b> {
     fn try_function(
         &mut self,
         FnConfig {
-            allow_method,
             is_public,
             is_unsafe,
             linkage,
             body,
         }: FnConfig,
         attrs: Attributes,
-    ) -> Result<Located<Fn>, Attributes> {
-        let (span, is_async) = if let Some(token) = self.next_if_kind(Token::Fn) {
-            (token.span, false)
+    ) -> Result<Either<Fn, OperatorFn>, Attributes> {
+        let (head_token, is_async) = if let Some(token) = self.next_if_kind(Token::Fn) {
+            (token, false)
         } else if let Some(token) = self.next_if_kind(Token::Async) {
             self.expect_kind(Token::Fn);
-            (token.span, true)
+            (token, true)
         } else {
             return Err(attrs);
         };
 
-        let name = self.expect_id_l("expected name");
+        let name = self.expect_fn_name();
         let mut variadic = false;
         let type_params = self.type_params();
         let mut params = Vec::new();
@@ -1767,7 +1789,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             .next_if(|t| matches!(t, Token::RParen | Token::Eof))
             .is_none()
         {
-            if self.next_if_kind(Token::Ellipses).is_some() {
+            if self.next_if_kind(Token::Ellipses).is_some() && name.data.is_left() {
                 variadic = true;
                 self.expect_kind(Token::RParen);
                 break;
@@ -1776,7 +1798,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             let keyword = self.next_if_kind(Token::Keyword).is_some();
             let mutable = self.next_if_kind(Token::Mut).is_some();
             if let Some(token) = self.next_if_kind(Token::This) {
-                if !allow_method || count != 0 {
+                if count != 0 {
                     self.error_no_sync(Error::not_valid_here(&token));
                 }
 
@@ -1869,10 +1891,9 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
         };
 
-        Ok(Located::new(
-            span,
-            Fn {
-                name,
+        match name.data {
+            Left(ident) => Ok(Left(Fn {
+                name: Located::new(name.span, ident),
                 public: is_public,
                 linkage,
                 is_async,
@@ -1883,11 +1904,28 @@ impl<'a, 'b> Parser<'a, 'b> {
                 ret,
                 body,
                 attrs,
-            },
-        ))
+            })),
+            Right(op) => {
+                if is_async {
+                    self.error(Error::not_valid_here(&head_token));
+                }
+                Ok(Right(OperatorFn {
+                    name: Located::new(name.span, op),
+                    type_params,
+                    params,
+                    ret,
+                    body,
+                    attrs,
+                }))
+            }
+        }
     }
 
-    fn expect_fn(&mut self, params: FnConfig, attrs: Attributes) -> Result<Located<Fn>, ()> {
+    fn expect_fn(
+        &mut self,
+        params: FnConfig,
+        attrs: Attributes,
+    ) -> Result<Either<Fn, OperatorFn>, ()> {
         match self.try_function(params, attrs) {
             Ok(proto) => Ok(proto),
             Err(_) => {
@@ -1896,6 +1934,34 @@ impl<'a, 'b> Parser<'a, 'b> {
                 Err(())
             }
         }
+    }
+
+    fn expect_fn_name(&mut self) -> Located<Either<String, OperatorFnType>> {
+        let token = self.next();
+        Located::new(
+            token.span,
+            match token.data {
+                Token::Plus => Right(OperatorFnType::Plus),
+                Token::Minus => Right(OperatorFnType::Minus), // unary or binary -
+                Token::Asterisk => Right(OperatorFnType::Mul), // binary *
+                Token::Div => Right(OperatorFnType::Div),
+                Token::Rem => Right(OperatorFnType::Rem),
+                Token::Ampersand => Right(OperatorFnType::And), // bitwise &
+                Token::Or => Right(OperatorFnType::Or),
+                Token::Caret => Right(OperatorFnType::Xor),
+                Token::Shl => Right(OperatorFnType::Shl),
+                Token::Shr => Right(OperatorFnType::Shr),
+                Token::Equal => Right(OperatorFnType::Eq),
+                Token::Spaceship => Right(OperatorFnType::Cmp),
+                Token::Increment => Right(OperatorFnType::Increment),
+                Token::Decrement => Right(OperatorFnType::Decrement),
+                Token::Ident(name) => Left(name.into()),
+                _ => {
+                    self.error(Error::new("expected identifier", token.span));
+                    Left(String::new())
+                }
+            },
+        )
     }
 
     //

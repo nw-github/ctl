@@ -776,7 +776,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
         }
         UserTypeKind::Template => {
             res += &ut.name.data;
-            for (i, (tr, _)) in ut.impls.iter().flat_map(|imp| imp.as_checked()).enumerate() {
+            for (i, tr) in ut.impls.iter().flat_map(|imp| imp.as_checked()).enumerate() {
                 if i > 0 {
                     res += " + ";
                 } else {

@@ -1,6 +1,8 @@
 use crate::lexer::{Located, Token};
 use derive_more::{Deref, Display};
 
+use self::parsed::OperatorFnType;
+
 pub mod checked;
 pub mod declared;
 pub mod parsed;
@@ -142,6 +144,30 @@ impl TryFrom<Token<'_>> for BinaryOp {
     }
 }
 
+impl TryFrom<OperatorFnType> for BinaryOp {
+    type Error = ();
+
+    fn try_from(value: OperatorFnType) -> Result<Self, Self::Error> {
+        match value {
+            OperatorFnType::Plus => Ok(BinaryOp::Add),
+            OperatorFnType::Minus => Ok(BinaryOp::Sub),
+            OperatorFnType::Mul => Ok(BinaryOp::Mul),
+            OperatorFnType::Div => Ok(BinaryOp::Div),
+            OperatorFnType::Rem => Ok(BinaryOp::Rem),
+            OperatorFnType::And => Ok(BinaryOp::And),
+            OperatorFnType::Or => Ok(BinaryOp::Or),
+            OperatorFnType::Xor => Ok(BinaryOp::Xor),
+            OperatorFnType::Shl => Ok(BinaryOp::Shl),
+            OperatorFnType::Shr => Ok(BinaryOp::Shr),
+            OperatorFnType::Eq => Ok(BinaryOp::Equal),
+            OperatorFnType::Cmp => Ok(BinaryOp::Cmp),
+            OperatorFnType::Increment => Err(()),
+            OperatorFnType::Decrement => Err(()),
+            OperatorFnType::Bang => Err(()),
+        }
+    }
+}
+
 impl BinaryOp {
     pub fn is_assignment(&self) -> bool {
         matches!(
@@ -212,6 +238,17 @@ impl UnaryOp {
             Token::Increment => Some(UnaryOp::PreIncrement),
             Token::Decrement => Some(UnaryOp::PreDecrement),
             Token::Exclamation => Some(UnaryOp::Not),
+            _ => None,
+        }
+    }
+
+    pub fn try_from_postfix_fn(value: OperatorFnType) -> Option<Self> {
+        match value {
+            OperatorFnType::Plus => Some(UnaryOp::Plus),
+            OperatorFnType::Minus => Some(UnaryOp::Neg),
+            OperatorFnType::Increment => Some(UnaryOp::PostIncrement),
+            OperatorFnType::Decrement => Some(UnaryOp::PostDecrement),
+            OperatorFnType::Bang => Some(UnaryOp::Not),
             _ => None,
         }
     }

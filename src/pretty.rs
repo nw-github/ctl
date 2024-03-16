@@ -1,5 +1,5 @@
 use crate::ast::parsed::{
-    Expr, ExprData, Fn, ImplBlock, Linkage, Stmt, StmtData, Struct, UsePath, UsePathTail,
+    Expr, ExprData, Fn, ImplBlock, Linkage, OperatorFn, Stmt, StmtData, Struct, UsePath, UsePathTail
 };
 
 const INDENT: &str = "  ";
@@ -93,6 +93,7 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
             type_params,
             impls,
             functions,
+            operators,
         } => {
             eprint!("{tabs}Extension[{name}, for={ty:?}]");
             print_bool!(public);
@@ -111,6 +112,9 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
             eprintln!("{tabs}Functions:");
             for f in functions {
                 print_fn(f, indent + 1);
+            }
+            for f in operators {
+                print_op_fn(f, indent + 1);
             }
         }
         StmtData::Static {
@@ -472,6 +476,43 @@ fn print_fn(
     }
 }
 
+fn print_op_fn(
+    OperatorFn {
+        name,
+        type_params,
+        params,
+        ret,
+        body,
+        attrs: _,
+    }: &OperatorFn,
+    indent: usize,
+) {
+    let tabs = INDENT.repeat(indent);
+    eprintln!("{tabs}OperatorFn[{name}]");
+
+    let plus_1 = INDENT.repeat(indent + 1);
+    let plus_2 = INDENT.repeat(indent + 2);
+    if !type_params.is_empty() {
+        eprintln!("{plus_1}Type Params:");
+        for (name, path) in type_params {
+            eprintln!("{plus_2}{name}: {path:?}");
+        }
+    }
+    if !params.is_empty() {
+        eprintln!("{plus_1}Params:");
+        for param in params {
+            eprintln!("{plus_2}{param:?}");
+        }
+    }
+
+    eprintln!("{plus_1}Return Type: {ret:?}");
+    if let Some(body) = body.as_ref() {
+        eprintln!("{plus_1}Body: ");
+        print_expr(body, indent);
+    }
+}
+
+
 fn print_struct(
     type_name: &str,
     Struct {
@@ -481,6 +522,7 @@ fn print_struct(
         impls,
         functions,
         public,
+        operators,
     }: &Struct,
     indent: usize,
 ) {
@@ -509,6 +551,9 @@ fn print_struct(
     eprintln!("{tabs}Functions:");
     for f in functions {
         print_fn(f, indent + 1);
+    }
+    for f in operators {
+        print_op_fn(f, indent + 1);
     }
 }
 

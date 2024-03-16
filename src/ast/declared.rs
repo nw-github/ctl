@@ -13,7 +13,6 @@ pub struct DeclaredFn {
 }
 
 pub struct DeclaredImplBlock {
-    pub impl_index: usize,
     pub span: Span,
     pub scope: ScopeId,
     pub fns: Vec<DeclaredFn>,

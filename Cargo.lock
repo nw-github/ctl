@@ -220,10 +220,12 @@ dependencies = [
  "dashmap",
  "datatest-stable",
  "derive_more",
+ "either",
  "enum-as-inner",
  "indexmap",
  "num-bigint",
  "num-traits",
+ "once_cell",
  "serde",
  "serde_json",
  "tempfile",
@@ -269,6 +271,12 @@ dependencies = [
  "rustc_version",
  "syn 1.0.109",
 ]
+
+[[package]]
+name = "either"
+version = "1.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11157ac094ffbdde99aa67b23417ebdd801842852b500e395a45a9c0aac03e4a"
 
 [[package]]
 name = "enum-as-inner"

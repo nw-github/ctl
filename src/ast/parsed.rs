@@ -83,6 +83,7 @@ pub enum StmtData {
         type_params: TypeParams,
         impls: Vec<ImplBlock>,
         functions: Vec<Fn>,
+        operators: Vec<OperatorFn>,
     },
     Static {
         public: bool,
@@ -421,6 +422,40 @@ pub struct Param {
     pub default: Option<Expr>,
 }
 
+#[derive(Debug, Clone, Copy, derive_more::Display)]
+pub enum OperatorFnType {
+    #[display(fmt = "+")]
+    Plus,
+    #[display(fmt = "-")]
+    Minus,
+    #[display(fmt = "*")]
+    Mul,
+    #[display(fmt = "/")]
+    Div,
+    #[display(fmt = "%")]
+    Rem,
+    #[display(fmt = "&")]
+    And,
+    #[display(fmt = "|")]
+    Or,
+    #[display(fmt = "^")]
+    Xor,
+    #[display(fmt = "<<")]
+    Shl,
+    #[display(fmt = ">>")]
+    Shr,
+    #[display(fmt = "==")]
+    Eq,
+    #[display(fmt = "<=>")]
+    Cmp,
+    #[display(fmt = "++")]
+    Increment,
+    #[display(fmt = "--")]
+    Decrement,
+    #[display(fmt = "!")]
+    Bang,
+}
+
 #[derive(Debug, Clone)]
 pub struct Fn {
     pub attrs: Attributes,
@@ -430,6 +465,16 @@ pub struct Fn {
     pub is_async: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
+    pub type_params: TypeParams,
+    pub params: Vec<Param>,
+    pub ret: TypeHint,
+    pub body: Option<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OperatorFn {
+    pub attrs: Attributes,
+    pub name: Located<OperatorFnType>,
     pub type_params: TypeParams,
     pub params: Vec<Param>,
     pub ret: TypeHint,
@@ -465,6 +510,7 @@ pub struct Struct {
     pub members: Vec<Member>,
     pub impls: Vec<ImplBlock>,
     pub functions: Vec<Fn>,
+    pub operators: Vec<OperatorFn>,
 }
 
 #[derive(Debug, Clone)]
