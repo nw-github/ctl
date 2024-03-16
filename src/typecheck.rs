@@ -122,7 +122,7 @@ pub enum ResolvedType {
 pub enum ResolvedValue {
     UnionConstructor(GenericUserType),
     Fn(GenericFunc),
-    // MemberFn(MemberFn),
+    MemberFn(MemberFn),
     Var(VariableId),
     NotFound(Error),
     #[default]
@@ -1835,9 +1835,9 @@ impl TypeChecker {
         let rhs = self.check_expr(rhs, Some(p1_ty.strip_references()));
         CheckedExpr::new(
             ret,
-            CheckedExprData::MemberCall {
+            CheckedExprData::member_call(
                 mfn,
-                args: [
+                [
                     arg0,
                     (
                         rhs_name,
@@ -1845,8 +1845,8 @@ impl TypeChecker {
                     ),
                 ]
                 .into(),
-                scope: self.current,
-            },
+                self.current,
+            ),
         )
     }
 
@@ -1885,11 +1885,11 @@ impl TypeChecker {
         };
         CheckedExpr::new(
             f.ret.with_templates(&mfn.func.ty_args),
-            CheckedExprData::MemberCall {
+            CheckedExprData::member_call(
                 mfn,
-                args: [(p0.label.clone(), expr.auto_deref(&p0.ty))].into(),
-                scope: self.current,
-            },
+                [(p0.label.clone(), expr.auto_deref(&p0.ty))].into(),
+                self.current,
+            ),
         )
     }
 
@@ -2385,11 +2385,11 @@ impl TypeChecker {
                             .map(|f| {
                                 CheckedExpr::new(
                                     Type::User(GenericUserType::new(id, Default::default()).into()),
-                                    CheckedExprData::Call {
-                                        func: GenericFunc::new(f, Default::default()),
-                                        args: Default::default(),
-                                        scope: self.current,
-                                    },
+                                    CheckedExprData::call(
+                                        GenericFunc::new(f, Default::default()),
+                                        Default::default(),
+                                        self.current,
+                                    ),
                                 )
                             })
                     })
@@ -2506,7 +2506,40 @@ impl TypeChecker {
                         CheckedExprData::Func(func, self.current),
                     )
                 }
-                // ResolvedValue::MemberFn(mut mem) => {}
+                ResolvedValue::MemberFn(mut mem) => {
+                    let unknowns: HashSet<_> = mem
+                        .func
+                        .ty_args
+                        .iter()
+                        .filter_map(|(&id, ty)| ty.is_unknown().then_some(id))
+                        .collect();
+                    if let Some(target) = target {
+                        mem.func
+                            .infer_type_args(&self.scopes.get(mem.func.id).ret, target);
+                    }
+                    self.check_bounds_filtered(&mem.func, &unknowns, path.final_component_span());
+
+                    if let Some(id) = self.scopes.get(mem.func.id).constructor {
+                        if self
+                            .scopes
+                            .get(id)
+                            .is_empty_variant(&self.scopes.get(mem.func.id).name.data)
+                        {
+                            return CheckedExpr::new(
+                                Type::User(GenericUserType::new(id, mem.func.ty_args).into()),
+                                CheckedExprData::VariantInstance {
+                                    members: Default::default(),
+                                    variant: self.scopes.get(mem.func.id).name.data.clone(),
+                                },
+                            );
+                        }
+                    }
+
+                    CheckedExpr::new(
+                        Type::Func(mem.func.clone().into()),
+                        CheckedExprData::MemFunc(mem, self.current),
+                    )
+                }
                 ResolvedValue::UnionConstructor(ut) => self.error(Error::expected_found(
                     "expression",
                     &format!("type '{}'", ut.name(&self.scopes)),
@@ -3358,14 +3391,14 @@ impl TypeChecker {
 
                 let recv = recv.auto_deref(&this_param.ty);
                 let (args, ret) = self.check_fn_args(&mut mfn.func, Some(recv), args, target, span);
-                return CheckedExpr::new(
-                    ret,
-                    CheckedExprData::MemberCall {
-                        mfn,
-                        args,
-                        scope: self.current,
-                    },
-                );
+                if mfn.dynamic {
+                    return CheckedExpr::new(ret, CheckedExprData::CallDyn { mfn, args });
+                } else {
+                    return CheckedExpr::new(
+                        ret,
+                        CheckedExprData::member_call(mfn, args, self.current),
+                    );
+                }
             }
             ExprData::Path(ref path) => match self.resolve_value_path(path) {
                 ResolvedValue::UnionConstructor(ut) => {
@@ -3374,6 +3407,34 @@ impl TypeChecker {
                 ResolvedValue::Fn(func) => {
                     let span = path.components.last().map(|c| c.0.span).unwrap_or(span);
                     return self.check_known_fn_call(func, args, target, span);
+                }
+                ResolvedValue::MemberFn(mut mfn) => {
+                    let span = path.components.last().map(|c| c.0.span).unwrap_or(span);
+                    let f = self.scopes.get(mfn.func.id);
+                    if let Some(id) = f.constructor {
+                        let ut = self.scopes.get(id);
+                        for id in ut.type_params.iter() {
+                            mfn.func.ty_args.entry(*id).or_insert(Type::Unknown);
+                        }
+
+                        if ut.is_empty_variant(&self.scopes.get(mfn.func.id).name.data) {
+                            return self.error(Error::expected_found(
+                                "function",
+                                &format!("union variant '{}'", f.name.data),
+                                span,
+                            ));
+                        }
+                    }
+
+                    let (args, ret) = self.check_fn_args(&mut mfn.func, None, args, target, span);
+                    if mfn.dynamic {
+                        return CheckedExpr::new(ret, CheckedExprData::CallDyn { mfn, args });
+                    } else {
+                        return CheckedExpr::new(
+                            ret,
+                            CheckedExprData::member_call(mfn, args, self.current),
+                        );
+                    }
                 }
                 ResolvedValue::NotFound(err) => return self.error(err),
                 ResolvedValue::Error => return Default::default(),
@@ -3433,14 +3494,13 @@ impl TypeChecker {
         span: Span,
     ) -> CheckedExpr {
         let f = self.scopes.get(func.id);
-        let constructor = f.constructor;
-        if let Some(id) = constructor {
+        if let Some(id) = f.constructor {
             let ut = self.scopes.get(id);
             for id in ut.type_params.iter() {
                 func.ty_args.entry(*id).or_insert(Type::Unknown);
             }
 
-            if ut.kind.is_union() && ut.is_empty_variant(&self.scopes.get(func.id).name.data) {
+            if ut.is_empty_variant(&self.scopes.get(func.id).name.data) {
                 return self.error(Error::expected_found(
                     "function",
                     &format!("union variant '{}'", f.name.data),
@@ -3450,14 +3510,7 @@ impl TypeChecker {
         }
 
         let (args, ret) = self.check_fn_args(&mut func, None, args, target, span);
-        CheckedExpr::new(
-            ret,
-            CheckedExprData::Call {
-                func,
-                args,
-                scope: self.current,
-            },
-        )
+        CheckedExpr::new(ret, CheckedExprData::call(func, args, self.current))
     }
 
     fn check_arg<T>(&mut self, func: &mut WithTypeArgs<T>, expr: Expr, ty: &Type) -> CheckedExpr {
@@ -4689,7 +4742,7 @@ impl TypeChecker {
         self.resolve_members(ut.id);
         let f = match path {
             ResolvedValue::Fn(f) => f,
-            // ResolvedValue::MemberFn(m, _) => m.func,
+            ResolvedValue::MemberFn(m) => m.func,
             ResolvedValue::UnionConstructor(ut) => {
                 return Err(Some(Error::type_mismatch_s(
                     &scrutinee.name(&self.scopes),
@@ -5775,7 +5828,7 @@ impl TypeChecker {
                             if let Some(&this) = self.scopes.get(id).kind.as_trait() {
                                 ty_args.insert(this, Type::Unknown);
                             } else if !self.scopes.get(id).kind.is_extension() {
-                                // return self.finish_resolve_value_path_from_type(id, rest, ty_args);
+                                return self.finish_resolve_value_path_from_type(id, rest, ty_args);
                             }
 
                             self.resolve_value_path_in(
@@ -5835,7 +5888,11 @@ impl TypeChecker {
                     if let Some(&this) = ty.kind.as_trait() {
                         ty_args.insert(this, Type::Unknown);
                     } else if !ty.kind.is_extension() {
-                        // return self.finish_resolve_value_path_from_type(id, &data[i..], ty_args);
+                        return self.finish_resolve_value_path_from_type(
+                            id,
+                            &data[i + 1..],
+                            ty_args,
+                        );
                     }
                 }
                 TypeItem::Module(id) => {
@@ -5894,23 +5951,36 @@ impl TypeChecker {
         }
     }
 
-    // fn finish_resolve_value_path_from_type(
-    //     &mut self,
-    //     id: UserTypeId,
-    //     rest: &[PathComponent],
-    //     ty_args: TypeArgs,
-    // ) -> ResolvedValue {
-    //     let ((name, args), rest) = rest.split_first().unwrap();
-    //     let ty = Type::User(GenericUserType::new(id, ty_args).into());
-    //     let Some(mfn) = self.get_member_fn(ty, None, &name.data, &args, name.span, self.current)
-    //     else {
-    //         return ResolvedValue::NotFound(Error::no_symbol(&name.data, name.span));
-    //     };
-    //     if let Some((name, _)) = rest.first() {
-    //         return ResolvedValue::NotFound(Error::no_symbol(&name.data, name.span));
-    //     }
-    //     ResolvedValue::MemberFn(mfn)
-    // }
+    fn finish_resolve_value_path_from_type(
+        &mut self,
+        id: UserTypeId,
+        rest: &[PathComponent],
+        ty_args: TypeArgs,
+    ) -> ResolvedValue {
+        let ((name, args), rest) = rest.split_first().unwrap();
+        let ty = Type::User(GenericUserType::new(id, ty_args).into());
+        let Some(mfn) = self.get_member_fn(ty, None, &name.data, args, name.span, self.current)
+        else {
+            return ResolvedValue::NotFound(Error::no_symbol(&name.data, name.span));
+        };
+
+        self.check_hover(name.span, mfn.func.id.into());
+        if let Some((name, _)) = rest.first() {
+            return ResolvedValue::NotFound(Error::no_symbol(&name.data, name.span));
+        }
+
+        if !mfn.public && !self.can_access_privates(mfn.owner) {
+            self.diag.error(Error::new(
+                format!(
+                    "cannot access private method '{}' of type '{}'",
+                    self.scopes.get(mfn.func.id).name.data,
+                    id.name(&self.scopes)
+                ),
+                name.span,
+            ));
+        }
+        ResolvedValue::MemberFn(mfn)
+    }
 
     fn resolve_type_args<T: ItemId>(
         &mut self,

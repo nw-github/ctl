@@ -111,14 +111,12 @@ pub enum CheckedExprData {
     },
     AutoDeref(Box<CheckedExpr>, usize),
     Call {
-        func: GenericFunc,
+        callee: Box<CheckedExpr>,
         args: IndexMap<String, CheckedExpr>,
-        scope: ScopeId,
     },
-    MemberCall {
+    CallDyn {
         mfn: MemberFn,
         args: IndexMap<String, CheckedExpr>,
-        scope: ScopeId,
     },
     CallFnPtr {
         expr: Box<CheckedExpr>,
@@ -158,6 +156,7 @@ pub enum CheckedExprData {
     Char(char),
     Void,
     Func(GenericFunc, ScopeId),
+    MemFunc(MemberFn, ScopeId),
     Var(VariableId),
     Block(Block),
     If {
@@ -205,6 +204,25 @@ impl CheckedExprData {
     pub fn is_yielding_block(&self, scopes: &Scopes) -> bool {
         matches!(self, CheckedExprData::Block(block) if
             matches!(scopes[block.scope].kind, ScopeKind::Block(_, true)))
+    }
+
+    pub fn member_call(mfn: MemberFn, args: IndexMap<String, CheckedExpr>, scope: ScopeId) -> Self {
+        Self::Call {
+            callee: CheckedExpr::new(
+                Type::Func(mfn.func.clone().into()),
+                Self::MemFunc(mfn, scope),
+            )
+            .into(),
+            args,
+        }
+    }
+
+    pub fn call(func: GenericFunc, args: IndexMap<String, CheckedExpr>, scope: ScopeId) -> Self {
+        Self::Call {
+            callee: CheckedExpr::new(Type::Func(func.clone().into()), Self::Func(func, scope))
+                .into(),
+            args,
+        }
     }
 }
 
