@@ -1167,7 +1167,7 @@ impl TypeChecker {
                     )
                 }
             }
-            O::Minus if f.params.len() > 2 => {
+            O::Minus if f.params.len() > 1 => {
                 let op = BinaryOp::try_from(f.name.data).unwrap();
                 let (tr_name, fn_name) = BINARY_OP_TRAITS.get(&op).unwrap();
                 (
@@ -1187,19 +1187,7 @@ impl TypeChecker {
         };
 
         let span = f.name.span;
-        let f = Fn {
-            attrs: f.attrs,
-            public: true,
-            name: Located::new(f.name.span, fn_name.to_string()),
-            linkage: Linkage::Internal,
-            is_async: false,
-            is_unsafe: false,
-            variadic: false,
-            type_params: vec![],
-            params: f.params,
-            ret: f.ret,
-            body: f.body,
-        };
+        let f = Fn::from_operator_fn(fn_name.to_string(), f);
         let block = self.enter(ScopeKind::None, |this| DeclaredImplBlock {
             span: f.name.span,
             scope: this.current,
@@ -1718,12 +1706,22 @@ impl TypeChecker {
     }
 
     fn check_impl_blocks(&mut self, this_ty: Type, id: UserTypeId, impls: Vec<DeclaredImplBlock>) {
+        let mut seen = HashSet::new();
         for (i, block) in impls.into_iter().enumerate() {
             // TODO:
             // - impl type params (impl<T> Trait<T>)
-            // - implement the same trait more than once
             self.enter_id(block.scope, |this| {
                 if let Some(gtr) = this.scopes.get(id).impls[i].as_checked().cloned() {
+                    if !seen.insert(gtr.clone()) {
+                        this.error(Error::new(
+                            format!(
+                                "duplicate implementation of trait {}",
+                                gtr.name(&this.scopes)
+                            ),
+                            block.span,
+                        ))
+                    }
+
                     this.check_impl_block(&this_ty, &gtr, block);
                     this.scopes[this.current].kind = ScopeKind::Impl(TraitImpl::Checked(gtr));
                 } else {

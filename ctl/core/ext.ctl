@@ -50,30 +50,20 @@ pub extension NumericExt<T: Numeric> for T {
         fn ne(this, rhs: *T): bool { this != rhs }
     }
 
-    impl Add<T, T> {
-        #(intrinsic(binary_op))
-        fn add(this, rhs: T): T { this + rhs }
-    }
+    #(intrinsic(binary_op))
+    pub fn +(this, rhs: T): T { this + rhs }
 
-    impl Sub<T, T> {
-        #(intrinsic(binary_op))
-        fn sub(this, rhs: T): T { this - rhs }
-    }
+    #(intrinsic(binary_op))
+    pub fn -(this, rhs: T): T { this - rhs }
 
-    impl Mul<T, T> {
-        #(intrinsic(binary_op))
-        fn mul(this, rhs: T): T { this * rhs }
-    }
+    #(intrinsic(binary_op))
+    pub fn *(this, rhs: T): T { this * rhs }
 
-    impl Div<T, T> {
-        #(intrinsic(binary_op))
-        fn div(this, rhs: T): T { this / rhs }
-    }
+    #(intrinsic(binary_op))
+    pub fn /(this, rhs: T): T { this / rhs }
 
-    impl Rem<T, T> {
-        #(intrinsic(binary_op))
-        fn rem(this, rhs: T): T { this % rhs }
-    }
+    #(intrinsic(binary_op))
+    pub fn %(this, rhs: T): T { this % rhs }
 
     pub fn max(this, rhs: T): T {
         if *this > rhs { *this } else { rhs }
@@ -95,45 +85,29 @@ pub extension NumericExt<T: Numeric> for T {
 }
 
 pub extension IntegralExt<T: Numeric + Integral> for T {
-    impl And<T, T> {
-        #(intrinsic(binary_op))
-        fn and(this, rhs: T): T { this & rhs }
-    }
+    #(intrinsic(binary_op))
+    pub fn &(this, rhs: T): T { this & rhs }
 
-    impl Or<T, T> {
-        #(intrinsic(binary_op))
-        fn or(this, rhs: T): T { this | rhs }
-    }
+    #(intrinsic(binary_op))
+    pub fn |(this, rhs: T): T { this | rhs }
 
-    impl Xor<T, T> {
-        #(intrinsic(binary_op))
-        fn xor(this, rhs: T): T { this ^ rhs }
-    }
+    #(intrinsic(binary_op))
+    pub fn ^(this, rhs: T): T { this ^ rhs }
 
-    impl Shl<T, T> {
-        #(intrinsic(binary_op))
-        fn shl(this, rhs: T): T { this << rhs }
-    }
+    #(intrinsic(binary_op))
+    pub fn <<(this, rhs: T): T { this << rhs }
 
-    impl Shr<T, T> {
-        #(intrinsic(binary_op))
-        fn shr(this, rhs: T): T { this >> rhs }
-    }
+    #(intrinsic(binary_op))
+    pub fn >>(this, rhs: T): T { this >> rhs }
 
-    impl Not<T> {
-        #(intrinsic(unary_op))
-        fn not(this): T { !*this }
-    }
+    #(intrinsic(unary_op))
+    pub fn !(this): T { !*this }
 
-    impl PostInc<T> {
-        #(intrinsic(unary_op))
-        fn post_inc(mut this): T { (*this)++ }
-    }
+    #(intrinsic(unary_op))
+    pub fn ++(mut this): T { (*this)++ }
 
-    impl PostDec<T> {
-        #(intrinsic(unary_op))
-        fn post_dec(mut this): T { (*this)-- }
-    }
+    #(intrinsic(unary_op))
+    pub fn --(mut this): T { (*this)-- }
 
     impl PreInc<T> {
         #(intrinsic(unary_op))
@@ -182,10 +156,8 @@ pub extension SignedExt<T: Numeric + Signed> for T {
         }
     }
 
-    impl Neg<T> {
-        #(intrinsic(unary_op))
-        fn neg(this): T { -*this }
-    }
+    #(intrinsic(unary_op))
+    pub fn -(this): T { -*this }
 }
 
 pub extension UnsignedExt<T: Numeric + Unsigned> for T {
@@ -317,25 +289,17 @@ pub extension BoolExt for bool {
         fn ne(this, rhs: *This): bool { this != rhs }
     }
 
-    impl Not<This> {
-        #(intrinsic(binary_op))
-        fn not(this): This { !*this }
-    }
+    #(intrinsic(unary_op))
+    pub fn !(this): This { !*this }
 
-    impl And<This, This> {
-        #(intrinsic(binary_op))
-        fn and(this, rhs: This): This { this & rhs }
-    }
+    #(intrinsic(binary_op))
+    pub fn &(this, rhs: This): This { this & rhs }
 
-    impl Or<This, This> {
-        #(intrinsic(binary_op))
-        fn or(this, rhs: This): This { this | rhs }
-    }
+    #(intrinsic(binary_op))
+    pub fn |(this, rhs: This): This { this | rhs }
 
-    impl Xor<This, This> {
-        #(intrinsic(binary_op))
-        fn xor(this, rhs: This): This { this ^ rhs }
-    }
+    #(intrinsic(binary_op))
+    pub fn ^(this, rhs: This): This { this ^ rhs }
 
     impl Format {
         fn format<F: Formatter>(this, f: *mut F) {

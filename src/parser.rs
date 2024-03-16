@@ -92,11 +92,21 @@ impl<'a, 'b> Parser<'a, 'b> {
             },
             attrs,
         ) {
-            Ok(func) => {
+            Ok(Left(func)) => {
                 return Ok(Stmt {
                     attrs: Default::default(),
-                    data: StmtData::Fn(func.unwrap_left()),
+                    data: StmtData::Fn(func),
                 })
+            }
+            Ok(Right(func)) => {
+                self.error(Error::new(
+                    "operator functions can only be defined in types and extensions",
+                    func.name.span,
+                ));
+                return Ok(Stmt {
+                    attrs: Default::default(),
+                    data: StmtData::Fn(Fn::from_operator_fn(func.name.data.to_string(), func)),
+                });
             }
             Err(attrs) => attrs,
         };
@@ -1480,6 +1490,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut members = Vec::new();
         let mut impls = Vec::new();
         self.next_until(Token::RCurly, span, |this| {
+            let attrs = this.attributes();
             let public = this.next_if_kind(Token::Pub);
             if let Some(token) = public.as_ref().filter(|_| union) {
                 this.error_no_sync(Error::not_valid_here(token));
@@ -1492,12 +1503,13 @@ impl<'a, 'b> Parser<'a, 'b> {
                 body: Some(true),
             };
             if config.is_unsafe {
-                match this.expect_fn(config, Default::default()) {
+                match this.expect_fn(config, attrs) {
                     Ok(Left(func)) => functions.push(func),
                     Ok(Right(func)) => operators.push(func),
                     _ => {}
                 }
-            } else if let Ok(func) = this.try_function(config, Default::default()) {
+            } else if let Ok(func) = this.try_function(config, attrs) {
+                // TODO: apply the attributes to the impl block or next member
                 match func {
                     Left(func) => functions.push(func),
                     Right(func) => operators.push(func),
@@ -1549,6 +1561,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         self.expect_kind(Token::LCurly);
         self.next_until(Token::RCurly, span, |this| {
+            let attrs = this.attributes();
             let config = FnConfig {
                 linkage: Linkage::Internal,
                 is_public: this.next_if_kind(Token::Pub).is_some(),
@@ -1556,12 +1569,13 @@ impl<'a, 'b> Parser<'a, 'b> {
                 body: Some(true),
             };
             if config.is_public || config.is_unsafe {
-                match this.expect_fn(config, Default::default()) {
+                match this.expect_fn(config, attrs) {
                     Ok(Left(func)) => functions.push(func),
                     Ok(Right(func)) => operators.push(func),
                     _ => {}
                 }
-            } else if let Ok(func) = this.try_function(config, Default::default()) {
+            } else if let Ok(func) = this.try_function(config, attrs) {
+                // TODO: apply the attributes to the impl block or next member
                 match func {
                     Left(func) => functions.push(func),
                     Right(func) => operators.push(func),
@@ -1693,6 +1707,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut operators = Vec::new();
         let mut impls = Vec::new();
         self.next_until(Token::RCurly, span, |this| {
+            let attrs = this.attributes();
             if let Some(token) = this.next_if_kind(Token::Impl) {
                 impls.push(this.impl_block(token.span));
             } else {
@@ -1702,7 +1717,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     is_public: this.next_if_kind(Token::Pub).is_some(),
                     is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
                 };
-                match this.expect_fn(config, Default::default()) {
+                match this.expect_fn(config, attrs) {
                     Ok(Left(func)) => functions.push(func),
                     Ok(Right(func)) => operators.push(func),
                     _ => {}
@@ -1955,6 +1970,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 Token::Spaceship => Right(OperatorFnType::Cmp),
                 Token::Increment => Right(OperatorFnType::Increment),
                 Token::Decrement => Right(OperatorFnType::Decrement),
+                Token::Exclamation => Right(OperatorFnType::Bang),
                 Token::Ident(name) => Left(name.into()),
                 _ => {
                     self.error(Error::new("expected identifier", token.span));

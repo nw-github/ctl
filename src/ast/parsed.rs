@@ -471,6 +471,24 @@ pub struct Fn {
     pub body: Option<Expr>,
 }
 
+impl Fn {
+    pub fn from_operator_fn(name: String, func: OperatorFn) -> Self {
+        Self {
+            attrs: func.attrs,
+            public: false,
+            name: Located::new(func.name.span, name),
+            linkage: Linkage::Internal,
+            is_async: false,
+            is_unsafe: false,
+            variadic: false,
+            type_params: func.type_params,
+            params: func.params,
+            ret: func.ret,
+            body: func.body,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct OperatorFn {
     pub attrs: Attributes,
