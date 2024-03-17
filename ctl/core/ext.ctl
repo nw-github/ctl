@@ -126,6 +126,12 @@ pub extension IntegralExt<T: Numeric + Integral> for T {
     pub fn wrapping_mul(this, rhs: T): T { *this * rhs }
 
     pub fn wrapping_div(this, rhs: T): T { *this / rhs }
+
+    #(intrinsic)
+    pub fn max_value(): T { T::max_value() }
+
+    #(intrinsic)
+    pub fn min_value(): T { T::min_value() }
 }
 
 pub extension SignedExt<T: Numeric + Signed> for T {

@@ -126,13 +126,13 @@ CTL_INIT($ctl_runtime_init) {
 #if !defined(CTL_NOBITINT)
 typedef SINT(sizeof(void *) * 8) isize;
 typedef UINT(sizeof(void *) * 8) usize;
-typedef UINT(32) CTL_char;
-typedef UINT(8) CTL_bool;
+typedef UINT(32) $char;
+typedef UINT(8) $bool;
 #else
 typedef intptr_t isize;
 typedef uintptr_t usize;
-typedef uint32_t CTL_char;
-typedef uint8_t CTL_bool;
+typedef uint32_t $char;
+typedef uint8_t $bool;
 #endif
 
 typedef float f32;

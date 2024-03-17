@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use num_bigint::BigInt;
 use tower_lsp::lsp_types::{Position, Range};
 
 use crate::{

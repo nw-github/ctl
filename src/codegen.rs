@@ -512,8 +512,8 @@ impl Buffer {
             Type::Usize => self.emit("usize"),
             Type::F32 => self.emit("f32"),
             Type::F64 => self.emit("f64"),
-            Type::Bool => self.emit("CTL_bool"),
-            Type::Char => self.emit("CTL_char"),
+            Type::Bool => self.emit("$bool"),
+            Type::Char => self.emit("$char"),
             Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) => {
                 if let Type::Array(value) = &**inner {
                     self.emit_type(scopes, &value.0, tg, min);
@@ -2124,10 +2124,8 @@ impl<'a> Codegen<'a> {
             }
             _ => {
                 lhs.ty.fill_templates(&state.func.ty_args);
-                let b = matches!(ret, Type::Bool) && !lhs.ty.is_bool();
-                if b {
+                if matches!(ret, Type::Bool) && !lhs.ty.is_bool() {
                     self.emit_cast(&ret);
-                    self.buffer.emit("(");
                 }
                 self.buffer.emit("(");
                 self.emit_expr(lhs, state);
@@ -2138,9 +2136,6 @@ impl<'a> Codegen<'a> {
                 }
                 self.emit_expr(rhs, state);
                 self.buffer.emit(")");
-                if b {
-                    self.buffer.emit("?1:0)");
-                }
             }
         }
     }
@@ -2389,8 +2384,16 @@ impl<'a> Codegen<'a> {
             }
             "numeric_cast" => {
                 let (_, expr) = args.shift_remove_index(0).unwrap();
-                self.emit_cast(&self.scopes.get(func.id).ret.with_templates(&func.ty_args));
+                self.emit_cast(&ret);
                 self.emit_expr(expr, state);
+            }
+            "max_value" => {
+                self.emit_cast(&ret);
+                self.buffer.emit(format!("({})", ret.as_integral().unwrap().max()));
+            }
+            "min_value" => {
+                self.emit_cast(&ret);
+                self.buffer.emit(format!("({}-1)", ret.as_integral().unwrap().min() + 1));
             }
             "size_of" => {
                 self.buffer.emit(format!(

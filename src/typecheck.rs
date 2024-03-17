@@ -1159,7 +1159,7 @@ impl TypeChecker {
                     };
                     match name {
                         "size_of" | "align_of" | "panic" | "binary_op" | "unary_op"
-                        | "numeric_cast" | "numeric_abs" => {
+                        | "numeric_cast" | "numeric_abs" | "max_value" | "min_value" => {
                             self.scopes.intrinsics.insert(id, name.to_string());
                         }
                         _ => self.error(Error::new(
