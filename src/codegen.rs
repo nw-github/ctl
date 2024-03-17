@@ -2853,8 +2853,11 @@ impl<'a> Codegen<'a> {
         let needs_wrapper = needs_fn_wrapper(f);
         if f.linkage == Linkage::Internal || (needs_wrapper && !real) {
             self.buffer.emit("static ");
-            if needs_wrapper {
+            // TODO: inline manually
+            if needs_wrapper || f.attrs.val("inline").is_some_and(|v| v == "always") {
                 self.buffer.emit("CTL_FORCEINLINE ");
+            } else if f.attrs.has("inline") {
+                self.buffer.emit("inline ");
             }
         } else {
             self.buffer.emit("extern ");
