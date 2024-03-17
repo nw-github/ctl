@@ -475,7 +475,7 @@ impl Fn {
     pub fn from_operator_fn(name: String, func: OperatorFn) -> Self {
         Self {
             attrs: func.attrs,
-            public: false,
+            public: true,
             name: Located::new(func.name.span, name),
             linkage: Linkage::Internal,
             is_async: false,
