@@ -1288,7 +1288,7 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit("}");
                 self.emit_vtable(vtable);
             }
-            CheckedExprData::Call { callee, args } => {
+            CheckedExprData::Call(callee, args) => {
                 let func = callee.ty.as_func().unwrap();
                 if let Some(name) = self.scopes.intrinsic_name(func.id) {
                     let mut func = func.clone();
@@ -1312,22 +1312,21 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit("(");
                 self.finish_emit_fn_args(state, id, args);
             }
-            CheckedExprData::CallDyn { mut mfn, mut args } => {
-                mfn.inst.fill_templates(&state.func.ty_args);
+            CheckedExprData::CallDyn(func, mut args) => {
                 let (_, recv) = args.shift_remove_index(0).unwrap();
                 let recv = hoist!(self, state, self.emit_tmpvar(recv, state));
                 self.buffer.emit(format!("{recv}.vtable->"));
                 self.buffer
-                    .emit_fn_name(self.scopes, &mfn.func, self.flags.minify);
+                    .emit_fn_name(self.scopes, &func, self.flags.minify);
                 self.buffer.emit(format!("({recv}.self"));
                 if args.is_empty() {
                     self.buffer.emit(")");
                 } else {
                     self.buffer.emit(",");
-                    self.finish_emit_fn_args(state, mfn.func.id, args);
+                    self.finish_emit_fn_args(state, func.id, args);
                 }
             }
-            CheckedExprData::CallFnPtr { expr, args } => {
+            CheckedExprData::CallFnPtr(expr, args) => {
                 self.buffer.emit("(");
                 self.emit_expr(*expr, state);
                 self.buffer.emit(")(");
@@ -1513,10 +1512,20 @@ impl<'a> Codegen<'a> {
                 self.funcs.insert(state);
             }
             CheckedExprData::MemFunc(mut mfn, scope) => {
-                mfn.inst.fill_templates(&state.func.ty_args);
-                if let Some(trait_id) = mfn.tr {
+                let parent = &self.scopes[self.scopes.get(mfn.func.id).scope];
+                if let Some((trait_id, this)) = parent
+                    .kind
+                    .as_user_type()
+                    .and_then(|&id| Some(id).zip(self.scopes.get(id).kind.as_trait()))
+                {
+                    let inst = mfn
+                        .func
+                        .ty_args
+                        .get(this)
+                        .unwrap()
+                        .with_templates(&state.func.ty_args);
                     mfn.func = self.find_implementation(
-                        &mfn.inst,
+                        &inst,
                         trait_id,
                         &self.scopes.get(mfn.func.id).name.data,
                         state.caller,
@@ -3019,7 +3028,7 @@ impl<'a> Codegen<'a> {
     ) -> GenericFunc {
         let Some(m) = self
             .tc
-            .get_member_fn_ex(inst.clone(), Some(trait_id), method, scope, finish)
+            .get_member_fn_ex(inst, Some(trait_id), method, scope, finish)
         else {
             panic!(
                 "searching from scope: '{}', cannot find implementation for method '{}::{method}' for type '{}'",
@@ -3029,7 +3038,7 @@ impl<'a> Codegen<'a> {
             )
         };
 
-        if m.tr.is_some_and(|_| !self.scopes.get(m.func.id).has_body) {
+        if !self.scopes.get(m.func.id).has_body {
             panic!(
                 "searching from scope: '{}', get_member_fn_ex picked invalid function for implementation for method '{}::{method}' for type '{}'",
                 self.scopes.full_name(scope, ""),

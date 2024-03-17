@@ -110,18 +110,9 @@ pub enum CheckedExprData {
         expr: Box<CheckedExpr>,
     },
     AutoDeref(Box<CheckedExpr>, usize),
-    Call {
-        callee: Box<CheckedExpr>,
-        args: IndexMap<String, CheckedExpr>,
-    },
-    CallDyn {
-        mfn: MemberFn,
-        args: IndexMap<String, CheckedExpr>,
-    },
-    CallFnPtr {
-        expr: Box<CheckedExpr>,
-        args: Vec<CheckedExpr>,
-    },
+    Call(Box<CheckedExpr>, IndexMap<String, CheckedExpr>),
+    CallDyn(GenericFunc, IndexMap<String, CheckedExpr>),
+    CallFnPtr(Box<CheckedExpr>, Vec<CheckedExpr>),
     DynCoerce {
         expr: Box<CheckedExpr>,
         scope: ScopeId,
@@ -207,22 +198,20 @@ impl CheckedExprData {
     }
 
     pub fn member_call(mfn: MemberFn, args: IndexMap<String, CheckedExpr>, scope: ScopeId) -> Self {
-        Self::Call {
-            callee: CheckedExpr::new(
+        Self::Call(
+            Box::new(CheckedExpr::new(
                 Type::Func(mfn.func.clone().into()),
                 Self::MemFunc(mfn, scope),
-            )
-            .into(),
+            )),
             args,
-        }
+        )
     }
 
     pub fn call(func: GenericFunc, args: IndexMap<String, CheckedExpr>, scope: ScopeId) -> Self {
-        Self::Call {
-            callee: CheckedExpr::new(Type::Func(func.clone().into()), Self::Func(func, scope))
-                .into(),
+        Self::Call(
+            CheckedExpr::new(Type::Func(func.clone().into()), Self::Func(func, scope)).into(),
             args,
-        }
+        )
     }
 }
 

@@ -280,7 +280,13 @@ impl LanguageServer for LspBackend {
                                 }),
                                 description: desc.clone().into(),
                             }),
-                            kind: Some(CompletionItemKind::METHOD),
+                            kind: Some(if f.constructor.is_some() {
+                                CompletionItemKind::CONSTRUCTOR
+                            } else if f.params.first().is_some_and(|p| p.label == THIS_PARAM) {
+                                CompletionItemKind::METHOD
+                            } else {
+                                CompletionItemKind::FUNCTION
+                            }),
                             detail: desc.into(),
                             insert_text: Some(insertion),
                             insert_text_format: Some(InsertTextFormat::SNIPPET),
@@ -294,6 +300,7 @@ impl LanguageServer for LspBackend {
                             kind: Some(match ut.kind {
                                 UserTypeKind::Union(_) => CompletionItemKind::ENUM,
                                 UserTypeKind::Trait(_) => CompletionItemKind::INTERFACE,
+                                UserTypeKind::Template => CompletionItemKind::TYPE_PARAMETER,
                                 _ => CompletionItemKind::STRUCT,
                             }),
                             label_details: Some(CompletionItemLabelDetails {
@@ -322,12 +329,28 @@ impl LanguageServer for LspBackend {
                         let var = scopes.get(id);
                         CompletionItem {
                             label: var.name.data.clone(),
-                            kind: Some(CompletionItemKind::VARIABLE),
+                            kind: Some(if var.is_static {
+                                CompletionItemKind::CONSTANT
+                            } else {
+                                CompletionItemKind::VARIABLE
+                            }),
                             label_details: Some(CompletionItemLabelDetails {
                                 detail: None,
                                 description: Some(var.name.data.clone()),
                             }),
                             detail: Some(var.name.data.clone()),
+                            ..Default::default()
+                        }
+                    }
+                    &LspItem::BuiltinType(name) => {
+                        CompletionItem {
+                            label: name.into(),
+                            kind: Some(CompletionItemKind::STRUCT),
+                            label_details: Some(CompletionItemLabelDetails {
+                                detail: None,
+                                description: Some(name.into()),
+                            }),
+                            detail: Some(name.into()),
                             ..Default::default()
                         }
                     }
