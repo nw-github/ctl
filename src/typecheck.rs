@@ -185,10 +185,15 @@ impl LspInput {
     }
 }
 
+pub struct Completions {
+    pub items: Vec<LspItem>,
+    pub method: bool,
+}
+
 #[derive(Default)]
 pub struct LspOutput {
     pub hover: Option<LspItem>,
-    pub completions: Option<Vec<LspItem>>,
+    pub completions: Option<Completions>,
 }
 
 pub struct TypeChecker {
@@ -324,7 +329,7 @@ impl TypeChecker {
         check_hover!(self, span, item);
     }
 
-    fn check_dot_completions(&mut self, span: Span, ty: &Type) {
+    fn check_dot_completions(&mut self, span: Span, ty: &Type, method: bool) {
         if self.lsp_output.completions.is_some()
             || !LspInput::matches(self.lsp_input.completion, span)
         {
@@ -348,7 +353,9 @@ impl TypeChecker {
                     continue;
                 }
 
-                if (f.public || cap) && f.params.first().is_some_and(|p| p.label == THIS_PARAM) {
+                if (f.public || cap)
+                    && (!method || f.params.first().is_some_and(|p| p.label == THIS_PARAM))
+                {
                     c.push(LspItem::Fn(func.id, Some(m)));
                     added.insert(f.name.data.clone());
                 }
@@ -424,10 +431,13 @@ impl TypeChecker {
             );
         }
 
-        self.lsp_output.completions = Some(completions);
+        self.lsp_output.completions = Some(Completions {
+            items: completions,
+            method,
+        });
     }
 
-    fn check_cursor_completions(&mut self, span: Span) {
+    fn check_cursor_completions(&mut self, span: Span, ty: bool) {
         if self.lsp_output.completions.is_some()
             || !LspInput::matches(self.lsp_input.completion, span)
         {
@@ -437,29 +447,33 @@ impl TypeChecker {
         let mut completions = vec![];
         let mut emitted_vars = HashSet::new();
         for (_, scope) in self.scopes.walk(self.current) {
-            for (_, item) in scope.vns.iter() {
-                match item.id {
-                    ValueItem::Fn(id) => {
-                        if matches!(scope.kind, ScopeKind::UserType(_)) {
-                            continue;
+            if !ty {
+                for (_, item) in scope.vns.iter() {
+                    match item.id {
+                        ValueItem::Fn(id) => {
+                            if matches!(scope.kind, ScopeKind::UserType(_)) {
+                                continue;
+                            }
+                            completions.push(LspItem::Fn(id, None))
                         }
-                        completions.push(LspItem::Fn(id, None))
+                        ValueItem::Var(id) => {
+                            let var = self.scopes.get(id);
+                            if !var.is_static
+                                && self.current_function() != self.scopes.function_of(var.scope)
+                            {
+                                continue;
+                            }
+                            if emitted_vars.contains(&var.name.data) {
+                                continue;
+                            }
+                            completions.push(LspItem::Var(id));
+                            emitted_vars.insert(var.name.data.clone());
+                        }
+                        ValueItem::StructConstructor(_, id) => {
+                            completions.push(LspItem::Fn(id, None))
+                        }
+                        ValueItem::UnionConstructor(_) => {}
                     }
-                    ValueItem::Var(id) => {
-                        let var = self.scopes.get(id);
-                        if !var.is_static
-                            && self.current_function() != self.scopes.function_of(var.scope)
-                        {
-                            continue;
-                        }
-                        if emitted_vars.contains(&var.name.data) {
-                            continue;
-                        }
-                        completions.push(LspItem::Var(id));
-                        emitted_vars.insert(var.name.data.clone());
-                    }
-                    ValueItem::StructConstructor(_, id) => completions.push(LspItem::Fn(id, None)),
-                    ValueItem::UnionConstructor(_) => {}
                 }
             }
 
@@ -473,9 +487,65 @@ impl TypeChecker {
 
                 completions.push(item.id.into());
             }
+
+            if scope.kind.is_module() {
+                break;
+            }
         }
 
-        self.lsp_output.completions = Some(completions);
+        self.lsp_output.completions = Some(Completions {
+            items: completions,
+            method: false,
+        });
+    }
+
+    fn check_module_completions(&mut self, span: Span, ty: bool, scope: ScopeId) {
+        if self.lsp_output.completions.is_some()
+            || !LspInput::matches(self.lsp_input.completion, span)
+        {
+            return;
+        }
+
+        let mut completions = vec![];
+        let cap = self.can_access_privates(scope);
+        let scope = &self.scopes[scope];
+        if !ty {
+            for (_, item) in scope.vns.iter().filter(|item| item.1.public || cap) {
+                match item.id {
+                    ValueItem::Fn(id) => {
+                        if matches!(scope.kind, ScopeKind::UserType(_)) {
+                            continue;
+                        }
+                        completions.push(LspItem::Fn(id, None))
+                    }
+                    ValueItem::Var(id) => {
+                        let var = self.scopes.get(id);
+                        if !var.is_static {
+                            continue;
+                        }
+                        completions.push(LspItem::Var(id));
+                    }
+                    ValueItem::StructConstructor(_, id) => completions.push(LspItem::Fn(id, None)),
+                    ValueItem::UnionConstructor(_) => {}
+                }
+            }
+        }
+
+        for (_, item) in scope.tns.iter().filter(|item| item.1.public || cap) {
+            if item
+                .as_type()
+                .is_some_and(|&id| self.scopes.get(id).name.data.starts_with('$'))
+            {
+                continue;
+            }
+
+            completions.push(item.id.into());
+        }
+
+        self.lsp_output.completions = Some(Completions {
+            items: completions,
+            method: false,
+        });
     }
 
     #[inline(always)]
@@ -2754,7 +2824,7 @@ impl TypeChecker {
 
                 let source = self.check_expr(*source, None);
                 let id = source.ty.strip_references();
-                self.check_dot_completions(span, id);
+                self.check_dot_completions(span, id, true);
                 let ut_id = match &id {
                     Type::User(data) => data.id,
                     Type::Unknown => return Default::default(),
@@ -3322,7 +3392,7 @@ impl TypeChecker {
                 // most of the time, the dot span will be inside a non-call member expression.
                 // however, if you start editing a function call, it is possible for the span
                 // to end up here
-                self.check_dot_completions(member.span, &id);
+                self.check_dot_completions(member.span, &id, true);
                 let Some(mut mfn) = self.get_member_fn(
                     id.clone(),
                     None,
@@ -5285,6 +5355,7 @@ impl TypeChecker {
                     &[(Located::new(pattern.span, "Some".into()), vec![])],
                     Default::default(),
                     self.scopes.get(id).body_scope,
+                    pattern.span,
                 );
                 self.check_tuple_union_pattern(
                     scrutinee,
@@ -5303,6 +5374,7 @@ impl TypeChecker {
                     &[(Located::new(pattern.span, "None".into()), vec![])],
                     Default::default(),
                     self.scopes.get(id).body_scope,
+                    pattern.span,
                 );
                 self.check_empty_union_pattern(scrutinee, value, pattern.span)
             }
@@ -5648,16 +5720,20 @@ impl TypeChecker {
     }
 
     fn resolve_type_path(&mut self, path: &Path) -> ResolvedType {
+        let span = path.span();
         match path.origin {
             PathOrigin::Root => {
-                self.resolve_type_path_in(&path.components, Default::default(), ScopeId::ROOT)
+                self.resolve_type_path_in(&path.components, Default::default(), ScopeId::ROOT, span)
             }
             PathOrigin::Super(span) => self
                 .get_super(span)
-                .map(|id| self.resolve_type_path_in(&path.components, Default::default(), id))
+                .map(|id| self.resolve_type_path_in(&path.components, Default::default(), id, span))
                 .unwrap_or_default(),
             PathOrigin::Normal => {
                 let ((name, ty_args), rest) = path.components.split_first().unwrap();
+                if rest.is_empty() {
+                    self.check_cursor_completions(name.span, true);
+                }
                 if let Some(builtin) = self.builtin_type_path(&name.data) {
                     if rest.is_empty() {
                         return ResolvedType::Builtin(builtin);
@@ -5684,7 +5760,12 @@ impl TypeChecker {
                             return ResolvedType::UserType(GenericUserType::new(id, ty_args));
                         }
 
-                        self.resolve_type_path_in(rest, ty_args, self.scopes.get(id).body_scope)
+                        self.resolve_type_path_in(
+                            rest,
+                            ty_args,
+                            self.scopes.get(id).body_scope,
+                            span,
+                        )
                     }
                     Some(TypeItem::Module(id)) if !rest.is_empty() => {
                         self.check_hover(name.span, id.into());
@@ -5695,12 +5776,13 @@ impl TypeChecker {
                             ));
                         }
 
-                        self.resolve_type_path_in(rest, Default::default(), id)
+                        self.resolve_type_path_in(rest, Default::default(), id, span)
                     }
                     _ => self.resolve_type_path_in(
                         &path.components,
                         Default::default(),
                         ScopeId::ROOT,
+                        span,
                     ),
                 }
             }
@@ -5712,9 +5794,14 @@ impl TypeChecker {
         data: &[PathComponent],
         mut ty_args: TypeArgs,
         mut scope: ScopeId,
+        total_span: Span,
     ) -> ResolvedType {
         for (i, (name, args)) in data.iter().enumerate() {
             let done = i + 1 == data.len();
+            if done {
+                self.check_module_completions(total_span, true, scope);
+            }
+
             let Some(item) = self.scopes[scope].find_in_tns(&name.data) else {
                 return self.error(Error::no_symbol(&name.data, name.span));
             };
@@ -5766,18 +5853,24 @@ impl TypeChecker {
     }
 
     fn resolve_value_path(&mut self, path: &Path) -> ResolvedValue {
+        let span = path.span();
         match path.origin {
-            PathOrigin::Root => {
-                self.resolve_value_path_in(&path.components, Default::default(), ScopeId::ROOT)
-            }
+            PathOrigin::Root => self.resolve_value_path_in(
+                &path.components,
+                Default::default(),
+                ScopeId::ROOT,
+                span,
+            ),
             PathOrigin::Super(span) => self
                 .get_super(span)
-                .map(|id| self.resolve_value_path_in(&path.components, Default::default(), id))
+                .map(|id| {
+                    self.resolve_value_path_in(&path.components, Default::default(), id, span)
+                })
                 .unwrap_or_default(),
             PathOrigin::Normal => {
                 let ((name, ty_args), rest) = path.components.split_first().unwrap();
                 if rest.is_empty() {
-                    self.check_cursor_completions(name.span);
+                    self.check_cursor_completions(name.span, false);
                     match self.find_in_vns(&name.data).map(|f| f.id) {
                         Some(ValueItem::Fn(id)) => {
                             self.resolve_proto(id);
@@ -5818,6 +5911,7 @@ impl TypeChecker {
                             &path.components,
                             Default::default(),
                             ScopeId::ROOT,
+                            span,
                         ),
                     }
                 } else {
@@ -5828,13 +5922,14 @@ impl TypeChecker {
                             if let Some(&this) = self.scopes.get(id).kind.as_trait() {
                                 ty_args.insert(this, Type::Unknown);
                             } else if !self.scopes.get(id).kind.is_extension() {
-                                return self.finish_resolve_value_path_from_type(id, rest, ty_args);
+                                return self.resolve_value_path_from_type(id, rest, ty_args, span);
                             }
 
                             self.resolve_value_path_in(
                                 rest,
                                 ty_args,
                                 self.scopes.get(id).body_scope,
+                                span,
                             )
                         }
                         Some(TypeItem::Module(id)) => {
@@ -5846,12 +5941,13 @@ impl TypeChecker {
                                 ));
                             }
 
-                            self.resolve_value_path_in(rest, Default::default(), id)
+                            self.resolve_value_path_in(rest, Default::default(), id, span)
                         }
                         None => self.resolve_value_path_in(
                             &path.components,
                             Default::default(),
                             ScopeId::ROOT,
+                            span,
                         ),
                     }
                 }
@@ -5864,8 +5960,10 @@ impl TypeChecker {
         data: &[PathComponent],
         mut ty_args: TypeArgs,
         mut scope: ScopeId,
+        total_span: Span,
     ) -> ResolvedValue {
         let Some(((last_name, last_args), rest)) = data.split_last() else {
+            self.check_module_completions(total_span, false, scope);
             // the only way for this to be empty is for a prior error to have occured
             return ResolvedValue::Error;
         };
@@ -5888,10 +5986,11 @@ impl TypeChecker {
                     if let Some(&this) = ty.kind.as_trait() {
                         ty_args.insert(this, Type::Unknown);
                     } else if !ty.kind.is_extension() {
-                        return self.finish_resolve_value_path_from_type(
+                        return self.resolve_value_path_from_type(
                             id,
                             &data[i + 1..],
                             ty_args,
+                            total_span,
                         );
                     }
                 }
@@ -5909,6 +6008,7 @@ impl TypeChecker {
             }
         }
 
+        self.check_module_completions(total_span, false, scope);
         let Some(item) = self.scopes[scope].find_in_vns(&last_name.data) else {
             return ResolvedValue::NotFound(Error::no_symbol(&last_name.data, last_name.span));
         };
@@ -5951,14 +6051,17 @@ impl TypeChecker {
         }
     }
 
-    fn finish_resolve_value_path_from_type(
+    fn resolve_value_path_from_type(
         &mut self,
         id: UserTypeId,
         rest: &[PathComponent],
         ty_args: TypeArgs,
+        total_span: Span,
     ) -> ResolvedValue {
         let ((name, args), rest) = rest.split_first().unwrap();
         let ty = Type::User(GenericUserType::new(id, ty_args).into());
+        self.check_dot_completions(total_span, &ty, false);
+
         let Some(mfn) = self.get_member_fn(ty, None, &name.data, args, name.span, self.current)
         else {
             return ResolvedValue::NotFound(Error::no_symbol(&name.data, name.span));

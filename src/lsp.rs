@@ -74,7 +74,7 @@ impl LanguageServer for LspBackend {
                 definition_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(CompletionOptions {
                     resolve_provider: None,
-                    trigger_characters: Some(vec![".".into()]),
+                    trigger_characters: Some(vec![".".into(), ":".into()]),
                     all_commit_characters: None,
                     work_done_progress_options: Default::default(),
                     completion_item: Some(CompletionOptionsCompletionItem {
@@ -191,6 +191,28 @@ impl LanguageServer for LspBackend {
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = &params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
+        if let Some(ctx) = params.context.and_then(|ctx| ctx.trigger_character) {
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!(
+                        "looking for completion at line {}, character {} due to trigger '{}'",
+                        pos.line, pos.character, ctx
+                    ),
+                )
+                .await;
+        } else {
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    format!(
+                        "looking for completion at line {}, character {}",
+                        pos.line, pos.character
+                    ),
+                )
+                .await;
+        }
+
         let (_, checked) = self.check_project(uri, None, Some(pos)).await?;
         let project = checked.project();
         let scopes = &project.tc.scopes();
@@ -198,6 +220,7 @@ impl LanguageServer for LspBackend {
             return Ok(None);
         };
         let completions = completions
+            .items
             .iter()
             .flat_map(|completion| {
                 Some(match completion {
@@ -223,7 +246,7 @@ impl LanguageServer for LspBackend {
                         for (i, param) in f
                             .params
                             .iter()
-                            .filter(|p| p.label != THIS_PARAM)
+                            .filter(|p| !completions.method || p.label != THIS_PARAM)
                             .enumerate()
                         {
                             if i > 0 {

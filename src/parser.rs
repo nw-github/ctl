@@ -418,7 +418,10 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
             Token::Super => {
                 let original = span;
-                let data = self.path_components(None, &mut span);
+                let mut data = self.path_components(None, &mut span);
+                if data.is_empty() {
+                    data.push((Located::new(self.peek().span, "".into()), vec![]));
+                }
                 Expr::new(
                     span,
                     ExprData::Path(Path::new(PathOrigin::Super(original), data)),
