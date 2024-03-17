@@ -140,11 +140,7 @@ pub enum ExprData {
     Tuple(Vec<Expr>),
     Map(Vec<(Expr, Expr)>),
     Bool(bool),
-    Integer {
-        base: u8,
-        value: String,
-        width: Option<String>,
-    },
+    Integer(IntPattern),
     Float(String),
     String(String),
     Char(char),

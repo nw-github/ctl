@@ -1,5 +1,5 @@
 use crate::ast::parsed::{
-    Expr, ExprData, Fn, ImplBlock, Linkage, OperatorFn, Stmt, StmtData, Struct, UsePath, UsePathTail
+    Expr, ExprData, Fn, ImplBlock, IntPattern, Linkage, OperatorFn, Stmt, StmtData, Struct, UsePath, UsePathTail
 };
 
 const INDENT: &str = "  ";
@@ -246,8 +246,8 @@ pub fn print_expr(expr: &Expr, indent: usize) {
                 print_expr(value, indent + 2);
             }
         }
-        ExprData::Integer { base, value, width } => {
-            eprintln!("{tabs}Integer(base {base}, width {width:?}) = {value}");
+        ExprData::Integer(IntPattern { negative, base, value, width }) => {
+            eprintln!("{tabs}Integer(base {base}, width {width:?}, neg {negative}) = {value}");
         }
         ExprData::Float(value) => {
             eprintln!("{tabs}Float = {value}");

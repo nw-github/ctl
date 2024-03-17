@@ -2513,8 +2513,8 @@ impl TypeChecker {
                 ty: Type::Bool,
                 data: CheckedExprData::Bool(value),
             },
-            ExprData::Integer { base, value, width } => {
-                let (ty, value) = self.get_int_type_and_val(target, base, width, value, span);
+            ExprData::Integer(integer) => {
+                let (ty, value) = self.get_int_type_and_val(target, &integer, span);
                 CheckedExpr::new(ty, CheckedExprData::Integer(value))
             }
             ExprData::Float(value) => CheckedExpr::new(
@@ -4398,13 +4398,16 @@ impl TypeChecker {
     fn get_int_type_and_val(
         &mut self,
         target: Option<&Type>,
-        base: u8,
-        width: Option<String>,
-        value: String,
+        IntPattern {
+            negative,
+            base,
+            value,
+            width,
+        }: &IntPattern,
         span: Span,
     ) -> (Type, BigInt) {
         let ty = if let Some(width) = width {
-            if let Some(ty) = Type::from_int_name(&width, false) {
+            if let Some(ty) = Type::from_int_name(width, false) {
                 ty
             } else {
                 return self.error(Error::new(
@@ -4421,7 +4424,7 @@ impl TypeChecker {
         };
 
         let stats = ty.as_integral().unwrap();
-        let result = match BigInt::from_str_radix(&value, base as u32) {
+        let mut result = match BigInt::from_str_radix(value, *base as u32) {
             Ok(result) => result,
             Err(e) => {
                 return self.error(Error::new(
@@ -4430,23 +4433,26 @@ impl TypeChecker {
                 ));
             }
         };
-        let max = stats.max();
-        if result > max {
-            return self.error(Error::new(
-                format!(
-                    "integer literal too large for type '{}' (max is {max})",
-                    ty.name(&self.scopes)
-                ),
-                span,
-            ));
+        if *negative {
+            result = -result;
+            if !stats.signed {
+                self.error(Error::new(
+                    format!(
+                        "cannot negate unsigned integer type '{}'",
+                        ty.name(&self.scopes)
+                    ),
+                    span,
+                ))
+            }
         }
 
         let min = stats.min();
-        if result < min {
+        let max = stats.max();
+        if result > max || result < min {
             return self.error(Error::new(
                 format!(
-                    "integer literal too small for type '{}' (min is {max})",
-                    ty.name(&self.scopes)
+                    "integer literal does not fit in range for type '{}' (range is {min}..{max})",
+                    ty.name(&self.scopes),
                 ),
                 span,
             ));
@@ -4457,22 +4463,13 @@ impl TypeChecker {
 
     fn consteval(&mut self, expr: &Expr, target: Option<&Type>) -> Result<usize, Error> {
         match &expr.data {
-            ExprData::Integer { base, value, width } => {
-                if let Some(width) = width
-                    .as_ref()
-                    .and_then(|width| Type::from_int_name(width, false))
-                {
-                    if let Some(target) = target.filter(|&target| target != &width) {
-                        return Err(Error::type_mismatch(
-                            target,
-                            &width,
-                            &self.scopes,
-                            expr.span,
-                        ));
-                    }
+            ExprData::Integer(patt) => {
+                let (ty, val) = self.get_int_type_and_val(target, patt, expr.span);
+                if let Some(target) = target.filter(|&target| target != &ty) {
+                    return Err(Error::type_mismatch(target, &ty, &self.scopes, expr.span));
                 }
 
-                return match usize::from_str_radix(value, *base as u32) {
+                return match val.try_into() {
                     Ok(value) => Ok(value),
                     Err(_) => Err(Error::new("value cannot be converted to uint", expr.span)),
                 };
@@ -4847,40 +4844,25 @@ impl TypeChecker {
     fn check_int_pattern(
         &mut self,
         target: &Type,
-        IntPattern {
-            negative,
-            base,
-            value,
-            width,
-        }: IntPattern,
+        patt: &IntPattern,
         span: Span,
     ) -> Option<BigInt> {
         let inner = target.strip_references();
-        let Some(stats) = inner.as_integral() else {
-            let (ty, _) = self.get_int_type_and_val(None, base, width, value, span);
+        if !inner.is_integral() {
+            let (ty, _) = self.get_int_type_and_val(None, patt, span);
             if ty.is_unknown() {
                 return None;
             }
 
             return self.error(Error::type_mismatch(target, &ty, &self.scopes, span));
-        };
+        }
 
-        let (ty, value) = self.get_int_type_and_val(Some(inner), base, width, value, span);
+        let (ty, value) = self.get_int_type_and_val(Some(inner), patt, span);
         if &ty != inner {
             return self.error(Error::type_mismatch(inner, &ty, &self.scopes, span));
         }
 
-        if !stats.signed && negative {
-            return self.error(Error::new(
-                format!(
-                    "cannot negate unsigned integer type '{}'",
-                    ty.name(&self.scopes)
-                ),
-                span,
-            ));
-        }
-
-        Some(if negative { -value } else { value })
+        Some(value)
     }
 
     fn check_slice_pattern(
@@ -5379,7 +5361,7 @@ impl TypeChecker {
                 CheckedPattern::refutable(CheckedPatternData::String(value))
             }
             Pattern::Int(patt) => CheckedPattern::refutable(
-                self.check_int_pattern(scrutinee, patt, span)
+                self.check_int_pattern(scrutinee, &patt, span)
                     .map(CheckedPatternData::Int)
                     .unwrap_or_default(),
             ),
@@ -5388,10 +5370,10 @@ impl TypeChecker {
                 start,
                 end,
             }) => {
-                let Some(start) = self.check_int_pattern(scrutinee, start, span) else {
+                let Some(start) = self.check_int_pattern(scrutinee, &start, span) else {
                     return Default::default();
                 };
-                let Some(end) = self.check_int_pattern(scrutinee, end, span) else {
+                let Some(end) = self.check_int_pattern(scrutinee, &end, span) else {
                     return Default::default();
                 };
 

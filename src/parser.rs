@@ -388,11 +388,12 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::None => Expr::new(span, ExprData::None),
             Token::Int { base, value, width } => Expr::new(
                 span,
-                ExprData::Integer {
+                ExprData::Integer(IntPattern {
                     base,
                     value: value.into(),
                     width: width.map(|w| w.into()),
-                },
+                    negative: false,
+                }),
             ),
             Token::Float(value) => Expr::new(span, ExprData::Float(value.into())),
             Token::String(value) => Expr::new(span, ExprData::String(value.into())),
@@ -479,7 +480,14 @@ impl<'a, 'b> Parser<'a, 'b> {
                     UnaryOp::try_from_prefix(data).unwrap()
                 };
 
-                let expr = self.precedence(Precedence::Prefix, ctx);
+                let mut expr = self.precedence(Precedence::Prefix, ctx);
+                if matches!(op, UnaryOp::Neg) {
+                    if let ExprData::Integer(patt) = &mut expr.data {
+                        patt.negative = true;
+                    }
+                    return expr;
+                }
+
                 Expr::new(
                     span.extended_to(expr.span),
                     ExprData::Unary {
