@@ -3035,7 +3035,8 @@ impl<'a> Codegen<'a> {
             CheckedExprData::Unary {
                 op: UnaryOp::Deref,
                 ..
-            } | CheckedExprData::Var(_)
+            } | CheckedExprData::AutoDeref { .. }
+                | CheckedExprData::Var(_)
                 | CheckedExprData::Member { .. }
                 | CheckedExprData::Subscript { .. }
         )

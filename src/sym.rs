@@ -185,6 +185,7 @@ pub struct Function {
     pub variadic: bool,
     /// Is this a trait function with a body
     pub has_body: bool,
+    pub assign_subscript: bool,
     pub type_params: Vec<UserTypeId>,
     pub params: Vec<CheckedParam>,
     pub ret: Type,
@@ -239,6 +240,7 @@ pub struct UserType {
     pub impls: Vec<TraitImpl>,
     pub type_params: Vec<UserTypeId>,
     pub fns: Vec<Vis<FunctionId>>,
+    pub subscripts: Vec<FunctionId>,
     pub members: IndexMap<String, CheckedMember>,
 }
 
@@ -270,6 +272,7 @@ impl UserType {
             fns: vec![],
             attrs: Default::default(),
             members: Default::default(),
+            subscripts: Vec::new(),
         }
     }
 }
@@ -475,6 +478,7 @@ impl Scopes {
                             attrs: Default::default(),
                             fns: Vec::new(),
                             members: IndexMap::new(),
+                            subscripts: Vec::new(),
                         },
                         false,
                         ScopeId::ROOT,
@@ -507,6 +511,7 @@ impl Scopes {
                     attrs: Default::default(),
                     impls: vec![],
                     fns: vec![],
+                    subscripts: Vec::new(),
                 },
                 false,
                 ScopeId::ROOT,
@@ -536,6 +541,7 @@ impl Scopes {
                             attrs: Default::default(),
                             fns: Vec::new(),
                             members: IndexMap::new(),
+                            subscripts: Vec::new(),
                         },
                         false,
                         ScopeId::ROOT,
@@ -568,6 +574,7 @@ impl Scopes {
                     attrs: Default::default(),
                     impls: vec![],
                     fns: vec![],
+                    subscripts: Vec::new(),
                 },
                 false,
                 ScopeId::ROOT,

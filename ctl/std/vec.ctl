@@ -1,5 +1,6 @@
 use std::mem;
 use std::span::*;
+use std::range::RangeBounds;
 
 #(lang(vec))
 pub struct Vec<T> {
@@ -227,5 +228,34 @@ pub struct Vec<T> {
             }
             self
         }
+    }
+
+    pub fn [](this, idx: uint): *T {
+        &this.as_span()[idx]
+    }
+
+    pub fn [](mut this, idx: uint): *mut T {
+        &mut this.as_span_mut()[idx]
+    }
+
+    pub fn []=(mut this, idx: uint, val: T) {
+        this.as_span_mut()[idx] = val;
+    }
+
+    pub fn []<R: RangeBounds<uint>>(this, range: R): [T..] {
+        this.as_span().subspan(range)
+    }
+
+    pub fn []<R: RangeBounds<uint>>(mut this, range: R): [mut T..] {
+        this.as_span_mut().subspan(range)
+    }
+
+    // TODO: remove these when RangeFull can implement rangebounds
+    pub fn [](this, _: std::range::RangeFull): [T..] {
+        this.as_span()
+    }
+
+    pub fn [](mut this, _: std::range::RangeFull): [mut T..] {
+        this.as_span_mut()
     }
 }

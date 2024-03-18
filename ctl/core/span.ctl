@@ -61,6 +61,25 @@ pub struct Span<T> {
 
         unsafe Span::new(this.ptr + start, end - start)
     }
+
+    #(inline)
+    pub fn [](this, idx: uint): *T {
+        if this.get(idx) is ?item {
+            item
+        } else {
+            panic("Span::[]: index out of bounds");
+        }
+    }
+
+    #(inline(always))
+    pub fn []<R: RangeBounds<uint>>(this, range: R): [T..] {
+        this.subspan(range)
+    }
+
+    // TODO: remove this when RangeFull can implement rangebounds
+    pub fn [](this, _: core::range::RangeFull): [T..] {
+        *this
+    }
 }
 
 #(lang(span_mut))
@@ -138,6 +157,34 @@ pub struct SpanMut<T> {
         }
 
         unsafe SpanMut::new(this.ptr + start, end - start)
+    }
+
+    #(inline)
+    pub fn [](this, idx: uint): *mut T {
+        if this.get_mut(idx) is ?item {
+            item
+        } else {
+            panic("Span::[]: index out of bounds");
+        }
+    }
+
+    #(inline)
+    pub fn []=(this, idx: uint, val: T) {
+        if this.get_mut(idx) is ?item {
+            *item = val;
+        } else {
+            panic("Span::[]: index out of bounds");
+        }
+    }
+
+    #(inline(always))
+    pub fn []<R: RangeBounds<uint>>(this, range: R): [mut T..] {
+        this.subspan(range)
+    }
+
+    // TODO: remove this when RangeFull can implement rangebounds
+    pub fn [](this, _: core::range::RangeFull): [mut T..] {
+        *this
     }
 }
 

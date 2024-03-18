@@ -197,8 +197,12 @@ pub fn print_expr(expr: &Expr, indent: usize) {
             eprintln!("{tabs}Unary({op:?})");
             print_expr(expr, indent + 1);
         }
-        ExprData::Call { callee, args } => {
-            eprintln!("{tabs}Call");
+        ExprData::Call { callee, args } | ExprData::Subscript { callee, args } => {
+            if matches!(expr.data, ExprData::Call { .. }) {
+                eprintln!("{tabs}Call");
+            } else {
+                eprintln!("{tabs}Subscript");
+            }
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}Callee: ");
             print_expr(callee, indent + 2);
@@ -323,19 +327,6 @@ pub fn print_expr(expr: &Expr, indent: usize) {
             }
             print_expr(source, indent + 1);
         }
-        ExprData::Subscript { callee, args } => {
-            eprintln!("{tabs}Subscript");
-            let tabs = INDENT.repeat(indent + 1);
-            eprintln!("{tabs}Callee: ");
-            print_expr(callee, indent + 2);
-
-            if !args.is_empty() {
-                eprintln!("{tabs}Args: ");
-                for expr in args {
-                    print_expr(expr, indent + 2);
-                }
-            }
-        }
         ExprData::Return(expr) => {
             eprintln!("{tabs}Return");
             print_expr(expr, indent + 1);
@@ -439,6 +430,7 @@ fn print_fn(
         ret,
         public,
         body,
+        assign_subscript: _,
         attrs: _,
     }: &Fn,
     indent: usize,

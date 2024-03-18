@@ -159,6 +159,56 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
             };
         }
     }
+
+    pub fn [](this, key: *K): *V {
+        if this.get(key) is ?item {
+            item
+        } else {
+            panic("Map::[]: attempt to retrieve invalid key");
+        }
+    }
+
+    pub fn [](mut this, key: *K): *mut V {
+        if this.get_mut(key) is ?item {
+            item
+        } else {
+            panic("Map::[]: attempt to retrieve invalid key");
+        }
+    }
+
+    pub fn [](mut this, key: K, kw fallback: V): *mut V {
+        // TODO: do this more efficiently
+        if this.get_mut(&key) is ?item {
+            item
+        } else {
+            if this.len + 1 > this.buckets.len() * 3 / 4 {
+                this.adjust_cap(this.buckets.len() * 2);
+            }
+
+            match this.buckets.get_mut(this.entry_pos(&key))! {
+                Bucket::Some(_, prev) => {
+                    *prev = fallback;
+                    prev
+                },
+                entry => {
+                    if !(entry is Bucket::Tombstone) {
+                        this.len++;
+                    }
+
+                    *entry = Bucket::Some(key, fallback);
+                    if entry is Bucket::Some(_, val) {
+                        val
+                    } else {
+                        unreachable();
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn []=(mut this, key: K, val: V) {
+        this.insert(key, val);
+    }
 }
 
 pub struct Iter<K, V> {
@@ -168,7 +218,7 @@ pub struct Iter<K, V> {
         fn next(mut this): ?(*K, *V) {
             for (i, bucket) in this.buckets.iter().enumerate() {
                 if bucket is Bucket::Some(key, val) {
-                    this.buckets = this.buckets.subspan(i + 1..);
+                    this.buckets = this.buckets[i + 1..];
                     break (key, val);
                 }
             }
@@ -183,7 +233,7 @@ pub struct IterMut<K, V> {
         fn next(mut this): ?(*K, *mut V) {
             for (i, bucket) in this.buckets.iter_mut().enumerate() {
                 if bucket is Bucket::Some(key, val) {
-                    this.buckets = this.buckets.subspan(i + 1..);
+                    this.buckets = this.buckets[i + 1..];
                     break (key, val);
                 }
             }

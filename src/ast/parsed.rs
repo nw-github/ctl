@@ -126,6 +126,10 @@ pub enum ExprData {
         callee: Box<Expr>,
         args: Vec<(Option<String>, Expr)>,
     },
+    Subscript {
+        callee: Box<Expr>,
+        args: Vec<(Option<String>, Expr)>,
+    },
     Array(Vec<Expr>),
     Set(Vec<Expr>),
     Vec(Vec<Expr>),
@@ -173,10 +177,6 @@ pub enum ExprData {
         source: Box<Expr>,
         generics: Vec<TypeHint>,
         member: Located<String>,
-    },
-    Subscript {
-        callee: Box<Expr>,
-        args: Vec<Expr>,
     },
     Return(Box<Expr>),
     Tail(Box<Expr>),
@@ -450,6 +450,10 @@ pub enum OperatorFnType {
     Decrement,
     #[display(fmt = "!")]
     Bang,
+    #[display(fmt = "[]")]
+    Subscript,
+    #[display(fmt = "[]=")]
+    SubscriptAssign,
 }
 
 #[derive(Debug, Clone)]
@@ -461,6 +465,7 @@ pub struct Fn {
     pub is_async: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
+    pub assign_subscript: bool,
     pub type_params: TypeParams,
     pub params: Vec<Param>,
     pub ret: TypeHint,
@@ -481,6 +486,7 @@ impl Fn {
             params: func.params,
             ret: func.ret,
             body: func.body,
+            assign_subscript: matches!(func.name.data, OperatorFnType::SubscriptAssign),
         }
     }
 }

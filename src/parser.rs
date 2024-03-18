@@ -808,8 +808,13 @@ impl<'a, 'b> Parser<'a, 'b> {
                     generics,
                 })
             }
-            Token::LParen => {
-                let args = self.csv(Vec::new(), Token::RParen, left.span, |this| {
+            Token::LParen | Token::LBrace => {
+                let closing = if op.data == Token::LParen {
+                    Token::RParen
+                } else {
+                    Token::RBrace
+                };
+                let args = self.csv(Vec::new(), closing, left.span, |this| {
                     let mut expr = this.expression();
                     let mut name = None;
                     if let ExprData::Path(path) = &expr.data {
@@ -826,17 +831,18 @@ impl<'a, 'b> Parser<'a, 'b> {
                     (name, expr)
                 });
 
-                args.map(|args| ExprData::Call {
-                    callee: left.into(),
-                    args,
-                })
+                if op.data == Token::LParen {
+                    args.map(|args| ExprData::Call {
+                        callee: left.into(),
+                        args,
+                    })
+                } else {
+                    args.map(|args| ExprData::Subscript {
+                        callee: left.into(),
+                        args,
+                    })
+                }
             }
-            Token::LBrace => self
-                .csv(Vec::new(), Token::RBrace, left.span, Self::expression)
-                .map(|args| ExprData::Subscript {
-                    callee: left.into(),
-                    args,
-                }),
             _ => {
                 self.error(Error::new("unexpected token", op.span));
                 Expr::new(op.span, ExprData::Error)
@@ -1905,6 +1911,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 ret,
                 body,
                 attrs,
+                assign_subscript: false,
             })),
             Right(op) => {
                 if is_async {
@@ -1957,6 +1964,14 @@ impl<'a, 'b> Parser<'a, 'b> {
                 Token::Increment => Right(OperatorFnType::Increment),
                 Token::Decrement => Right(OperatorFnType::Decrement),
                 Token::Exclamation => Right(OperatorFnType::Bang),
+                Token::LBrace => {
+                    self.expect_kind(Token::RBrace);
+                    if self.next_if_kind(Token::Assign).is_some() {
+                        Right(OperatorFnType::SubscriptAssign)
+                    } else {
+                        Right(OperatorFnType::Subscript)
+                    }
+                }
                 Token::Ident(name) => Left(name.into()),
                 _ => {
                     self.error(Error::new("expected identifier", token.span));

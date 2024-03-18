@@ -113,8 +113,10 @@ impl Diagnostics {
         Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1))
     }
 
-    pub fn set_errors_enabled(&mut self, enabled: bool) {
+    pub fn set_errors_enabled(&mut self, enabled: bool) -> bool {
+        let prev = !self.errors_disabled;
         self.errors_disabled = !enabled;
+        prev
     }
 }
 

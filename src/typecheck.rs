@@ -366,8 +366,10 @@ impl TypeChecker {
 
             let data = self.scopes.get(ut.id);
             let cap = self.can_access_privates(data.scope);
-            for (name, _) in data.members.iter().filter(|(_, m)| m.public || cap) {
-                completions.push(LspItem::Property(ut.id, name.clone()))
+            if method {
+                for (name, _) in data.members.iter().filter(|(_, m)| m.public || cap) {
+                    completions.push(LspItem::Property(ut.id, name.clone()))
+                }
             }
 
             for tr in self
@@ -607,6 +609,7 @@ impl TypeChecker {
                     ret: Self::typehint_for_struct(&base.name, &base.type_params),
                     body: None,
                     attrs: Default::default(),
+                    assign_subscript: false,
                 })
             });
             let mut members = IndexMap::with_capacity(base.members.len());
@@ -628,8 +631,8 @@ impl TypeChecker {
                 }
             }
 
-            let (impls, blocks) = this.declare_impl_blocks(base.impls, base.operators);
-            let fns = this.declare_fns(base.functions);
+            let (impls, blocks, subscripts) = this.declare_impl_blocks(base.impls, base.operators);
+            let mut fns = this.declare_fns(base.functions);
             let ut = this.ut_from_stuff(
                 attrs,
                 base.name,
@@ -640,8 +643,10 @@ impl TypeChecker {
                 &fns,
                 impls,
                 &blocks,
+                &subscripts,
             );
 
+            fns.extend(subscripts);
             (ut, init, fns, blocks)
         });
 
@@ -708,7 +713,7 @@ impl TypeChecker {
                 });
             }
 
-            let (impls, blocks) = this.declare_impl_blocks(base.impls, base.operators);
+            let (impls, blocks, subscripts) = this.declare_impl_blocks(base.impls, base.operators);
             let ret = Self::typehint_for_struct(&base.name, &base.type_params);
             let mut enum_union = true;
             for variant in variants {
@@ -794,6 +799,7 @@ impl TypeChecker {
                     ret: ret.clone(),
                     body: None,
                     attrs: Default::default(),
+                    assign_subscript: false,
                 }));
             }
             let member_cons_len = fns.len();
@@ -814,8 +820,10 @@ impl TypeChecker {
                 &fns,
                 impls,
                 &blocks,
+                &subscripts,
             );
 
+            fns.extend(subscripts);
             (ut, blocks, fns, member_cons_len)
         });
         let scope = ut.body_scope;
@@ -850,8 +858,8 @@ impl TypeChecker {
                 }
             }
 
-            let (impls, blocks) = this.declare_impl_blocks(base.impls, base.operators);
-            let fns = this.declare_fns(base.functions);
+            let (impls, blocks, subscripts) = this.declare_impl_blocks(base.impls, base.operators);
+            let mut fns = this.declare_fns(base.functions);
             let ut = this.ut_from_stuff(
                 attrs,
                 base.name,
@@ -862,7 +870,9 @@ impl TypeChecker {
                 &fns,
                 impls,
                 &blocks,
+                &subscripts,
             );
+            fns.extend(subscripts);
             (ut, fns, blocks)
         });
 
@@ -985,6 +995,7 @@ impl TypeChecker {
                         &fns,
                         impls,
                         &[],
+                        &[],
                     );
                     (tr, fns, this_id)
                 });
@@ -1012,8 +1023,8 @@ impl TypeChecker {
                 operators,
             } => {
                 let (ext, impl_blocks, fns) = self.enter(ScopeKind::None, |this| {
-                    let (impls, blocks) = this.declare_impl_blocks(impls, operators);
-                    let fns = this.declare_fns(functions);
+                    let (impls, blocks, subscripts) = this.declare_impl_blocks(impls, operators);
+                    let mut fns = this.declare_fns(functions);
                     let ext = this.ut_from_stuff(
                         stmt.attrs,
                         name,
@@ -1024,7 +1035,9 @@ impl TypeChecker {
                         &fns,
                         impls,
                         &blocks,
+                        &subscripts,
                     );
+                    fns.extend(subscripts);
                     (ext, blocks, fns)
                 });
 
@@ -1095,6 +1108,7 @@ impl TypeChecker {
                 is_async: f.is_async,
                 is_unsafe: f.is_unsafe,
                 variadic: f.variadic,
+                assign_subscript: f.assign_subscript,
                 has_body: f.body.is_some(),
                 type_params: Vec::new(),
                 params: Vec::new(),
@@ -1175,6 +1189,7 @@ impl TypeChecker {
         f: OperatorFn,
         impls: &mut Vec<TraitImpl>,
         blocks: &mut Vec<DeclaredImplBlock>,
+        subscripts: &mut Vec<DeclaredFn>,
     ) {
         use OperatorFnType as O;
         let (tr_name, fn_name, ty_args) = match f.name.data {
@@ -1231,6 +1246,12 @@ impl TypeChecker {
                 let (tr_name, fn_name) = UNARY_OP_TRAITS.get(&op).unwrap();
                 (tr_name, fn_name, vec![f.ret.clone()])
             }
+            O::Subscript | O::SubscriptAssign => {
+                subscripts.push(
+                    self.declare_fn(Fn::from_operator_fn(format!("$sub{}", subscripts.len()), f)),
+                );
+                return;
+            }
         };
 
         let span = f.name.span;
@@ -1251,7 +1272,7 @@ impl TypeChecker {
         blocks.push(block);
     }
 
-    fn declare_type_params(&mut self, vec: Vec<(Located<String>, Vec<Path>)>) -> Vec<UserTypeId> {
+    fn declare_type_params(&mut self, vec: TypeParams) -> Vec<UserTypeId> {
         vec.into_iter()
             .map(|(name, impls)| {
                 self.insert(
@@ -1277,9 +1298,10 @@ impl TypeChecker {
         &mut self,
         blocks: Vec<ImplBlock>,
         operators: Vec<OperatorFn>,
-    ) -> (Vec<TraitImpl>, Vec<DeclaredImplBlock>) {
+    ) -> (Vec<TraitImpl>, Vec<DeclaredImplBlock>, Vec<DeclaredFn>) {
         let mut impls = Vec::new();
         let mut declared_blocks = Vec::new();
+        let mut subscripts = Vec::new();
         for ImplBlock {
             path, functions, ..
         } in blocks
@@ -1299,10 +1321,10 @@ impl TypeChecker {
         }
 
         for func in operators {
-            self.declare_op_fn(func, &mut impls, &mut declared_blocks);
+            self.declare_op_fn(func, &mut impls, &mut declared_blocks, &mut subscripts);
         }
 
-        (impls, declared_blocks)
+        (impls, declared_blocks, subscripts)
     }
 
     fn declare_type_hint(&self, hint: TypeHint) -> Type {
@@ -1333,10 +1355,11 @@ impl TypeChecker {
         public: bool,
         members: IndexMap<String, CheckedMember>,
         kind: UserTypeKind,
-        type_params: Vec<(Located<String>, Vec<Path>)>,
+        type_params: TypeParams,
         fns: &[DeclaredFn],
         impls: Vec<TraitImpl>,
         impl_blocks: &[DeclaredImplBlock],
+        subscripts: &[DeclaredFn],
     ) -> UserType {
         UserType {
             attrs,
@@ -1352,6 +1375,7 @@ impl TypeChecker {
                 .chain(impl_blocks.iter().flat_map(|block| block.fns.iter()))
                 .map(|f| Vis::new(f.id, self.scopes.get(f.id).public))
                 .collect(),
+            subscripts: subscripts.iter().map(|s| s.id).collect(),
         }
     }
 }
@@ -1954,11 +1978,44 @@ impl TypeChecker {
         let span = expr.span;
         match expr.data {
             ExprData::Binary { op, left, right } => {
+                let left_span = left.span;
+                if op == BinaryOp::Assign {
+                    if let ExprData::Subscript { callee, mut args } = left.data {
+                        if args.is_empty() {
+                            return self.error(Error::new(
+                                "subscript requires at least one argument",
+                                span,
+                            ));
+                        }
+
+                        let callee = self.check_expr(*callee, None);
+                        if let Type::Array(target) = callee.ty.strip_references() {
+                            let left = self.check_array_subscript(target.0.clone(), callee, args);
+                            if op.is_assignment() && !left.is_assignable(&self.scopes) {
+                                // TODO: report a better error here
+                                self.error(Error::new("expression is not assignable", left_span))
+                            }
+
+                            let right = self.type_check(*right, &left.ty);
+                            return CheckedExpr::new(
+                                left.ty.clone(),
+                                CheckedExprData::Binary {
+                                    op: BinaryOp::Assign,
+                                    left: left.into(),
+                                    right: right.into(),
+                                },
+                            );
+                        } else {
+                            args.push((None, *right));
+                            return self.check_subscript(callee, args, target, true, span);
+                        }
+                    }
+                }
+
                 if matches!(op, BinaryOp::NoneCoalesce | BinaryOp::NoneCoalesceAssign) {
                     return self.check_null_coalesce(*left, *right, op, target, span);
                 }
 
-                let left_span = left.span;
                 let left = self.check_expr(*left, target);
                 if left.ty.is_unknown() {
                     return Default::default();
@@ -2862,36 +2919,16 @@ impl TypeChecker {
                 )
             }
             ExprData::Subscript { callee, args } => {
-                if args.len() > 1 {
-                    self.error(Error::new(
-                        "multidimensional subscript is not supported",
-                        args[1].span,
-                    ))
-                } else if args.is_empty() {
-                    return self.error(Error::new(
-                        "subscript requires at least one argument",
-                        callee.span,
-                    ));
+                if args.is_empty() {
+                    return self
+                        .error(Error::new("subscript requires at least one argument", span));
                 }
 
                 let callee = self.check_expr(*callee, None);
-                let arg = self.type_check(args.into_iter().next().unwrap(), &Type::Isize);
                 if let Type::Array(target) = callee.ty.strip_references() {
-                    CheckedExpr::new(
-                        target.0.clone(),
-                        CheckedExprData::Subscript {
-                            callee: callee.into(),
-                            args: vec![arg],
-                        },
-                    )
+                    self.check_array_subscript(target.0.clone(), callee, args)
                 } else {
-                    self.error(Error::new(
-                        format!(
-                            "type {} cannot be subscripted",
-                            &callee.ty.name(&self.scopes)
-                        ),
-                        span,
-                    ))
+                    self.check_subscript(callee, args, target, false, span)
                 }
             }
             ExprData::Return(expr) => self.check_return(*expr, span),
@@ -3144,6 +3181,153 @@ impl TypeChecker {
         expr
     }
 
+    fn check_array_subscript(
+        &mut self,
+        target: Type,
+        callee: CheckedExpr,
+        args: Vec<(Option<String>, Expr)>,
+    ) -> CheckedExpr {
+        let mut args = args.into_iter();
+        let (name, expr) = args.next().unwrap();
+        if let Some(name) = name {
+            self.error(Error::new(
+                format!("unknown parameter: '{name}'"),
+                expr.span,
+            ))
+        }
+
+        let arg = self.type_check(expr, &Type::Isize);
+        if let Some((_, arg)) = args.next() {
+            let last = args.last().map(|(_, arg)| arg.span).unwrap_or(arg.span);
+            self.error(Error::new(
+                "multidimensional array subscript is not supported",
+                arg.span.extended_to(last),
+            ))
+        }
+
+        CheckedExpr::new(
+            target,
+            CheckedExprData::Subscript {
+                callee: callee.into(),
+                args: vec![arg],
+            },
+        )
+    }
+
+    fn check_subscript(
+        &mut self,
+        callee: CheckedExpr,
+        args: Vec<(Option<String>, Expr)>,
+        target: Option<&Type>,
+        assign: bool,
+        span: Span,
+    ) -> CheckedExpr {
+        let ty = callee.ty.strip_references();
+        let imm_receiver = 'out: {
+            let mut ty = &callee.ty;
+            if !matches!(
+                ty,
+                Type::Ptr(_) | Type::MutPtr(_) | Type::DynPtr(_) | Type::DynMutPtr(_)
+            ) && !callee.can_addrmut(&self.scopes)
+            {
+                break 'out true;
+            }
+
+            while let Type::MutPtr(inner) = ty {
+                ty = inner;
+            }
+
+            matches!(ty, Type::Ptr(_) | Type::DynPtr(_))
+        };
+
+        if let Some(ut) = ty.as_user() {
+            let mut candidates: Vec<_> = self
+                .scopes
+                .get(ut.id)
+                .subscripts
+                .iter()
+                .cloned()
+                .filter(|&f| assign == self.scopes.get(f).assign_subscript)
+                .filter(|&f| self.scopes.get(f).params.len() == args.len() + 1)
+                .collect();
+            candidates.iter().for_each(|&f| self.resolve_proto(f));
+            candidates.sort_unstable_by(|&a, &b| {
+                let left = self
+                    .scopes
+                    .get(a)
+                    .params
+                    .first()
+                    .is_some_and(|p| p.ty.is_mut_ptr());
+                let right = self
+                    .scopes
+                    .get(b)
+                    .params
+                    .first()
+                    .is_some_and(|p| p.ty.is_mut_ptr());
+                right.cmp(&left)
+            });
+
+            for f in candidates {
+                if imm_receiver
+                    && self
+                        .scopes
+                        .get(f)
+                        .params
+                        .first()
+                        .is_some_and(|p| p.ty.is_mut_ptr())
+                {
+                    continue;
+                }
+
+                let mut func = GenericFunc::from_id(&self.scopes, f);
+                func.ty_args.copy_args(&ut.ty_args);
+
+                let args = args.clone();
+                let recv = callee.clone().auto_deref(&self.scopes.get(f).params[0].ty);
+                let prev = self.diag.set_errors_enabled(false);
+                let (args, ret, failed) =
+                    self.check_fn_args(&mut func, Some(recv), args, target, span);
+                self.diag.set_errors_enabled(prev);
+                if failed {
+                    continue;
+                }
+                // unsafe doesnt cause check_fn_args to fail, but we mute errors, so check again
+                // here
+                if self.scopes.get(func.id).is_unsafe && self.safety != Safety::Unsafe {
+                    self.error(Error::is_unsafe(span))
+                }
+
+                if !assign {
+                    if let Type::Ptr(inner) | Type::MutPtr(inner) = &ret {
+                        let inner = (**inner).clone();
+                        let expr =
+                            CheckedExpr::new(ret, CheckedExprData::call(func, args, self.current));
+                        return CheckedExpr::new(inner, CheckedExprData::AutoDeref(expr.into(), 1));
+                    }
+                }
+
+                return CheckedExpr::new(ret, CheckedExprData::call(func, args, self.current));
+            }
+        }
+
+        let args: Vec<_> = args
+            .into_iter()
+            .map(|(_, expr)| self.check_expr(expr, None))
+            .collect();
+        self.error(Error::new(
+            format!(
+                "type '{}' does not support subscript{} with arguments of type ({})",
+                &callee.ty.name(&self.scopes),
+                if assign { " assign" } else { "" },
+                args.into_iter()
+                    .map(|expr| expr.ty.name(&self.scopes))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+            span,
+        ))
+    }
+
     fn check_cast(&mut self, lhs: &Type, rhs: &Type, throwing: bool, span: Span) {
         if let Some((a, b)) = lhs.as_integral().zip(rhs.as_integral()) {
             if (a.signed == b.signed || (a.signed && !b.signed)) && a.bits <= b.bits {
@@ -3335,7 +3519,7 @@ impl TypeChecker {
                 return self.error(Error::new(format!("unknown variant '{name}'"), span));
             };
 
-            members.insert(name, self.check_arg(&mut ut, expr, &ty));
+            members.insert(name, self.check_arg(&mut ut, expr, &ty).0);
         } else if !args.is_empty() {
             self.error(Error::new("expected 0 arguments", span))
         }
@@ -3442,7 +3626,8 @@ impl TypeChecker {
                 }
 
                 let recv = recv.auto_deref(&this_param.ty);
-                let (args, ret) = self.check_fn_args(&mut mfn.func, Some(recv), args, target, span);
+                let (args, ret, _) =
+                    self.check_fn_args(&mut mfn.func, Some(recv), args, target, span);
                 if mfn.dynamic {
                     return CheckedExpr::new(ret, CheckedExprData::CallDyn(mfn.func, args));
                 } else {
@@ -3478,7 +3663,8 @@ impl TypeChecker {
                         }
                     }
 
-                    let (args, ret) = self.check_fn_args(&mut mfn.func, None, args, target, span);
+                    let (args, ret, _) =
+                        self.check_fn_args(&mut mfn.func, None, args, target, span);
                     if mfn.dynamic {
                         return CheckedExpr::new(ret, CheckedExprData::CallDyn(mfn.func, args));
                     } else {
@@ -3558,11 +3744,16 @@ impl TypeChecker {
             }
         }
 
-        let (args, ret) = self.check_fn_args(&mut func, None, args, target, span);
+        let (args, ret, _) = self.check_fn_args(&mut func, None, args, target, span);
         CheckedExpr::new(ret, CheckedExprData::call(func, args, self.current))
     }
 
-    fn check_arg<T>(&mut self, func: &mut WithTypeArgs<T>, expr: Expr, ty: &Type) -> CheckedExpr {
+    fn check_arg<T>(
+        &mut self,
+        func: &mut WithTypeArgs<T>,
+        expr: Expr,
+        ty: &Type,
+    ) -> (CheckedExpr, bool) {
         let mut target = ty.with_templates(&func.ty_args);
         let span = expr.span;
         let expr = self.check_expr(expr, Some(&target));
@@ -3571,7 +3762,13 @@ impl TypeChecker {
             target.fill_templates(&func.ty_args);
         }
 
-        self.type_check_checked(expr, &target, span)
+        match self.coerce(expr, &target) {
+            Ok(expr) => (expr, false),
+            Err(expr) => (
+                self.error(Error::type_mismatch(&target, &expr.ty, &self.scopes, span)),
+                true,
+            ),
+        }
     }
 
     fn check_fn_args(
@@ -3581,7 +3778,7 @@ impl TypeChecker {
         args: Vec<(Option<String>, Expr)>,
         target: Option<&Type>,
         span: Span,
-    ) -> (IndexMap<String, CheckedExpr>, Type) {
+    ) -> (IndexMap<String, CheckedExpr>, Type, bool) {
         self.resolve_proto(func.id);
 
         let unknowns: HashSet<_> = func
@@ -3602,13 +3799,17 @@ impl TypeChecker {
 
         let variadic = self.scopes.get(func.id).variadic;
         let mut num = 0;
+        let mut failed = false;
         for (name, expr) in args {
             if let Some(name) = name {
                 match result.entry(name.clone()) {
-                    Entry::Occupied(_) => self.error(Error::new(
-                        format!("duplicate arguments for for parameter '{name}'"),
-                        expr.span,
-                    )),
+                    Entry::Occupied(_) => {
+                        failed = true;
+                        self.error(Error::new(
+                            format!("duplicate arguments for for parameter '{name}'"),
+                            expr.span,
+                        ))
+                    }
                     Entry::Vacant(entry) => {
                         if let Some(param) = self
                             .scopes
@@ -3617,8 +3818,11 @@ impl TypeChecker {
                             .iter()
                             .find(|p| p.label == name)
                         {
-                            entry.insert(self.check_arg(func, expr, &param.ty.clone()));
+                            let (expr, f) = self.check_arg(func, expr, &param.ty.clone());
+                            entry.insert(expr);
+                            failed = failed || f;
                         } else {
+                            failed = true;
                             self.error(Error::new(
                                 format!("unknown parameter: '{name}'"),
                                 expr.span,
@@ -3635,12 +3839,13 @@ impl TypeChecker {
                 .skip(last_pos)
                 .find(|(_, param)| !param.keyword)
             {
-                result.insert(
-                    param.label.clone(),
-                    self.check_arg(func, expr, &param.ty.clone()),
-                );
+                let name = param.label.clone();
+                let (expr, f) = self.check_arg(func, expr, &param.ty.clone());
+                result.insert(name, expr);
+                failed = failed || f;
                 last_pos = i + 1;
             } else if !variadic {
+                failed = true;
                 // TODO: a better error here would be nice
                 self.error(Error::new("too many positional arguments", expr.span))
             } else {
@@ -3678,6 +3883,7 @@ impl TypeChecker {
                 missing.push_str(&param.label);
             }
 
+            failed = true;
             self.error(Error::new(
                 format!(
                     "expected {} argument(s), found {} (missing {missing})",
@@ -3688,7 +3894,8 @@ impl TypeChecker {
             ))
         }
 
-        self.check_bounds_filtered(func, &unknowns, span);
+        let f = self.check_bounds_filtered(func, &unknowns, span);
+        failed = failed || f;
         if self.scopes.get(func.id).is_unsafe && self.safety != Safety::Unsafe {
             self.error(Error::is_unsafe(span))
         }
@@ -3696,6 +3903,7 @@ impl TypeChecker {
         (
             result,
             self.scopes.get(func.id).ret.with_templates(&func.ty_args),
+            failed,
         )
     }
 
@@ -3704,9 +3912,11 @@ impl TypeChecker {
         func: &GenericFunc,
         unknowns: &HashSet<UserTypeId>,
         span: Span,
-    ) {
+    ) -> bool {
+        let mut failed = false;
         for (id, ty) in func.ty_args.iter().filter(|(id, _)| unknowns.contains(id)) {
             if ty.is_unknown() {
+                failed = true;
                 self.error(Error::new(
                     format!(
                         "cannot infer type for type parameter '{}'",
@@ -3715,17 +3925,28 @@ impl TypeChecker {
                     span,
                 ))
             } else {
-                self.check_bounds(&func.ty_args, ty, self.scopes.get(*id).impls.clone(), span);
+                let f =
+                    self.check_bounds(&func.ty_args, ty, self.scopes.get(*id).impls.clone(), span);
+                failed = failed || f;
             }
         }
+        failed
     }
 
-    fn check_bounds(&mut self, ty_args: &TypeArgs, ty: &Type, bounds: Vec<TraitImpl>, span: Span) {
+    fn check_bounds(
+        &mut self,
+        ty_args: &TypeArgs,
+        ty: &Type,
+        bounds: Vec<TraitImpl>,
+        span: Span,
+    ) -> bool {
+        let mut failed = false;
         for mut bound in bounds.into_iter().flat_map(|bound| bound.into_checked()) {
             self.resolve_impls(bound.id);
             bound.fill_templates(ty_args);
 
             if !self.implements_trait(ty, &bound) {
+                failed = true;
                 self.error(Error::doesnt_implement(
                     &ty.name(&self.scopes),
                     &bound.name(&self.scopes),
@@ -3733,6 +3954,7 @@ impl TypeChecker {
                 ))
             }
         }
+        failed
     }
 
     fn check_block(&mut self, body: Vec<Stmt>) -> Vec<CheckedStmt> {
@@ -3979,10 +4201,9 @@ impl TypeChecker {
     fn resolve_proto(&mut self, id: FunctionId) {
         // disable errors to avoid duplicate errors when the struct and the constructor
         // are typechecked
-        if self.scopes.get(id).constructor.is_some() {
-            self.diag.set_errors_enabled(false);
-        }
-
+        let prev = self
+            .diag
+            .set_errors_enabled(self.scopes.get(id).constructor.is_none());
         for i in 0..self.scopes.get(id).params.len() {
             resolve_type!(self, self.scopes.get_mut(id).params[i].ty);
             match std::mem::take(&mut self.scopes.get_mut(id).params[i].default) {
@@ -4003,7 +4224,7 @@ impl TypeChecker {
             self.resolve_impls(self.scopes.get(id).type_params[i]);
         }
 
-        self.diag.set_errors_enabled(true);
+        self.diag.set_errors_enabled(prev);
     }
 
     fn check_impls_of(&mut self, ut: &GenericUserType, bound: &GenericTrait) -> bool {
@@ -4207,9 +4428,9 @@ impl TypeChecker {
 
             let scope = this.scopes.get(func).scope;
             if let Some(mut imp) = this.scopes[scope].kind.as_impl().cloned() {
-                this.diag.set_errors_enabled(false);
+                let prev = this.diag.set_errors_enabled(false);
                 resolve_impl!(this, imp);
-                this.diag.set_errors_enabled(true);
+                this.diag.set_errors_enabled(prev);
                 let res = matches!(&imp, TraitImpl::Checked(tr) if tr.id == wanted_tr);
                 this.scopes[scope].kind = ScopeKind::Impl(imp);
                 res

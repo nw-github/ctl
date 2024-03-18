@@ -45,7 +45,7 @@ pub struct str {
     }
 
     pub fn substr<R: RangeBounds<uint>>(this, range: R): str {
-        let span = this.span.subspan(range);
+        let span = this.span[range];
         if span.get(0) is ?ch {
             if !is_char_boundary(*ch) {
                 panic("str::substr(): range does not start at char boundary");
@@ -76,6 +76,14 @@ pub struct str {
             f.write_str(*this);
         }
     }
+
+    pub fn [](this, idx: uint): *u8 {
+        &this.span[idx]
+    }
+
+    pub fn []<R: RangeBounds<uint>>(this, range: R): str {
+        this.substr(range)
+    }
 }
 
 pub struct Chars {
@@ -86,17 +94,17 @@ pub struct Chars {
             unsafe if this.s.get(0) is ?cp {
                 mut cp = *cp as u32 & 0xff;
                 if cp < 0x80 {
-                    this.s = this.s.subspan(1u..);
+                    this.s = this.s[1u..];
                 } else if cp >> 5 == 0x6 {
                     cp = ((cp << 6) & 0x7ff) + (*this.s.get_unchecked(1) as u32 & 0x3f);
-                    this.s = this.s.subspan(2u..);
+                    this.s = this.s[2u..];
                 } else if cp >> 4 == 0xe {
                     cp = (
                         (cp << 12) & 0xffff) + 
                         (((*this.s.get_unchecked(1) as u32 & 0xff) << 6) & 0xfff
                     );
                     cp += *this.s.get_unchecked(2) as u32 & 0x3f;
-                    this.s = this.s.subspan(3u..);
+                    this.s = this.s[3u..];
                 } else if cp >> 4 == 0x1e {
                     cp = (
                         (cp << 18) & 0x1fffff) + 
@@ -104,7 +112,7 @@ pub struct Chars {
                     );
                     cp += ((*this.s.get_unchecked(2) as u32 & 0xff) << 6) & 0xfff;
                     cp += *this.s.get_unchecked(3) as u32 & 0x3f;
-                    this.s = this.s.subspan(4u..);
+                    this.s = this.s[4u..];
                 } else {
                     core::unreachable_unchecked();
                 }

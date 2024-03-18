@@ -164,6 +164,8 @@ impl TryFrom<OperatorFnType> for BinaryOp {
             OperatorFnType::Increment => Err(()),
             OperatorFnType::Decrement => Err(()),
             OperatorFnType::Bang => Err(()),
+            OperatorFnType::Subscript => Err(()),
+            OperatorFnType::SubscriptAssign => Err(()),
         }
     }
 }
