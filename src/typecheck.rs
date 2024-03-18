@@ -4847,6 +4847,8 @@ impl TypeChecker {
                         )),
                         Err(expr) => Err(expr),
                     }
+                } else if self.can_span_coerce(lhs, rhs).is_some() {
+                    Ok(CheckedExpr::new(rhs.clone(), CheckedExprData::SpanMutCoerce(expr.into())))
                 } else {
                     Err(expr)
                 }
@@ -4859,6 +4861,21 @@ impl TypeChecker {
         match self.coerce(expr, target) {
             Ok(expr) => expr,
             Err(expr) => expr,
+        }
+    }
+
+    fn can_span_coerce(&self, lhs: &Type, rhs: &Type) -> Option<()> {
+        let span = *self.scopes.lang_types.get("span")?;
+        let span_mut = *self.scopes.lang_types.get("span_mut")?;
+        let lhs = lhs.as_user()?;
+        let rhs = rhs.as_user()?;
+        if lhs.id == span_mut
+            && rhs.id == span
+            && lhs.ty_args.get_index(0)?.1 == rhs.ty_args.get_index(0)?.1
+        {
+            Some(())
+        } else {
+            None
         }
     }
 }

@@ -1847,6 +1847,11 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit(format!("*){NULLPTR})"));
                 }
             }
+            CheckedExprData::SpanMutCoerce(inner) => {
+                let tmp = hoist!(self, state, self.emit_tmpvar(*inner, state));
+                self.emit_cast(&expr.ty);
+                self.buffer.emit(format!("{{.$ptr={tmp}.$ptr,.$len={tmp}.$len}}"));
+            }
             CheckedExprData::StringInterpolation {
                 mut formatter,
                 parts,

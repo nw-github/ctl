@@ -121,6 +121,7 @@ pub enum CheckedExprData {
         members: IndexMap<String, CheckedExpr>,
         variant: String,
     },
+    SpanMutCoerce(Box<CheckedExpr>),
     Instance(IndexMap<String, CheckedExpr>),
     Array(Vec<CheckedExpr>),
     ArrayWithInit {
