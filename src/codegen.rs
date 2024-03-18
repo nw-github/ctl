@@ -772,7 +772,7 @@ impl ConditionBuilder {
 }
 
 macro_rules! hoist {
-    ($self: expr, $state: expr, $body: expr) => {{
+    ($self: expr, $body: expr) => {{
         let buffer = std::mem::take(&mut $self.buffer);
         let result = $body;
         $self
@@ -784,7 +784,7 @@ macro_rules! hoist {
 
 macro_rules! tmpbuf {
     ($self: expr, $state: expr, |$tmp: ident| $body: expr) => {{
-        hoist!($self, $state, {
+        hoist!($self, {
             let $tmp = $state.tmpvar();
             $body
         })
@@ -806,7 +806,7 @@ macro_rules! enter_block {
     ($self: expr, $state: expr, $ty: expr, $body: expr) => {{
         let ty = $ty;
         let old = std::mem::replace(&mut $self.cur_block, $state.tmpvar());
-        hoist!($self, $state, {
+        hoist!($self, {
             $self.emit_type(ty);
             $self.buffer.emit(format!(" {};", $self.cur_block));
             $body;
@@ -824,7 +824,7 @@ macro_rules! enter_loop {
         let cur_loop = ($scope, $state.tmpvar());
         let old_block = std::mem::replace(&mut $self.cur_block, cur_loop.1.clone());
         let old_loop = std::mem::replace(&mut $self.cur_loop, cur_loop);
-        hoist!($self, $state, {
+        hoist!($self, {
             $self.emit_type(ty);
             $self.buffer.emit(format!(" {};", $self.cur_loop.1));
             $body;
@@ -1314,7 +1314,7 @@ impl<'a> Codegen<'a> {
             }
             CheckedExprData::CallDyn(func, mut args) => {
                 let (_, recv) = args.shift_remove_index(0).unwrap();
-                let recv = hoist!(self, state, self.emit_tmpvar(recv, state));
+                let recv = hoist!(self, self.emit_tmpvar(recv, state));
                 self.buffer.emit(format!("{recv}.vtable->"));
                 self.buffer
                     .emit_fn_name(self.scopes, &func, self.flags.minify);
@@ -1746,7 +1746,7 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit("]");
             }
             CheckedExprData::Return(mut expr) => {
-                hoist!(self, state, {
+                hoist!(self, {
                     expr.ty.fill_templates(&state.func.ty_args);
                     let tmp = self.emit_tmpvar(*expr, state);
                     self.leave_scope(
@@ -1758,7 +1758,7 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit(VOID_INSTANCE);
             }
             CheckedExprData::Yield(expr) => {
-                hoist!(self, state, {
+                hoist!(self, {
                     // currently, the only way to yield is via tail expression, meaning emit_block
                     // will take care of all defers for us. if we allow something like break to
                     // label, we will need to update this to leave_scope, then goto
@@ -1769,7 +1769,7 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit(VOID_INSTANCE);
             }
             CheckedExprData::Break(expr) => {
-                hoist!(self, state, {
+                hoist!(self, {
                     self.buffer.emit(format!("{}=", self.cur_loop.1));
                     if let Some(expr) = expr {
                         self.emit_expr_inline(*expr, state);
@@ -1782,11 +1782,7 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit(VOID_INSTANCE);
             }
             CheckedExprData::Continue => {
-                hoist!(
-                    self,
-                    state,
-                    self.leave_scope(state, "continue", self.cur_loop.0)
-                );
+                hoist!(self, self.leave_scope(state, "continue", self.cur_loop.0));
                 self.buffer.emit(VOID_INSTANCE);
             }
             CheckedExprData::Match {
@@ -1831,7 +1827,7 @@ impl<'a> Codegen<'a> {
             CheckedExprData::Is(mut inner, patt) => {
                 inner.ty.fill_templates(&state.func.ty_args);
                 let ty = inner.ty.clone();
-                let tmp = hoist!(self, state, self.emit_tmpvar(*inner, state));
+                let tmp = hoist!(self, self.emit_tmpvar(*inner, state));
                 let (_, conditions) = self.emit_pattern(state, &patt.data, &tmp, &ty);
                 self.buffer.emit(conditions.finish());
             }
@@ -1848,9 +1844,10 @@ impl<'a> Codegen<'a> {
                 }
             }
             CheckedExprData::SpanMutCoerce(inner) => {
-                let tmp = hoist!(self, state, self.emit_tmpvar(*inner, state));
+                let tmp = hoist!(self, self.emit_tmpvar(*inner, state));
                 self.emit_cast(&expr.ty);
-                self.buffer.emit(format!("{{.$ptr={tmp}.$ptr,.$len={tmp}.$len}}"));
+                self.buffer
+                    .emit(format!("{{.$ptr={tmp}.$ptr,.$len={tmp}.$len}}"));
             }
             CheckedExprData::StringInterpolation {
                 mut formatter,
@@ -1859,7 +1856,7 @@ impl<'a> Codegen<'a> {
             } => {
                 formatter.ty.fill_templates(&state.func.ty_args);
                 let formatter_ty = formatter.ty.clone();
-                let formatter = hoist!(self, state, {
+                let formatter = hoist!(self, {
                     let format_id = self.scopes.lang_traits.get("format").copied().unwrap();
                     let formatter = self.emit_tmpvar(*formatter, state);
                     for mut expr in parts {
@@ -1966,7 +1963,7 @@ impl<'a> Codegen<'a> {
                 .map(|(name, mut expr)| {
                     expr.ty.fill_templates(&state.func.ty_args);
                     // TODO: dont emit temporaries for expressions that cant have side effects
-                    (name, hoist!(self, state, self.emit_tmpvar(expr, state)))
+                    (name, hoist!(self, self.emit_tmpvar(expr, state)))
                 })
                 .collect();
             self.buffer.emit(format!(
@@ -2019,7 +2016,7 @@ impl<'a> Codegen<'a> {
                 usebuf!(self, &mut left, self.emit_expr_inner(lhs, state));
                 let left = left.finish();
 
-                hoist!(self, state, {
+                hoist!(self, {
                     self.emit_pattern_if_stmt(
                         state,
                         &CheckedPatternData::UnionMember {
@@ -2061,7 +2058,7 @@ impl<'a> Codegen<'a> {
 
                     lhs.ty.fill_templates(&state.func.ty_args);
                     let opt_type = lhs.ty.clone();
-                    let name = hoist!(self, state, self.emit_tmpvar(lhs, state));
+                    let name = hoist!(self, self.emit_tmpvar(lhs, state));
                     self.emit_pattern_if_stmt(
                         state,
                         &CheckedPatternData::UnionMember {
@@ -2273,7 +2270,7 @@ impl<'a> Codegen<'a> {
             .map(|(name, mut expr)| {
                 expr.ty.fill_templates(&state.func.ty_args);
                 // TODO: dont emit temporaries for expressions that cant have side effects
-                (name, hoist!(self, state, self.emit_tmpvar(expr, state)))
+                (name, hoist!(self, self.emit_tmpvar(expr, state)))
             })
             .collect();
 
@@ -2399,7 +2396,7 @@ impl<'a> Codegen<'a> {
             "numeric_abs" => {
                 let (_, mut expr) = args.shift_remove_index(0).unwrap();
                 expr.ty.fill_templates(&state.func.ty_args);
-                let tmp = hoist!(self, state, self.emit_tmpvar(expr, state));
+                let tmp = hoist!(self, self.emit_tmpvar(expr, state));
                 self.buffer.emit(format!("({tmp}<0?-{tmp}:{tmp})"));
             }
             "numeric_cast" => {
