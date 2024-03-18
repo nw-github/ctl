@@ -2122,6 +2122,25 @@ impl<'a> Codegen<'a> {
                     union.variant_tag("Equal").unwrap()
                 ));
             }
+            BinaryOp::LogicalAnd | BinaryOp::LogicalOr => {
+                tmpbuf_emit!(self, state, |tmp| {
+                    let lor = matches!(op, BinaryOp::LogicalOr);
+                    let end_label = state.tmpvar();
+
+                    self.emit_type(&Type::Bool);
+                    self.buffer.emit(format!(" {tmp}="));
+                    self.emit_expr_inline(lhs, state);
+                    self.buffer.emit(format!(
+                        ";if({}{tmp}){{goto {end_label};}}",
+                        if lor { "" } else { "!" }
+                    ));
+                    hoist_point!(self, {
+                        self.buffer.emit(format!("{tmp}="));
+                        self.emit_expr_inline(rhs, state);
+                        self.buffer.emit(format!(";{end_label}:;"));
+                    });
+                });
+            }
             _ => {
                 lhs.ty.fill_templates(&state.func.ty_args);
                 if matches!(ret, Type::Bool) && !lhs.ty.is_bool() {
@@ -2129,11 +2148,7 @@ impl<'a> Codegen<'a> {
                 }
                 self.buffer.emit("(");
                 self.emit_expr(lhs, state);
-                match op {
-                    BinaryOp::LogicalAnd => self.buffer.emit("&&"),
-                    BinaryOp::LogicalOr => self.buffer.emit("||"),
-                    _ => self.buffer.emit(format!("{op}")),
-                }
+                self.buffer.emit(format!("{op}"));
                 self.emit_expr(rhs, state);
                 self.buffer.emit(")");
             }
@@ -2389,11 +2404,13 @@ impl<'a> Codegen<'a> {
             }
             "max_value" => {
                 self.emit_cast(&ret);
-                self.buffer.emit(format!("({})", ret.as_integral().unwrap().max()));
+                self.buffer
+                    .emit(format!("({})", ret.as_integral().unwrap().max()));
             }
             "min_value" => {
                 self.emit_cast(&ret);
-                self.buffer.emit(format!("({}-1)", ret.as_integral().unwrap().min() + 1));
+                self.buffer
+                    .emit(format!("({}-1)", ret.as_integral().unwrap().min() + 1));
             }
             "size_of" => {
                 self.buffer.emit(format!(

@@ -157,7 +157,9 @@ pub extension SignedExt<T: Numeric + Signed> for T {
 
     impl Format {
         fn format<F: Formatter>(this, f: *mut F) {
-            mut buffer = [b'0'; core::mem::size_of::<i32>() * 8 + 1];
+            // FIXME: fix this when there is a safer way to deal with uninitialized memory
+            //        size_of should be size_of<T>
+            mut buffer: [u8; core::mem::size_of::<u128>() * 8 + 1];
             unsafe this.to_str_radix_unchecked(10, buffer.as_byte_span_mut()).format(f);
         }
     }
@@ -181,7 +183,7 @@ pub extension UnsignedExt<T: Numeric + Unsigned> for T {
 
     impl Format {
         fn format<F: Formatter>(this, f: *mut F) {
-            mut buffer = [b'0'; core::mem::size_of::<i32>() * 8];
+            mut buffer: [u8; core::mem::size_of::<u128>() * 8 + 1];
             unsafe this.to_str_radix_unchecked(10, buffer.as_byte_span_mut()).format(f);
         }
     }
