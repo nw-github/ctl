@@ -151,6 +151,13 @@ pub enum CheckedExprData {
     MemFunc(MemberFn, ScopeId),
     Var(VariableId),
     Block(Block),
+    AffixOperator {
+        callee: Box<CheckedExpr>,
+        mfn: MemberFn,
+        param: String,
+        scope: ScopeId,
+        postfix: bool,
+    },
     If {
         cond: Box<CheckedExpr>,
         if_branch: Box<CheckedExpr>,

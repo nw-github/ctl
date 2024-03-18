@@ -1241,10 +1241,15 @@ impl TypeChecker {
                     ],
                 )
             }
-            O::Minus | O::Increment | O::Decrement | O::Bang => {
+            O::Minus | O::Bang => {
                 let op = UnaryOp::try_from_postfix_fn(f.name.data).unwrap();
                 let (tr_name, fn_name) = UNARY_OP_TRAITS.get(&op).unwrap();
                 (tr_name, fn_name, vec![f.ret.clone()])
+            }
+            O::Increment | O::Decrement => {
+                let op = UnaryOp::try_from_postfix_fn(f.name.data).unwrap();
+                let (tr_name, fn_name) = UNARY_OP_TRAITS.get(&op).unwrap();
+                (tr_name, fn_name, vec![])
             }
             O::Subscript | O::SubscriptAssign => {
                 subscripts.push(
@@ -1964,14 +1969,33 @@ impl TypeChecker {
         let [p0, ..] = &f.params[..] else {
             return Default::default();
         };
-        CheckedExpr::new(
-            f.ret.with_templates(&mfn.func.ty_args),
-            CheckedExprData::member_call(
-                mfn,
-                [(p0.label.clone(), expr.auto_deref(&p0.ty))].into(),
-                self.current,
-            ),
-        )
+        if matches!(
+            op,
+            UnaryOp::PreDecrement
+                | UnaryOp::PreIncrement
+                | UnaryOp::PostDecrement
+                | UnaryOp::PostIncrement
+        ) {
+            CheckedExpr::new(
+                stripped.clone(),
+                CheckedExprData::AffixOperator {
+                    callee: expr.auto_deref(&p0.ty).into(),
+                    mfn,
+                    param: p0.label.clone(),
+                    scope: self.current,
+                    postfix: matches!(op, UnaryOp::PostDecrement | UnaryOp::PostIncrement)
+                },
+            )
+        } else {
+            CheckedExpr::new(
+                f.ret.with_templates(&mfn.func.ty_args),
+                CheckedExprData::member_call(
+                    mfn,
+                    [(p0.label.clone(), expr.auto_deref(&p0.ty))].into(),
+                    self.current,
+                ),
+            )
+        }
     }
 
     fn check_expr_inner(&mut self, expr: Expr, target: Option<&Type>) -> CheckedExpr {
@@ -4848,7 +4872,10 @@ impl TypeChecker {
                         Err(expr) => Err(expr),
                     }
                 } else if self.can_span_coerce(lhs, rhs).is_some() {
-                    Ok(CheckedExpr::new(rhs.clone(), CheckedExprData::SpanMutCoerce(expr.into())))
+                    Ok(CheckedExpr::new(
+                        rhs.clone(),
+                        CheckedExprData::SpanMutCoerce(expr.into()),
+                    ))
                 } else {
                     Err(expr)
                 }
@@ -6368,10 +6395,10 @@ static UNARY_OP_TRAITS: Lazy<HashMap<UnaryOp, (&str, &str)>> = Lazy::new(|| {
         (UnaryOp::Neg, ("op_neg", "neg")),
         (UnaryOp::Not, ("op_not", "not")),
         (UnaryOp::Unwrap, ("op_unwrap", "unwrap")),
-        (UnaryOp::PostDecrement, ("op_post_dec", "post_dec")),
-        (UnaryOp::PostIncrement, ("op_post_inc", "post_inc")),
-        (UnaryOp::PreDecrement, ("op_pre_dec", "pre_dec")),
-        (UnaryOp::PreIncrement, ("op_pre_dec", "pre_dec")),
+        (UnaryOp::PostDecrement, ("op_dec", "dec")),
+        (UnaryOp::PreDecrement, ("op_dec", "dec")),
+        (UnaryOp::PostIncrement, ("op_inc", "inc")),
+        (UnaryOp::PreIncrement, ("op_inc", "inc")),
     ]
     .into()
 });

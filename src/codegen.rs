@@ -1904,6 +1904,54 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit(format!("(&{formatter})"));
                 self.funcs.insert(finish_state);
             }
+            CheckedExprData::AffixOperator {
+                callee,
+                mfn,
+                param,
+                scope,
+                postfix,
+            } => {
+                let deref = "*".repeat(Self::indirection(&callee.ty));
+                if !postfix {
+                    hoist!(self, {
+                        self.emit_expr_stmt(
+                            CheckedExpr::new(
+                                self.scopes
+                                    .get(mfn.func.id)
+                                    .ret
+                                    .with_templates(&state.func.ty_args),
+                                CheckedExprData::member_call(
+                                    mfn,
+                                    [(param, (*callee).clone())].into(),
+                                    scope,
+                                ),
+                            ),
+                            state,
+                        );
+                    });
+                    self.buffer.emit(format!("({deref}"));
+                    self.emit_expr(*callee, state);
+                    self.buffer.emit(")");
+                } else {
+                    tmpbuf_emit!(self, state, |tmp| {
+                        self.emit_type(&expr.ty);
+                        self.buffer.emit(format!(" {tmp}={deref}"));
+                        self.emit_expr_inline((*callee).clone(), state);
+                        self.buffer.emit(";");
+    
+                        self.emit_expr_stmt(
+                            CheckedExpr::new(
+                                self.scopes
+                                    .get(mfn.func.id)
+                                    .ret
+                                    .with_templates(&state.func.ty_args),
+                                CheckedExprData::member_call(mfn, [(param, *callee)].into(), scope),
+                            ),
+                            state,
+                        );
+                    });
+                }
+            }
             CheckedExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }
     }
@@ -2495,11 +2543,9 @@ impl<'a> Codegen<'a> {
                     match op {
                         "neg" => UnaryOp::Neg,
                         "not" => UnaryOp::Not,
-                        "post_inc" => UnaryOp::PostIncrement,
-                        "post_dec" => UnaryOp::PostDecrement,
-                        "pre_inc" => UnaryOp::PreIncrement,
-                        "pre_dec" => UnaryOp::PreDecrement,
-                        _ => panic!("ICE: call to unsupported binary operator '{op}'"),
+                        "inc" => UnaryOp::PostIncrement,
+                        "dec" => UnaryOp::PostDecrement,
+                        _ => panic!("ICE: call to unsupported unary operator '{op}'"),
                     },
                     ret,
                     args.into_iter()

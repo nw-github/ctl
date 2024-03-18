@@ -104,20 +104,10 @@ pub extension IntegralExt<T: Numeric + Integral> for T {
     pub fn !(this): T { !*this }
 
     #(intrinsic(unary_op))
-    pub fn ++(mut this): T { (*this)++ }
+    pub fn ++(mut this) { (*this)++; }
 
     #(intrinsic(unary_op))
-    pub fn --(mut this): T { (*this)-- }
-
-    impl PreInc<T> {
-        #(intrinsic(unary_op))
-        fn pre_inc(mut this): T { ++(*this) }
-    }
-
-    impl PreDec<T> {
-        #(intrinsic(unary_op))
-        fn pre_dec(mut this): T { --(*this) }
-    }
+    pub fn --(mut this) { (*this)--; }
 
     pub fn wrapping_add(this, rhs: T): T { *this + rhs }
 
