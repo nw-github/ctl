@@ -484,8 +484,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 if matches!(op, UnaryOp::Neg) {
                     if let ExprData::Integer(patt) = &mut expr.data {
                         patt.negative = true;
+                        return expr;
                     }
-                    return expr;
                 }
 
                 Expr::new(
