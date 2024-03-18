@@ -218,4 +218,14 @@ pub struct Vec<T> {
             panic("Vec::_reserve(): out of memory!");
         }
     }
+
+    impl core::iter::FromIter<T> {
+        fn from_iter<I: Iterator<T>>(iter: I): This {
+            mut self: [T] = @[]; // TODO: size hint
+            for item in iter {
+                self.push(item);
+            }
+            self
+        }
+    }
 }
