@@ -628,30 +628,21 @@ impl TypeChecker {
                 }
             }
 
-            let (impls, impl_blocks) = this.declare_impl_blocks(base.impls, base.operators);
-            let fns: Vec<_> = base
-                .functions
-                .into_iter()
-                .map(|f| this.declare_fn(f))
-                .collect();
-            let ut = UserType {
-                members,
-                public: base.public,
-                body_scope: this.current,
-                name: base.name,
-                kind: UserTypeKind::Struct,
-                type_params: this.declare_type_params(base.type_params),
-                impls,
+            let (impls, blocks) = this.declare_impl_blocks(base.impls, base.operators);
+            let fns = this.declare_fns(base.functions);
+            let ut = this.ut_from_stuff(
                 attrs,
-                fns: fns
-                    .iter()
-                    .chain(impl_blocks.iter().flat_map(|block| block.fns.iter()))
-                    .chain(std::iter::once(&init))
-                    .map(|f| Vis::new(f.id, f.public))
-                    .collect(),
-            };
+                base.name,
+                base.public,
+                members,
+                UserTypeKind::Struct,
+                base.type_params,
+                &fns,
+                impls,
+                &blocks,
+            );
 
-            (ut, init, fns, impl_blocks)
+            (ut, init, fns, blocks)
         });
 
         let scope = ut.body_scope;
@@ -717,7 +708,7 @@ impl TypeChecker {
                 });
             }
 
-            let (impls, impl_blocks) = this.declare_impl_blocks(base.impls, base.operators);
+            let (impls, blocks) = this.declare_impl_blocks(base.impls, base.operators);
             let ret = Self::typehint_for_struct(&base.name, &base.type_params);
             let mut enum_union = true;
             for variant in variants {
@@ -807,30 +798,25 @@ impl TypeChecker {
             }
             let member_cons_len = fns.len();
             fns.extend(base.functions.into_iter().map(|f| this.declare_fn(f)));
-
-            let ut = UserType {
+            let ut = this.ut_from_stuff(
+                attrs,
+                base.name,
+                base.public,
                 members,
-                public: base.public,
-                name: base.name,
-                body_scope: this.current,
-                type_params: this.declare_type_params(base.type_params),
-                kind: UserTypeKind::Union(Union {
+                UserTypeKind::Union(Union {
                     tag: tag
                         .map(|tag| this.declare_type_hint(TypeHint::Regular(tag)))
                         .unwrap_or(Type::Uint(discriminant_bits(rvariants.len()))),
                     variants: rvariants,
                     enum_union,
                 }),
+                base.type_params,
+                &fns,
                 impls,
-                attrs,
-                fns: fns
-                    .iter()
-                    .chain(impl_blocks.iter().flat_map(|block| block.fns.iter()))
-                    .map(|f| Vis::new(f.id, f.public))
-                    .collect(),
-            };
+                &blocks,
+            );
 
-            (ut, impl_blocks, fns, member_cons_len)
+            (ut, blocks, fns, member_cons_len)
         });
         let scope = ut.body_scope;
         let id = self.insert_user_type(ut, base.public);
@@ -864,29 +850,20 @@ impl TypeChecker {
                 }
             }
 
-            let (impls, impl_blocks) = this.declare_impl_blocks(base.impls, base.operators);
-            let fns: Vec<_> = base
-                .functions
-                .into_iter()
-                .map(|f| this.declare_fn(f))
-                .collect();
-            let ut = UserType {
-                members,
-                public: base.public,
-                body_scope: this.current,
-                name: base.name,
-                kind: UserTypeKind::UnsafeUnion,
-                type_params: this.declare_type_params(base.type_params),
-                impls,
+            let (impls, blocks) = this.declare_impl_blocks(base.impls, base.operators);
+            let fns = this.declare_fns(base.functions);
+            let ut = this.ut_from_stuff(
                 attrs,
-                fns: fns
-                    .iter()
-                    .chain(impl_blocks.iter().flat_map(|block| block.fns.iter()))
-                    .map(|f| Vis::new(f.id, f.public))
-                    .collect(),
-            };
-
-            (ut, fns, impl_blocks)
+                base.name,
+                base.public,
+                members,
+                UserTypeKind::UnsafeUnion,
+                base.type_params,
+                &fns,
+                impls,
+                &blocks,
+            );
+            (ut, fns, blocks)
         });
 
         let scope = ut.body_scope;
@@ -989,32 +966,26 @@ impl TypeChecker {
                         })
                         .collect();
                     let this_id = this.insert(
-                        UserType {
-                            public: false,
-                            name: Located::new(name.span, THIS_TYPE.into()),
-                            body_scope: this.current,
-                            kind: UserTypeKind::Template,
-                            type_params: Vec::new(),
-                            impls: impls.clone(),
-                            fns: vec![],
-                            attrs: Default::default(),
-                            members: Default::default(),
-                        },
+                        UserType::template(
+                            Located::new(name.span, THIS_TYPE.into()),
+                            this.current,
+                            impls.clone(),
+                        ),
                         false,
                         false,
                     );
-                    let fns: Vec<_> = functions.into_iter().map(|f| this.declare_fn(f)).collect();
-                    let tr = UserType {
-                        public,
+                    let fns = this.declare_fns(functions);
+                    let tr = this.ut_from_stuff(
+                        stmt.attrs,
                         name,
-                        body_scope: this.current,
-                        type_params: this.declare_type_params(type_params),
+                        public,
+                        Default::default(),
+                        UserTypeKind::Trait(this_id),
+                        type_params,
+                        &fns,
                         impls,
-                        attrs: stmt.attrs,
-                        fns: fns.iter().map(|f| Vis::new(f.id, f.public)).collect(),
-                        kind: UserTypeKind::Trait(this_id),
-                        members: Default::default(),
-                    };
+                        &[],
+                    );
                     (tr, fns, this_id)
                 });
 
@@ -1041,25 +1012,20 @@ impl TypeChecker {
                 operators,
             } => {
                 let (ext, impl_blocks, fns) = self.enter(ScopeKind::None, |this| {
-                    let (impls, impl_blocks) = this.declare_impl_blocks(impls, operators);
-                    let fns: Vec<_> = functions.into_iter().map(|f| this.declare_fn(f)).collect();
-                    let ext = UserType {
-                        attrs: stmt.attrs,
+                    let (impls, blocks) = this.declare_impl_blocks(impls, operators);
+                    let fns = this.declare_fns(functions);
+                    let ext = this.ut_from_stuff(
+                        stmt.attrs,
                         name,
                         public,
-                        kind: UserTypeKind::Extension(this.declare_type_hint(ty)),
+                        Default::default(),
+                        UserTypeKind::Extension(this.declare_type_hint(ty)),
+                        type_params,
+                        &fns,
                         impls,
-                        type_params: this.declare_type_params(type_params),
-                        body_scope: this.current,
-                        fns: fns
-                            .iter()
-                            .chain(impl_blocks.iter().flat_map(|block| block.fns.iter()))
-                            .map(|f| Vis::new(f.id, f.public))
-                            .collect(),
-                        members: Default::default(),
-                    };
-
-                    (ext, impl_blocks, fns)
+                        &blocks,
+                    );
+                    (ext, blocks, fns)
                 });
 
                 let scope = ext.body_scope;
@@ -1196,12 +1162,12 @@ impl TypeChecker {
                 .collect();
             this.scopes.get_mut(id).ret = this.declare_type_hint(f.ret);
 
-            DeclaredFn {
-                id,
-                public: f.public,
-                body: f.body,
-            }
+            DeclaredFn { id, body: f.body }
         })
+    }
+
+    fn declare_fns(&mut self, fns: Vec<Fn>) -> Vec<DeclaredFn> {
+        fns.into_iter().map(|f| self.declare_fn(f)).collect()
     }
 
     fn declare_op_fn(
@@ -1289,23 +1255,17 @@ impl TypeChecker {
         vec.into_iter()
             .map(|(name, impls)| {
                 self.insert(
-                    UserType {
+                    UserType::template(
                         name,
-                        public: false,
-                        body_scope: self.current,
-                        kind: UserTypeKind::Template,
-                        type_params: Vec::new(),
-                        impls: impls
+                        self.current,
+                        impls
                             .into_iter()
                             .map(|path| TraitImpl::Unchecked {
                                 scope: self.current,
                                 path,
                             })
                             .collect(),
-                        attrs: Default::default(),
-                        fns: vec![],
-                        members: Default::default(),
-                    },
+                    ),
                     false,
                     false,
                 )
@@ -1339,7 +1299,7 @@ impl TypeChecker {
         }
 
         for func in operators {
-            self.declare_op_fn(func, &mut impls, &mut declared_blocks)
+            self.declare_op_fn(func, &mut impls, &mut declared_blocks);
         }
 
         (impls, declared_blocks)
@@ -1363,6 +1323,36 @@ impl TypeChecker {
                     .collect(),
             )],
         ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ut_from_stuff(
+        &mut self,
+        attrs: Attributes,
+        name: Located<String>,
+        public: bool,
+        members: IndexMap<String, CheckedMember>,
+        kind: UserTypeKind,
+        type_params: Vec<(Located<String>, Vec<Path>)>,
+        fns: &[DeclaredFn],
+        impls: Vec<TraitImpl>,
+        impl_blocks: &[DeclaredImplBlock],
+    ) -> UserType {
+        UserType {
+            attrs,
+            name,
+            public,
+            kind,
+            impls,
+            members,
+            type_params: self.declare_type_params(type_params),
+            body_scope: self.current,
+            fns: fns
+                .iter()
+                .chain(impl_blocks.iter().flat_map(|block| block.fns.iter()))
+                .map(|f| Vis::new(f.id, self.scopes.get(f.id).public))
+                .collect(),
+        }
     }
 }
 

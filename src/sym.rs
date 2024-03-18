@@ -258,6 +258,20 @@ impl UserType {
                 .and_then(|u| u.variants.get(variant))
                 .is_some_and(|u| u.0.is_none())
     }
+
+    pub fn template(name: Located<String>, scope: ScopeId, impls: Vec<TraitImpl>) -> Self {
+        Self {
+            public: false,
+            name,
+            body_scope: scope,
+            kind: UserTypeKind::Template,
+            type_params: Vec::new(),
+            impls,
+            fns: vec![],
+            attrs: Default::default(),
+            members: Default::default(),
+        }
+    }
 }
 
 pub trait HasTypeParams {

@@ -7,7 +7,6 @@ use crate::{
 };
 
 pub struct DeclaredFn {
-    pub public: bool,
     pub id: FunctionId,
     pub body: Option<Expr>,
 }
