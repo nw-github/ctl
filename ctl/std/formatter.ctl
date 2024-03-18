@@ -26,7 +26,7 @@ struct StringFormatter {
 
     impl Formatter {
         fn written(this): str {
-            unsafe str::from_utf8_unchecked(this.buffer.as_span())
+            unsafe str::from_utf8_unchecked(this.buffer[..])
         }
     }
 

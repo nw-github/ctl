@@ -13,7 +13,7 @@ fn convert_argv(argc: c_int, argv: **c_char): [str..] {
             );
         }
     }
-    result.as_span()
+    result[..]
 }
 
 #(lang(panic_handler))

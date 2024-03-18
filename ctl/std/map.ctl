@@ -88,7 +88,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     }
 
     pub fn iter(this): Iter<K, V> {
-        Iter(buckets: this.buckets.as_span())
+        Iter(buckets: this.buckets[..])
     }
 
     pub fn iter_mut(mut this): IterMut<K, V> {

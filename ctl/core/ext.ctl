@@ -152,7 +152,7 @@ pub extension SignedExt<T: Numeric + Signed> for T {
             unsafe *buf.get_mut_unchecked(--pos) = b'-';
         }
 
-        unsafe str::from_utf8_unchecked(buf[pos..].as_span())
+        unsafe str::from_utf8_unchecked(buf[pos..])
     }
 
     impl Format {
@@ -178,7 +178,7 @@ pub extension UnsignedExt<T: Numeric + Unsigned> for T {
             val = val / radix;
         } while val != intrin::numeric_cast(0);
 
-        unsafe str::from_utf8_unchecked(buf[pos..].as_span())
+        unsafe str::from_utf8_unchecked(buf[pos..])
     }
 
     impl Format {
@@ -277,7 +277,7 @@ pub extension CharExt for char {
                 }
                 _ => core::unreachable_unchecked(),
             }
-            str::from_utf8_unchecked(buf[..len_utf8].as_span())
+            str::from_utf8_unchecked(buf[..len_utf8])
         }
     }
 }

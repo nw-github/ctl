@@ -13,7 +13,7 @@ pub extension StringExt for str {
         }
         unsafe {
             buf.set_len(num * n);
-            str::from_utf8_unchecked(buf.as_span())
+            str::from_utf8_unchecked(buf[..])
         }
     }
 }

@@ -77,6 +77,7 @@ pub struct Span<T> {
     }
 
     // TODO: remove this when RangeFull can implement rangebounds
+    #(inline(always))
     pub fn [](this, _: core::range::RangeFull): [T..] {
         *this
     }
@@ -183,6 +184,7 @@ pub struct SpanMut<T> {
     }
 
     // TODO: remove this when RangeFull can implement rangebounds
+    #(inline(always))
     pub fn [](this, _: core::range::RangeFull): [mut T..] {
         *this
     }

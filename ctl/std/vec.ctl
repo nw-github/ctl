@@ -52,11 +52,11 @@ pub struct Vec<T> {
     }
 
     pub fn iter(this): Iter<T> {
-        this.as_span().iter()
+        this[..].iter()
     }
 
     pub fn iter_mut(mut this): IterMut<T> {
-        this.as_span_mut().iter_mut()
+        this[..].iter_mut()
     }
 
     pub fn push(mut this, t: T) {
@@ -230,31 +230,38 @@ pub struct Vec<T> {
         }
     }
 
+    #(inline(always))
     pub fn [](this, idx: uint): *T {
-        &this.as_span()[idx]
+        &this[..][idx]
     }
 
+    #(inline(always))
     pub fn [](mut this, idx: uint): *mut T {
-        &mut this.as_span_mut()[idx]
+        &mut this[..][idx]
     }
 
+    #(inline(always))
     pub fn []=(mut this, idx: uint, val: T) {
-        this.as_span_mut()[idx] = val;
+        this[..][idx] = val;
     }
 
+    #(inline(always))
     pub fn []<R: RangeBounds<uint>>(this, range: R): [T..] {
-        this.as_span().subspan(range)
+        this.as_span()[range]
     }
 
+    #(inline(always))
     pub fn []<R: RangeBounds<uint>>(mut this, range: R): [mut T..] {
-        this.as_span_mut().subspan(range)
+        this.as_span_mut()[range]
     }
 
     // TODO: remove these when RangeFull can implement rangebounds
+    #(inline(always))
     pub fn [](this, _: std::range::RangeFull): [T..] {
         this.as_span()
     }
 
+    #(inline(always))
     pub fn [](mut this, _: std::range::RangeFull): [mut T..] {
         this.as_span_mut()
     }
