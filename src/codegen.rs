@@ -1743,7 +1743,7 @@ impl<'a> Codegen<'a> {
                 self.emit_expr(*arg, state);
                 self.buffer.emit("]");
             }
-            CheckedExprData::SliceArray { callee, arg } => {
+            CheckedExprData::SliceArray { callee, arg, range_full } => {
                 let indirection = Self::indirection(&callee.ty);
                 let src = tmpbuf!(self, state, |tmp| {
                     let len = callee.ty.strip_references().as_array().unwrap().1;
@@ -1759,23 +1759,27 @@ impl<'a> Codegen<'a> {
                     self.buffer.emit(format!(",.$len={len}}};"));
                     tmp
                 });
-                let ut = expr.ty.as_user().unwrap();
-                let mut func = GenericFunc::from_type_args(
-                    self.scopes,
-                    self.scopes
-                        .get(ut.id)
-                        .find_associated_fn(self.scopes, "subspan")
-                        .unwrap(),
-                    [arg.ty.with_templates(&state.func.ty_args)],
-                );
-                func.ty_args.copy_args(&ut.ty_args);
-                let new_state = State::in_body_scope(func, self.scopes);
-                self.buffer
-                    .emit_fn_name(self.scopes, &new_state.func, self.flags.minify);
-                self.buffer.emit(format!("(&{src}, "));
-                self.emit_expr_inline(*arg, state);
-                self.buffer.emit(")");
-                self.funcs.insert(new_state);
+                if range_full {
+                    self.buffer.emit(src);
+                } else {
+                    let ut = expr.ty.as_user().unwrap();
+                    let mut func = GenericFunc::from_type_args(
+                        self.scopes,
+                        self.scopes
+                            .get(ut.id)
+                            .find_associated_fn(self.scopes, "subspan")
+                            .unwrap(),
+                        [arg.ty.with_templates(&state.func.ty_args)],
+                    );
+                    func.ty_args.copy_args(&ut.ty_args);
+                    let new_state = State::in_body_scope(func, self.scopes);
+                    self.buffer
+                        .emit_fn_name(self.scopes, &new_state.func, self.flags.minify);
+                    self.buffer.emit(format!("(&{src}, "));
+                    self.emit_expr_inline(*arg, state);
+                    self.buffer.emit(")");
+                    self.funcs.insert(new_state);
+                }
             }
             CheckedExprData::Return(mut expr) => {
                 hoist!(self, {

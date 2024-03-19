@@ -3211,15 +3211,19 @@ impl TypeChecker {
         callee: CheckedExpr,
         args: Vec<(Option<String>, Expr)>,
     ) -> CheckedExpr {
-        fn maybe_span(this: &mut TypeChecker, ty: &Type, imm: bool) -> Option<UserTypeId> {
+        fn maybe_span(this: &mut TypeChecker, ty: &Type, imm: bool) -> Option<(bool, UserTypeId)> {
+            // FIXME: remove this hack when .. implements rangebounds
+            let full = this.scopes.lang_types.get("range_full");
             let id = *this.scopes.lang_traits.get("range_bounds")?;
             let bound = GenericTrait::from_type_args(&this.scopes, id, [Type::Usize]);
-            if this.implements_trait(ty, &bound) {
-                Some(if imm {
+            let is_range_full = ty.as_user().is_some_and(|ut| Some(&ut.id) == full);
+            if is_range_full || this.implements_trait(ty, &bound) {
+                let span_ty = if imm {
                     *this.scopes.lang_types.get("span")?
                 } else {
                     *this.scopes.lang_types.get("span_mut")?
-                })
+                };
+                Some((is_range_full, span_ty))
             } else {
                 None
             }
@@ -3253,7 +3257,8 @@ impl TypeChecker {
                 },
             ),
             Err(expr) => {
-                let Some(id) = maybe_span(self, &expr.ty, self.immutable_receiver(&callee)) else {
+                let Some((full, id)) = maybe_span(self, &expr.ty, self.immutable_receiver(&callee))
+                else {
                     return self.error(Error::expected_found(
                         "array index",
                         &format!("type '{}'", expr.ty.name(&self.scopes)),
@@ -3265,6 +3270,7 @@ impl TypeChecker {
                     CheckedExprData::SliceArray {
                         callee: callee.into(),
                         arg: expr.into(),
+                        range_full: full,
                     },
                 )
             }
