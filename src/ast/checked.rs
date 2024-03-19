@@ -185,7 +185,11 @@ pub enum CheckedExprData {
     },
     Subscript {
         callee: Box<CheckedExpr>,
-        args: Vec<CheckedExpr>,
+        arg: Box<CheckedExpr>,
+    },
+    SliceArray {
+        callee: Box<CheckedExpr>,
+        arg: Box<CheckedExpr>,
     },
     As(Box<CheckedExpr>, bool),
     Is(Box<CheckedExpr>, CheckedPattern),

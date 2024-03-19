@@ -52,10 +52,10 @@ fn mul_shift_32(m: u32, factor: u64, shift: i32): u32 {
 
 pub fn mul_pow5_inv_div_pow2(m: u32, q: u32, j: i32): u32 {
     debug_assert(q < DOUBLE_POW5_INV_TABLE_SIZE as! u32);
-    mul_shift_32(m, DOUBLE_POW5_INV_SPLIT[q as int].1 + 1, j)
+    mul_shift_32(m, DOUBLE_POW5_INV_SPLIT[q as uint].1 + 1, j)
 }
 
 pub fn mul_pow5_div_pow2(m: u32, i: u32, j: i32): u32 {
     debug_assert(i < DOUBLE_POW5_TABLE_SIZE as! u32);
-    mul_shift_32(m, DOUBLE_POW5_SPLIT[i as int].1, j)
+    mul_shift_32(m, DOUBLE_POW5_SPLIT[i as uint].1, j)
 }

@@ -1983,7 +1983,7 @@ impl TypeChecker {
                     mfn,
                     param: p0.label.clone(),
                     scope: self.current,
-                    postfix: matches!(op, UnaryOp::PostDecrement | UnaryOp::PostIncrement)
+                    postfix: matches!(op, UnaryOp::PostDecrement | UnaryOp::PostIncrement),
                 },
             )
         } else {
@@ -3211,6 +3211,20 @@ impl TypeChecker {
         callee: CheckedExpr,
         args: Vec<(Option<String>, Expr)>,
     ) -> CheckedExpr {
+        fn maybe_span(this: &mut TypeChecker, ty: &Type, imm: bool) -> Option<UserTypeId> {
+            let id = *this.scopes.lang_traits.get("range_bounds")?;
+            let bound = GenericTrait::from_type_args(&this.scopes, id, [Type::Usize]);
+            if this.implements_trait(ty, &bound) {
+                Some(if imm {
+                    *this.scopes.lang_types.get("span")?
+                } else {
+                    *this.scopes.lang_types.get("span_mut")?
+                })
+            } else {
+                None
+            }
+        }
+
         let mut args = args.into_iter();
         let (name, expr) = args.next().unwrap();
         if let Some(name) = name {
@@ -3220,7 +3234,8 @@ impl TypeChecker {
             ))
         }
 
-        let arg = self.type_check(expr, &Type::Isize);
+        let arg_span = expr.span;
+        let arg = self.check_expr(expr, Some(&Type::Usize));
         if let Some((_, arg)) = args.next() {
             let last = args.last().map(|(_, arg)| arg.span).unwrap_or(arg.span);
             self.error(Error::new(
@@ -3229,13 +3244,31 @@ impl TypeChecker {
             ))
         }
 
-        CheckedExpr::new(
-            target,
-            CheckedExprData::Subscript {
-                callee: callee.into(),
-                args: vec![arg],
-            },
-        )
+        match self.coerce(arg, &Type::Usize) {
+            Ok(expr) => CheckedExpr::new(
+                target,
+                CheckedExprData::Subscript {
+                    callee: callee.into(),
+                    arg: expr.into(),
+                },
+            ),
+            Err(expr) => {
+                let Some(id) = maybe_span(self, &expr.ty, self.immutable_receiver(&callee)) else {
+                    return self.error(Error::expected_found(
+                        "array index",
+                        &format!("type '{}'", expr.ty.name(&self.scopes)),
+                        arg_span,
+                    ));
+                };
+                CheckedExpr::new(
+                    Type::User(GenericUserType::from_type_args(&self.scopes, id, [target]).into()),
+                    CheckedExprData::SliceArray {
+                        callee: callee.into(),
+                        arg: expr.into(),
+                    },
+                )
+            }
+        }
     }
 
     fn check_subscript(
@@ -3247,22 +3280,7 @@ impl TypeChecker {
         span: Span,
     ) -> CheckedExpr {
         let ty = callee.ty.strip_references();
-        let imm_receiver = 'out: {
-            let mut ty = &callee.ty;
-            if !matches!(
-                ty,
-                Type::Ptr(_) | Type::MutPtr(_) | Type::DynPtr(_) | Type::DynMutPtr(_)
-            ) && !callee.can_addrmut(&self.scopes)
-            {
-                break 'out true;
-            }
-
-            while let Type::MutPtr(inner) = ty {
-                ty = inner;
-            }
-
-            matches!(ty, Type::Ptr(_) | Type::DynPtr(_))
-        };
+        let imm_receiver = self.immutable_receiver(&callee);
 
         if let Some(ut) = ty.as_user() {
             let mut candidates: Vec<_> = self
@@ -3350,6 +3368,23 @@ impl TypeChecker {
             ),
             span,
         ))
+    }
+
+    fn immutable_receiver(&self, callee: &CheckedExpr) -> bool {
+        let mut ty = &callee.ty;
+        if !matches!(
+            ty,
+            Type::Ptr(_) | Type::MutPtr(_) | Type::DynPtr(_) | Type::DynMutPtr(_)
+        ) && !callee.can_addrmut(&self.scopes)
+        {
+            return true;
+        }
+
+        while let Type::MutPtr(inner) = ty {
+            ty = inner;
+        }
+
+        matches!(ty, Type::Ptr(_) | Type::DynPtr(_))
     }
 
     fn check_cast(&mut self, lhs: &Type, rhs: &Type, throwing: bool, span: Span) {

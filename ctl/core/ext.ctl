@@ -84,6 +84,20 @@ pub extension NumericExt<T: Numeric> for T {
     }
 }
 
+mod gcc_intrin {
+    use super::Integral;
+
+    // TODO: compiler independent fallback for these functions
+    #(c_opaque)
+    pub import fn __builtin_add_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
+
+    #(c_opaque)
+    pub import fn __builtin_sub_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
+
+    #(c_opaque)
+    pub import fn __builtin_mul_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
+}
+
 pub extension IntegralExt<T: Numeric + Integral> for T {
     #(intrinsic(binary_op))
     pub fn &(this, rhs: T): T { this & rhs }
@@ -109,13 +123,62 @@ pub extension IntegralExt<T: Numeric + Integral> for T {
     #(intrinsic(unary_op))
     pub fn --(mut this) { (*this)--; }
 
+    #(inline)
     pub fn wrapping_add(this, rhs: T): T { *this + rhs }
 
+    #(inline)
     pub fn wrapping_sub(this, rhs: T): T { *this - rhs }
 
+    #(inline)
     pub fn wrapping_mul(this, rhs: T): T { *this * rhs }
 
+    #(inline)
     pub fn wrapping_div(this, rhs: T): T { *this / rhs }
+
+    #(inline)
+    pub fn overflowing_add(this, rhs: T): (T, bool) {
+        mut out: T;
+        let res = gcc_intrin::__builtin_add_overflow(*this, rhs, &mut out);
+        (out, res)
+    }
+
+    #(inline)
+    pub fn overflowing_sub(this, rhs: T): (T, bool) {
+        mut out: T;
+        let res = gcc_intrin::__builtin_sub_overflow(*this, rhs, &mut out);
+        (out, res)
+    }
+
+    #(inline)
+    pub fn overflowing_mul(this, rhs: T): (T, bool) {
+        mut out: T;
+        let res = gcc_intrin::__builtin_mul_overflow(*this, rhs, &mut out);
+        (out, res)
+    }
+
+    #(inline)
+    pub fn checked_add(this, rhs: T): ?T {
+        mut out: T;
+        if !gcc_intrin::__builtin_add_overflow(*this, rhs, &mut out) {
+            out
+        }
+    }
+
+    #(inline)
+    pub fn checked_sub(this, rhs: T): ?T {
+        mut out: T;
+        if !gcc_intrin::__builtin_sub_overflow(*this, rhs, &mut out) {
+            out
+        }
+    }
+
+    #(inline)
+    pub fn checked_mul(this, rhs: T): ?T {
+        mut out: T;
+        if !gcc_intrin::__builtin_mul_overflow(*this, rhs, &mut out) {
+            out
+        }
+    }
 
     #(intrinsic)
     pub fn max_value(): T { T::max_value() }

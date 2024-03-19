@@ -1713,7 +1713,7 @@ impl<'a> Codegen<'a> {
                     self.funcs.insert(next_state);
                 });
             }
-            CheckedExprData::Subscript { callee, args } => {
+            CheckedExprData::Subscript { callee, arg } => {
                 // TODO: bounds check
                 if callee.ty.is_array() {
                     match callee.data {
@@ -1740,10 +1740,42 @@ impl<'a> Codegen<'a> {
                 }
 
                 self.buffer.emit("[");
-                for arg in args {
-                    self.emit_expr(arg, state);
-                }
+                self.emit_expr(*arg, state);
                 self.buffer.emit("]");
+            }
+            CheckedExprData::SliceArray { callee, arg } => {
+                let indirection = Self::indirection(&callee.ty);
+                let src = tmpbuf!(self, state, |tmp| {
+                    let len = callee.ty.strip_references().as_array().unwrap().1;
+                    self.emit_type(&expr.ty);
+                    self.buffer.emit(format!(" {tmp}={{.$ptr="));
+                    if indirection != 0 {
+                        self.buffer.emit("*".repeat(indirection - 1));
+                        self.emit_expr_inline(*callee, state);
+                    } else {
+                        self.emit_expr_inline(*callee, state);
+                        self.buffer.emit(format!(".{ARRAY_DATA_NAME}"));
+                    }
+                    self.buffer.emit(format!(",.$len={len}}};"));
+                    tmp
+                });
+                let ut = expr.ty.as_user().unwrap();
+                let mut func = GenericFunc::from_type_args(
+                    self.scopes,
+                    self.scopes
+                        .get(ut.id)
+                        .find_associated_fn(self.scopes, "subspan")
+                        .unwrap(),
+                    [arg.ty.with_templates(&state.func.ty_args)],
+                );
+                func.ty_args.copy_args(&ut.ty_args);
+                let new_state = State::in_body_scope(func, self.scopes);
+                self.buffer
+                    .emit_fn_name(self.scopes, &new_state.func, self.flags.minify);
+                self.buffer.emit(format!("(&{src}, "));
+                self.emit_expr_inline(*arg, state);
+                self.buffer.emit(")");
+                self.funcs.insert(new_state);
             }
             CheckedExprData::Return(mut expr) => {
                 hoist!(self, {
@@ -1938,7 +1970,7 @@ impl<'a> Codegen<'a> {
                         self.buffer.emit(format!(" {tmp}={deref}"));
                         self.emit_expr_inline((*callee).clone(), state);
                         self.buffer.emit(";");
-    
+
                         self.emit_expr_stmt(
                             CheckedExpr::new(
                                 self.scopes
