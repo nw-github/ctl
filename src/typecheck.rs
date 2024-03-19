@@ -3336,7 +3336,9 @@ impl TypeChecker {
                 let (args, ret, failed) =
                     self.check_fn_args(&mut func, Some(recv), args, target, span);
                 self.diag.set_errors_enabled(prev);
-                if failed {
+                // TODO: if the arguments have non overload related errors, just stop overload
+                // resolution
+                if failed || args.iter().any(|arg| matches!(arg.1.data, CheckedExprData::Error)) {
                     continue;
                 }
                 // unsafe doesnt cause check_fn_args to fail, but we mute errors, so check again
@@ -3362,6 +3364,10 @@ impl TypeChecker {
             .into_iter()
             .map(|(_, expr)| self.check_expr(expr, None))
             .collect();
+        if args.iter().any(|expr| expr.ty.is_unknown()) {
+            return Default::default();
+        }
+
         self.error(Error::new(
             format!(
                 "type '{}' does not support subscript{} with arguments of type ({})",
