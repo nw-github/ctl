@@ -802,12 +802,8 @@ impl TypeId {
                 types.insert(ty)
             }
             Type::User(ut) => {
-                if let Some(&ty) = map.get(&ut.id) {
-                    if ty != TypeId::UNKNOWN {
-                        ty
-                    } else {
-                        self
-                    }
+                if let Some(&ty) = map.get(&ut.id).filter(|&&ty| ty != TypeId::UNKNOWN) {
+                    ty
                 } else if !ut.ty_args.is_empty() {
                     let mut ut = ut.clone();
                     ut.fill_templates(types, map);
@@ -815,6 +811,11 @@ impl TypeId {
                 } else {
                     self
                 }
+            }
+            Type::Func(f) => {
+                let mut tr = f.clone();
+                tr.fill_templates(types, map);
+                types.insert(Type::Func(tr))
             }
             Type::FnPtr(f) => {
                 let f = f.clone();

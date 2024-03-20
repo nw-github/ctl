@@ -9,7 +9,7 @@
 
 pub fn main() {
     mut funcs = @[
-        subscript, 
+        &subscript, 
         val::end, 
         val::start, 
         val::mid,

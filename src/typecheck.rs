@@ -1614,7 +1614,7 @@ impl TypeChecker {
             let ty = Type::User(GenericUserType::from_id(scopes, types, hfn.type_params[i]));
             ty_args.insert(id, types.insert(ty));
         }
-        ty_args.insert(*scopes.get(tr).kind.as_trait().unwrap(), this.clone());
+        ty_args.insert(*scopes.get(tr).kind.as_trait().unwrap(), this);
 
         let mut compare_types = |has: TypeId, wants: TypeId| {
             let wants = wants.with_templates(types, &ty_args);
@@ -1778,7 +1778,7 @@ impl TypeChecker {
                     .params
                     .iter()
                     .map(|param| (param.label.clone(), CheckedExpr::new(
-                        param.ty.clone(),
+                        param.ty,
                         CheckedExprData::Var(*param.patt.as_checked().and_then(|p| p.data.as_variable()).unwrap())
                     )))
                     .collect();
@@ -1873,7 +1873,7 @@ impl TypeChecker {
         };
 
         let target = if let Some(target) = target {
-            let ut = GenericUserType::from_type_args(&self.scopes, id, [target.clone()]);
+            let ut = GenericUserType::from_type_args(&self.scopes, id, [target]);
             Some(self.types.insert(Type::User(ut)))
         } else {
             None
@@ -1900,7 +1900,7 @@ impl TypeChecker {
         let rhs = self.check_expr_inner(rhs, Some(target));
         let rhs = self.type_check_checked(rhs, target, span);
         CheckedExpr::new(
-            target.clone(),
+            target,
             CheckedExprData::Binary {
                 op,
                 left: lhs.into(),
@@ -2002,7 +2002,7 @@ impl TypeChecker {
                 | UnaryOp::PostIncrement
         ) {
             CheckedExpr::new(
-                stripped.clone(),
+                stripped,
                 CheckedExprData::AffixOperator {
                     callee: expr.auto_deref(&mut self.types, p0.ty).into(),
                     mfn,
@@ -2051,7 +2051,7 @@ impl TypeChecker {
 
                             let right = self.type_check(*right, left.ty);
                             return CheckedExpr::new(
-                                left.ty.clone(),
+                                left.ty,
                                 CheckedExprData::Binary {
                                     op: BinaryOp::Assign,
                                     left: left.into(),
@@ -2142,7 +2142,7 @@ impl TypeChecker {
                             ));
                         }
                         CheckedExpr::new(
-                            left.ty.clone(),
+                            left.ty,
                             CheckedExprData::Binary {
                                 op,
                                 left: left.into(),
@@ -2164,7 +2164,7 @@ impl TypeChecker {
                                 | BinaryOp::NotEqual
                                 | BinaryOp::LogicalOr
                                 | BinaryOp::LogicalAnd => TypeId::BOOL,
-                                _ => left.ty.clone(),
+                                _ => left.ty,
                             },
                             CheckedExprData::Binary {
                                 op,
@@ -2269,7 +2269,7 @@ impl TypeChecker {
                                 ))
                             }
 
-                            (inner.clone(), expr)
+                            (inner, expr)
                         } else if expr.ty == TypeId::UNKNOWN {
                             return Default::default();
                         } else {
@@ -2301,7 +2301,7 @@ impl TypeChecker {
                             self.error(Error::new("expression is not assignable", span))
                         }
 
-                        (expr.ty.clone(), expr)
+                        (expr.ty, expr)
                     }
                 };
 
@@ -2321,7 +2321,7 @@ impl TypeChecker {
                     *ty
                 } else if let Some(expr) = elements.next() {
                     let expr = self.check_expr(expr, None);
-                    let ty = expr.ty.clone();
+                    let ty = expr.ty;
                     checked.push(expr);
                     ty
                 } else {
@@ -2374,7 +2374,7 @@ impl TypeChecker {
                     (self.type_check(*init, ty), ty)
                 } else {
                     let expr = self.check_expr(*init, None);
-                    let ty = expr.ty.clone();
+                    let ty = expr.ty;
                     (expr, ty)
                 };
 
@@ -2400,7 +2400,7 @@ impl TypeChecker {
                         self.check_expr(expr, None)
                     };
 
-                    result_ty.push(result.ty.clone());
+                    result_ty.push(result.ty);
                     result_elems.insert(format!("{i}"), result);
                 }
 
@@ -2424,7 +2424,7 @@ impl TypeChecker {
                     ty
                 } else if let Some(expr) = elements.next() {
                     let expr = self.check_expr(expr, None);
-                    let ty = expr.ty.clone();
+                    let ty = expr.ty;
                     checked.push(expr);
                     ty
                 } else {
@@ -2452,7 +2452,7 @@ impl TypeChecker {
                     ty
                 } else if let Some(expr) = elements.next() {
                     let expr = self.check_expr(expr, None);
-                    let ty = expr.ty.clone();
+                    let ty = expr.ty;
                     checked.push(expr);
                     ty
                 } else {
@@ -2482,8 +2482,8 @@ impl TypeChecker {
                     let key = self.check_expr(key, None);
                     let val = self.check_expr(val, None);
 
-                    let k = key.ty.clone();
-                    let v = val.ty.clone();
+                    let k = key.ty;
+                    let v = val.ty;
                     result.push((key, val));
                     (k, v)
                 } else {
@@ -2515,7 +2515,7 @@ impl TypeChecker {
                         };
                         (
                             item,
-                            start.ty.clone(),
+                            start.ty,
                             [("start".into(), start), ("end".into(), end)].into(),
                         )
                     }
@@ -2526,15 +2526,11 @@ impl TypeChecker {
                         } else {
                             "range_to"
                         };
-                        (item, end.ty.clone(), [("end".into(), end)].into())
+                        (item, end.ty, [("end".into(), end)].into())
                     }
                     (Some(start), None) => {
                         let start = self.check_expr(*start, None);
-                        (
-                            "range_from",
-                            start.ty.clone(),
-                            [("start".into(), start)].into(),
-                        )
+                        ("range_from", start.ty, [("start".into(), start)].into())
                     }
                     (None, None) => {
                         return CheckedExpr::new(
@@ -2627,11 +2623,7 @@ impl TypeChecker {
                 if let Some(inner) =
                     target.and_then(|target| target.as_option_inner(&self.scopes, &self.types))
                 {
-                    CheckedExpr::option_null(self.make_lang_type_by_name(
-                        "option",
-                        [inner.clone()],
-                        span,
-                    ))
+                    CheckedExpr::option_null(self.make_lang_type_by_name("option", [inner], span))
                 } else {
                     self.error(Error::new("cannot infer type of option null literal", span))
                 }
@@ -2664,7 +2656,7 @@ impl TypeChecker {
                         ));
                     }
 
-                    let ty = var.ty.clone();
+                    let ty = var.ty;
                     self.scopes.get_mut(id).unused = false;
                     CheckedExpr::new(ty, CheckedExprData::Var(id))
                 }
@@ -2686,9 +2678,8 @@ impl TypeChecker {
                             .is_empty_variant(&self.scopes.get(func.id).name.data)
                         {
                             return CheckedExpr::new(
-                                self.types.insert(Type::User(
-                                    GenericUserType::new(id, func.ty_args).into(),
-                                )),
+                                self.types
+                                    .insert(Type::User(GenericUserType::new(id, func.ty_args))),
                                 CheckedExprData::VariantInstance {
                                     members: Default::default(),
                                     variant: self.scopes.get(func.id).name.data.clone(),
@@ -2725,9 +2716,8 @@ impl TypeChecker {
                             .is_empty_variant(&self.scopes.get(mfn.func.id).name.data)
                         {
                             return CheckedExpr::new(
-                                self.types.insert(Type::User(
-                                    GenericUserType::new(id, mfn.func.ty_args).into(),
-                                )),
+                                self.types
+                                    .insert(Type::User(GenericUserType::new(id, mfn.func.ty_args))),
                                 CheckedExprData::VariantInstance {
                                     members: Default::default(),
                                     variant: self.scopes.get(mfn.func.id).name.data.clone(),
@@ -2756,10 +2746,7 @@ impl TypeChecker {
                 let block = self.create_block(body, ScopeKind::Block(target, false));
                 let (target, yields) = self.scopes[block.scope].kind.as_block().unwrap();
                 CheckedExpr::new(
-                    yields
-                        .then(|| target.clone())
-                        .flatten()
-                        .unwrap_or(TypeId::VOID),
+                    yields.then(|| *target).flatten().unwrap_or(TypeId::VOID),
                     CheckedExprData::Block(block),
                 )
             }
@@ -3070,7 +3057,7 @@ impl TypeChecker {
                         };
                     } else {
                         self.scopes[id].kind = ScopeKind::Loop {
-                            target: Some(expr.ty.clone()),
+                            target: Some(expr.ty),
                             breaks: Some(true),
                             infinite,
                         };
@@ -3127,7 +3114,7 @@ impl TypeChecker {
                             if expr.ty == TypeId::NEVER {
                                 has_never = true;
                             } else {
-                                target = Some(expr.ty.clone());
+                                target = Some(expr.ty);
                             }
 
                             (patt, expr)
@@ -3208,7 +3195,7 @@ impl TypeChecker {
                                 ))
                             });
 
-                        lparams.push(ty.clone());
+                        lparams.push(ty);
                         this.insert::<VariableId>(
                             Variable {
                                 public: false,
@@ -3239,10 +3226,7 @@ impl TypeChecker {
                 let (target, yields) = self.scopes[id].kind.as_lambda().unwrap();
                 let fnptr = Type::FnPtr(FnPtr {
                     params: lparams,
-                    ret: yields
-                        .then(|| target.clone())
-                        .flatten()
-                        .unwrap_or(TypeId::VOID),
+                    ret: yields.then(|| *target).flatten().unwrap_or(TypeId::VOID),
                 });
                 CheckedExpr::new(self.types.insert(fnptr), CheckedExprData::Lambda(body))
             }
@@ -3672,7 +3656,7 @@ impl TypeChecker {
                     continue;
                 }
 
-                ut.ty_args.insert(*id, ty.clone());
+                ut.ty_args.insert(*id, *ty);
             }
         }
 
@@ -4204,7 +4188,7 @@ impl TypeChecker {
         if let Some(id) = self.scopes.lang_types.get(name).copied() {
             let ty_args = self.resolve_type_args(id, args, true, span);
             self.types
-                .insert(Type::User(GenericUserType::new(id, ty_args).into()))
+                .insert(Type::User(GenericUserType::new(id, ty_args)))
         } else {
             self.error(Error::no_lang_item(name, span))
         }
@@ -4561,7 +4545,7 @@ impl TypeChecker {
                             return None;
                         }
                     }
-                    Some(TypeArgs([(id, ty.clone())].into()))
+                    Some(TypeArgs([(id, ty)].into()))
                 }
                 _ => (ty == ext_ty_id).then(Default::default),
             }
@@ -4717,10 +4701,8 @@ impl TypeChecker {
                                 func.ty_args
                                     .copy_args_with(&mut this.types, &ty_args, &ut.ty_args);
                             }
-                            func.ty_args.insert(
-                                *this.scopes.get(tr_id).kind.as_trait().unwrap(),
-                                inst.clone(),
-                            );
+                            func.ty_args
+                                .insert(*this.scopes.get(tr_id).kind.as_trait().unwrap(), inst);
                             return Some(MemberFn {
                                 func,
                                 owner: src_scope,
@@ -4996,7 +4978,7 @@ impl TypeChecker {
         } else {
             match breaks {
                 Some(true) => (
-                    self.make_lang_type_by_name("option", [target.clone().unwrap()], span),
+                    self.make_lang_type_by_name("option", [(*target).unwrap()], span),
                     true,
                 ),
                 _ => (TypeId::VOID, false),
@@ -5278,17 +5260,17 @@ impl TypeChecker {
         if f.constructor.is_some_and(|id| id == ut_id) {
             let variant = f.name.data.clone();
             Ok((
-                self.scopes
+                (*self
+                    .scopes
                     .get(ut_id)
                     .kind
                     .as_union()
                     .and_then(|union| union.variants.get(&variant).map(|v| &v.0))
-                    .unwrap()
-                    .clone()
-                    .map(|ty| {
-                        let inner = ty.with_ut_templates(&mut self.types, stripped);
-                        scrutinee.matched_inner_type(&mut self.types, inner)
-                    }),
+                    .unwrap())
+                .map(|ty| {
+                    let inner = ty.with_ut_templates(&mut self.types, stripped);
+                    scrutinee.matched_inner_type(&mut self.types, inner)
+                }),
                 variant,
             ))
         } else if f
@@ -5414,10 +5396,10 @@ impl TypeChecker {
     ) -> CheckedPattern {
         let span_id = self.scopes.lang_types.get("span").copied();
         let span_mut_id = self.scopes.lang_types.get("span_mut").copied();
-        let (inner, arr_len) = match self.types.get(target.strip_references(&self.types)) {
+        let (real_inner, arr_len) = match self.types.get(target.strip_references(&self.types)) {
             &Type::Array(ty, len) => (ty, len),
             Type::User(ut) if Some(ut.id) == span_id => {
-                let inner = ut.first_type_arg().unwrap().clone();
+                let inner = ut.first_type_arg().unwrap();
                 let ptr = self.types.insert(Type::Ptr(inner));
                 return self.check_slice_pattern(ptr, inner, patterns, span_id.unwrap(), param);
             }
@@ -5456,7 +5438,7 @@ impl TypeChecker {
             }
         };
 
-        let inner = target.matched_inner_type(&mut self.types, inner);
+        let inner = target.matched_inner_type(&mut self.types, real_inner);
         let mut rest = None;
         let mut irrefutable = true;
         let mut result = Vec::new();
@@ -5506,7 +5488,7 @@ impl TypeChecker {
         if let Some(RestPattern { id: Some(id), .. }) = &mut rest {
             let arr = self
                 .types
-                .insert(Type::Array(inner.clone(), arr_len - result.len()));
+                .insert(Type::Array(real_inner, arr_len - result.len()));
             self.scopes.get_mut(*id).item.ty = target.matched_inner_type(&mut self.types, arr);
         }
 
@@ -5516,7 +5498,7 @@ impl TypeChecker {
                 patterns: ArrayPattern {
                     rest,
                     arr_len,
-                    inner,
+                    inner: real_inner,
                     patterns: result,
                 },
                 borrows: self.types.get(target).is_any_ptr(),
@@ -5776,7 +5758,7 @@ impl TypeChecker {
                                 Variable {
                                     public: false,
                                     name: Located::new(span, ident.into()),
-                                    ty: scrutinee.clone(),
+                                    ty: scrutinee,
                                     is_static: false,
                                     mutable,
                                     value: None,
@@ -5829,7 +5811,7 @@ impl TypeChecker {
                     Variable {
                         public: false,
                         name: Located::new(span, name),
-                        ty: scrutinee.clone(),
+                        ty: scrutinee,
                         is_static: false,
                         mutable: true,
                         value: None,
@@ -6397,7 +6379,7 @@ impl TypeChecker {
                             if let Some(&this) = self.scopes.get(id).kind.as_trait() {
                                 ty_args.insert(this, TypeId::UNKNOWN);
                             } else {
-                                let ty = Type::User(GenericUserType::new(id, ty_args).into());
+                                let ty = Type::User(GenericUserType::new(id, ty_args));
                                 let id = self.types.insert(ty);
                                 return self.resolve_value_path_from_type(id, rest, span);
                             }
@@ -6463,7 +6445,7 @@ impl TypeChecker {
                     if let Some(&this) = ty.kind.as_trait() {
                         ty_args.insert(this, TypeId::UNKNOWN);
                     } else {
-                        let ty = Type::User(GenericUserType::new(id, ty_args).into());
+                        let ty = Type::User(GenericUserType::new(id, ty_args));
                         let id = self.types.insert(ty);
                         return self.resolve_value_path_from_type(id, &data[i + 1..], total_span);
                     }
