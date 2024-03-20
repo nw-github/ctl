@@ -167,7 +167,7 @@ impl Error {
         expected: TypeId,
         received: TypeId,
         scopes: &Scopes,
-        types: &Types,
+        types: &mut Types,
         span: Span,
     ) -> Self {
         Self::new(

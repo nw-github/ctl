@@ -494,15 +494,10 @@ impl Scopes {
                         .iter()
                         .enumerate()
                         .map(|(i, id)| {
+                            let ty = Type::User(GenericUserType::from_id(self, types, *id));
                             (
                                 format!("{i}"),
-                                CheckedMember::new(
-                                    true,
-                                    types.insert_ty(Type::User(GenericUserType::from_id(
-                                        self, types, *id,
-                                    ))),
-                                    Span::default(),
-                                ),
+                                CheckedMember::new(true, types.insert(ty), Span::default()),
                             )
                         })
                         .collect(),
@@ -522,7 +517,7 @@ impl Scopes {
             self.tuples.insert(ty_args.len(), res.id);
             res.id
         };
-        types.insert_ty(Type::User(GenericUserType::from_type_args(
+        types.insert(Type::User(GenericUserType::from_type_args(
             self, id, ty_args,
         )))
     }
@@ -566,15 +561,10 @@ impl Scopes {
                         .iter()
                         .enumerate()
                         .map(|(i, id)| {
+                            let ty = Type::User(GenericUserType::from_id(self, types, *id));
                             (
                                 names[i].clone(),
-                                CheckedMember::new(
-                                    true,
-                                    types.insert_ty(Type::User(GenericUserType::from_id(
-                                        self, types, *id,
-                                    ))),
-                                    Span::default(),
-                                ),
+                                CheckedMember::new(true, types.insert(ty), Span::default()),
                             )
                         })
                         .collect(),
@@ -594,7 +584,7 @@ impl Scopes {
             self.structs.insert(names, res.id);
             res.id
         };
-        types.insert_ty(Type::User(GenericUserType::from_type_args(
+        types.insert(Type::User(GenericUserType::from_type_args(
             self, id, ty_args,
         )))
     }
@@ -616,7 +606,7 @@ impl Scopes {
     }
 
     pub fn has_builtin_impl(&self, types: &Types, id: TypeId, bound: &GenericTrait) -> bool {
-        let ty = types.get_ty(id);
+        let ty = types.get(id);
         if ty.is_numeric() && Some(&bound.id) == self.lang_traits.get("numeric") {
             return true;
         }
