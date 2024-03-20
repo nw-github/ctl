@@ -158,8 +158,8 @@ impl Compiler<Checked> {
         codegen::build(&mut self.state.0, flags)
     }
 
-    pub fn project(&self) -> &Project {
-        &self.state.0
+    pub fn project(self) -> Project {
+        self.state.0
     }
 }
 

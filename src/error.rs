@@ -5,7 +5,7 @@ use tower_lsp::lsp_types::{Position, Range};
 use crate::{
     lexer::{Located, Span, Token},
     sym::Scopes,
-    typeid::Type,
+    typeid::{TypeId, Types},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -163,12 +163,18 @@ impl Error {
         Self::new(format!("'{}' is not valid here", token.data), token.span)
     }
 
-    pub fn type_mismatch(expected: &Type, received: &Type, scopes: &Scopes, span: Span) -> Self {
+    pub fn type_mismatch(
+        expected: TypeId,
+        received: TypeId,
+        scopes: &Scopes,
+        types: &Types,
+        span: Span,
+    ) -> Self {
         Self::new(
             format!(
                 "type mismatch: expected type '{}', found '{}'",
-                expected.name(scopes),
-                received.name(scopes)
+                expected.name(scopes, types),
+                received.name(scopes, types),
             ),
             span,
         )

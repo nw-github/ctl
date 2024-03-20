@@ -11,11 +11,11 @@ use crate::ast::parsed::Linkage;
 use crate::error::{Diagnostics, FileId, OffsetMode};
 use crate::lexer::Span;
 use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeId, UserTypeKind, VariableId};
-use crate::typecheck::{LspInput, LspItem};
-use crate::typeid::{GenericUserType, Type};
+use crate::typecheck::{LspInput, LspItem, Project};
+use crate::typeid::Type;
 use crate::{
-    project_from_file, CachingSourceProvider, Checked, Compiler, FileSourceProvider,
-    SourceProvider, THIS_PARAM,
+    project_from_file, CachingSourceProvider, Compiler, FileSourceProvider, SourceProvider,
+    THIS_PARAM,
 };
 
 macro_rules! write_de {
@@ -148,8 +148,7 @@ impl LanguageServer for LspBackend {
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        let (file, checked) = self.check_project(uri, Some(pos), None).await?;
-        let proj = checked.project();
+        let (file, proj) = self.check_project(uri, Some(pos), None).await?;
         let scopes = proj.tc.scopes();
         let Some(span) = proj.tc.lsp().hover.as_ref().and_then(|hover| {
             Some(match hover {
@@ -171,7 +170,7 @@ impl LanguageServer for LspBackend {
             return Ok(None);
         };
 
-        let diag = checked.project().tc.diagnostics();
+        let diag = proj.tc.diagnostics();
         let path = diag.file_path(span.file);
         let uri = get_uri((file, uri), (span.file, path));
         let range = if let Some(doc) = self.documents.get(&uri) {
@@ -213,10 +212,9 @@ impl LanguageServer for LspBackend {
                 .await;
         }
 
-        let (_, checked) = self.check_project(uri, None, Some(pos)).await?;
-        let project = checked.project();
-        let scopes = &project.tc.scopes();
-        let Some(completions) = project.tc.lsp().completions.as_ref() else {
+        let (_, proj) = self.check_project(uri, None, Some(pos)).await?;
+        let scopes = &proj.tc.scopes();
+        let Some(completions) = proj.tc.lsp().completions.as_ref() else {
             return Ok(None);
         };
         let completions = completions
@@ -342,18 +340,16 @@ impl LanguageServer for LspBackend {
                             ..Default::default()
                         }
                     }
-                    &LspItem::BuiltinType(name) => {
-                        CompletionItem {
-                            label: name.into(),
-                            kind: Some(CompletionItemKind::STRUCT),
-                            label_details: Some(CompletionItemLabelDetails {
-                                detail: None,
-                                description: Some(name.into()),
-                            }),
-                            detail: Some(name.into()),
-                            ..Default::default()
-                        }
-                    }
+                    &LspItem::BuiltinType(name) => CompletionItem {
+                        label: name.into(),
+                        kind: Some(CompletionItemKind::STRUCT),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some(name.into()),
+                        }),
+                        detail: Some(name.into()),
+                        ..Default::default()
+                    },
                     _ => return None,
                 })
             })
@@ -364,20 +360,22 @@ impl LanguageServer for LspBackend {
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        let (_, checked) = self.check_project(uri, Some(pos), None).await?;
-        let proj = checked.project();
+        let (_, proj) = self.check_project(uri, Some(pos), None).await?;
         let Some(item) = proj.tc.lsp().hover.as_ref() else {
             return Ok(None);
         };
-        let scopes = &proj.tc.scopes();
+        let scopes = proj.tc.scopes();
         let str = match item {
             &LspItem::Var(id) => Some(visualize_var(id, scopes)),
             &LspItem::Fn(id, _) => Some(visualize_func(id, false, scopes)),
             &LspItem::Type(id) => Some(visualize_type(id, scopes)),
             LspItem::Property(id, name) => {
                 let ut = scopes.get(*id);
-                let unk = Type::Unknown;
-                let ty = ut.members.get(name).map(|m| &m.ty).unwrap_or(&unk);
+                let ty = ut
+                    .members
+                    .get(name)
+                    .map(|m| m.ty)
+                    .unwrap_or(TypeId::UNKNOWN);
                 Some(format!(
                     "{}{name}: {}",
                     visualize_location(ut.body_scope, scopes),
@@ -427,7 +425,7 @@ impl LspBackend {
         uri: &Url,
         hover: Option<Position>,
         completion: Option<Position>,
-    ) -> Result<(FileId, Compiler<Checked>)> {
+    ) -> Result<(FileId, Project)> {
         let path = if !uri.scheme().is_empty() {
             Path::new(&uri.as_str()[uri.scheme().len() + 3..])
         } else {
@@ -469,7 +467,8 @@ impl LspBackend {
             }),
         });
 
-        let diag = checked.project().tc.diagnostics();
+        let proj = checked.project();
+        let diag = proj.tc.diagnostics();
         let mut all = HashMap::<Url, Vec<Diagnostic>>::new();
         let mut cache = CachingSourceProvider::new();
         for (severity, err) in diag
@@ -517,7 +516,7 @@ impl LspBackend {
             self.client.publish_diagnostics(uri, diags, None).await;
         }
 
-        let scopes = &checked.project().tc.scopes();
+        let scopes = proj.tc.scopes();
         if let Some(mut doc) = self.documents.get_mut(uri) {
             doc.inlay_hints.clear();
             for (_, var) in scopes.vars() {
@@ -539,7 +538,7 @@ impl LspBackend {
             }
         }
 
-        Ok((file, checked))
+        Ok((file, proj))
     }
 }
 
@@ -647,10 +646,7 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes) -> String {
             &mut res,
             union,
             variant,
-            union
-                .variants
-                .get(variant)
-                .and_then(|inner| inner.0.as_ref()),
+            union.variants.get(variant).and_then(|inner| inner.0),
             scopes,
             small,
         );
@@ -697,7 +693,7 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes) -> String {
             res += "kw ";
         }
 
-        if param.label == THIS_PARAM && param.ty.is_mut_ptr() {
+        if param.label == THIS_PARAM && scopes.get_ty(param.ty).is_mut_ptr() {
             res += "mut ";
         }
 
@@ -729,7 +725,7 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes) -> String {
     }
 
     res += ")";
-    if !func.ret.is_void() {
+    if func.ret != TypeId::VOID {
         res += ": ";
         res += &func.ret.name(scopes);
     }
@@ -772,7 +768,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
                 ""
             };
 
-            write_de!(res, "\n\t{header}{name}: {},", &member.ty.name(scopes));
+            write_de!(res, "\n\t{header}{name}: {},", member.ty.name(scopes));
             wrote = true;
         }
 
@@ -787,11 +783,11 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
         res += &visualize_location(ut.scope, scopes);
     }
 
-    if ut.type_params.is_empty() && matches!(ut.kind, UserTypeKind::Struct | UserTypeKind::Union(_))
-    {
-        let (sz, align) = GenericUserType::new(id, Default::default()).size_and_align(scopes);
-        writeln_de!(res, "// size = {sz}, align = {align}");
-    }
+    // if ut.type_params.is_empty() && matches!(ut.kind, UserTypeKind::Struct | UserTypeKind::Union(_))
+    // {
+    //     let (sz, align) = GenericUserType::new(id, Default::default()).size_and_align(scopes);
+    //     writeln_de!(res, "// size = {sz}, align = {align}");
+    // }
 
     if ut.public {
         res += "pub ";
@@ -815,7 +811,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes) -> String {
             write_de!(res, ": {} {{", union.tag.name(scopes));
             for (name, (ty, _)) in union.variants.iter() {
                 res += "\n\t";
-                visualize_variant_body(&mut res, union, name, ty.as_ref(), scopes, false);
+                visualize_variant_body(&mut res, union, name, *ty, scopes, false);
                 res += ",";
             }
             print_body(&mut res, !union.variants.is_empty());
@@ -863,12 +859,12 @@ fn visualize_variant_body(
     res: &mut String,
     union: &Union,
     name: &str,
-    ty: Option<&Type>,
+    ty: Option<TypeId>,
     scopes: &Scopes,
     small: bool,
 ) {
     *res += name;
-    match ty {
+    match ty.map(|id| scopes.get_ty(id)) {
         Some(Type::User(ut)) => {
             let inner = scopes.get(ut.id);
             if inner.kind.is_anon_struct() {
@@ -880,8 +876,8 @@ fn visualize_variant_body(
                         if i > 0 { ", " } else { " " },
                         ut.ty_args
                             .get_index(i)
-                            .map(|v| v.1)
-                            .unwrap_or(&Type::Unknown)
+                            .map(|v| *v.1)
+                            .unwrap_or(TypeId::UNKNOWN)
                             .name(scopes)
                     )
                 }
@@ -895,8 +891,8 @@ fn visualize_variant_body(
                     *res += &ut
                         .ty_args
                         .get_index(i)
-                        .map(|v| v.1)
-                        .unwrap_or(&Type::Unknown)
+                        .map(|v| *v.1)
+                        .unwrap_or(TypeId::UNKNOWN)
                         .name(scopes)
                 }
                 *res += ")";

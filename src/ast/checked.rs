@@ -6,7 +6,7 @@ use crate::{
     ast::{BinaryOp, UnaryOp},
     sym::{ScopeId, ScopeKind, Scopes, VariableId},
     typecheck::MemberFn,
-    typeid::{GenericFunc, Type},
+    typeid::{GenericFunc, Type, TypeId, Types},
 };
 
 use super::parsed::RangePattern;
@@ -28,7 +28,7 @@ pub struct ArrayPattern<T> {
     pub patterns: Vec<T>,
     pub rest: Option<RestPattern>,
     pub arr_len: usize,
-    pub inner: Type,
+    pub inner: TypeId,
 }
 
 #[derive(Debug, Clone, Default, EnumAsInner)]
@@ -36,11 +36,11 @@ pub enum CheckedPatternData {
     UnionMember {
         pattern: Option<Box<CheckedPattern>>,
         variant: String,
-        inner: Type,
+        inner: TypeId,
         borrows: bool,
     },
     Destrucure {
-        patterns: Vec<(String, Type, CheckedPattern)>,
+        patterns: Vec<(String, TypeId, CheckedPattern)>,
         borrows: bool,
     },
     Array {
@@ -53,7 +53,7 @@ pub enum CheckedPatternData {
     Span {
         patterns: Vec<CheckedPattern>,
         rest: Option<RestPattern>,
-        inner: Type,
+        inner: TypeId,
     },
     Variable(VariableId),
     Void,
@@ -210,19 +210,37 @@ impl CheckedExprData {
             matches!(scopes[block.scope].kind, ScopeKind::Block(_, true)))
     }
 
-    pub fn member_call(mfn: MemberFn, args: IndexMap<String, CheckedExpr>, scope: ScopeId) -> Self {
+    pub fn member_call(
+        scopes: &Scopes,
+        types: &mut Types,
+        mfn: MemberFn,
+        args: IndexMap<String, CheckedExpr>,
+        scope: ScopeId,
+    ) -> Self {
+        let fptr = mfn.func.as_fn_ptr(scopes, types);
         Self::Call(
             Box::new(CheckedExpr::new(
-                Type::Func(mfn.func.clone().into()),
+                types.insert_ty(Type::Func(mfn.func.clone(), fptr)),
                 Self::MemFunc(mfn, scope),
             )),
             args,
         )
     }
 
-    pub fn call(func: GenericFunc, args: IndexMap<String, CheckedExpr>, scope: ScopeId) -> Self {
+    pub fn call(
+        scopes: &Scopes,
+        types: &mut Types,
+        func: GenericFunc,
+        args: IndexMap<String, CheckedExpr>,
+        scope: ScopeId,
+    ) -> Self {
+        let fptr = func.as_fn_ptr(scopes, types);
         Self::Call(
-            CheckedExpr::new(Type::Func(func.clone().into()), Self::Func(func, scope)).into(),
+            CheckedExpr::new(
+                types.insert_ty(Type::Func(func.clone(), fptr)),
+                Self::Func(func, scope),
+            )
+            .into(),
             args,
         )
     }
@@ -230,77 +248,78 @@ impl CheckedExprData {
 
 #[derive(Debug, Default, Clone, derive_more::Constructor)]
 pub struct CheckedExpr {
-    pub ty: Type,
+    pub ty: TypeId,
     pub data: CheckedExprData,
 }
 
 impl CheckedExpr {
-    pub fn is_assignable(&self, scopes: &Scopes) -> bool {
+    pub fn is_assignable(&self, scopes: &Scopes, types: &Types) -> bool {
         match &self.data {
             CheckedExprData::AutoDeref(expr, _) => {
-                matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
+                matches!(types.get_ty(expr.ty), Type::MutPtr(_) | Type::RawPtr(_))
             }
             CheckedExprData::Unary { op, expr } => {
-                matches!(op, UnaryOp::Deref) && matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
+                matches!(op, UnaryOp::Deref)
+                    && matches!(types.get_ty(expr.ty), Type::MutPtr(_) | Type::RawPtr(_))
             }
             CheckedExprData::Var(id) => scopes.get(*id).mutable,
-            CheckedExprData::Member { source, .. } => source.is_assignable(scopes),
+            CheckedExprData::Member { source, .. } => source.is_assignable(scopes, types),
             CheckedExprData::Subscript { callee, .. } => match &callee.data {
                 CheckedExprData::Var(id) => {
-                    matches!(callee.ty, Type::MutPtr(_) | Type::RawPtr(_))
+                    matches!(types.get_ty(callee.ty), Type::MutPtr(_) | Type::RawPtr(_))
                         || scopes.get(*id).mutable
                 }
-                CheckedExprData::Member { source, .. } => source.is_assignable(scopes),
+                CheckedExprData::Member { source, .. } => source.is_assignable(scopes, types),
                 _ => true,
             },
             _ => false,
         }
     }
 
-    pub fn can_addrmut(&self, scopes: &Scopes) -> bool {
+    pub fn can_addrmut(&self, scopes: &Scopes, types: &Types) -> bool {
         match &self.data {
             CheckedExprData::AutoDeref(expr, _) => {
-                matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
+                matches!(types.get_ty(expr.ty), Type::MutPtr(_) | Type::RawPtr(_))
             }
             CheckedExprData::Unary { op, expr } => {
                 !matches!(op, UnaryOp::Deref)
-                    || matches!(expr.ty, Type::MutPtr(_) | Type::RawPtr(_))
+                    || matches!(types.get_ty(expr.ty), Type::MutPtr(_) | Type::RawPtr(_))
             }
             CheckedExprData::Var(id) => scopes.get(*id).mutable,
             CheckedExprData::Member { source, .. } => {
-                matches!(source.ty, Type::MutPtr(_)) || source.can_addrmut(scopes)
+                matches!(types.get_ty(source.ty), Type::MutPtr(_)) || source.can_addrmut(scopes, types)
             }
-            CheckedExprData::Subscript { callee, .. } => callee.can_addrmut(scopes),
+            CheckedExprData::Subscript { callee, .. } => callee.can_addrmut(scopes, types),
             _ => true,
         }
     }
 
-    pub fn auto_deref(self, target: &Type) -> CheckedExpr {
+    pub fn auto_deref(self, types: &mut Types, target: TypeId) -> CheckedExpr {
         let mut needed = 0;
         let mut current = target;
-        while let Type::Ptr(inner) | Type::MutPtr(inner) = current {
-            current = inner;
+        while let Type::Ptr(inner) | Type::MutPtr(inner) = types.get_ty(current) {
+            current = *inner;
             needed += 1;
         }
 
-        let mut prev = &self.ty;
-        let mut ty = &self.ty;
+        let mut prev = self.ty;
+        let mut ty = self.ty;
         let mut indirection = 0;
-        while let Type::Ptr(inner) | Type::MutPtr(inner) = ty {
+        while let Type::Ptr(inner) | Type::MutPtr(inner) = types.get_ty(ty) {
             prev = ty;
-            ty = inner;
+            ty = *inner;
             indirection += 1;
         }
 
-        if let Type::DynMutPtr(_) | Type::DynPtr(_) = ty {
+        if let Type::DynMutPtr(_) | Type::DynPtr(_) = types.get_ty(ty) {
             indirection += 1;
         }
 
         match indirection.cmp(&needed) {
             std::cmp::Ordering::Less => {
-                if matches!(target, Type::Ptr(_)) {
+                if matches!(types.get_ty(target), Type::Ptr(_)) {
                     CheckedExpr::new(
-                        Type::Ptr(self.ty.clone().into()),
+                        types.insert_ty(Type::Ptr(self.ty)),
                         CheckedExprData::Unary {
                             op: UnaryOp::Addr,
                             expr: self.into(),
@@ -308,7 +327,7 @@ impl CheckedExpr {
                     )
                 } else {
                     CheckedExpr::new(
-                        Type::MutPtr(self.ty.clone().into()),
+                        types.insert_ty(Type::MutPtr(self.ty)),
                         CheckedExprData::Unary {
                             op: UnaryOp::AddrMut,
                             expr: self.into(),
@@ -328,7 +347,7 @@ impl CheckedExpr {
         }
     }
 
-    pub fn option_null(opt: Type) -> CheckedExpr {
+    pub fn option_null(opt: TypeId) -> CheckedExpr {
         CheckedExpr::new(
             opt,
             CheckedExprData::VariantInstance {
