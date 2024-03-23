@@ -2023,16 +2023,17 @@ impl<'a> Codegen<'a> {
                     let formatter = self.emit_tmpvar(*formatter, state);
                     for mut expr in parts {
                         expr.ty = expr.ty.with_templates(self.types, &state.func.ty_args);
+                        let stripped = expr.ty.strip_references(self.types);
                         let format_state = State::with_inst(
                             self.find_implementation(
-                                expr.ty,
+                                stripped,
                                 format_id,
                                 "format",
                                 scope,
                                 |tc, id| TypeArgs::in_order(tc.scopes(), id, [formatter_ty]),
                             ),
                             self.types,
-                            expr.ty,
+                            stripped,
                             scope,
                         );
 
@@ -2042,7 +2043,7 @@ impl<'a> Codegen<'a> {
                             &format_state.func,
                             self.flags.minify,
                         );
-                        self.buffer.emit("(&");
+                        self.buffer.emit("(");
                         self.emit_tmpvar_ident(expr, state);
                         self.buffer.emit(format!(",&{formatter});"));
                         self.funcs.insert(format_state);

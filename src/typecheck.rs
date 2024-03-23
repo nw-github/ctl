@@ -2278,9 +2278,8 @@ impl TypeChecker {
                                     self.diag.warn(Error::subscript_addr(span));
                                 }
                             }
-                            CheckedExprData::Func(_, _) => {
-                                self.error(Error::new("cannot create raw pointer to function", span))
-                            }
+                            CheckedExprData::Func(_, _) => self
+                                .error(Error::new("cannot create raw pointer to function", span)),
                             _ => {}
                         }
                         (self.types.insert(Type::RawPtr(expr.ty)), expr)
@@ -2618,28 +2617,26 @@ impl TypeChecker {
                             })
                     })
                     .unwrap_or_else(|| self.error(Error::no_lang_item("String Formatter", span)));
-                let sty = self.make_lang_type_by_name("string", [], span);
-
                 let mut out_parts = Vec::with_capacity(parts.len());
                 for expr in parts {
                     let span = expr.span;
                     let expr = self.check_expr(expr, None);
-                    if expr.ty != TypeId::UNKNOWN
-                        && self.get_trait_impl(expr.ty, write_id).is_none()
-                    {
+                    let ty = expr.ty.strip_references(&self.types);
+                    if ty != TypeId::UNKNOWN && self.get_trait_impl(ty, write_id).is_none() {
                         self.diag.error(Error::doesnt_implement(
-                            &expr.ty.name(&self.scopes, &mut self.types),
+                            &ty.name(&self.scopes, &mut self.types),
                             "Format",
                             span,
                         ));
                     }
+                    let ptr_to_unk = self.types.insert(Type::Ptr(TypeId::UNKNOWN));
                     if !matches!(&expr.data, CheckedExprData::String(s) if s.is_empty()) {
-                        out_parts.push(expr);
+                        out_parts.push(expr.auto_deref(&mut self.types, ptr_to_unk));
                     }
                 }
 
                 CheckedExpr::new(
-                    sty,
+                    self.make_lang_type_by_name("string", [], span),
                     CheckedExprData::StringInterpolation {
                         parts: out_parts,
                         formatter: formatter.into(),
