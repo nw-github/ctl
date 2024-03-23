@@ -259,4 +259,11 @@ impl Error {
     pub fn bad_destructure(ty: &str, span: Span) -> Self {
         Self::new(format!("cannot destructure value of type '{ty}'"), span)
     }
+
+    pub fn subscript_addr(span: Span) -> Self {
+        Self::new(
+            "taking address of subcript that returns a value creates a temporary",
+            span,
+        )
+    }
 }

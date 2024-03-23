@@ -2210,13 +2210,26 @@ impl TypeChecker {
                     UnaryOp::Addr => {
                         let expr = self
                             .check_expr(*expr, target.and_then(|id| id.as_pointee(&self.types)));
-                        if let Type::Func(f) = self.types.get(expr.ty) {
-                            let f = f.clone();
-                            let fptr = Type::FnPtr(f.as_fn_ptr(&self.scopes, &mut self.types));
-                            return CheckedExpr::new(self.types.insert(fptr), expr.data);
-                        } else {
-                            (self.types.insert(Type::Ptr(expr.ty)), expr)
+                        match &expr.data {
+                            CheckedExprData::Call(inner, _) => {
+                                // FIXME: don't test by name
+                                if matches!(&inner.data, CheckedExprData::Func(f, _)
+                                    if self.scopes.get(f.id).name.data.starts_with("$sub"))
+                                {
+                                    self.diag.warn(Error::subscript_addr(span));
+                                }
+                            }
+                            CheckedExprData::Func(_, _) => {
+                                let Type::Func(f) = self.types.get(expr.ty) else {
+                                    unreachable!()
+                                };
+                                let f = f.clone();
+                                let fptr = Type::FnPtr(f.as_fn_ptr(&self.scopes, &mut self.types));
+                                return CheckedExpr::new(self.types.insert(fptr), expr.data);
+                            }
+                            _ => {}
                         }
+                        (self.types.insert(Type::Ptr(expr.ty)), expr)
                     }
                     UnaryOp::AddrMut => {
                         let expr = self
@@ -2227,23 +2240,49 @@ impl TypeChecker {
                                 span,
                             ))
                         }
+                        match &expr.data {
+                            CheckedExprData::Call(inner, _) => {
+                                // FIXME: don't test by name
+                                if matches!(&inner.data, CheckedExprData::Func(f, _)
+                                    if self.scopes.get(f.id).name.data.starts_with("$sub"))
+                                {
+                                    self.diag.warn(Error::subscript_addr(span));
+                                }
+                            }
+                            CheckedExprData::Func(_, _) => {
+                                self.diag.warn(Error::new(
+                                    "&mut on function creates immutable function pointer (use &)",
+                                    span,
+                                ));
 
-                        if matches!(&expr.data, CheckedExprData::Func(_, _)) {
-                            self.diag.warn(Error::new(
-                                "cannot create mutable pointer to function",
-                                span,
-                            ))
+                                let Type::Func(f) = self.types.get(expr.ty) else {
+                                    unreachable!()
+                                };
+                                let f = f.clone();
+                                let fptr = Type::FnPtr(f.as_fn_ptr(&self.scopes, &mut self.types));
+                                return CheckedExpr::new(self.types.insert(fptr), expr.data);
+                            }
+                            _ => {}
                         }
-
                         (self.types.insert(Type::MutPtr(expr.ty)), expr)
                     }
                     UnaryOp::AddrRaw => {
                         let expr = self
                             .check_expr(*expr, target.and_then(|id| id.as_pointee(&self.types)));
-                        if matches!(&expr.data, CheckedExprData::Func(_, _)) {
-                            self.error(Error::new("cannot create raw pointer to function", span))
+                        match &expr.data {
+                            CheckedExprData::Call(inner, _) => {
+                                // FIXME: don't test by name
+                                if matches!(&inner.data, CheckedExprData::Func(f, _)
+                                    if self.scopes.get(f.id).name.data.starts_with("$sub"))
+                                {
+                                    self.diag.warn(Error::subscript_addr(span));
+                                }
+                            }
+                            CheckedExprData::Func(_, _) => {
+                                self.error(Error::new("cannot create raw pointer to function", span))
+                            }
+                            _ => {}
                         }
-
                         (self.types.insert(Type::RawPtr(expr.ty)), expr)
                     }
                     UnaryOp::Try => {

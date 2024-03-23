@@ -632,7 +632,7 @@ impl Buffer {
                         self.emit_type(scopes, types, inner, None, min);
                         self.emit("*/");
                     }
-                } else if id.is_c_void() {
+                } else if types.get(inner).is_c_void() {
                     self.emit("void");
                 } else {
                     self.emit_type(scopes, types, inner, tg, min);
