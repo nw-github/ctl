@@ -10,8 +10,9 @@ use tower_lsp::{Client, LanguageServer};
 use crate::ast::parsed::Linkage;
 use crate::error::{Diagnostics, FileId, OffsetMode};
 use crate::lexer::Span;
+use crate::project::Project;
 use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeId, UserTypeKind, VariableId};
-use crate::typecheck::{LspInput, LspItem, Project};
+use crate::typecheck::{LspInput, LspItem};
 use crate::typeid::{GenericUserType, Type, TypeId, Types};
 use crate::{
     project_from_file, CachingSourceProvider, Compiler, FileSourceProvider, SourceProvider,
@@ -149,8 +150,8 @@ impl LanguageServer for LspBackend {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
         let (file, mut proj) = self.check_project(uri, Some(pos), None).await?;
-        let (scopes, _, lsp) = proj.tc.lsp();
-        let Some(span) = lsp.hover.as_ref().and_then(|hover| {
+        let scopes = &proj.scopes;
+        let Some(span) = proj.hover.as_ref().and_then(|hover| {
             Some(match hover {
                 &LspItem::Var(id) => scopes.get(id).name.span,
                 &LspItem::Type(id) => scopes.get(id).name.span,
@@ -170,7 +171,7 @@ impl LanguageServer for LspBackend {
             return Ok(None);
         };
 
-        let diag = proj.tc.diagnostics();
+        let diag = &mut proj.diag;
         let path = diag.file_path(span.file);
         let uri = get_uri((file, uri), (span.file, path));
         let range = if let Some(doc) = self.documents.get(&uri) {
@@ -213,10 +214,11 @@ impl LanguageServer for LspBackend {
         }
 
         let (_, mut proj) = self.check_project(uri, None, Some(pos)).await?;
-        let (scopes, types, lsp) = proj.tc.lsp();
-        let Some(completions) = lsp.completions.as_ref() else {
+        let Some(completions) = proj.completions.as_ref() else {
             return Ok(None);
         };
+        let scopes = &proj.scopes;
+        let types = &mut proj.types;
         let completions = completions
             .items
             .iter()
@@ -361,10 +363,11 @@ impl LanguageServer for LspBackend {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
         let (_, mut proj) = self.check_project(uri, Some(pos), None).await?;
-        let (scopes, types, lsp) = proj.tc.lsp();
-        let Some(item) = lsp.hover.as_ref() else {
+        let Some(item) = proj.hover.as_ref() else {
             return Ok(None);
         };
+        let scopes = &proj.scopes;
+        let types = &mut proj.types;
         let str = match item {
             &LspItem::Var(id) => Some(visualize_var(id, scopes, types)),
             &LspItem::Fn(id, _) => Some(visualize_func(id, false, scopes, types)),
@@ -468,7 +471,7 @@ impl LspBackend {
         });
 
         let mut proj = checked.project();
-        let diag = proj.tc.diagnostics();
+        let diag = &mut proj.diag;
         let mut all = HashMap::<Url, Vec<Diagnostic>>::new();
         let mut cache = CachingSourceProvider::new();
         for (severity, err) in diag
@@ -516,10 +519,9 @@ impl LspBackend {
             self.client.publish_diagnostics(uri, diags, None).await;
         }
 
-        let (scopes, types, _) = proj.tc.lsp();
         if let Some(mut doc) = self.documents.get_mut(uri) {
             doc.inlay_hints.clear();
-            for (_, var) in scopes.vars() {
+            for (_, var) in proj.scopes.vars() {
                 if var.name.span.file != file || var.has_hint || var.name.data.starts_with('$') {
                     continue;
                 }
@@ -527,7 +529,7 @@ impl LspBackend {
                 let r = Diagnostics::get_span_range(&doc.text, var.name.span, OffsetMode::Utf16);
                 doc.inlay_hints.push(InlayHint {
                     position: r.end,
-                    label: InlayHintLabel::String(format!(": {}", var.ty.name(scopes, types))),
+                    label: InlayHintLabel::String(format!(": {}", var.ty.name(&proj.scopes, &mut proj.types))),
                     kind: Some(InlayHintKind::TYPE),
                     text_edits: Default::default(),
                     tooltip: Default::default(),
