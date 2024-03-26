@@ -3394,6 +3394,15 @@ impl TypeChecker {
                     arg: expr.into(),
                 },
             ),
+            Err(expr) if self.proj.types.get(expr.ty).is_integral() => {
+                CheckedExpr::new(
+                    target,
+                    CheckedExprData::Subscript {
+                        callee: callee.into(),
+                        arg: expr.into(),
+                    },
+                )
+            }
             Err(expr) => {
                 let Some((full, id)) = maybe_span(self, expr.ty, self.immutable_receiver(&callee))
                 else {
