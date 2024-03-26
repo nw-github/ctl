@@ -85,8 +85,9 @@ pub enum StmtData {
         functions: Vec<Fn>,
         operators: Vec<OperatorFn>,
     },
-    Static {
+    Binding {
         public: bool,
+        constant: bool,
         name: Located<String>,
         ty: TypeHint,
         value: Expr,
@@ -520,6 +521,7 @@ pub enum VariantData {
 pub struct Variant {
     pub name: Located<String>,
     pub data: VariantData,
+    pub tag: Option<Expr>,
 }
 
 #[derive(Debug, Clone)]

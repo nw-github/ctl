@@ -726,9 +726,9 @@ impl TypeId {
                         sa.next(ty.size_and_align(scopes, types));
                     }
 
-                    sa.next(union.variants.values().flat_map(|v| &v.0).fold(
+                    sa.next(union.variants.values().flat_map(|v| v.ty).fold(
                         (0, 1),
-                        |(sz, align), &ty| {
+                        |(sz, align), ty| {
                             let (s, a) = ty
                                 .with_templates(types, &ut.ty_args)
                                 .size_and_align(scopes, types);

@@ -206,8 +206,14 @@ pub struct CheckedMember {
 }
 
 #[derive(Debug, Clone)]
+pub struct CheckedVariant {
+    pub ty: Option<TypeId>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
 pub struct Union {
-    pub variants: IndexMap<String, (Option<TypeId>, Span)>,
+    pub variants: IndexMap<String, CheckedVariant>,
     pub tag: TypeId,
     pub enum_union: bool,
 }
@@ -258,7 +264,7 @@ impl UserType {
                 .kind
                 .as_union()
                 .and_then(|u| u.variants.get(variant))
-                .is_some_and(|u| u.0.is_none())
+                .is_some_and(|u| u.ty.is_none())
     }
 
     pub fn template(name: Located<String>, scope: ScopeId, impls: Vec<TraitImpl>) -> Self {

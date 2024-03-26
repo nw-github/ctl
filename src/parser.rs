@@ -260,7 +260,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
                 components.push(ident);
             }
-        } else if self.next_if_kind(Token::Static).is_some() {
+        } else if let Some(token) = self.next_if(|tk| matches!(tk, Token::Static | Token::Const)) {
             if let Some(token) = is_unsafe {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
@@ -276,8 +276,9 @@ impl<'a, 'b> Parser<'a, 'b> {
             let value = self.expression();
             self.expect_kind(Token::Semicolon);
             Ok(Stmt {
-                data: StmtData::Static {
+                data: StmtData::Binding {
                     public: public.is_some(),
+                    constant: matches!(token.data, Token::Const),
                     name,
                     ty,
                     value,
@@ -1627,11 +1628,12 @@ impl<'a, 'b> Parser<'a, 'b> {
                     }
                     _ => VariantData::Empty,
                 };
+                let tag = this.next_if_kind(Token::Assign).map(|_| this.expression());
 
                 if !this.matches_kind(Token::RCurly) {
                     this.expect_kind(Token::Comma);
                 }
-                variants.push(Variant { name, data });
+                variants.push(Variant { name, data, tag });
             }
         });
 

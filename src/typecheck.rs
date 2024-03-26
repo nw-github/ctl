@@ -22,7 +22,7 @@ macro_rules! resolve_type {
         let id = match $self.types.get($ty) {
             &Type::Unresolved(id) => {
                 let (hint, scope) = $self.types.take_unresolved(id);
-                $self.enter_id_and_resolve(scope, |this| this.resolve_typehint(hint))
+                $self.enter_id_and_resolve(scope, |this| this.resolve_typehint(&hint))
             }
             _ => $ty,
         };
@@ -734,14 +734,20 @@ impl TypeChecker {
                 let mut params = params.clone();
                 match variant.data {
                     VariantData::Empty => {
-                        rvariants.insert(variant.name.data.clone(), (None, variant.name.span));
+                        rvariants.insert(
+                            variant.name.data.clone(),
+                            CheckedVariant {
+                                ty: None,
+                                span: variant.name.span,
+                            },
+                        );
                     }
                     VariantData::StructLike(smembers) => {
                         enum_union = false;
                         rvariants.insert(
                             variant.name.data.clone(),
-                            (
-                                Some(
+                            CheckedVariant {
+                                ty: Some(
                                     this.declare_type_hint(TypeHint::AnonStruct(
                                         smembers
                                             .iter()
@@ -749,8 +755,8 @@ impl TypeChecker {
                                             .collect(),
                                     )),
                                 ),
-                                variant.name.span,
-                            ),
+                                span: variant.name.span,
+                            },
                         );
 
                         for member in smembers {
@@ -776,12 +782,12 @@ impl TypeChecker {
                         enum_union = false;
                         rvariants.insert(
                             variant.name.data.clone(),
-                            (
-                                Some(this.declare_type_hint(TypeHint::Tuple(
+                            CheckedVariant {
+                                ty: Some(this.declare_type_hint(TypeHint::Tuple(
                                     members.iter().map(|(ty, _)| ty.clone()).collect(),
                                 ))),
-                                variant.name.span,
-                            ),
+                                span: variant.name.span,
+                            },
                         );
 
                         for (i, (ty, default)) in members.into_iter().enumerate() {
@@ -1070,14 +1076,15 @@ impl TypeChecker {
                 }
             }
             StmtData::Fn(f) => DeclaredStmt::Fn(self.declare_fn(f)),
-            StmtData::Static {
+            StmtData::Binding {
                 public,
+                constant,
                 name,
                 ty,
                 value,
             } => {
                 let ty = self.declare_type_hint(ty);
-                DeclaredStmt::Static {
+                DeclaredStmt::Binding {
                     id: self.insert::<VariableId>(
                         Variable {
                             public,
@@ -1093,6 +1100,7 @@ impl TypeChecker {
                         true,
                     ),
                     value,
+                    constant,
                 }
             }
             StmtData::Use(stmt) => {
@@ -1535,7 +1543,7 @@ impl TypeChecker {
             DeclaredStmt::Let { ty, value, patt } => {
                 let span = patt.span;
                 if let Some(ty) = ty {
-                    let ty = self.resolve_typehint(ty);
+                    let ty = self.resolve_typehint(&ty);
                     if let Some(value) = value {
                         let value = self.type_check(value, ty);
                         let patt = self.check_pattern(true, ty, false, patt, false, true);
@@ -1577,7 +1585,7 @@ impl TypeChecker {
                 );
             }
             DeclaredStmt::Fn(f) => self.check_fn(f),
-            DeclaredStmt::Static { id, value } => {
+            DeclaredStmt::Binding { id, value, constant } => {
                 // FIXME: detect cycles like static X: usize = X;
                 // FIXME: non-const statics should be disallowed
                 let ty = resolve_type!(self, self.scopes.get_mut(id).ty);
@@ -3178,7 +3186,7 @@ impl TypeChecker {
                 )
             }
             ExprData::As { expr, ty, throwing } => {
-                let ty = self.resolve_typehint(ty);
+                let ty = self.resolve_typehint(&ty);
                 let expr = self.check_expr(*expr, Some(ty));
                 match self.coerce(expr, ty) {
                     Ok(expr) => expr,
@@ -3204,7 +3212,7 @@ impl TypeChecker {
                 };
 
                 let mut lparams = Vec::new();
-                let ret = ret.map(|ret| self.resolve_typehint(ret)).or_else(|| {
+                let ret = ret.map(|ret| self.resolve_typehint(&ret)).or_else(|| {
                     target
                         .as_ref()
                         .and_then(|&ty| self.types.get(ty).as_fn_ptr())
@@ -3215,7 +3223,7 @@ impl TypeChecker {
                     for (i, (name, hint)) in params.into_iter().enumerate() {
                         let has_hint = hint.is_some();
                         let ty = hint
-                            .map(|ty| this.resolve_typehint(ty))
+                            .map(|ty| this.resolve_typehint(&ty))
                             .or_else(|| {
                                 target
                                     .as_ref()
@@ -4262,8 +4270,8 @@ impl TypeChecker {
             )))
     }
 
-    fn resolve_dyn_ptr(&mut self, path: Path) -> Option<GenericTrait> {
-        match self.resolve_type_path(&path) {
+    fn resolve_dyn_ptr(&mut self, path: &Path) -> Option<GenericTrait> {
+        match self.resolve_type_path(path) {
             ResolvedType::UserType(ut) => {
                 if self.scopes.get(ut.id).kind.is_trait() {
                     Some(ut)
@@ -4290,14 +4298,14 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_typehint(&mut self, hint: TypeHint) -> TypeId {
-        let mut create_ptr = |init: fn(TypeId) -> Type, hint: TypeHint| {
+    fn resolve_typehint(&mut self, hint: &TypeHint) -> TypeId {
+        let mut create_ptr = |init: fn(TypeId) -> Type, hint: &TypeHint| {
             let ty = self.resolve_typehint(hint);
             self.types.insert(init(ty))
         };
 
         match hint {
-            TypeHint::Regular(path) => match self.resolve_type_path(&path) {
+            TypeHint::Regular(path) => match self.resolve_type_path(path) {
                 ResolvedType::Builtin(ty) => ty,
                 ResolvedType::UserType(ut) => {
                     if !self.scopes.get(ut.id).kind.is_trait() {
@@ -4316,9 +4324,9 @@ impl TypeChecker {
                 ResolvedType::Error => TypeId::UNKNOWN,
             },
             TypeHint::Void => TypeId::VOID,
-            TypeHint::Ptr(ty) => create_ptr(Type::Ptr, *ty),
-            TypeHint::MutPtr(ty) => create_ptr(Type::MutPtr, *ty),
-            TypeHint::RawPtr(ty) => create_ptr(Type::RawPtr, *ty),
+            TypeHint::Ptr(ty) => create_ptr(Type::Ptr, ty),
+            TypeHint::MutPtr(ty) => create_ptr(Type::MutPtr, ty),
+            TypeHint::RawPtr(ty) => create_ptr(Type::RawPtr, ty),
             TypeHint::DynPtr(path) => self
                 .resolve_dyn_ptr(path)
                 .map(|tr| self.types.insert(Type::DynPtr(tr)))
@@ -4327,7 +4335,7 @@ impl TypeChecker {
                 .resolve_dyn_ptr(path)
                 .map(|tr| self.types.insert(Type::DynMutPtr(tr)))
                 .unwrap_or_default(),
-            TypeHint::This(span) => {
+            &TypeHint::This(span) => {
                 let current = self.current_function();
                 for (_, scope) in self.scopes.walk(self.current) {
                     match scope.kind {
@@ -4357,24 +4365,23 @@ impl TypeChecker {
                 self.error(Error::new(format!("'{THIS_TYPE}' outside of type"), span))
             }
             TypeHint::Array(ty, count) => {
-                let n = match self.consteval(&count, Some(TypeId::USIZE)) {
+                let n = match self.consteval(count, Some(TypeId::USIZE)) {
                     Ok(n) => n,
                     Err(err) => return self.error(err),
                 };
-                let id = self.resolve_typehint(*ty);
+                let id = self.resolve_typehint(ty);
                 self.types.insert(Type::Array(id, n))
             }
-            TypeHint::Option(ty) => self.resolve_lang_type("option", &[*ty]),
-            TypeHint::Vec(ty) => self.resolve_lang_type("vec", &[*ty]),
-            TypeHint::Map(key, val) => self.resolve_lang_type("map", &[*key, *val]),
-            TypeHint::Set(ty) => self.resolve_lang_type("set", &[*ty]),
-            TypeHint::Slice(ty) => self.resolve_lang_type("span", &[*ty]),
-            TypeHint::SliceMut(ty) => self.resolve_lang_type("span_mut", &[*ty]),
+            TypeHint::Option(ty) => self.resolve_lang_type("option", std::slice::from_ref(ty)),
+            TypeHint::Vec(ty) => self.resolve_lang_type("vec", std::slice::from_ref(ty)),
+            TypeHint::Map(key, val) => {
+                self.resolve_lang_type("map", &[(**key).clone(), (**val).clone()])
+            }
+            TypeHint::Set(ty) => self.resolve_lang_type("set", std::slice::from_ref(ty)),
+            TypeHint::Slice(ty) => self.resolve_lang_type("span", std::slice::from_ref(ty)),
+            TypeHint::SliceMut(ty) => self.resolve_lang_type("span_mut", std::slice::from_ref(ty)),
             TypeHint::Tuple(params) => {
-                let params = params
-                    .into_iter()
-                    .map(|p| self.resolve_typehint(p))
-                    .collect();
+                let params = params.iter().map(|p| self.resolve_typehint(p)).collect();
                 self.scopes.get_tuple(params, &mut self.types)
             }
             TypeHint::AnonStruct(params) => {
@@ -4392,11 +4399,8 @@ impl TypeChecker {
                 ret,
             } => {
                 let fnptr = FnPtr {
-                    params: params
-                        .into_iter()
-                        .map(|p| self.resolve_typehint(p))
-                        .collect(),
-                    ret: self.resolve_typehint(*ret),
+                    params: params.iter().map(|p| self.resolve_typehint(p)).collect(),
+                    ret: self.resolve_typehint(ret),
                 };
                 self.types.insert(Type::FnPtr(fnptr))
             }
@@ -4411,7 +4415,7 @@ impl TypeChecker {
 
         if let Some(mut union) = self.scopes.get_mut(id).kind.as_union().cloned() {
             resolve_type!(self, union.tag);
-            for variant in union.variants.values_mut().flat_map(|v| &mut v.0) {
+            for variant in union.variants.values_mut().flat_map(|v| &mut v.ty) {
                 resolve_type!(self, *variant);
             }
             self.scopes.get_mut(id).kind = UserTypeKind::Union(union);
@@ -5296,12 +5300,12 @@ impl TypeChecker {
         if f.constructor.is_some_and(|id| id == ut_id) {
             let variant = f.name.data.clone();
             Ok((
-                (*self
+                (self
                     .scopes
                     .get(ut_id)
                     .kind
                     .as_union()
-                    .and_then(|union| union.variants.get(&variant).map(|v| &v.0))
+                    .and_then(|union| union.variants.get(&variant).map(|v| v.ty))
                     .unwrap())
                 .map(|ty| {
                     let inner = ty.with_ut_templates(&mut self.types, stripped);
@@ -6603,7 +6607,7 @@ impl TypeChecker {
                 .cloned()
                 .zip(
                     args.iter()
-                        .map(|ty| self.resolve_typehint(ty.clone()))
+                        .map(|ty| self.resolve_typehint(ty))
                         .take(params.len())
                         .chain(
                             std::iter::repeat(TypeId::UNKNOWN)

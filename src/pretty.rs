@@ -1,5 +1,6 @@
 use crate::ast::parsed::{
-    Expr, ExprData, Fn, ImplBlock, IntPattern, Linkage, OperatorFn, Stmt, StmtData, Struct, UsePath, UsePathTail
+    Expr, ExprData, Fn, ImplBlock, IntPattern, Linkage, OperatorFn, Stmt, StmtData, Struct,
+    UsePath, UsePathTail,
 };
 
 const INDENT: &str = "  ";
@@ -117,21 +118,28 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
                 print_op_fn(f, indent + 1);
             }
         }
-        StmtData::Static {
+        StmtData::Binding {
             name,
             ty,
             value,
             public,
+            constant,
         } => {
             eprint!("{tabs}Static[{name}]");
             print_bool!(public);
+            print_bool!(constant);
             eprintln!();
 
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}Type: {ty:?}");
             print_expr(value, indent + 1);
         }
-        StmtData::Module { name, body, public, file: _ } => {
+        StmtData::Module {
+            name,
+            body,
+            public,
+            file: _,
+        } => {
             eprint!("{tabs}Module[{name}]");
             print_bool!(public);
             eprintln!();
@@ -250,7 +258,12 @@ pub fn print_expr(expr: &Expr, indent: usize) {
                 print_expr(value, indent + 2);
             }
         }
-        ExprData::Integer(IntPattern { negative, base, value, width }) => {
+        ExprData::Integer(IntPattern {
+            negative,
+            base,
+            value,
+            width,
+        }) => {
             eprintln!("{tabs}Integer(base {base}, width {width:?}, neg {negative}) = {value}");
         }
         ExprData::Float(value) => {
@@ -503,7 +516,6 @@ fn print_op_fn(
         print_expr(body, indent);
     }
 }
-
 
 fn print_struct(
     type_name: &str,

@@ -166,8 +166,8 @@ impl TypeGen {
                 }
 
                 defs.emit("union{");
-                for (name, &(ty, _)) in union.variants.iter() {
-                    if let Some(ty) = ty {
+                for (name, variant) in union.variants.iter() {
+                    if let Some(ty) = variant.ty {
                         Self::emit_member(scopes, types, ut, name, ty, &mut defs, flags.minify);
                     }
                 }
@@ -303,7 +303,7 @@ impl TypeGen {
 
         if let Some(union) = sty.kind.as_union() {
             self.add_type(scopes, types, diag, union.tag, None);
-            for ty in union.variants.values().flat_map(|v| v.0) {
+            for ty in union.variants.values().flat_map(|v| v.ty) {
                 self.check_member_dep(
                     scopes,
                     types,
@@ -2199,7 +2199,7 @@ impl<'a> Codegen<'a> {
                 ));
             }
 
-            if union.variants.get(variant).is_some_and(|v| v.0.is_some()) {
+            if union.variants.get(variant).is_some_and(|v| v.ty.is_some()) {
                 self.buffer.emit(format!(".${variant}={{"));
                 for (name, value) in members
                     .iter()

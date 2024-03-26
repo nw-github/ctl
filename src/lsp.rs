@@ -161,7 +161,7 @@ impl LanguageServer for LspBackend {
                     return ut.members.get(member).map(|m| m.span).or_else(|| {
                         ut.kind
                             .as_union()
-                            .and_then(|u| u.variants.get(member).map(|v| v.1))
+                            .and_then(|u| u.variants.get(member).map(|v| v.span))
                     });
                 }
                 _ => return None,
@@ -651,7 +651,7 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes, types: &mut Type
             &mut res,
             union,
             variant,
-            union.variants.get(variant).and_then(|inner| inner.0),
+            union.variants.get(variant).and_then(|inner| inner.ty),
             scopes,
             types,
             small,
@@ -820,9 +820,9 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types) -> String 
             write_de!(res, "union {}", &ut.item.name.data);
             visualize_type_params(&mut res, &ut.type_params, scopes, types);
             write_de!(res, ": {} {{", union.tag.name(scopes, types));
-            for (name, (ty, _)) in union.variants.iter() {
+            for (name, variant) in union.variants.iter() {
                 res += "\n\t";
-                visualize_variant_body(&mut res, union, name, *ty, scopes, types, false);
+                visualize_variant_body(&mut res, union, name, variant.ty, scopes, types, false);
                 res += ",";
             }
             print_body(types, &mut res, !union.variants.is_empty());
