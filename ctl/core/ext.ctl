@@ -298,6 +298,46 @@ pub extension CharExt for char {
         unsafe this.encode_utf8_unchecked(len, buf)
     }
 
+    pub fn is_ascii_upper(this): bool {
+        this is 'A'..='Z'
+    }
+
+    pub fn is_ascii_lower(this): bool {
+        this is 'a'..='z'
+    }
+
+    pub fn make_ascii_upper(mut this) {
+        if this.is_ascii_upper() {
+            *this = this.to_ascii_upper();
+        }
+    }
+
+    pub fn make_ascii_lower(mut this) {
+        if this.is_ascii_lower() {
+            *this = this.to_ascii_lower();
+        }
+    }
+
+    pub fn to_ascii_upper(this): char {
+        if this.is_ascii_upper() {
+            this.toggled_ascii_case()
+        } else {
+            *this
+        }
+    }
+
+    pub fn to_ascii_lower(this): char {
+        if this.is_ascii_lower() {
+            this.toggled_ascii_case()
+        } else {
+            *this
+        }
+    }
+
+    fn toggled_ascii_case(this): char {
+        (*this as u32 ^ 0b100000) as! char
+    }
+
     unsafe fn encode_utf8_unchecked(this, len_utf8: uint, buf: [mut u8..]): str {
         unsafe {
             let cp = *this as u32;

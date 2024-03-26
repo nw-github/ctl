@@ -48,7 +48,7 @@ struct Arguments {
     /// Compile as a library
     #[clap(action, short, long)]
     #[arg(global = true)]
-    lib: bool,
+    shared: bool,
 }
 
 #[derive(Args)]
@@ -68,6 +68,9 @@ struct BuildOrRun {
     /// View messages from the C compiler
     #[clap(action, short, long)]
     verbose: bool,
+
+    #[clap(short, long)]
+    libs: Vec<String>,
 }
 
 #[derive(Subcommand)]
@@ -121,6 +124,7 @@ fn compile_results(src: &str, leak: bool, output: &Path, build: BuildOrRun) -> R
         .args(if build.verbose { &warnings[..] } else { &[] })
         .args(["-x", "c", "-"])
         .args(build.ccargs.unwrap_or_default().split(' '))
+        .args(build.libs.iter().map(|lib| format!("-l{lib}")))
         .stdin(Stdio::piped())
         .stdout(if build.verbose {
             Stdio::inherit()
@@ -260,7 +264,7 @@ fn main() -> Result<()> {
         .build(CodegenFlags {
             leak: args.leak,
             no_bit_int: args.no_bit_int,
-            lib: args.lib,
+            lib: args.shared,
             minify: !matches!(args.command, SubCommand::Print { minify: false, .. }),
         });
     let result = match result {
