@@ -241,30 +241,34 @@ impl LanguageServer for LspBackend {
                     }
                     &LspItem::Fn(id, owner) => {
                         let f = scopes.get(id);
+                        let empty_variant = owner.is_some_and(|id| scopes.get(id).is_empty_variant(&f.name.data));
                         let label = f.name.data.clone();
-                        let mut insertion = format!("{label}(");
-                        for (i, param) in f
-                            .params
-                            .iter()
-                            .filter(|p| !completions.method || p.label != THIS_PARAM)
-                            .enumerate()
-                        {
-                            if i > 0 {
-                                insertion += ", ";
+                        let insert_text = (!empty_variant).then(|| {
+                            let mut text = format!("{label}(");
+                            for (i, param) in f
+                                .params
+                                .iter()
+                                .filter(|p| !completions.method || p.label != THIS_PARAM)
+                                .enumerate()
+                            {
+                                if i > 0 {
+                                    text += ", ";
+                                }
+                                if param.keyword {
+                                    write_de!(
+                                        text,
+                                        "{}: ${{{}:{}}}",
+                                        param.label,
+                                        i + 1,
+                                        param.label
+                                    );
+                                } else {
+                                    write_de!(text, "${{{}:{}}}", i + 1, param.label);
+                                }
                             }
-                            if param.keyword {
-                                write_de!(
-                                    insertion,
-                                    "{}: ${{{}:{}}}",
-                                    param.label,
-                                    i + 1,
-                                    param.label
-                                );
-                            } else {
-                                write_de!(insertion, "${{{}:{}}}", i + 1, param.label);
-                            }
-                        }
-                        insertion += ")";
+                            text += ")";
+                            text
+                        });
                         let desc = visualize_func(id, true, scopes, types);
                         CompletionItem {
                             label,
@@ -280,7 +284,9 @@ impl LanguageServer for LspBackend {
                                 }),
                                 description: desc.clone().into(),
                             }),
-                            kind: Some(if f.constructor.is_some() {
+                            kind: Some(if f.constructor.is_some_and(|id| scopes.get(id).kind.is_union()) {
+                                CompletionItemKind::ENUM_MEMBER
+                            } else if f.constructor.is_some() {
                                 CompletionItemKind::CONSTRUCTOR
                             } else if f.params.first().is_some_and(|p| p.label == THIS_PARAM) {
                                 CompletionItemKind::METHOD
@@ -288,7 +294,7 @@ impl LanguageServer for LspBackend {
                                 CompletionItemKind::FUNCTION
                             }),
                             detail: desc.into(),
-                            insert_text: Some(insertion),
+                            insert_text,
                             insert_text_format: Some(InsertTextFormat::SNIPPET),
                             ..Default::default()
                         }
