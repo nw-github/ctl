@@ -2075,31 +2075,33 @@ impl Codegen {
                     let format_id = self.proj.scopes.lang_traits.get("format").copied().unwrap();
                     let formatter = self.emit_tmpvar(*formatter, state);
                     for mut expr in parts {
-                        expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
-                        let stripped = expr.ty.strip_references(&self.proj.types);
-                        let format_state = State::with_inst(
-                            self.find_implementation(
+                        hoist_point!(self, {
+                            expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                            let stripped = expr.ty.strip_references(&self.proj.types);
+                            let format_state = State::with_inst(
+                                self.find_implementation(
+                                    stripped,
+                                    format_id,
+                                    "format",
+                                    scope,
+                                    |tc, id| TypeArgs::in_order(tc.scopes(), id, [formatter_ty]),
+                                ),
+                                &self.proj.types,
                                 stripped,
-                                format_id,
-                                "format",
                                 scope,
-                                |tc, id| TypeArgs::in_order(tc.scopes(), id, [formatter_ty]),
-                            ),
-                            &self.proj.types,
-                            stripped,
-                            scope,
-                        );
-
-                        self.buffer.emit_fn_name(
-                            &self.proj.scopes,
-                            &mut self.proj.types,
-                            &format_state.func,
-                            self.flags.minify,
-                        );
-                        self.buffer.emit("(");
-                        self.emit_tmpvar_ident(expr, state);
-                        self.buffer.emit(format!(",&{formatter});"));
-                        self.funcs.insert(format_state);
+                            );
+    
+                            self.buffer.emit_fn_name(
+                                &self.proj.scopes,
+                                &mut self.proj.types,
+                                &format_state.func,
+                                self.flags.minify,
+                            );
+                            self.buffer.emit("(");
+                            self.emit_tmpvar_ident(expr, state);
+                            self.buffer.emit(format!(",&{formatter});"));
+                            self.funcs.insert(format_state);
+                        });
                     }
                     formatter
                 });
