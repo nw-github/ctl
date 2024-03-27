@@ -49,6 +49,11 @@ struct Arguments {
     #[clap(action, short, long)]
     #[arg(global = true)]
     shared: bool,
+
+    /// Silence unnecessary messages from the compiler
+    #[clap(action, short, long)]
+    #[arg(global = true)]
+    quiet: bool,
 }
 
 #[derive(Args)]
@@ -269,7 +274,9 @@ fn main() -> Result<()> {
         });
     let result = match result {
         Ok((diag, code)) => {
-            display_diagnostics(&diag);
+            if !args.quiet {
+                display_diagnostics(&diag);
+            }
             code
         }
         Err(diag) => {
