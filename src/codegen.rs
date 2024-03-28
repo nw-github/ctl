@@ -2342,7 +2342,7 @@ impl Codegen {
                     });
                 });
 
-                self.buffer.emit(format!("{left}{tag}"));
+                self.buffer.emit(VOID_INSTANCE);
             }
             BinaryOp::NoneCoalesce => {
                 tmpbuf_emit!(self, state, |tmp| {
@@ -2447,11 +2447,17 @@ impl Codegen {
                 if ret == TypeId::BOOL && lhs.ty != TypeId::BOOL {
                     self.emit_cast(ret);
                 }
+                if op.is_assignment() {
+                    self.buffer.emit("(");
+                }
                 self.buffer.emit("(");
                 self.emit_expr(lhs, state);
                 self.buffer.emit(format!("{op}"));
                 self.emit_expr(rhs, state);
                 self.buffer.emit(")");
+                if op.is_assignment() {
+                    self.buffer.emit(format!(", {VOID_INSTANCE})"));
+                }
             }
         }
     }

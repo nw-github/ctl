@@ -1849,55 +1849,6 @@ impl TypeChecker {
         }
     }
 
-    fn check_null_coalesce(
-        &mut self,
-        lhs: Expr,
-        rhs: Expr,
-        op: BinaryOp,
-        target: Option<TypeId>,
-        span: Span,
-    ) -> CheckedExpr {
-        let Some(id) = self.proj.scopes.get_option_id() else {
-            return self.error(Error::no_lang_item("option", span));
-        };
-
-        let target = if let Some(target) = target {
-            let ut = GenericUserType::from_type_args(&self.proj.scopes, id, [target]);
-            Some(self.proj.types.insert(Type::User(ut)))
-        } else {
-            None
-        };
-        let lhs_span = lhs.span;
-        let lhs = self.check_expr(lhs, target);
-        let Some(target) = lhs.ty.as_option_inner(&self.proj.scopes, &self.proj.types) else {
-            if lhs.ty != TypeId::UNKNOWN {
-                self.proj.diag.error(Error::invalid_operator(
-                    BinaryOp::NoneCoalesce,
-                    &lhs.ty.name(&self.proj.scopes, &mut self.proj.types),
-                    lhs_span,
-                ));
-            }
-            return Default::default();
-        };
-        if op.is_assignment() && !lhs.is_assignable(&self.proj.scopes, &self.proj.types) {
-            // TODO: report a better error here
-            self.error(Error::new("expression is not assignable", lhs_span))
-        }
-
-        let span = rhs.span;
-        //
-        let rhs = self.check_expr_inner(rhs, Some(target));
-        let rhs = self.type_check_checked(rhs, target, span);
-        CheckedExpr::new(
-            target,
-            CheckedExprData::Binary {
-                op,
-                left: lhs.into(),
-                right: rhs.into(),
-            },
-        )
-    }
-
     fn check_binary(
         &mut self,
         lhs_span: Span,
@@ -2057,7 +2008,7 @@ impl TypeChecker {
 
                             let right = self.type_check(*right, left.ty);
                             return CheckedExpr::new(
-                                left.ty,
+                                TypeId::VOID,
                                 CheckedExprData::Binary {
                                     op: BinaryOp::Assign,
                                     left: left.into(),
@@ -2072,8 +2023,47 @@ impl TypeChecker {
                     }
                 }
 
+                let assignment = op.is_assignment();
                 if matches!(op, BinaryOp::NoneCoalesce | BinaryOp::NoneCoalesceAssign) {
-                    return self.check_null_coalesce(*left, *right, op, target, span);
+                    let Some(id) = self.proj.scopes.get_option_id() else {
+                        return self.error(Error::no_lang_item("option", span));
+                    };
+
+                    let target = if let Some(target) = target {
+                        let ut = GenericUserType::from_type_args(&self.proj.scopes, id, [target]);
+                        Some(self.proj.types.insert(Type::User(ut)))
+                    } else {
+                        None
+                    };
+                    let lhs_span = left.span;
+                    let lhs = self.check_expr(*left, target);
+                    let Some(target) = lhs.ty.as_option_inner(&self.proj.scopes, &self.proj.types)
+                    else {
+                        if lhs.ty != TypeId::UNKNOWN {
+                            self.proj.diag.error(Error::invalid_operator(
+                                BinaryOp::NoneCoalesce,
+                                &lhs.ty.name(&self.proj.scopes, &mut self.proj.types),
+                                lhs_span,
+                            ));
+                        }
+                        return Default::default();
+                    };
+                    if assignment && !lhs.is_assignable(&self.proj.scopes, &self.proj.types) {
+                        // TODO: report a better error here
+                        self.error(Error::new("expression is not assignable", lhs_span))
+                    }
+
+                    let span = right.span;
+                    let rhs = self.check_expr_inner(*right, Some(target));
+                    let rhs = self.type_check_checked(rhs, target, span);
+                    return CheckedExpr::new(
+                        if assignment { TypeId::VOID } else { target },
+                        CheckedExprData::Binary {
+                            op,
+                            left: lhs.into(),
+                            right: rhs.into(),
+                        },
+                    );
                 }
 
                 let left = self.check_expr(*left, target);
@@ -2081,7 +2071,7 @@ impl TypeChecker {
                     return Default::default();
                 }
 
-                if op.is_assignment() && !left.is_assignable(&self.proj.scopes, &self.proj.types) {
+                if assignment && !left.is_assignable(&self.proj.scopes, &self.proj.types) {
                     // TODO: report a better error here
                     self.error(Error::new("expression is not assignable", left_span))
                 }
@@ -2138,8 +2128,8 @@ impl TypeChecker {
                         BinaryOp::Shl | BinaryOp::Shr | BinaryOp::ShlAssign | BinaryOp::ShrAssign,
                     ) => {
                         let span = right.span;
-                        let right = self.check_expr(*right, Some(TypeId::ISIZE));
-                        let right = self.try_coerce(right, TypeId::ISIZE);
+                        let right = self.check_expr(*right, Some(left.ty));
+                        let right = self.try_coerce(right, left.ty);
                         if !self.proj.types.get(right.ty).is_integral()
                             && right.ty != TypeId::UNKNOWN
                         {
@@ -2150,7 +2140,7 @@ impl TypeChecker {
                             ));
                         }
                         CheckedExpr::new(
-                            left.ty,
+                            if assignment { TypeId::VOID } else { left.ty },
                             CheckedExprData::Binary {
                                 op,
                                 left: left.into(),
@@ -2172,6 +2162,7 @@ impl TypeChecker {
                                 | BinaryOp::NotEqual
                                 | BinaryOp::LogicalOr
                                 | BinaryOp::LogicalAnd => TypeId::BOOL,
+                                op if op.is_assignment() => TypeId::VOID,
                                 _ => left.ty,
                             },
                             CheckedExprData::Binary {
@@ -3394,15 +3385,13 @@ impl TypeChecker {
                     arg: expr.into(),
                 },
             ),
-            Err(expr) if self.proj.types.get(expr.ty).is_integral() => {
-                CheckedExpr::new(
-                    target,
-                    CheckedExprData::Subscript {
-                        callee: callee.into(),
-                        arg: expr.into(),
-                    },
-                )
-            }
+            Err(expr) if self.proj.types.get(expr.ty).is_integral() => CheckedExpr::new(
+                target,
+                CheckedExprData::Subscript {
+                    callee: callee.into(),
+                    arg: expr.into(),
+                },
+            ),
             Err(expr) => {
                 let Some((full, id)) = maybe_span(self, expr.ty, self.immutable_receiver(&callee))
                 else {
