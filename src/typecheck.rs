@@ -3867,32 +3867,33 @@ impl TypeChecker {
                     ));
                 };
 
-                if self.proj.types.get(this_param.ty).is_mut_ptr() {
-                    let mut ty = self.proj.types.get(recv.ty);
+                let this_param_ty = this_param.ty;
+                if self.proj.types.get(this_param_ty).is_mut_ptr() {
                     if !matches!(
-                        ty,
+                        self.proj.types.get(recv.ty),
                         Type::Ptr(_) | Type::MutPtr(_) | Type::DynPtr(_) | Type::DynMutPtr(_)
                     ) && !recv.can_addrmut(&self.proj.scopes, &self.proj.types)
                     {
-                        return self.error(Error::new(
+                        self.error(Error::new(
                             format!("cannot call method '{member}' with immutable receiver"),
                             span,
-                        ));
+                        ))
                     }
 
+                    let mut ty = self.proj.types.get(recv.ty);
                     while let Type::MutPtr(inner) = ty {
                         ty = self.proj.types.get(*inner);
                     }
 
                     if matches!(ty, Type::Ptr(_) | Type::DynPtr(_)) {
-                        return self.error(Error::new(
+                        self.error(Error::new(
                             format!("cannot call method '{member}' through an immutable pointer"),
                             span,
-                        ));
+                        ))
                     }
                 }
 
-                let recv = recv.auto_deref(&mut self.proj.types, this_param.ty);
+                let recv = recv.auto_deref(&mut self.proj.types, this_param_ty);
                 let (args, ret, _) =
                     self.check_fn_args(&mut mfn.func, Some(recv), args, target, span);
                 if mfn.dynamic {
