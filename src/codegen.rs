@@ -2848,6 +2848,16 @@ impl Codegen {
                     arg0,
                 );
             }
+            "raw_offset" => {
+                self.buffer.emit("(");
+                let (_, ptr) = args.shift_remove_index(0).unwrap();
+                self.emit_expr(ptr, state);
+                self.buffer.emit("+");
+
+                let (_, offset) = args.shift_remove_index(0).unwrap();
+                self.emit_expr(offset, state);
+                self.buffer.emit(")");
+            }
             _ => unreachable!(),
         }
     }

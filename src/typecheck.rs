@@ -1132,7 +1132,8 @@ impl TypeChecker {
                     };
                     match name {
                         "size_of" | "align_of" | "panic" | "binary_op" | "unary_op"
-                        | "numeric_cast" | "numeric_abs" | "max_value" | "min_value" => {
+                        | "numeric_cast" | "numeric_abs" | "max_value" | "min_value"
+                        | "raw_offset" => {
                             self.proj.scopes.intrinsics.insert(id, name.to_string());
                         }
                         _ => self.error(Error::new(
@@ -3537,7 +3538,7 @@ impl TypeChecker {
             .into_iter()
             .map(|(_, expr)| self.check_expr(expr, None))
             .collect();
-        if args.iter().any(|expr| expr.ty == TypeId::UNKNOWN) {
+        if ty == TypeId::UNKNOWN || args.iter().any(|expr| expr.ty == TypeId::UNKNOWN) {
             return Default::default();
         }
 

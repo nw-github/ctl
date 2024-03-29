@@ -96,7 +96,7 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
                 m2,
                 {
                     debug_assert(i < DOUBLE_POW5_TABLE_SIZE as! i32);
-                    &DOUBLE_POW5_SPLIT[i as uint]
+                    &DOUBLE_POW5_SPLIT[i]
                 },
                 j as u32,
                 &mut vp,

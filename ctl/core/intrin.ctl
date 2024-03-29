@@ -15,6 +15,8 @@ pub import fn align_of<T>(): uint;
 #(intrinsic)
 pub import fn panic(s: core::string::str): never;
 
+#(intrinsic)
+pub import fn raw_offset<T, U: Integral>(ptr: *raw T, offset: U): *raw T;
 
 
 

@@ -233,10 +233,10 @@ unsafe fn write_exponent3(mut k: int, mut res: *raw u8): uint {
         if k >= 100 {
             *res = b'0' + (k / 100) as! u8;
             k %= 100;
-            core::mem::copy(dst: res + 1, src: &raw DIGIT_TABLE[(k * 2) as uint], num: 2);
+            core::mem::copy(dst: res + 1, src: &raw DIGIT_TABLE[k * 2], num: 2);
             sign as uint + 3
         } else if k >= 10 {
-            core::mem::copy(dst: res, src: &raw DIGIT_TABLE[(k * 2) as uint], num: 2);
+            core::mem::copy(dst: res, src: &raw DIGIT_TABLE[k * 2], num: 2);
             sign as uint + 2
         } else {
             *res = b'0' + k as! u8;
@@ -255,7 +255,7 @@ unsafe fn write_exponent2(mut k: int, mut res: *raw u8): uint {
 
         debug_assert(k < 100);
         if k >= 10 {
-            core::mem::copy(dst: res, src: &raw DIGIT_TABLE[(k * 2) as uint], num: 2);
+            core::mem::copy(dst: res, src: &raw DIGIT_TABLE[k * 2], num: 2);
             sign as uint + 2
         } else {
             *res = b'0' + k as! u8;
@@ -274,10 +274,10 @@ unsafe fn write_mantissa_long(mut output: u64, mut res: *raw u8) {
             let c = output2 % 10000;
             output2 /= 10000;
             let d = output2 % 10000;
-            core::mem::copy(dst: res - 2, src: &raw DIGIT_TABLE[((c % 100) << 1) as uint], num: 2);
-            core::mem::copy(dst: res - 4, src: &raw DIGIT_TABLE[((c / 100) << 1) as uint], num: 2);
-            core::mem::copy(dst: res - 6, src: &raw DIGIT_TABLE[((d % 100) << 1) as uint], num: 2);
-            core::mem::copy(dst: res - 8, src: &raw DIGIT_TABLE[((d / 100) << 1) as uint], num: 2);
+            core::mem::copy(dst: res - 2, src: &raw DIGIT_TABLE[(c % 100) << 1], num: 2);
+            core::mem::copy(dst: res - 4, src: &raw DIGIT_TABLE[(c / 100) << 1], num: 2);
+            core::mem::copy(dst: res - 6, src: &raw DIGIT_TABLE[(d % 100) << 1], num: 2);
+            core::mem::copy(dst: res - 8, src: &raw DIGIT_TABLE[(d / 100) << 1], num: 2);
             res -= 8;
         }
         write_mantissa(output as! u32, res);
@@ -289,20 +289,20 @@ unsafe fn write_mantissa(mut output: u32, mut res: *raw u8) {
         while output >= 10000 {
             let c = output - (output / 10000) * 10000;
             output /= 10000;
-            core::mem::copy(dst: res - 2, src: &raw DIGIT_TABLE[((c % 100) << 1) as uint], num: 2);
-            core::mem::copy(dst: res - 4, src: &raw DIGIT_TABLE[((c / 100) << 1) as uint], num: 2);
+            core::mem::copy(dst: res - 2, src: &raw DIGIT_TABLE[(c % 100) << 1], num: 2);
+            core::mem::copy(dst: res - 4, src: &raw DIGIT_TABLE[(c / 100) << 1], num: 2);
             res -= 4;
         }
 
         if output >= 100 {
             let c = (output % 100) << 1;
             output /= 100;
-            core::mem::copy(dst: res - 2, src: &raw DIGIT_TABLE[c as uint], num: 2);
+            core::mem::copy(dst: res - 2, src: &raw DIGIT_TABLE[c], num: 2);
             res -= 2;
         }
 
         if output >= 10 {
-            core::mem::copy(dst: res - 2, src: &raw DIGIT_TABLE[(output << 1) as uint], num: 2);
+            core::mem::copy(dst: res - 2, src: &raw DIGIT_TABLE[output << 1], num: 2);
         } else {
             *(res - 1) = b'0' + output as! u8;
         }

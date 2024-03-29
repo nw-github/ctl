@@ -2,6 +2,8 @@ use core::range::RangeBounds;
 use core::range::Bound;
 use core::iter::Iterator;
 use core::panic;
+use core::reflect::*;
+use core::ext::*;
 
 #(lang(span))
 pub struct Span<T> {
@@ -63,12 +65,8 @@ pub struct Span<T> {
     }
 
     #(inline)
-    pub fn [](this, idx: uint): *T {
-        if this.get(idx) is ?item {
-            item
-        } else {
-            panic("Span::[]: index out of bounds");
-        }
+    pub fn []<I: Numeric + Integral>(this, idx: I): *T {
+        unsafe raw_subscript_checked(this.ptr, this.len, idx) as *T
     }
 
     #(inline(always))
@@ -161,20 +159,14 @@ pub struct SpanMut<T> {
     }
 
     #(inline)
-    pub fn [](this, idx: uint): *mut T {
-        if this.get_mut(idx) is ?item {
-            item
-        } else {
-            panic("Span::[]: index out of bounds");
-        }
+    pub fn []<I: Numeric + Integral>(this, idx: I): *mut T {
+        unsafe raw_subscript_checked(this.ptr, this.len, idx) as *mut T
     }
 
     #(inline)
-    pub fn []=(this, idx: uint, val: T) {
-        if this.get_mut(idx) is ?item {
-            *item = val;
-        } else {
-            panic("Span::[]: index out of bounds");
+    pub fn []=<I: Numeric + Integral>(this, idx: I, val: T) {
+        unsafe {
+            *raw_subscript_checked(this.ptr, this.len, idx) = val;
         }
     }
 
@@ -222,4 +214,19 @@ pub fn compare<T>(lhs: [T..], rhs: [T..]): bool {
     }
 
     unsafe core::mem::compare(lhs.ptr, rhs.ptr, lhs.len())
+}
+
+#(inline(always))
+fn raw_subscript_checked<T, I: Numeric + Integral>(ptr: *raw T, len: uint, idx: I): *raw T {
+    let less_than = if core::mem::size_of::<uint>() > core::mem::size_of::<I>() {
+        idx < core::intrin::numeric_cast(len)
+    } else {
+        len >= core::intrin::numeric_cast(idx)
+    };
+
+    if !less_than or idx < core::intrin::numeric_cast(0) {
+        panic("Span::[]: index out of bounds");
+    }
+
+    core::intrin::raw_offset(ptr, idx)
 }

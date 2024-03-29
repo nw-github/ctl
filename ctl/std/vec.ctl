@@ -1,6 +1,7 @@
 use std::mem;
 use std::span::*;
 use std::range::RangeBounds;
+use std::reflect::*;
 
 #(lang(vec))
 pub struct Vec<T> {
@@ -231,17 +232,17 @@ pub struct Vec<T> {
     }
 
     #(inline(always))
-    pub fn [](this, idx: uint): *T {
+    pub fn []<I: Numeric + Integral>(this, idx: I): *T {
         &this[..][idx]
     }
 
     #(inline(always))
-    pub fn [](mut this, idx: uint): *mut T {
+    pub fn []<I: Numeric + Integral>(mut this, idx: I): *mut T {
         &mut this[..][idx]
     }
 
     #(inline(always))
-    pub fn []=(mut this, idx: uint, val: T) {
+    pub fn []=<I: Numeric + Integral>(mut this, idx: I, val: T) {
         this[..][idx] = val;
     }
 
