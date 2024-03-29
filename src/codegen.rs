@@ -2497,9 +2497,19 @@ impl Codegen {
                 }
             }
             UnaryOp::Deref => {
-                self.buffer.emit("(*");
-                self.emit_expr(lhs, state);
-                self.buffer.emit(")");
+                if let &Type::Array(inner, len) = self.proj.types.get(ret) {
+                    let (sz, _) = inner.size_and_align(&self.proj.scopes, &mut self.proj.types);
+                    tmpbuf_emit!(self, state, |tmp| {
+                        self.emit_type(ret);
+                        self.buffer.emit(format!(" {tmp};CTL_MEMCPY(&{tmp},"));
+                        self.emit_expr(lhs, state);
+                        self.buffer.emit(format!(",{len}*{sz});"));
+                    });
+                } else {
+                    self.buffer.emit("(*");
+                    self.emit_expr(lhs, state);
+                    self.buffer.emit(")");
+                }
             }
             UnaryOp::Addr | UnaryOp::AddrMut | UnaryOp::AddrRaw => {
                 lhs.ty = lhs.ty.with_templates(&mut self.proj.types, &state.func.ty_args);

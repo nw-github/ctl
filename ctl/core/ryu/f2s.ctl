@@ -3,9 +3,9 @@ use super::common::*;
 use super::f2s_intrinsics::*;
 use super::pretty::*;
 
-pub static FLOAT_MANTISSA_BITS: u32 = 23;
-pub static FLOAT_EXPONENT_BITS: u32 = 8;
-static FLOAT_BIAS: i32 = 127;
+pub const FLOAT_MANTISSA_BITS: u32 = 23;
+pub const FLOAT_EXPONENT_BITS: u32 = 8;
+const FLOAT_BIAS: i32 = 127;
 
 // A floating decimal representing m * 10^e.
 pub struct FloatingDecimal32 {

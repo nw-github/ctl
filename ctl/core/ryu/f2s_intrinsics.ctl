@@ -2,8 +2,8 @@ use super::debug_assert;
 use super::d2s;
 use super::d2s_full_table::*;
 
-pub static FLOAT_POW5_INV_BITCOUNT: i32 = 61; // d2s::DOUBLE_POW5_INV_BITCOUNT - 64;
-pub static FLOAT_POW5_BITCOUNT: i32 = 61; //d2s::DOUBLE_POW5_BITCOUNT - 64;
+pub const FLOAT_POW5_INV_BITCOUNT: i32 = 61; // d2s::DOUBLE_POW5_INV_BITCOUNT - 64;
+pub const FLOAT_POW5_BITCOUNT: i32 = 61; //d2s::DOUBLE_POW5_BITCOUNT - 64;
 
 fn pow5factor_32(mut value: u32): u32 {
     mut count = 0u32;

@@ -1,5 +1,5 @@
-pub static DOUBLE_POW5_INV_TABLE_SIZE: uint = 342;
-pub static DOUBLE_POW5_TABLE_SIZE: uint = 326;
+pub const DOUBLE_POW5_INV_TABLE_SIZE: uint = 342;
+pub const DOUBLE_POW5_TABLE_SIZE: uint = 326;
 
 pub static DOUBLE_POW5_INV_SPLIT: [(u64, u64); 342] = [
     (1, 2305843009213693952),

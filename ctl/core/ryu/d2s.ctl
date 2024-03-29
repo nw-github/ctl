@@ -5,11 +5,11 @@ use super::d2s_full_table::*;
 use super::pretty::*;
 use core::ext::*;
 
-pub static DOUBLE_MANTISSA_BITS: u32 = 52;
-pub static DOUBLE_EXPONENT_BITS: u32 = 11;
-pub static DOUBLE_BIAS: i32 = 1023;
-pub static DOUBLE_POW5_INV_BITCOUNT: i32 = 125;
-pub static DOUBLE_POW5_BITCOUNT: i32 = 125;
+pub const DOUBLE_MANTISSA_BITS: u32 = 52;
+pub const DOUBLE_EXPONENT_BITS: u32 = 11;
+pub const DOUBLE_BIAS: i32 = 1023;
+pub const DOUBLE_POW5_INV_BITCOUNT: i32 = 125;
+pub const DOUBLE_POW5_BITCOUNT: i32 = 125;
 
 // A floating decimal representing m * 10^e.
 pub struct FloatingDecimal64 {
