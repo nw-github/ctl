@@ -824,7 +824,7 @@ impl TypeChecker {
                 let prev = members.insert(
                     member.name.data.clone(),
                     CheckedMember::new(
-                        member.public,
+                        true,
                         this.declare_type_hint(std::mem::take(&mut member.ty)),
                         member.name.span,
                     ),
@@ -1597,8 +1597,12 @@ impl TypeChecker {
 
         let mut ty_args = ty_args.clone();
         for (i, &id) in wfn.type_params.iter().enumerate() {
-            let ty = Type::User(GenericUserType::from_id(scopes, types, hfn.type_params[i]));
-            ty_args.insert(id, types.insert(ty));
+            if let Some(&ty) = hfn.type_params.get(i) {
+                let ty = Type::User(GenericUserType::from_id(scopes, types, ty));
+                ty_args.insert(id, types.insert(ty));
+            } else {
+                ty_args.insert(id, TypeId::UNKNOWN);
+            }
         }
         ty_args.insert(*scopes.get(tr).kind.as_trait().unwrap(), this);
 
@@ -2856,25 +2860,20 @@ impl TypeChecker {
                         let source = self.check_expr_inner(*expr, target.or(Some(out_type)));
                         Some(self.type_check_checked(source, out_type, span))
                     }
-                } else {
-                    // this separates these two cases:
-                    //   let x /* void? */ = if whatever { yield void; };
-                    //   let x /* void */ = if whatever { };
-                    if if_branch.data.is_yielding_block(&self.proj.scopes) {
-                        if out_type == TypeId::NEVER {
-                            out_type = TypeId::VOID;
-                            Some(CheckedExpr::new(TypeId::VOID, CheckedExprData::Void))
-                        } else {
-                            out_type = self.make_lang_type_by_name("option", [out_type], span);
-                            if_branch = self.try_coerce(if_branch, out_type);
-                            Some(self.check_expr_inner(
-                                Located::new(span, ExprData::None),
-                                Some(out_type),
-                            ))
-                        }
+                } else if if_branch.data.is_yielding_block(&self.proj.scopes) {
+                    if out_type == TypeId::NEVER || out_type == TypeId::VOID {
+                        out_type = TypeId::VOID;
+                        Some(CheckedExpr::new(TypeId::VOID, CheckedExprData::Void))
                     } else {
-                        None
+                        out_type = self.make_lang_type_by_name("option", [out_type], span);
+                        if_branch = self.try_coerce(if_branch, out_type);
+                        Some(self.check_expr_inner(
+                            Located::new(span, ExprData::None),
+                            Some(out_type),
+                        ))
                     }
+                } else {
+                    None
                 };
 
                 CheckedExpr::new(
@@ -3576,7 +3575,23 @@ impl TypeChecker {
         matches!(ty, Type::Ptr(_) | Type::DynPtr(_))
     }
 
-    fn check_cast(&mut self, from_id: TypeId, to_id: TypeId, throwing: bool, span: Span) {
+    fn check_cast(&mut self, mut from_id: TypeId, to_id: TypeId, throwing: bool, span: Span) {
+        if let Some(ut) = self.proj.types.get(from_id).as_user() {
+            let id = ut.id;
+            self.resolve_members(id);
+            if let Some(tag) = self
+                .proj
+                .scopes
+                .get(id)
+                .kind
+                .as_union()
+                .filter(|u| u.enum_union)
+                .map(|u| u.tag)
+            {
+                from_id = tag;
+            }
+        }
+
         let from = self.proj.types.get(from_id);
         let to = self.proj.types.get(to_id);
         if let Some((a, b)) = from.as_integral().zip(to.as_integral()) {
@@ -3586,14 +3601,6 @@ impl TypeChecker {
             if (!a.signed && b.signed) && a.bits < b.bits {
                 return;
             }
-        }
-
-        if let Some(u) = from
-            .as_user()
-            .and_then(|u| self.proj.scopes.get(u.id).kind.as_union())
-            .filter(|u| u.enum_union)
-        {
-            return self.check_cast(u.tag, to_id, throwing, span);
         }
 
         match (from, to) {

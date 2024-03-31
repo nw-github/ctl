@@ -74,6 +74,9 @@ struct BuildOrRun {
     #[clap(action, short, long)]
     verbose: bool,
 
+    #[clap(action, short, long)]
+    optimized: bool,
+
     #[clap(short, long)]
     libs: Vec<String>,
 }
@@ -125,7 +128,8 @@ fn compile_results(src: &str, leak: bool, output: &Path, build: BuildOrRun) -> R
         .arg("-o")
         .arg(output)
         .arg("-std=c11")
-        .arg(if leak { "" } else { "-lgc" })
+        .arg(if !leak { "-lgc" } else { "" })
+        .arg(if build.optimized { "-O2" } else { "" })
         .args(if build.verbose { &warnings[..] } else { &[] })
         .args(["-x", "c", "-"])
         .args(build.ccargs.unwrap_or_default().split(' '))

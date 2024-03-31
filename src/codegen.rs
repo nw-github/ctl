@@ -675,7 +675,7 @@ impl Buffer {
                 }
 
                 if let Some(ty) = id.can_omit_tag(scopes, types) {
-                    self.emit_type(scopes, types, ty, None, min);
+                    self.emit_type(scopes, types, ty, tg, min);
                 } else {
                     let ut = ut.clone();
                     self.emit_type_name(scopes, types, &ut, min);
@@ -1018,6 +1018,10 @@ impl Codegen {
         let mut prototypes = Buffer::default();
         let mut emitted = HashSet::new();
         let mut emitted_statics = HashSet::new();
+        let static_state = &mut State::new(
+            GenericFunc::from_id(&this.proj.scopes, FunctionId::RESERVED),
+            ScopeId::ROOT,
+        );
         while !this.funcs.is_empty() || !this.statics.is_empty() {
             let diff = this.funcs.difference(&emitted).cloned().collect::<Vec<_>>();
             emitted.extend(this.funcs.drain());
@@ -1033,12 +1037,9 @@ impl Codegen {
                 .collect::<Vec<_>>();
             emitted_statics.extend(this.statics.drain());
             for id in sdiff {
-                let state = &mut State::new(
-                    GenericFunc::from_id(&this.proj.scopes, FunctionId::RESERVED),
-                    this.proj.scopes.get(id).scope,
-                );
+                static_state.caller = this.proj.scopes.get(id).scope;
                 usebuf!(this, &mut static_defs, {
-                    this.emit_var_decl(id, state);
+                    this.emit_var_decl(id, static_state);
                     this.buffer.emit(";");
                 });
 
@@ -1046,11 +1047,11 @@ impl Codegen {
                     this,
                     &mut static_init,
                     hoist_point!(this, {
-                        this.emit_var_name(id, state);
+                        this.emit_var_name(id, static_state);
                         this.buffer.emit("=");
                         this.emit_expr_inner(
                             this.proj.scopes.get(id).value.clone().unwrap(),
-                            state,
+                            static_state,
                         );
                         this.buffer.emit(";");
                     })
@@ -1318,7 +1319,9 @@ impl Codegen {
     }
 
     fn emit_expr_stmt(&mut self, expr: CheckedExpr, state: &mut State) {
-        if Self::has_side_effects(&expr) {
+        if Self::has_side_effects(&expr) && 
+            !matches!(expr.data, CheckedExprData::Binary { op, .. } if op.is_assignment())
+        {
             self.emit_expr_inline(expr, state);
             self.buffer.emit(";");
         } else {
@@ -2047,13 +2050,12 @@ impl Codegen {
                     .ty
                     .with_templates(&mut self.proj.types, &state.func.ty_args);
                 // enum tag cast
+                self.emit_cast(expr.ty);
+                self.buffer.emit("(");
                 if self.proj.types.get(inner.ty).is_user() {
-                    self.buffer.emit("(");
                     self.emit_expr(*inner, state);
                     self.buffer.emit(format!(").{UNION_TAG_NAME}"));
                 } else {
-                    self.emit_cast(expr.ty);
-                    self.buffer.emit("(");
                     self.emit_expr(*inner, state);
                     self.buffer.emit(")");
                 }

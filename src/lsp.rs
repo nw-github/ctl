@@ -241,7 +241,8 @@ impl LanguageServer for LspBackend {
                     }
                     &LspItem::Fn(id, owner) => {
                         let f = scopes.get(id);
-                        let empty_variant = owner.is_some_and(|id| scopes.get(id).is_empty_variant(&f.name.data));
+                        let empty_variant =
+                            owner.is_some_and(|id| scopes.get(id).is_empty_variant(&f.name.data));
                         let label = f.name.data.clone();
                         let insert_text = (!empty_variant).then(|| {
                             let mut text = format!("{label}(");
@@ -284,15 +285,19 @@ impl LanguageServer for LspBackend {
                                 }),
                                 description: desc.clone().into(),
                             }),
-                            kind: Some(if f.constructor.is_some_and(|id| scopes.get(id).kind.is_union()) {
-                                CompletionItemKind::ENUM_MEMBER
-                            } else if f.constructor.is_some() {
-                                CompletionItemKind::CONSTRUCTOR
-                            } else if f.params.first().is_some_and(|p| p.label == THIS_PARAM) {
-                                CompletionItemKind::METHOD
-                            } else {
-                                CompletionItemKind::FUNCTION
-                            }),
+                            kind: Some(
+                                if f.constructor
+                                    .is_some_and(|id| scopes.get(id).kind.is_union())
+                                {
+                                    CompletionItemKind::ENUM_MEMBER
+                                } else if f.constructor.is_some() {
+                                    CompletionItemKind::CONSTRUCTOR
+                                } else if f.params.first().is_some_and(|p| p.label == THIS_PARAM) {
+                                    CompletionItemKind::METHOD
+                                } else {
+                                    CompletionItemKind::FUNCTION
+                                },
+                            ),
                             detail: desc.into(),
                             insert_text,
                             insert_text_format: Some(InsertTextFormat::SNIPPET),
@@ -535,7 +540,10 @@ impl LspBackend {
                 let r = Diagnostics::get_span_range(&doc.text, var.name.span, OffsetMode::Utf16);
                 doc.inlay_hints.push(InlayHint {
                     position: r.end,
-                    label: InlayHintLabel::String(format!(": {}", var.ty.name(&proj.scopes, &mut proj.types))),
+                    label: InlayHintLabel::String(format!(
+                        ": {}",
+                        var.ty.name(&proj.scopes, &mut proj.types)
+                    )),
                     kind: Some(InlayHintKind::TYPE),
                     text_edits: Default::default(),
                     tooltip: Default::default(),
@@ -801,7 +809,11 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types) -> String 
         res += &visualize_location(ut.scope, scopes);
     }
 
-    if ut.type_params.is_empty() && matches!(ut.kind, UserTypeKind::Struct | UserTypeKind::Union(_))
+    if ut.type_params.is_empty()
+        && matches!(
+            ut.kind,
+            UserTypeKind::Struct | UserTypeKind::Union(_) | UserTypeKind::UnsafeUnion
+        )
     {
         let ut = GenericUserType::new(id, Default::default());
         let (sz, align) = types.insert(Type::User(ut)).size_and_align(scopes, types);

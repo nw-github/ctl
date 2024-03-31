@@ -156,7 +156,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
                 if i != j {
                     std::mem::swap(this.buckets.get_mut(i)!, this.buckets.get_mut(j)!);
                 }
-            };
+            }
         }
     }
 
