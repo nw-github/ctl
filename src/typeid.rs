@@ -680,6 +680,7 @@ impl TypeId {
         use std::ffi::*;
 
         let sz = match types.get(self) {
+            Type::Int(0) | Type::Uint(0) => 0,
             Type::Int(bits) | Type::Uint(bits) => nearest_pow_of_two(*bits) / 8,
             Type::CInt(inner) | Type::CUint(inner) => match inner {
                 CInt::Char => std::mem::size_of::<c_char>(),

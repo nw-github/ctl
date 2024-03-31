@@ -55,6 +55,10 @@ impl TypeGen {
     ) {
         let mut defs = Buffer::default();
         for (bits, signed) in self.integers {
+            if bits == 0 {
+                continue;
+            }
+
             if flags.no_bit_int {
                 buffer.emit(format!(
                     "typedef {}int{}_t {}{bits};",
@@ -159,8 +163,10 @@ impl TypeGen {
 
             let members = &scopes.get(ut.id).members;
             if let UserTypeKind::Union(union) = &ut_data.kind {
-                defs.emit_type(scopes, types, union.tag, None, flags.minify);
-                defs.emit(format!(" {UNION_TAG_NAME};"));
+                if !matches!(types.get(union.tag), Type::Uint(0) | Type::Int(0)) {
+                    defs.emit_type(scopes, types, union.tag, None, flags.minify);
+                    defs.emit(format!(" {UNION_TAG_NAME};"));
+                }
 
                 for (name, member) in members {
                     Self::emit_member(scopes, types, ut, name, member.ty, &mut defs, flags.minify);
@@ -223,7 +229,7 @@ impl TypeGen {
         adding: Option<&GenericUserType>,
     ) {
         match types.get(ty) {
-            Type::Ptr(inner) | Type::MutPtr(inner) => {
+            Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) => {
                 self.add_type(scopes, types, diag, *inner, adding)
             }
             Type::FnPtr(ptr) => self.add_fnptr(scopes, types, diag, ptr.clone()),
@@ -237,6 +243,10 @@ impl TypeGen {
             }
             Type::DynPtr(ut) | Type::DynMutPtr(ut) => {
                 self.add_dynptr(ut.clone());
+            }
+            Type::Func(f) => {
+                let fnptr = f.clone().as_fn_ptr(scopes, types);
+                self.add_fnptr(scopes, types, diag, fnptr)
             }
             _ => {}
         }
@@ -1112,7 +1122,9 @@ impl Codegen {
                         self.flags.minify,
                     );
                     self.buffer.emit("=(");
-                    let ret = func_data.ret.with_templates(&mut self.proj.types, &func.ty_args);
+                    let ret = func_data
+                        .ret
+                        .with_templates(&mut self.proj.types, &func.ty_args);
                     self.buffer.emit_type(
                         &self.proj.scopes,
                         &mut self.proj.types,
@@ -1353,7 +1365,9 @@ impl Codegen {
     }
 
     fn emit_expr(&mut self, mut expr: CheckedExpr, state: &mut State) {
-        expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+        expr.ty = expr
+            .ty
+            .with_templates(&mut self.proj.types, &state.func.ty_args);
         if Self::has_side_effects(&expr) {
             self.emit_tmpvar_ident(expr, state);
         } else {
@@ -1730,7 +1744,9 @@ impl Codegen {
             } => {
                 enter_block!(self, state, expr.ty, {
                     if let CheckedExprData::Is(mut expr, patt) = cond.data {
-                        expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                        expr.ty = expr
+                            .ty
+                            .with_templates(&mut self.proj.types, &state.func.ty_args);
                         let ty = expr.ty;
                         let tmp = self.emit_tmpvar(*expr, state);
                         self.emit_pattern_if_stmt(state, &patt.data, &tmp, ty);
@@ -1780,7 +1796,9 @@ impl Codegen {
                     self.buffer.emit("for(;;){");
                     hoist_point!(self, {
                         if let Some(mut cond) = cond {
-                            cond.ty = cond.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                            cond.ty = cond
+                                .ty
+                                .with_templates(&mut self.proj.types, &state.func.ty_args);
                             if let CheckedExprData::Is(cond, patt) = cond.data {
                                 let ty = cond.ty;
                                 let tmp = self.emit_tmpvar(*cond, state);
@@ -1810,7 +1828,9 @@ impl Codegen {
                 optional,
             } => {
                 enter_loop!(self, state, body.scope, expr.ty, {
-                    iter.ty = iter.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                    iter.ty = iter
+                        .ty
+                        .with_templates(&mut self.proj.types, &state.func.ty_args);
                     let next = self.find_implementation(
                         iter.ty,
                         self.proj.scopes.lang_traits.get("iter").copied().unwrap(),
@@ -1936,7 +1956,8 @@ impl Codegen {
                             .get(ut.id)
                             .find_associated_fn(&self.proj.scopes, "subspan")
                             .unwrap(),
-                        [arg.ty.with_templates(&mut self.proj.types, &state.func.ty_args)],
+                        [arg.ty
+                            .with_templates(&mut self.proj.types, &state.func.ty_args)],
                     );
                     func.ty_args.copy_args(&ut.ty_args);
                     let new_state = State::in_body_scope(func, &self.proj.scopes);
@@ -1954,7 +1975,9 @@ impl Codegen {
             }
             CheckedExprData::Return(mut expr) => {
                 hoist!(self, {
-                    expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                    expr.ty = expr
+                        .ty
+                        .with_templates(&mut self.proj.types, &state.func.ty_args);
                     let tmp = self.emit_tmpvar(*expr, state);
                     self.leave_scope(
                         state,
@@ -2076,7 +2099,9 @@ impl Codegen {
                     let formatter = self.emit_tmpvar(*formatter, state);
                     for mut expr in parts {
                         hoist_point!(self, {
-                            expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                            expr.ty = expr
+                                .ty
+                                .with_templates(&mut self.proj.types, &state.func.ty_args);
                             let stripped = expr.ty.strip_references(&self.proj.types);
                             let format_state = State::with_inst(
                                 self.find_implementation(
@@ -2090,7 +2115,7 @@ impl Codegen {
                                 stripped,
                                 scope,
                             );
-    
+
                             self.buffer.emit_fn_name(
                                 &self.proj.scopes,
                                 &mut self.proj.types,
@@ -2191,7 +2216,9 @@ impl Codegen {
 
     #[inline(always)]
     fn emit_expr_inline(&mut self, mut expr: CheckedExpr, state: &mut State) {
-        expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+        expr.ty = expr
+            .ty
+            .with_templates(&mut self.proj.types, &state.func.ty_args);
         self.emit_expr_inner(expr, state);
     }
 
@@ -2243,7 +2270,9 @@ impl Codegen {
             let members: Vec<_> = members
                 .into_iter()
                 .map(|(name, mut expr)| {
-                    expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                    expr.ty = expr
+                        .ty
+                        .with_templates(&mut self.proj.types, &state.func.ty_args);
                     // TODO: dont emit temporaries for expressions that cant have side effects
                     (name, hoist!(self, self.emit_tmpvar(expr, state)))
                 })
@@ -2291,7 +2320,9 @@ impl Codegen {
     ) {
         match op {
             BinaryOp::NoneCoalesceAssign => {
-                lhs.ty = lhs.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                lhs.ty = lhs
+                    .ty
+                    .with_templates(&mut self.proj.types, &state.func.ty_args);
                 let opt_type = lhs.ty;
                 let tag = if opt_type
                     .can_omit_tag(&self.proj.scopes, &self.proj.types)
@@ -2349,7 +2380,9 @@ impl Codegen {
                     self.emit_type(ret);
                     self.buffer.emit(format!(" {tmp};"));
 
-                    lhs.ty = lhs.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                    lhs.ty = lhs
+                        .ty
+                        .with_templates(&mut self.proj.types, &state.func.ty_args);
                     let opt_type = lhs.ty;
                     let name = hoist!(self, self.emit_tmpvar(lhs, state));
                     self.emit_pattern_if_stmt(
@@ -2443,7 +2476,9 @@ impl Codegen {
                 });
             }
             _ => {
-                lhs.ty = lhs.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                lhs.ty = lhs
+                    .ty
+                    .with_templates(&mut self.proj.types, &state.func.ty_args);
                 if ret == TypeId::BOOL && lhs.ty != TypeId::BOOL {
                     self.emit_cast(ret);
                 }
@@ -2512,7 +2547,9 @@ impl Codegen {
                 }
             }
             UnaryOp::Addr | UnaryOp::AddrMut | UnaryOp::AddrRaw => {
-                lhs.ty = lhs.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                lhs.ty = lhs
+                    .ty
+                    .with_templates(&mut self.proj.types, &state.func.ty_args);
 
                 let array = self.proj.types.get(lhs.ty).is_array();
                 if !array {
@@ -2530,7 +2567,9 @@ impl Codegen {
             }
             UnaryOp::Try => {
                 tmpbuf_emit!(self, state, |tmp| {
-                    lhs.ty = lhs.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                    lhs.ty = lhs
+                        .ty
+                        .with_templates(&mut self.proj.types, &state.func.ty_args);
 
                     self.emit_type(ret);
                     self.buffer.emit(format!(" {tmp};"));
@@ -2587,7 +2626,9 @@ impl Codegen {
         let mut args: IndexMap<_, _> = args
             .into_iter()
             .map(|(name, mut expr)| {
-                expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                expr.ty = expr
+                    .ty
+                    .with_templates(&mut self.proj.types, &state.func.ty_args);
                 // TODO: dont emit temporaries for expressions that cant have side effects
                 (name, hoist!(self, self.emit_tmpvar(expr, state)))
             })
@@ -2725,7 +2766,9 @@ impl Codegen {
         match name {
             "numeric_abs" => {
                 let (_, mut expr) = args.shift_remove_index(0).unwrap();
-                expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                expr.ty = expr
+                    .ty
+                    .with_templates(&mut self.proj.types, &state.func.ty_args);
                 let tmp = hoist!(self, self.emit_tmpvar(expr, state));
                 self.buffer.emit(format!("({tmp}<0?-{tmp}:{tmp})"));
             }
@@ -3386,7 +3429,9 @@ impl Codegen {
 
     fn emit_var_decl(&mut self, id: VariableId, state: &mut State) -> TypeId {
         let var = self.proj.scopes.get(id);
-        let ty = var.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+        let ty = var
+            .ty
+            .with_templates(&mut self.proj.types, &state.func.ty_args);
         if var.is_static {
             self.buffer.emit("static ");
         }
