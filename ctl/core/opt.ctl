@@ -28,6 +28,10 @@ pub union Option<T> {
         }
     }
 
+    pub fn take(mut this): This {
+        core::mem::replace(this, null)
+    }
+
     impl core::ops::Unwrap<T> {
         fn unwrap(this): T {
             if this is ?inner {
