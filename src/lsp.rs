@@ -149,7 +149,7 @@ impl LanguageServer for LspBackend {
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        let (file, mut proj) = self.check_project(uri, Some(pos), None).await?;
+        let mut proj = self.check_project(uri, Some(pos), None).await?;
         let scopes = &proj.scopes;
         let Some(span) = proj.hover.as_ref().and_then(|hover| {
             Some(match hover {
@@ -173,7 +173,7 @@ impl LanguageServer for LspBackend {
 
         let diag = &mut proj.diag;
         let path = diag.file_path(span.file);
-        let uri = get_uri((file, uri), (span.file, path));
+        let uri = Url::from_file_path(path).unwrap();
         let range = if let Some(doc) = self.documents.get(&uri) {
             Diagnostics::get_span_range(&doc.text, span, OffsetMode::Utf16)
         } else {
@@ -213,7 +213,7 @@ impl LanguageServer for LspBackend {
                 .await;
         }
 
-        let (_, mut proj) = self.check_project(uri, None, Some(pos)).await?;
+        let mut proj = self.check_project(uri, None, Some(pos)).await?;
         let Some(completions) = proj.completions.as_ref() else {
             return Ok(None);
         };
@@ -373,7 +373,7 @@ impl LanguageServer for LspBackend {
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        let (_, mut proj) = self.check_project(uri, Some(pos), None).await?;
+        let mut proj = self.check_project(uri, Some(pos), None).await?;
         let Some(item) = proj.hover.as_ref() else {
             return Ok(None);
         };
@@ -439,7 +439,7 @@ impl LspBackend {
         uri: &Url,
         hover: Option<Position>,
         completion: Option<Position>,
-    ) -> Result<(FileId, Project)> {
+    ) -> Result<Project> {
         let path = if !uri.scheme().is_empty() {
             Path::new(&uri.as_str()[uri.scheme().len() + 3..])
         } else {
@@ -460,24 +460,27 @@ impl LspBackend {
             .diagnostics()
             .paths()
             .find(|p| p.1 == path)
-            .unwrap()
-            .0;
+            .map(|v| v.0);
         let checked = parsed.typecheck(LspInput {
-            hover: hover.map(|p| {
-                position_to_span(
-                    &self.documents.get(uri).unwrap().text,
-                    file,
-                    p.line,
-                    p.character,
-                )
+            hover: hover.and_then(|p| {
+                file.map(|file| {
+                    position_to_span(
+                        &self.documents.get(uri).unwrap().text,
+                        file,
+                        p.line,
+                        p.character,
+                    )
+                })
             }),
-            completion: completion.map(|p| {
-                position_to_span(
-                    &self.documents.get(uri).unwrap().text,
-                    file,
-                    p.line,
-                    p.character,
-                )
+            completion: completion.and_then(|p| {
+                file.map(|file| {
+                    position_to_span(
+                        &self.documents.get(uri).unwrap().text,
+                        file,
+                        p.line,
+                        p.character,
+                    )
+                })
             }),
         });
 
@@ -509,9 +512,7 @@ impl LspBackend {
                 continue;
             };
 
-            let entry = all
-                .entry(get_uri((file, uri), (err.span.file, path)))
-                .or_default();
+            let entry = all.entry(Url::from_file_path(path).unwrap()).or_default();
             entry.push(Diagnostic {
                 range,
                 severity: Some(severity),
@@ -530,7 +531,7 @@ impl LspBackend {
             self.client.publish_diagnostics(uri, diags, None).await;
         }
 
-        if let Some(mut doc) = self.documents.get_mut(uri) {
+        if let Some((mut doc, file)) = self.documents.get_mut(uri).zip(file) {
             doc.inlay_hints.clear();
             for (_, var) in proj.scopes.vars() {
                 if var.name.span.file != file || var.has_hint || var.name.data.starts_with('$') {
@@ -554,7 +555,7 @@ impl LspBackend {
             }
         }
 
-        Ok((file, proj))
+        Ok(proj)
     }
 }
 
@@ -577,14 +578,6 @@ impl SourceProvider for LspFileProvider<'_> {
         } else {
             FileSourceProvider.get_source(path, get)
         }
-    }
-}
-
-fn get_uri((file, furi): (FileId, &Url), (spanid, path): (FileId, &Path)) -> Url {
-    if spanid == file {
-        furi.clone()
-    } else {
-        Url::from_file_path(path).unwrap()
     }
 }
 
