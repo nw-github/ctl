@@ -2073,6 +2073,7 @@ impl TypeChecker {
 
                 let left = self.check_expr(*left, target);
                 if left.ty == TypeId::UNKNOWN {
+                    self.check_expr(*right, target);
                     return Default::default();
                 }
 

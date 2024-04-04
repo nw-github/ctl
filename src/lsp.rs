@@ -810,7 +810,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types) -> String 
     {
         let ut = GenericUserType::new(id, Default::default());
         let (sz, align) = types.insert(Type::User(ut)).size_and_align(scopes, types);
-        writeln_de!(res, "// size = {sz}, align = {align}");
+        writeln_de!(res, "// size = {sz:#x}, align = {align:#x}");
     }
 
     if ut.public {
