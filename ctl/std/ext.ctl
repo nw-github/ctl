@@ -20,11 +20,11 @@ pub extension StringExt for str {
 
 pub extension StdSignedExt<T: Numeric + Signed> for T {
     pub fn to_str_radix(this, radix: u32): str {
-        if radix < 2 or radix > 36 {
+        if !(radix is 2..=36) {
             core::panic("to_str_radix(): invalid radix");
         }
 
-        mut buffer = @[b'0'; core::mem::size_of::<i32>() * 8 + 1];
+        mut buffer = @[b'0'; core::mem::size_of::<T>() * 8 + 1];
         unsafe {
             this.to_str_radix_unchecked(radix, buffer.as_span_mut())
         }
@@ -33,11 +33,11 @@ pub extension StdSignedExt<T: Numeric + Signed> for T {
 
 pub extension StdUnsignedExt<T: Numeric + Unsigned> for T {
     pub fn to_str_radix(this, radix: u32): str {
-        if radix < 2 or radix > 36 {
+        if !(radix is 2..=36) {
             core::panic("to_str_radix(): invalid radix");
         }
 
-        mut buffer = @[b'0'; core::mem::size_of::<i32>() * 8];
+        mut buffer = @[b'0'; core::mem::size_of::<T>() * 8];
         unsafe {
             this.to_str_radix_unchecked(radix, buffer.as_span_mut())
         }

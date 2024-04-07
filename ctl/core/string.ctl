@@ -47,15 +47,11 @@ pub struct str {
 
     pub fn substr<R: RangeBounds<uint>>(this, range: R): str {
         let span = this.span[range];
-        if span.get(0) is ?ch {
-            if !is_char_boundary(*ch) {
-                panic("str::substr(): range does not start at char boundary");
-            }
+        if span.get(0) is ?ch and !is_char_boundary(*ch) {
+            panic("str::substr(): range does not start at char boundary");
         }
-        if span.get(span.len()) is ?ch {
-            if !is_char_boundary(*ch) {
-                panic("str::substr(): range does not end at char boundary");
-            }
+        if span.get(span.len()) is ?ch and !is_char_boundary(*ch) {
+            panic("str::substr(): range does not end at char boundary");
         }
         str(span:)
     }

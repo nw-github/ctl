@@ -957,12 +957,14 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.expect_kind(Token::LCurly);
         let mut body = Vec::new();
         let span = self.next_until(Token::RCurly, token, |this| {
-            let pattern = this.pattern_ex(false, EvalContext::Normal).map(|data| FullPattern {
-                data,
-                if_expr: this
-                    .next_if_kind(Token::If)
-                    .map(|_| this.expression().into()),
-            });
+            let pattern = this
+                .pattern_ex(false, EvalContext::Normal)
+                .map(|data| FullPattern {
+                    data,
+                    if_expr: this
+                        .next_if_kind(Token::If)
+                        .map(|_| this.expression().into()),
+                });
             this.expect_kind(Token::FatArrow);
             let (needs_comma, expr) = this.block_or_normal_expr();
             if needs_comma {
@@ -1107,26 +1109,36 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
     }
 
-    fn maybe_range_pattern(&mut self, start: Located<IntPattern>) -> Located<Pattern> {
-        let Some(range) = self.next_if(|t| matches!(t, Token::Range | Token::RangeInclusive))
-        else {
+    fn maybe_range_pattern(
+        &mut self,
+        range: Option<Located<Token>>,
+        start: Located<IntPattern>,
+    ) -> Located<Pattern> {
+        let (range, start, end, span) = if let Some(range) = range {
+            let span = range.span.extended_to(start.span);
+            (range, None, start.data, span)
+        } else if let Some(range) =
+            self.next_if(|t| matches!(t, Token::Range | Token::RangeInclusive))
+        {
+            let negative = self.next_if_kind(Token::Minus);
+            let Ok(end) = self.expect(
+                |t| Self::int_pattern(negative.map(|t| t.span), &t).ok_or(t),
+                "expected number",
+            ) else {
+                return Located::new(start.span, Pattern::Error);
+            };
+            let span = start.span.extended_to(end.span);
+            (range, Some(start.data), end.data, span)
+        } else {
             return start.map(Pattern::Int);
         };
 
-        let negative = self.next_if_kind(Token::Minus);
-        let Ok(end) = self.expect(
-            |t| Self::int_pattern(negative.map(|t| t.span), &t).ok_or(t),
-            "expected number",
-        ) else {
-            return Located::new(start.span, Pattern::Error);
-        };
-
         Located::new(
-            start.span.extended_to(end.span),
+            span,
             Pattern::IntRange(RangePattern {
                 inclusive: matches!(range.data, Token::RangeInclusive),
-                start: start.data,
-                end: end.data,
+                start,
+                end,
             }),
         )
     }
@@ -1138,18 +1150,15 @@ impl<'a, 'b> Parser<'a, 'b> {
             return Some(token.map(|_| Pattern::Bool(false)));
         } else if let Some(token) = self.next_if_kind(Token::Void) {
             return Some(token.map(|_| Pattern::Void));
-        }
-
-        let string = self.next_if_map(|t| {
+        } else if let Some(string) = self.next_if_map(|t| {
             t.data
                 .as_string()
                 .map(|value| Located::new(t.span, value.to_string()))
-        });
-
-        if let Some(string) = string {
+        }) {
             return Some(string.map(Pattern::String));
         }
 
+        let range = self.next_if(|t| matches!(t, Token::Range | Token::RangeInclusive));
         if let Some(token) = self.next_if_kind(Token::Minus) {
             let Ok(start) = self.expect(
                 |t| Self::int_pattern(Some(token.span), &t).ok_or(t),
@@ -1158,18 +1167,23 @@ impl<'a, 'b> Parser<'a, 'b> {
                 return Some(Located::new(token.span, Pattern::Error));
             };
 
-            return Some(self.maybe_range_pattern(start));
+            return Some(self.maybe_range_pattern(range, start));
         }
 
-        let int = self.next_if_map(|t| Self::int_pattern(None, t));
-        if let Some(int) = int {
-            return Some(self.maybe_range_pattern(int));
+        if let Some(int) = self.next_if_map(|t| Self::int_pattern(None, t)) {
+            return Some(self.maybe_range_pattern(range, int));
         }
 
-        let char = self.next_if_map(|t| t.data.as_char().map(|&ch| Located::new(t.span, ch)));
-        if let Some(char) = char {
-            let Some(range) = self.next_if(|t| matches!(t, Token::Range | Token::RangeInclusive))
-            else {
+        if let Some(char) =
+            self.next_if_map(|t| t.data.as_char().map(|&ch| Located::new(t.span, ch)))
+        {
+            let range = if let Some(range) = range {
+                range
+            } else if let Some(range) =
+                self.next_if(|t| matches!(t, Token::Range | Token::RangeInclusive))
+            {
+                range
+            } else {
                 return Some(char.map(Pattern::Char));
             };
 
@@ -1188,10 +1202,13 @@ impl<'a, 'b> Parser<'a, 'b> {
                 char.span.extended_to(end.span),
                 Pattern::CharRange(RangePattern {
                     inclusive: matches!(range.data, Token::RangeInclusive),
-                    start: char.data,
+                    start: Some(char.data),
                     end: end.data,
                 }),
             ));
+        } else if let Some(range) = range {
+            self.error(Error::new("expected range to pattern", range.span));
+            return Some(Located::new(range.span, Pattern::Error));
         }
 
         None

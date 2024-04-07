@@ -281,7 +281,7 @@ pub struct IntPattern {
 #[derive(Debug, Clone)]
 pub struct RangePattern<T> {
     pub inclusive: bool,
-    pub start: T,
+    pub start: Option<T>,
     pub end: T,
 }
 

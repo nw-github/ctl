@@ -5359,12 +5359,18 @@ impl TypeChecker {
                             continue 'outer;
                         }
                         CheckedPatternData::IntRange(i) => {
-                            if i.inclusive {
-                                if value >= i.start && value <= i.end {
+                            if let Some(start) = &i.start {
+                                if i.inclusive && &value >= start && value <= i.end {
                                     value = &i.end + 1;
                                     continue 'outer;
+                                } else if !i.inclusive && &value >= start && value < i.end {
+                                    value = i.end.clone();
+                                    continue 'outer;
                                 }
-                            } else if value >= i.start && value < i.end {
+                            } else if i.inclusive && value <= i.end {
+                                value = &i.end + 1;
+                                continue 'outer;
+                            } else if !i.inclusive && value < i.end {
                                 value = i.end.clone();
                                 continue 'outer;
                             }
@@ -6070,14 +6076,20 @@ impl TypeChecker {
                 start,
                 end,
             }) => {
-                let Some(start) = self.check_int_pattern(scrutinee, &start, span) else {
-                    return Default::default();
+                let start = if let Some(start) = start {
+                    let Some(start) = self.check_int_pattern(scrutinee, &start, span) else {
+                        return Default::default();
+                    };
+                    Some(start)
+                } else {
+                    None
                 };
+                
                 let Some(end) = self.check_int_pattern(scrutinee, &end, span) else {
                     return Default::default();
                 };
 
-                if start > end {
+                if start.as_ref().is_some_and(|start| start > &end) {
                     return self.error(Error::new(
                         "range start must be less than or equal to its end",
                         span,
@@ -6124,7 +6136,7 @@ impl TypeChecker {
                     );
                 }
 
-                if start > end {
+                if start.is_some_and(|start| start > end) {
                     return self.error(Error::new(
                         "range pattern end cannot be greater than its start",
                         span,
@@ -6133,7 +6145,7 @@ impl TypeChecker {
 
                 CheckedPattern::refutable(CheckedPatternData::IntRange(RangePattern {
                     inclusive,
-                    start: BigInt::from(start as u32),
+                    start: start.map(|start| BigInt::from(start as u32)),
                     end: BigInt::from(end as u32),
                 }))
             }

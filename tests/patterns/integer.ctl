@@ -32,5 +32,15 @@ fn main() {
         _ => panic("-10..=5 didn't match x = -5"),
     }
 
+    match -x {
+        ..10 => {}
+        _ => panic("..=10 didn't match x = -5"),
+    }
+
+    match -x {
+        ..=-5 => {}
+        _ => panic("..=10 didn't match x = -5"),
+    }
+
     println("pass");
 }

@@ -1319,8 +1319,8 @@ impl Codegen {
     }
 
     fn emit_expr_stmt(&mut self, expr: CheckedExpr, state: &mut State) {
-        if Self::has_side_effects(&expr) && 
-            !matches!(expr.data, CheckedExprData::Binary { op, .. } if op.is_assignment())
+        if Self::has_side_effects(&expr)
+            && !matches!(expr.data, CheckedExprData::Binary { op, .. } if op.is_assignment())
         {
             self.emit_expr_inline(expr, state);
             self.buffer.emit(";");
@@ -2455,8 +2455,7 @@ impl Codegen {
                 self.buffer
                     .emit(format!("{{.{UNION_TAG_NAME}={greater}}}:"));
                 self.emit_cast(ret);
-                self.buffer
-                    .emit(format!("{{.{UNION_TAG_NAME}={equal}}}))"));
+                self.buffer.emit(format!("{{.{UNION_TAG_NAME}={equal}}}))"));
             }
             BinaryOp::LogicalAnd | BinaryOp::LogicalOr => {
                 tmpbuf_emit!(self, state, |tmp| {
@@ -2994,14 +2993,19 @@ impl Codegen {
             }) => {
                 let src = Self::deref(&self.proj.types, src, ty);
                 let base = ty.strip_references(&self.proj.types);
+                if let Some(start) = start {
+                    conditions.next(|buffer| {
+                        usebuf!(self, buffer, {
+                            self.buffer.emit(format!("{src}>="));
+                            self.emit_cast(base);
+                            self.buffer.emit(format!("{start}"));
+                        });
+                    });
+                }
                 conditions.next(|buffer| {
                     usebuf!(self, buffer, {
-                        self.buffer.emit(format!("{src}>="));
-                        self.emit_cast(base);
-                        self.buffer.emit(format!(
-                            "{start}&&{src}{}",
-                            if *inclusive { "<=" } else { "<" }
-                        ));
+                        self.buffer
+                            .emit(format!("{src}{}", if *inclusive { "<=" } else { "<" }));
                         self.emit_cast(base);
                         self.buffer.emit(format!("{end}"));
                     });
