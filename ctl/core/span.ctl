@@ -54,7 +54,7 @@ pub struct Span<T> {
         let end = match range.end() {
             Bound::Inclusive(end) => end + 1,
             Bound::Exclusive(end) => end,
-            Bound::Unbounded => this.len(),
+            Bound::Unbounded => this.len,
         };
 
         if end < start or start > this.len or end > this.len {
@@ -218,13 +218,7 @@ pub fn compare<T>(lhs: [T..], rhs: [T..]): bool {
 
 #(inline(always))
 fn raw_subscript_checked<T, I: Numeric + Integral>(ptr: *raw T, len: uint, idx: I): *raw T {
-    let less_than = if core::mem::size_of::<uint>() > core::mem::size_of::<I>() {
-        idx < core::intrin::numeric_cast(len)
-    } else {
-        len >= core::intrin::numeric_cast(idx)
-    };
-
-    if !less_than or idx < core::intrin::numeric_cast(0) {
+    if !core::intrin::numeric_lt(idx, len) or idx < core::intrin::numeric_cast(0) {
         panic("Span::[]: index out of bounds");
     }
 

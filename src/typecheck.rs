@@ -1132,7 +1132,7 @@ impl TypeChecker {
                     };
                     match name {
                         "size_of" | "align_of" | "panic" | "binary_op" | "unary_op"
-                        | "numeric_cast" | "numeric_abs" | "max_value" | "min_value"
+                        | "numeric_cast" | "numeric_abs" | "numeric_lt" | "max_value" | "min_value"
                         | "raw_offset" => {
                             self.proj.scopes.intrinsics.insert(id, name.to_string());
                         }
@@ -2862,7 +2862,7 @@ impl TypeChecker {
                         Some(self.type_check_checked(source, out_type, span))
                     }
                 } else if if_branch.data.is_yielding_block(&self.proj.scopes) {
-                    if out_type == TypeId::NEVER || out_type == TypeId::VOID {
+                    if out_type == TypeId::NEVER || out_type == TypeId::VOID || out_type == TypeId::UNKNOWN {
                         out_type = TypeId::VOID;
                         Some(CheckedExpr::new(TypeId::VOID, CheckedExprData::Void))
                     } else {

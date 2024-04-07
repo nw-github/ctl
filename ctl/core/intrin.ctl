@@ -7,6 +7,9 @@ pub import fn numeric_abs<T: Signed>(_: T): T;
 pub import fn numeric_cast<T: Numeric, U: Numeric>(_: T): U;
 
 #(intrinsic)
+pub import fn numeric_lt<T: Numeric, U: Numeric>(lhs: T, rhs: U): bool;
+
+#(intrinsic)
 pub import fn size_of<T>(): uint;
 
 #(intrinsic)

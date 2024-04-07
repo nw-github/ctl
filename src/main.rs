@@ -274,7 +274,7 @@ fn main() -> Result<()> {
             leak: args.leak,
             no_bit_int: args.no_bit_int,
             lib: args.shared,
-            minify: !matches!(args.command, SubCommand::Print { minify: false, .. }),
+            minify: matches!(args.command, SubCommand::Print { minify: true, .. }),
         });
     let result = match result {
         Ok((diag, code)) => {

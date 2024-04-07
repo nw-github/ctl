@@ -2450,13 +2450,13 @@ impl Codegen {
                 self.buffer.emit(format!("({tmp}<0?"));
                 self.emit_cast(ret);
                 self.buffer
-                    .emit(format!("{{.{UNION_TAG_NAME}={less}}}:({tmp}>0?",));
+                    .emit(format!("{{.{UNION_TAG_NAME}={less}}}:({tmp}>0?"));
                 self.emit_cast(ret);
                 self.buffer
-                    .emit(format!("{{.{UNION_TAG_NAME}={greater}}}:",));
+                    .emit(format!("{{.{UNION_TAG_NAME}={greater}}}:"));
                 self.emit_cast(ret);
                 self.buffer
-                    .emit(format!("{{.{UNION_TAG_NAME}={equal}}}))",));
+                    .emit(format!("{{.{UNION_TAG_NAME}={equal}}}))"));
             }
             BinaryOp::LogicalAnd | BinaryOp::LogicalOr => {
                 tmpbuf_emit!(self, state, |tmp| {
@@ -2778,6 +2778,15 @@ impl Codegen {
                 let (_, expr) = args.shift_remove_index(0).unwrap();
                 self.emit_cast(ret);
                 self.emit_expr(expr, state);
+            }
+            "numeric_lt" => {
+                let mut args = args.into_iter();
+                self.emit_cast(TypeId::BOOL);
+                self.buffer.emit("(");
+                self.emit_expr(args.next().unwrap().1, state);
+                self.buffer.emit("<");
+                self.emit_expr(args.next().unwrap().1, state);
+                self.buffer.emit(")");
             }
             "max_value" => {
                 self.emit_cast(ret);
