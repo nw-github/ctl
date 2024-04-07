@@ -204,6 +204,9 @@ pub struct TypeChecker {
     current: ScopeId,
     lsp_input: LspInput,
     proj: Project,
+    listening_vars: Vec<VariableId>,
+    listening_expr: usize,
+    current_expr: usize,
 }
 
 impl TypeChecker {
@@ -214,6 +217,9 @@ impl TypeChecker {
             current: ScopeId::ROOT,
             lsp_input: lsp,
             proj: Project::new(diag),
+            listening_vars: Vec::new(),
+            listening_expr: 0,
+            current_expr: 0,
         };
 
         let mut scope = ScopeId::ROOT;
@@ -248,6 +254,9 @@ impl TypeChecker {
             current: ScopeId::ROOT,
             lsp_input: Default::default(),
             proj: std::mem::take(proj),
+            listening_vars: Vec::new(),
+            listening_expr: 0,
+            current_expr: 0,
         };
         let res = f(&mut tc);
         std::mem::swap(proj, &mut tc.proj);
@@ -1132,8 +1141,8 @@ impl TypeChecker {
                     };
                     match name {
                         "size_of" | "align_of" | "panic" | "binary_op" | "unary_op"
-                        | "numeric_cast" | "numeric_abs" | "numeric_lt" | "max_value" | "min_value"
-                        | "raw_offset" => {
+                        | "numeric_cast" | "numeric_abs" | "numeric_lt" | "max_value"
+                        | "min_value" | "raw_offset" => {
                             self.proj.scopes.intrinsics.insert(id, name.to_string());
                         }
                         _ => self.error(Error::new(
@@ -1987,88 +1996,118 @@ impl TypeChecker {
     }
 
     fn check_expr_inner(&mut self, expr: Expr, target: Option<TypeId>) -> CheckedExpr {
+        // FIXME: this should just be a parameter to this function
+        self.current_expr += 1;
         let span = expr.span;
         match expr.data {
             ExprData::Binary { op, left, right } => {
                 let left_span = left.span;
-                if op == BinaryOp::Assign {
-                    if let ExprData::Subscript { callee, mut args } = left.data {
-                        if args.is_empty() {
-                            return self.error(Error::new(
-                                "subscript requires at least one argument",
-                                span,
-                            ));
-                        }
-
-                        let callee = self.check_expr(*callee, None);
-                        let stripped = callee.ty.strip_references(&self.proj.types);
-                        if let &Type::Array(inner, _) = self.proj.types.get(stripped) {
-                            let left = self.check_array_subscript(inner, callee, args);
-                            if op.is_assignment()
-                                && !left.is_assignable(&self.proj.scopes, &self.proj.types)
-                            {
-                                // TODO: report a better error here
-                                self.error(Error::new("expression is not assignable", left_span))
+                let assignment = op.is_assignment();
+                match op {
+                    BinaryOp::Assign => {
+                        if let ExprData::Subscript { callee, mut args } = left.data {
+                            if args.is_empty() {
+                                return self.error(Error::new(
+                                    "subscript requires at least one argument",
+                                    span,
+                                ));
                             }
 
-                            let right = self.type_check(*right, left.ty);
-                            return CheckedExpr::new(
-                                TypeId::VOID,
-                                CheckedExprData::Binary {
-                                    op: BinaryOp::Assign,
-                                    left: left.into(),
-                                    right: right.into(),
-                                },
-                            );
+                            let callee = self.check_expr(*callee, None);
+                            let stripped = callee.ty.strip_references(&self.proj.types);
+                            if let &Type::Array(inner, _) = self.proj.types.get(stripped) {
+                                let left = self.check_array_subscript(inner, callee, args);
+                                if op.is_assignment()
+                                    && !left.is_assignable(&self.proj.scopes, &self.proj.types)
+                                {
+                                    // TODO: report a better error here
+                                    self.error(Error::new(
+                                        "expression is not assignable",
+                                        left_span,
+                                    ))
+                                }
+
+                                let right = self.type_check(*right, left.ty);
+                                return CheckedExpr::new(
+                                    TypeId::VOID,
+                                    CheckedExprData::Binary {
+                                        op: BinaryOp::Assign,
+                                        left: left.into(),
+                                        right: right.into(),
+                                    },
+                                );
+                            } else {
+                                args.push((None, *right));
+                                return self
+                                    .check_subscript(callee, stripped, args, target, true, span);
+                            }
+                        }
+                    }
+                    BinaryOp::NoneCoalesce | BinaryOp::NoneCoalesceAssign => {
+                        let Some(id) = self.proj.scopes.get_option_id() else {
+                            return self.error(Error::no_lang_item("option", span));
+                        };
+
+                        let target = if let Some(target) = target {
+                            let ut =
+                                GenericUserType::from_type_args(&self.proj.scopes, id, [target]);
+                            Some(self.proj.types.insert(Type::User(ut)))
                         } else {
-                            args.push((None, *right));
-                            return self
-                                .check_subscript(callee, stripped, args, target, true, span);
+                            None
+                        };
+                        let lhs_span = left.span;
+                        let lhs = self.check_expr(*left, target);
+                        let Some(target) =
+                            lhs.ty.as_option_inner(&self.proj.scopes, &self.proj.types)
+                        else {
+                            if lhs.ty != TypeId::UNKNOWN {
+                                self.proj.diag.error(Error::invalid_operator(
+                                    BinaryOp::NoneCoalesce,
+                                    &lhs.ty.name(&self.proj.scopes, &mut self.proj.types),
+                                    lhs_span,
+                                ));
+                            }
+                            return Default::default();
+                        };
+                        if assignment && !lhs.is_assignable(&self.proj.scopes, &self.proj.types) {
+                            // TODO: report a better error here
+                            self.error(Error::new("expression is not assignable", lhs_span))
                         }
+
+                        let span = right.span;
+                        let rhs = self.check_expr_inner(*right, Some(target));
+                        let rhs = self.type_check_checked(rhs, target, span);
+                        return CheckedExpr::new(
+                            if assignment { TypeId::VOID } else { target },
+                            CheckedExprData::Binary {
+                                op,
+                                left: lhs.into(),
+                                right: rhs.into(),
+                            },
+                        );
                     }
-                }
-
-                let assignment = op.is_assignment();
-                if matches!(op, BinaryOp::NoneCoalesce | BinaryOp::NoneCoalesceAssign) {
-                    let Some(id) = self.proj.scopes.get_option_id() else {
-                        return self.error(Error::no_lang_item("option", span));
-                    };
-
-                    let target = if let Some(target) = target {
-                        let ut = GenericUserType::from_type_args(&self.proj.scopes, id, [target]);
-                        Some(self.proj.types.insert(Type::User(ut)))
-                    } else {
-                        None
-                    };
-                    let lhs_span = left.span;
-                    let lhs = self.check_expr(*left, target);
-                    let Some(target) = lhs.ty.as_option_inner(&self.proj.scopes, &self.proj.types)
-                    else {
-                        if lhs.ty != TypeId::UNKNOWN {
-                            self.proj.diag.error(Error::invalid_operator(
-                                BinaryOp::NoneCoalesce,
-                                &lhs.ty.name(&self.proj.scopes, &mut self.proj.types),
-                                lhs_span,
-                            ));
+                    BinaryOp::LogicalAnd => {
+                        let was_listening = self.listening_expr == self.current_expr;
+                        let (left, lvars) = self.type_check_with_listen(*left);
+                        let (right, rvars) = self.enter(ScopeKind::None, |this| {
+                            this.define(&lvars);
+                            this.type_check_with_listen(*right)
+                        });
+                        if was_listening {
+                            self.listening_vars.extend(lvars);
+                            self.listening_vars.extend(rvars);
                         }
-                        return Default::default();
-                    };
-                    if assignment && !lhs.is_assignable(&self.proj.scopes, &self.proj.types) {
-                        // TODO: report a better error here
-                        self.error(Error::new("expression is not assignable", lhs_span))
-                    }
 
-                    let span = right.span;
-                    let rhs = self.check_expr_inner(*right, Some(target));
-                    let rhs = self.type_check_checked(rhs, target, span);
-                    return CheckedExpr::new(
-                        if assignment { TypeId::VOID } else { target },
-                        CheckedExprData::Binary {
-                            op,
-                            left: lhs.into(),
-                            right: rhs.into(),
-                        },
-                    );
+                        return CheckedExpr::new(
+                            TypeId::BOOL,
+                            CheckedExprData::Binary {
+                                op,
+                                left: left.into(),
+                                right: right.into(),
+                            },
+                        );
+                    }
+                    _ => {}
                 }
 
                 let left = self.check_expr(*left, target);
@@ -2826,56 +2865,53 @@ impl TypeChecker {
                 if_branch,
                 else_branch,
             } => {
-                let check_if_branch = |this: &mut TypeChecker| {
-                    let target = if else_branch.is_none() {
-                        target.and_then(|t| t.as_option_inner(&this.proj.scopes, &this.proj.types))
-                    } else {
-                        target
-                    };
-
-                    let if_span = if_branch.span;
-                    let expr = this.check_expr_inner(*if_branch, target);
-                    if let Some(target) = target {
-                        this.type_check_checked(expr, target, if_span)
-                    } else {
-                        expr
-                    }
-                };
-
-                let (cond, mut if_branch) = if let ExprData::Is { expr, pattern } = cond.data {
-                    self.check_is_expr(*expr, pattern, |this, cond| (cond, check_if_branch(this)))
+                let (cond, vars) = self.type_check_with_listen(*cond);
+                let target = if else_branch.is_none() {
+                    target.and_then(|t| t.as_option_inner(&self.proj.scopes, &self.proj.types))
                 } else {
-                    let cond = self.type_check(*cond, TypeId::BOOL);
-                    (cond, check_if_branch(self))
+                    target
                 };
+
+                let if_span = if_branch.span;
+                let mut if_branch = self.enter(ScopeKind::None, |this| {
+                    this.define(&vars);
+                    this.check_expr_inner(*if_branch, target)
+                });
+                if let Some(target) = target {
+                    if_branch = self.type_check_checked(if_branch, target, if_span);
+                }
 
                 let mut out_type = if_branch.ty;
-                let else_branch = if let Some(expr) = else_branch {
-                    if out_type == TypeId::NEVER {
-                        let expr = self.check_expr_inner(*expr, None);
-                        out_type = expr.ty;
-                        if_branch = self.try_coerce(if_branch, expr.ty);
-                        Some(expr)
+                let else_branch =
+                    if let Some(expr) = else_branch {
+                        if out_type == TypeId::NEVER {
+                            let expr = self.check_expr_inner(*expr, None);
+                            out_type = expr.ty;
+                            if_branch = self.try_coerce(if_branch, expr.ty);
+                            Some(expr)
+                        } else {
+                            let span = expr.span;
+                            let source = self.check_expr_inner(*expr, target.or(Some(out_type)));
+                            Some(self.type_check_checked(source, out_type, span))
+                        }
+                    } else if if_branch.data.is_yielding_block(&self.proj.scopes) {
+                        if out_type == TypeId::NEVER
+                            || out_type == TypeId::VOID
+                            || out_type == TypeId::UNKNOWN
+                        {
+                            out_type = TypeId::VOID;
+                            Some(CheckedExpr::new(TypeId::VOID, CheckedExprData::Void))
+                        } else {
+                            out_type = self.make_lang_type_by_name("option", [out_type], span);
+                            if_branch = self.try_coerce(if_branch, out_type);
+                            Some(self.check_expr_inner(
+                                Located::new(span, ExprData::None),
+                                Some(out_type),
+                            ))
+                        }
                     } else {
-                        let span = expr.span;
-                        let source = self.check_expr_inner(*expr, target.or(Some(out_type)));
-                        Some(self.type_check_checked(source, out_type, span))
-                    }
-                } else if if_branch.data.is_yielding_block(&self.proj.scopes) {
-                    if out_type == TypeId::NEVER || out_type == TypeId::VOID || out_type == TypeId::UNKNOWN {
-                        out_type = TypeId::VOID;
-                        Some(CheckedExpr::new(TypeId::VOID, CheckedExprData::Void))
-                    } else {
-                        out_type = self.make_lang_type_by_name("option", [out_type], span);
-                        if_branch = self.try_coerce(if_branch, out_type);
-                        Some(self.check_expr_inner(
-                            Located::new(span, ExprData::None),
-                            Some(out_type),
-                        ))
-                    }
-                } else {
-                    None
-                };
+                        None
+                    };
 
                 CheckedExpr::new(
                     out_type,
@@ -2894,34 +2930,17 @@ impl TypeChecker {
                 let infinite = cond.is_none();
                 let target = self.loop_target(target, infinite);
                 let (cond, body) = if let Some(cond) = cond {
-                    match cond.data {
-                        ExprData::Is { expr, pattern } if !do_while => {
-                            self.check_is_expr(*expr, pattern, |this, cond| {
-                                (
-                                    Some(cond.into()),
-                                    this.create_block(
-                                        body,
-                                        ScopeKind::Loop {
-                                            target,
-                                            breaks: None,
-                                            infinite,
-                                        },
-                                    ),
-                                )
-                            })
-                        }
-                        _ => (
-                            Some(self.type_check(*cond, TypeId::BOOL).into()),
-                            self.create_block(
-                                body,
-                                ScopeKind::Loop {
-                                    target,
-                                    breaks: None,
-                                    infinite,
-                                },
-                            ),
-                        ),
-                    }
+                    let (cond, vars) = self.type_check_with_listen(*cond);
+                    let body = self.create_block_with_init(
+                        body,
+                        ScopeKind::Loop {
+                            target,
+                            breaks: None,
+                            infinite,
+                        },
+                        |this| if !do_while { this.define(&vars); },
+                    );
+                    (Some(cond.into()), body)
                 } else {
                     (
                         None,
@@ -2935,7 +2954,6 @@ impl TypeChecker {
                         ),
                     )
                 };
-
                 let (out_type, optional) =
                     self.loop_out_type(&self.proj.scopes[body.scope].kind.clone(), span);
                 CheckedExpr::new(
@@ -3161,7 +3179,14 @@ impl TypeChecker {
 
                 CheckedExpr::new(TypeId::NEVER, CheckedExprData::Continue)
             }
-            ExprData::Is { expr, pattern } => self.check_is_expr(*expr, pattern, |_, expr| expr),
+            ExprData::Is { expr, pattern } => self.enter(ScopeKind::None, |this| {
+                let mut prev = this.current_expr;
+                let expr = this.check_expr(*expr, None);
+                std::mem::swap(&mut this.current_expr, &mut prev);
+                let patt = this.check_pattern(false, expr.ty, false, pattern, false, false);
+                std::mem::swap(&mut this.current_expr, &mut prev);
+                CheckedExpr::new(TypeId::BOOL, CheckedExprData::Is(expr.into(), patt))
+            }),
             ExprData::Match { expr, body } => {
                 let scrutinee = self.check_expr(*expr, None);
                 let mut has_never = false;
@@ -3328,6 +3353,21 @@ impl TypeChecker {
             }
         }
         expr
+    }
+
+    fn type_check_with_listen(&mut self, expr: Expr) -> (CheckedExpr, Vec<VariableId>) {
+        let prev = std::mem::take(&mut self.listening_vars);
+        let prev_insp = std::mem::replace(&mut self.listening_expr, self.current_expr + 1);
+        let expr = self.type_check(expr, TypeId::BOOL);
+        self.listening_expr = prev_insp;
+        (expr, std::mem::replace(&mut self.listening_vars, prev))
+    }
+
+    fn define(&mut self, vars: &[VariableId]) {
+        for &var in vars.iter() {
+            let name = self.proj.scopes.get(var).name.data.clone();
+            self.proj.scopes[self.current].vns.insert(name, Vis::new(ValueItem::Var(var), false));
+        }
     }
 
     fn check_array_subscript(
@@ -3679,22 +3719,6 @@ impl TypeChecker {
                 )
             ),
         }
-    }
-
-    fn check_is_expr<T>(
-        &mut self,
-        expr: Expr,
-        patt: Located<FullPattern>,
-        f: impl FnOnce(&mut Self, CheckedExpr) -> T,
-    ) -> T {
-        self.enter(ScopeKind::None, |this| {
-            let expr = this.check_expr(expr, None);
-            let patt = this.check_full_pattern(expr.ty, patt);
-            f(
-                this,
-                CheckedExpr::new(TypeId::BOOL, CheckedExprData::Is(expr.into(), patt)),
-            )
-        })
     }
 
     fn check_return(&mut self, expr: Expr, span: Span) -> CheckedExpr {
@@ -4279,9 +4303,21 @@ impl TypeChecker {
     }
 
     fn create_block(&mut self, body: Vec<Stmt>, kind: ScopeKind) -> Block {
-        self.enter(kind, |this| Block {
-            body: this.check_block(body),
-            scope: this.current,
+        self.create_block_with_init(body, kind, |_| {})
+    }
+
+    fn create_block_with_init(
+        &mut self,
+        body: Vec<Stmt>,
+        kind: ScopeKind,
+        init: impl FnOnce(&mut Self),
+    ) -> Block {
+        self.enter(kind, |this| {
+            init(this);
+            Block {
+                body: this.check_block(body),
+                scope: this.current,
+            }
         })
     }
 
@@ -5283,6 +5319,14 @@ impl TypeChecker {
 
 /// Pattern matching routines
 impl TypeChecker {
+    fn insert_pattern_var(&mut self, v: Variable) -> VariableId {
+        let id = self.insert(v, false, false);
+        if self.current_expr == self.listening_expr {
+            self.listening_vars.push(id);
+        }
+        id
+    }
+
     fn check_match_coverage<'a>(
         &mut self,
         ty: TypeId,
@@ -5522,20 +5566,16 @@ impl TypeChecker {
         for (i, patt) in patterns.into_iter().enumerate() {
             if let Pattern::Rest(var) = patt.data {
                 let id = var.map(|(mutable, name)| {
-                    self.insert(
-                        Variable {
-                            public: false,
-                            name,
-                            ty: TypeId::UNKNOWN,
-                            is_static: false,
-                            mutable,
-                            value: None,
-                            unused: !param,
-                            has_hint: false,
-                        },
-                        false,
-                        false,
-                    )
+                    self.insert_pattern_var(Variable {
+                        public: false,
+                        name,
+                        ty: TypeId::UNKNOWN,
+                        is_static: false,
+                        mutable,
+                        value: None,
+                        unused: !param,
+                        has_hint: false,
+                    })
                 });
 
                 if rest.is_some() {
@@ -5631,20 +5671,16 @@ impl TypeChecker {
         for (i, patt) in patterns.into_iter().enumerate() {
             if let Pattern::Rest(var) = patt.data {
                 let id = var.map(|(mutable, name)| {
-                    self.insert(
-                        Variable {
-                            public: false,
-                            name,
-                            ty: TypeId::UNKNOWN,
-                            is_static: false,
-                            mutable,
-                            value: None,
-                            unused: !param,
-                            has_hint: false,
-                        },
-                        false,
-                        false,
-                    )
+                    self.insert_pattern_var(Variable {
+                        public: false,
+                        name,
+                        ty: TypeId::UNKNOWN,
+                        is_static: false,
+                        mutable,
+                        value: None,
+                        unused: !param,
+                        has_hint: false,
+                    })
                 });
 
                 if rest.is_some() {
@@ -5945,22 +5981,18 @@ impl TypeChecker {
                                 borrows: false,
                             })
                         }
-                        Err(Some(_)) => {
-                            CheckedPattern::irrefutable(CheckedPatternData::Variable(self.insert(
-                                Variable {
-                                    public: false,
-                                    name: Located::new(span, ident.into()),
-                                    ty: scrutinee,
-                                    is_static: false,
-                                    mutable,
-                                    value: None,
-                                    unused: !param,
-                                    has_hint,
-                                },
-                                false,
-                                false,
-                            )))
-                        }
+                        Err(Some(_)) => CheckedPattern::irrefutable(CheckedPatternData::Variable(
+                            self.insert_pattern_var(Variable {
+                                public: false,
+                                name: Located::new(span, ident.into()),
+                                ty: scrutinee,
+                                is_static: false,
+                                mutable,
+                                value: None,
+                                unused: !param,
+                                has_hint,
+                            }),
+                        )),
                         Err(None) => Default::default(),
                     }
                 } else {
@@ -5998,22 +6030,18 @@ impl TypeChecker {
                 );
                 self.check_empty_union_pattern(scrutinee, value, pattern.span)
             }
-            Pattern::MutBinding(name) => {
-                CheckedPattern::irrefutable(CheckedPatternData::Variable(self.insert(
-                    Variable {
-                        public: false,
-                        name: Located::new(span, name),
-                        ty: scrutinee,
-                        is_static: false,
-                        mutable: true,
-                        value: None,
-                        unused: !param,
-                        has_hint,
-                    },
-                    false,
-                    false,
-                )))
-            }
+            Pattern::MutBinding(name) => CheckedPattern::irrefutable(CheckedPatternData::Variable(
+                self.insert_pattern_var(Variable {
+                    public: false,
+                    name: Located::new(span, name),
+                    ty: scrutinee,
+                    is_static: false,
+                    mutable: true,
+                    value: None,
+                    unused: !param,
+                    has_hint,
+                }),
+            )),
             Pattern::Struct(sub) => self.check_struct_pattern(scrutinee, mutable, sub, span, param),
             Pattern::String(value) => {
                 let string = self.make_lang_type_by_name("string", [], span);

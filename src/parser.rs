@@ -754,7 +754,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 left.span,
                 ExprData::Is {
                     expr: left.into(),
-                    pattern: self.full_pattern(ctx),
+                    pattern: self.pattern_ex(false, ctx),
                 },
             ),
             Token::As => {
@@ -957,7 +957,12 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.expect_kind(Token::LCurly);
         let mut body = Vec::new();
         let span = self.next_until(Token::RCurly, token, |this| {
-            let pattern = this.full_pattern(EvalContext::Normal);
+            let pattern = this.pattern_ex(false, EvalContext::Normal).map(|data| FullPattern {
+                data,
+                if_expr: this
+                    .next_if_kind(Token::If)
+                    .map(|_| this.expression().into()),
+            });
             this.expect_kind(Token::FatArrow);
             let (needs_comma, expr) = this.block_or_normal_expr();
             if needs_comma {
@@ -1293,15 +1298,6 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn pattern(&mut self, mut_var: bool) -> Located<Pattern> {
         self.pattern_ex(mut_var, EvalContext::Normal)
-    }
-
-    fn full_pattern(&mut self, ctx: EvalContext) -> Located<FullPattern> {
-        self.pattern_ex(false, ctx).map(|data| FullPattern {
-            data,
-            if_expr: self
-                .next_if_kind(Token::If)
-                .map(|_| self.expression().into()),
-        })
     }
 
     fn is_range_end(&mut self, ctx: EvalContext) -> bool {

@@ -112,7 +112,7 @@ pub enum ExprData {
     },
     Is {
         expr: Box<Expr>,
-        pattern: Located<FullPattern>,
+        pattern: Located<Pattern>,
     },
     As {
         expr: Box<Expr>,
