@@ -33,7 +33,7 @@ pub struct ArrayPattern<T> {
 
 #[derive(Debug, Clone, Default, EnumAsInner)]
 pub enum CheckedPatternData {
-    UnionMember {
+    Variant {
         pattern: Option<Box<CheckedPattern>>,
         variant: String,
         inner: TypeId,

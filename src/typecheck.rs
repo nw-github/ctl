@@ -2938,7 +2938,11 @@ impl TypeChecker {
                             breaks: None,
                             infinite,
                         },
-                        |this| if !do_while { this.define(&vars); },
+                        |this| {
+                            if !do_while {
+                                this.define(&vars);
+                            }
+                        },
                     );
                     (Some(cond.into()), body)
                 } else {
@@ -3366,7 +3370,9 @@ impl TypeChecker {
     fn define(&mut self, vars: &[VariableId]) {
         for &var in vars.iter() {
             let name = self.proj.scopes.get(var).name.data.clone();
-            self.proj.scopes[self.current].vns.insert(name, Vis::new(ValueItem::Var(var), false));
+            self.proj.scopes[self.current]
+                .vns
+                .insert(name, Vis::new(ValueItem::Var(var), false));
         }
     }
 
@@ -5412,13 +5418,9 @@ impl TypeChecker {
                 for patt in patterns.clone() {
                     if patt.irrefutable {
                         return;
-                    } else if patt
-                        .data
-                        .as_union_member()
-                        .is_some_and(|(sub, variant, _, _)| {
-                            name == variant && sub.as_ref().map_or(true, |sub| sub.irrefutable)
-                        })
-                    {
+                    } else if patt.data.as_variant().is_some_and(|(sub, variant, _, _)| {
+                        name == variant && sub.as_ref().map_or(true, |sub| sub.irrefutable)
+                    }) {
                         continue 'outer;
                     }
                 }
@@ -5879,7 +5881,7 @@ impl TypeChecker {
     ) -> CheckedPattern {
         match self.get_union_variant(scrutinee, resolved, span) {
             Ok((Some(scrutinee), variant)) => {
-                CheckedPattern::refutable(CheckedPatternData::UnionMember {
+                CheckedPattern::refutable(CheckedPatternData::Variant {
                     pattern: Some(
                         self.check_tuple_pattern(scrutinee, mutable, subpatterns, span, param)
                             .into(),
@@ -5911,7 +5913,7 @@ impl TypeChecker {
                 "variant pattern",
                 span,
             )),
-            Ok((None, variant)) => CheckedPattern::refutable(CheckedPatternData::UnionMember {
+            Ok((None, variant)) => CheckedPattern::refutable(CheckedPatternData::Variant {
                 pattern: None,
                 variant,
                 inner: TypeId::UNKNOWN,
@@ -5941,7 +5943,7 @@ impl TypeChecker {
                 let value = self.resolve_value_path(&path);
                 match self.get_union_variant(scrutinee, value, span) {
                     Ok((Some(scrutinee), variant)) => {
-                        CheckedPattern::refutable(CheckedPatternData::UnionMember {
+                        CheckedPattern::refutable(CheckedPatternData::Variant {
                             pattern: Some(
                                 self.check_struct_pattern(
                                     scrutinee,
@@ -5980,7 +5982,7 @@ impl TypeChecker {
                             span,
                         )),
                         Ok((None, variant)) => {
-                            CheckedPattern::refutable(CheckedPatternData::UnionMember {
+                            CheckedPattern::refutable(CheckedPatternData::Variant {
                                 pattern: None,
                                 variant,
                                 inner: TypeId::UNKNOWN,
@@ -6084,7 +6086,7 @@ impl TypeChecker {
                 } else {
                     None
                 };
-                
+
                 let Some(end) = self.check_int_pattern(scrutinee, &end, span) else {
                     return Default::default();
                 };

@@ -1867,7 +1867,7 @@ impl Codegen {
                         .unwrap();
                     self.emit_pattern_if_stmt(
                         state,
-                        &CheckedPatternData::UnionMember {
+                        &CheckedPatternData::Variant {
                             pattern: Some(
                                 CheckedPattern::new(
                                     true,
@@ -2341,7 +2341,7 @@ impl Codegen {
                 hoist!(self, {
                     self.emit_pattern_if_stmt(
                         state,
-                        &CheckedPatternData::UnionMember {
+                        &CheckedPatternData::Variant {
                             pattern: None,
                             variant: "None".into(),
                             inner: ret,
@@ -2389,7 +2389,7 @@ impl Codegen {
                     let name = hoist!(self, self.emit_tmpvar(lhs, state));
                     self.emit_pattern_if_stmt(
                         state,
-                        &CheckedPatternData::UnionMember {
+                        &CheckedPatternData::Variant {
                             pattern: None,
                             variant: "None".into(),
                             inner: ret,
@@ -2579,7 +2579,7 @@ impl Codegen {
                     let inner_tmp = self.emit_tmpvar(lhs, state);
                     self.emit_pattern_if_stmt(
                         state,
-                        &CheckedPatternData::UnionMember {
+                        &CheckedPatternData::Variant {
                             pattern: None,
                             variant: "None".into(),
                             inner: ret,
@@ -3026,7 +3026,7 @@ impl Codegen {
                     });
                 });
             }
-            CheckedPatternData::UnionMember {
+            CheckedPatternData::Variant {
                 pattern: patt,
                 variant,
                 inner,
@@ -3126,10 +3126,8 @@ impl Codegen {
             }
             CheckedPatternData::Destrucure { patterns, borrows } => {
                 let src = Self::deref(&self.proj.types, src, ty);
-                let ut_id = ty
-                    .strip_references_r(&self.proj.types)
-                    .as_user()
-                    .map(|ut| ut.id);
+                let ty_stripped = ty.strip_references_r(&self.proj.types);
+                let ut_id = ty_stripped.as_user().map(|ut| ut.id);
                 for (member, inner, patt) in patterns {
                     self.emit_pattern_inner(
                         state,
