@@ -123,6 +123,10 @@ CTL_INIT($ctl_runtime_init) {
 #endif
 }
 
+#ifdef __GNUC__
+typedef __uint128_t uint128_t;
+#endif
+
 #if !defined(CTL_NOBITINT)
 typedef SINT(sizeof(void *) * 8) isize;
 typedef UINT(sizeof(void *) * 8) usize;

@@ -91,6 +91,7 @@ pub enum Token<'a> {
     Else,
     Loop,
     For,
+    Guard,
     In,
     Is,
     As,
@@ -171,6 +172,7 @@ impl std::fmt::Display for Token<'_> {
             Token::Raw => write!(f, "raw"),
             Token::This => write!(f, "This"),
             Token::Struct => write!(f, "struct"),
+            Token::Else => write!(f, "else"),
             _ => write!(f, "FIXME: {self:?}"),
         }
     }
@@ -803,6 +805,7 @@ impl<'a> Lexer<'a> {
             "false" => Token::False,
             "fn" => Token::Fn,
             "for" => Token::For,
+            "guard" => Token::Guard,
             "if" => Token::If,
             "impl" => Token::Impl,
             "import" => Token::Import,

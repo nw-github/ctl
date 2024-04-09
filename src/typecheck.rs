@@ -1078,6 +1078,7 @@ impl TypeChecker {
                 DeclaredStmt::None
             }
             StmtData::Let { ty, value, patt } => DeclaredStmt::Let { ty, value, patt },
+            StmtData::Guard { cond, body } => DeclaredStmt::Guard { cond, body },
             StmtData::Expr(expr) => DeclaredStmt::Expr(expr),
             StmtData::Defer(expr) => DeclaredStmt::Defer(expr),
             StmtData::Error => DeclaredStmt::None,
@@ -1566,6 +1567,14 @@ impl TypeChecker {
                 return CheckedStmt::Defer(
                     self.enter(ScopeKind::Defer, |this| this.check_expr(expr, None)),
                 );
+            }
+            DeclaredStmt::Guard { cond, body } => {
+                let (cond, vars) = self.type_check_with_listen(cond);
+                let span = body.span;
+                let body = self.check_expr_inner(body, Some(TypeId::NEVER));
+                let body = self.type_check_checked(body, TypeId::BOOL, span);
+                self.define(&vars);
+                return CheckedStmt::Guard { cond, body };
             }
             DeclaredStmt::Fn(f) => self.check_fn(f),
             DeclaredStmt::Binding {

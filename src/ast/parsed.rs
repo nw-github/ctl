@@ -54,6 +54,10 @@ pub struct Stmt {
 pub enum StmtData {
     Expr(Expr),
     Defer(Expr),
+    Guard {
+        cond: Expr,
+        body: Expr,
+    },
     Use(UsePath),
     Let {
         patt: Located<Pattern>,

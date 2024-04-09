@@ -33,6 +33,16 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
                 print_expr(value, indent + 1);
             }
         }
+        StmtData::Guard { cond, body } => {
+            eprintln!("{tabs}Guard");
+
+            let tabs = INDENT.repeat(indent + 1);
+            eprintln!("{tabs}Condition: ");
+            print_expr(cond, indent + 2);
+
+            eprintln!("{tabs}Body: ");
+            print_expr(body, indent + 2);
+        }
         StmtData::Fn(f) => print_fn(f, indent),
         StmtData::Struct(base) => print_struct("Struct", base, indent),
         StmtData::Union {

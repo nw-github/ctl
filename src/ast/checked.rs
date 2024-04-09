@@ -94,6 +94,10 @@ pub enum CheckedStmt {
     Expr(CheckedExpr),
     Let(CheckedPattern, Option<CheckedExpr>),
     Defer(CheckedExpr),
+    Guard {
+        cond: CheckedExpr,
+        body: CheckedExpr,
+    },
     #[default]
     None,
 }

@@ -1363,6 +1363,15 @@ impl Codegen {
             CheckedStmt::Defer(expr) => {
                 self.defers.last_mut().unwrap().1.push(expr);
             }
+            CheckedStmt::Guard { cond, body } => {
+                hoist_point!(self, {
+                    self.buffer.emit("if(!(");
+                    self.emit_expr_inline(cond, state);
+                    self.buffer.emit(")) {");
+                    hoist_point!(self, self.emit_expr_stmt(body, state));
+                    self.buffer.emit("}");
+                });
+            }
             CheckedStmt::None => {}
         }
     }
@@ -2066,7 +2075,8 @@ impl Codegen {
                     .with_templates(&mut self.proj.types, &state.func.ty_args);
                 let ty = inner.ty;
                 let tmp = hoist!(self, self.emit_tmpvar(*inner, state));
-                let (_, conditions) = self.emit_pattern(state, &patt.data, &tmp, ty);
+                let (bindings, conditions) = self.emit_pattern(state, &patt.data, &tmp, ty);
+                hoist!(self, self.buffer.emit(bindings.finish()));
                 self.buffer.emit(conditions.finish());
             }
             CheckedExprData::Lambda(_) => todo!(),

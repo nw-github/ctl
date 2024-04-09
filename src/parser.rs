@@ -308,8 +308,9 @@ impl<'a, 'b> Parser<'a, 'b> {
     fn statement(&mut self) -> Stmt {
         let stmt = match self.try_item() {
             Ok(item) => item,
-            Err((is_unsafe, attrs)) => {
-                if let Some(token) = self.next_if(|t| matches!(t, Token::Let | Token::Mut)) {
+            Err((is_unsafe, attrs)) => match self.peek().data {
+                Token::Let | Token::Mut => {
+                    let token = self.next();
                     if let Some(is_unsafe) = is_unsafe {
                         self.error_no_sync(Error::not_valid_here(&is_unsafe));
                     }
@@ -322,7 +323,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                         data: StmtData::Let { ty, value, patt },
                         attrs,
                     }
-                } else if self.next_if_kind(Token::Defer).is_some() {
+                }
+                Token::Defer => {
+                    self.next();
+
                     let (needs_semicolon, expr) = self.block_or_normal_expr();
                     if needs_semicolon {
                         self.expect_kind(Token::Semicolon);
@@ -333,7 +337,19 @@ impl<'a, 'b> Parser<'a, 'b> {
                         attrs,
                         data: StmtData::Defer(expr),
                     }
-                } else {
+                }
+                Token::Guard => {
+                    self.next();
+                    let cond = self.expression();
+                    self.expect_kind(Token::Else);
+                    let lcurly = self.expect_kind(Token::LCurly);
+                    let body = self.block_expr(lcurly.span);
+                    Stmt {
+                        data: StmtData::Guard { cond, body },
+                        attrs,
+                    }
+                }
+                _ => {
                     let (needs_semicolon, mut expr) = self.block_or_normal_expr();
                     if self.matches_kind(Token::RCurly) {
                         expr = Expr::new(expr.span, ExprData::Tail(expr.into()));
@@ -355,7 +371,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         data: StmtData::Expr(expr),
                     }
                 }
-            }
+            },
         };
 
         if self.needs_sync {

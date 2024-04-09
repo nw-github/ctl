@@ -21,6 +21,10 @@ pub struct DeclaredImplBlock {
 pub enum DeclaredStmt {
     Expr(Expr),
     Defer(Expr),
+    Guard {
+        cond: Expr,
+        body: Expr,
+    },
     Let {
         patt: Located<Pattern>,
         ty: Option<TypeHint>,
