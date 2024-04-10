@@ -400,6 +400,10 @@ pub extension BoolExt for bool {
             if *this { "true".format(f) } else { "false".format(f) }
         }
     }
+
+    pub fn then_some<T>(this, t: T): ?T {
+        if *this { t }
+    }
 }
 
 pub extension VoidExt for void {
@@ -425,9 +429,15 @@ pub extension VoidExt for void {
 use super::ryu::Float32Ext;
 use super::ryu::Float64Ext;
 
-mod libc {
+mod libm {
     pub import fn sqrt(num: f64): f64;
     pub import fn sqrtf(num: f32): f32;
+    pub import fn sin(n: f64): f64;
+    pub import fn sinf(n: f32): f32;
+    pub import fn cos(n: f64): f64;
+    pub import fn cosf(n: f32): f32;
+    pub import fn tan(n: f64): f64;
+    pub import fn tanf(n: f32): f32;
 }
 
 pub extension F32Ext for f32 {
@@ -436,7 +446,19 @@ pub extension F32Ext for f32 {
     }
 
     pub fn sqrt(this): f32 {
-        libc::sqrtf(*this)
+        libm::sqrtf(*this)
+    }
+
+    pub fn sin(this): f32 {
+        libm::sinf(*this)
+    }
+
+    pub fn cos(this): f32 {
+        libm::cosf(*this)
+    }
+
+    pub fn tan(this): f32 {
+        libm::tanf(*this)
     }
 
     impl Format {
@@ -452,7 +474,19 @@ pub extension F64Ext for f64 {
     }
 
     pub fn sqrt(this): f64 {
-        libc::sqrt(*this)
+        libm::sqrt(*this)
+    }
+
+    pub fn sin(this): f64 {
+        libm::sin(*this)
+    }
+
+    pub fn cos(this): f64 {
+        libm::cos(*this)
+    }
+
+    pub fn tan(this): f64 {
+        libm::tan(*this)
     }
 
     impl Format {
