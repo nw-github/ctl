@@ -431,13 +431,18 @@ use super::ryu::Float64Ext;
 
 mod libm {
     pub import fn sqrt(num: f64): f64;
-    pub import fn sqrtf(num: f32): f32;
     pub import fn sin(n: f64): f64;
-    pub import fn sinf(n: f32): f32;
     pub import fn cos(n: f64): f64;
-    pub import fn cosf(n: f32): f32;
     pub import fn tan(n: f64): f64;
+    pub import fn floor(n: f64): f64;
+    pub import fn ceil(n: f64): f64;
+
+    pub import fn sqrtf(num: f32): f32;
+    pub import fn sinf(n: f32): f32;
+    pub import fn cosf(n: f32): f32;
     pub import fn tanf(n: f32): f32;
+    pub import fn floorf(n: f32): f32;
+    pub import fn ceilf(n: f32): f32;
 }
 
 pub extension F32Ext for f32 {
@@ -459,6 +464,18 @@ pub extension F32Ext for f32 {
 
     pub fn tan(this): f32 {
         libm::tanf(*this)
+    }
+
+    pub fn floor(this): f32 {
+        libm::floorf(*this)
+    }
+
+    pub fn ceil(this): f32 {
+        libm::ceilf(*this)
+    }
+
+    pub fn pi(): f32 {
+        3.14159265358979323846
     }
 
     impl Format {
@@ -487,6 +504,18 @@ pub extension F64Ext for f64 {
 
     pub fn tan(this): f64 {
         libm::tan(*this)
+    }
+
+    pub fn floor(this): f64 {
+        libm::floor(*this)
+    }
+
+    pub fn ceil(this): f64 {
+        libm::ceil(*this)
+    }
+
+    pub fn pi(): f64 {
+        3.14159265358979323846
     }
 
     impl Format {

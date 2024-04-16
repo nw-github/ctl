@@ -16,11 +16,23 @@ pub extension StringExt for str {
             str::from_utf8_unchecked(buf[..])
         }
     }
+
+    pub fn +(this, rhs: str): str {
+        let llen = this.len();
+        let rlen = rhs.len();
+        mut buf: [u8] = std::vec::Vec::with_capacity(llen + rlen);
+        unsafe {
+            std::mem::copy(dst: buf.as_raw(), src: this.as_raw(), num: llen);
+            std::mem::copy(dst: buf.as_raw() + llen, src: rhs.as_raw(), num: rlen);
+            buf.set_len(llen + rlen);
+            str::from_utf8_unchecked(buf[..])
+        }
+    }
 }
 
 pub extension StdSignedExt<T: Numeric + Signed> for T {
     pub fn to_str_radix(this, radix: u32): str {
-        if !(radix is 2..=36) {
+        guard radix is 2..=36 else {
             core::panic("to_str_radix(): invalid radix");
         }
 
@@ -33,7 +45,7 @@ pub extension StdSignedExt<T: Numeric + Signed> for T {
 
 pub extension StdUnsignedExt<T: Numeric + Unsigned> for T {
     pub fn to_str_radix(this, radix: u32): str {
-        if !(radix is 2..=36) {
+        guard radix is 2..=36 else {
             core::panic("to_str_radix(): invalid radix");
         }
 

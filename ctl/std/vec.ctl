@@ -266,4 +266,15 @@ pub struct Vec<T> {
     pub fn [](mut this, _: std::range::RangeFull): [mut T..] {
         this.as_span_mut()
     }
+
+    #(inline(always))
+    pub fn []=<R: RangeBounds<uint>>(mut this, range: R, rhs: [T..]) {
+        this[range] = rhs;
+    }
+
+    // TODO: remove these when RangeFull can implement rangebounds
+    #(inline(always))
+    pub fn []=(mut this, range: std::range::RangeFull, rhs: [T..]) {
+        this[range] = rhs;
+    }
 }

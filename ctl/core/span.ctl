@@ -158,6 +158,13 @@ pub struct SpanMut<T> {
         unsafe SpanMut::new(this.ptr + start, end - start)
     }
 
+    pub fn fill(this, t: T) {
+        // TODO: use memset when possible
+        for item in this.iter_mut() {
+            *item = t;
+        }
+    }
+
     #(inline)
     pub fn []<I: Numeric + Integral>(this, idx: I): *mut T {
         unsafe raw_subscript_checked(this.ptr, this.len, idx) as *mut T
@@ -179,6 +186,27 @@ pub struct SpanMut<T> {
     #(inline(always))
     pub fn [](this, _: core::range::RangeFull): [mut T..] {
         *this
+    }
+
+    #(inline(always))
+    pub fn []=<R: RangeBounds<uint>>(this, range: R, rhs: [T..]) {
+        let subspan = this.subspan(range);
+        if subspan.len() != rhs.len() {
+            panic("Span assignment requires that both sides are the same length");
+        }
+
+        // copy_overlapping?
+        unsafe core::mem::copy(
+            dst: subspan.as_raw(),
+            src: rhs.as_raw(),
+            num: subspan.len(),
+        );
+    }
+
+    // TODO: remove this when RangeFull can implement rangebounds
+    #(inline(always))
+    pub fn []=(this, _: core::range::RangeFull, rhs: [T..]) {
+        this[0u..] = rhs;
     }
 }
 
