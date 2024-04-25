@@ -1,4 +1,4 @@
-use std::collections::{hash_map::Entry, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 
@@ -28,307 +28,293 @@ const ATTR_LINKNAME: &str = "c_name";
 const NULLPTR: &str = "((void*)0)";
 
 struct TypeGen {
-    structs: HashMap<GenericUserType, Vec<GenericUserType>>,
-    fnptrs: HashSet<FnPtr>,
-    arrays: HashMap<TypeId, HashSet<usize>>,
-    integers: HashSet<(u32, bool)>,
-    dynptrs: HashSet<GenericTrait>,
+    dependency_graph: HashMap<TypeId, Vec<TypeId>>,
 }
 
 impl TypeGen {
     fn new() -> Self {
         Self {
-            structs: Default::default(),
-            fnptrs: Default::default(),
-            arrays: Default::default(),
-            integers: Default::default(),
-            dynptrs: Default::default(),
+            dependency_graph: HashMap::new(),
         }
     }
 
-    fn finish(
-        mut self,
+    fn gen_int(flags: &CodegenFlags, buffer: &mut Buffer, bits: u32, signed: bool) {
+        if bits == 0 {
+            return;
+        }
+
+        if flags.no_bit_int {
+            buffer.emit(format!(
+                "typedef {}int{}_t {}{bits};",
+                if signed { "" } else { "u" },
+                nearest_pow_of_two(bits),
+                if signed { 's' } else { 'u' },
+            ));
+        } else {
+            let ch = if signed { 's' } else { 'u' };
+            buffer.emit(format!(
+                "typedef {}INT({bits}){ch}{bits};",
+                ch.to_uppercase(),
+            ));
+        }
+    }
+
+    fn gen_fnptr(
+        scopes: &Scopes,
+        types: &mut Types,
+        defs: &mut Buffer,
+        flags: &CodegenFlags,
+        f: &FnPtr,
+    ) {
+        defs.emit("typedef ");
+        defs.emit_type(scopes, types, f.ret, None, flags.minify);
+        defs.emit("(*");
+        defs.emit_fnptr_name(scopes, types, f, flags.minify);
+        defs.emit(")(");
+        for (i, &param) in f.params.iter().enumerate() {
+            if i > 0 {
+                defs.emit(",");
+            }
+
+            defs.emit_type(scopes, types, param, None, flags.minify);
+        }
+        defs.emit(");");
+    }
+
+    fn gen_dynptr(
+        flags: &CodegenFlags,
+        buffer: &mut Buffer,
+        defs: &mut Buffer,
+        scopes: &Scopes,
+        types: &mut Types,
+        tr: &GenericTrait,
+    ) {
+        buffer.emit("typedef struct ");
+        buffer.emit_vtable_struct_name(scopes, types, tr, flags.minify);
+        buffer.emit(" ");
+        buffer.emit_vtable_struct_name(scopes, types, tr, flags.minify);
+
+        buffer.emit(";typedef struct ");
+        buffer.emit_type_name(scopes, types, tr, flags.minify);
+        buffer.emit("{void*self;");
+        buffer.emit_vtable_struct_name(scopes, types, tr, flags.minify);
+        buffer.emit(" const*vtable;}");
+        buffer.emit_type_name(scopes, types, tr, flags.minify);
+        buffer.emit(";");
+
+        defs.emit("struct ");
+        defs.emit_vtable_struct_name(scopes, types, tr, flags.minify);
+        defs.emit("{");
+        for id in scopes.get_trait_impls(tr.id) {
+            for f in vtable_methods(scopes, types, scopes.get(id)) {
+                let ret = scopes.get(f.id).ret.with_templates(types, &tr.ty_args);
+                defs.emit_type(scopes, types, ret, None, flags.minify);
+                defs.emit("(*const ");
+                defs.emit_fn_name(
+                    scopes,
+                    types,
+                    &GenericFunc::new(f.id, tr.ty_args.clone()),
+                    flags.minify,
+                );
+                defs.emit(")(");
+                for (i, param) in scopes.get(f.id).params.iter().enumerate() {
+                    let ty = param.ty.with_templates(types, &tr.ty_args);
+                    if i > 0 {
+                        defs.emit(",");
+                        defs.emit_type(scopes, types, ty, None, flags.minify);
+                    } else if types.get(ty).is_ptr() {
+                        defs.emit("const void*");
+                    } else {
+                        defs.emit("void*");
+                    }
+                }
+                defs.emit(");");
+            }
+        }
+        defs.emit("};");
+    }
+
+    fn gen_usertype(
+        flags: &CodegenFlags,
+        buffer: &mut Buffer,
+        defs: &mut Buffer,
+        scopes: &Scopes,
+        types: &mut Types,
+        ut: &GenericUserType,
+    ) {
+        fn emit_member(
+            scopes: &Scopes,
+            types: &mut Types,
+            ut: &GenericUserType,
+            name: &str,
+            ty: TypeId,
+            buffer: &mut Buffer,
+            min: bool,
+        ) {
+            let ty = ty.with_templates(types, &ut.ty_args);
+            if ty.size_and_align(scopes, types).0 == 0 {
+                buffer.emit("CTL_ZST ");
+            }
+
+            buffer.emit_type(scopes, types, ty, None, min);
+            buffer.emit(format!(" {};", member_name(scopes, Some(ut.id), name)));
+        }
+
+        let ut_data = scopes.get(ut.id);
+        buffer.emit(if ut_data.kind.is_unsafe_union() {
+            "typedef union "
+        } else {
+            "typedef struct "
+        });
+        buffer.emit_type_name(scopes, types, ut, flags.minify);
+        buffer.emit(" ");
+        buffer.emit_type_name(scopes, types, ut, flags.minify);
+        buffer.emit(";");
+        if scopes.get(ut.id).attrs.has(ATTR_NOGEN) {
+            return;
+        }
+
+        defs.emit(if ut_data.kind.is_unsafe_union() {
+            "union "
+        } else {
+            "struct "
+        });
+        defs.emit_type_name(scopes, types, ut, flags.minify);
+        defs.emit("{");
+
+        let members = &scopes.get(ut.id).members;
+        if let UserTypeKind::Union(union) = &ut_data.kind {
+            if !matches!(types.get(union.tag), Type::Uint(0) | Type::Int(0)) {
+                defs.emit_type(scopes, types, union.tag, None, flags.minify);
+                defs.emit(format!(" {UNION_TAG_NAME};"));
+            }
+
+            for (name, member) in members {
+                emit_member(scopes, types, ut, name, member.ty, defs, flags.minify);
+            }
+
+            defs.emit("union{");
+            for (name, variant) in union.variants.iter() {
+                if let Some(ty) = variant.ty {
+                    emit_member(scopes, types, ut, name, ty, defs, flags.minify);
+                }
+            }
+            defs.emit("};");
+        } else {
+            if members.is_empty() {
+                defs.emit("CTL_DUMMY_MEMBER;");
+            }
+
+            for (name, member) in members {
+                emit_member(scopes, types, ut, name, member.ty, defs, flags.minify);
+            }
+        }
+        defs.emit("};");
+    }
+
+    fn gen_array(
+        flags: &CodegenFlags,
         scopes: &Scopes,
         types: &mut Types,
         buffer: &mut Buffer,
-        flags: &CodegenFlags,
+        defs: &mut Buffer,
+        ty: TypeId,
+        size: usize,
     ) {
+        buffer.emit("typedef struct ");
+        buffer.emit_array_struct_name(scopes, types, ty, size, flags.minify);
+        buffer.emit(" ");
+        buffer.emit_array_struct_name(scopes, types, ty, size, flags.minify);
+        buffer.emit(";");
+
+        defs.emit("struct ");
+        defs.emit_array_struct_name(scopes, types, ty, size, flags.minify);
+        defs.emit("{");
+        defs.emit_type(scopes, types, ty, None, flags.minify);
+        defs.emit(format!(" {ARRAY_DATA_NAME}[{size}];}};"));
+    }
+
+    fn emit(&self, scopes: &Scopes, types: &mut Types, buffer: &mut Buffer, flags: &CodegenFlags) {
         let mut defs = Buffer::default();
-        for (bits, signed) in self.integers {
-            if bits == 0 {
-                continue;
-            }
-
-            if flags.no_bit_int {
-                buffer.emit(format!(
-                    "typedef {}int{}_t {}{bits};",
-                    if signed { "" } else { "u" },
-                    nearest_pow_of_two(bits),
-                    if signed { 's' } else { 'u' },
-                ));
-            } else {
-                let ch = if signed { 's' } else { 'u' };
-                buffer.emit(format!(
-                    "typedef {}INT({bits}){ch}{bits};",
-                    ch.to_uppercase(),
-                ));
-            }
-        }
-
-        for f in self.fnptrs {
-            defs.emit("typedef ");
-            defs.emit_type(scopes, types, f.ret, None, flags.minify);
-            defs.emit("(*");
-            defs.emit_fnptr_name(scopes, types, &f, flags.minify);
-            defs.emit(")(");
-            for (i, &param) in f.params.iter().enumerate() {
-                if i > 0 {
-                    defs.emit(",");
+        for id in Self::order_types(&self.dependency_graph) {
+            match types.get(id) {
+                &Type::Int(bits) => Self::gen_int(flags, buffer, bits, true),
+                &Type::Uint(bits) => Self::gen_int(flags, buffer, bits, false),
+                Type::Func(f) => {
+                    let f = f.clone().as_fn_ptr(scopes, types);
+                    Self::gen_fnptr(scopes, types, &mut defs, flags, &f)
                 }
-
-                defs.emit_type(scopes, types, param, None, flags.minify);
-            }
-            defs.emit(");");
-        }
-
-        for tr in self.dynptrs {
-            buffer.emit("typedef struct ");
-            buffer.emit_vtable_struct_name(scopes, types, &tr, flags.minify);
-            buffer.emit(" ");
-            buffer.emit_vtable_struct_name(scopes, types, &tr, flags.minify);
-
-            buffer.emit(";typedef struct ");
-            buffer.emit_type_name(scopes, types, &tr, flags.minify);
-            buffer.emit("{void*self;");
-            buffer.emit_vtable_struct_name(scopes, types, &tr, flags.minify);
-            buffer.emit(" const*vtable;}");
-            buffer.emit_type_name(scopes, types, &tr, flags.minify);
-            buffer.emit(";");
-
-            defs.emit("struct ");
-            defs.emit_vtable_struct_name(scopes, types, &tr, flags.minify);
-            defs.emit("{");
-            for id in scopes.get_trait_impls(tr.id) {
-                for f in vtable_methods(scopes, types, scopes.get(id)) {
-                    let ret = scopes.get(f.id).ret.with_templates(types, &tr.ty_args);
-                    defs.emit_type(scopes, types, ret, None, flags.minify);
-                    defs.emit("(*const ");
-                    defs.emit_fn_name(
-                        scopes,
-                        types,
-                        &GenericFunc::new(f.id, tr.ty_args.clone()),
-                        flags.minify,
-                    );
-                    defs.emit(")(");
-                    for (i, param) in scopes.get(f.id).params.iter().enumerate() {
-                        let ty = param.ty.with_templates(types, &tr.ty_args);
-                        if i > 0 {
-                            defs.emit(",");
-                            defs.emit_type(scopes, types, ty, None, flags.minify);
-                        } else if types.get(ty).is_ptr() {
-                            defs.emit("const void*");
-                        } else {
-                            defs.emit("void*");
-                        }
-                    }
-                    defs.emit(");");
+                Type::FnPtr(f) => Self::gen_fnptr(scopes, types, &mut defs, flags, &f.clone()),
+                Type::User(ut) => {
+                    Self::gen_usertype(flags, buffer, &mut defs, scopes, types, &ut.clone())
                 }
-            }
-            defs.emit("};");
-        }
-
-        let mut emitted_arrays = HashSet::new();
-        for ut in Self::get_struct_order(&self.structs) {
-            let ut_data = scopes.get(ut.id);
-            buffer.emit(if ut_data.kind.is_unsafe_union() {
-                "typedef union "
-            } else {
-                "typedef struct "
-            });
-            buffer.emit_type_name(scopes, types, ut, flags.minify);
-            buffer.emit(" ");
-            buffer.emit_type_name(scopes, types, ut, flags.minify);
-            buffer.emit(";");
-            if scopes.get(ut.id).attrs.has(ATTR_NOGEN) {
-                continue;
-            }
-
-            defs.emit(if ut_data.kind.is_unsafe_union() {
-                "union "
-            } else {
-                "struct "
-            });
-            defs.emit_type_name(scopes, types, ut, flags.minify);
-            defs.emit("{");
-
-            let members = &scopes.get(ut.id).members;
-            if let UserTypeKind::Union(union) = &ut_data.kind {
-                if !matches!(types.get(union.tag), Type::Uint(0) | Type::Int(0)) {
-                    defs.emit_type(scopes, types, union.tag, None, flags.minify);
-                    defs.emit(format!(" {UNION_TAG_NAME};"));
+                Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
+                    Self::gen_dynptr(flags, buffer, &mut defs, scopes, types, &tr.clone())
                 }
-
-                for (name, member) in members {
-                    Self::emit_member(scopes, types, ut, name, member.ty, &mut defs, flags.minify);
+                &Type::Array(ty, len) => {
+                    Self::gen_array(flags, scopes, types, buffer, &mut defs, ty, len)
                 }
-
-                defs.emit("union{");
-                for (name, variant) in union.variants.iter() {
-                    if let Some(ty) = variant.ty {
-                        Self::emit_member(scopes, types, ut, name, ty, &mut defs, flags.minify);
-                    }
-                }
-                defs.emit("};");
-            } else {
-                if members.is_empty() {
-                    defs.emit("CTL_DUMMY_MEMBER;");
-                }
-
-                for (name, member) in members {
-                    Self::emit_member(scopes, types, ut, name, member.ty, &mut defs, flags.minify);
-                }
-            }
-
-            defs.emit("};");
-            let ty = types.insert(Type::User(ut.clone()));
-            if let Some(sizes) = self.arrays.remove(&ty) {
-                for size in sizes {
-                    Self::emit_array(
-                        scopes,
-                        types,
-                        buffer,
-                        Some(&mut defs),
-                        ty,
-                        size,
-                        flags.minify,
-                    );
-                }
-                emitted_arrays.insert(ty);
-            }
-        }
-
-        for (ty, sizes) in self
-            .arrays
-            .into_iter()
-            .filter(|(ty, _)| !emitted_arrays.contains(ty))
-        {
-            for size in sizes {
-                Self::emit_array(scopes, types, buffer, None, ty, size, flags.minify);
+                _ => {}
             }
         }
 
         buffer.emit(defs.finish());
     }
 
-    fn add_type(
-        &mut self,
-        scopes: &Scopes,
-        types: &mut Types,
-        diag: &mut Diagnostics,
-        ty: TypeId,
-        adding: Option<&GenericUserType>,
-    ) {
-        match types.get(ty) {
+    fn add_type(&mut self, scopes: &Scopes, types: &mut Types, ty: TypeId) {
+        if self.dependency_graph.contains_key(&ty) {
+            return;
+        }
+
+        let deps = match types.get(ty) {
             Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) => {
-                self.add_type(scopes, types, diag, *inner, adding)
+                return self.add_type(scopes, types, *inner);
             }
-            Type::FnPtr(ptr) => self.add_fnptr(scopes, types, diag, ptr.clone()),
-            Type::User(ut) => self.add_user_type(scopes, types, diag, ut.clone(), adding),
-            &Type::Array(ty, len) => self.add_array(scopes, types, diag, ty, len, adding),
-            Type::Int(bits) => {
-                self.integers.insert((*bits, true));
-            }
-            Type::Uint(bits) => {
-                self.integers.insert((*bits, false));
-            }
-            Type::DynPtr(ut) | Type::DynMutPtr(ut) => {
-                self.add_dynptr(ut.clone());
+            Type::FnPtr(f) => {
+                let ret = f.ret;
+                for param in f.params.clone() {
+                    self.add_type(scopes, types, param);
+                }
+
+                self.add_type(scopes, types, ret);
+                vec![]
             }
             Type::Func(f) => {
-                let fnptr = f.clone().as_fn_ptr(scopes, types);
-                self.add_fnptr(scopes, types, diag, fnptr)
+                let f = f.clone().as_fn_ptr(scopes, types);
+                for &param in f.params.iter() {
+                    self.add_type(scopes, types, param);
+                }
+
+                self.add_type(scopes, types, f.ret);
+                vec![]
             }
-            _ => {}
-        }
-    }
-
-    fn add_fnptr(&mut self, scopes: &Scopes, types: &mut Types, diag: &mut Diagnostics, f: FnPtr) {
-        for &param in f.params.iter() {
-            self.add_type(scopes, types, diag, param, None);
-        }
-
-        self.add_type(scopes, types, diag, f.ret, None);
-        self.fnptrs.insert(f);
-    }
-
-    fn add_dynptr(&mut self, tr: GenericTrait) {
-        self.dynptrs.insert(tr);
-    }
-
-    fn add_array(
-        &mut self,
-        scopes: &Scopes,
-        types: &mut Types,
-        diag: &mut Diagnostics,
-        ty: TypeId,
-        len: usize,
-        adding: Option<&GenericUserType>,
-    ) {
-        if let Entry::Occupied(mut entry) = self.arrays.entry(ty) {
-            entry.get_mut().insert(len);
-            return;
-        }
-
-        self.add_type(scopes, types, diag, ty, adding);
-        self.arrays.insert(ty, [len].into());
-    }
-
-    fn add_user_type(
-        &mut self,
-        scopes: &Scopes,
-        types: &mut Types,
-        diag: &mut Diagnostics,
-        ut: GenericUserType,
-        adding: Option<&GenericUserType>,
-    ) {
-        if self.structs.contains_key(&ut) {
-            return;
-        }
-
-        self.structs.insert(ut.clone(), Vec::new());
-        let sty = scopes.get(ut.id);
-
-        let mut deps = Vec::new();
-        for m in sty.members.values() {
-            self.check_member_dep(
-                scopes,
-                types,
-                diag,
-                &ut,
-                m.ty,
-                adding,
-                &mut deps,
-                sty.name.span,
-            );
-        }
-
-        if let Some(union) = sty.kind.as_union() {
-            self.add_type(scopes, types, diag, union.tag, None);
-            for ty in union.variants.values().flat_map(|v| v.ty) {
-                self.check_member_dep(
-                    scopes,
-                    types,
-                    diag,
-                    &ut,
-                    ty,
-                    adding,
-                    &mut deps,
-                    sty.name.span,
-                );
+            &Type::Array(ty, _) => {
+                self.add_type(scopes, types, ty);
+                vec![ty]
             }
-        }
+            Type::User(ut) => {
+                self.dependency_graph.insert(ty, Vec::new());
+                let sty = scopes.get(ut.id);
+                let ut = ut.clone();
 
-        self.structs.insert(ut, deps);
+                let mut deps = Vec::new();
+                for m in sty.members.values() {
+                    self.check_member_dep(scopes, types, &ut, m.ty, &mut deps);
+                }
+
+                if let Some(union) = sty.kind.as_union() {
+                    self.add_type(scopes, types, union.tag);
+                    for ty in union.variants.values().flat_map(|v| v.ty) {
+                        self.check_member_dep(scopes, types, &ut, ty, &mut deps);
+                    }
+                }
+                deps
+            }
+            Type::Int(_) | Type::Uint(_) | Type::DynMutPtr(_) | Type::DynPtr(_) => vec![],
+            _ => return,
+        };
+
+        self.dependency_graph.insert(ty, deps);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -336,129 +322,62 @@ impl TypeGen {
         &mut self,
         scopes: &Scopes,
         types: &mut Types,
-        diag: &mut Diagnostics,
         ut: &GenericUserType,
         ty: TypeId,
-        adding: Option<&GenericUserType>,
-        deps: &mut Vec<GenericUserType>,
-        span: Span,
+        deps: &mut Vec<TypeId>,
     ) {
         let ty = ty.with_templates(types, &ut.ty_args);
+        // TODO: cyclic dependency
         match types.get(ty) {
-            Type::User(dep) => {
-                let dep = dep.clone();
-                if matches!(adding, Some(adding) if adding == &dep) {
-                    // ideally get the span of the instantiation that caused this
-                    diag.error(Error::cyclic(
-                        &dep.name(scopes, types),
-                        &ut.name(scopes, types),
-                        scopes.get(dep.id).name.span,
-                    ));
-                    if !matches!(adding, Some(adding) if adding == ut) {
-                        diag.error(Error::cyclic(
-                            &ut.name(scopes, types),
-                            &dep.name(scopes, types),
-                            span,
-                        ));
-                    }
-                    return;
-                }
-
-                deps.push(dep.clone());
-                self.add_user_type(scopes, types, diag, dep, Some(ut));
-            }
-            &Type::Array(ty, len) => {
-                let mut inner = ty;
-                while let Type::Array(ty, _) = types.get(inner) {
-                    inner = *ty;
-                }
-
-                if let Type::User(data) = types.get(inner) {
-                    deps.push(data.clone());
-                }
-
-                self.add_array(scopes, types, diag, ty, len, Some(ut));
-            }
-            _ => self.add_type(scopes, types, diag, ty, adding),
+            Type::User(_)
+            | Type::Array(_, _)
+            | Type::Int(_)
+            | Type::Uint(_)
+            | Type::DynMutPtr(_)
+            | Type::DynPtr(_)
+            | Type::Func(_)
+            | Type::FnPtr(_) => deps.push(ty),
+            _ => {}
         }
+        self.add_type(scopes, types, ty);
     }
 
-    fn get_struct_order(
-        structs: &HashMap<GenericUserType, Vec<GenericUserType>>,
-    ) -> Vec<&GenericUserType> {
-        fn dfs<'b>(
-            sid: &'b GenericUserType,
-            structs: &'b HashMap<GenericUserType, Vec<GenericUserType>>,
-            visited: &mut HashMap<&'b GenericUserType, bool>,
-            result: &mut Vec<&'b GenericUserType>,
-        ) -> Result<(), ()> {
+    fn order_types(types: &HashMap<TypeId, Vec<TypeId>>) -> Vec<TypeId> {
+        fn dfs(
+            sid: TypeId,
+            types: &HashMap<TypeId, Vec<TypeId>>,
+            visited: &mut HashMap<TypeId, bool>,
+            result: &mut Vec<TypeId>,
+        ) -> bool {
             visited.insert(sid, true);
-            if let Some(deps) = structs.get(sid) {
+            if let Some(deps) = types.get(&sid) {
                 for dep in deps.iter() {
                     match visited.get(dep) {
-                        Some(true) => return Err(()),
-                        None => dfs(dep, structs, visited, result)?,
+                        Some(true) => return false,
+                        None => {
+                            if !dfs(*dep, types, visited, result) {
+                                return false;
+                            }
+                        },
                         _ => {}
                     }
                 }
             }
 
-            *visited.get_mut(sid).unwrap() = false;
+            *visited.get_mut(&sid).unwrap() = false;
             result.push(sid);
-            Ok(())
+            true
         }
 
         let mut state = HashMap::new();
         let mut result = Vec::new();
-        for sid in structs.keys() {
-            if state.contains_key(sid) {
-                continue;
+        for sid in types.keys() {
+            if !state.contains_key(sid) {
+                dfs(*sid, types, &mut state, &mut result);
             }
-            _ = dfs(sid, structs, &mut state, &mut result);
         }
 
         result
-    }
-
-    fn emit_member(
-        scopes: &Scopes,
-        types: &mut Types,
-        ut: &GenericUserType,
-        name: &str,
-        ty: TypeId,
-        buffer: &mut Buffer,
-        min: bool,
-    ) {
-        let ty = ty.with_templates(types, &ut.ty_args);
-        if ty.size_and_align(scopes, types).0 == 0 {
-            buffer.emit("CTL_ZST ");
-        }
-
-        buffer.emit_type(scopes, types, ty, None, min);
-        buffer.emit(format!(" {};", member_name(scopes, Some(ut.id), name)));
-    }
-
-    fn emit_array(
-        scopes: &Scopes,
-        types: &mut Types,
-        typedef: &mut Buffer,
-        defs: Option<&mut Buffer>,
-        ty: TypeId,
-        size: usize,
-        min: bool,
-    ) {
-        typedef.emit("typedef struct ");
-        typedef.emit_array_struct_name(scopes, types, ty, size, min);
-        typedef.emit(" ");
-        typedef.emit_array_struct_name(scopes, types, ty, size, min);
-        typedef.emit(";");
-
-        let defs = defs.unwrap_or(typedef);
-        defs.emit("struct ");
-        defs.emit_array_struct_name(scopes, types, ty, size, min);
-        defs.emit("{");
-        defs.emit_type(scopes, types, ty, None, min);
-        defs.emit(format!(" {ARRAY_DATA_NAME}[{size}];}};"));
     }
 }
 
@@ -603,17 +522,17 @@ impl Buffer {
         scopes: &Scopes,
         types: &mut Types,
         id: TypeId,
-        tg: Option<(&mut Diagnostics, &mut TypeGen)>,
+        mut tg: Option<&mut TypeGen>,
         min: bool,
     ) {
+        if let Some(gen) = &mut tg {
+            gen.add_type(scopes, types, id);
+        }
         match types.get(id) {
             Type::Void | Type::Never | Type::CVoid => self.emit("$void"),
             ty @ (Type::Int(bits) | Type::Uint(bits)) => {
                 let ch = if matches!(ty, Type::Int(_)) { 's' } else { 'u' };
                 self.emit(format!("{ch}{bits}"));
-                if let Some((diag, tg)) = tg {
-                    tg.add_type(scopes, types, diag, id, None);
-                }
             }
             ty @ (Type::CInt(inner) | Type::CUint(inner)) => {
                 if matches!(ty, Type::CUint(_)) {
@@ -654,19 +573,8 @@ impl Buffer {
                     self.emit("*");
                 }
             }
-            Type::FnPtr(f) => {
-                if let Some((diag, tg)) = tg {
-                    tg.add_fnptr(scopes, types, diag, f.clone());
-                }
-                self.emit_mangled_name(scopes, types, id, min);
-            }
-            Type::Func(f) => {
-                let f = f.clone().as_fn_ptr(scopes, types);
-                self.emit_mangled_name(scopes, types, id, min);
-                if let Some((diag, tg)) = tg {
-                    tg.add_fnptr(scopes, types, diag, f);
-                }
-            }
+            Type::FnPtr(_) => self.emit_mangled_name(scopes, types, id, min),
+            Type::Func(_) => self.emit_mangled_name(scopes, types, id, min),
             Type::User(ut) => {
                 if scopes.get(ut.id).kind.is_template() {
                     eprintln!("ICE: Template type in emit_type");
@@ -677,25 +585,12 @@ impl Buffer {
                 if let Some(ty) = id.can_omit_tag(scopes, types) {
                     self.emit_type(scopes, types, ty, tg, min);
                 } else {
-                    let ut = ut.clone();
-                    self.emit_type_name(scopes, types, &ut, min);
-                    if let Some((diag, tg)) = tg {
-                        tg.add_user_type(scopes, types, diag, ut, None);
-                    }
+                    self.emit_type_name(scopes, types, &ut.clone(), min);
                 }
             }
-            &Type::Array(ty, len) => {
-                self.emit_mangled_name(scopes, types, id, min);
-                if let Some((diag, tg)) = tg {
-                    tg.add_array(scopes, types, diag, ty, len, None);
-                }
-            }
+            &Type::Array(_, _) => self.emit_mangled_name(scopes, types, id, min),
             Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                let tr = tr.clone();
-                self.emit_type_name(scopes, types, &tr, min);
-                if let Some((_, tg)) = tg {
-                    tg.add_dynptr(tr);
-                }
+                self.emit_type_name(scopes, types, &tr.clone(), min)
             }
             Type::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             Type::Unresolved(_) => panic!("ICE: TypeId::Unresolved in emit_type"),
@@ -1069,7 +964,7 @@ impl Codegen {
         if this.proj.diag.has_errors() {
             return Err(this.proj.diag);
         }
-        this.tg.finish(
+        this.tg.emit(
             &this.proj.scopes,
             &mut this.proj.types,
             &mut this.buffer,
@@ -2888,8 +2783,8 @@ impl Codegen {
                         "mul" => BinaryOp::Mul,
                         "div" => BinaryOp::Div,
                         "rem" => BinaryOp::Rem,
-                        "and" => BinaryOp::BitAnd,
-                        "or" => BinaryOp::BitOr,
+                        "bit_and" => BinaryOp::BitAnd,
+                        "bit_or" => BinaryOp::BitOr,
                         "xor" => BinaryOp::Xor,
                         "shl" => BinaryOp::Shl,
                         "shr" => BinaryOp::Shr,
@@ -3294,7 +3189,7 @@ impl Codegen {
             &self.proj.scopes,
             &mut self.proj.types,
             id,
-            Some((&mut self.proj.diag, &mut self.tg)),
+            Some(&mut self.tg),
             self.flags.minify,
         );
     }

@@ -1572,7 +1572,7 @@ impl TypeChecker {
                 let (cond, vars) = self.type_check_with_listen(cond);
                 let span = body.span;
                 let body = self.check_expr_inner(body, Some(TypeId::NEVER));
-                let body = self.type_check_checked(body, TypeId::BOOL, span);
+                let body = self.type_check_checked(body, TypeId::NEVER, span);
                 self.define(&vars);
                 return CheckedStmt::Guard { cond, body };
             }
@@ -4612,10 +4612,12 @@ impl TypeChecker {
             let target = resolve_type!(self, self.proj.scopes.get_mut(id).params[i].ty);
             match std::mem::take(&mut self.proj.scopes.get_mut(id).params[i].default) {
                 Some(DefaultExpr::Unchecked(scope, expr)) => {
+                    let prev = self.proj.diag.set_errors_enabled(true);
                     self.enter_id_and_resolve(scope, |this| {
                         this.proj.scopes.get_mut(id).params[i].default =
                             Some(DefaultExpr::Checked(this.type_check(expr, target)));
                     });
+                    self.proj.diag.set_errors_enabled(prev);
                 }
                 other => self.proj.scopes.get_mut(id).params[i].default = other,
             }
