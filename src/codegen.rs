@@ -43,11 +43,11 @@ impl TypeGen {
             return;
         }
 
-        if flags.no_bit_int {
+        let nearest = nearest_pow_of_two(bits);
+        if flags.no_bit_int || nearest == bits as usize {
             buffer.emit(format!(
-                "typedef {}int{}_t {}{bits};",
+                "typedef {}int{nearest}_t {}{bits};",
                 if signed { "" } else { "u" },
-                nearest_pow_of_two(bits),
                 if signed { 's' } else { 'u' },
             ));
         } else {

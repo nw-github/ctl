@@ -1,3 +1,50 @@
+#if __STDC_VERSION__ >= 201112L
+#include <stdatomic.h>
+
+// clang & msvc require that the pointers are to _Atomic types
+#if !defined(__GNUC__) || defined(__clang__)
+#define ctl_atomic_store_explicit(a, b, c) \
+    atomic_store_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
+#define ctl_atomic_load_explicit(a, b) atomic_load_explicit((const _Atomic __typeof__(*(a)) *)a, b)
+#define ctl_atomic_exchange_explicit(a, b, c) \
+    atomic_exchange_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
+#define ctl_atomic_compare_exchange_strong_explicit(a, b, c, d, e) \
+    atomic_compare_exchange_strong_explicit(                       \
+        (_Atomic __typeof__(*(a)) *)a, (_Atomic __typeof__(*(b)) *)b, c, d, e)
+#define ctl_atomic_compare_exchange_weak_explicit(a, b) \
+    atomic_compare_exchange_weak_explicit(              \
+        (_Atomic __typeof__(*(a)) *)a, (_Atomic __typeof__(*(b)) *)b, c, d, e)
+#define ctl_atomic_fetch_add_explicit(a, b, c) \
+    atomic_fetch_add_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
+#define ctl_atomic_fetch_sub_explicit(a, b, c) \
+    atomic_fetch_sub_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
+#define ctl_atomic_fetch_and_explicit(a, b, c) \
+    atomic_fetch_and_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
+#define ctl_atomic_fetch_or_explicit(a, b, c) \
+    atomic_fetch_or_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
+#define ctl_atomic_fetch_xor_explicit(a, b, c) \
+    atomic_fetch_xor_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
+#define ctl_atomic_is_lock_free(a) atomic_is_lock_free((_Atomic __typeof__(*(a)) *)a)
+#else
+
+#define ctl_atomic_store_explicit                   atomic_store_explicit
+#define ctl_atomic_load_explicit                    atomic_load_explicit
+#define ctl_atomic_exchange_explicit                atomic_exchange_explicit
+#define ctl_atomic_compare_exchange_strong_explicit atomic_compare_exchange_strong_explicit
+#define ctl_atomic_compare_exchange_weak_explicit   atomic_compare_exchange_weak_explicit
+#define ctl_atomic_fetch_add_explicit               atomic_fetch_add_explicit
+#define ctl_atomic_fetch_sub_explicit               atomic_fetch_sub_explicit
+#define ctl_atomic_fetch_and_explicit               atomic_fetch_and_explicit
+#define ctl_atomic_fetch_or_explicit                atomic_fetch_or_explicit
+#define ctl_atomic_fetch_xor_explicit               atomic_fetch_xor_explicit
+#define ctl_atomic_is_lock_free                     atomic_is_lock_free
+
+#endif
+
+#endif
+
+#include <stdint.h>
+
 #if !defined(CTL_NOGC)
 #include <gc.h>
 
@@ -22,7 +69,7 @@
 #define CTL_ZST
 #endif
 
-#define CTL_NONNULL()
+#define CTL_NONNULL(...)
 #define CTL_DUMMY_INIT    0
 #define CTL_DUMMY_MEMBER  CTL_ZST char dummy
 #define CTL_NORETURN      __declspec(noreturn)
@@ -98,7 +145,10 @@
         .$span = {.$ptr = (u8 *)data, .$len = (usize)n } \
     }
 
+#if defined(__clang__)
 #pragma clang diagnostic ignored "-Wundefined-internal"
+#endif
+
 static void $ctl_static_init(void);
 static void $ctl_static_deinit(void);
 
@@ -125,19 +175,13 @@ CTL_INIT($ctl_runtime_init) {
 
 #ifdef __GNUC__
 typedef __uint128_t uint128_t;
+typedef __int128_t int128_t;
 #endif
 
-#if !defined(CTL_NOBITINT)
-typedef SINT(sizeof(void *) * 8) isize;
-typedef UINT(sizeof(void *) * 8) usize;
-typedef UINT(32) $char;
-typedef UINT(8) $bool;
-#else
 typedef intptr_t isize;
 typedef uintptr_t usize;
 typedef uint32_t $char;
 typedef uint8_t $bool;
-#endif
 
 typedef float f32;
 typedef double f64;

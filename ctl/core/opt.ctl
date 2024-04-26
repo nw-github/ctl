@@ -23,9 +23,14 @@ pub union Option<T> {
         if this is ?val {
             val
         } else {
-            *this = rhs;
-            this.as_mut()!
+            this.insert(rhs)
         }
+    }
+
+    pub fn insert(mut this, rhs: T): *mut T {
+        // TODO: do this more efficiently without the unwrap
+        *this = rhs;
+        this.as_mut()!
     }
 
     pub fn take(mut this): This {

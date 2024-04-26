@@ -125,13 +125,11 @@ enum SubCommand {
 fn compile_results(src: &str, leak: bool, output: &Path, build: BuildOrRun) -> Result<()> {
     let warnings = ["-Wall", "-Wextra"];
     let mut cc = Command::new(build.cc)
-        .arg("-o")
+        .args(["-fwrapv", "-std=c11", "-x", "c", "-", "-o"])
         .arg(output)
-        .arg("-std=c11")
-        .arg(if !leak { "-lgc" } else { "" })
-        .arg(if build.optimized { "-O2" } else { "" })
+        .args(if !leak { &["-lgc"][..] } else { &[] })
+        .args(if build.optimized { &["-O2"][..] } else { &[] })
         .args(if build.verbose { &warnings[..] } else { &[] })
-        .args(["-x", "c", "-"])
         .args(build.ccargs.unwrap_or_default().split(' '))
         .args(build.libs.iter().map(|lib| format!("-l{lib}")))
         .stdin(Stdio::piped())
