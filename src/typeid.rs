@@ -455,6 +455,7 @@ impl Types {
                 Type::Char,
                 Type::F32,
                 Type::F64,
+                Type::CVoid,
             ]
             .into(),
         }
@@ -502,6 +503,7 @@ impl TypeId {
     pub const CHAR: TypeId = TypeId(7);
     pub const F32: TypeId = TypeId(8);
     pub const F64: TypeId = TypeId(9);
+    pub const CVOID: TypeId = TypeId(10);
 
     pub fn name(self, scopes: &Scopes, types: &mut Types) -> String {
         match types.get(self) {
@@ -857,5 +859,9 @@ impl TypeId {
         } else {
             self
         }
+    }
+
+    pub fn is_void(self) -> bool {
+        matches!(self, TypeId::NEVER | TypeId::VOID | TypeId::CVOID)
     }
 }

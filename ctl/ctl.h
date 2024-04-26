@@ -147,6 +147,7 @@
 
 #if defined(__clang__)
 #pragma clang diagnostic ignored "-Wundefined-internal"
+#pragma clang diagnostic ignored "-Wunused-function"
 #endif
 
 static void $ctl_static_init(void);

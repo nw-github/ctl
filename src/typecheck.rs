@@ -1143,7 +1143,7 @@ impl TypeChecker {
                     match name {
                         "size_of" | "align_of" | "panic" | "binary_op" | "unary_op"
                         | "numeric_cast" | "numeric_abs" | "numeric_lt" | "max_value"
-                        | "min_value" | "raw_offset" => {
+                        | "min_value" | "raw_offset" | "unreachable_unchecked" => {
                             self.proj.scopes.intrinsics.insert(id, name.to_string());
                         }
                         _ => self.error(Error::new(

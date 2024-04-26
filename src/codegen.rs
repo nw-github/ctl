@@ -67,7 +67,11 @@ impl TypeGen {
         f: &FnPtr,
     ) {
         defs.emit("typedef ");
-        defs.emit_type(scopes, types, f.ret, None, flags.minify);
+        if f.ret.is_void() {
+            defs.emit("void");
+        } else {
+            defs.emit_type(scopes, types, f.ret, None, flags.minify);
+        }
         defs.emit("(*");
         defs.emit_fnptr_name(scopes, types, f, flags.minify);
         defs.emit(")(");
@@ -108,7 +112,11 @@ impl TypeGen {
         for id in scopes.get_trait_impls(tr.id) {
             for f in vtable_methods(scopes, types, scopes.get(id)) {
                 let ret = scopes.get(f.id).ret.with_templates(types, &tr.ty_args);
-                defs.emit_type(scopes, types, ret, None, flags.minify);
+                if ret.is_void() {
+                    defs.emit("void");
+                } else {
+                    defs.emit_type(scopes, types, ret, None, flags.minify);
+                }
                 defs.emit("(*const ");
                 defs.emit_fn_name(
                     scopes,
@@ -358,7 +366,7 @@ impl TypeGen {
                             if !dfs(*dep, types, visited, result) {
                                 return false;
                             }
-                        },
+                        }
                         _ => {}
                     }
                 }
@@ -668,20 +676,8 @@ impl Buffer {
         }
     }
 
-    fn emit_fn_name(&mut self, scopes: &Scopes, types: &mut Types, f: &GenericFunc, min: bool) {
-        self.emit_fn_name_ex(scopes, types, false, f, min)
-    }
-
-    fn emit_fn_name_ex(
-        &mut self,
-        scopes: &Scopes,
-        types: &mut Types,
-        real: bool,
-        func: &GenericFunc,
-        min: bool,
-    ) {
+    fn emit_fn_name(&mut self, scopes: &Scopes, types: &mut Types, func: &GenericFunc, min: bool) {
         let f = scopes.get(func.id);
-        let is_macro = f.attrs.has(ATTR_NOGEN);
         if f.linkage == Linkage::Internal {
             if min {
                 self.emit(format!("p{}", func.id));
@@ -700,15 +696,7 @@ impl Buffer {
                 }
             }
         } else {
-            let name = f.attrs.val(ATTR_LINKNAME).unwrap_or(&f.name.data);
-            if !is_macro && !real && needs_fn_wrapper(types, f) {
-                if min {
-                    return self.emit(format!("f{}", func.id));
-                } else {
-                    self.emit("$");
-                }
-            }
-            self.emit(name);
+            self.emit(f.attrs.val(ATTR_LINKNAME).unwrap_or(&f.name.data));
         }
     }
 
@@ -1021,13 +1009,17 @@ impl Codegen {
                     let ret = func_data
                         .ret
                         .with_templates(&mut self.proj.types, &func.ty_args);
-                    self.buffer.emit_type(
-                        &self.proj.scopes,
-                        &mut self.proj.types,
-                        ret,
-                        None,
-                        self.flags.minify,
-                    );
+                    if ret.is_void() {
+                        self.buffer.emit("void");
+                    } else {
+                        self.buffer.emit_type(
+                            &self.proj.scopes,
+                            &mut self.proj.types,
+                            ret,
+                            None,
+                            self.flags.minify,
+                        );
+                    }
                     self.buffer.emit("(*)(");
                     for (i, param) in func_data.params.iter().enumerate() {
                         let param_ty = param.ty.with_templates(&mut self.proj.types, &func.ty_args);
@@ -1074,7 +1066,7 @@ impl Codegen {
 
     fn gen_c_main(&mut self, main: &mut State) -> String {
         self.buffer.emit("int main(int argc, char **argv){");
-        let returns = self.proj.scopes.get(main.func.id).ret != TypeId::VOID;
+        let returns = !self.proj.scopes.get(main.func.id).ret.is_void();
         if let Some(id) = self
             .proj
             .scopes
@@ -1138,47 +1130,16 @@ impl Codegen {
             return;
         }
 
-        if needs_fn_wrapper(&self.proj.types, func) {
-            usebuf!(self, prototypes, {
-                let returns_never = func.ret == TypeId::NEVER;
-                let params = func.params.len();
-                self.emit_prototype(state, false, false);
-
-                self.buffer.emit("{");
-                self.emit_prototype(state, true, true);
-                self.buffer.emit(";");
-                self.buffer.emit_fn_name_ex(
-                    &self.proj.scopes,
-                    &mut self.proj.types,
-                    true,
-                    &state.func,
-                    self.flags.minify,
-                );
-                self.buffer.emit("(");
-                for i in 0..params {
-                    if i > 0 {
-                        self.buffer.emit(",");
-                    }
-                    self.buffer.emit(format!("$p{i}"));
-                }
-
-                self.buffer.emit(");");
-                if returns_never {
-                    self.buffer.emit("CTL_UNREACHABLE();}");
-                } else {
-                    self.buffer.emit(format!("return {VOID_INSTANCE};}}"));
-                }
-            });
-            return;
-        }
-
         usebuf!(self, prototypes, {
             self.emit_prototype(state, true, false);
             self.buffer.emit(";");
         });
         let func = self.proj.scopes.get(state.func.id);
         if let Some(body) = func.body.clone() {
-            let returns_never = func.ret == TypeId::NEVER;
+            let void_return = func
+                .ret
+                .with_templates(&mut self.proj.types, &state.func.ty_args)
+                .is_void();
             let params = func.params.clone();
             let unused = self.emit_prototype(state, false, false);
             self.buffer.emit("{");
@@ -1197,11 +1158,12 @@ impl Codegen {
                     continue;
                 };
 
-                self.emit_pattern_bindings(state, &patt.data, &param.label, param.ty);
+                let ty = param.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                self.emit_pattern_bindings(state, &patt.data, &param.label, ty);
             }
 
             hoist_point!(self, {
-                if returns_never {
+                if void_return {
                     self.emit_expr_stmt(body, state);
                     self.buffer.emit("}");
                 } else {
@@ -1214,9 +1176,7 @@ impl Codegen {
     }
 
     fn emit_expr_stmt(&mut self, expr: CheckedExpr, state: &mut State) {
-        if Self::has_side_effects(&expr)
-            && !matches!(expr.data, CheckedExprData::Binary { op, .. } if op.is_assignment())
-        {
+        if Self::has_side_effects(&expr) && !expr.ty.is_void() {
             self.emit_expr_inline(expr, state);
             self.buffer.emit(";");
         } else {
@@ -1347,12 +1307,21 @@ impl Codegen {
                     }
                 }
 
+                if expr.ty.is_void() {
+                    self.buffer.emit("(");
+                }
                 let id = func.id;
                 self.emit_expr(*callee, state);
                 self.buffer.emit("(");
                 self.finish_emit_fn_args(state, id, args);
+                if expr.ty.is_void() {
+                    self.buffer.emit(format!(", {VOID_INSTANCE})"));
+                }
             }
             CheckedExprData::CallDyn(func, mut args) => {
+                if expr.ty.is_void() {
+                    self.buffer.emit("(");
+                }
                 let (_, recv) = args.shift_remove_index(0).unwrap();
                 let recv = hoist!(self, self.emit_tmpvar(recv, state));
                 self.buffer.emit(format!("{recv}.vtable->"));
@@ -1369,10 +1338,16 @@ impl Codegen {
                     self.buffer.emit(",");
                     self.finish_emit_fn_args(state, func.id, args);
                 }
+                if expr.ty.is_void() {
+                    self.buffer.emit(format!(", {VOID_INSTANCE})"));
+                }
             }
-            CheckedExprData::CallFnPtr(expr, args) => {
+            CheckedExprData::CallFnPtr(inner, args) => {
+                if expr.ty.is_void() {
+                    self.buffer.emit("(");
+                }
                 self.buffer.emit("(");
-                self.emit_expr(*expr, state);
+                self.emit_expr(*inner, state);
                 self.buffer.emit(")(");
                 for (i, arg) in args.into_iter().enumerate() {
                     if i > 0 {
@@ -1382,6 +1357,9 @@ impl Codegen {
                     self.emit_expr(arg, state);
                 }
                 self.buffer.emit(")");
+                if expr.ty.is_void() {
+                    self.buffer.emit(format!(", {VOID_INSTANCE})"));
+                }
             }
             CheckedExprData::Array(exprs) => {
                 self.buffer.emit("(");
@@ -1885,12 +1863,15 @@ impl Codegen {
                     expr.ty = expr
                         .ty
                         .with_templates(&mut self.proj.types, &state.func.ty_args);
+                    let void = expr.ty.is_void();
                     let tmp = self.emit_tmpvar(*expr, state);
-                    self.leave_scope(
-                        state,
-                        &format!("return {tmp}"),
-                        self.proj.scopes.get(state.func.id).body_scope,
-                    );
+                    let str = if void {
+                        self.buffer.emit(format!("(void){tmp};"));
+                        "return".into()
+                    } else {
+                        format!("return {tmp}")
+                    };
+                    self.leave_scope(state, &str, self.proj.scopes.get(state.func.id).body_scope);
                 });
                 self.buffer.emit(VOID_INSTANCE);
             }
@@ -2738,6 +2719,7 @@ impl Codegen {
                     &self.proj.scopes,
                 );
 
+                self.buffer.emit("(");
                 self.buffer.emit_fn_name(
                     &self.proj.scopes,
                     &mut self.proj.types,
@@ -2751,9 +2733,13 @@ impl Codegen {
                     }
                     self.emit_expr(expr, state);
                 }
-                self.buffer.emit(")");
+                self.buffer.emit(format!("), {VOID_INSTANCE})"));
 
                 self.funcs.insert(panic);
+            }
+            "unreachable_unchecked" => {
+                hoist!(self, self.buffer.emit("CTL_UNREACHABLE();"));
+                self.buffer.emit(VOID_INSTANCE);
             }
             "binary_op" => {
                 let mut args = args.into_iter();
@@ -3207,14 +3193,14 @@ impl Codegen {
         real: bool,
     ) -> Vec<VariableId> {
         let f = self.proj.scopes.get(state.func.id);
-        let mut ret = f.ret;
-        ret = ret.with_templates(&mut self.proj.types, &state.func.ty_args);
+        let ret = f
+            .ret
+            .with_templates(&mut self.proj.types, &state.func.ty_args);
 
-        let needs_wrapper = needs_fn_wrapper(&self.proj.types, f);
-        if f.linkage == Linkage::Internal || (needs_wrapper && !real) {
+        if f.linkage == Linkage::Internal {
             self.buffer.emit("static ");
             // TODO: inline manually
-            if needs_wrapper || f.attrs.val("inline").is_some_and(|v| v == "always") {
+            if f.attrs.val("inline").is_some_and(|v| v == "always") {
                 self.buffer.emit("CTL_FORCEINLINE ");
             } else if f.attrs.has("inline") {
                 self.buffer.emit("inline ");
@@ -3223,23 +3209,22 @@ impl Codegen {
             self.buffer.emit("extern ");
         }
 
-        if ret == TypeId::NEVER && (!needs_wrapper || real) {
+        if ret == TypeId::NEVER && real {
             self.buffer.emit("CTL_NORETURN ");
         }
 
         let variadic = f.variadic;
         let params = f.params.clone();
         let is_import = f.linkage == Linkage::Import;
-        if real && needs_wrapper {
+        if ret.is_void() {
             self.buffer.emit("void ");
         } else {
             self.emit_type(ret);
             self.buffer.emit(" ");
         }
-        self.buffer.emit_fn_name_ex(
+        self.buffer.emit_fn_name(
             &self.proj.scopes,
             &mut self.proj.types,
-            real,
             &state.func,
             self.flags.minify,
         );
@@ -3258,10 +3243,7 @@ impl Codegen {
                 nonnull.push(format!("{}", i + 1));
             }
 
-            if !is_prototype && needs_wrapper {
-                self.emit_type(ty);
-                self.buffer.emit(format!(" $p{i}"));
-            } else if is_import || is_prototype {
+            if is_import || is_prototype {
                 self.emit_type(ty);
             } else if let ParamPattern::Checked(CheckedPattern {
                 data: CheckedPatternData::Variable(id),
@@ -3449,11 +3431,6 @@ impl Codegen {
         }
         count
     }
-}
-
-fn needs_fn_wrapper(types: &Types, f: &Function) -> bool {
-    f.linkage == Linkage::Import
-        && matches!(types.get(f.ret), Type::Void | Type::Never | Type::CVoid)
 }
 
 fn vtable_methods(scopes: &Scopes, types: &Types, tr: &UserType) -> Vec<Vis<FunctionId>> {

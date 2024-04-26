@@ -19,13 +19,13 @@ pub import fn align_of<T>(): uint;
 pub import fn panic(s: core::string::str): never;
 
 #(intrinsic)
+pub import fn unreachable_unchecked(): never;
+
+#(intrinsic)
 pub import fn raw_offset<T, U: Integral>(ptr: *raw T, offset: U): *raw T;
 
 
 
-
-#(c_opaque, c_name(CTL_UNREACHABLE))
-pub import fn builtin_unreachable(): never;
 
 #(c_opaque, c_name(CTL_MEMSET))
 pub import fn memset(dst: *mut c_void, c: c_int, len: uint): *mut c_void;
