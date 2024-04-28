@@ -1,6 +1,6 @@
 mod libc {
-    pub import fn abort(): never;
-    pub import fn exit(code: c_int): never;
+    pub extern fn abort(): never;
+    pub extern fn exit(code: c_int): never;
 }
 
 pub fn exit(code: u32): never {

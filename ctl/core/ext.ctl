@@ -85,13 +85,13 @@ mod gcc_intrin {
 
     // TODO: compiler independent fallback for these functions
     #(c_opaque)
-    pub import fn __builtin_add_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
+    pub extern fn __builtin_add_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
 
     #(c_opaque)
-    pub import fn __builtin_sub_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
+    pub extern fn __builtin_sub_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
 
     #(c_opaque)
-    pub import fn __builtin_mul_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
+    pub extern fn __builtin_mul_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
 }
 
 pub extension IntegralExt<T: Numeric + Integral> for T {
@@ -430,19 +430,19 @@ use super::ryu::Float32Ext;
 use super::ryu::Float64Ext;
 
 mod libm {
-    pub import fn sqrt(num: f64): f64;
-    pub import fn sin(n: f64): f64;
-    pub import fn cos(n: f64): f64;
-    pub import fn tan(n: f64): f64;
-    pub import fn floor(n: f64): f64;
-    pub import fn ceil(n: f64): f64;
+    pub extern fn sqrt(num: f64): f64;
+    pub extern fn sin(n: f64): f64;
+    pub extern fn cos(n: f64): f64;
+    pub extern fn tan(n: f64): f64;
+    pub extern fn floor(n: f64): f64;
+    pub extern fn ceil(n: f64): f64;
 
-    pub import fn sqrtf(num: f32): f32;
-    pub import fn sinf(n: f32): f32;
-    pub import fn cosf(n: f32): f32;
-    pub import fn tanf(n: f32): f32;
-    pub import fn floorf(n: f32): f32;
-    pub import fn ceilf(n: f32): f32;
+    pub extern fn sqrtf(num: f32): f32;
+    pub extern fn sinf(n: f32): f32;
+    pub extern fn cosf(n: f32): f32;
+    pub extern fn tanf(n: f32): f32;
+    pub extern fn floorf(n: f32): f32;
+    pub extern fn ceilf(n: f32): f32;
 }
 
 pub extension F32Ext for f32 {

@@ -1,4 +1,4 @@
-import fn write(fd: c_int, buf: *c_void, count: uint): int;
+extern fn write(fd: c_int, buf: *c_void, count: uint): int;
 
 pub fn println(s: str = "") {
     print(s);

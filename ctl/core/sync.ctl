@@ -9,16 +9,16 @@ pub union MemoryOrder {
 
 mod c11 {
     #(c_opaque, c_name(ctl_atomic_store_explicit))
-    pub import fn atomic_store_explicit<T>(obj: *mut T, desired: T, order: u32);
+    pub extern fn atomic_store_explicit<T>(obj: *mut T, desired: T, order: u32);
 
     #(c_opaque, c_name(ctl_atomic_load_explicit))
-    pub import fn atomic_load_explicit<T>(obj: *T, order: u32): T;
+    pub extern fn atomic_load_explicit<T>(obj: *T, order: u32): T;
 
     #(c_opaque, c_name(ctl_atomic_exchange_explicit))
-    pub import fn atomic_exchange_explicit<T>(obj: *mut T, desired: T, order: u32): T;
+    pub extern fn atomic_exchange_explicit<T>(obj: *mut T, desired: T, order: u32): T;
 
     #(c_opaque, c_name(ctl_atomic_compare_exchange_strong_explicit))
-    pub import fn atomic_compare_exchange_strong_explicit<T>(
+    pub extern fn atomic_compare_exchange_strong_explicit<T>(
         obj: *mut T,
         expected: *mut T,
         desired: T,
@@ -27,7 +27,7 @@ mod c11 {
     ): bool; // _Bool
 
     #(c_opaque, c_name(ctl_atomic_compare_exchange_weak_explicit))
-    pub import fn atomic_compare_exchange_weak_explicit<T>(
+    pub extern fn atomic_compare_exchange_weak_explicit<T>(
         obj: *mut T,
         expected: *mut T,
         desired: T,
@@ -36,22 +36,22 @@ mod c11 {
     ): bool; // _Bool
 
     #(c_opaque, c_name(ctl_atomic_fetch_add_explicit))
-    pub import fn atomic_fetch_add_explicit<T>(obj: *mut T, arg: T, order: u32): T;
+    pub extern fn atomic_fetch_add_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
     #(c_opaque, c_name(ctl_atomic_fetch_sub_explicit))
-    pub import fn atomic_fetch_sub_explicit<T>(obj: *mut T, arg: T, order: u32): T;
+    pub extern fn atomic_fetch_sub_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
     #(c_opaque, c_name(ctl_atomic_fetch_and_explicit))
-    pub import fn atomic_fetch_and_explicit<T>(obj: *mut T, arg: T, order: u32): T;
+    pub extern fn atomic_fetch_and_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
     #(c_opaque, c_name(ctl_atomic_fetch_or_explicit))
-    pub import fn atomic_fetch_or_explicit<T>(obj: *mut T, arg: T, order: u32): T;
+    pub extern fn atomic_fetch_or_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
     #(c_opaque, c_name(ctl_atomic_fetch_xor_explicit))
-    pub import fn atomic_fetch_xor_explicit<T>(obj: *mut T, arg: T, order: u32): T;
+    pub extern fn atomic_fetch_xor_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
     #(c_opaque, c_name(ctl_atomic_is_lock_free))
-    pub import fn atomic_is_lock_free<T>(obj: *T): bool; // _Bool
+    pub extern fn atomic_is_lock_free<T>(obj: *T): bool; // _Bool
 }
 
 pub struct Atomic<T> {

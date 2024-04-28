@@ -9,10 +9,10 @@ use crate::{
 
 #[derive(Clone, Copy)]
 struct FnConfig {
-    linkage: Linkage,
+    is_extern: bool,
     is_public: bool,
     is_unsafe: bool,
-    body: Option<bool>,
+    require_body: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -70,25 +70,13 @@ impl<'a, 'b> Parser<'a, 'b> {
         let attrs = self.attributes();
         let public = self.next_if_kind(Token::Pub);
         let is_unsafe = self.next_if_kind(Token::Unsafe);
-        let is_import = self.next_if_kind(Token::Import);
-        let is_export = self.next_if_kind(Token::Export);
-        if let Some((_, export)) = is_import.as_ref().zip(is_export.as_ref()) {
-            self.error_no_sync(Error::new(
-                "cannot combine 'import' and 'export' modifiers",
-                export.span,
-            ));
-        }
-
+        let is_extern = self.next_if_kind(Token::Extern);
         let attrs = match self.try_function(
             FnConfig {
-                linkage: match (&is_export, &is_import) {
-                    (Some(_), None) => Linkage::Export,
-                    (None, Some(_)) => Linkage::Import,
-                    _ => Linkage::Internal,
-                },
                 is_public: public.is_some(),
+                is_extern: is_extern.is_some(),
                 is_unsafe: is_unsafe.is_some(),
-                body: Some(is_import.is_none()),
+                require_body: is_extern.is_none(),
             },
             attrs,
         ) {
@@ -116,7 +104,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
-            if let Some(token) = is_import.or(is_export) {
+            if let Some(token) = is_extern {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
@@ -125,7 +113,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 data: StmtData::Struct(self.structure(public.is_some(), token.span, false)),
             })
         } else if let Some(token) = self.next_if_kind(Token::Union) {
-            if let Some(token) = is_import.or(is_export) {
+            if let Some(token) = is_extern {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
@@ -138,7 +126,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 },
             })
         } else if let Some(token) = self.next_if_kind(Token::Trait) {
-            if let Some(token) = is_import.or(is_export) {
+            if let Some(token) = is_extern {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
@@ -151,7 +139,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
-            if let Some(token) = is_import.or(is_export) {
+            if let Some(token) = is_extern {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
@@ -164,7 +152,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
-            if let Some(token) = is_import.or(is_export) {
+            if let Some(token) = is_extern {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
@@ -186,7 +174,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
-            if let Some(token) = is_import.or(is_export) {
+            if let Some(token) = is_extern {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
@@ -265,7 +253,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
-            if let Some(token) = is_import.or(is_export) {
+            if let Some(token) = is_extern {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
@@ -286,7 +274,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 attrs,
             })
         } else {
-            if let Some(token) = is_import.or(is_export) {
+            if let Some(token) = is_extern {
                 self.error_no_sync(Error::not_valid_here(&token));
             }
 
@@ -1520,9 +1508,9 @@ impl<'a, 'b> Parser<'a, 'b> {
 
             let config = FnConfig {
                 is_public: public.is_some(),
-                linkage: Linkage::Internal,
+                is_extern: false,
                 is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
-                body: Some(true),
+                require_body: true,
             };
             if config.is_unsafe {
                 match this.expect_fn(config, attrs) {
@@ -1585,10 +1573,10 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
             let config = FnConfig {
-                linkage: Linkage::Internal,
+                is_extern: false,
                 is_public: this.next_if_kind(Token::Pub).is_some(),
                 is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
-                body: Some(true),
+                require_body: true,
             };
             if config.is_public || config.is_unsafe {
                 match this.expect_fn(config, attrs) {
@@ -1691,8 +1679,8 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.next_until(Token::RCurly, span, |this| {
             let is_unsafe = this.next_if_kind(Token::Unsafe).is_some();
             let config = FnConfig {
-                body: None,
-                linkage: Linkage::Internal,
+                require_body: false,
+                is_extern: false,
                 is_public: true,
                 is_unsafe,
             };
@@ -1735,8 +1723,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 impls.push(this.impl_block(token.span));
             } else {
                 let config = FnConfig {
-                    body: Some(true),
-                    linkage: Linkage::Internal,
+                    require_body: true,
+                    is_extern: false,
                     is_public: this.next_if_kind(Token::Pub).is_some(),
                     is_unsafe: this.next_if_kind(Token::Unsafe).is_some(),
                 };
@@ -1774,8 +1762,8 @@ impl<'a, 'b> Parser<'a, 'b> {
             let is_unsafe = this.next_if_kind(Token::Unsafe).is_some();
             let config = FnConfig {
                 is_public: true,
-                body: Some(true),
-                linkage: Linkage::Internal,
+                is_extern: false,
+                require_body: true,
                 is_unsafe,
             };
             match this.expect_fn(config, attrs) {
@@ -1802,8 +1790,8 @@ impl<'a, 'b> Parser<'a, 'b> {
         FnConfig {
             is_public,
             is_unsafe,
-            linkage,
-            body,
+            is_extern,
+            require_body,
         }: FnConfig,
         attrs: Attributes,
     ) -> Result<Either<Fn, OperatorFn>, Attributes> {
@@ -1900,40 +1888,21 @@ impl<'a, 'b> Parser<'a, 'b> {
             TypeHint::Void
         };
 
-        let body = match body {
-            Some(true) => {
-                if let Some(semi) = self.next_if_kind(Token::Semicolon) {
-                    self.error(Error::new("expected '{'", semi.span));
-                    None
-                } else {
-                    let lcurly = self.expect_kind(Token::LCurly);
-                    Some(self.block_expr(lcurly.span))
-                }
+        let body = if let Some(semi) = self.next_if_kind(Token::Semicolon) {
+            if require_body {
+                self.error(Error::new("expected '{'", semi.span));
             }
-            Some(false) => {
-                if let Some(lcurly) = self.next_if_kind(Token::LCurly) {
-                    self.error(Error::new("expected ';'", lcurly.span));
-                    Some(self.block_expr(lcurly.span))
-                } else {
-                    self.expect_kind(Token::Semicolon);
-                    None
-                }
-            }
-            None => {
-                if self.next_if_kind(Token::Semicolon).is_some() {
-                    None
-                } else {
-                    let lcurly = self.expect_kind(Token::LCurly);
-                    Some(self.block_expr(lcurly.span))
-                }
-            }
+            None
+        } else {
+            let lcurly = self.expect_kind(Token::LCurly);
+            Some(self.block_expr(lcurly.span))
         };
 
         match name.data {
             Left(ident) => Ok(Left(Fn {
                 name: Located::new(name.span, ident),
                 public: is_public,
-                linkage,
+                is_extern,
                 is_async,
                 is_unsafe,
                 variadic,

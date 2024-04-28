@@ -5,14 +5,6 @@ use crate::{
 
 use super::{Attributes, BinaryOp, UnaryOp};
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Linkage {
-    Import,
-    Export,
-    #[default]
-    Internal,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum PathOrigin {
     Root,
@@ -466,7 +458,7 @@ pub struct Fn {
     pub attrs: Attributes,
     pub public: bool,
     pub name: Located<String>,
-    pub linkage: Linkage,
+    pub is_extern: bool,
     pub is_async: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
@@ -483,7 +475,7 @@ impl Fn {
             attrs: func.attrs,
             public: true,
             name: Located::new(func.name.span, name),
-            linkage: Linkage::Internal,
+            is_extern: false,
             is_async: false,
             is_unsafe: false,
             variadic: false,

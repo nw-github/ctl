@@ -532,7 +532,7 @@
         {
           "comment": "storage keywords",
           "name": "keyword.other.ctl storage.type.ctl",
-          "match": "\\b(import|export|let|mod)\\b"
+          "match": "\\b(import|export|extern|let|mod)\\b"
         },
         {
           "comment": "const keyword",

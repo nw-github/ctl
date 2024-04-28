@@ -1,6 +1,6 @@
 use crate::ast::parsed::{
-    Expr, ExprData, Fn, ImplBlock, IntPattern, Linkage, OperatorFn, Stmt, StmtData, Struct,
-    UsePath, UsePathTail,
+    Expr, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Stmt, StmtData, Struct, UsePath,
+    UsePathTail,
 };
 
 const INDENT: &str = "  ";
@@ -444,7 +444,7 @@ fn print_stmts(stmts: &[Stmt], indent: usize) {
 fn print_fn(
     Fn {
         name,
-        linkage,
+        is_extern,
         is_async,
         is_unsafe,
         type_params,
@@ -462,11 +462,9 @@ fn print_fn(
     eprint!("{tabs}Fn[{name}]");
     print_bool!(is_async);
     print_bool!(is_unsafe);
+    print_bool!(is_extern);
     print_bool!(variadic);
     print_bool!(public);
-    if *linkage != Linkage::Internal {
-        eprint!("({linkage:?})");
-    }
     eprintln!();
 
     let plus_1 = INDENT.repeat(indent + 1);

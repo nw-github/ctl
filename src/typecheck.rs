@@ -567,7 +567,7 @@ impl TypeChecker {
                     public: base.public && !base.members.iter().any(|m| !m.public),
                     name: base.name.clone(),
                     is_async: false,
-                    linkage: Linkage::Internal,
+                    is_extern: false,
                     variadic: false,
                     is_unsafe: false,
                     type_params: vec![],
@@ -774,7 +774,7 @@ impl TypeChecker {
                 fns.push(this.declare_fn(Fn {
                     public: base.public,
                     name: Located::new(variant.name.span, variant.name.data),
-                    linkage: Linkage::Internal,
+                    is_extern: false,
                     is_async: false,
                     variadic: false,
                     is_unsafe: false,
@@ -1087,13 +1087,13 @@ impl TypeChecker {
 
     fn declare_fn(&mut self, f: Fn) -> DeclaredFn {
         let span = f.name.span;
-        if f.variadic && f.linkage != Linkage::Import {
-            self.error(Error::new("only import functions may be variadic", span))
+        if f.variadic && (!f.is_extern || f.body.is_some()) {
+            self.error(Error::new("only imported extern functions may be variadic", span))
         }
 
-        if f.linkage == Linkage::Export && !f.type_params.is_empty() {
+        if f.is_extern && !f.type_params.is_empty() && f.body.is_some() {
             self.error(Error::new(
-                "generic functions cannot be declared 'export'",
+                "generic functions cannot be declared 'extern'",
                 span,
             ))
         }
@@ -1103,7 +1103,7 @@ impl TypeChecker {
                 public: f.public,
                 attrs: f.attrs,
                 name: f.name,
-                linkage: f.linkage,
+                is_extern: f.is_extern,
                 is_async: f.is_async,
                 is_unsafe: f.is_unsafe,
                 variadic: f.variadic,
@@ -4566,6 +4566,7 @@ impl TypeChecker {
     }
 
     fn resolve_members(&mut self, id: UserTypeId) {
+        // TODO: check for cyclic dependencies
         for i in 0..self.proj.scopes.get(id).members.len() {
             resolve_type!(self, self.proj.scopes.get_mut(id).members[i].ty);
         }

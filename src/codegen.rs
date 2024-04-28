@@ -3,11 +3,7 @@ use std::collections::{HashMap, HashSet};
 use indexmap::IndexMap;
 
 use crate::{
-    ast::{
-        checked::*,
-        parsed::{Linkage, RangePattern},
-        BinaryOp, UnaryOp,
-    },
+    ast::{checked::*, parsed::RangePattern, BinaryOp, UnaryOp},
     error::{Diagnostics, Error},
     lexer::Span,
     nearest_pow_of_two,
@@ -27,15 +23,12 @@ const ATTR_NOGEN: &str = "c_opaque";
 const ATTR_LINKNAME: &str = "c_name";
 const NULLPTR: &str = "((void*)0)";
 
-struct TypeGen {
-    dependency_graph: HashMap<TypeId, Vec<TypeId>>,
-}
+#[derive(Default)]
+struct TypeGen(HashMap<TypeId, Vec<TypeId>>);
 
 impl TypeGen {
     fn new() -> Self {
-        Self {
-            dependency_graph: HashMap::new(),
-        }
+        Self::default()
     }
 
     fn gen_int(flags: &CodegenFlags, buffer: &mut Buffer, bits: u32, signed: bool) {
@@ -62,49 +55,49 @@ impl TypeGen {
     fn gen_fnptr(
         scopes: &Scopes,
         types: &mut Types,
-        defs: &mut Buffer,
+        buffer: &mut Buffer,
         flags: &CodegenFlags,
         f: &FnPtr,
     ) {
-        defs.emit("typedef ");
+        buffer.emit("typedef ");
         if f.ret.is_void() {
-            defs.emit("void");
+            buffer.emit("void");
         } else {
-            defs.emit_type(scopes, types, f.ret, None, flags.minify);
+            buffer.emit_type(scopes, types, f.ret, None, flags.minify);
         }
-        defs.emit("(*");
-        defs.emit_fnptr_name(scopes, types, f, flags.minify);
-        defs.emit(")(");
+        buffer.emit("(*");
+        buffer.emit_fnptr_name(scopes, types, f, flags.minify);
+        buffer.emit(")(");
         for (i, &param) in f.params.iter().enumerate() {
             if i > 0 {
-                defs.emit(",");
+                buffer.emit(",");
             }
 
-            defs.emit_type(scopes, types, param, None, flags.minify);
+            buffer.emit_type(scopes, types, param, None, flags.minify);
         }
-        defs.emit(");");
+        buffer.emit(");");
     }
 
     fn gen_dynptr(
         flags: &CodegenFlags,
-        buffer: &mut Buffer,
+        decls: &mut Buffer,
         defs: &mut Buffer,
         scopes: &Scopes,
         types: &mut Types,
         tr: &GenericTrait,
     ) {
-        buffer.emit("typedef struct ");
-        buffer.emit_vtable_struct_name(scopes, types, tr, flags.minify);
-        buffer.emit(" ");
-        buffer.emit_vtable_struct_name(scopes, types, tr, flags.minify);
+        decls.emit("typedef struct ");
+        decls.emit_vtable_struct_name(scopes, types, tr, flags.minify);
+        decls.emit(" ");
+        decls.emit_vtable_struct_name(scopes, types, tr, flags.minify);
 
-        buffer.emit(";typedef struct ");
-        buffer.emit_type_name(scopes, types, tr, flags.minify);
-        buffer.emit("{void*self;");
-        buffer.emit_vtable_struct_name(scopes, types, tr, flags.minify);
-        buffer.emit(" const*vtable;}");
-        buffer.emit_type_name(scopes, types, tr, flags.minify);
-        buffer.emit(";");
+        decls.emit(";typedef struct ");
+        decls.emit_type_name(scopes, types, tr, flags.minify);
+        decls.emit("{void*self;");
+        decls.emit_vtable_struct_name(scopes, types, tr, flags.minify);
+        decls.emit(" const*vtable;}");
+        decls.emit_type_name(scopes, types, tr, flags.minify);
+        decls.emit(";");
 
         defs.emit("struct ");
         defs.emit_vtable_struct_name(scopes, types, tr, flags.minify);
@@ -144,7 +137,7 @@ impl TypeGen {
 
     fn gen_usertype(
         flags: &CodegenFlags,
-        buffer: &mut Buffer,
+        decls: &mut Buffer,
         defs: &mut Buffer,
         scopes: &Scopes,
         types: &mut Types,
@@ -169,15 +162,15 @@ impl TypeGen {
         }
 
         let ut_data = scopes.get(ut.id);
-        buffer.emit(if ut_data.kind.is_unsafe_union() {
+        decls.emit(if ut_data.kind.is_unsafe_union() {
             "typedef union "
         } else {
             "typedef struct "
         });
-        buffer.emit_type_name(scopes, types, ut, flags.minify);
-        buffer.emit(" ");
-        buffer.emit_type_name(scopes, types, ut, flags.minify);
-        buffer.emit(";");
+        decls.emit_type_name(scopes, types, ut, flags.minify);
+        decls.emit(" ");
+        decls.emit_type_name(scopes, types, ut, flags.minify);
+        decls.emit(";");
         if scopes.get(ut.id).attrs.has(ATTR_NOGEN) {
             return;
         }
@@ -224,16 +217,16 @@ impl TypeGen {
         flags: &CodegenFlags,
         scopes: &Scopes,
         types: &mut Types,
-        buffer: &mut Buffer,
+        decls: &mut Buffer,
         defs: &mut Buffer,
         ty: TypeId,
         size: usize,
     ) {
-        buffer.emit("typedef struct ");
-        buffer.emit_array_struct_name(scopes, types, ty, size, flags.minify);
-        buffer.emit(" ");
-        buffer.emit_array_struct_name(scopes, types, ty, size, flags.minify);
-        buffer.emit(";");
+        decls.emit("typedef struct ");
+        decls.emit_array_struct_name(scopes, types, ty, size, flags.minify);
+        decls.emit(" ");
+        decls.emit_array_struct_name(scopes, types, ty, size, flags.minify);
+        decls.emit(";");
 
         defs.emit("struct ");
         defs.emit_array_struct_name(scopes, types, ty, size, flags.minify);
@@ -244,33 +237,30 @@ impl TypeGen {
 
     fn emit(&self, scopes: &Scopes, types: &mut Types, buffer: &mut Buffer, flags: &CodegenFlags) {
         let mut defs = Buffer::default();
-        for id in Self::order_types(&self.dependency_graph) {
-            match types.get(id) {
-                &Type::Int(bits) => Self::gen_int(flags, buffer, bits, true),
-                &Type::Uint(bits) => Self::gen_int(flags, buffer, bits, false),
-                Type::Func(f) => {
-                    let f = f.clone().as_fn_ptr(scopes, types);
-                    Self::gen_fnptr(scopes, types, &mut defs, flags, &f)
-                }
-                Type::FnPtr(f) => Self::gen_fnptr(scopes, types, &mut defs, flags, &f.clone()),
-                Type::User(ut) => {
-                    Self::gen_usertype(flags, buffer, &mut defs, scopes, types, &ut.clone())
-                }
-                Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                    Self::gen_dynptr(flags, buffer, &mut defs, scopes, types, &tr.clone())
-                }
-                &Type::Array(ty, len) => {
-                    Self::gen_array(flags, scopes, types, buffer, &mut defs, ty, len)
-                }
-                _ => {}
+        self.gen_types(|id| match types.get(id) {
+            &Type::Int(bits) => Self::gen_int(flags, buffer, bits, true),
+            &Type::Uint(bits) => Self::gen_int(flags, buffer, bits, false),
+            Type::Func(f) => {
+                let f = f.clone().as_fn_ptr(scopes, types);
+                Self::gen_fnptr(scopes, types, &mut defs, flags, &f)
             }
-        }
-
+            Type::FnPtr(f) => Self::gen_fnptr(scopes, types, &mut defs, flags, &f.clone()),
+            Type::User(ut) => {
+                Self::gen_usertype(flags, buffer, &mut defs, scopes, types, &ut.clone())
+            }
+            Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
+                Self::gen_dynptr(flags, buffer, &mut defs, scopes, types, &tr.clone())
+            }
+            &Type::Array(ty, len) => {
+                Self::gen_array(flags, scopes, types, buffer, &mut defs, ty, len)
+            }
+            _ => {}
+        });
         buffer.emit(defs.finish());
     }
 
     fn add_type(&mut self, scopes: &Scopes, types: &mut Types, ty: TypeId) {
-        if self.dependency_graph.contains_key(&ty) {
+        if self.0.contains_key(&ty) {
             return;
         }
 
@@ -301,7 +291,7 @@ impl TypeGen {
                 vec![ty]
             }
             Type::User(ut) => {
-                self.dependency_graph.insert(ty, Vec::new());
+                self.0.insert(ty, Vec::new());
                 let sty = scopes.get(ut.id);
                 let ut = ut.clone();
 
@@ -322,7 +312,7 @@ impl TypeGen {
             _ => return,
         };
 
-        self.dependency_graph.insert(ty, deps);
+        self.0.insert(ty, deps);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -335,7 +325,6 @@ impl TypeGen {
         deps: &mut Vec<TypeId>,
     ) {
         let ty = ty.with_templates(types, &ut.ty_args);
-        // TODO: cyclic dependency
         match types.get(ty) {
             Type::User(_)
             | Type::Array(_, _)
@@ -350,42 +339,40 @@ impl TypeGen {
         self.add_type(scopes, types, ty);
     }
 
-    fn order_types(types: &HashMap<TypeId, Vec<TypeId>>) -> Vec<TypeId> {
+    fn gen_types(&self, mut gen: impl FnMut(TypeId)) {
         fn dfs(
             sid: TypeId,
             types: &HashMap<TypeId, Vec<TypeId>>,
-            visited: &mut HashMap<TypeId, bool>,
-            result: &mut Vec<TypeId>,
+            visiting: &mut HashMap<TypeId, bool>,
+            gen: &mut impl FnMut(TypeId),
         ) -> bool {
-            visited.insert(sid, true);
+            visiting.insert(sid, true);
             if let Some(deps) = types.get(&sid) {
                 for dep in deps.iter() {
-                    match visited.get(dep) {
-                        Some(true) => return false,
+                    match visiting.get(dep) {
+                        Some(true) => return false, // currently in the process of visiting, recursive dependency
+                        Some(false) => {}           // already seen, do nothing
                         None => {
-                            if !dfs(*dep, types, visited, result) {
+                            // never seen
+                            if !dfs(*dep, types, visiting, gen) {
                                 return false;
                             }
                         }
-                        _ => {}
                     }
                 }
             }
 
-            *visited.get_mut(&sid).unwrap() = false;
-            result.push(sid);
+            visiting.insert(sid, false);
+            gen(sid);
             true
         }
 
         let mut state = HashMap::new();
-        let mut result = Vec::new();
-        for sid in types.keys() {
+        for sid in self.0.keys() {
             if !state.contains_key(sid) {
-                dfs(*sid, types, &mut state, &mut result);
+                dfs(*sid, &self.0, &mut state, &mut gen);
             }
         }
-
-        result
     }
 }
 
@@ -678,7 +665,7 @@ impl Buffer {
 
     fn emit_fn_name(&mut self, scopes: &Scopes, types: &mut Types, func: &GenericFunc, min: bool) {
         let f = scopes.get(func.id);
-        if f.linkage == Linkage::Internal {
+        if !f.is_extern {
             if min {
                 self.emit(format!("p{}", func.id));
                 for &ty in func.ty_args.values() {
@@ -862,7 +849,7 @@ impl Codegen {
         let exports = proj
             .scopes
             .functions()
-            .filter(|(_, f)| f.linkage == Linkage::Export)
+            .filter(|(_, f)| f.is_extern && f.body.is_some())
             .map(|(id, _)| {
                 State::in_body_scope(GenericFunc::from_id(&proj.scopes, id), &proj.scopes)
             });
@@ -1158,7 +1145,9 @@ impl Codegen {
                     continue;
                 };
 
-                let ty = param.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                let ty = param
+                    .ty
+                    .with_templates(&mut self.proj.types, &state.func.ty_args);
                 self.emit_pattern_bindings(state, &patt.data, &param.label, ty);
             }
 
@@ -3197,7 +3186,9 @@ impl Codegen {
             .ret
             .with_templates(&mut self.proj.types, &state.func.ty_args);
 
-        if f.linkage == Linkage::Internal {
+        if f.is_extern {
+            self.buffer.emit("extern ");
+        } else {
             self.buffer.emit("static ");
             // TODO: inline manually
             if f.attrs.val("inline").is_some_and(|v| v == "always") {
@@ -3205,8 +3196,6 @@ impl Codegen {
             } else if f.attrs.has("inline") {
                 self.buffer.emit("inline ");
             }
-        } else {
-            self.buffer.emit("extern ");
         }
 
         if ret == TypeId::NEVER && real {
@@ -3215,7 +3204,7 @@ impl Codegen {
 
         let variadic = f.variadic;
         let params = f.params.clone();
-        let is_import = f.linkage == Linkage::Import;
+        let is_import = f.is_extern && f.body.is_none();
         if ret.is_void() {
             self.buffer.emit("void ");
         } else {

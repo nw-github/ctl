@@ -166,6 +166,7 @@ impl std::fmt::Display for Token<'_> {
             Token::Fn => write!(f, "fn"),
             Token::Import => write!(f, "import"),
             Token::Export => write!(f, "export"),
+            Token::Extern => write!(f, "extern"),
             Token::Unsafe => write!(f, "unsafe"),
             Token::Pub => write!(f, "pub"),
             Token::Mut => write!(f, "mut"),

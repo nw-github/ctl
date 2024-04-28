@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     ast::{
         checked::{CheckedExpr, CheckedPattern},
-        parsed::{Expr, Linkage, Path, Pattern, TypeHint, UsePath},
+        parsed::{Expr, Path, Pattern, TypeHint, UsePath},
         Attributes,
     },
     lexer::{Located, Span},
@@ -179,7 +179,7 @@ pub struct Function {
     pub public: bool,
     pub attrs: Attributes,
     pub name: Located<String>,
-    pub linkage: Linkage,
+    pub is_extern: bool,
     pub is_async: bool,
     pub is_unsafe: bool,
     pub variadic: bool,

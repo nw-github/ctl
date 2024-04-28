@@ -8,7 +8,6 @@ import {
 } from "vscode";
 import { LanguageClient, State } from "vscode-languageclient/node";
 
-
 const CMD_STOP = "ctlsp.stop_server";
 const CMD_RESTART = "ctlsp.restart_server";
 const message = {

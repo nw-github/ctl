@@ -7,7 +7,6 @@ use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use crate::ast::parsed::Linkage;
 use crate::error::{Diagnostics, FileId, OffsetMode};
 use crate::lexer::Span;
 use crate::project::Project;
@@ -679,10 +678,8 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes, types: &mut Type
             res += "pub ";
         }
 
-        match func.linkage {
-            Linkage::Import => res += "import ",
-            Linkage::Export => res += "export ",
-            Linkage::Internal => {}
+        if func.is_extern {
+            res += "extern ";
         }
 
         if func.is_unsafe {
