@@ -1297,19 +1297,19 @@ impl Codegen {
                 }
 
                 if expr.ty.is_void() {
-                    self.buffer.emit("(");
+                    self.buffer.emit("VOID(");
                 }
                 let id = func.id;
                 self.emit_expr(*callee, state);
                 self.buffer.emit("(");
                 self.finish_emit_fn_args(state, id, args);
                 if expr.ty.is_void() {
-                    self.buffer.emit(format!(", {VOID_INSTANCE})"));
+                    self.buffer.emit(")");
                 }
             }
             CheckedExprData::CallDyn(func, mut args) => {
                 if expr.ty.is_void() {
-                    self.buffer.emit("(");
+                    self.buffer.emit("VOID(");
                 }
                 let (_, recv) = args.shift_remove_index(0).unwrap();
                 let recv = hoist!(self, self.emit_tmpvar(recv, state));
@@ -1328,12 +1328,12 @@ impl Codegen {
                     self.finish_emit_fn_args(state, func.id, args);
                 }
                 if expr.ty.is_void() {
-                    self.buffer.emit(format!(", {VOID_INSTANCE})"));
+                    self.buffer.emit(")");
                 }
             }
             CheckedExprData::CallFnPtr(inner, args) => {
                 if expr.ty.is_void() {
-                    self.buffer.emit("(");
+                    self.buffer.emit("VOID(");
                 }
                 self.buffer.emit("(");
                 self.emit_expr(*inner, state);
@@ -1347,7 +1347,7 @@ impl Codegen {
                 }
                 self.buffer.emit(")");
                 if expr.ty.is_void() {
-                    self.buffer.emit(format!(", {VOID_INSTANCE})"));
+                    self.buffer.emit(")");
                 }
             }
             CheckedExprData::Array(exprs) => {
@@ -1946,14 +1946,14 @@ impl Codegen {
             }
             CheckedExprData::Lambda(_) => todo!(),
             CheckedExprData::NeverCoerce(inner) => {
-                if matches!(self.proj.types.get(expr.ty), Type::Void | Type::CVoid) {
+                if matches!(expr.ty, TypeId::VOID | TypeId::CVOID) {
                     self.emit_expr_inline(*inner, state);
                 } else {
-                    self.buffer.emit("/*never*/((");
-                    self.emit_expr_inline(*inner, state);
-                    self.buffer.emit("),*(");
+                    self.buffer.emit("COERCE(");
                     self.emit_type(expr.ty);
-                    self.buffer.emit(format!("*){NULLPTR})"));
+                    self.buffer.emit(", ");
+                    self.emit_expr_inline(*inner, state);
+                    self.buffer.emit(")");
                 }
             }
             CheckedExprData::SpanMutCoerce(inner) => {
@@ -2359,7 +2359,7 @@ impl Codegen {
                     self.emit_cast(ret);
                 }
                 if op.is_assignment() {
-                    self.buffer.emit("(");
+                    self.buffer.emit("VOID(");
                 }
                 self.buffer.emit("(");
                 self.emit_expr(lhs, state);
@@ -2367,7 +2367,7 @@ impl Codegen {
                 self.emit_expr(rhs, state);
                 self.buffer.emit(")");
                 if op.is_assignment() {
-                    self.buffer.emit(format!(", {VOID_INSTANCE})"));
+                    self.buffer.emit(")");
                 }
             }
         }
@@ -2399,9 +2399,9 @@ impl Codegen {
             UnaryOp::Not => {
                 if lhs.ty == TypeId::BOOL {
                     self.emit_cast(ret);
-                    self.buffer.emit("((");
+                    self.buffer.emit("!(");
                     self.emit_expr(lhs, state);
-                    self.buffer.emit(") ^ 1)");
+                    self.buffer.emit(")");
                 } else {
                     self.buffer.emit("~");
                     self.emit_expr(lhs, state);
@@ -2708,7 +2708,7 @@ impl Codegen {
                     &self.proj.scopes,
                 );
 
-                self.buffer.emit("(");
+                self.buffer.emit("VOID(");
                 self.buffer.emit_fn_name(
                     &self.proj.scopes,
                     &mut self.proj.types,
@@ -2722,7 +2722,7 @@ impl Codegen {
                     }
                     self.emit_expr(expr, state);
                 }
-                self.buffer.emit(format!("), {VOID_INSTANCE})"));
+                self.buffer.emit("))");
 
                 self.funcs.insert(panic);
             }
@@ -3198,7 +3198,7 @@ impl Codegen {
             }
         }
 
-        if ret == TypeId::NEVER && real {
+        if ret == TypeId::NEVER { // && real
             self.buffer.emit("CTL_NORETURN ");
         }
 

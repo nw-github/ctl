@@ -319,7 +319,7 @@ pub extension CharExt for char {
     }
 
     pub fn to_ascii_upper(this): char {
-        if this.is_ascii_upper() {
+        if this.is_ascii_lower() {
             this.toggled_ascii_case()
         } else {
             *this
@@ -327,7 +327,7 @@ pub extension CharExt for char {
     }
 
     pub fn to_ascii_lower(this): char {
-        if this.is_ascii_lower() {
+        if this.is_ascii_upper() {
             this.toggled_ascii_case()
         } else {
             *this

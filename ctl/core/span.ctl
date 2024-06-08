@@ -165,6 +165,10 @@ pub struct SpanMut<T> {
         }
     }
 
+    pub fn swap(this, a: uint, b: uint) {
+        core::mem::swap(&mut this[a], &mut this[b]);
+    }
+
     #(inline)
     pub fn []<I: Numeric + Integral>(this, idx: I): *mut T {
         unsafe raw_subscript_checked(this.ptr, this.len, idx) as *mut T

@@ -144,6 +144,8 @@
     (s) {                                                \
         .$span = {.$ptr = (u8 *)data, .$len = (usize)n } \
     }
+#define COERCE(ty, expr) (expr, *(ty *)(NULL))
+#define VOID(expr) (expr, CTL_VOID)
 
 #if defined(__clang__)
 #pragma clang diagnostic ignored "-Wundefined-internal"

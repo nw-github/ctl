@@ -5156,7 +5156,7 @@ impl TypeChecker {
                 if let ExprData::Path(path) = &callee.data {
                     match self.resolve_value_path(path) {
                         ResolvedValue::Fn(func) => {
-                            if self.proj.scopes.intrinsics.get(&func.id).is_some()
+                            if self.proj.scopes.intrinsics.contains_key(&func.id)
                                 && self.proj.scopes.get(func.id).name.data == "size_of"
                             {
                                 return Ok(func
@@ -5382,14 +5382,14 @@ impl TypeChecker {
                                     value = &i.end + 1;
                                     continue 'outer;
                                 } else if !i.inclusive && &value >= start && value < i.end {
-                                    value = i.end.clone();
+                                    value.clone_from(&i.end);
                                     continue 'outer;
                                 }
                             } else if i.inclusive && value <= i.end {
                                 value = &i.end + 1;
                                 continue 'outer;
                             } else if !i.inclusive && value < i.end {
-                                value = i.end.clone();
+                                value.clone_from(&i.end);
                                 continue 'outer;
                             }
                         }
