@@ -204,7 +204,7 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
-    pub fn check(project: Vec<Stmt>, diag: Diagnostics, lsp: LspInput) -> (ScopeId, Project) {
+    pub fn check(project: Vec<Stmt>, diag: Diagnostics, lsp: LspInput) -> Project {
         let mut this = Self {
             universal: Vec::new(),
             safety: Safety::Safe,
@@ -216,11 +216,10 @@ impl TypeChecker {
             current_expr: 0,
         };
 
-        let mut scope = ScopeId::ROOT;
         for module in project {
             let mut autouse = vec![];
             let stmt = this.declare_stmt(&mut autouse, module);
-            scope = *stmt.as_module().unwrap().0;
+            this.proj.scope = *stmt.as_module().unwrap().0;
             this.check_stmt(stmt);
             this.universal.extend(autouse);
         }
@@ -230,7 +229,7 @@ impl TypeChecker {
                 v.unused && !v.name.data.starts_with('_') && v.name.data != THIS_PARAM
             })
         {
-            if this.proj.scopes.walk(var.scope).any(|(id, _)| id == scope) {
+            if this.proj.scopes.walk(var.scope).any(|(id, _)| id == this.proj.scope) {
                 this.proj.diag.warn(Error::new(
                     format!("unused variable: '{}'", var.name.data),
                     var.name.span,
@@ -238,7 +237,7 @@ impl TypeChecker {
             }
         }
 
-        (scope, this.proj)
+        this.proj
     }
 
     pub fn with_project<T>(proj: &mut Project, f: impl FnOnce(&mut TypeChecker) -> T) -> T {

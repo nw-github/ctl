@@ -838,7 +838,6 @@ pub struct Codegen {
 
 impl Codegen {
     pub fn build(
-        scope: ScopeId,
         mut proj: Project,
         flags: CodegenFlags,
     ) -> Result<(Diagnostics, String), Diagnostics> {
@@ -856,6 +855,7 @@ impl Codegen {
         let (funcs, main) = if flags.lib {
             (exports.collect(), None)
         } else {
+            let scope = proj.scope;
             let Some(main) = proj.scopes[scope].vns.get("main").and_then(|id| id.as_fn()) else {
                 proj.diag
                     .error(Error::new("no main function found", Span::default()));

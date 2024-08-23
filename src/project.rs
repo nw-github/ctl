@@ -1,7 +1,13 @@
-use crate::{sym::Scopes, typecheck::{Completions, LspItem}, typeid::Types, Diagnostics};
+use crate::{
+    sym::{ScopeId, Scopes},
+    typecheck::{Completions, LspItem},
+    typeid::Types,
+    Diagnostics,
+};
 
 #[derive(Default)]
 pub struct Project {
+    pub scope: ScopeId,
     pub scopes: Scopes,
     pub types: Types,
     pub diag: Diagnostics,

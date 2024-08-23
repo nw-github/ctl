@@ -20,7 +20,6 @@ pub use error::*;
 pub use lexer::*;
 use project::Project;
 pub use source::*;
-use sym::ScopeId;
 use typecheck::LspInput;
 
 use crate::{parser::Parser, typecheck::TypeChecker};
@@ -34,7 +33,7 @@ pub trait CompileState {}
 
 pub struct Source<T>(T);
 pub struct Parsed(Vec<Stmt>, Diagnostics);
-pub struct Checked(ScopeId, Project);
+pub struct Checked(Project);
 
 impl<T> CompileState for Source<T> {}
 impl CompileState for Parsed {}
@@ -151,20 +150,19 @@ impl Compiler<Parsed> {
     }
 
     pub fn typecheck(self, lsp: LspInput) -> Compiler<Checked> {
-        let (scope, proj) = TypeChecker::check(self.state.0, self.state.1, lsp);
         Compiler {
-            state: Checked(scope, proj),
+            state: Checked(TypeChecker::check(self.state.0, self.state.1, lsp)),
         }
     }
 }
 
 impl Compiler<Checked> {
     pub fn build(self, flags: CodegenFlags) -> Result<(Diagnostics, String), Diagnostics> {
-        Codegen::build(self.state.0, self.state.1, flags)
+        Codegen::build(self.state.0, flags)
     }
 
     pub fn project(self) -> Project {
-        self.state.1
+        self.state.0
     }
 }
 
