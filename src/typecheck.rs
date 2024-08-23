@@ -192,12 +192,6 @@ pub struct Completions {
     pub method: bool,
 }
 
-#[derive(Default)]
-pub struct LspOutput {
-    pub hover: Option<LspItem>,
-    pub completions: Option<Completions>,
-}
-
 pub struct TypeChecker {
     universal: Vec<ScopeId>,
     safety: Safety,
