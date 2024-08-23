@@ -1,6 +1,5 @@
 import {
     workspace,
-    ExtensionContext,
     window,
     StatusBarAlignment,
     MarkdownString,
@@ -18,9 +17,13 @@ const message = {
 
 const statusItem = window.createStatusBarItem(StatusBarAlignment.Left);
 
-let client: LanguageClient;
+/** @type {LanguageClient} */
+let client;
 
-export function activate(context: ExtensionContext) {
+/**
+ * @param {import("vscode").ExtensionContext} context
+ */
+export function activate(context) {
     context.subscriptions.push(
         commands.registerCommand(CMD_STOP, async () => {
             await client.stop();
@@ -79,7 +82,7 @@ function initClient() {
                 },
             },
             run: {
-                command: workspace.getConfiguration("ctlsp.compiler").get<string>("path"),
+                command: workspace.getConfiguration("ctlsp.compiler").get("path"),
                 args: ["lsp"],
                 options: {
                     env: {
@@ -102,7 +105,11 @@ function initClient() {
     client.start();
 }
 
-function updateTooltip(state: State) {
+/**
+ * 
+ * @param {State} state
+ */
+function updateTooltip(state) {
     const running = state === State.Running;
     statusItem.tooltip = new MarkdownString("", true);
     statusItem.tooltip.isTrusted = true;
