@@ -5,6 +5,7 @@ mod lexer;
 mod lsp;
 mod parser;
 mod pretty;
+mod project;
 mod source;
 mod sym;
 mod typecheck;
@@ -14,10 +15,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use ast::parsed::{Stmt, StmtData};
+use codegen::Codegen;
 pub use error::*;
 pub use lexer::*;
+use project::Project;
 pub use source::*;
-use typecheck::{LspInput, Project};
+use sym::ScopeId;
+use typecheck::LspInput;
 
 use crate::{parser::Parser, typecheck::TypeChecker};
 
@@ -30,7 +34,7 @@ pub trait CompileState {}
 
 pub struct Source<T>(T);
 pub struct Parsed(Vec<Stmt>, Diagnostics);
-pub struct Checked(Project);
+pub struct Checked(ScopeId, Project);
 
 impl<T> CompileState for Source<T> {}
 impl CompileState for Parsed {}
@@ -147,19 +151,20 @@ impl Compiler<Parsed> {
     }
 
     pub fn typecheck(self, lsp: LspInput) -> Compiler<Checked> {
+        let (scope, proj) = TypeChecker::check(self.state.0, self.state.1, lsp);
         Compiler {
-            state: Checked(TypeChecker::check(self.state.0, self.state.1, lsp)),
+            state: Checked(scope, proj),
         }
     }
 }
 
 impl Compiler<Checked> {
-    pub fn build(mut self, flags: CodegenFlags) -> Result<(Diagnostics, String), Diagnostics> {
-        codegen::build(&mut self.state.0, flags)
+    pub fn build(self, flags: CodegenFlags) -> Result<(Diagnostics, String), Diagnostics> {
+        Codegen::build(self.state.0, self.state.1, flags)
     }
 
-    pub fn project(&self) -> &Project {
-        &self.state.0
+    pub fn project(self) -> Project {
+        self.state.1
     }
 }
 

@@ -1,4 +1,11 @@
-import fn abort(): never;
+mod libc {
+    pub extern fn abort(): never;
+    pub extern fn exit(code: c_int): never;
+}
+
+pub fn exit(code: u32): never {
+    libc::exit(code as! c_int)
+}
 
 #(lang(convert_argv))
 fn convert_argv(argc: c_int, argv: **c_char): [str..] {
@@ -20,7 +27,7 @@ fn convert_argv(argc: c_int, argv: **c_char): [str..] {
 fn panic_handler(s: str): never {
     io::eprint("fatal error: ");
     io::eprintln(s);
-    abort();
+    libc::abort();
 }
 
 #(autouse)

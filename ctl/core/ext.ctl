@@ -85,13 +85,13 @@ mod gcc_intrin {
 
     // TODO: compiler independent fallback for these functions
     #(c_opaque)
-    pub import fn __builtin_add_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
+    pub extern fn __builtin_add_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
 
     #(c_opaque)
-    pub import fn __builtin_sub_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
+    pub extern fn __builtin_sub_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
 
     #(c_opaque)
-    pub import fn __builtin_mul_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
+    pub extern fn __builtin_mul_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
 }
 
 pub extension IntegralExt<T: Numeric + Integral> for T {
@@ -298,6 +298,46 @@ pub extension CharExt for char {
         unsafe this.encode_utf8_unchecked(len, buf)
     }
 
+    pub fn is_ascii_upper(this): bool {
+        this is 'A'..='Z'
+    }
+
+    pub fn is_ascii_lower(this): bool {
+        this is 'a'..='z'
+    }
+
+    pub fn make_ascii_upper(mut this) {
+        if this.is_ascii_upper() {
+            *this = this.to_ascii_upper();
+        }
+    }
+
+    pub fn make_ascii_lower(mut this) {
+        if this.is_ascii_lower() {
+            *this = this.to_ascii_lower();
+        }
+    }
+
+    pub fn to_ascii_upper(this): char {
+        if this.is_ascii_lower() {
+            this.toggled_ascii_case()
+        } else {
+            *this
+        }
+    }
+
+    pub fn to_ascii_lower(this): char {
+        if this.is_ascii_upper() {
+            this.toggled_ascii_case()
+        } else {
+            *this
+        }
+    }
+
+    fn toggled_ascii_case(this): char {
+        (*this as u32 ^ 0b100000) as! char
+    }
+
     unsafe fn encode_utf8_unchecked(this, len_utf8: uint, buf: [mut u8..]): str {
         unsafe {
             let cp = *this as u32;
@@ -360,6 +400,10 @@ pub extension BoolExt for bool {
             if *this { "true".format(f) } else { "false".format(f) }
         }
     }
+
+    pub fn then_some<T>(this, t: T): ?T {
+        if *this { t }
+    }
 }
 
 pub extension VoidExt for void {
@@ -385,9 +429,20 @@ pub extension VoidExt for void {
 use super::ryu::Float32Ext;
 use super::ryu::Float64Ext;
 
-mod libc {
-    pub import fn sqrt(num: f64): f64;
-    pub import fn sqrtf(num: f32): f32;
+mod libm {
+    pub extern fn sqrt(num: f64): f64;
+    pub extern fn sin(n: f64): f64;
+    pub extern fn cos(n: f64): f64;
+    pub extern fn tan(n: f64): f64;
+    pub extern fn floor(n: f64): f64;
+    pub extern fn ceil(n: f64): f64;
+
+    pub extern fn sqrtf(num: f32): f32;
+    pub extern fn sinf(n: f32): f32;
+    pub extern fn cosf(n: f32): f32;
+    pub extern fn tanf(n: f32): f32;
+    pub extern fn floorf(n: f32): f32;
+    pub extern fn ceilf(n: f32): f32;
 }
 
 pub extension F32Ext for f32 {
@@ -396,7 +451,31 @@ pub extension F32Ext for f32 {
     }
 
     pub fn sqrt(this): f32 {
-        libc::sqrtf(*this)
+        libm::sqrtf(*this)
+    }
+
+    pub fn sin(this): f32 {
+        libm::sinf(*this)
+    }
+
+    pub fn cos(this): f32 {
+        libm::cosf(*this)
+    }
+
+    pub fn tan(this): f32 {
+        libm::tanf(*this)
+    }
+
+    pub fn floor(this): f32 {
+        libm::floorf(*this)
+    }
+
+    pub fn ceil(this): f32 {
+        libm::ceilf(*this)
+    }
+
+    pub fn pi(): f32 {
+        3.14159265358979323846
     }
 
     impl Format {
@@ -412,7 +491,31 @@ pub extension F64Ext for f64 {
     }
 
     pub fn sqrt(this): f64 {
-        libc::sqrt(*this)
+        libm::sqrt(*this)
+    }
+
+    pub fn sin(this): f64 {
+        libm::sin(*this)
+    }
+
+    pub fn cos(this): f64 {
+        libm::cos(*this)
+    }
+
+    pub fn tan(this): f64 {
+        libm::tan(*this)
+    }
+
+    pub fn floor(this): f64 {
+        libm::floor(*this)
+    }
+
+    pub fn ceil(this): f64 {
+        libm::ceil(*this)
+    }
+
+    pub fn pi(): f64 {
+        3.14159265358979323846
     }
 
     impl Format {

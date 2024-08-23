@@ -7,9 +7,9 @@
 // Output: 1 2 3 4
 // Output: 1 2 3 4
 
-pub fn main() {
-    mut funcs = @[
-        subscript, 
+fn main() {
+    let funcs = @[
+        &subscript, 
         val::end, 
         val::start, 
         val::mid,

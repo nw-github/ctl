@@ -11,7 +11,7 @@ fn main() {
     mut x = 0;
     for _ in 0..=2 {
         test(
-            c: x = 3,
+            c: {x = 3; x},
             b: --x,
             a: x--,
         );

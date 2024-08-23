@@ -48,7 +48,12 @@ struct Arguments {
     /// Compile as a library
     #[clap(action, short, long)]
     #[arg(global = true)]
-    lib: bool,
+    shared: bool,
+
+    /// Silence unnecessary messages from the compiler
+    #[clap(action, short, long)]
+    #[arg(global = true)]
+    quiet: bool,
 }
 
 #[derive(Args)]
@@ -68,6 +73,12 @@ struct BuildOrRun {
     /// View messages from the C compiler
     #[clap(action, short, long)]
     verbose: bool,
+
+    #[clap(action, short, long)]
+    optimized: bool,
+
+    #[clap(short, long)]
+    libs: Vec<String>,
 }
 
 #[derive(Subcommand)]
@@ -114,13 +125,13 @@ enum SubCommand {
 fn compile_results(src: &str, leak: bool, output: &Path, build: BuildOrRun) -> Result<()> {
     let warnings = ["-Wall", "-Wextra"];
     let mut cc = Command::new(build.cc)
-        .arg("-o")
+        .args(["-fwrapv", "-std=c11", "-x", "c", "-", "-o"])
         .arg(output)
-        .arg("-std=c11")
-        .arg(if leak { "" } else { "-lgc" })
+        .args(if !leak { &["-lgc"][..] } else { &[] })
+        .args(if build.optimized { &["-O2"][..] } else { &[] })
         .args(if build.verbose { &warnings[..] } else { &[] })
-        .args(["-x", "c", "-"])
         .args(build.ccargs.unwrap_or_default().split(' '))
+        .args(build.libs.iter().map(|lib| format!("-l{lib}")))
         .stdin(Stdio::piped())
         .stdout(if build.verbose {
             Stdio::inherit()
@@ -260,12 +271,14 @@ fn main() -> Result<()> {
         .build(CodegenFlags {
             leak: args.leak,
             no_bit_int: args.no_bit_int,
-            lib: args.lib,
-            minify: !matches!(args.command, SubCommand::Print { minify: false, .. }),
+            lib: args.shared,
+            minify: matches!(args.command, SubCommand::Print { minify: true, .. }),
         });
     let result = match result {
         Ok((diag, code)) => {
-            display_diagnostics(&diag);
+            if !args.quiet {
+                display_diagnostics(&diag);
+            }
             code
         }
         Err(diag) => {

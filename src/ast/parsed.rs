@@ -5,14 +5,6 @@ use crate::{
 
 use super::{Attributes, BinaryOp, UnaryOp};
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Linkage {
-    Import,
-    Export,
-    #[default]
-    Internal,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum PathOrigin {
     Root,
@@ -54,6 +46,10 @@ pub struct Stmt {
 pub enum StmtData {
     Expr(Expr),
     Defer(Expr),
+    Guard {
+        cond: Expr,
+        body: Expr,
+    },
     Use(UsePath),
     Let {
         patt: Located<Pattern>,
@@ -85,8 +81,9 @@ pub enum StmtData {
         functions: Vec<Fn>,
         operators: Vec<OperatorFn>,
     },
-    Static {
+    Binding {
         public: bool,
+        constant: bool,
         name: Located<String>,
         ty: TypeHint,
         value: Expr,
@@ -111,7 +108,7 @@ pub enum ExprData {
     },
     Is {
         expr: Box<Expr>,
-        pattern: Located<FullPattern>,
+        pattern: Located<Pattern>,
     },
     As {
         expr: Box<Expr>,
@@ -280,7 +277,7 @@ pub struct IntPattern {
 #[derive(Debug, Clone)]
 pub struct RangePattern<T> {
     pub inclusive: bool,
-    pub start: T,
+    pub start: Option<T>,
     pub end: T,
 }
 
@@ -461,7 +458,7 @@ pub struct Fn {
     pub attrs: Attributes,
     pub public: bool,
     pub name: Located<String>,
-    pub linkage: Linkage,
+    pub is_extern: bool,
     pub is_async: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
@@ -478,7 +475,7 @@ impl Fn {
             attrs: func.attrs,
             public: true,
             name: Located::new(func.name.span, name),
-            linkage: Linkage::Internal,
+            is_extern: false,
             is_async: false,
             is_unsafe: false,
             variadic: false,
@@ -520,6 +517,7 @@ pub enum VariantData {
 pub struct Variant {
     pub name: Located<String>,
     pub data: VariantData,
+    pub tag: Option<Expr>,
 }
 
 #[derive(Debug, Clone)]

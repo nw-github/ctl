@@ -1,90 +1,84 @@
 {
-  "name": "ctl",
-  "displayName": "CTL",
-  "description": "Language support for the CTL programming language.",
-  "version": "0.0.1",
-  "engines": {
-    "vscode": "^1.80.0"
-  },
-  "categories": [
-    "Programming Languages"
-  ],
-  "main": "./out/extension",
-  "scripts": {
-    "yaml-transpile": "js-yaml syntaxes/ctl.tmLanguage.yaml > syntaxes/ctl.tmLanguage.json",
-    "vscode:prepublish": "npm run compile",
-		"compile": "npm run yaml-transpile && tsc -b",
-		"watch": "tsc -b -w",
-		"lint": "eslint ./src --ext .ts,.tsx",
-		"postinstall": "npm run yaml-transpile"
-  },
-  "contributes": {
-    "languages": [
-      {
-        "id": "ctl",
-        "aliases": [
-          "CTL",
-          "ctl"
-        ],
-        "extensions": [
-          ".ctl"
-        ],
-        "configuration": "./language-configuration.json"
-      }
+    "name": "ctl",
+    "displayName": "CTL",
+    "description": "Language support for the CTL programming language.",
+    "version": "0.0.1",
+    "engines": {
+        "vscode": "^1.80.0"
+    },
+    "categories": [
+        "Programming Languages"
     ],
-    "grammars": [
-      {
-        "language": "ctl",
-        "scopeName": "source.ctl",
-        "path": "./syntaxes/ctl.tmLanguage.json"
-      }
-    ],
-    "configuration": {
-			"type": "object",
-			"title": "CTL Extension Configuration",
-			"properties": {
-				"ctlsp.maxNumberOfProblems": {
-					"scope": "resource",
-					"type": "number",
-					"default": 100,
-					"description": "Controls the maximum number of problems produced by the server."
-				},
-				"ctlsp.trace.server": {
-					"scope": "window",
-					"type": "string",
-					"enum": [
-						"off",
-						"messages",
-						"verbose"
-					],
-					"default": "off",
-					"description": "Traces the communication between VS Code and the language server."
-				},
-        "ctlsp.compiler.path": {
-          "scope": "resource",
-          "type": "string",
-          "default": "ctl",
-          "description": "The path to the CTL compiler binary."
-        },
-        "ctlsp.debounceMs": {
-          "scope": "resource",
-          "type": "number",
-          "default": 250,
-          "description": "The minimum time required between invocations of the compiler (in ms)."
+    "main": "./src/extension",
+    "scripts": {
+        "yaml-transpile": "js-yaml syntaxes/ctl.tmLanguage.yaml > syntaxes/ctl.tmLanguage.json",
+        "vscode:prepublish": "npm run compile",
+        "compile": "npm run yaml-transpile && tsc -b",
+        "watch": "tsc -b -w",
+        "lint": "eslint ./src --ext .ts,.tsx",
+        "postinstall": "npm run yaml-transpile"
+    },
+    "contributes": {
+        "languages": [
+            {
+                "id": "ctl",
+                "aliases": [
+                    "CTL",
+                    "ctl"
+                ],
+                "extensions": [
+                    ".ctl"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "ctl",
+                "scopeName": "source.ctl",
+                "path": "./syntaxes/ctl.tmLanguage.json"
+            }
+        ],
+        "configuration": {
+            "type": "object",
+            "title": "CTL Extension Configuration",
+            "properties": {
+                "ctlsp.maxNumberOfProblems": {
+                    "scope": "resource",
+                    "type": "number",
+                    "default": 100,
+                    "description": "Controls the maximum number of problems produced by the server."
+                },
+                "ctlsp.trace.server": {
+                    "scope": "window",
+                    "type": "string",
+                    "enum": [
+                        "off",
+                        "messages",
+                        "verbose"
+                    ],
+                    "default": "off",
+                    "description": "Traces the communication between VS Code and the language server."
+                },
+                "ctlsp.compiler.path": {
+                    "scope": "resource",
+                    "type": "string",
+                    "default": "ctl",
+                    "description": "The path to the CTL compiler binary."
+                },
+                "ctlsp.debounceMs": {
+                    "scope": "resource",
+                    "type": "number",
+                    "default": 250,
+                    "description": "The minimum time required between invocations of the compiler (in ms)."
+                }
+            }
         }
-			}
-		}
-  },
-  "dependencies": {
-		"vscode-languageclient": "^9.0.1"
-	},
-  "devDependencies": {
-    "js-yaml": "^4.1.0",
-		"@types/node": "^18.14.6",
-		"@typescript-eslint/eslint-plugin": "^7.1.0",
-		"@typescript-eslint/parser": "^7.1.0",
-		"@types/vscode": "^1.75.1",
-		"eslint": "^8.57.0",
-		"typescript": "^5.3.3"
-  }
+    },
+    "dependencies": {
+        "vscode-languageclient": "^9.0.1"
+    },
+    "devDependencies": {
+        "js-yaml": "^4.1.0"
+    }
 }

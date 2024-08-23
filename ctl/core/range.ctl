@@ -93,6 +93,10 @@ pub struct Range<T: Numeric + Integral> {
             }
         }
     }
+
+    pub fn contains(this, rhs: *T): bool {
+        this.start <= rhs and this.end > rhs
+    }
 }
 
 // extension RangeExt<T: Numeric> for Range<T> {
@@ -125,6 +129,10 @@ pub struct RangeInclusive<T: Numeric + Integral> {
                 this.start
             }
         }
+    }
+
+    pub fn contains(this, rhs: *T): bool {
+        this.start <= rhs and this.end >= rhs
     }
 }
 

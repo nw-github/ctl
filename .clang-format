@@ -1,9 +1,9 @@
 ---
 BasedOnStyle: LLVM
-IndentWidth: 4
+IndentWidth: 2
 ---
 Language: Cpp
-AccessModifierOffset: -4
+AccessModifierOffset: -2
 AlignConsecutiveAssignments: true
 AlignConsecutiveBitFields: true
 AlignConsecutiveMacros: true

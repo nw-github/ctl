@@ -7,6 +7,7 @@ use core::iter::Iterator;
 use core::panic;
 use core::fmt::*;
 use core::intrin;
+use core::reflect::*;
 
 #(lang(string))
 pub struct str {
@@ -22,6 +23,14 @@ pub struct str {
 
     pub unsafe fn from_utf8_unchecked(span: [u8..]): str {
         str(span:)
+    }
+
+    pub unsafe fn from_cstr(s: *c_char): ?str {
+        str::from_utf8(unsafe core::span::Span::new(s as *raw u8, core::intrin::strlen(s)))
+    }
+
+    pub unsafe fn from_cstr_unchecked(s: *c_char): str {
+        str(span: unsafe core::span::Span::new(s as *raw u8, core::intrin::strlen(s)))
     }
 
     pub fn len(this): uint {
@@ -46,15 +55,11 @@ pub struct str {
 
     pub fn substr<R: RangeBounds<uint>>(this, range: R): str {
         let span = this.span[range];
-        if span.get(0) is ?ch {
-            if !is_char_boundary(*ch) {
-                panic("str::substr(): range does not start at char boundary");
-            }
+        if span.get(0) is ?ch and !is_char_boundary(*ch) {
+            panic("str::substr(): range does not start at char boundary");
         }
-        if span.get(span.len()) is ?ch {
-            if !is_char_boundary(*ch) {
-                panic("str::substr(): range does not end at char boundary");
-            }
+        if span.get(span.len()) is ?ch and !is_char_boundary(*ch) {
+            panic("str::substr(): range does not end at char boundary");
         }
         str(span:)
     }
@@ -77,7 +82,7 @@ pub struct str {
         }
     }
 
-    pub fn [](this, idx: uint): *u8 {
+    pub fn []<I: Numeric + Integral>(this, idx: I): *u8 {
         &this.span[idx]
     }
 

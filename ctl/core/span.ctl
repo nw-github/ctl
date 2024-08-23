@@ -2,6 +2,8 @@ use core::range::RangeBounds;
 use core::range::Bound;
 use core::iter::Iterator;
 use core::panic;
+use core::reflect::*;
+use core::ext::*;
 
 #(lang(span))
 pub struct Span<T> {
@@ -52,7 +54,7 @@ pub struct Span<T> {
         let end = match range.end() {
             Bound::Inclusive(end) => end + 1,
             Bound::Exclusive(end) => end,
-            Bound::Unbounded => this.len(),
+            Bound::Unbounded => this.len,
         };
 
         if end < start or start > this.len or end > this.len {
@@ -63,12 +65,8 @@ pub struct Span<T> {
     }
 
     #(inline)
-    pub fn [](this, idx: uint): *T {
-        if this.get(idx) is ?item {
-            item
-        } else {
-            panic("Span::[]: index out of bounds");
-        }
+    pub fn []<I: Numeric + Integral>(this, idx: I): *T {
+        unsafe raw_subscript_checked(this.ptr, this.len, idx) as *T
     }
 
     #(inline(always))
@@ -160,21 +158,26 @@ pub struct SpanMut<T> {
         unsafe SpanMut::new(this.ptr + start, end - start)
     }
 
-    #(inline)
-    pub fn [](this, idx: uint): *mut T {
-        if this.get_mut(idx) is ?item {
-            item
-        } else {
-            panic("Span::[]: index out of bounds");
+    pub fn fill(this, t: T) {
+        // TODO: use memset when possible
+        for item in this.iter_mut() {
+            *item = t;
         }
     }
 
+    pub fn swap(this, a: uint, b: uint) {
+        core::mem::swap(&mut this[a], &mut this[b]);
+    }
+
     #(inline)
-    pub fn []=(this, idx: uint, val: T) {
-        if this.get_mut(idx) is ?item {
-            *item = val;
-        } else {
-            panic("Span::[]: index out of bounds");
+    pub fn []<I: Numeric + Integral>(this, idx: I): *mut T {
+        unsafe raw_subscript_checked(this.ptr, this.len, idx) as *mut T
+    }
+
+    #(inline)
+    pub fn []=<I: Numeric + Integral>(this, idx: I, val: T) {
+        unsafe {
+            *raw_subscript_checked(this.ptr, this.len, idx) = val;
         }
     }
 
@@ -187,6 +190,27 @@ pub struct SpanMut<T> {
     #(inline(always))
     pub fn [](this, _: core::range::RangeFull): [mut T..] {
         *this
+    }
+
+    #(inline(always))
+    pub fn []=<R: RangeBounds<uint>>(this, range: R, rhs: [T..]) {
+        let subspan = this.subspan(range);
+        if subspan.len() != rhs.len() {
+            panic("Span assignment requires that both sides are the same length");
+        }
+
+        // copy_overlapping?
+        unsafe core::mem::copy(
+            dst: subspan.as_raw(),
+            src: rhs.as_raw(),
+            num: subspan.len(),
+        );
+    }
+
+    // TODO: remove this when RangeFull can implement rangebounds
+    #(inline(always))
+    pub fn []=(this, _: core::range::RangeFull, rhs: [T..]) {
+        this[0u..] = rhs;
     }
 }
 
@@ -216,10 +240,41 @@ pub struct IterMut<T> {
     }
 }
 
+// TODO: make this a member function for T: Eq types
 pub fn compare<T>(lhs: [T..], rhs: [T..]): bool {
     if lhs.len() != rhs.len() {
         return false;
     }
 
     unsafe core::mem::compare(lhs.ptr, rhs.ptr, lhs.len())
+}
+
+// TODO: make this a member function
+pub fn sort<T: core::ops::Cmp<T>>(span: [mut T..]) {
+    guard !span.is_empty() else {
+        return;
+    }
+
+    let end      = span.len() - 1;
+    let pivot    = &span[end];
+    mut part_idx = 0u;
+    for j in 0u..end {
+        if span[j] <= pivot {
+            span.swap(part_idx, j);
+            part_idx++;
+        }
+    }
+
+    span.swap(part_idx, end);
+    sort(span[0u..part_idx]);
+    sort(span[part_idx + 1..]);
+}
+
+#(inline(always))
+fn raw_subscript_checked<T, I: Numeric + Integral>(ptr: *raw T, len: uint, idx: I): *raw T {
+    if !core::intrin::numeric_lt(idx, len) or idx < core::intrin::numeric_cast(0) {
+        panic("Span::[]: index out of bounds");
+    }
+
+    core::intrin::raw_offset(ptr, idx)
 }

@@ -1,12 +1,8 @@
 pub use intrin::panic;
+pub use intrin::unreachable_unchecked;
 
 pub fn unreachable(): never {
     panic("entered unreachable code");
-}
-
-pub unsafe fn unreachable_unchecked(): never {
-    // CTL_UNREACHABLE is a macro with no return value, generating it directly can cause errors
-    intrin::builtin_unreachable();
 }
 
 #(autouse)

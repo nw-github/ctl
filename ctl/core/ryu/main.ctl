@@ -41,7 +41,7 @@ trait Float {
 pub extension Float32Ext for f32 {
     impl Float {
         fn is_nonfinite(this): bool {
-            static EXP_MASK: u32 = 0x7f800000;
+            const EXP_MASK: u32 = 0x7f800000;
             let bits = this.to_bits();
             bits & EXP_MASK == EXP_MASK
         }
@@ -67,7 +67,7 @@ pub extension Float32Ext for f32 {
 pub extension Float64Ext for f64 {
     impl Float {
         fn is_nonfinite(this): bool {
-            static EXP_MASK: u64 = 0x7ff0000000000000;
+            const EXP_MASK: u64 = 0x7ff0000000000000;
             let bits = this.to_bits();
             bits & EXP_MASK == EXP_MASK
         }

@@ -6,11 +6,11 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     ast::{
         checked::{CheckedExpr, CheckedPattern},
-        parsed::{Expr, Linkage, Path, Pattern, TypeHint, UsePath},
+        parsed::{Expr, Path, Pattern, TypeHint, UsePath},
         Attributes,
     },
     lexer::{Located, Span},
-    typeid::{GenericTrait, GenericUserType, Type},
+    typeid::{GenericTrait, GenericUserType, Type, TypeId, Types},
 };
 
 macro_rules! id {
@@ -94,13 +94,13 @@ pub type ExtensionId = UserTypeId;
 
 #[derive(Default, Debug, Clone, EnumAsInner)]
 pub enum ScopeKind {
-    Block(Option<Type>, bool),
+    Block(Option<TypeId>, bool),
     Loop {
-        target: Option<Type>,
+        target: Option<TypeId>,
         breaks: Option<bool>,
         infinite: bool,
     },
-    Lambda(Option<Type>, bool),
+    Lambda(Option<TypeId>, bool),
     Function(FunctionId),
     UserType(UserTypeId),
     Impl(TraitImpl),
@@ -158,7 +158,7 @@ pub struct CheckedParam {
     pub keyword: bool,
     pub label: String,
     pub patt: ParamPattern,
-    pub ty: Type,
+    pub ty: TypeId,
     pub default: Option<DefaultExpr>,
 }
 
@@ -166,7 +166,7 @@ pub struct CheckedParam {
 pub struct Variable {
     pub public: bool,
     pub name: Located<String>,
-    pub ty: Type,
+    pub ty: TypeId,
     pub is_static: bool,
     pub mutable: bool,
     pub value: Option<CheckedExpr>,
@@ -179,7 +179,7 @@ pub struct Function {
     pub public: bool,
     pub attrs: Attributes,
     pub name: Located<String>,
-    pub linkage: Linkage,
+    pub is_extern: bool,
     pub is_async: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
@@ -188,7 +188,7 @@ pub struct Function {
     pub assign_subscript: bool,
     pub type_params: Vec<UserTypeId>,
     pub params: Vec<CheckedParam>,
-    pub ret: Type,
+    pub ret: TypeId,
     pub body: Option<CheckedExpr>,
     pub constructor: Option<UserTypeId>,
     pub body_scope: ScopeId,
@@ -201,14 +201,20 @@ impl FunctionId {
 #[derive(Debug, Clone, Constructor)]
 pub struct CheckedMember {
     pub public: bool,
-    pub ty: Type,
+    pub ty: TypeId,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedVariant {
+    pub ty: Option<TypeId>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct Union {
-    pub variants: IndexMap<String, (Option<Type>, Span)>,
-    pub tag: Type,
+    pub variants: IndexMap<String, CheckedVariant>,
+    pub tag: TypeId,
     pub enum_union: bool,
 }
 
@@ -227,7 +233,7 @@ pub enum UserTypeKind {
     AnonStruct,
     Tuple,
     Trait(UserTypeId),
-    Extension(Type),
+    Extension(TypeId),
 }
 
 #[derive(Debug, Clone)]
@@ -258,7 +264,7 @@ impl UserType {
                 .kind
                 .as_union()
                 .and_then(|u| u.variants.get(variant))
-                .is_some_and(|u| u.0.is_none())
+                .is_some_and(|u| u.ty.is_none())
     }
 
     pub fn template(name: Located<String>, scope: ScopeId, impls: Vec<TraitImpl>) -> Self {
@@ -460,7 +466,7 @@ impl Scopes {
         id.get_mut(self)
     }
 
-    pub fn get_tuple(&mut self, ty_args: Vec<Type>) -> Type {
+    pub fn get_tuple(&mut self, ty_args: Vec<TypeId>, types: &mut Types) -> TypeId {
         let id = if let Some(id) = self.tuples.get(&ty_args.len()) {
             *id
         } else {
@@ -494,13 +500,10 @@ impl Scopes {
                         .iter()
                         .enumerate()
                         .map(|(i, id)| {
+                            let ty = Type::User(GenericUserType::from_id(self, types, *id));
                             (
                                 format!("{i}"),
-                                CheckedMember::new(
-                                    true,
-                                    Type::User(GenericUserType::from_id(self, *id).into()),
-                                    Span::default(),
-                                ),
+                                CheckedMember::new(true, types.insert(ty), Span::default()),
                             )
                         })
                         .collect(),
@@ -520,10 +523,17 @@ impl Scopes {
             self.tuples.insert(ty_args.len(), res.id);
             res.id
         };
-        Type::User(GenericUserType::from_type_args(self, id, ty_args).into())
+        types.insert(Type::User(GenericUserType::from_type_args(
+            self, id, ty_args,
+        )))
     }
 
-    pub fn get_anon_struct(&mut self, names: Vec<String>, types: Vec<Type>) -> Type {
+    pub fn get_anon_struct(
+        &mut self,
+        names: Vec<String>,
+        ty_args: Vec<TypeId>,
+        types: &mut Types,
+    ) -> TypeId {
         let id = if let Some(id) = self.structs.get(&names) {
             *id
         } else {
@@ -557,13 +567,10 @@ impl Scopes {
                         .iter()
                         .enumerate()
                         .map(|(i, id)| {
+                            let ty = Type::User(GenericUserType::from_id(self, types, *id));
                             (
                                 names[i].clone(),
-                                CheckedMember::new(
-                                    true,
-                                    Type::User(GenericUserType::from_id(self, *id).into()),
-                                    Span::default(),
-                                ),
+                                CheckedMember::new(true, types.insert(ty), Span::default()),
                             )
                         })
                         .collect(),
@@ -583,7 +590,9 @@ impl Scopes {
             self.structs.insert(names, res.id);
             res.id
         };
-        Type::User(GenericUserType::from_type_args(self, id, types).into())
+        types.insert(Type::User(GenericUserType::from_type_args(
+            self, id, ty_args,
+        )))
     }
 
     pub fn get_trait_impls(&self, tr: TraitId) -> HashSet<TraitId> {
@@ -602,7 +611,8 @@ impl Scopes {
         result
     }
 
-    pub fn has_builtin_impl(&self, ty: &Type, bound: &GenericTrait) -> bool {
+    pub fn has_builtin_impl(&self, types: &Types, id: TypeId, bound: &GenericTrait) -> bool {
+        let ty = types.get(id);
         if ty.is_numeric() && Some(&bound.id) == self.lang_traits.get("numeric") {
             return true;
         }

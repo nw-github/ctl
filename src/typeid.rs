@@ -5,11 +5,11 @@ use crate::{
 };
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
-use indexmap::{map::Entry, IndexMap};
+use indexmap::{map::Entry, IndexMap, IndexSet};
 use num_bigint::BigInt;
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Deref, DerefMut)]
-pub struct TypeArgs(pub IndexMap<UserTypeId, Type>);
+pub struct TypeArgs(pub IndexMap<UserTypeId, TypeId>);
 
 impl std::hash::Hash for TypeArgs {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -21,17 +21,17 @@ impl std::hash::Hash for TypeArgs {
 
 impl TypeArgs {
     pub fn copy_args(&mut self, rhs: &TypeArgs) {
-        self.extend(rhs.iter().map(|(x, y)| (*x, y.clone())));
+        self.extend(rhs.iter().map(|(x, y)| (*x, *y)));
     }
 
-    pub fn copy_args_with(&mut self, rhs: &TypeArgs, map: &TypeArgs) {
-        self.extend(rhs.iter().map(|(x, y)| (*x, y.with_templates(map))));
+    pub fn copy_args_with(&mut self, types: &mut Types, rhs: &TypeArgs, map: &TypeArgs) {
+        self.extend(rhs.iter().map(|(x, y)| (*x, y.with_templates(types, map))));
     }
 
     pub fn in_order<T: ItemId>(
         scopes: &Scopes,
         id: T,
-        types: impl IntoIterator<Item = Type>,
+        types: impl IntoIterator<Item = TypeId>,
     ) -> Self
     where
         T::Value: HasTypeParams,
@@ -58,11 +58,11 @@ impl<T: ItemId> WithTypeArgs<T>
 where
     T::Value: HasTypeParams,
 {
-    pub fn from_type_args(scopes: &Scopes, id: T, types: impl IntoIterator<Item = Type>) -> Self {
-        Self::new(id, TypeArgs::in_order(scopes, id, types))
+    pub fn from_type_args(scopes: &Scopes, id: T, args: impl IntoIterator<Item = TypeId>) -> Self {
+        Self::new(id, TypeArgs::in_order(scopes, id, args))
     }
 
-    pub fn from_type_params(scopes: &Scopes, id: T) -> Self {
+    pub fn from_type_params(scopes: &Scopes, types: &mut Types, id: T) -> Self {
         Self::new(
             id,
             TypeArgs(
@@ -73,7 +73,7 @@ where
                     .map(|&id| {
                         (
                             id,
-                            Type::User(GenericUserType::new(id, Default::default()).into()),
+                            types.insert(Type::User(GenericUserType::new(id, Default::default()))),
                         )
                     })
                     .collect(),
@@ -83,44 +83,45 @@ where
 }
 
 impl<T> WithTypeArgs<T> {
-    pub fn first_type_arg(&self) -> Option<&Type> {
-        self.ty_args.values().next()
+    pub fn first_type_arg(&self) -> Option<TypeId> {
+        self.ty_args.values().next().cloned()
     }
 
-    pub fn infer_type_args(&mut self, mut src: &Type, mut target: &Type) {
+    pub fn infer_type_args(&mut self, types: &Types, mut src: TypeId, mut target: TypeId) {
         loop {
-            match (src, target) {
+            match (types.get(src), types.get(target)) {
                 (
                     Type::Ptr(gi) | Type::MutPtr(gi) | Type::RawPtr(gi),
                     Type::Ptr(ti) | Type::MutPtr(ti) | Type::RawPtr(ti),
                 ) => {
-                    src = gi;
-                    target = ti;
+                    src = *gi;
+                    target = *ti;
                 }
-                (Type::Array(gi), Type::Array(ti)) => {
-                    src = &gi.0;
-                    target = &ti.0;
+                (Type::Array(gi, _), Type::Array(ti, _)) => {
+                    src = *gi;
+                    target = *ti;
                 }
                 (Type::FnPtr(src), Type::FnPtr(target)) => {
-                    for (src, target) in src.params.iter().zip(target.params.iter()) {
-                        self.infer_type_args(src, target);
+                    for (&src, &target) in src.params.iter().zip(target.params.iter()) {
+                        self.infer_type_args(types, src, target);
                     }
 
-                    self.infer_type_args(&src.ret, &target.ret);
+                    self.infer_type_args(types, src.ret, target.ret);
                     break;
                 }
-                (Type::User(src), target) => {
+                (Type::User(src), target_ty) => {
                     // TODO: T => ?T
                     if let Entry::Occupied(mut entry) = self.ty_args.entry(src.id) {
-                        if !entry.get().is_unknown() {
+                        if entry.get() != &TypeId::UNKNOWN {
                             return;
                         }
 
-                        entry.insert(target.clone());
-                    } else if let Some(target) = target.as_user() {
+                        entry.insert(target);
+                    } else if let Some(target) = target_ty.as_user() {
                         if src.id == target.id {
-                            for (src, target) in src.ty_args.values().zip(target.ty_args.values()) {
-                                self.infer_type_args(src, target);
+                            for (&src, &target) in src.ty_args.values().zip(target.ty_args.values())
+                            {
+                                self.infer_type_args(types, src, target);
                             }
                         }
                     }
@@ -132,9 +133,9 @@ impl<T> WithTypeArgs<T> {
         }
     }
 
-    pub fn fill_templates(&mut self, map: &TypeArgs) {
+    pub fn fill_templates(&mut self, types: &mut Types, map: &TypeArgs) {
         for ty in self.ty_args.values_mut() {
-            ty.fill_templates(map);
+            *ty = ty.with_templates(types, map);
         }
     }
 }
@@ -150,21 +151,21 @@ impl GenericFunc {
                     .get(id)
                     .type_params
                     .iter()
-                    .map(|&id| (id, Type::Unknown))
+                    .map(|&id| (id, TypeId::UNKNOWN))
                     .collect(),
             ),
         )
     }
 
-    pub fn as_fn_ptr(&self, scopes: &Scopes) -> FnPtr {
+    pub fn as_fn_ptr(&self, scopes: &Scopes, types: &mut Types) -> FnPtr {
         let f = scopes.get(self.id);
         FnPtr {
             params: f
                 .params
                 .iter()
-                .map(|p| p.ty.with_templates(&self.ty_args))
+                .map(|p| p.ty.with_templates(types, &self.ty_args))
                 .collect(),
-            ret: f.ret.with_templates(&self.ty_args),
+            ret: f.ret.with_templates(types, &self.ty_args),
         }
     }
 }
@@ -172,7 +173,7 @@ impl GenericFunc {
 pub type GenericUserType = WithTypeArgs<UserTypeId>;
 
 impl GenericUserType {
-    pub fn name(&self, scopes: &Scopes) -> String {
+    pub fn name(&self, scopes: &Scopes, types: &mut Types) -> String {
         match &scopes.get(self.id).kind {
             crate::sym::UserTypeKind::AnonStruct => {
                 let mut result = "struct {".to_string();
@@ -188,7 +189,7 @@ impl GenericUserType {
                             .get_index(i)
                             .map(|m| &m.0[..])
                             .unwrap_or("???"),
-                        concrete.name(scopes)
+                        concrete.name(scopes, types)
                     ));
                 }
                 format!("{result} }}")
@@ -199,7 +200,7 @@ impl GenericUserType {
                     if i > 0 {
                         result.push_str(", ");
                     }
-                    result.push_str(&concrete.name(scopes));
+                    result.push_str(&concrete.name(scopes, types));
                 }
                 format!("{result})")
             }
@@ -207,20 +208,20 @@ impl GenericUserType {
                 let is_lang_type =
                     |name: &str| scopes.lang_types.get(name).is_some_and(|&id| id == self.id);
                 if is_lang_type("option") {
-                    return format!("?{}", self.ty_args[0].name(scopes));
+                    return format!("?{}", self.ty_args[0].name(scopes, types));
                 } else if is_lang_type("span") {
-                    return format!("[{}..]", self.ty_args[0].name(scopes));
+                    return format!("[{}..]", self.ty_args[0].name(scopes, types));
                 } else if is_lang_type("span_mut") {
-                    return format!("[mut {}..]", self.ty_args[0].name(scopes));
+                    return format!("[mut {}..]", self.ty_args[0].name(scopes, types));
                 } else if is_lang_type("vec") {
-                    return format!("[{}]", self.ty_args[0].name(scopes));
+                    return format!("[{}]", self.ty_args[0].name(scopes, types));
                 } else if is_lang_type("set") {
-                    return format!("{{{}}}", self.ty_args[0].name(scopes));
+                    return format!("{{{}}}", self.ty_args[0].name(scopes, types));
                 } else if is_lang_type("map") {
                     return format!(
                         "[{}: {}]",
-                        self.ty_args[0].name(scopes),
-                        self.ty_args[1].name(scopes)
+                        self.ty_args[0].name(scopes, types),
+                        self.ty_args[1].name(scopes, types)
                     );
                 }
 
@@ -231,7 +232,7 @@ impl GenericUserType {
                         if i > 0 {
                             result.push_str(", ");
                         }
-                        result.push_str(&concrete.name(scopes));
+                        result.push_str(&concrete.name(scopes, types));
                     }
                     result.push('>');
                 }
@@ -241,77 +242,21 @@ impl GenericUserType {
         }
     }
 
-    pub fn from_id(scopes: &Scopes, id: UserTypeId) -> Self {
-        Self::from_type_params(scopes, id)
+    pub fn from_id(scopes: &Scopes, types: &mut Types, id: UserTypeId) -> Self {
+        Self::from_type_params(scopes, types, id)
     }
 
-    pub fn size_and_align(&self, scopes: &Scopes) -> (usize, usize) {
-        struct SizeAndAlign {
-            size: usize,
-            align: usize,
-        }
-
-        impl SizeAndAlign {
-            fn new() -> Self {
-                Self { size: 0, align: 1 }
-            }
-
-            fn next(&mut self, (s, a): (usize, usize)) {
-                self.size += (a - self.size % a) % a + s;
-                self.align = self.align.max(a);
-            }
-        }
-
-        let mut sa = SizeAndAlign::new();
-        let ut = scopes.get(self.id);
-        if let Some(union) = ut.kind.as_union() {
-            if self.can_omit_tag(scopes).is_none() {
-                sa.next(union.tag.size_and_align(scopes));
-            }
-            for member in ut.members.values() {
-                sa.next(
-                    member
-                        .ty
-                        .with_templates(&self.ty_args)
-                        .size_and_align(scopes),
-                );
-            }
-
-            sa.next(
-                union
-                    .variants
-                    .values()
-                    .flat_map(|v| &v.0)
-                    .fold((0, 1), |(sz, align), ty| {
-                        let (s, a) = ty.with_templates(&self.ty_args).size_and_align(scopes);
-                        (sz.max(s), align.max(a))
-                    }),
-            );
-        } else {
-            for member in ut.members.values() {
-                sa.next(
-                    member
-                        .ty
-                        .with_templates(&self.ty_args)
-                        .size_and_align(scopes),
-                );
-            }
-        }
-        sa.next((0, sa.align));
-        (sa.size, sa.align)
-    }
-
-    pub fn as_option_inner(&self, scopes: &Scopes) -> Option<&Type> {
+    pub fn as_option_inner(&self, scopes: &Scopes) -> Option<TypeId> {
         scopes
             .get_option_id()
             .filter(|opt| self.id == *opt)
             .and_then(|_| self.first_type_arg())
     }
 
-    pub fn can_omit_tag(&self, scopes: &Scopes) -> Option<&Type> {
-        self.as_option_inner(scopes).filter(|inner| {
+    pub fn can_omit_tag(&self, scopes: &Scopes, types: &Types) -> Option<TypeId> {
+        self.as_option_inner(scopes).filter(|&inner| {
             matches!(
-                inner,
+                types.get(inner),
                 Type::FnPtr(_) | Type::RawPtr(_) | Type::Ptr(_) | Type::MutPtr(_)
             )
         })
@@ -356,15 +301,15 @@ impl Integer {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FnPtr {
-    pub params: Vec<Type>,
-    pub ret: Type,
+    pub params: Vec<TypeId>,
+    pub ret: TypeId,
 }
 
-#[derive(Debug, Default, Clone, EnumAsInner)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, EnumAsInner)]
 pub enum Type {
     #[default]
     Unknown,
-    Unresolved(Box<(TypeHint, ScopeId)>),
+    Unresolved(UnresolvedTypeId),
     Void,
     Never,
     Int(u32),
@@ -378,267 +323,23 @@ pub enum Type {
     F64,
     Bool,
     Char,
-    Func(Box<GenericFunc>),
-    FnPtr(Box<FnPtr>),
-    User(Box<GenericUserType>),
-    Ptr(Box<Type>),
-    MutPtr(Box<Type>),
-    RawPtr(Box<Type>),
-    DynPtr(Box<GenericTrait>),
-    DynMutPtr(Box<GenericTrait>),
-    Array(Box<(Type, usize)>),
+    Func(GenericFunc),
+    FnPtr(FnPtr),
+    User(GenericUserType),
+    Ptr(TypeId),
+    MutPtr(TypeId),
+    RawPtr(TypeId),
+    DynPtr(GenericTrait),
+    DynMutPtr(GenericTrait),
+    Array(TypeId, usize),
 }
-
-impl PartialEq for Type {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Int(l0), Self::Int(r0)) => l0 == r0,
-            (Self::Uint(l0), Self::Uint(r0)) => l0 == r0,
-            (Self::CInt(l0), Self::CInt(r0)) => l0 == r0,
-            (Self::CUint(l0), Self::CUint(r0)) => l0 == r0,
-            (Self::User(l0), Self::User(r0)) => l0 == r0,
-            (Self::Ptr(l0), Self::Ptr(r0)) => l0 == r0,
-            (Self::MutPtr(l0), Self::MutPtr(r0)) => l0 == r0,
-            (Self::RawPtr(l0), Self::RawPtr(r0)) => l0 == r0,
-            (Self::Array(l0), Self::Array(r0)) => l0 == r0,
-            (Self::FnPtr(l0), Self::FnPtr(r0)) => l0 == r0,
-            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
-        }
-    }
-}
-
-impl std::hash::Hash for Type {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        match self {
-            Self::Int(l0) => l0.hash(state),
-            Self::Uint(l0) => l0.hash(state),
-            Self::CInt(l0) => l0.hash(state),
-            Self::CUint(l0) => l0.hash(state),
-            Self::FnPtr(l0) => l0.hash(state),
-            Self::User(l0) => l0.hash(state),
-            Self::Ptr(l0) => l0.hash(state),
-            Self::MutPtr(l0) => l0.hash(state),
-            Self::RawPtr(l0) => l0.hash(state),
-            Self::Array(l0) => l0.hash(state),
-            _ => {}
-        }
-        core::mem::discriminant(self).hash(state);
-    }
-}
-
-impl Eq for Type {}
 
 impl Type {
-    pub fn supports_binary(&self, _scopes: &Scopes, op: BinaryOp) -> bool {
-        use BinaryOp::*;
-        match op {
-            Assign => true,
-            Add | AddAssign | Sub | SubAssign => self.is_numeric() || self.is_raw_ptr(),
-            Mul | Div | Rem | MulAssign | DivAssign | RemAssign => self.is_numeric(),
-            BitAnd | Xor | BitOr | BitAndAssign | XorAssign | BitOrAssign => {
-                self.is_integral() || self.is_bool()
-            }
-            Shl | Shr | ShlAssign | ShrAssign => self.is_integral(),
-            Gt | GtEqual | Lt | LtEqual | Cmp => {
-                matches!(
-                    self,
-                    Type::Int(_)
-                        | Type::Isize
-                        | Type::Uint(_)
-                        | Type::Usize
-                        | Type::F32
-                        | Type::F64
-                        | Type::CInt(_)
-                        | Type::CUint(_)
-                        | Type::Char
-                        | Type::RawPtr(_)
-                        | Type::Bool,
-                )
-            }
-            Equal | NotEqual => {
-                matches!(
-                    self,
-                    Type::Int(_)
-                        | Type::Isize
-                        | Type::Uint(_)
-                        | Type::Usize
-                        | Type::F32
-                        | Type::F64
-                        | Type::Bool // FIXME: option<T> should be comparable with T without coercion
-                        | Type::CInt(_)
-                        | Type::CUint(_)
-                        | Type::Char
-                        | Type::RawPtr(_)
-                )
-            }
-            LogicalOr | LogicalAnd => self.is_bool(),
-            NoneCoalesce | NoneCoalesceAssign => false,
-        }
-    }
-
-    pub fn supports_unary(&self, scopes: &Scopes, op: UnaryOp) -> bool {
-        use UnaryOp::*;
-        match op {
-            Neg => {
-                self.as_integral().is_some_and(|s| s.signed)
-                    || matches!(self, Type::F32 | Type::F64)
-            }
-            PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
-                self.is_integral() || self.is_raw_ptr()
-            }
-            Not => self.is_integral() || self.is_bool(),
-            Try => self.as_option_inner(scopes).is_some(),
-            Plus => self.is_numeric(),
-            Deref => self.is_any_ptr(),
-            Addr | AddrMut | AddrRaw => true,
-            Unwrap => false,
-        }
-    }
-
-    pub fn strip_references(&self) -> &Type {
-        let mut id = self;
-        while let Type::Ptr(inner) | Type::MutPtr(inner) = id {
-            id = inner;
-        }
-        id
-    }
-
-    pub fn strip_options(&self, scopes: &Scopes) -> &Type {
-        let mut id = self;
-        while let Some(inner) = id.as_option_inner(scopes) {
-            id = inner;
-        }
-        id
-    }
-
-    pub fn matched_inner_type(&self, ty: Type) -> Type {
-        if !(self.is_ptr() || self.is_mut_ptr()) {
-            return ty;
-        }
-
-        let mut id = self;
-        while let Type::MutPtr(inner) = id {
-            id = inner;
-        }
-
-        if matches!(id, Type::Ptr(_)) {
-            Type::Ptr(ty.into())
-        } else {
-            Type::MutPtr(ty.into())
-        }
-    }
-
-    pub fn fill_templates(&mut self, map: &TypeArgs) {
-        if map.is_empty() {
-            return;
-        }
-
-        let mut src = self;
-        loop {
-            match src {
-                Type::Array(t) => src = &mut t.0,
-                Type::Ptr(t) | Type::MutPtr(t) | Type::RawPtr(t) => src = t,
-                Type::User(ut) => {
-                    if let Some(ty) = map.get(&ut.id) {
-                        if !ty.is_unknown() {
-                            *src = ty.clone();
-                        }
-                    } else if !ut.ty_args.is_empty() {
-                        ut.fill_templates(map);
-                    }
-                    break;
-                }
-                Type::FnPtr(f) => {
-                    for ty in f.params.iter_mut() {
-                        ty.fill_templates(map);
-                    }
-
-                    f.ret.fill_templates(map);
-                    break;
-                }
-                Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                    tr.fill_templates(map);
-                    break;
-                }
-                _ => break,
-            }
-        }
-    }
-
     pub fn as_dyn_pointee(&self) -> Option<&GenericTrait> {
         if let Type::DynMutPtr(tr) | Type::DynPtr(tr) = self {
-            Some(&**tr)
+            Some(tr)
         } else {
             None
-        }
-    }
-
-    pub fn name(&self, scopes: &Scopes) -> String {
-        match self {
-            Type::Unknown => "{unknown}".into(),
-            // for debug purposes, ideally this should never be visible
-            Type::Unresolved(_) => "{unresolved}".into(),
-            Type::Void => "void".into(),
-            Type::Never => "never".into(),
-            Type::Int(bits) => format!("i{bits}"),
-            Type::Uint(bits) => format!("u{bits}"),
-            Type::F32 => "f32".into(),
-            Type::F64 => "f64".into(),
-            Type::Bool => "bool".into(),
-            Type::Char => "char".into(),
-            Type::Ptr(id) => format!("*{}", id.name(scopes)),
-            Type::MutPtr(id) => format!("*mut {}", id.name(scopes)),
-            Type::RawPtr(id) => format!("*raw {}", id.name(scopes)),
-            Type::DynPtr(id) => format!("*dyn {}", id.name(scopes)),
-            Type::DynMutPtr(id) => format!("*dyn mut {}", id.name(scopes)),
-            Type::FnPtr(f) => {
-                let mut result = "fn(".to_string();
-                for (i, param) in f.params.iter().enumerate() {
-                    if i > 0 {
-                        result.push_str(", ");
-                    }
-
-                    result.push_str(&param.name(scopes));
-                }
-                format!("{result}) => {}", f.ret.name(scopes))
-            }
-            Type::Func(func) => {
-                let f = scopes.get(func.id);
-                let mut result = format!("fn {}(", f.name.data);
-                for (i, param) in f.params.iter().enumerate() {
-                    if i > 0 {
-                        result.push_str(", ");
-                    }
-
-                    result.push_str(&param.ty.with_templates(&func.ty_args).name(scopes));
-                }
-                format!(
-                    "{result}): {}",
-                    f.ret.with_templates(&func.ty_args).name(scopes)
-                )
-            }
-            Type::User(ty) => ty.name(scopes),
-            Type::Array(inner) => format!("[{}; {}]", inner.0.name(scopes), inner.1),
-            Type::Isize => "int".into(),
-            Type::Usize => "uint".into(),
-            Type::CInt(ty) | Type::CUint(ty) => {
-                format!(
-                    "c_{}{}",
-                    if matches!(self, Type::CUint(_)) {
-                        "u"
-                    } else {
-                        ""
-                    },
-                    match ty {
-                        CInt::Char => "char",
-                        CInt::Short => "short",
-                        CInt::Int => "int",
-                        CInt::Long => "long",
-                        CInt::LongLong => "longlong",
-                    }
-                )
-            }
-            Type::CVoid => "c_void".into(),
         }
     }
 
@@ -658,14 +359,6 @@ impl Type {
 
     pub fn is_any_ptr(&self) -> bool {
         matches!(self, Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_))
-    }
-
-    pub fn as_pointee(&self) -> Option<&Type> {
-        if let Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) = self {
-            Some(&**inner)
-        } else {
-            None
-        }
     }
 
     pub fn is_integral(&self) -> bool {
@@ -737,20 +430,259 @@ impl Type {
         }
     }
 
-    pub fn as_option_inner<'a>(&'a self, scopes: &Scopes) -> Option<&'a Type> {
+    pub fn as_option_inner(&self, scopes: &Scopes) -> Option<TypeId> {
         self.as_user().and_then(|s| s.as_option_inner(scopes))
     }
+}
 
-    pub fn with_templates(&self, args: &TypeArgs) -> Type {
-        let mut ty = self.clone();
-        ty.fill_templates(args);
-        ty
+pub struct Types {
+    types: IndexSet<Type>,
+    unresolved_types: Vec<(TypeHint, ScopeId)>,
+}
+
+impl Types {
+    pub fn new() -> Self {
+        Self {
+            unresolved_types: Vec::new(),
+            types: [
+                Type::Unknown,
+                Type::Void,
+                Type::Never,
+                Type::Isize,
+                Type::Usize,
+                Type::Bool,
+                Type::Uint(8),
+                Type::Char,
+                Type::F32,
+                Type::F64,
+                Type::CVoid,
+            ]
+            .into(),
+        }
     }
 
-    pub fn size_and_align(&self, scopes: &Scopes) -> (usize, usize) {
+    pub fn insert(&mut self, ty: Type) -> TypeId {
+        TypeId(self.types.insert_full(ty).0)
+    }
+
+    pub fn get(&self, id: TypeId) -> &Type {
+        &self.types[id.0]
+    }
+
+    pub fn add_unresolved(&mut self, hint: TypeHint, scope: ScopeId) -> TypeId {
+        let id = UnresolvedTypeId(self.unresolved_types.len());
+        self.unresolved_types.push((hint, scope));
+        self.insert(Type::Unresolved(id))
+    }
+
+    pub fn take_unresolved(&mut self, id: UnresolvedTypeId) -> (TypeHint, ScopeId) {
+        std::mem::take(&mut self.unresolved_types[id.0])
+    }
+}
+
+impl Default for Types {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct TypeId(usize);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct UnresolvedTypeId(usize);
+
+impl TypeId {
+    pub const UNKNOWN: TypeId = TypeId(0);
+    pub const VOID: TypeId = TypeId(1);
+    pub const NEVER: TypeId = TypeId(2);
+    pub const ISIZE: TypeId = TypeId(3);
+    pub const USIZE: TypeId = TypeId(4);
+    pub const BOOL: TypeId = TypeId(5);
+    pub const U8: TypeId = TypeId(6);
+    pub const CHAR: TypeId = TypeId(7);
+    pub const F32: TypeId = TypeId(8);
+    pub const F64: TypeId = TypeId(9);
+    pub const CVOID: TypeId = TypeId(10);
+
+    pub fn name(self, scopes: &Scopes, types: &mut Types) -> String {
+        match types.get(self) {
+            Type::Unknown => "{unknown}".into(),
+            // for debug purposes, ideally this should never be visible
+            Type::Unresolved(_) => "{unresolved}".into(),
+            Type::Void => "void".into(),
+            Type::Never => "never".into(),
+            Type::Int(bits) => format!("i{bits}"),
+            Type::Uint(bits) => format!("u{bits}"),
+            Type::F32 => "f32".into(),
+            Type::F64 => "f64".into(),
+            Type::Bool => "bool".into(),
+            Type::Char => "char".into(),
+            &Type::Ptr(id) => format!("*{}", id.name(scopes, types)),
+            &Type::MutPtr(id) => format!("*mut {}", id.name(scopes, types)),
+            &Type::RawPtr(id) => format!("*raw {}", id.name(scopes, types)),
+            Type::DynPtr(id) => format!("*dyn {}", id.clone().name(scopes, types)),
+            Type::DynMutPtr(id) => format!("*dyn mut {}", id.clone().name(scopes, types)),
+            Type::FnPtr(f) => {
+                let f = f.clone();
+                let mut result = "fn(".to_string();
+                for (i, &param) in f.params.iter().enumerate() {
+                    if i > 0 {
+                        result.push_str(", ");
+                    }
+
+                    result.push_str(&param.name(scopes, types));
+                }
+                format!("{result}) => {}", f.ret.name(scopes, types))
+            }
+            Type::Func(func) => {
+                let ty_args = func.ty_args.clone();
+                let f = scopes.get(func.id);
+                let mut result = format!("fn {}(", f.name.data);
+                let ret = f.ret.with_templates(types, &ty_args);
+                let params: Vec<_> = f
+                    .params
+                    .iter()
+                    .map(|p| p.ty.with_templates(types, &ty_args))
+                    .collect();
+                for (i, ty) in params.into_iter().enumerate() {
+                    if i > 0 {
+                        result.push_str(", ");
+                    }
+                    result.push_str(&ty.name(scopes, types));
+                }
+                format!("{result}): {}", ret.name(scopes, types))
+            }
+            Type::User(ty) => ty.clone().name(scopes, types),
+            &Type::Array(ty, count) => format!("[{}; {}]", ty.name(scopes, types), count),
+            Type::Isize => "int".into(),
+            Type::Usize => "uint".into(),
+            id @ (Type::CInt(ty) | Type::CUint(ty)) => {
+                format!(
+                    "c_{}{}",
+                    if matches!(id, Type::CUint(_)) {
+                        "u"
+                    } else {
+                        ""
+                    },
+                    match ty {
+                        CInt::Char => "char",
+                        CInt::Short => "short",
+                        CInt::Int => "int",
+                        CInt::Long => "long",
+                        CInt::LongLong => "longlong",
+                    }
+                )
+            }
+            Type::CVoid => "c_void".into(),
+        }
+    }
+
+    pub fn as_option_inner(self, scopes: &Scopes, types: &Types) -> Option<TypeId> {
+        types.get(self).as_option_inner(scopes)
+    }
+
+    pub fn strip_references(self, types: &Types) -> TypeId {
+        let mut id = self;
+        while let Type::Ptr(inner) | Type::MutPtr(inner) = types.get(id) {
+            id = *inner;
+        }
+        id
+    }
+
+    pub fn strip_references_r(self, types: &Types) -> &Type {
+        types.get(self.strip_references(types))
+    }
+
+    pub fn strip_options(self, scopes: &Scopes, types: &Types) -> TypeId {
+        let mut id = self;
+        while let Some(inner) = id.as_option_inner(scopes, types) {
+            id = inner;
+        }
+        id
+    }
+
+    pub fn supports_binary(self, types: &Types, op: BinaryOp) -> bool {
+        use BinaryOp::*;
+        let this = types.get(self);
+        match op {
+            Assign => true,
+            Add | AddAssign | Sub | SubAssign => this.is_numeric() || this.is_raw_ptr(),
+            Mul | Div | Rem | MulAssign | DivAssign | RemAssign => this.is_numeric(),
+            BitAnd | Xor | BitOr | BitAndAssign | XorAssign | BitOrAssign => {
+                this.is_integral() || this.is_bool()
+            }
+            Shl | Shr | ShlAssign | ShrAssign => this.is_integral(),
+            Gt | GtEqual | Lt | LtEqual | Cmp => {
+                matches!(
+                    this,
+                    Type::Int(_)
+                        | Type::Isize
+                        | Type::Uint(_)
+                        | Type::Usize
+                        | Type::F32
+                        | Type::F64
+                        | Type::CInt(_)
+                        | Type::CUint(_)
+                        | Type::Char
+                        | Type::RawPtr(_)
+                        | Type::Bool,
+                )
+            }
+            Equal | NotEqual => {
+                matches!(
+                    this,
+                    Type::Int(_)
+                        | Type::Isize
+                        | Type::Uint(_)
+                        | Type::Usize
+                        | Type::F32
+                        | Type::F64
+                        | Type::Bool // FIXME: option<T> should be comparable with T without coercion
+                        | Type::CInt(_)
+                        | Type::CUint(_)
+                        | Type::Char
+                        | Type::RawPtr(_)
+                )
+            }
+            LogicalOr | LogicalAnd => this.is_bool(),
+            NoneCoalesce | NoneCoalesceAssign => false,
+        }
+    }
+
+    pub fn supports_unary(self, scopes: &Scopes, types: &Types, op: UnaryOp) -> bool {
+        use UnaryOp::*;
+        let this = types.get(self);
+        match op {
+            Neg => {
+                this.as_integral().is_some_and(|s| s.signed)
+                    || matches!(this, Type::F32 | Type::F64)
+            }
+            PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
+                this.is_integral() || this.is_raw_ptr()
+            }
+            Not => this.is_integral() || this.is_bool(),
+            Try => this.as_option_inner(scopes).is_some(),
+            Plus => this.is_numeric(),
+            Deref => this.is_any_ptr(),
+            Addr | AddrMut | AddrRaw => true,
+            Unwrap => false,
+        }
+    }
+
+    pub fn as_pointee(self, types: &Types) -> Option<TypeId> {
+        if let Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) = types.get(self) {
+            Some(*inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn size_and_align(self, scopes: &Scopes, types: &mut Types) -> (usize, usize) {
         use std::ffi::*;
 
-        let sz = match self {
+        let sz = match types.get(self) {
+            Type::Int(0) | Type::Uint(0) => 0,
             Type::Int(bits) | Type::Uint(bits) => nearest_pow_of_two(*bits) / 8,
             Type::CInt(inner) | Type::CUint(inner) => match inner {
                 CInt::Char => std::mem::size_of::<c_char>(),
@@ -768,10 +700,63 @@ impl Type {
             Type::Bool => std::mem::size_of::<bool>(),
             Type::Char => std::mem::size_of::<char>(),
             Type::FnPtr(_) => std::mem::size_of::<fn()>(),
-            Type::User(ut) => return ut.size_and_align(scopes),
-            Type::Array(data) => {
-                let (s, a) = data.0.size_and_align(scopes);
-                return (s * data.1, a);
+            Type::User(ut) => {
+                struct SizeAndAlign {
+                    size: usize,
+                    align: usize,
+                }
+
+                impl SizeAndAlign {
+                    fn new() -> Self {
+                        Self { size: 0, align: 1 }
+                    }
+
+                    fn next(&mut self, (s, a): (usize, usize)) {
+                        self.size += (a - self.size % a) % a + s;
+                        self.align = self.align.max(a);
+                    }
+                }
+
+                let mut sa = SizeAndAlign::new();
+                let ut = ut.clone();
+                let ut_data = scopes.get(ut.id);
+                if let Some(union) = ut_data.kind.as_union() {
+                    if self.can_omit_tag(scopes, types).is_none() {
+                        sa.next(union.tag.size_and_align(scopes, types));
+                    }
+                    for member in ut_data.members.values() {
+                        let ty = member.ty.with_templates(types, &ut.ty_args);
+                        sa.next(ty.size_and_align(scopes, types));
+                    }
+
+                    sa.next(union.variants.values().flat_map(|v| v.ty).fold(
+                        (0, 1),
+                        |(sz, align), ty| {
+                            let (s, a) = ty
+                                .with_templates(types, &ut.ty_args)
+                                .size_and_align(scopes, types);
+                            (sz.max(s), align.max(a))
+                        },
+                    ));
+                } else if ut_data.kind.is_unsafe_union() {
+                    sa.next(ut_data.members.values().fold((0, 1), |(sz, align), m| {
+                        let (s, a) = m.ty
+                            .with_templates(types, &ut.ty_args)
+                            .size_and_align(scopes, types);
+                        (sz.max(s), align.max(a))
+                    }));
+                } else {
+                    for member in ut_data.members.values() {
+                        let ty = member.ty.with_templates(types, &ut.ty_args);
+                        sa.next(ty.size_and_align(scopes, types));
+                    }
+                }
+                sa.next((0, sa.align));
+                return (sa.size, sa.align);
+            }
+            &Type::Array(ty, len) => {
+                let (s, a) = ty.size_and_align(scopes, types);
+                return (s * len, a);
             }
             _ => 0,
         };
@@ -780,7 +765,103 @@ impl Type {
         (sz, sz.max(1))
     }
 
-    pub fn can_omit_tag(&self, scopes: &Scopes) -> Option<&Type> {
-        self.as_user().and_then(|s| s.can_omit_tag(scopes))
+    pub fn matched_inner_type(self, types: &mut Types, ty: TypeId) -> TypeId {
+        let mut id = types.get(self);
+        if !matches!(id, Type::Ptr(_) | Type::MutPtr(_)) {
+            return ty;
+        }
+
+        while let Type::MutPtr(inner) = id {
+            id = types.get(*inner);
+        }
+
+        if matches!(id, Type::Ptr(_)) {
+            types.insert(Type::Ptr(ty))
+        } else {
+            types.insert(Type::MutPtr(ty))
+        }
+    }
+
+    pub fn can_omit_tag(self, scopes: &Scopes, types: &Types) -> Option<TypeId> {
+        types
+            .get(self)
+            .as_user()
+            .and_then(|s| s.can_omit_tag(scopes, types))
+    }
+
+    pub fn with_templates(self, types: &mut Types, map: &TypeArgs) -> TypeId {
+        if map.is_empty() {
+            return self;
+        }
+
+        match types.get(self) {
+            &Type::Array(ty, len) => {
+                let ty = Type::Array(ty.with_templates(types, map), len);
+                types.insert(ty)
+            }
+            Type::Ptr(t) => {
+                let ty = Type::Ptr(t.with_templates(types, map));
+                types.insert(ty)
+            }
+            Type::MutPtr(t) => {
+                let ty = Type::MutPtr(t.with_templates(types, map));
+                types.insert(ty)
+            }
+            Type::RawPtr(t) => {
+                let ty = Type::RawPtr(t.with_templates(types, map));
+                types.insert(ty)
+            }
+            Type::User(ut) => {
+                if let Some(&ty) = map.get(&ut.id).filter(|&&ty| ty != TypeId::UNKNOWN) {
+                    ty
+                } else if !ut.ty_args.is_empty() {
+                    let mut ut = ut.clone();
+                    ut.fill_templates(types, map);
+                    types.insert(Type::User(ut))
+                } else {
+                    self
+                }
+            }
+            Type::Func(f) => {
+                let mut tr = f.clone();
+                tr.fill_templates(types, map);
+                types.insert(Type::Func(tr))
+            }
+            Type::FnPtr(f) => {
+                let f = f.clone();
+                let fnptr = Type::FnPtr(FnPtr {
+                    params: f
+                        .params
+                        .iter()
+                        .map(|p| p.with_templates(types, map))
+                        .collect(),
+                    ret: f.ret.with_templates(types, map),
+                });
+                types.insert(fnptr)
+            }
+            Type::DynPtr(tr) => {
+                let mut tr = tr.clone();
+                tr.fill_templates(types, map);
+                types.insert(Type::DynPtr(tr))
+            }
+            Type::DynMutPtr(tr) => {
+                let mut tr = tr.clone();
+                tr.fill_templates(types, map);
+                types.insert(Type::DynMutPtr(tr))
+            }
+            _ => self,
+        }
+    }
+
+    pub fn with_ut_templates(self, types: &mut Types, id: TypeId) -> TypeId {
+        if let Some(ut) = types.get(id).as_user() {
+            self.with_templates(types, &ut.ty_args.clone())
+        } else {
+            self
+        }
+    }
+
+    pub fn is_void(self) -> bool {
+        matches!(self, TypeId::NEVER | TypeId::VOID | TypeId::CVOID)
     }
 }
