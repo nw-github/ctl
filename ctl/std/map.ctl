@@ -70,9 +70,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     pub fn clear(mut this) {
         if this.len > 0 {
             for entry in this.buckets.iter_mut() {
-                if !(entry is Bucket::None) {
-                    *entry = Bucket::None;
-                }
+                *entry = Bucket::None;
             }
 
             this.len = 0;
@@ -124,8 +122,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
                 Bucket::Some(key, _) => if k.eq(key) {
                     break idx;
                 }
-                //break tombstone ?? idx;
-                Bucket::None => break tombstone.unwrap_or(idx),
+                Bucket::None => break tombstone ?? idx,
                 Bucket::Tombstone => {
                     tombstone.get_or_insert(idx);
                 }
@@ -149,7 +146,9 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
 
         this.len = 0;
 
-        for i in 0u..old {
+        mut i = old;
+        while i != 0 {
+            i--;
             if this.buckets.get(i)! is Bucket::Some(key, _) {
                 this.len++;
                 let j = this.entry_pos(key);

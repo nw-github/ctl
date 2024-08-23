@@ -1118,7 +1118,7 @@ impl Codegen {
         }
 
         usebuf!(self, prototypes, {
-            self.emit_prototype(state, true, false);
+            self.emit_prototype(state, true);
             self.buffer.emit(";");
         });
         let func = self.proj.scopes.get(state.func.id);
@@ -1128,7 +1128,7 @@ impl Codegen {
                 .with_templates(&mut self.proj.types, &state.func.ty_args)
                 .is_void();
             let params = func.params.clone();
-            let unused = self.emit_prototype(state, false, false);
+            let unused = self.emit_prototype(state, false);
             self.buffer.emit("{");
             for id in unused {
                 self.buffer.emit("(void)");
@@ -3175,12 +3175,7 @@ impl Codegen {
         self.buffer.emit(")");
     }
 
-    fn emit_prototype(
-        &mut self,
-        state: &mut State,
-        is_prototype: bool,
-        real: bool,
-    ) -> Vec<VariableId> {
+    fn emit_prototype(&mut self, state: &mut State, is_prototype: bool) -> Vec<VariableId> {
         let f = self.proj.scopes.get(state.func.id);
         let ret = f
             .ret
@@ -3198,7 +3193,8 @@ impl Codegen {
             }
         }
 
-        if ret == TypeId::NEVER { // && real
+        if ret == TypeId::NEVER {
+            // && real
             self.buffer.emit("CTL_NORETURN ");
         }
 
