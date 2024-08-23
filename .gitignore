@@ -1,7 +1,5 @@
 /target
-/examples
-/.vscode
+.vscode
 node_modules
-out
 a.out
 main.c

@@ -14,6 +14,10 @@ pub trait Iterator<T> {
         Zip::new(*this, rhs)
     }
 
+    fn chain<I: Iterator<T>>(this, rhs: I): Chain<T, This, I> {
+        Chain::new(*this, rhs)
+    }
+
     fn collect<I: FromIter<T>>(this): I {
         I::from_iter(*this)
     }
@@ -73,6 +77,24 @@ pub struct Zip<T, U, I: Iterator<T>, J: Iterator<U>> {
             if (this.iter1.next(), this.iter2.next()) is (?a, ?b) {
                 (a, b)
             }
+        }
+    }
+}
+
+pub struct Chain<T, I: Iterator<T>, J: Iterator<T>> {
+    iter1: I,
+    iter2: J,
+
+    pub fn new(iter1: I, iter2: J): This {
+        Chain(iter1:, iter2:)
+    }
+
+    impl Iterator<T> {
+        fn next(mut this): ?T {
+            if this.iter1.next() is ?a {
+                return a;
+            }
+            this.iter2.next()
         }
     }
 }

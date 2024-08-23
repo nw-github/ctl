@@ -14,6 +14,10 @@ pub struct Span<T> {
         Span(ptr:, len:)
     }
 
+    pub fn from_ptr(ptr: *T): [T..] {
+        unsafe Span::new(ptr as *raw T, 1)
+    }
+
     pub fn empty(): [T..] {
         Span(ptr: core::ptr::raw_dangling(), len: 0)
     }
@@ -88,6 +92,10 @@ pub struct SpanMut<T> {
 
     pub unsafe fn new(ptr: *raw T, len: uint): [mut T..] {
         SpanMut(ptr:, len:)
+    }
+
+    pub fn from_ptr(ptr: *mut T): [mut T..] {
+        unsafe SpanMut::new(ptr as *raw T, 1)
     }
 
     pub fn empty(): [mut T..] {
