@@ -1,9 +1,17 @@
+use std::collections::HashMap;
+
 use crate::{
     sym::{ScopeId, Scopes},
     typecheck::{Completions, LspItem},
-    typeid::Types,
+    typeid::{TypeId, Types},
     Diagnostics,
 };
+
+pub enum Dependencies {
+    Resolving,
+    Resolved(Vec<TypeId>),
+    Recursive,
+}
 
 #[derive(Default)]
 pub struct Project {
@@ -13,6 +21,7 @@ pub struct Project {
     pub diag: Diagnostics,
     pub hover: Option<LspItem>,
     pub completions: Option<Completions>,
+    pub deps: HashMap<TypeId, Dependencies>,
 }
 
 impl Project {

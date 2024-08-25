@@ -804,6 +804,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types) -> String 
             ut.kind,
             UserTypeKind::Struct | UserTypeKind::Union(_) | UserTypeKind::UnsafeUnion
         )
+        && !ut.recursive
     {
         let ut = GenericUserType::new(id, Default::default());
         let (sz, align) = types.insert(Type::User(ut)).size_and_align(scopes, types);

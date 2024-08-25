@@ -248,6 +248,8 @@ pub struct UserType {
     pub fns: Vec<Vis<FunctionId>>,
     pub subscripts: Vec<FunctionId>,
     pub members: IndexMap<String, CheckedMember>,
+    pub members_resolved: bool,
+    pub recursive: bool,
 }
 
 impl UserType {
@@ -279,6 +281,8 @@ impl UserType {
             attrs: Default::default(),
             members: Default::default(),
             subscripts: Vec::new(),
+            members_resolved: true,
+            recursive: false,
         }
     }
 }
@@ -485,6 +489,8 @@ impl Scopes {
                             fns: Vec::new(),
                             members: IndexMap::new(),
                             subscripts: Vec::new(),
+                            members_resolved: true,
+                            recursive: false,
                         },
                         false,
                         ScopeId::ROOT,
@@ -515,6 +521,8 @@ impl Scopes {
                     impls: vec![],
                     fns: vec![],
                     subscripts: Vec::new(),
+                    members_resolved: true,
+                    recursive: false,
                 },
                 false,
                 ScopeId::ROOT,
@@ -552,6 +560,8 @@ impl Scopes {
                             fns: Vec::new(),
                             members: IndexMap::new(),
                             subscripts: Vec::new(),
+                            members_resolved: true,
+                            recursive: false,
                         },
                         false,
                         ScopeId::ROOT,
@@ -582,6 +592,8 @@ impl Scopes {
                     impls: vec![],
                     fns: vec![],
                     subscripts: Vec::new(),
+                    members_resolved: true,
+                    recursive: false,
                 },
                 false,
                 ScopeId::ROOT,

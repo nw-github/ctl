@@ -9,7 +9,7 @@ use crate::{
     ast::{checked::*, declared::*, parsed::*, Attributes, BinaryOp, UnaryOp},
     error::{Diagnostics, Error},
     lexer::{Located, Span},
-    project::Project,
+    project::{Dependencies, Project},
     sym::*,
     typeid::{
         CInt, FnPtr, GenericExtension, GenericFunc, GenericTrait, GenericUserType, Type, TypeArgs,
@@ -229,7 +229,12 @@ impl TypeChecker {
                 v.unused && !v.name.data.starts_with('_') && v.name.data != THIS_PARAM
             })
         {
-            if this.proj.scopes.walk(var.scope).any(|(id, _)| id == this.proj.scope) {
+            if this
+                .proj
+                .scopes
+                .walk(var.scope)
+                .any(|(id, _)| id == this.proj.scope)
+            {
                 this.proj.diag.warn(Error::new(
                     format!("unused variable: '{}'", var.name.data),
                     var.name.span,
@@ -1081,7 +1086,10 @@ impl TypeChecker {
     fn declare_fn(&mut self, f: Fn) -> DeclaredFn {
         let span = f.name.span;
         if f.variadic && (!f.is_extern || f.body.is_some()) {
-            self.error(Error::new("only imported extern functions may be variadic", span))
+            self.error(Error::new(
+                "only imported extern functions may be variadic",
+                span,
+            ))
         }
 
         if f.is_extern && !f.type_params.is_empty() && f.body.is_some() {
@@ -1134,9 +1142,18 @@ impl TypeChecker {
                         (&self.proj.scopes.get(id).name.data[..], attr.name.span)
                     };
                     match name {
-                        "size_of" | "align_of" | "panic" | "binary_op" | "unary_op"
-                        | "numeric_cast" | "numeric_abs" | "numeric_lt" | "max_value"
-                        | "min_value" | "raw_offset" | "unreachable_unchecked" => {
+                        "size_of"
+                        | "align_of"
+                        | "panic"
+                        | "binary_op"
+                        | "unary_op"
+                        | "numeric_cast"
+                        | "numeric_abs"
+                        | "numeric_lt"
+                        | "max_value"
+                        | "min_value"
+                        | "raw_offset"
+                        | "unreachable_unchecked" => {
                             self.proj.scopes.intrinsics.insert(id, name.to_string());
                         }
                         _ => self.error(Error::new(
@@ -1378,6 +1395,8 @@ impl TypeChecker {
                 .map(|f| Vis::new(f.id, self.proj.scopes.get(f.id).public))
                 .collect(),
             subscripts: subscripts.iter().map(|s| s.id).collect(),
+            members_resolved: false,
+            recursive: false,
         }
     }
 }
@@ -1445,6 +1464,7 @@ impl TypeChecker {
                         id,
                     ));
                     let this_ty = this.proj.types.insert(this_ty);
+                    this.resolve_dependencies(id, this_ty, true);
                     this.check_impl_blocks(this_ty, id, impls);
 
                     for f in fns {
@@ -1458,6 +1478,7 @@ impl TypeChecker {
                     this.resolve_members(id);
                     let this_ty = Type::User(GenericUserType::from_id(&this.proj.scopes, &mut this.proj.types, id));
                     let this_ty = this.proj.types.insert(this_ty);
+                    this.resolve_dependencies(id, this_ty, true);
                     this.check_impl_blocks(this_ty, id, impls);
 
                     for f in fns {
@@ -4559,18 +4580,122 @@ impl TypeChecker {
     }
 
     fn resolve_members(&mut self, id: UserTypeId) {
-        // TODO: check for cyclic dependencies
+        if self.proj.scopes.get(id).members_resolved {
+            return;
+        }
+
         for i in 0..self.proj.scopes.get(id).members.len() {
             resolve_type!(self, self.proj.scopes.get_mut(id).members[i].ty);
         }
 
-        if let Some(mut union) = self.proj.scopes.get_mut(id).kind.as_union().cloned() {
+        if let Some(mut union) = self.proj.scopes.get(id).kind.as_union().cloned() {
             resolve_type!(self, union.tag);
             for variant in union.variants.values_mut().flat_map(|v| &mut v.ty) {
                 resolve_type!(self, *variant);
             }
             self.proj.scopes.get_mut(id).kind = UserTypeKind::Union(union);
         }
+
+        self.proj.scopes.get_mut(id).members_resolved = true;
+    }
+
+    fn resolve_dependencies(&mut self, ut: UserTypeId, this: TypeId, mut canonical: bool) -> bool {
+        match self.proj.deps.get(&this) {
+            Some(Dependencies::Resolved(_)) => return false,
+            Some(_) => return true,
+            None => {}
+        }
+
+        self.proj.deps.insert(this, Dependencies::Resolving);
+        let mut deps = Vec::new();
+        let mut failed = false;
+
+        if !canonical {
+            let canonical_ty = Type::User(GenericUserType::from_id(
+                &self.proj.scopes,
+                &mut self.proj.types,
+                ut,
+            ));
+            canonical = this == self.proj.types.insert(canonical_ty);
+        }
+
+        macro_rules! check_ty {
+            ($ty: expr, $err: expr) => {
+                let ty = $ty;
+                let ty = ty.with_ut_templates(&mut self.proj.types, this);
+                if self.check_member_dep(ty, this, &mut deps) {
+                    failed = true;
+                    if canonical {
+                        self.error($err)
+                    }
+                }
+            };
+        }
+
+        for i in 0..self.proj.scopes.get(ut).members.len() {
+            check_ty!(
+                self.proj.scopes.get(ut).members[i].ty,
+                Error::recursive_type(
+                    self.proj.scopes.get(ut).members.get_index(i).unwrap().0,
+                    self.proj.scopes.get(ut).members[i].span,
+                    false,
+                )
+            );
+        }
+
+        if let Some(union) = self.proj.scopes.get(ut).kind.as_union().cloned() {
+            check_ty!(
+                union.tag,
+                Error::new(
+                    "union tag makes this struct recursive",
+                    self.proj.scopes.get(ut).name.span
+                )
+            );
+            for (name, var) in union.variants.iter() {
+                if let Some(ty) = var.ty {
+                    check_ty!(ty, Error::recursive_type(name, var.span, true));
+                }
+            }
+        }
+
+        if failed {
+            self.proj.deps.insert(this, Dependencies::Recursive);
+            if canonical {
+                self.proj.scopes.get_mut(ut).recursive = true;
+            }
+        } else {
+            self.proj.deps.insert(this, Dependencies::Resolved(deps));
+        }
+
+        failed
+    }
+
+    fn check_member_dep(&mut self, mut this: TypeId, ut: TypeId, deps: &mut Vec<TypeId>) -> bool {
+        while let &Type::Array(inner, _) = self.proj.types.get(this) {
+            this = inner;
+        }
+        if ut == this {
+            return true;
+        }
+
+        if let Type::User(dep) = self.proj.types.get(this) {
+            deps.push(this);
+
+            let dep_id = dep.id;
+            self.resolve_members(dep_id);
+            if self.resolve_dependencies(dep_id, this, false) {
+                return true;
+            }
+            if let Some(Dependencies::Resolved(member_deps)) = self.proj.deps.get(&this) {
+                if member_deps.iter().any(|&v| v == ut) {
+                    return true;
+                }
+
+                deps.extend(member_deps);
+            }
+        }
+
+        false
     }
 
     fn resolve_impls(&mut self, id: UserTypeId) {
@@ -5152,6 +5277,8 @@ impl TypeChecker {
                             if self.proj.scopes.intrinsics.contains_key(&func.id)
                                 && self.proj.scopes.get(func.id).name.data == "size_of"
                             {
+                                // TODO: make sure the first type arg has had resolve_members()
+                                // and resolve_dependencies() called on it
                                 return Ok(func
                                     .first_type_arg()
                                     .unwrap()

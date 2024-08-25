@@ -717,6 +717,10 @@ impl TypeId {
                     }
                 }
 
+                if scopes.get(ut.id).recursive {
+                    return (0, 1);
+                }
+
                 let mut sa = SizeAndAlign::new();
                 let ut = ut.clone();
                 let ut_data = scopes.get(ut.id);
@@ -740,9 +744,9 @@ impl TypeId {
                     ));
                 } else if ut_data.kind.is_unsafe_union() {
                     sa.next(ut_data.members.values().fold((0, 1), |(sz, align), m| {
-                        let (s, a) = m.ty
-                            .with_templates(types, &ut.ty_args)
-                            .size_and_align(scopes, types);
+                        let (s, a) =
+                            m.ty.with_templates(types, &ut.ty_args)
+                                .size_and_align(scopes, types);
                         (sz.max(s), align.max(a))
                     }));
                 } else {

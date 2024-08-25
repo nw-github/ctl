@@ -266,4 +266,14 @@ impl Error {
             span,
         )
     }
+
+    pub fn recursive_type(member: &str, span: Span, variant: bool) -> Self {
+        Self::new(
+            format!(
+                "{} '{member}' gives this struct infinite size",
+                if variant { "variant" } else { "member" }
+            ),
+            span,
+        )
+    }
 }
