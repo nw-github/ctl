@@ -160,11 +160,13 @@ pub enum ExprData {
         cond: Option<Box<Expr>>,
         body: Vec<Stmt>,
         do_while: bool,
+        label: Option<String>,
     },
     For {
         patt: Located<Pattern>,
         iter: Box<Expr>,
         body: Vec<Stmt>,
+        label: Option<String>,
     },
     Match {
         expr: Box<Expr>,
@@ -177,14 +179,14 @@ pub enum ExprData {
     },
     Return(Box<Expr>),
     Tail(Box<Expr>),
-    Break(Option<Box<Expr>>),
+    Break(Option<Box<Expr>>, Option<Located<String>>),
     Unsafe(Box<Expr>),
     Range {
         start: Option<Box<Expr>>,
         end: Option<Box<Expr>>,
         inclusive: bool,
     },
-    Continue,
+    Continue(Option<Located<String>>),
     Lambda {
         params: Vec<(Located<String>, Option<TypeHint>)>,
         ret: Option<TypeHint>,

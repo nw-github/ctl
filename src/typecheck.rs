@@ -2949,6 +2949,7 @@ impl TypeChecker {
                 cond,
                 body,
                 do_while,
+                label,
             } => {
                 let infinite = cond.is_none();
                 let target = self.loop_target(target, infinite);
@@ -2956,11 +2957,12 @@ impl TypeChecker {
                     let (cond, vars) = self.type_check_with_listen(*cond);
                     let body = self.create_block_with_init(
                         body,
-                        ScopeKind::Loop {
+                        ScopeKind::Loop(LoopScopeKind {
                             target,
                             breaks: None,
                             infinite,
-                        },
+                            label,
+                        }),
                         |this| {
                             if !do_while {
                                 this.define(&vars);
@@ -2973,11 +2975,12 @@ impl TypeChecker {
                         None,
                         self.create_block(
                             body,
-                            ScopeKind::Loop {
+                            ScopeKind::Loop(LoopScopeKind {
                                 target,
                                 breaks: None,
                                 infinite,
-                            },
+                                label,
+                            }),
                         ),
                     )
                 };
@@ -2993,17 +2996,23 @@ impl TypeChecker {
                     },
                 )
             }
-            ExprData::For { patt, iter, body } => {
+            ExprData::For {
+                patt,
+                iter,
+                body,
+                label,
+            } => {
                 let span = iter.span;
                 let iter = self.check_expr(*iter, None);
                 let Some(iter_id) = self.proj.scopes.lang_traits.get("iter").copied() else {
                     return self.error(Error::no_lang_item("Iterator", span));
                 };
-                let kind = ScopeKind::Loop {
+                let kind = ScopeKind::Loop(LoopScopeKind {
                     target: self.loop_target(target, false),
                     breaks: None,
                     infinite: false,
-                };
+                    label,
+                });
                 self.enter(kind, |this| {
                     let Some(ut) = this.get_trait_impl(iter.ty, iter_id) else {
                         this.check_block(body);
@@ -3144,36 +3153,34 @@ impl TypeChecker {
                     CheckedExpr::new(TypeId::NEVER, CheckedExprData::Yield(expr.into()))
                 }
             },
-            ExprData::Break(expr) => {
-                let Some(((&target, _, &infinite), id)) = self
-                    .proj
-                    .scopes
-                    .walk(self.current)
-                    .take_while(|(_, scope)| !scope.kind.is_defer())
-                    .find_map(|(id, scope)| scope.kind.as_loop().zip(Some(id)))
-                else {
+            ExprData::Break(expr, label) => {
+                let Some((loop_data, id)) = self.current_loop(&label) else {
                     if let Some(expr) = expr {
                         self.check_expr(*expr, None);
                     }
-                    return self.error(Error::new("break outside of loop", span));
+                    if let Some(label) = label {
+                        return self.error(Error::new(
+                            format!("cannot find loop with label {label}"),
+                            label.span,
+                        ));
+                    } else {
+                        return self.error(Error::new("break outside of loop", span));
+                    }
                 };
+
+                let mut loop_data = loop_data.clone();
+                let target = loop_data.target;
                 let expr = if let Some(expr) = expr {
                     let span = expr.span;
                     let mut expr = self.check_expr(*expr, target);
                     if let Some(target) = target {
                         expr = self.type_check_checked(expr, target, span);
-                        self.proj.scopes[id].kind = ScopeKind::Loop {
-                            target: Some(target),
-                            breaks: Some(true),
-                            infinite,
-                        };
+                        loop_data.target = Some(target);
                     } else {
-                        self.proj.scopes[id].kind = ScopeKind::Loop {
-                            target: Some(expr.ty),
-                            breaks: Some(true),
-                            infinite,
-                        };
+                        loop_data.target = Some(expr.ty);
                     }
+                    loop_data.breaks = Some(true);
+                    self.proj.scopes[id].kind = ScopeKind::Loop(loop_data);
 
                     let (target, opt) =
                         self.loop_out_type(&self.proj.scopes[id].kind.clone(), span);
@@ -3183,28 +3190,27 @@ impl TypeChecker {
                         Some(expr.into())
                     }
                 } else {
-                    self.proj.scopes[id].kind = ScopeKind::Loop {
-                        target: Some(TypeId::VOID),
-                        breaks: Some(false),
-                        infinite,
-                    };
+                    loop_data.target = Some(TypeId::VOID);
+                    loop_data.breaks = Some(false);
+                    self.proj.scopes[id].kind = ScopeKind::Loop(loop_data);
                     None
                 };
 
-                CheckedExpr::new(TypeId::NEVER, CheckedExprData::Break(expr))
+                CheckedExpr::new(TypeId::NEVER, CheckedExprData::Break(expr, id))
             }
-            ExprData::Continue => {
-                if !self
-                    .proj
-                    .scopes
-                    .walk(self.current)
-                    .take_while(|(_, scope)| !scope.kind.is_defer())
-                    .any(|(_, scope)| matches!(scope.kind, ScopeKind::Loop { .. }))
-                {
-                    return self.error(Error::new("continue outside of loop", span));
-                }
+            ExprData::Continue(label) => {
+                let Some((_, id)) = self.current_loop(&label) else {
+                    if let Some(label) = label {
+                        return self.error(Error::new(
+                            format!("cannot find loop with label {label}"),
+                            label.span,
+                        ));
+                    } else {
+                        return self.error(Error::new("continue outside of loop", span));
+                    }
+                };
 
-                CheckedExpr::new(TypeId::NEVER, CheckedExprData::Continue)
+                CheckedExpr::new(TypeId::NEVER, CheckedExprData::Continue(id))
             }
             ExprData::Is { expr, pattern } => self.enter(ScopeKind::None, |this| {
                 let mut prev = this.current_expr;
@@ -3397,6 +3403,21 @@ impl TypeChecker {
                 .vns
                 .insert(name, Vis::new(ValueItem::Var(var), false));
         }
+    }
+
+    fn current_loop(&self, label: &Option<Located<String>>) -> Option<(&LoopScopeKind, ScopeId)> {
+        let label = label.as_ref().map(|l| &l.data);
+        self.proj
+            .scopes
+            .walk(self.current)
+            .take_while(|(_, scope)| !scope.kind.is_defer())
+            .find_map(|(id, scope)| {
+                scope
+                    .kind
+                    .as_loop()
+                    .filter(|l| label.is_none() || l.label.as_ref() == label)
+                    .zip(Some(id))
+            })
     }
 
     fn check_array_subscript(
@@ -5312,11 +5333,12 @@ impl TypeChecker {
     }
 
     fn loop_out_type(&mut self, kind: &ScopeKind, span: Span) -> (TypeId, bool) {
-        let ScopeKind::Loop {
+        let ScopeKind::Loop(LoopScopeKind {
             target,
             breaks,
             infinite,
-        } = kind
+            label: _,
+        }) = kind
         else {
             panic!("ICE: target of loop changed from loop to something else");
         };

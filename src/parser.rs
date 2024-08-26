@@ -547,9 +547,9 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
             Token::LCurly => self.block_expr(span),
             Token::If => self.if_expr(span),
-            Token::While => self.while_expr(span),
-            Token::Loop => self.loop_expr(span),
-            Token::For => self.for_expr(span),
+            Token::While => self.while_expr(span, None),
+            Token::Loop => self.loop_expr(span, None),
+            Token::For => self.for_expr(span, None),
             Token::Match => self.match_expr(span),
             Token::LBrace => {
                 if let Some(rbrace) = self.next_if_kind(Token::RBrace) {
@@ -588,24 +588,47 @@ impl<'a, 'b> Parser<'a, 'b> {
                 }
             }
             Token::At => {
-                self.expect_kind(Token::LBrace);
-                if let Some(rbrace) = self.next_if_kind(Token::RBrace) {
-                    Expr::new(span.extended_to(rbrace.span), ExprData::Vec(Vec::new()))
-                } else {
-                    let expr = self.expression();
-                    if self.next_if_kind(Token::Semicolon).is_some() {
-                        let count = self.expression();
-                        let rbrace = self.expect_kind(Token::RBrace);
-                        Expr::new(
-                            span.extended_to(rbrace.span),
-                            ExprData::VecWithInit {
-                                init: expr.into(),
-                                count: count.into(),
-                            },
-                        )
+                if self.next_if_kind(Token::LBrace).is_some() {
+                    if let Some(rbrace) = self.next_if_kind(Token::RBrace) {
+                        Expr::new(span.extended_to(rbrace.span), ExprData::Vec(Vec::new()))
                     } else {
-                        self.csv(vec![expr], Token::RBrace, span, Self::expression)
-                            .map(ExprData::Vec)
+                        let expr = self.expression();
+                        if self.next_if_kind(Token::Semicolon).is_some() {
+                            let count = self.expression();
+                            let rbrace = self.expect_kind(Token::RBrace);
+                            Expr::new(
+                                span.extended_to(rbrace.span),
+                                ExprData::VecWithInit {
+                                    init: expr.into(),
+                                    count: count.into(),
+                                },
+                            )
+                        } else {
+                            self.csv(vec![expr], Token::RBrace, span, Self::expression)
+                                .map(ExprData::Vec)
+                        }
+                    }
+                } else {
+                    let label = self.expect_id_l("expected label identifier");
+                    self.expect_kind(Token::Colon);
+                    match self.peek().data {
+                        Token::While => {
+                            let token = self.next();
+                            self.while_expr(token.span, Some(label.data))
+                        }
+                        Token::Loop => {
+                            let token = self.next();
+                            self.loop_expr(token.span, Some(label.data))
+                        }
+                        Token::For => {
+                            let token = self.next();
+                            self.for_expr(token.span, Some(label.data))
+                        }
+                        _ => {
+                            let expr = self.expression();
+                            self.label_error(label);
+                            expr
+                        }
                     }
                 }
             }
@@ -640,6 +663,9 @@ impl<'a, 'b> Parser<'a, 'b> {
                 Expr::new(span, ExprData::Return(expr))
             }
             Token::Break => {
+                let label = self
+                    .next_if_kind(Token::At)
+                    .map(|_| self.expect_id_l("expected label name"));
                 let (span, expr) = if !self.is_range_end(EvalContext::Normal) {
                     let expr = self.expression();
                     (span.extended_to(expr.span), Some(expr.into()))
@@ -647,13 +673,18 @@ impl<'a, 'b> Parser<'a, 'b> {
                     (span, None)
                 };
 
-                Expr::new(span, ExprData::Break(expr))
+                Expr::new(span, ExprData::Break(expr, label))
             }
             Token::Unsafe => {
                 let expr = self.expression();
                 Expr::new(span, ExprData::Unsafe(expr.into()))
             }
-            Token::Continue => Expr::new(span, ExprData::Continue),
+            Token::Continue => {
+                let label = self
+                    .next_if_kind(Token::At)
+                    .map(|_| self.expect_id_l("expected label name"));
+                Expr::new(span, ExprData::Continue(label))
+            }
             _ => {
                 self.error(Error::new("unexpected token", span));
                 Expr::new(span, ExprData::Error)
@@ -857,31 +888,75 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     //
 
+    fn label_error(&mut self, label: Located<String>) {
+        self.error_no_sync(Error::new(
+            "labels are only valid for loop expressions",
+            label.span,
+        ));
+    }
+
     fn block_or_normal_expr(&mut self) -> (bool, Expr) {
-        if let Some(token) = self.next_if_kind(Token::If) {
-            (false, self.if_expr(token.span))
-        } else if let Some(token) = self.next_if_kind(Token::While) {
-            (false, self.while_expr(token.span))
-        } else if let Some(token) = self.next_if_kind(Token::Loop) {
-            let expr = self.loop_expr(token.span);
-            (
-                matches!(&expr.data, ExprData::Loop { do_while: true, .. }),
-                expr,
-            )
-        } else if let Some(token) = self.next_if_kind(Token::For) {
-            (false, self.for_expr(token.span))
-        } else if let Some(token) = self.next_if_kind(Token::Match) {
-            (false, self.match_expr(token.span))
-        } else if let Some(token) = self.next_if_kind(Token::LCurly) {
-            (false, self.block_expr(token.span))
-        } else if self.next_if_kind(Token::Unsafe).is_some() {
-            let (is_unsafe, expr) = self.block_or_normal_expr();
-            (
-                is_unsafe,
-                Expr::new(expr.span, ExprData::Unsafe(expr.into())),
-            )
-        } else {
-            (true, self.expression())
+        let label = self.next_if_kind(Token::At).map(|_| {
+            let label = self.expect_id_l("expected label identifier");
+            self.expect_kind(Token::Colon);
+            label
+        });
+        match self.peek().data {
+            Token::If => {
+                if let Some(label) = label {
+                    self.label_error(label)
+                }
+                let token = self.next();
+                (false, self.if_expr(token.span))
+            }
+            Token::While => {
+                let token = self.next();
+                (false, self.while_expr(token.span, label.map(|l| l.data)))
+            }
+            Token::Loop => {
+                let token = self.next();
+                let expr = self.loop_expr(token.span, label.map(|l| l.data));
+                (
+                    matches!(&expr.data, ExprData::Loop { do_while: true, .. }),
+                    expr,
+                )
+            }
+            Token::For => {
+                let token = self.next();
+                (false, self.for_expr(token.span, label.map(|l| l.data)))
+            }
+            Token::Match => {
+                let token = self.next();
+                if let Some(label) = label {
+                    self.label_error(label)
+                }
+                (false, self.match_expr(token.span))
+            }
+            Token::LCurly => {
+                let token = self.next();
+                if let Some(label) = label {
+                    self.label_error(label)
+                }
+
+                (false, self.block_expr(token.span))
+            }
+            Token::Unsafe => {
+                if let Some(label) = label {
+                    self.label_error(label)
+                }
+
+                let (is_unsafe, expr) = self.block_or_normal_expr();
+                (
+                    is_unsafe,
+                    Expr::new(expr.span, ExprData::Unsafe(expr.into())),
+                )
+            }
+            _ => {
+                if let Some(label) = label {
+                    self.label_error(label)
+                }
+                (true, self.expression())
+            }
         }
     }
 
@@ -907,7 +982,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         )
     }
 
-    fn while_expr(&mut self, token: Span) -> Expr {
+    fn while_expr(&mut self, token: Span, label: Option<String>) -> Expr {
         let cond = self.precedence(Precedence::Min, EvalContext::IfWhile);
         let Located { span, data: body } = self.block();
         Expr::new(
@@ -916,11 +991,12 @@ impl<'a, 'b> Parser<'a, 'b> {
                 cond: Some(cond.into()),
                 body,
                 do_while: false,
+                label,
             },
         )
     }
 
-    fn loop_expr(&mut self, mut token: Span) -> Expr {
+    fn loop_expr(&mut self, mut token: Span, label: Option<String>) -> Expr {
         let body = self.block().data;
         let (cond, do_while) = self
             .next_if_kind(Token::While)
@@ -937,11 +1013,12 @@ impl<'a, 'b> Parser<'a, 'b> {
                 cond,
                 body,
                 do_while,
+                label,
             },
         )
     }
 
-    fn for_expr(&mut self, token: Span) -> Expr {
+    fn for_expr(&mut self, token: Span, label: Option<String>) -> Expr {
         let patt = self.pattern(false);
         self.expect_kind(Token::In);
         let iter = self.precedence(Precedence::Min, EvalContext::For);
@@ -952,6 +1029,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 patt,
                 iter: iter.into(),
                 body,
+                label,
             },
         )
     }

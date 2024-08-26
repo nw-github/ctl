@@ -321,8 +321,9 @@ pub fn print_expr(expr: &Expr, indent: usize) {
             cond,
             body,
             do_while,
+            label,
         } => {
-            eprint!("{tabs}Loop");
+            eprint!("{tabs}Loop({label:?}");
             print_bool!(do_while);
             eprintln!();
 
@@ -358,8 +359,8 @@ pub fn print_expr(expr: &Expr, indent: usize) {
             eprintln!("{tabs}Tail");
             print_expr(expr, indent + 1);
         }
-        ExprData::Break(expr) => {
-            eprintln!("{tabs}Break");
+        ExprData::Break(expr, label) => {
+            eprintln!("{tabs}Break({label:?})");
             if let Some(expr) = expr {
                 print_expr(expr, indent + 1);
             }
@@ -367,14 +368,14 @@ pub fn print_expr(expr: &Expr, indent: usize) {
         ExprData::Bool(value) => {
             eprintln!("{tabs}Bool = {value}");
         }
-        ExprData::Continue => {
-            eprintln!("{tabs}Continue");
+        ExprData::Continue(label) => {
+            eprintln!("{tabs}Continue({label:?})");
         }
         ExprData::None => {
             eprintln!("{tabs}None");
         }
-        ExprData::For { patt, iter, body } => {
-            eprintln!("{tabs}For[{patt:?}]");
+        ExprData::For { patt, iter, body, label } => {
+            eprintln!("{tabs}For[{patt:?}, {label:?}]");
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}In: ");
             print_expr(iter, indent + 2);

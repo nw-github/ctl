@@ -200,10 +200,10 @@ pub enum CheckedExprData {
     Is(Box<CheckedExpr>, CheckedPattern),
     Return(Box<CheckedExpr>),
     Yield(Box<CheckedExpr>),
-    Break(Option<Box<CheckedExpr>>),
+    Break(Option<Box<CheckedExpr>>, ScopeId),
     Lambda(Vec<CheckedStmt>),
     NeverCoerce(Box<CheckedExpr>),
-    Continue,
+    Continue(ScopeId),
     #[default]
     Error,
 }

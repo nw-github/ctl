@@ -777,19 +777,21 @@ macro_rules! enter_block {
 macro_rules! enter_loop {
     ($self: expr, $state: expr, $scope: expr, $ty: expr, $body: expr) => {{
         let ty = $ty;
-        let cur_loop = ($scope, $state.tmpvar());
-        let old_block = std::mem::replace(&mut $self.cur_block, cur_loop.1.clone());
-        let old_loop = std::mem::replace(&mut $self.cur_loop, cur_loop);
+        let old_block = std::mem::replace(&mut $self.cur_block, $state.tmpvar());
+        let old_loop = std::mem::replace(&mut $self.cur_loop, $scope);
         hoist!($self, {
             $self.emit_type(ty);
-            $self.buffer.emit(format!(" {};", $self.cur_loop.1));
+            $self
+                .buffer
+                .emit(format!(" {};", scope_var_name($self.cur_loop)));
             $body;
         });
 
         $self.cur_block = old_block;
-        $self
-            .buffer
-            .emit(std::mem::replace(&mut $self.cur_loop, old_loop).1);
+        $self.buffer.emit(scope_var_name(std::mem::replace(
+            &mut $self.cur_loop,
+            old_loop,
+        )));
     }};
 }
 
@@ -828,7 +830,7 @@ pub struct Codegen {
     funcs: HashSet<State>,
     statics: HashSet<VariableId>,
     cur_block: String,
-    cur_loop: (ScopeId, String),
+    cur_loop: ScopeId,
     flags: CodegenFlags,
     vtables: Buffer,
     emitted_vtables: HashSet<Vtable>,
@@ -1692,7 +1694,7 @@ impl Codegen {
                             self.emit_block(body, state);
                         }
                     });
-                    self.buffer.emit("}");
+                    self.buffer.emit(format!("c{0}:;}}b{0}:;", self.cur_loop.0));
                 });
             }
             CheckedExprData::For {
@@ -1759,7 +1761,8 @@ impl Codegen {
                     self.emit_block(body, state);
                     self.buffer.emit("}else{");
                     self.emit_loop_break(state, expr.ty, optional);
-                    self.buffer.emit("}}");
+                    self.buffer
+                        .emit(format!("}}c{0}:;}}b{0}:;", self.cur_loop.0));
 
                     self.funcs.insert(next_state);
                 });
@@ -1875,21 +1878,31 @@ impl Codegen {
                 });
                 self.buffer.emit(VOID_INSTANCE);
             }
-            CheckedExprData::Break(expr) => {
+            CheckedExprData::Break(expr, scope) => {
                 hoist!(self, {
-                    self.buffer.emit(format!("{}=", self.cur_loop.1));
+                    self.buffer.emit(format!("{}=", scope_var_name(scope)));
                     if let Some(expr) = expr {
                         self.emit_expr_inline(*expr, state);
                     } else {
                         self.buffer.emit(VOID_INSTANCE);
                     }
                     self.buffer.emit(";");
-                    self.leave_scope(state, "break", self.cur_loop.0);
+                    if self.cur_loop == scope {
+                        self.leave_scope(state, "break", scope);
+                    } else {
+                        self.leave_scope(state, &format!("goto {}", loop_break_name(scope)), scope);
+                    }
                 });
                 self.buffer.emit(VOID_INSTANCE);
             }
-            CheckedExprData::Continue => {
-                hoist!(self, self.leave_scope(state, "continue", self.cur_loop.0));
+            CheckedExprData::Continue(scope) => {
+                hoist!(self, {
+                    if self.cur_loop == scope {
+                        self.leave_scope(state, "continue", scope);
+                    } else {
+                        self.leave_scope(state, &format!("goto {}", loop_cont_name(scope)), scope);
+                    }
+                });
                 self.buffer.emit(VOID_INSTANCE);
             }
             CheckedExprData::Match {
@@ -2535,11 +2548,12 @@ impl Codegen {
 
     fn emit_loop_break(&mut self, state: &mut State, ty: TypeId, optional: bool) {
         if optional {
-            self.buffer.emit(format!("{}=", self.cur_loop.1));
+            self.buffer
+                .emit(format!("{}=", scope_var_name(self.cur_loop)));
             self.emit_expr_inline(CheckedExpr::option_null(ty), state);
         } else {
             self.buffer
-                .emit(format!("{}={VOID_INSTANCE}", self.cur_loop.1));
+                .emit(format!("{}={VOID_INSTANCE}", scope_var_name(self.cur_loop)));
         }
         self.buffer.emit(";break;");
     }
@@ -3443,4 +3457,16 @@ fn member_name(scopes: &Scopes, id: Option<UserTypeId>, name: &str) -> String {
     } else {
         format!("${name}")
     }
+}
+
+fn loop_cont_name(scope: ScopeId) -> String {
+    format!("c{}", scope.0)
+}
+
+fn loop_break_name(scope: ScopeId) -> String {
+    format!("b{}", scope.0)
+}
+
+fn scope_var_name(scope: ScopeId) -> String {
+    format!("$sv{}", scope.0)
 }

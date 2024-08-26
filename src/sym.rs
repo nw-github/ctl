@@ -92,14 +92,18 @@ id!(VariableId => Variable, vars, vns);
 pub type TraitId = UserTypeId;
 pub type ExtensionId = UserTypeId;
 
+#[derive(Debug, Clone)]
+pub struct LoopScopeKind {
+    pub target: Option<TypeId>,
+    pub breaks: Option<bool>,
+    pub infinite: bool,
+    pub label: Option<String>,
+}
+
 #[derive(Default, Debug, Clone, EnumAsInner)]
 pub enum ScopeKind {
     Block(Option<TypeId>, bool),
-    Loop {
-        target: Option<TypeId>,
-        breaks: Option<bool>,
-        infinite: bool,
-    },
+    Loop(LoopScopeKind),
     Lambda(Option<TypeId>, bool),
     Function(FunctionId),
     UserType(UserTypeId),
