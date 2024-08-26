@@ -3173,12 +3173,12 @@ impl TypeChecker {
                 let expr = if let Some(expr) = expr {
                     let span = expr.span;
                     let mut expr = self.check_expr(*expr, target);
-                    if let Some(target) = target {
+                    loop_data.target = if let Some(target) = target {
                         expr = self.type_check_checked(expr, target, span);
-                        loop_data.target = Some(target);
+                        Some(target)
                     } else {
-                        loop_data.target = Some(expr.ty);
-                    }
+                        Some(expr.ty)
+                    };
                     loop_data.breaks = Some(true);
                     self.proj.scopes[id].kind = ScopeKind::Loop(loop_data);
 

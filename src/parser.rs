@@ -609,7 +609,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         }
                     }
                 } else {
-                    let label = self.expect_id_l("expected label identifier");
+                    let label = self.expect_id_l("expected label identifier or vector literal");
                     self.expect_kind(Token::Colon);
                     match self.peek().data {
                         Token::While => {
