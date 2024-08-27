@@ -150,7 +150,7 @@ pub enum ExprData {
     Path(Path),
     Void,
     None,
-    Block(Vec<Stmt>),
+    Block(Vec<Stmt>, Option<String>),
     If {
         cond: Box<Expr>,
         if_branch: Box<Expr>,

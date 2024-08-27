@@ -738,6 +738,13 @@ macro_rules! hoist {
     }};
 }
 
+macro_rules! never_expr {
+    ($self: expr, $body: expr) => {{
+        hoist!($self, $body);
+        $self.buffer.emit(VOID_INSTANCE);
+    }};
+}
+
 macro_rules! tmpbuf {
     ($self: expr, $state: expr, |$tmp: ident| $body: expr) => {{
         hoist!($self, {
@@ -759,39 +766,38 @@ macro_rules! tmpbuf_emit {
 }
 
 macro_rules! enter_block {
-    ($self: expr, $state: expr, $ty: expr, $body: expr) => {{
+    ($self: expr, $scope: expr, $ty: expr, |$tmp: ident| $body: expr) => {{
         let ty = $ty;
-        let old = std::mem::replace(&mut $self.cur_block, $state.tmpvar());
+        let scope = $scope;
+        let old = std::mem::replace(&mut $self.cur_block, scope);
+        let $tmp = scope_var_or_label(scope);
         hoist!($self, {
             $self.emit_type(ty);
-            $self.buffer.emit(format!(" {};", $self.cur_block));
+            $self.buffer.emit(format!(" {};", $tmp));
             $body;
         });
 
-        $self
-            .buffer
-            .emit(std::mem::replace(&mut $self.cur_block, old));
+        $self.cur_block = old;
+        $self.buffer.emit($tmp);
     }};
 }
 
 macro_rules! enter_loop {
-    ($self: expr, $state: expr, $scope: expr, $ty: expr, $body: expr) => {{
+    ($self: expr, $state: expr, $scope: expr, $ty: expr, |$tmp: ident| $body: expr) => {{
         let ty = $ty;
-        let old_block = std::mem::replace(&mut $self.cur_block, $state.tmpvar());
-        let old_loop = std::mem::replace(&mut $self.cur_loop, $scope);
+        let scope = $scope;
+        let old_block = std::mem::replace(&mut $self.cur_block, scope);
+        let old_loop = std::mem::replace(&mut $self.cur_loop, scope);
+        let $tmp = scope_var_or_label($self.cur_loop);
         hoist!($self, {
             $self.emit_type(ty);
-            $self
-                .buffer
-                .emit(format!(" {};", scope_var_name($self.cur_loop)));
+            $self.buffer.emit(format!(" {};", $tmp));
             $body;
         });
 
         $self.cur_block = old_block;
-        $self.buffer.emit(scope_var_name(std::mem::replace(
-            &mut $self.cur_loop,
-            old_loop,
-        )));
+        $self.cur_loop = old_loop;
+        $self.buffer.emit($tmp);
     }};
 }
 
@@ -829,7 +835,7 @@ pub struct Codegen {
     temporaries: Buffer,
     funcs: HashSet<State>,
     statics: HashSet<VariableId>,
-    cur_block: String,
+    cur_block: ScopeId,
     cur_loop: ScopeId,
     flags: CodegenFlags,
     vtables: Buffer,
@@ -1601,24 +1607,28 @@ impl Codegen {
                 self.buffer
                     .emit(format!(".{}", member_name(&self.proj.scopes, id, &member)));
             }
-            CheckedExprData::Block(block) => {
-                enter_block!(self, state, expr.ty, {
-                    let scope = block.scope;
-                    self.buffer.emit_info("{", self.flags.minify);
-                    self.emit_block(block, state);
-                    if matches!(self.proj.scopes[scope].kind, ScopeKind::Block(_, false)) {
-                        self.buffer
-                            .emit(format!("{}={VOID_INSTANCE};", self.cur_block));
-                    }
-                    self.buffer.emit_info("}", self.flags.minify);
-                });
-            }
+            CheckedExprData::Block(block) => enter_block!(self, block.scope, expr.ty, |name| {
+                let yields = block.is_yielding(&self.proj.scopes);
+                self.buffer.emit_info("{", self.flags.minify);
+                self.emit_block(block, state);
+                if !yields {
+                    self.buffer.emit(format!("{name}={VOID_INSTANCE};",));
+                }
+                self.buffer.emit_info("}", self.flags.minify);
+                if yields {
+                    self.buffer.emit(format!("{name}:;"));
+                }
+            }),
             CheckedExprData::If {
                 cond,
                 if_branch,
                 else_branch,
             } => {
-                enter_block!(self, state, expr.ty, {
+                let dummy = self
+                    .proj
+                    .scopes
+                    .create_scope(ScopeId::ROOT, ScopeKind::None, false);
+                enter_block!(self, dummy, expr.ty, |name| {
                     if let CheckedExprData::Is(mut expr, patt) = cond.data {
                         expr.ty = expr
                             .ty
@@ -1632,19 +1642,18 @@ impl Codegen {
                         self.buffer.emit("){");
                     }
                     hoist_point!(self, {
-                        self.buffer.emit(format!("{}=", self.cur_block));
+                        self.buffer.emit(format!("{name}="));
                         self.emit_expr_inline(*if_branch, state);
                     });
 
                     self.buffer.emit(";}else{");
                     if let Some(else_branch) = else_branch {
                         hoist_point!(self, {
-                            self.buffer.emit(format!("{}=", self.cur_block));
+                            self.buffer.emit(format!("{name}="));
                             self.emit_expr_inline(*else_branch, state);
                         });
                     } else {
-                        self.buffer
-                            .emit(format!("{}={VOID_INSTANCE}", self.cur_block));
+                        self.buffer.emit(format!("{name}={VOID_INSTANCE}"));
                     }
 
                     self.buffer.emit(";}");
@@ -1656,7 +1665,7 @@ impl Codegen {
                 do_while,
                 optional,
             } => {
-                enter_loop!(self, state, body.scope, expr.ty, {
+                enter_loop!(self, state, body.scope, expr.ty, |name| {
                     macro_rules! cond {
                         ($cond: expr) => {
                             hoist_point!(self, {
@@ -1694,7 +1703,8 @@ impl Codegen {
                             self.emit_block(body, state);
                         }
                     });
-                    self.buffer.emit(format!("c{0}:;}}b{0}:;", self.cur_loop.0));
+                    self.buffer
+                        .emit(format!("{}:;}}{name}:;", loop_cont_label(self.cur_loop)));
                 });
             }
             CheckedExprData::For {
@@ -1703,7 +1713,7 @@ impl Codegen {
                 body,
                 optional,
             } => {
-                enter_loop!(self, state, body.scope, expr.ty, {
+                enter_loop!(self, state, body.scope, expr.ty, |name| {
                     iter.ty = iter
                         .ty
                         .with_templates(&mut self.proj.types, &state.func.ty_args);
@@ -1762,8 +1772,7 @@ impl Codegen {
                     self.buffer.emit("}else{");
                     self.emit_loop_break(state, expr.ty, optional);
                     self.buffer
-                        .emit(format!("}}c{0}:;}}b{0}:;", self.cur_loop.0));
-
+                        .emit(format!("}}{}:;}}{name}:;", loop_cont_label(self.cur_loop)));
                     self.funcs.insert(next_state);
                 });
             }
@@ -1850,69 +1859,67 @@ impl Codegen {
                     self.funcs.insert(new_state);
                 }
             }
-            CheckedExprData::Return(mut expr) => {
-                hoist!(self, {
-                    expr.ty = expr
-                        .ty
-                        .with_templates(&mut self.proj.types, &state.func.ty_args);
-                    let void = expr.ty.is_void();
-                    let tmp = self.emit_tmpvar(*expr, state);
-                    let str = if void {
-                        self.buffer.emit(format!("(void){tmp};"));
-                        "return".into()
-                    } else {
-                        format!("return {tmp}")
-                    };
-                    self.leave_scope(state, &str, self.proj.scopes.get(state.func.id).body_scope);
-                });
-                self.buffer.emit(VOID_INSTANCE);
-            }
-            CheckedExprData::Yield(expr) => {
-                hoist!(self, {
-                    // currently, the only way to yield is via tail expression, meaning emit_block
-                    // will take care of all defers for us. if we allow something like break to
-                    // label, we will need to update this to leave_scope, then goto
-                    self.buffer.emit(format!("{}=", self.cur_block));
+            CheckedExprData::Return(mut expr) => never_expr!(self, {
+                expr.ty = expr
+                    .ty
+                    .with_templates(&mut self.proj.types, &state.func.ty_args);
+                let void = expr.ty.is_void();
+                let tmp = self.emit_tmpvar(*expr, state);
+                let str = if void {
+                    self.buffer.emit(format!("(void){tmp};"));
+                    "return".into()
+                } else {
+                    format!("return {tmp}")
+                };
+                self.leave_scope(state, &str, self.proj.scopes.get(state.func.id).body_scope);
+            }),
+            CheckedExprData::Yield(expr, scope) => never_expr!(self, {
+                self.buffer.emit(format!("{}=", scope_var_or_label(scope)));
+                if let Some(expr) = expr {
                     self.emit_expr_inline(*expr, state);
-                    self.buffer.emit(";");
-                });
-                self.buffer.emit(VOID_INSTANCE);
-            }
-            CheckedExprData::Break(expr, scope) => {
-                hoist!(self, {
-                    self.buffer.emit(format!("{}=", scope_var_name(scope)));
-                    if let Some(expr) = expr {
-                        self.emit_expr_inline(*expr, state);
-                    } else {
-                        self.buffer.emit(VOID_INSTANCE);
-                    }
-                    self.buffer.emit(";");
-                    if self.cur_loop == scope {
-                        self.leave_scope(state, "break", scope);
-                    } else {
-                        self.leave_scope(state, &format!("goto {}", loop_break_name(scope)), scope);
-                    }
-                });
-                self.buffer.emit(VOID_INSTANCE);
-            }
-            CheckedExprData::Continue(scope) => {
-                hoist!(self, {
-                    if self.cur_loop == scope {
-                        self.leave_scope(state, "continue", scope);
-                    } else {
-                        self.leave_scope(state, &format!("goto {}", loop_cont_name(scope)), scope);
-                    }
-                });
-                self.buffer.emit(VOID_INSTANCE);
-            }
+                } else {
+                    self.buffer.emit(VOID_INSTANCE);
+                }
+                self.buffer.emit(";");
+
+                // if scope != self.cur_block {
+                // }
+                self.leave_scope(state, &format!("goto {}", scope_var_or_label(scope)), scope);
+            }),
+            CheckedExprData::Break(expr, scope) => never_expr!(self, {
+                self.buffer.emit(format!("{}=", scope_var_or_label(scope)));
+                if let Some(expr) = expr {
+                    self.emit_expr_inline(*expr, state);
+                } else {
+                    self.buffer.emit(VOID_INSTANCE);
+                }
+                self.buffer.emit(";");
+                if self.cur_loop == scope {
+                    self.leave_scope(state, "break", scope);
+                } else {
+                    self.leave_scope(state, &format!("goto {}", scope_var_or_label(scope)), scope);
+                }
+            }),
+            CheckedExprData::Continue(scope) => never_expr!(self, {
+                if self.cur_loop == scope {
+                    self.leave_scope(state, "continue", scope);
+                } else {
+                    self.leave_scope(state, &format!("goto {}", loop_cont_label(scope)), scope);
+                }
+            }),
             CheckedExprData::Match {
                 expr: mut scrutinee,
                 body,
             } => {
-                enter_block!(self, state, expr.ty, {
+                let dummy = self
+                    .proj
+                    .scopes
+                    .create_scope(ScopeId::ROOT, ScopeKind::None, false);
+                enter_block!(self, dummy, expr.ty, |name| {
                     scrutinee.ty = scrutinee
                         .ty
                         .with_templates(&mut self.proj.types, &state.func.ty_args);
+
                     let ty = scrutinee.ty;
                     let tmp = self.emit_tmpvar(*scrutinee, state);
                     for (i, (patt, expr)) in body.into_iter().enumerate() {
@@ -1923,7 +1930,7 @@ impl Codegen {
                         self.emit_pattern_if_stmt(state, &patt.data, &tmp, ty);
 
                         hoist_point!(self, {
-                            self.buffer.emit(format!("{}=", self.cur_block));
+                            self.buffer.emit(format!("{name}="));
                             self.emit_expr_inline(expr, state);
                             self.buffer.emit(";}");
                         });
@@ -2549,11 +2556,13 @@ impl Codegen {
     fn emit_loop_break(&mut self, state: &mut State, ty: TypeId, optional: bool) {
         if optional {
             self.buffer
-                .emit(format!("{}=", scope_var_name(self.cur_loop)));
+                .emit(format!("{}=", scope_var_or_label(self.cur_loop)));
             self.emit_expr_inline(CheckedExpr::option_null(ty), state);
         } else {
-            self.buffer
-                .emit(format!("{}={VOID_INSTANCE}", scope_var_name(self.cur_loop)));
+            self.buffer.emit(format!(
+                "{}={VOID_INSTANCE}",
+                scope_var_or_label(self.cur_loop)
+            ));
         }
         self.buffer.emit(";break;");
     }
@@ -3459,14 +3468,10 @@ fn member_name(scopes: &Scopes, id: Option<UserTypeId>, name: &str) -> String {
     }
 }
 
-fn loop_cont_name(scope: ScopeId) -> String {
+fn loop_cont_label(scope: ScopeId) -> String {
     format!("c{}", scope.0)
 }
 
-fn loop_break_name(scope: ScopeId) -> String {
-    format!("b{}", scope.0)
-}
-
-fn scope_var_name(scope: ScopeId) -> String {
+fn scope_var_or_label(scope: ScopeId) -> String {
     format!("$sv{}", scope.0)
 }

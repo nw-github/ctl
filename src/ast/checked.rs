@@ -17,6 +17,12 @@ pub struct Block {
     pub scope: ScopeId,
 }
 
+impl Block {
+    pub fn is_yielding(&self, scopes: &Scopes) -> bool {
+        matches!(&scopes[self.scope].kind, ScopeKind::Block(data) if data.yields)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RestPattern {
     pub id: Option<VariableId>,
@@ -199,7 +205,7 @@ pub enum CheckedExprData {
     As(Box<CheckedExpr>, bool),
     Is(Box<CheckedExpr>, CheckedPattern),
     Return(Box<CheckedExpr>),
-    Yield(Box<CheckedExpr>),
+    Yield(Option<Box<CheckedExpr>>, ScopeId),
     Break(Option<Box<CheckedExpr>>, ScopeId),
     Lambda(Vec<CheckedStmt>),
     NeverCoerce(Box<CheckedExpr>),
@@ -210,8 +216,7 @@ pub enum CheckedExprData {
 
 impl CheckedExprData {
     pub fn is_yielding_block(&self, scopes: &Scopes) -> bool {
-        matches!(self, CheckedExprData::Block(block) if
-            matches!(scopes[block.scope].kind, ScopeKind::Block(_, true)))
+        matches!(self, CheckedExprData::Block(block) if block.is_yielding(scopes))
     }
 
     pub fn member_call(

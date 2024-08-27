@@ -315,7 +315,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 Token::Defer => {
                     self.next();
 
-                    let (needs_semicolon, expr) = self.block_or_normal_expr();
+                    let (needs_semicolon, expr) = self.block_or_normal_expr(None);
                     if needs_semicolon {
                         self.expect_kind(Token::Semicolon);
                     } else {
@@ -331,14 +331,14 @@ impl<'a, 'b> Parser<'a, 'b> {
                     let cond = self.expression();
                     self.expect_kind(Token::Else);
                     let lcurly = self.expect_kind(Token::LCurly);
-                    let body = self.block_expr(lcurly.span);
+                    let body = self.block_expr(lcurly.span, None);
                     Stmt {
                         data: StmtData::Guard { cond, body },
                         attrs,
                     }
                 }
                 _ => {
-                    let (needs_semicolon, mut expr) = self.block_or_normal_expr();
+                    let (needs_semicolon, mut expr) = self.block_or_normal_expr(None);
                     if self.matches_kind(Token::RCurly) {
                         expr = Expr::new(expr.span, ExprData::Tail(expr.into()));
                     } else if needs_semicolon {
@@ -545,7 +545,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     },
                 )
             }
-            Token::LCurly => self.block_expr(span),
+            Token::LCurly => self.block_expr(span, None),
             Token::If => self.if_expr(span),
             Token::While => self.while_expr(span, None),
             Token::Loop => self.loop_expr(span, None),
@@ -611,25 +611,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 } else {
                     let label = self.expect_id_l("expected label identifier or vector literal");
                     self.expect_kind(Token::Colon);
-                    match self.peek().data {
-                        Token::While => {
-                            let token = self.next();
-                            self.while_expr(token.span, Some(label.data))
-                        }
-                        Token::Loop => {
-                            let token = self.next();
-                            self.loop_expr(token.span, Some(label.data))
-                        }
-                        Token::For => {
-                            let token = self.next();
-                            self.for_expr(token.span, Some(label.data))
-                        }
-                        _ => {
-                            let expr = self.expression();
-                            self.label_error(label);
-                            expr
-                        }
-                    }
+                    self.block_or_normal_expr(Some(label)).1
                 }
             }
             Token::Hash => {
@@ -895,11 +877,13 @@ impl<'a, 'b> Parser<'a, 'b> {
         ));
     }
 
-    fn block_or_normal_expr(&mut self) -> (bool, Expr) {
-        let label = self.next_if_kind(Token::At).map(|_| {
-            let label = self.expect_id_l("expected label identifier");
-            self.expect_kind(Token::Colon);
-            label
+    fn block_or_normal_expr(&mut self, label: Option<Located<String>>) -> (bool, Expr) {
+        let label = label.or_else(|| {
+            self.next_if_kind(Token::At).map(|_| {
+                let label = self.expect_id_l("expected label identifier");
+                self.expect_kind(Token::Colon);
+                label
+            })
         });
         match self.peek().data {
             Token::If => {
@@ -934,18 +918,14 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
             Token::LCurly => {
                 let token = self.next();
-                if let Some(label) = label {
-                    self.label_error(label)
-                }
-
-                (false, self.block_expr(token.span))
+                (false, self.block_expr(token.span, label.map(|l| l.data)))
             }
             Token::Unsafe => {
                 if let Some(label) = label {
                     self.label_error(label)
                 }
 
-                let (is_unsafe, expr) = self.block_or_normal_expr();
+                let (is_unsafe, expr) = self.block_or_normal_expr(None);
                 (
                     is_unsafe,
                     Expr::new(expr.span, ExprData::Unsafe(expr.into())),
@@ -963,11 +943,11 @@ impl<'a, 'b> Parser<'a, 'b> {
     fn if_expr(&mut self, token: Span) -> Expr {
         let cond = self.precedence(Precedence::Min, EvalContext::IfWhile);
         let lcurly = self.expect_kind(Token::LCurly);
-        let if_branch = self.block_expr(lcurly.span);
+        let if_branch = self.block_expr(lcurly.span, None);
         let else_branch = self.next_if_kind(Token::Else).map(|_| {
             if !self.matches_kind(Token::If) {
                 let lcurly = self.expect_kind(Token::LCurly);
-                self.block_expr(lcurly.span)
+                self.block_expr(lcurly.span, None)
             } else {
                 self.precedence(Precedence::Min, EvalContext::IfWhile)
             }
@@ -1048,7 +1028,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         .map(|_| this.expression().into()),
                 });
             this.expect_kind(Token::FatArrow);
-            let (needs_comma, expr) = this.block_or_normal_expr();
+            let (needs_comma, expr) = this.block_or_normal_expr(None);
             if needs_comma {
                 this.expect_kind(Token::Comma);
             } else {
@@ -1067,12 +1047,12 @@ impl<'a, 'b> Parser<'a, 'b> {
         )
     }
 
-    fn block_expr(&mut self, token: Span) -> Expr {
+    fn block_expr(&mut self, token: Span, label: Option<String>) -> Expr {
         let mut stmts = Vec::new();
         let span = self.next_until(Token::RCurly, token, |this| {
             stmts.push(this.statement());
         });
-        Expr::new(span, ExprData::Block(stmts))
+        Expr::new(span, ExprData::Block(stmts, label))
     }
 
     fn lambda_expr(&mut self, head: Located<Token>, moves: bool) -> Expr {
@@ -1093,7 +1073,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             self.expression()
         } else {
             let token = self.expect_kind(Token::LCurly);
-            self.block_expr(token.span)
+            self.block_expr(token.span, None)
         };
 
         Expr::new(
@@ -1973,7 +1953,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             None
         } else {
             let lcurly = self.expect_kind(Token::LCurly);
-            Some(self.block_expr(lcurly.span))
+            Some(self.block_expr(lcurly.span, None))
         };
 
         match name.data {

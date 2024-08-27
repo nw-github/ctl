@@ -294,8 +294,8 @@ pub fn print_expr(expr: &Expr, indent: usize) {
         ExprData::Path(path) => {
             eprintln!("{tabs}Path[{path:?}]");
         }
-        ExprData::Block(expr) => {
-            eprintln!("{tabs}Block");
+        ExprData::Block(expr, label) => {
+            eprintln!("{tabs}Block({label:?})");
             print_stmts(expr, indent + 1);
         }
         ExprData::If {
