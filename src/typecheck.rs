@@ -3151,12 +3151,11 @@ impl TypeChecker {
             ExprData::Break(expr, label) => {
                 if let Some(label) = label {
                     let label_data = Some(&label.data);
-                    for (id, scope) in self
-                        .proj
-                        .scopes
-                        .walk(self.current)
-                        .take_while(|(_, scope)| !scope.kind.is_defer())
-                    {
+                    for (id, scope) in self.proj.scopes.walk(self.current) {
+                        if scope.kind.is_defer() {
+                            break;
+                        }
+
                         match &scope.kind {
                             ScopeKind::Loop(data) if data.label.as_ref() == label_data => {
                                 return self.check_break(expr, data.clone(), id);

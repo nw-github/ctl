@@ -742,6 +742,7 @@ macro_rules! never_expr {
     ($self: expr, $body: expr) => {{
         hoist!($self, $body);
         $self.buffer.emit(VOID_INSTANCE);
+        $self.emitted_never_in_this_block = true;
     }};
 }
 
@@ -835,6 +836,7 @@ pub struct Codegen {
     temporaries: Buffer,
     funcs: HashSet<State>,
     statics: HashSet<VariableId>,
+    emitted_never_in_this_block: bool,
     cur_block: ScopeId,
     cur_loop: ScopeId,
     flags: CodegenFlags,
@@ -880,6 +882,7 @@ impl Codegen {
             proj,
             funcs,
             flags,
+            emitted_never_in_this_block: false,
             buffer: Default::default(),
             temporaries: Default::default(),
             cur_block: Default::default(),
@@ -1185,7 +1188,13 @@ impl Codegen {
 
     fn emit_stmt(&mut self, stmt: CheckedStmt, state: &mut State) {
         match stmt {
-            CheckedStmt::Expr(expr) => hoist_point!(self, self.emit_expr_stmt(expr, state)),
+            CheckedStmt::Expr(expr) => {
+                if matches!(expr.ty, TypeId::NEVER) {
+                    self.emitted_never_in_this_block = true;
+                }
+
+                hoist_point!(self, self.emit_expr_stmt(expr, state))
+            }
             CheckedStmt::Let(patt, value) => hoist_point!(self, {
                 if let CheckedPatternData::Variable(id) = patt.data {
                     if !self.proj.scopes.get(id).unused {
@@ -1208,9 +1217,7 @@ impl Codegen {
                     self.emit_pattern_bindings(state, &patt.data, &tmp, ty);
                 }
             }),
-            CheckedStmt::Defer(expr) => {
-                self.defers.last_mut().unwrap().1.push(expr);
-            }
+            CheckedStmt::Defer(expr) => self.defers.last_mut().unwrap().1.push(expr),
             CheckedStmt::Guard { cond, body } => hoist_point!(self, {
                 self.buffer.emit("if(!(");
                 self.emit_expr_inline(cond, state);
@@ -1876,8 +1883,8 @@ impl Codegen {
                 self.buffer.emit(";");
 
                 // if scope != self.cur_block {
-                // }
                 self.leave_scope(state, &format!("goto {}", scope_var_or_label(scope)), scope);
+                // }
             }),
             CheckedExprData::Break(expr, scope) => never_expr!(self, {
                 self.buffer.emit(format!("{}=", scope_var_or_label(scope)));
@@ -1927,6 +1934,7 @@ impl Codegen {
                             self.emit_expr_inline(expr, state);
                             self.buffer.emit(";}");
                         });
+                        self.emitted_never_in_this_block = false;
                     }
 
                     self.buffer.emit("else{CTL_UNREACHABLE();}");
@@ -3156,13 +3164,22 @@ impl Codegen {
     }
 
     fn emit_block(&mut self, block: Block, state: &mut State) {
+        let old = std::mem::take(&mut self.emitted_never_in_this_block);
         hoist_point!(self, {
             self.defers.push((block.scope, vec![]));
             for stmt in block.body.into_iter() {
                 self.emit_stmt(stmt, state);
+                if self.emitted_never_in_this_block {
+                    break;
+                }
             }
         });
+
         let (id, defers) = self.defers.pop().unwrap();
+        if std::mem::replace(&mut self.emitted_never_in_this_block, old) {
+            return;
+        }
+
         if !defers.is_empty() {
             self.buffer
                 .emit_info(format!("/* begin defers {:?} */", id), self.flags.minify);
