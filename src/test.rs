@@ -1,11 +1,13 @@
 use anyhow::Context;
 use ctl::{project_from_file, CodegenFlags, Compiler, Diagnostics, FileId, Lexer, Token};
 use std::{
-    io::Write,
+    io::{Read, Write},
     path::Path,
     process::{Command, Stdio},
+    time::Duration,
 };
 use tempfile::NamedTempFile;
+use wait_timeout::ChildExt;
 
 fn test_diagnostics(diag: Diagnostics, expected: &[&str]) -> datatest_stable::Result<()> {
     let mut errors: Vec<_> = diag.errors().iter().map(|e| e.message.clone()).collect();
@@ -88,18 +90,18 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
                         ))?;
                     }
                 }
-                let result = Command::new(&tmpfile)
-                    .stdout(Stdio::piped())
-                    .spawn()?
-                    .wait_with_output()?;
-                if !result.status.success() {
-                    Err(format!(
-                        "binary returned exit code {:?}",
-                        result.status.code()
-                    ))?;
+                let mut child = Command::new(&tmpfile).stdout(Stdio::piped()).spawn()?;
+                let mut stdout = child.stdout.take().unwrap();
+                let status = child
+                    .wait_timeout(Duration::from_secs(5))?
+                    .ok_or("Test took too long!")?;
+                if !status.success() {
+                    Err(format!("binary returned exit code {:?}", status.code()))?;
                 }
 
-                String::from_utf8(result.stdout).context("parsing output of test program")?
+                let mut data = Vec::new();
+                stdout.read_to_end(&mut data)?;
+                String::from_utf8(data).context("parsing output of test program")?
             };
             let output: Vec<_> = stdout.trim().split('\n').map(|s| s.trim()).collect();
             if output != expected {
@@ -114,7 +116,10 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
         Err(diag) => {
             test_diagnostics(diag, &errors)?;
             if !expected.is_empty() {
-                Err(format!("expected '{}', but build failed", expected.join("\n")))?;
+                Err(format!(
+                    "expected '{}', but build failed",
+                    expected.join("\n")
+                ))?;
             }
 
             Ok(())

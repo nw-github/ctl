@@ -21,6 +21,7 @@ tempfile = "3.10.1"
 tokio = { version = "1.36.0", features = ["full"] }
 tower-lsp = "0.20.0"
 unicode-xid = "0.2.4"
+wait-timeout = "0.2.0"
 
 [[test]]
 name = "test"
