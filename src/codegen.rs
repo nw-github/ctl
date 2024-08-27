@@ -802,7 +802,7 @@ macro_rules! enter_loop {
 }
 
 macro_rules! hoist_point {
-    ($self: expr, $body: expr) => {
+    ($self: expr, $body: expr) => {{
         let old_tmp = std::mem::take(&mut $self.temporaries);
         let old_buf = std::mem::take(&mut $self.buffer);
         $body;
@@ -811,7 +811,7 @@ macro_rules! hoist_point {
             .buffer
             .emit(std::mem::replace(&mut $self.temporaries, old_tmp).finish());
         $self.buffer.emit(written);
-    };
+    }};
 }
 
 macro_rules! usebuf {
@@ -1185,45 +1185,39 @@ impl Codegen {
 
     fn emit_stmt(&mut self, stmt: CheckedStmt, state: &mut State) {
         match stmt {
-            CheckedStmt::Expr(expr) => {
-                hoist_point!(self, self.emit_expr_stmt(expr, state));
-            }
-            CheckedStmt::Let(patt, value) => {
-                hoist_point!(self, {
-                    if let CheckedPatternData::Variable(id) = patt.data {
-                        if !self.proj.scopes.get(id).unused {
-                            let ty = self.emit_var_decl(id, state);
-                            if let Some(mut expr) = value {
-                                expr.ty = ty;
-                                self.buffer.emit("=");
-                                self.emit_expr_inner(expr, state);
-                            }
-                            self.buffer.emit(";");
-                        } else if let Some(expr) = value {
-                            self.emit_expr_stmt(expr, state);
+            CheckedStmt::Expr(expr) => hoist_point!(self, self.emit_expr_stmt(expr, state)),
+            CheckedStmt::Let(patt, value) => hoist_point!(self, {
+                if let CheckedPatternData::Variable(id) = patt.data {
+                    if !self.proj.scopes.get(id).unused {
+                        let ty = self.emit_var_decl(id, state);
+                        if let Some(mut expr) = value {
+                            expr.ty = ty;
+                            self.buffer.emit("=");
+                            self.emit_expr_inner(expr, state);
                         }
-                    } else if let Some(mut value) = value {
-                        let ty = value
-                            .ty
-                            .with_templates(&mut self.proj.types, &state.func.ty_args);
-                        value.ty = ty;
-                        let tmp = self.emit_tmpvar(value, state);
-                        self.emit_pattern_bindings(state, &patt.data, &tmp, ty);
+                        self.buffer.emit(";");
+                    } else if let Some(expr) = value {
+                        self.emit_expr_stmt(expr, state);
                     }
-                });
-            }
+                } else if let Some(mut value) = value {
+                    let ty = value
+                        .ty
+                        .with_templates(&mut self.proj.types, &state.func.ty_args);
+                    value.ty = ty;
+                    let tmp = self.emit_tmpvar(value, state);
+                    self.emit_pattern_bindings(state, &patt.data, &tmp, ty);
+                }
+            }),
             CheckedStmt::Defer(expr) => {
                 self.defers.last_mut().unwrap().1.push(expr);
             }
-            CheckedStmt::Guard { cond, body } => {
-                hoist_point!(self, {
-                    self.buffer.emit("if(!(");
-                    self.emit_expr_inline(cond, state);
-                    self.buffer.emit(")) {");
-                    hoist_point!(self, self.emit_expr_stmt(body, state));
-                    self.buffer.emit("}");
-                });
-            }
+            CheckedStmt::Guard { cond, body } => hoist_point!(self, {
+                self.buffer.emit("if(!(");
+                self.emit_expr_inline(cond, state);
+                self.buffer.emit(")) {");
+                hoist_point!(self, self.emit_expr_stmt(body, state));
+                self.buffer.emit("}");
+            }),
             CheckedStmt::None => {}
         }
     }
@@ -1613,11 +1607,10 @@ impl Codegen {
                 self.emit_block(block, state);
                 if !yields {
                     self.buffer.emit(format!("{name}={VOID_INSTANCE};",));
-                }
-                self.buffer.emit_info("}", self.flags.minify);
-                if yields {
+                } else {
                     self.buffer.emit(format!("{name}:;"));
                 }
+                self.buffer.emit_info("}", self.flags.minify);
             }),
             CheckedExprData::If {
                 cond,
