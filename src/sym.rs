@@ -112,6 +112,7 @@ pub struct BlockScopeKind {
     pub target: Option<TypeId>,
     pub yields: bool,
     pub label: Option<String>,
+    pub branches: bool,
 }
 
 #[derive(Default, Debug, Clone, EnumAsInner)]

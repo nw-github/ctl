@@ -2882,14 +2882,17 @@ impl TypeChecker {
                         target,
                         yields: false,
                         label,
+                        branches: false,
                     }),
                 );
                 let data = self.proj.scopes[block.scope].kind.as_block().unwrap();
+                let target = match (data.branches, data.yields) {
+                    (true, false) => Some(TypeId::NEVER),
+                    (_, true) => data.target,
+                    _ => None,
+                };
                 CheckedExpr::new(
-                    data.yields
-                        .then_some(data.target)
-                        .flatten()
-                        .unwrap_or(TypeId::VOID),
+                    target.unwrap_or(TypeId::VOID),
                     CheckedExprData::Block(block),
                 )
             }
@@ -3363,14 +3366,10 @@ impl TypeChecker {
             && !matches!(expr.data, CheckedExprData::Yield(_, scope) if scope == self.current)
         {
             // TODO: lambdas
-            if let ScopeKind::Block(BlockScopeKind {
-                target,
-                yields: yields @ false,
-                label: _,
-            }) = &mut self.proj.scopes[self.current].kind
+            if let ScopeKind::Block(BlockScopeKind { branches, .. }) =
+                &mut self.proj.scopes[self.current].kind
             {
-                *target = Some(TypeId::NEVER);
-                *yields = true;
+                *branches = true;
             }
         }
         expr
