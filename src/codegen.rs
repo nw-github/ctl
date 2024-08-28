@@ -22,7 +22,7 @@ use crate::{
 #[macro_export]
 macro_rules! write_nm {
     ($self: expr, $($arg:tt)*) => {
-        if $self.flags.minify {
+        if !$self.flags.minify {
             _ = write!($self.buffer, $($arg)*)
         }
     };
@@ -829,11 +829,11 @@ macro_rules! hoist_point {
 }
 
 macro_rules! usebuf {
-    ($self: expr, $buf: expr, $body: expr) => {
+    ($self: expr, $buf: expr, $body: expr) => {{
         std::mem::swap(&mut $self.buffer, $buf);
         $body;
         std::mem::swap(&mut $self.buffer, $buf);
-    };
+    }};
 }
 
 #[derive(PartialEq, Eq, Hash)]
