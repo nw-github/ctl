@@ -18,12 +18,14 @@ use crate::{
     THIS_PARAM,
 };
 
+#[macro_export]
 macro_rules! write_de {
     ($dst:expr, $($arg:tt)*) => {
         _ = write!($dst, $($arg)*)
     };
 }
 
+#[macro_export]
 macro_rules! writeln_de {
     ($dst:expr, $($arg:tt)*) => {
         _ = writeln!($dst, $($arg)*)

@@ -3186,10 +3186,8 @@ impl TypeChecker {
             ExprData::Continue(label) => {
                 let Some((_, id)) = self.current_loop(&label) else {
                     if let Some(label) = label {
-                        return self.error(Error::new(
-                            format!("cannot find loop with label {label}"),
-                            label.span,
-                        ));
+                        return self
+                            .error(Error::new(format!("undefined label '{label}'"), label.span));
                     } else {
                         return self.error(Error::new("continue outside of loop", span));
                     }
