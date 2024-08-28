@@ -1201,10 +1201,6 @@ impl Codegen {
     fn emit_stmt(&mut self, stmt: CheckedStmt, state: &mut State) {
         match stmt {
             CheckedStmt::Expr(expr) => {
-                if matches!(expr.ty, TypeId::NEVER) {
-                    self.emitted_never_in_this_block = true;
-                }
-
                 hoist_point!(self, self.emit_expr_stmt(expr, state))
             }
             CheckedStmt::Let(patt, value) => hoist_point!(self, {
