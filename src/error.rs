@@ -230,7 +230,7 @@ impl Error {
     }
 
     pub fn redefinition(name: &str, span: Span) -> Self {
-        Self::new(format!("redefinition of name '{name}'"), span)
+        Self::redefinition_k("name", name, span)
     }
 
     pub fn redefinition_k(kind: &str, name: &str, span: Span) -> Self {
