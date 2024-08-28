@@ -96,7 +96,7 @@ pub type ExtensionId = UserTypeId;
 pub enum LoopBreak {
     None,
     WithValue,
-    WithVoid,
+    WithNothing,
 }
 
 #[derive(Debug, Clone)]

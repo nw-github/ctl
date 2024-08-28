@@ -179,12 +179,6 @@ pub enum CheckedExprData {
         do_while: bool,
         optional: bool,
     },
-    For {
-        iter: Box<CheckedExpr>,
-        patt: CheckedPattern,
-        body: Block,
-        optional: bool,
-    },
     Match {
         expr: Box<CheckedExpr>,
         body: Vec<(CheckedPattern, CheckedExpr)>,

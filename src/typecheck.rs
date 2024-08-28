@@ -3058,65 +3058,7 @@ impl TypeChecker {
                 iter,
                 body,
                 label,
-            } => {
-                let span = iter.span;
-                let iter = self.check_expr(*iter, None);
-                let Some(iter_id) = self.proj.scopes.lang_traits.get("iter").copied() else {
-                    return self.error(Error::no_lang_item("Iterator", span));
-                };
-                let kind = ScopeKind::Loop(LoopScopeKind {
-                    target: self.loop_target(target, false),
-                    breaks: LoopBreak::None,
-                    infinite: false,
-                    label,
-                });
-                self.enter(kind, |this| {
-                    let Some(ut) = this.get_trait_impl(iter.ty, iter_id) else {
-                        this.check_block(body);
-                        bail!(
-                            this,
-                            Error::doesnt_implement(
-                                &iter.ty.name(&this.proj.scopes, &mut this.proj.types),
-                                "Iterator",
-                                span,
-                            )
-                        );
-                    };
-
-                    let next_ty = ut
-                        .first_type_arg()
-                        .unwrap()
-                        .with_ut_templates(&mut this.proj.types, iter.ty);
-                    let patt_span = patt.span;
-                    let patt = this.check_pattern(PatternParams {
-                        binding: true,
-                        scrutinee: next_ty,
-                        mutable: false,
-                        pattern: patt,
-                        typ: PatternType::Regular,
-                        has_hint: false,
-                    });
-                    if !patt.irrefutable {
-                        this.error(Error::must_be_irrefutable("for patterns", patt_span))
-                    }
-
-                    let body = this.check_block(body);
-                    let (out, optional) =
-                        this.loop_out_type(&this.proj.scopes[this.current].kind.clone(), span);
-                    CheckedExpr::new(
-                        out,
-                        CheckedExprData::For {
-                            patt,
-                            body: Block {
-                                body,
-                                scope: this.current,
-                            },
-                            optional,
-                            iter: iter.into(),
-                        },
-                    )
-                })
-            }
+            } => self.check_for_expr(target, patt, iter, body, label),
             ExprData::Member {
                 source,
                 member: name,
@@ -3881,7 +3823,7 @@ impl TypeChecker {
             }
         } else {
             data.target = Some(TypeId::VOID);
-            data.breaks = LoopBreak::WithVoid;
+            data.breaks = LoopBreak::WithNothing;
             self.proj.scopes[id].kind = ScopeKind::Loop(data);
             None
         };
@@ -3910,6 +3852,169 @@ impl TypeChecker {
         self.proj.scopes[id].kind = ScopeKind::Block(data);
 
         CheckedExpr::new(TypeId::NEVER, CheckedExprData::Yield(expr, id))
+    }
+
+    fn check_for_expr(
+        &mut self,
+        target: Option<TypeId>,
+        patt: Located<Pattern>,
+        iter: Box<Located<ExprData>>,
+        body: Vec<Stmt>,
+        label: Option<String>,
+    ) -> CheckedExpr {
+        let span = iter.span;
+        let iter = self.check_expr(*iter, None);
+        let Some(iter_tr_id) = self.proj.scopes.lang_traits.get("iter").copied() else {
+            return self.error(Error::no_lang_item("Iterator", span));
+        };
+
+        let kind = ScopeKind::Block(BlockScopeKind {
+            target: None,
+            yields: true,
+            label: None,
+            branches: false,
+        });
+        self.enter(kind, |this| {
+            let Some(ut) = this.get_trait_impl(iter.ty, iter_tr_id) else {
+                this.check_block(body);
+                bail!(
+                    this,
+                    Error::doesnt_implement(
+                        &iter.ty.name(&this.proj.scopes, &mut this.proj.types),
+                        "Iterator",
+                        span,
+                    )
+                );
+            };
+
+            let next_ty = ut
+                .first_type_arg()
+                .unwrap()
+                .with_ut_templates(&mut this.proj.types, iter.ty);
+            let patt_span = patt.span;
+            let patt = this.check_pattern(PatternParams {
+                binding: true,
+                scrutinee: next_ty,
+                mutable: false,
+                pattern: patt,
+                typ: PatternType::Regular,
+                has_hint: false,
+            });
+            if !patt.irrefutable {
+                this.error(Error::must_be_irrefutable("for patterns", patt_span))
+            }
+
+            let body = this.create_block(
+                body,
+                ScopeKind::Loop(LoopScopeKind {
+                    target: this.loop_target(target, false),
+                    breaks: LoopBreak::None,
+                    infinite: false,
+                    label,
+                }),
+            );
+            let (out, optional) =
+                this.loop_out_type(&this.proj.scopes[body.scope].kind.clone(), span);
+
+            let iter_var = this.insert::<VariableId>(
+                Variable {
+                    public: false,
+                    name: Located::new(Span::default(), format!("$iter{}", this.current.0)),
+                    ty: iter.ty,
+                    is_static: false,
+                    mutable: true,
+                    value: None,
+                    unused: false,
+                    has_hint: false,
+                },
+                false,
+                false,
+            );
+
+            let next_fn_call = {
+                let Some(mfn) = this.get_member_fn(
+                    iter.ty,
+                    Some(iter_tr_id),
+                    "next",
+                    &[],
+                    Span::default(),
+                    this.current,
+                ) else {
+                    panic!("ICE: for loop, can't find next function for iterator type");
+                };
+
+                let f = this.proj.scopes.get(mfn.func.id);
+                let Some(p0) = f.params.first().map(|p| p.label.clone()) else {
+                    panic!("ICE: Iterator::next() has 0 parameters");
+                };
+                let arg0 = CheckedExpr::new(
+                    this.proj.types.insert(Type::MutPtr(iter.ty)),
+                    CheckedExprData::Unary {
+                        op: UnaryOp::AddrMut,
+                        expr: CheckedExpr::new(iter.ty, CheckedExprData::Var(iter_var)).into(),
+                    },
+                );
+
+                CheckedExpr::new(
+                    f.ret
+                        .with_templates(&mut this.proj.types, &mfn.func.ty_args),
+                    CheckedExprData::member_call(
+                        &mut this.proj.types,
+                        mfn,
+                        [(p0, arg0)].into(),
+                        this.current,
+                    ),
+                )
+            };
+
+            let cond = CheckedExpr::new(
+                TypeId::BOOL,
+                CheckedExprData::Is(
+                    next_fn_call.into(),
+                    CheckedPattern::refutable(CheckedPatternData::Variant {
+                        pattern: Some(
+                            CheckedPattern::irrefutable(CheckedPatternData::Destrucure {
+                                patterns: vec![("0".into(), next_ty, patt)],
+                                borrows: false,
+                            })
+                            .into(),
+                        ),
+                        variant: "Some".into(),
+                        inner: TypeId::UNKNOWN,
+                        borrows: false,
+                    }),
+                ),
+            );
+            let while_loop = CheckedExpr::new(
+                out,
+                CheckedExprData::Loop {
+                    cond: Some(cond.into()),
+                    body,
+                    do_while: false,
+                    optional,
+                },
+            );
+
+            CheckedExpr::new(
+                out,
+                CheckedExprData::Block(Block {
+                    body: vec![
+                        CheckedStmt::Let(
+                            CheckedPattern {
+                                irrefutable: true,
+                                data: CheckedPatternData::Variable(iter_var),
+                            },
+                            Some(iter),
+                        ),
+                        CheckedStmt::Expr(CheckedExpr::new(
+                            out,
+                            CheckedExprData::Yield(Some(while_loop.into()), this.current),
+                        )),
+                    ],
+                    scope: this.current,
+                }),
+            )
+        })
     }
 
     fn check_unsafe_union_constructor(
