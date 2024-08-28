@@ -1640,23 +1640,13 @@ impl Codegen {
                     .scopes
                     .create_scope(ScopeId::ROOT, ScopeKind::None, false);
                 enter_block!(self, dummy, expr.ty, |name| {
-                    if let CheckedExprData::Is(mut expr, patt) = cond.data {
-                        expr.ty = expr
-                            .ty
-                            .with_templates(&mut self.proj.types, &state.func.ty_args);
-                        let ty = expr.ty;
-                        let tmp = self.emit_tmpvar(*expr, state);
-                        self.emit_pattern_if_stmt(state, &patt.data, &tmp, ty);
-                    } else {
-                        write_de!(self.buffer, "if(");
-                        self.emit_expr_inline(*cond, state);
-                        write_de!(self.buffer, "){{");
-                    }
+                    write_de!(self.buffer, "if(");
+                    self.emit_expr_inline(*cond, state);
+                    write_de!(self.buffer, "){{");
                     hoist_point!(self, {
                         write_de!(self.buffer, "{name}=");
                         self.emit_expr_inline(*if_branch, state);
                     });
-
                     write_de!(self.buffer, ";}}else{{");
                     if let Some(else_branch) = else_branch {
                         hoist_point!(self, {
@@ -1676,7 +1666,8 @@ impl Codegen {
                 do_while,
                 optional,
             } => {
-                enter_loop!(self, state, body.scope, expr.ty, |name| {
+                let scope = body.scope;
+                enter_loop!(self, state, scope, expr.ty, |name| {
                     macro_rules! cond {
                         ($cond: expr) => {
                             hoist_point!(self, {
@@ -1695,15 +1686,7 @@ impl Codegen {
                             cond.ty = cond
                                 .ty
                                 .with_templates(&mut self.proj.types, &state.func.ty_args);
-                            if let CheckedExprData::Is(cond, patt) = cond.data {
-                                let ty = cond.ty;
-                                let tmp = self.emit_tmpvar(*cond, state);
-                                self.emit_pattern_if_stmt(state, &patt.data, &tmp, ty);
-                                self.emit_block(body, state);
-                                write_de!(self.buffer, "}}else{{");
-                                self.emit_loop_break(state, expr.ty, optional);
-                                write_de!(self.buffer, "}}");
-                            } else if !do_while {
+                            if !do_while {
                                 cond!(*cond);
                                 self.emit_block(body, state);
                             } else {
@@ -1714,11 +1697,10 @@ impl Codegen {
                             self.emit_block(body, state);
                         }
                     });
-                    write_de!(
-                        self.buffer,
-                        "{}:;}}{name}:;",
-                        loop_cont_label(self.cur_loop)
-                    );
+                    write_de!(self.buffer, "{}:;}}", loop_cont_label(self.cur_loop));
+                    if self.proj.scopes[scope].kind.as_loop().unwrap().breaks != LoopBreak::None {
+                        write_de!(self.buffer, "{name}:;");
+                    }
                 });
             }
             CheckedExprData::Subscript { callee, arg } => {
@@ -1909,7 +1891,7 @@ impl Codegen {
                 let tmp = hoist!(self, self.emit_tmpvar(*inner, state));
                 let (bindings, conditions) = self.emit_pattern(state, &patt.data, &tmp, ty);
                 hoist!(self, self.buffer.emit(bindings.finish()));
-                self.buffer.emit(conditions.finish());
+                write_de!(self.buffer, "({})", conditions.finish());
             }
             CheckedExprData::Lambda(_) => todo!(),
             CheckedExprData::NeverCoerce(inner) => {
@@ -3419,7 +3401,7 @@ fn member_name(scopes: &Scopes, id: Option<UserTypeId>, name: &str) -> String {
 }
 
 fn loop_cont_label(scope: ScopeId) -> String {
-    format!("c{}", scope.0)
+    format!("$c{}", scope.0)
 }
 
 fn scope_var_or_label(scope: ScopeId) -> String {
