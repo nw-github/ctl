@@ -318,8 +318,6 @@ impl<'a, 'b> Parser<'a, 'b> {
                     let (needs_semicolon, expr) = self.block_or_normal_expr(None);
                     if needs_semicolon {
                         self.expect_kind(Token::Semicolon);
-                    } else {
-                        self.next_if_kind(Token::Semicolon);
                     }
                     Stmt {
                         attrs,
@@ -343,8 +341,6 @@ impl<'a, 'b> Parser<'a, 'b> {
                         expr = Expr::new(expr.span, ExprData::Tail(expr.into()));
                     } else if needs_semicolon {
                         self.expect_kind(Token::Semicolon);
-                    } else {
-                        self.next_if_kind(Token::Semicolon);
                     }
 
                     if let Some(is_unsafe) = is_unsafe {
@@ -362,6 +358,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             },
         };
 
+        self.next_if_kind(Token::Semicolon);
         if self.needs_sync {
             self.synchronize();
         }
@@ -925,9 +922,9 @@ impl<'a, 'b> Parser<'a, 'b> {
                     self.label_error(label)
                 }
 
-                let (is_unsafe, expr) = self.block_or_normal_expr(None);
+                let (needs_delim, expr) = self.block_or_normal_expr(None);
                 (
-                    is_unsafe,
+                    needs_delim,
                     Expr::new(expr.span, ExprData::Unsafe(expr.into())),
                 )
             }
@@ -1050,6 +1047,11 @@ impl<'a, 'b> Parser<'a, 'b> {
     fn block_expr(&mut self, token: Span, label: Option<String>) -> Expr {
         let mut stmts = Vec::new();
         let span = self.next_until(Token::RCurly, token, |this| {
+            while this.next_if_kind(Token::Semicolon).is_some() {}
+            if this.peek().data.is_r_curly() {
+                return;
+            }
+
             stmts.push(this.statement());
         });
         Expr::new(span, ExprData::Block(stmts, label))
@@ -1542,6 +1544,11 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut stmts = Vec::new();
         let lcurly = self.expect_kind(Token::LCurly);
         let span = self.next_until(Token::RCurly, lcurly.span, |this| {
+            while this.next_if_kind(Token::Semicolon).is_some() {}
+            if this.peek().data.is_r_curly() {
+                return;
+            }
+
             stmts.push(this.statement());
         });
         Located::new(span, stmts)
