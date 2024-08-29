@@ -157,8 +157,16 @@ impl Compiler<Parsed> {
 }
 
 impl Compiler<Checked> {
-    pub fn build(self, flags: CodegenFlags) -> Result<(Diagnostics, String), Diagnostics> {
-        Codegen::build(self.state.0, flags)
+    pub fn build(mut self, flags: CodegenFlags) -> (Option<String>, Diagnostics) {
+        if flags.lib && self.state.0.main.is_none() {
+            self.state.0.diag.error(Error::new("no main function found", Span::default()));
+        }
+        if self.state.0.diag.has_errors() {
+            return (None, self.state.0.diag);
+        }
+
+        let (code, diag) = Codegen::build(self.state.0, flags);
+        (Some(code), diag)
     }
 
     pub fn project(self) -> Project {

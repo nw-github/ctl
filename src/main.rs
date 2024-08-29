@@ -275,13 +275,13 @@ fn main() -> Result<()> {
             minify: matches!(args.command, SubCommand::Print { minify: true, .. }),
         });
     let result = match result {
-        Ok((diag, code)) => {
+        (Some(code), diag) => {
             if !args.quiet {
                 display_diagnostics(&diag);
             }
             code
         }
-        Err(diag) => {
+        (None, diag) => {
             eprintln!("Compilation failed: ");
             display_diagnostics(&diag);
             std::process::exit(1);

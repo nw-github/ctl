@@ -240,6 +240,11 @@ impl TypeChecker {
             this.universal.extend(autouse);
         }
 
+        this.proj.main = this.proj.scopes[this.proj.scope]
+            .vns
+            .get("main")
+            .and_then(|id| id.as_fn())
+            .copied();
         for (_, var) in
             this.proj.scopes.vars().filter(|(_, v)| {
                 v.unused && !v.name.data.starts_with('_') && v.name.data != THIS_PARAM

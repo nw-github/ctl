@@ -7,8 +7,7 @@ use indexmap::IndexMap;
 
 use crate::{
     ast::{checked::*, parsed::RangePattern, BinaryOp, UnaryOp},
-    error::{Diagnostics, Error},
-    lexer::Span,
+    error::Diagnostics,
     nearest_pow_of_two,
     project::Project,
     sym::*,
@@ -860,14 +859,7 @@ pub struct Codegen {
 }
 
 impl Codegen {
-    pub fn build(
-        mut proj: Project,
-        flags: CodegenFlags,
-    ) -> Result<(Diagnostics, String), Diagnostics> {
-        if proj.diag.has_errors() {
-            return Err(proj.diag);
-        }
-
+    pub fn build(proj: Project, flags: CodegenFlags) -> (String, Diagnostics) {
         let exports = proj
             .scopes
             .functions()
@@ -878,14 +870,10 @@ impl Codegen {
         let (funcs, main) = if flags.lib {
             (exports.collect(), None)
         } else {
-            let scope = proj.scope;
-            let Some(main) = proj.scopes[scope].vns.get("main").and_then(|id| id.as_fn()) else {
-                proj.diag
-                    .error(Error::new("no main function found", Span::default()));
-                return Err(proj.diag);
-            };
-            let main =
-                State::in_body_scope(GenericFunc::from_id(&proj.scopes, *main), &proj.scopes);
+            let main = State::in_body_scope(
+                GenericFunc::from_id(&proj.scopes, proj.main.unwrap()),
+                &proj.scopes,
+            );
             (
                 exports.chain(std::iter::once(main.clone())).collect(),
                 Some(main),
@@ -960,9 +948,6 @@ impl Codegen {
             writeln_de!(this.buffer, "#define CTL_NOBITINT");
         }
         this.buffer.emit(include_str!("../ctl/ctl.h"));
-        if this.proj.diag.has_errors() {
-            return Err(this.proj.diag);
-        }
         this.tg.emit(
             &this.proj.scopes,
             &mut this.proj.types,
@@ -980,7 +965,7 @@ impl Codegen {
             this.buffer.emit(main);
         }
 
-        Ok((this.proj.diag, this.buffer.finish()))
+        (this.buffer.finish(), this.proj.diag)
     }
 
     fn emit_vtable(&mut self, vtable: Vtable) {

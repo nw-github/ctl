@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    sym::{ScopeId, Scopes},
+    sym::{FunctionId, ScopeId, Scopes},
     typecheck::{Completions, LspItem},
     typeid::{TypeId, Types},
     Diagnostics,
@@ -22,6 +22,7 @@ pub struct Project {
     pub hover: Option<LspItem>,
     pub completions: Option<Completions>,
     pub deps: HashMap<TypeId, Dependencies>,
+    pub main: Option<FunctionId>,
 }
 
 impl Project {
