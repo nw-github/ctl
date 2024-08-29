@@ -499,8 +499,8 @@ impl TypeChecker {
 
         #[rustfmt::skip]
         let builtins = [
-            "void", "never", "f32", "f64", "bool", "char", "c_void", "c_char", 
-            "c_short", "c_int", "c_long", "c_longlong", "c_uchar", "c_ushort", "c_uint", 
+            "void", "never", "f32", "f64", "bool", "char", "c_void", "c_char",
+            "c_short", "c_int", "c_long", "c_longlong", "c_uchar", "c_ushort", "c_uint",
             "c_ulong", "c_ulonglong", "int", "uint", "u8", "i8", "u16", "i16", "u32", "i32", "u64",
             "i64", "u128", "i128",
         ];
@@ -6840,7 +6840,7 @@ impl TypeChecker {
                 if rest.is_empty() {
                     self.check_cursor_completions(name.span, true);
                 }
-                if let Some(builtin) = self.builtin_type_path(&name.data) {
+                if let Some(builtin) = Self::builtin_type_path(&name.data) {
                     if let Some((name, _)) = rest.first() {
                         return self.error(Error::no_symbol(&name.data, name.span));
                     }
@@ -6972,7 +6972,7 @@ impl TypeChecker {
                 .unwrap_or_default(),
             PathOrigin::Normal => {
                 let ((name, ty_args), rest) = path.components.split_first().unwrap();
-                if let Some(builtin) = self.builtin_type_path(&name.data) {
+                if let Some(builtin) = Self::builtin_type_path(&name.data) {
                     if !rest.is_empty() {
                         let builtin = self.proj.types.insert(builtin);
                         return self.resolve_value_path_from_type(builtin, rest, span);
@@ -7236,7 +7236,7 @@ impl TypeChecker {
         ty_args
     }
 
-    fn builtin_type_path(&self, name: &str) -> Option<Type> {
+    fn builtin_type_path(name: &str) -> Option<Type> {
         match name {
             "void" => Some(Type::Void),
             "never" => Some(Type::Never),

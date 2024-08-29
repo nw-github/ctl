@@ -283,19 +283,19 @@ pub struct Integer {
 
 impl Integer {
     pub fn min(&self) -> BigInt {
-        if self.signed {
-            -(BigInt::from(1) << (self.bits - 1))
-        } else {
-            BigInt::default()
+        if !self.signed || self.bits == 0 {
+            return BigInt::default();
         }
+
+        -(BigInt::from(1) << (self.bits - 1))
     }
 
     pub fn max(&self) -> BigInt {
-        if self.signed {
-            (BigInt::from(1) << (self.bits - 1)) - 1
-        } else {
-            (BigInt::from(1) << self.bits) - 1u8
+        if self.bits == 0 {
+            return BigInt::default();
         }
+
+        (BigInt::from(1) << (self.bits - self.signed as u32)) - 1
     }
 }
 
@@ -403,7 +403,7 @@ impl Type {
             _ => return None,
         };
 
-        if let Ok(bits) = name[1..].parse::<u32>() {
+        if let Ok(bits @ 0..65535) = name[1..].parse::<u32>() {
             Some(result(bits))
         } else if ty {
             match name {
