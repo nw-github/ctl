@@ -2845,7 +2845,7 @@ impl Codegen {
                 });
             }
             CheckedPatternData::Variant {
-                pattern: patt,
+                pattern,
                 variant,
                 inner,
                 borrows,
@@ -2859,7 +2859,7 @@ impl Codegen {
                     if variant == "Some" {
                         conditions.next_str(format!("{src}!={NULLPTR}"));
                         if let Some((patt, borrows)) =
-                            patt.as_ref().and_then(|patt| patt.data.as_destrucure())
+                            pattern.as_ref().and_then(|patt| patt.data.as_destrucure())
                         {
                             self.emit_pattern_inner(
                                 state,
@@ -2885,10 +2885,10 @@ impl Codegen {
                         .unwrap();
                     conditions.next_str(format!("{src}.{UNION_TAG_NAME}=={tag}"));
 
-                    if let Some(patt) = patt {
+                    if let Some(pattern) = pattern {
                         self.emit_pattern_inner(
                             state,
-                            &patt.data,
+                            &pattern.data,
                             &format!("{src}.${variant}"),
                             *inner,
                             borrow || *borrows,
@@ -2928,6 +2928,7 @@ impl Codegen {
                     }
                     pos
                 });
+                let inner = inner.with_templates(&mut self.proj.types, &state.func.ty_args);
                 for (i, patt) in patterns.iter().enumerate() {
                     self.emit_pattern_inner(
                         state,
@@ -2937,7 +2938,7 @@ impl Codegen {
                         } else {
                             format!("{src}.$ptr[{i}]")
                         },
-                        *inner,
+                        inner,
                         true,
                         bindings,
                         conditions,
@@ -2946,14 +2947,15 @@ impl Codegen {
             }
             CheckedPatternData::Destrucure { patterns, borrows } => {
                 let src = Self::deref(&self.proj.types, src, ty);
-                let ty_stripped = ty.strip_references_r(&self.proj.types);
-                let ut_id = ty_stripped.as_user().map(|ut| ut.id);
+                let ty = ty.strip_references(&self.proj.types);
+                let ut_id = self.proj.types.get(ty).as_user().map(|ut| ut.id);
                 for (member, inner, patt) in patterns {
+                    let inner = inner.with_templates(&mut self.proj.types, &state.func.ty_args);
                     self.emit_pattern_inner(
                         state,
                         &patt.data,
                         &format!("{src}.{}", member_name(&self.proj.scopes, ut_id, member)),
-                        *inner,
+                        inner,
                         borrow || *borrows,
                         bindings,
                         conditions,
@@ -2997,6 +2999,7 @@ impl Codegen {
                     (pos, rest_len)
                 });
 
+                let inner = inner.with_templates(&mut self.proj.types, &state.func.ty_args);
                 for (mut i, patt) in patterns.iter().enumerate() {
                     if let Some((_, rest_len)) = rest.filter(|&(pos, _)| i >= pos) {
                         i += rest_len;
@@ -3005,7 +3008,7 @@ impl Codegen {
                         state,
                         &patt.data,
                         &format!("{src}[{i}]"),
-                        *inner,
+                        inner,
                         borrow || *borrows,
                         bindings,
                         conditions,
