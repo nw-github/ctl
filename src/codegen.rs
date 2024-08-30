@@ -276,113 +276,95 @@ impl TypeGen {
             return;
         }
 
-        let deps = match types.get(ty) {
-            Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) => {
-                return self.add_type(scopes, types, *inner);
-            }
+        let mut deps = Vec::new();
+        macro_rules! dependency {
+            ($ty: expr) => {{
+                let dep = $ty;
+                let mut inner = dep;
+                while let Type::Ptr(id) | Type::MutPtr(id) | Type::RawPtr(id) = types.get(inner) {
+                    inner = *id;
+                }
+                if matches!(types.get(inner), Type::Func(_) | Type::FnPtr(_)) {
+                    deps.push(inner);
+                } else if matches!(
+                    types.get(dep),
+                    Type::User(_)
+                        | Type::Array(_, _)
+                        | Type::Int(_)
+                        | Type::Uint(_)
+                        | Type::DynMutPtr(_)
+                        | Type::DynPtr(_)
+                ) {
+                    deps.push(dep);
+                }
+
+                self.add_type(scopes, types, dep);
+            }};
+        }
+
+        match types.get(ty) {
+            Type::Int(_) | Type::Uint(_) | Type::DynMutPtr(_) | Type::DynPtr(_) => {}
             Type::FnPtr(f) => {
                 let ret = f.ret;
                 for param in f.params.clone() {
                     self.add_type(scopes, types, param);
                 }
-
                 self.add_type(scopes, types, ret);
-                vec![]
             }
             Type::Func(f) => {
                 let f = f.clone().as_fn_ptr(scopes, types);
-                for &param in f.params.iter() {
+                for param in f.params {
                     self.add_type(scopes, types, param);
                 }
-
                 self.add_type(scopes, types, f.ret);
-                vec![]
             }
-            &Type::Array(ty, _) => {
-                self.add_type(scopes, types, ty);
-                vec![ty]
-            }
+            &Type::Array(ty, _) => dependency!(ty),
             Type::User(ut) => {
                 self.0.insert(ty, Vec::new());
-                let sty = scopes.get(ut.id);
                 let ut = ut.clone();
-
-                let mut deps = Vec::new();
-                for m in sty.members.values() {
-                    self.check_member_dep(scopes, types, &ut, m.ty, &mut deps);
+                for m in scopes.get(ut.id).members.values() {
+                    dependency!(m.ty.with_templates(types, &ut.ty_args));
                 }
 
-                if let Some(union) = sty.kind.as_union() {
-                    self.add_type(scopes, types, union.tag);
+                if let Some(union) = scopes.get(ut.id).kind.as_union() {
+                    dependency!(union.tag);
                     for ty in union.variants.values().flat_map(|v| v.ty) {
-                        self.check_member_dep(scopes, types, &ut, ty, &mut deps);
+                        dependency!(ty.with_templates(types, &ut.ty_args));
                     }
                 }
-                deps
             }
-            Type::Int(_) | Type::Uint(_) | Type::DynMutPtr(_) | Type::DynPtr(_) => vec![],
+            Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) => {
+                return self.add_type(scopes, types, *inner);
+            }
             _ => return,
-        };
+        }
 
         self.0.insert(ty, deps);
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn check_member_dep(
-        &mut self,
-        scopes: &Scopes,
-        types: &mut Types,
-        ut: &GenericUserType,
-        ty: TypeId,
-        deps: &mut Vec<TypeId>,
-    ) {
-        let ty = ty.with_templates(types, &ut.ty_args);
-        match types.get(ty) {
-            Type::User(_)
-            | Type::Array(_, _)
-            | Type::Int(_)
-            | Type::Uint(_)
-            | Type::DynMutPtr(_)
-            | Type::DynPtr(_)
-            | Type::Func(_)
-            | Type::FnPtr(_) => deps.push(ty),
-            _ => {}
-        }
-        self.add_type(scopes, types, ty);
-    }
-
     fn gen_types(&self, mut gen: impl FnMut(TypeId)) {
         fn dfs(
-            sid: TypeId,
+            id: TypeId,
             types: &HashMap<TypeId, Vec<TypeId>>,
-            visiting: &mut HashMap<TypeId, bool>,
+            visited: &mut HashSet<TypeId>,
             gen: &mut impl FnMut(TypeId),
-        ) -> bool {
-            visiting.insert(sid, true);
-            if let Some(deps) = types.get(&sid) {
+        ) {
+            visited.insert(id);
+            if let Some(deps) = types.get(&id) {
                 for dep in deps.iter() {
-                    match visiting.get(dep) {
-                        Some(true) => return false, // currently in the process of visiting, recursive dependency
-                        Some(false) => {}           // already seen, do nothing
-                        None => {
-                            // never seen
-                            if !dfs(*dep, types, visiting, gen) {
-                                return false;
-                            }
-                        }
+                    if !visited.contains(dep) {
+                        dfs(*dep, types, visited, gen);
                     }
                 }
             }
 
-            visiting.insert(sid, false);
-            gen(sid);
-            true
+            gen(id);
         }
 
-        let mut state = HashMap::new();
-        for sid in self.0.keys() {
-            if !state.contains_key(sid) {
-                dfs(*sid, &self.0, &mut state, &mut gen);
+        let mut visited = HashSet::new();
+        for id in self.0.keys() {
+            if !visited.contains(id) {
+                dfs(*id, &self.0, &mut visited, &mut gen);
             }
         }
     }
