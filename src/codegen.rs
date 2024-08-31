@@ -38,33 +38,6 @@ const NULLPTR: &str = "((void*)0)";
 struct TypeGen(HashMap<TypeId, Vec<TypeId>>);
 
 impl TypeGen {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn gen_int(flags: &CodegenFlags, buffer: &mut Buffer, bits: u32, signed: bool) {
-        if bits == 0 {
-            return;
-        }
-
-        let nearest = nearest_pow_of_two(bits);
-        if flags.no_bit_int || nearest == bits as usize {
-            write_de!(
-                buffer,
-                "typedef {}int{nearest}_t {}{bits};",
-                if signed { "" } else { "u" },
-                if signed { 's' } else { 'u' },
-            );
-        } else {
-            let ch = if signed { 's' } else { 'u' };
-            write_de!(
-                buffer,
-                "typedef {}INT({bits}){ch}{bits};",
-                ch.to_uppercase()
-            );
-        }
-    }
-
     fn gen_fnptr(
         scopes: &Scopes,
         types: &mut Types,
@@ -76,7 +49,7 @@ impl TypeGen {
         if f.ret.is_void() {
             write_de!(buffer, "void");
         } else {
-            buffer.emit_type(scopes, types, f.ret, None, flags.minify);
+            buffer.emit_type(scopes, types, f.ret, flags.minify);
         }
         write_de!(buffer, "(*");
         buffer.emit_fnptr_name(scopes, types, f, flags.minify);
@@ -86,7 +59,7 @@ impl TypeGen {
                 write_de!(buffer, ",");
             }
 
-            buffer.emit_type(scopes, types, param, None, flags.minify);
+            buffer.emit_type(scopes, types, param, flags.minify);
         }
         write_de!(buffer, ");");
     }
@@ -120,7 +93,7 @@ impl TypeGen {
                 if ret.is_void() {
                     write_de!(defs, "void");
                 } else {
-                    defs.emit_type(scopes, types, ret, None, flags.minify);
+                    defs.emit_type(scopes, types, ret, flags.minify);
                 }
                 write_de!(defs, "(*const ");
                 defs.emit_fn_name(
@@ -134,7 +107,7 @@ impl TypeGen {
                     let ty = param.ty.with_templates(types, &tr.ty_args);
                     if i > 0 {
                         write_de!(defs, ",");
-                        defs.emit_type(scopes, types, ty, None, flags.minify);
+                        defs.emit_type(scopes, types, ty, flags.minify);
                     } else if types.get(ty).is_ptr() {
                         write_de!(defs, "const void*");
                     } else {
@@ -169,7 +142,7 @@ impl TypeGen {
                 write_de!(buffer, "CTL_ZST ");
             }
 
-            buffer.emit_type(scopes, types, ty, None, min);
+            buffer.emit_type(scopes, types, ty, min);
             write_de!(buffer, " {};", member_name(scopes, Some(ut.id), name));
         }
 
@@ -198,7 +171,7 @@ impl TypeGen {
         let members = &scopes.get(ut.id).members;
         if let UserTypeKind::Union(union) = &ut_data.kind {
             if !matches!(types.get(union.tag), Type::Uint(0) | Type::Int(0)) {
-                defs.emit_type(scopes, types, union.tag, None, flags.minify);
+                defs.emit_type(scopes, types, union.tag, flags.minify);
                 write_de!(defs, " {UNION_TAG_NAME};");
             }
 
@@ -225,50 +198,76 @@ impl TypeGen {
         write_de!(defs, "}};");
     }
 
-    fn gen_array(
-        flags: &CodegenFlags,
-        scopes: &Scopes,
-        types: &mut Types,
-        decls: &mut Buffer,
-        defs: &mut Buffer,
-        ty: TypeId,
-        size: usize,
-    ) {
-        write_de!(decls, "typedef struct ");
-        decls.emit_array_struct_name(scopes, types, ty, size, flags.minify);
-        write_de!(decls, " ");
-        decls.emit_array_struct_name(scopes, types, ty, size, flags.minify);
-        write_de!(decls, ";");
+    fn emit(&self, scopes: &Scopes, types: &mut Types, decls: &mut Buffer, flags: &CodegenFlags) {
+        fn dfs(
+            id: TypeId,
+            tree: &HashMap<TypeId, Vec<TypeId>>,
+            visited: &mut HashSet<TypeId>,
+            gen: &mut impl FnMut(TypeId),
+        ) {
+            visited.insert(id);
+            if let Some(deps) = tree.get(&id) {
+                for dep in deps.iter() {
+                    if !visited.contains(dep) {
+                        dfs(*dep, tree, visited, gen);
+                    }
+                }
+            }
 
-        write_de!(defs, "struct ");
-        defs.emit_array_struct_name(scopes, types, ty, size, flags.minify);
-        write_de!(defs, "{{");
-        defs.emit_type(scopes, types, ty, None, flags.minify);
-        write_de!(defs, " {ARRAY_DATA_NAME}[{size}];}};");
-    }
+            gen(id);
+        }
 
-    fn emit(&self, scopes: &Scopes, types: &mut Types, buffer: &mut Buffer, flags: &CodegenFlags) {
         let mut defs = Buffer::default();
-        self.gen_types(|id| match types.get(id) {
-            &Type::Int(bits) => Self::gen_int(flags, buffer, bits, true),
-            &Type::Uint(bits) => Self::gen_int(flags, buffer, bits, false),
+        let mut gen_type = |id| match types.get(id) {
             Type::Func(f) => {
                 let f = f.clone().as_fn_ptr(scopes, types);
-                Self::gen_fnptr(scopes, types, &mut defs, flags, &f)
+                Self::gen_fnptr(scopes, types, &mut defs, flags, &f);
             }
             Type::FnPtr(f) => Self::gen_fnptr(scopes, types, &mut defs, flags, &f.clone()),
             Type::User(ut) => {
-                Self::gen_usertype(flags, buffer, &mut defs, scopes, types, &ut.clone())
+                Self::gen_usertype(flags, decls, &mut defs, scopes, types, &ut.clone());
             }
             Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                Self::gen_dynptr(flags, buffer, &mut defs, scopes, types, &tr.clone())
+                Self::gen_dynptr(flags, decls, &mut defs, scopes, types, &tr.clone());
+            }
+            &Type::Int(bits) | &Type::Uint(bits) if bits != 0 => {
+                let signed = types.get(id).is_int();
+                let nearest = nearest_pow_of_two(bits);
+                let ch = if signed { 's' } else { 'u' };
+                if flags.no_bit_int || nearest == bits as usize {
+                    write_de!(
+                        decls,
+                        "typedef {}int{nearest}_t {ch}{bits};",
+                        if signed { "" } else { "u" },
+                    );
+                } else {
+                    write_de!(decls, "typedef {}INT({bits}){ch}{bits};", ch.to_uppercase());
+                }
             }
             &Type::Array(ty, len) => {
-                Self::gen_array(flags, scopes, types, buffer, &mut defs, ty, len)
+                write_de!(decls, "typedef struct ");
+                decls.emit_array_struct_name(scopes, types, ty, len, flags.minify);
+                write_de!(decls, " ");
+                decls.emit_array_struct_name(scopes, types, ty, len, flags.minify);
+                write_de!(decls, ";");
+
+                write_de!(defs, "struct ");
+                defs.emit_array_struct_name(scopes, types, ty, len, flags.minify);
+                write_de!(defs, "{{");
+                defs.emit_type(scopes, types, ty, flags.minify);
+                write_de!(defs, " {ARRAY_DATA_NAME}[{len}];}};");
             }
             _ => {}
-        });
-        buffer.emit(defs.finish());
+        };
+
+        let mut visited = HashSet::new();
+        for id in self.0.keys() {
+            if !visited.contains(id) {
+                dfs(*id, &self.0, &mut visited, &mut gen_type);
+            }
+        }
+
+        decls.emit(defs.finish());
     }
 
     fn add_type(&mut self, scopes: &Scopes, types: &mut Types, ty: TypeId) {
@@ -340,33 +339,6 @@ impl TypeGen {
         }
 
         self.0.insert(ty, deps);
-    }
-
-    fn gen_types(&self, mut gen: impl FnMut(TypeId)) {
-        fn dfs(
-            id: TypeId,
-            types: &HashMap<TypeId, Vec<TypeId>>,
-            visited: &mut HashSet<TypeId>,
-            gen: &mut impl FnMut(TypeId),
-        ) {
-            visited.insert(id);
-            if let Some(deps) = types.get(&id) {
-                for dep in deps.iter() {
-                    if !visited.contains(dep) {
-                        dfs(*dep, types, visited, gen);
-                    }
-                }
-            }
-
-            gen(id);
-        }
-
-        let mut visited = HashSet::new();
-        for id in self.0.keys() {
-            if !visited.contains(id) {
-                dfs(*id, &self.0, &mut visited, &mut gen);
-            }
-        }
     }
 }
 
@@ -500,17 +472,7 @@ impl Buffer {
         }
     }
 
-    fn emit_type(
-        &mut self,
-        scopes: &Scopes,
-        types: &mut Types,
-        id: TypeId,
-        mut tg: Option<&mut TypeGen>,
-        min: bool,
-    ) {
-        if let Some(gen) = &mut tg {
-            gen.add_type(scopes, types, id);
-        }
+    fn emit_type(&mut self, scopes: &Scopes, types: &mut Types, id: TypeId, min: bool) {
         match types.get(id) {
             Type::Void | Type::Never | Type::CVoid => write_de!(self, "$void"),
             ty @ (Type::Int(bits) | Type::Uint(bits)) => {
@@ -539,16 +501,16 @@ impl Buffer {
             id @ (&Type::Ptr(inner) | &Type::MutPtr(inner) | &Type::RawPtr(inner)) => {
                 let id_is_ptr = id.is_ptr();
                 if let &Type::Array(ty, _) = types.get(inner) {
-                    self.emit_type(scopes, types, ty, tg, min);
+                    self.emit_type(scopes, types, ty, min);
                     if !min {
                         write_de!(self, "/*");
-                        self.emit_type(scopes, types, inner, None, min);
+                        self.emit_type(scopes, types, inner, min);
                         write_de!(self, "*/");
                     }
                 } else if types.get(inner).is_c_void() {
                     write_de!(self, "void");
                 } else {
-                    self.emit_type(scopes, types, inner, tg, min);
+                    self.emit_type(scopes, types, inner, min);
                 }
                 if id_is_ptr {
                     write_de!(self, " const*");
@@ -566,7 +528,7 @@ impl Buffer {
                 }
 
                 if let Some(ty) = id.can_omit_tag(scopes, types) {
-                    self.emit_type(scopes, types, ty, tg, min);
+                    self.emit_type(scopes, types, ty, min);
                 } else {
                     self.emit_type_name(scopes, types, &ut.clone(), min);
                 }
@@ -874,7 +836,7 @@ impl Codegen {
             statics: Default::default(),
             emitted_vtables: Default::default(),
             defers: Default::default(),
-            tg: TypeGen::new(),
+            tg: Default::default(),
         };
         let main = main.map(|mut main| this.gen_c_main(&mut main));
         let mut static_defs = Buffer::default();
@@ -994,7 +956,6 @@ impl Codegen {
                             &self.proj.scopes,
                             &mut self.proj.types,
                             ret,
-                            None,
                             self.flags.minify,
                         );
                     }
@@ -1007,7 +968,6 @@ impl Codegen {
                                 &self.proj.scopes,
                                 &mut self.proj.types,
                                 param_ty,
-                                None,
                                 self.flags.minify,
                             );
                         } else if self.proj.types.get(param_ty).is_ptr() {
@@ -3090,11 +3050,12 @@ impl Codegen {
     }
 
     fn emit_type(&mut self, id: TypeId) {
+        self.tg
+            .add_type(&self.proj.scopes, &mut self.proj.types, id);
         self.buffer.emit_type(
             &self.proj.scopes,
             &mut self.proj.types,
             id,
-            Some(&mut self.tg),
             self.flags.minify,
         );
     }
