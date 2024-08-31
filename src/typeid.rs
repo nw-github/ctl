@@ -403,7 +403,7 @@ impl Type {
             _ => return None,
         };
 
-        if let Ok(bits @ 0..65535) = name[1..].parse::<u32>() {
+        if let Ok(bits @ 0..=65535) = name[1..].parse::<u32>() {
             Some(result(bits))
         } else if ty {
             match name {
