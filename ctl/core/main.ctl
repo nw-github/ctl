@@ -14,4 +14,5 @@ mod prelude {
     pub use super::iter::Iterator;
     pub use super::ext::*;
     pub use super::span::ext::*;
+    pub use super::opt::ext::*;
 }

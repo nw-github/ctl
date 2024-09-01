@@ -1,15 +1,7 @@
-// Output: 3
-// Output: 3
-// Output: 2
-// Output: 1
-// Output: true
+// Output: 3 Some(3) Some(2) Some(1) null
 
 fn main() {
     mut x = @[1, 2, 3];
-    println("{x.len()}");
-    println("{x.pop()!}");
-    println("{x.pop()!}");
-    println("{x.pop()!}");
-    println("{x.pop() is null}");
+    print("{x.len()} {x.pop()} {x.pop()} {x.pop()} {x.pop()}");
 }
 

@@ -1,10 +1,5 @@
 // Output: 3
-// Output: 4
-// Output: 3
-// Output: 2
-// Output: 4
-// Output: 1
-// Output: true
+// Output: 4 Some(3) Some(2) Some(4) Some(1) true
 
 fn main() {
     mut x: [int] = @[];
@@ -14,11 +9,5 @@ fn main() {
     println("{x.len()}");
 
     x.insert(idx: 1, 4);
-    println("{x.len()}");
-
-    println("{x.pop()!}");
-    println("{x.pop()!}");
-    println("{x.pop()!}");
-    println("{x.pop()!}");
-    println("{x.pop() is null}");
+    println("{x.len()} {x.pop()} {x.pop()} {x.pop()} {x.pop()} {x.pop()}");
 }

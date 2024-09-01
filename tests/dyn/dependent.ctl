@@ -8,7 +8,7 @@ trait Bar: Foo { }
 
 struct Test {
     x: int,
-    
+
     impl Foo {
         fn foo(mut this, x: int) {
             this.x = x;

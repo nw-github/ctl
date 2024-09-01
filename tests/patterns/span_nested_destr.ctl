@@ -9,8 +9,8 @@ struct Foo {
 }
 
 fn main() {
-    mut vec = @[Foo(a: 10, b: 10), Foo(a: 10, b: 10)];
-    match vec.as_span_mut() {
+    let vec = [Foo(a: 10, b: 10), Foo(a: 10, b: 10)][..];
+    match vec {
         [{a, b}, {a: a2, b: b2}] => {
             *a = 1;
             *b = 2;

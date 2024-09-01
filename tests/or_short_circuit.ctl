@@ -28,8 +28,8 @@ fn main() {
         println("bad 5");
     }
 
-    if passthrough(false, "good 6") or 
-       passthrough(false, "good 7") or 
+    if passthrough(false, "good 6") or
+       passthrough(false, "good 7") or
        passthrough(false, "good 8")
     {
         println("bad 6");
