@@ -80,6 +80,10 @@ where
             ),
         )
     }
+
+    pub fn from_id_unknown(scopes: &Scopes, id: T) -> Self {
+        Self::from_type_args(scopes, id, std::iter::repeat(TypeId::UNKNOWN))
+    }
 }
 
 impl<T> WithTypeArgs<T> {
@@ -144,17 +148,7 @@ pub type GenericFunc = WithTypeArgs<FunctionId>;
 
 impl GenericFunc {
     pub fn from_id(scopes: &Scopes, id: FunctionId) -> Self {
-        Self::new(
-            id,
-            TypeArgs(
-                scopes
-                    .get(id)
-                    .type_params
-                    .iter()
-                    .map(|&id| (id, TypeId::UNKNOWN))
-                    .collect(),
-            ),
-        )
+        Self::from_id_unknown(scopes, id)
     }
 
     pub fn as_fn_ptr(&self, scopes: &Scopes, types: &mut Types) -> FnPtr {

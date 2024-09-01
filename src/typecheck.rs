@@ -4984,7 +4984,7 @@ impl TypeChecker {
         self.proj.diag.set_errors_enabled(prev);
     }
 
-    fn check_impls_of(&mut self, ut: &GenericUserType, bound: &GenericTrait) -> bool {
+    fn has_direct_impl(&mut self, ut: &GenericUserType, bound: &GenericTrait) -> bool {
         for i in 0..self.proj.scopes.get(ut.id).impls.len() {
             resolve_impl!(self, self.proj.scopes.get_mut(ut.id).impls[i]);
             let tr = &self.proj.scopes.get(ut.id).impls[i];
@@ -5009,13 +5009,13 @@ impl TypeChecker {
         }
 
         if let Some(ut) = self.proj.types.get(ty).as_user() {
-            if self.check_impls_of(&ut.clone(), bound) {
+            if self.has_direct_impl(&ut.clone(), bound) {
                 return true;
             }
         }
 
         for ext in self.extensions_in_scope_for(ty, self.current) {
-            if self.check_impls_of(&ext, bound) {
+            if self.has_direct_impl(&ext, bound) {
                 return true;
             }
         }
@@ -5030,7 +5030,6 @@ impl TypeChecker {
             bound: &GenericTrait,
             ignore: &HashSet<ExtensionId>,
             exts: &[ExtensionId],
-            results: &mut [Option<Option<GenericExtension>>],
         ) -> bool {
             if this
                 .proj
@@ -5041,36 +5040,15 @@ impl TypeChecker {
             }
 
             if let Some(ut) = this.proj.types.get(ty).as_user() {
-                if this.check_impls_of(&ut.clone(), bound) {
+                if this.has_direct_impl(&ut.clone(), bound) {
                     return true;
                 }
             }
 
-            for (i, &id) in exts
-                .iter()
-                .enumerate()
-                .filter(|(_, id)| !ignore.contains(id))
-            {
-                match &results[i] {
-                    Some(Some(ext)) => {
-                        if this.check_impls_of(ext, bound) {
-                            return true;
-                        }
-                    }
-                    Some(None) => continue,
-                    None => {
-                        let mut ignore = ignore.clone();
-                        ignore.insert(id);
-                        if let Some(args) = applies_to(this, ty, id, &ignore, exts, results) {
-                            let ext = GenericExtension::new(id, args);
-                            if this.check_impls_of(&ext, bound) {
-                                results[i] = Some(Some(ext));
-                                return true;
-                            }
-                            results[i] = Some(Some(ext));
-                        } else {
-                            results[i] = Some(None);
-                        }
+            for &ext in exts.iter().filter(|ext| !ignore.contains(ext)) {
+                if let Some(ext) = applies_to(this, ty, ext, ignore, exts) {
+                    if this.has_direct_impl(&ext, bound) {
+                        return true;
                     }
                 }
             }
@@ -5084,8 +5062,7 @@ impl TypeChecker {
             ext: ExtensionId,
             ignore: &HashSet<ExtensionId>,
             exts: &[ExtensionId],
-            results: &mut [Option<Option<GenericExtension>>],
-        ) -> Option<TypeArgs> {
+        ) -> Option<GenericExtension> {
             let ext_ty_id = resolve_type!(
                 this,
                 *this
@@ -5096,27 +5073,31 @@ impl TypeChecker {
                     .as_extension_mut()
                     .unwrap()
             );
-            match this.proj.types.get(ext_ty_id) {
-                Type::User(ut) if this.proj.scopes.get(ut.id).kind.is_template() => {
-                    let id = ut.id;
-                    this.resolve_impls_recursive(id);
-                    for bound in this
-                        .proj
-                        .scopes
-                        .get(id)
-                        .impls
-                        .clone()
-                        .iter()
-                        .flat_map(|bound| bound.as_checked())
-                    {
-                        if !implements_trait(this, ty, bound, ignore, exts, results) {
-                            return None;
-                        }
-                    }
-                    Some(TypeArgs([(id, ty)].into()))
-                }
-                _ => (ty == ext_ty_id).then(Default::default),
+            this.resolve_impls(ext);
+
+            let mut ext = GenericExtension::from_id_unknown(&this.proj.scopes, ext);
+            ext.infer_type_args(&this.proj.types, ext_ty_id, ty);
+            if ext_ty_id.with_templates(&mut this.proj.types, &ext.ty_args) != ty {
+                return None;
             }
+
+            let mut ignore = ignore.clone();
+            ignore.insert(ext.id);
+            for (&id, &ty) in ext.ty_args.iter() {
+                if ty == TypeId::UNKNOWN {
+                    return None;
+                }
+
+                let bounds = this.proj.scopes.get(id).impls.clone();
+                for mut bound in bounds.into_iter().flat_map(TraitImpl::into_checked) {
+                    bound.fill_templates(&mut this.proj.types, &ext.ty_args);
+                    if !implements_trait(this, ty, &bound, &ignore, exts) {
+                        return None;
+                    }
+                }
+            }
+
+            Some(ext)
         }
 
         if ty == TypeId::UNKNOWN {
@@ -5138,14 +5119,11 @@ impl TypeChecker {
         let mut results = vec![None; exts.len()];
         for (i, &id) in exts.iter().enumerate() {
             if results[i].is_none() {
-                results[i] = Some(
-                    applies_to(self, ty, id, &[id].into(), &exts, &mut results)
-                        .map(|args| GenericExtension::new(id, args)),
-                );
+                results[i] = applies_to(self, ty, id, &HashSet::new(), &exts);
             }
         }
 
-        results.into_iter().flatten().flatten().collect()
+        results.into_iter().flatten().collect()
     }
 
     fn get_trait_impl(&mut self, ty: TypeId, id: TraitId) -> Option<GenericTrait> {
