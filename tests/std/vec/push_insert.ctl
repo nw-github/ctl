@@ -1,5 +1,5 @@
 // Output: 3
-// Output: 4 Some(3) Some(2) Some(4) Some(1) true
+// Output: 4 Some(3) Some(2) Some(4) Some(1) null
 
 fn main() {
     mut x: [int] = @[];
