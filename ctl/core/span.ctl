@@ -289,46 +289,72 @@ fn raw_subscript_checked<T, I: Numeric + Integral>(ptr: *raw T, len: uint, idx: 
 
 // TODO: make these member functions/impls when the syntax allows for it
 
-pub extension SpanEq<T: core::ops::Eq<T>> for [T..] {
-    pub fn ==(this, rhs: *[T..]): bool {
-        if this.len() != rhs.len() {
-            return false;
-        }
-
-        for (l, r) in this.iter().zip::<*T, Iter<T>>(rhs.iter()) {
-            if l != r {
+pub mod ext {
+    pub extension SpanEq<T: core::ops::Eq<T>> for [T..] {
+        pub fn ==(this, rhs: *[T..]): bool {
+            if this.len() != rhs.len() {
                 return false;
             }
+
+            for (l, r) in this.iter().zip::<*T, super::Iter<T>>(rhs.iter()) {
+                if l != r {
+                    return false;
+                }
+            }
+
+            true
         }
-
-        true
     }
-}
 
-pub extension SpanMutEq<T: core::ops::Eq<T>> for [mut T..] {
-    pub fn ==(this, rhs: *[T..]): bool {
-        this.as_span() == rhs
-    }
-}
-
-pub extension SpanMutSort<T: core::ops::Cmp<T>> for [mut T..] {
-    pub fn sort(this) {
-        guard !this.is_empty() else {
-            return;
+    pub extension SpanMutEq<T: core::ops::Eq<T>> for [mut T..] {
+        pub fn ==(this, rhs: *[T..]): bool {
+            this.as_span() == rhs
         }
+    }
 
-        let end      = this.len() - 1;
-        let pivot    = &this[end];
-        mut part_idx = 0u;
-        for j in 0u..end {
-            if this[j] <= pivot {
-                this.swap(part_idx, j);
-                part_idx++;
+    pub extension SpanMutSort<T: core::ops::Cmp<T>> for [mut T..] {
+        pub fn sort(this) {
+            guard !this.is_empty() else {
+                return;
+            }
+
+            let end      = this.len() - 1;
+            let pivot    = &this[end];
+            mut part_idx = 0u;
+            for j in 0u..end {
+                if this[j] <= pivot {
+                    this.swap(part_idx, j);
+                    part_idx++;
+                }
+            }
+
+            this.swap(part_idx, end);
+            this[0u..part_idx].sort();
+            this[part_idx + 1..].sort();
+        }
+    }
+
+    pub extension SpanFormat<T: core::fmt::Format> for [T..] {
+        impl core::fmt::Format {
+            fn format<F: core::fmt::Formatter>(this, f: *mut F) {
+                "[".format(f);
+                for (i, item) in this.iter().enumerate() {
+                    if i > 0 {
+                        ", ".format(f);
+                    }
+                    item.format(f);
+                }
+                "]".format(f);
             }
         }
+    }
 
-        this.swap(part_idx, end);
-        this[0u..part_idx].sort();
-        this[part_idx + 1..].sort();
+    pub extension SpanMutFormat<T: core::fmt::Format> for [mut T..] {
+        impl core::fmt::Format {
+            fn format<F: core::fmt::Formatter>(this, f: *mut F) {
+                this.as_span().format(f)
+            }
+        }
     }
 }
+
