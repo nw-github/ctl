@@ -68,6 +68,16 @@ pub struct Span<T> {
         unsafe Span::new(this.ptr + start, end - start)
     }
 
+    pub fn first(this): ?*T {
+        this.get(0)
+    }
+
+    pub fn last(this): ?*T {
+        if !this.is_empty() {
+            unsafe this.get_unchecked(this.len() - 1)
+        }
+    }
+
     #(inline)
     pub fn []<I: Numeric + Integral>(this, idx: I): *T {
         unsafe raw_subscript_checked(this.ptr, this.len, idx) as *T
@@ -177,6 +187,26 @@ pub struct SpanMut<T> {
         core::mem::swap(&mut this[a], &mut this[b]);
     }
 
+    pub fn first(this): ?*T {
+        this.get(0)
+    }
+
+    pub fn first_mut(this): ?*mut T {
+        this.get_mut(0)
+    }
+
+    pub fn last(this): ?*T {
+        if !this.is_empty() {
+            unsafe this.get_unchecked(this.len() - 1)
+        }
+    }
+
+    pub fn last_mut(this): ?*mut T {
+        if !this.is_empty() {
+            unsafe this.get_mut_unchecked(this.len() - 1)
+        }
+    }
+
     #(inline)
     pub fn []<I: Numeric + Integral>(this, idx: I): *mut T {
         unsafe raw_subscript_checked(this.ptr, this.len, idx) as *mut T
@@ -248,36 +278,6 @@ pub struct IterMut<T> {
     }
 }
 
-// TODO: make this a member function for T: Eq types
-pub fn compare<T>(lhs: [T..], rhs: [T..]): bool {
-    if lhs.len() != rhs.len() {
-        return false;
-    }
-
-    unsafe core::mem::compare(lhs.ptr, rhs.ptr, lhs.len())
-}
-
-// TODO: make this a member function
-pub fn sort<T: core::ops::Cmp<T>>(span: [mut T..]) {
-    guard !span.is_empty() else {
-        return;
-    }
-
-    let end      = span.len() - 1;
-    let pivot    = &span[end];
-    mut part_idx = 0u;
-    for j in 0u..end {
-        if span[j] <= pivot {
-            span.swap(part_idx, j);
-            part_idx++;
-        }
-    }
-
-    span.swap(part_idx, end);
-    sort(span[0u..part_idx]);
-    sort(span[part_idx + 1..]);
-}
-
 #(inline(always))
 fn raw_subscript_checked<T, I: Numeric + Integral>(ptr: *raw T, len: uint, idx: I): *raw T {
     if !core::intrin::numeric_lt(idx, len) or idx < core::intrin::numeric_cast(0) {
@@ -285,4 +285,50 @@ fn raw_subscript_checked<T, I: Numeric + Integral>(ptr: *raw T, len: uint, idx: 
     }
 
     core::intrin::raw_offset(ptr, idx)
+}
+
+// TODO: make these member functions/impls when the syntax allows for it
+
+pub extension SpanEq<T: core::ops::Eq<T>> for [T..] {
+    pub fn ==(this, rhs: *[T..]): bool {
+        if this.len() != rhs.len() {
+            return false;
+        }
+
+        for (l, r) in this.iter().zip::<*T, Iter<T>>(rhs.iter()) {
+            if l != r {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+pub extension SpanMutEq<T: core::ops::Eq<T>> for [mut T..] {
+    pub fn ==(this, rhs: *[T..]): bool {
+        this.as_span() == rhs
+    }
+}
+
+pub extension SpanMutSort<T: core::ops::Cmp<T>> for [mut T..] {
+    pub fn sort(this) {
+        guard !this.is_empty() else {
+            return;
+        }
+
+        let end      = this.len() - 1;
+        let pivot    = &this[end];
+        mut part_idx = 0u;
+        for j in 0u..end {
+            if this[j] <= pivot {
+                this.swap(part_idx, j);
+                part_idx++;
+            }
+        }
+
+        this.swap(part_idx, end);
+        this[0u..part_idx].sort();
+        this[part_idx + 1..].sort();
+    }
 }

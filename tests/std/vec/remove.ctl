@@ -11,5 +11,5 @@ fn main() {
     println("{vec.len()}");
     println("{vec.remove(3)}");
     println("{vec.len()}");
-    println("{std::span::compare(vec.as_span(), @[1, 7, 3, 5, 6].as_span())}");
+    println("{vec.as_span() == [1, 7, 3, 5, 6][..].as_span()}");
 }

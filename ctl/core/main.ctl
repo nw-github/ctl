@@ -13,4 +13,7 @@ mod prelude {
     pub use super::opt::Option::Some;
     pub use super::iter::Iterator;
     pub use super::ext::*;
+    pub use super::span::SpanEq;
+    pub use super::span::SpanMutEq;
+    pub use super::span::SpanMutSort;
 }

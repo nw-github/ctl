@@ -72,7 +72,10 @@ pub struct str {
 
     impl Eq<str> {
         fn eq(this, rhs: *str): bool {
-            core::span::compare(this.as_bytes(), rhs.as_bytes())
+            use core::span::SpanEq;
+            use core::ext::NumericExt;
+
+            this.as_bytes() == rhs.as_bytes()
         }
     }
 
