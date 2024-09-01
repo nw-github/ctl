@@ -5030,6 +5030,7 @@ impl TypeChecker {
             bound: &GenericTrait,
             ignore: &HashSet<ExtensionId>,
             exts: &[ExtensionId],
+            cache: &mut [HashMap<TypeId, Option<GenericExtension>>],
         ) -> bool {
             if this
                 .proj
@@ -5045,11 +5046,21 @@ impl TypeChecker {
                 }
             }
 
-            for &ext in exts.iter().filter(|ext| !ignore.contains(ext)) {
-                if let Some(ext) = applies_to(this, ty, ext, ignore, exts) {
-                    if this.has_direct_impl(&ext, bound) {
-                        return true;
+            for (i, &ext) in exts.iter().enumerate() {
+                if ignore.contains(&ext) {
+                    continue;
+                }
+
+                let ext = match cache[i].get(&ty) {
+                    Some(ext) => ext.as_ref(),
+                    None => {
+                        let ext = applies_to(this, ty, ext, ignore, exts, cache);
+                        cache[i].entry(ty).or_insert(ext).as_ref()
                     }
+                };
+
+                if ext.is_some_and(|ext| this.has_direct_impl(ext, bound)) {
+                    return true;
                 }
             }
 
@@ -5062,6 +5073,7 @@ impl TypeChecker {
             ext: ExtensionId,
             ignore: &HashSet<ExtensionId>,
             exts: &[ExtensionId],
+            cache: &mut [HashMap<TypeId, Option<GenericExtension>>],
         ) -> Option<GenericExtension> {
             let ext_ty_id = resolve_type!(
                 this,
@@ -5083,15 +5095,14 @@ impl TypeChecker {
 
             let mut ignore = ignore.clone();
             ignore.insert(ext.id);
-            for (&id, &ty) in ext.ty_args.iter() {
-                if ty == TypeId::UNKNOWN {
+            for (&id, &arg) in ext.ty_args.iter() {
+                if arg == TypeId::UNKNOWN {
                     return None;
                 }
-
                 let bounds = this.proj.scopes.get(id).impls.clone();
                 for mut bound in bounds.into_iter().flat_map(TraitImpl::into_checked) {
                     bound.fill_templates(&mut this.proj.types, &ext.ty_args);
-                    if !implements_trait(this, ty, &bound, &ignore, exts) {
+                    if !implements_trait(this, arg, &bound, &ignore, exts, cache) {
                         return None;
                     }
                 }
@@ -5116,14 +5127,23 @@ impl TypeChecker {
                 })
             })
             .collect();
-        let mut results = vec![None; exts.len()];
+        let mut cache = vec![HashMap::new(); exts.len()];
         for (i, &id) in exts.iter().enumerate() {
-            if results[i].is_none() {
-                results[i] = applies_to(self, ty, id, &HashSet::new(), &exts);
-            }
+            // FIXME: by unconditionally calling applies_to we are duplicating work, since we may
+            // have already checked it. But we can't just blindly trust the contents of the cache
+            // if they are negative due to the `ignores` that prevents infinite recursion
+
+            // in fact, the cache may need to be per-call (defined in this loop) to be
+            // 100% correct, but I'm not sure at the moment. That works but has a significant effect
+            // on performance. If something stupid is happening with extensions, try here first
+            let ext = applies_to(self, ty, id, &HashSet::new(), &exts, &mut cache);
+            cache[i].insert(ty, ext);
         }
 
-        results.into_iter().flatten().collect()
+        cache
+            .into_iter()
+            .flat_map(|mut map| map.remove(&ty).flatten())
+            .collect()
     }
 
     fn get_trait_impl(&mut self, ty: TypeId, id: TraitId) -> Option<GenericTrait> {
