@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use indexmap::{map::Entry, IndexMap};
 use num_bigint::BigInt;
 use num_traits::Num;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 use crate::{
     ast::{checked::*, declared::*, parsed::*, Attributes, BinaryOp, UnaryOp},
@@ -7242,7 +7242,7 @@ fn discriminant_bits(count: usize) -> u32 {
     (count as f64).log2().ceil() as u32
 }
 
-static BINARY_OP_TRAITS: Lazy<HashMap<BinaryOp, (&str, &str)>> = Lazy::new(|| {
+static BINARY_OP_TRAITS: LazyLock<HashMap<BinaryOp, (&str, &str)>> = LazyLock::new(|| {
     [
         (BinaryOp::Cmp, ("op_cmp", "cmp")),
         (BinaryOp::Gt, ("op_cmp", "gt")),
@@ -7265,7 +7265,7 @@ static BINARY_OP_TRAITS: Lazy<HashMap<BinaryOp, (&str, &str)>> = Lazy::new(|| {
     .into()
 });
 
-static UNARY_OP_TRAITS: Lazy<HashMap<UnaryOp, (&str, &str)>> = Lazy::new(|| {
+static UNARY_OP_TRAITS: LazyLock<HashMap<UnaryOp, (&str, &str)>> = LazyLock::new(|| {
     [
         (UnaryOp::Neg, ("op_neg", "neg")),
         (UnaryOp::Not, ("op_not", "not")),
