@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use indexmap::{map::Entry, IndexMap};
 use num_bigint::BigInt;
 use num_traits::Num;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 use crate::{
     ast::{checked::*, declared::*, parsed::*, Attributes, BinaryOp, UnaryOp},
@@ -4984,7 +4984,7 @@ impl TypeChecker {
         self.proj.diag.set_errors_enabled(prev);
     }
 
-    fn check_impls_of(&mut self, ut: &GenericUserType, bound: &GenericTrait) -> bool {
+    fn has_direct_impl(&mut self, ut: &GenericUserType, bound: &GenericTrait) -> bool {
         for i in 0..self.proj.scopes.get(ut.id).impls.len() {
             resolve_impl!(self, self.proj.scopes.get_mut(ut.id).impls[i]);
             let tr = &self.proj.scopes.get(ut.id).impls[i];
@@ -5009,13 +5009,13 @@ impl TypeChecker {
         }
 
         if let Some(ut) = self.proj.types.get(ty).as_user() {
-            if self.check_impls_of(&ut.clone(), bound) {
+            if self.has_direct_impl(&ut.clone(), bound) {
                 return true;
             }
         }
 
         for ext in self.extensions_in_scope_for(ty, self.current) {
-            if self.check_impls_of(&ext, bound) {
+            if self.has_direct_impl(&ext, bound) {
                 return true;
             }
         }
@@ -5030,7 +5030,7 @@ impl TypeChecker {
             bound: &GenericTrait,
             ignore: &HashSet<ExtensionId>,
             exts: &[ExtensionId],
-            results: &mut [Option<Option<GenericExtension>>],
+            cache: &mut [HashMap<TypeId, Option<GenericExtension>>],
         ) -> bool {
             if this
                 .proj
@@ -5041,37 +5041,26 @@ impl TypeChecker {
             }
 
             if let Some(ut) = this.proj.types.get(ty).as_user() {
-                if this.check_impls_of(&ut.clone(), bound) {
+                if this.has_direct_impl(&ut.clone(), bound) {
                     return true;
                 }
             }
 
-            for (i, &id) in exts
-                .iter()
-                .enumerate()
-                .filter(|(_, id)| !ignore.contains(id))
-            {
-                match &results[i] {
-                    Some(Some(ext)) => {
-                        if this.check_impls_of(ext, bound) {
-                            return true;
-                        }
-                    }
-                    Some(None) => continue,
+            for (i, &ext) in exts.iter().enumerate() {
+                if ignore.contains(&ext) {
+                    continue;
+                }
+
+                let ext = match cache[i].get(&ty) {
+                    Some(ext) => ext.as_ref(),
                     None => {
-                        let mut ignore = ignore.clone();
-                        ignore.insert(id);
-                        if let Some(args) = applies_to(this, ty, id, &ignore, exts, results) {
-                            let ext = GenericExtension::new(id, args);
-                            if this.check_impls_of(&ext, bound) {
-                                results[i] = Some(Some(ext));
-                                return true;
-                            }
-                            results[i] = Some(Some(ext));
-                        } else {
-                            results[i] = Some(None);
-                        }
+                        let ext = applies_to(this, ty, ext, ignore, exts, cache);
+                        cache[i].entry(ty).or_insert(ext).as_ref()
                     }
+                };
+
+                if ext.is_some_and(|ext| this.has_direct_impl(ext, bound)) {
+                    return true;
                 }
             }
 
@@ -5084,8 +5073,8 @@ impl TypeChecker {
             ext: ExtensionId,
             ignore: &HashSet<ExtensionId>,
             exts: &[ExtensionId],
-            results: &mut [Option<Option<GenericExtension>>],
-        ) -> Option<TypeArgs> {
+            cache: &mut [HashMap<TypeId, Option<GenericExtension>>],
+        ) -> Option<GenericExtension> {
             let ext_ty_id = resolve_type!(
                 this,
                 *this
@@ -5096,27 +5085,30 @@ impl TypeChecker {
                     .as_extension_mut()
                     .unwrap()
             );
-            match this.proj.types.get(ext_ty_id) {
-                Type::User(ut) if this.proj.scopes.get(ut.id).kind.is_template() => {
-                    let id = ut.id;
-                    this.resolve_impls_recursive(id);
-                    for bound in this
-                        .proj
-                        .scopes
-                        .get(id)
-                        .impls
-                        .clone()
-                        .iter()
-                        .flat_map(|bound| bound.as_checked())
-                    {
-                        if !implements_trait(this, ty, bound, ignore, exts, results) {
-                            return None;
-                        }
-                    }
-                    Some(TypeArgs([(id, ty)].into()))
-                }
-                _ => (ty == ext_ty_id).then(Default::default),
+            this.resolve_impls(ext);
+
+            let mut ext = GenericExtension::from_id_unknown(&this.proj.scopes, ext);
+            ext.infer_type_args(&this.proj.types, ext_ty_id, ty);
+            if ext_ty_id.with_templates(&mut this.proj.types, &ext.ty_args) != ty {
+                return None;
             }
+
+            let mut ignore = ignore.clone();
+            ignore.insert(ext.id);
+            for (&id, &arg) in ext.ty_args.iter() {
+                if arg == TypeId::UNKNOWN {
+                    return None;
+                }
+                let bounds = this.proj.scopes.get(id).impls.clone();
+                for mut bound in bounds.into_iter().flat_map(TraitImpl::into_checked) {
+                    bound.fill_templates(&mut this.proj.types, &ext.ty_args);
+                    if !implements_trait(this, arg, &bound, &ignore, exts, cache) {
+                        return None;
+                    }
+                }
+            }
+
+            Some(ext)
         }
 
         if ty == TypeId::UNKNOWN {
@@ -5135,17 +5127,23 @@ impl TypeChecker {
                 })
             })
             .collect();
-        let mut results = vec![None; exts.len()];
+        let mut cache = vec![HashMap::new(); exts.len()];
         for (i, &id) in exts.iter().enumerate() {
-            if results[i].is_none() {
-                results[i] = Some(
-                    applies_to(self, ty, id, &[id].into(), &exts, &mut results)
-                        .map(|args| GenericExtension::new(id, args)),
-                );
-            }
+            // FIXME: by unconditionally calling applies_to we are duplicating work, since we may
+            // have already checked it. But we can't just blindly trust the contents of the cache
+            // if they are negative due to the `ignores` that prevents infinite recursion
+
+            // in fact, the cache may need to be per-call (defined in this loop) to be
+            // 100% correct, but I'm not sure at the moment. That works but has a significant effect
+            // on performance. If something stupid is happening with extensions, try here first
+            let ext = applies_to(self, ty, id, &HashSet::new(), &exts, &mut cache);
+            cache[i].insert(ty, ext);
         }
 
-        results.into_iter().flatten().flatten().collect()
+        cache
+            .into_iter()
+            .flat_map(|mut map| map.remove(&ty).flatten())
+            .collect()
     }
 
     fn get_trait_impl(&mut self, ty: TypeId, id: TraitId) -> Option<GenericTrait> {
@@ -7264,7 +7262,7 @@ fn discriminant_bits(count: usize) -> u32 {
     (count as f64).log2().ceil() as u32
 }
 
-static BINARY_OP_TRAITS: Lazy<HashMap<BinaryOp, (&str, &str)>> = Lazy::new(|| {
+static BINARY_OP_TRAITS: LazyLock<HashMap<BinaryOp, (&str, &str)>> = LazyLock::new(|| {
     [
         (BinaryOp::Cmp, ("op_cmp", "cmp")),
         (BinaryOp::Gt, ("op_cmp", "gt")),
@@ -7287,7 +7285,7 @@ static BINARY_OP_TRAITS: Lazy<HashMap<BinaryOp, (&str, &str)>> = Lazy::new(|| {
     .into()
 });
 
-static UNARY_OP_TRAITS: Lazy<HashMap<UnaryOp, (&str, &str)>> = Lazy::new(|| {
+static UNARY_OP_TRAITS: LazyLock<HashMap<UnaryOp, (&str, &str)>> = LazyLock::new(|| {
     [
         (UnaryOp::Neg, ("op_neg", "neg")),
         (UnaryOp::Not, ("op_not", "not")),

@@ -8,16 +8,16 @@
 // Output: 1 2 3 4
 
 fn main() {
-    let funcs = @[
-        &subscript, 
-        val::end, 
-        val::start, 
+    let funcs = [
+        &subscript,
+        val::end,
+        val::start,
         val::mid,
         ptr::regular,
         ptr::end,
         ptr::start,
         ptr::mid,
-    ];
+    ][..];
     for func in funcs.iter() {
         let a = [1, 2, 3, 4];
         mut b = [5, 6, 7, 8];
