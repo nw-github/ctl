@@ -2,7 +2,7 @@
 // Output: 6
 // Output: 4
 // Output: 5
-// Output: true
+// Output: [1, 7, 3, 5, 6]
 
 fn main() {
     mut vec = @[1, 2, 3, 4, 5, 6, 7];
@@ -11,5 +11,5 @@ fn main() {
     println("{vec.len()}");
     println("{vec.remove(3)}");
     println("{vec.len()}");
-    println("{vec.as_span() == [1, 7, 3, 5, 6][..].as_span()}");
+    println("{vec[..]}");
 }

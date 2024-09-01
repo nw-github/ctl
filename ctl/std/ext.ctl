@@ -38,7 +38,7 @@ pub extension StdSignedExt<T: Numeric + Signed> for T {
 
         mut buffer = @[b'0'; core::mem::size_of::<T>() * 8 + 1];
         unsafe {
-            this.to_str_radix_unchecked(radix, buffer.as_span_mut())
+            this.to_str_radix_unchecked(radix, buffer[..])
         }
     }
 }
@@ -51,7 +51,7 @@ pub extension StdUnsignedExt<T: Numeric + Unsigned> for T {
 
         mut buffer = @[b'0'; core::mem::size_of::<T>() * 8];
         unsafe {
-            this.to_str_radix_unchecked(radix, buffer.as_span_mut())
+            this.to_str_radix_unchecked(radix, buffer[..])
         }
     }
 }
