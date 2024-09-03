@@ -5247,7 +5247,6 @@ impl TypeChecker {
                     }
                 }
 
-                this.resolve_impls_recursive(ext.id);
                 for tr in this
                     .proj
                     .scopes
@@ -5256,9 +5255,8 @@ impl TypeChecker {
                     .iter()
                     .flat_map(|ut| ut.as_checked())
                 {
-                    let tr_id = tr.id;
-                    for imp in this.proj.scopes.get_trait_impls(tr_id) {
-                        if wanted_tr.is_some_and(|id| id != tr_id) {
+                    for imp in this.proj.scopes.get_trait_impls(tr.id) {
+                        if wanted_tr.is_some_and(|id| id != imp) {
                             continue;
                         }
 
@@ -5267,7 +5265,6 @@ impl TypeChecker {
                         {
                             let ty_args = tr.ty_args.clone();
                             let mut func = GenericFunc::new(f.id, finish(this, f.id));
-                            func.ty_args.copy_args(&ext.ty_args);
                             if let Type::User(ut) = this.proj.types.get(inst) {
                                 let ut = ut.clone();
                                 func.ty_args.copy_args_with(
@@ -5276,10 +5273,14 @@ impl TypeChecker {
                                     &ut.ty_args,
                                 );
                             }
-                            func.ty_args.insert(
-                                *this.proj.scopes.get(tr_id).kind.as_trait().unwrap(),
-                                inst,
+                            func.ty_args.copy_args_with(
+                                &mut this.proj.types,
+                                &ty_args,
+                                &ext.ty_args,
                             );
+                            func.ty_args
+                                .insert(*this.proj.scopes.get(imp).kind.as_trait().unwrap(), inst);
+
                             return Some(MemberFn {
                                 func,
                                 owner: src_scope,
@@ -5329,7 +5330,7 @@ impl TypeChecker {
                 .flat_map(|ut| ut.as_checked())
             {
                 for imp in self.proj.scopes.get_trait_impls(tr.id) {
-                    if wanted_tr.is_some_and(|id| id != tr.id) {
+                    if wanted_tr.is_some_and(|id| id != imp) {
                         continue;
                     }
 
