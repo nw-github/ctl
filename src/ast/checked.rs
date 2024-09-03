@@ -6,7 +6,7 @@ use crate::{
     ast::{BinaryOp, UnaryOp},
     sym::{ScopeId, ScopeKind, Scopes, VariableId},
     typecheck::MemberFn,
-    typeid::{GenericFunc, Type, TypeId, Types},
+    typeid::{GenericFn, Type, TypeId, Types},
 };
 
 use super::parsed::RangePattern;
@@ -121,7 +121,7 @@ pub enum CheckedExprData {
     },
     AutoDeref(Box<CheckedExpr>, usize),
     Call(Box<CheckedExpr>, IndexMap<String, CheckedExpr>),
-    CallDyn(GenericFunc, IndexMap<String, CheckedExpr>),
+    CallDyn(GenericFn, IndexMap<String, CheckedExpr>),
     CallFnPtr(Box<CheckedExpr>, Vec<CheckedExpr>),
     DynCoerce {
         expr: Box<CheckedExpr>,
@@ -157,8 +157,8 @@ pub enum CheckedExprData {
     ByteString(Vec<u8>),
     Char(char),
     Void,
-    Func(GenericFunc, ScopeId),
-    MemFunc(MemberFn, ScopeId),
+    Fn(GenericFn, ScopeId),
+    MemFn(MemberFn, ScopeId),
     Var(VariableId),
     Block(Block),
     AffixOperator {
@@ -221,8 +221,8 @@ impl CheckedExprData {
     ) -> Self {
         Self::Call(
             Box::new(CheckedExpr::new(
-                types.insert(Type::Func(mfn.func.clone())),
-                Self::MemFunc(mfn, scope),
+                types.insert(Type::Fn(mfn.func.clone())),
+                Self::MemFn(mfn, scope),
             )),
             args,
         )
@@ -230,16 +230,12 @@ impl CheckedExprData {
 
     pub fn call(
         types: &mut Types,
-        func: GenericFunc,
+        func: GenericFn,
         args: IndexMap<String, CheckedExpr>,
         scope: ScopeId,
     ) -> Self {
         Self::Call(
-            CheckedExpr::new(
-                types.insert(Type::Func(func.clone())),
-                Self::Func(func, scope),
-            )
-            .into(),
+            CheckedExpr::new(types.insert(Type::Fn(func.clone())), Self::Fn(func, scope)).into(),
             args,
         )
     }

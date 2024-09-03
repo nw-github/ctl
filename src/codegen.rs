@@ -13,7 +13,7 @@ use crate::{
     sym::*,
     typecheck::TypeChecker,
     typeid::{
-        CInt, FnPtr, GenericFunc, GenericTrait, GenericUserType, Type, TypeArgs, TypeId, Types,
+        CInt, FnPtr, GenericFn, GenericTrait, GenericUserType, Type, TypeArgs, TypeId, Types,
     },
     write_de, writeln_de, CodegenFlags, THIS_PARAM,
 };
@@ -99,7 +99,7 @@ impl TypeGen {
                 defs.emit_fn_name(
                     scopes,
                     types,
-                    &GenericFunc::new(f.id, tr.ty_args.clone()),
+                    &GenericFn::new(f.id, tr.ty_args.clone()),
                     flags.minify,
                 );
                 write_de!(defs, ")(");
@@ -219,7 +219,7 @@ impl TypeGen {
 
         let mut defs = Buffer::default();
         let mut gen_type = |id| match types.get(id) {
-            Type::Func(f) => {
+            Type::Fn(f) => {
                 let f = f.clone().as_fn_ptr(scopes, types);
                 Self::gen_fnptr(scopes, types, &mut defs, flags, &f);
             }
@@ -283,7 +283,7 @@ impl TypeGen {
                 while let Type::Ptr(id) | Type::MutPtr(id) | Type::RawPtr(id) = types.get(inner) {
                     inner = *id;
                 }
-                if matches!(types.get(inner), Type::Func(_) | Type::FnPtr(_)) {
+                if matches!(types.get(inner), Type::Fn(_) | Type::FnPtr(_)) {
                     deps.push(inner);
                 } else if matches!(
                     types.get(dep),
@@ -310,7 +310,7 @@ impl TypeGen {
                 }
                 self.add_type(scopes, types, ret);
             }
-            Type::Func(f) => {
+            Type::Fn(f) => {
                 let f = f.clone().as_fn_ptr(scopes, types);
                 for param in f.params {
                     self.add_type(scopes, types, param);
@@ -344,7 +344,7 @@ impl TypeGen {
 
 #[derive(Eq, Clone)]
 struct State {
-    func: GenericFunc,
+    func: GenericFn,
     tmpvar: usize,
     caller: ScopeId,
     emitted_names: HashMap<String, VariableId>,
@@ -352,7 +352,7 @@ struct State {
 }
 
 impl State {
-    pub fn new(func: GenericFunc, caller: ScopeId) -> Self {
+    pub fn new(func: GenericFn, caller: ScopeId) -> Self {
         Self {
             func,
             caller,
@@ -362,12 +362,12 @@ impl State {
         }
     }
 
-    pub fn in_body_scope(func: GenericFunc, scopes: &Scopes) -> Self {
+    pub fn in_body_scope(func: GenericFn, scopes: &Scopes) -> Self {
         let scope = scopes.get(func.id).body_scope;
         Self::new(func, scope)
     }
 
-    pub fn with_inst(mut func: GenericFunc, types: &Types, inst: TypeId, caller: ScopeId) -> Self {
+    pub fn with_inst(mut func: GenericFn, types: &Types, inst: TypeId, caller: ScopeId) -> Self {
         if let Some(ut) = types.get(inst).as_user() {
             func.ty_args.copy_args(&ut.ty_args);
         }
@@ -444,7 +444,7 @@ impl Buffer {
                 self.emit_type_name(scopes, types, &tr.clone(), min);
             }
             Type::FnPtr(f) => self.emit_fnptr_name(scopes, types, &f.clone(), min),
-            Type::Func(f) => {
+            Type::Fn(f) => {
                 let fptr = f.clone().as_fn_ptr(scopes, types);
                 self.emit_fnptr_name(scopes, types, &fptr, min)
             }
@@ -519,7 +519,7 @@ impl Buffer {
                 }
             }
             Type::FnPtr(_) => self.emit_mangled_name(scopes, types, id, min),
-            Type::Func(_) => self.emit_mangled_name(scopes, types, id, min),
+            Type::Fn(_) => self.emit_mangled_name(scopes, types, id, min),
             Type::User(ut) => {
                 if scopes.get(ut.id).kind.is_template() {
                     eprintln!("ICE: Template type in emit_type");
@@ -613,7 +613,7 @@ impl Buffer {
         }
     }
 
-    fn emit_fn_name(&mut self, scopes: &Scopes, types: &mut Types, func: &GenericFunc, min: bool) {
+    fn emit_fn_name(&mut self, scopes: &Scopes, types: &mut Types, func: &GenericFn, min: bool) {
         let f = scopes.get(func.id);
         if !f.is_extern {
             if min {
@@ -809,13 +809,13 @@ impl Codegen {
             .functions()
             .filter(|(_, f)| f.is_extern && f.body.is_some())
             .map(|(id, _)| {
-                State::in_body_scope(GenericFunc::from_id(&proj.scopes, id), &proj.scopes)
+                State::in_body_scope(GenericFn::from_id(&proj.scopes, id), &proj.scopes)
             });
         let (funcs, main) = if flags.lib {
             (exports.collect(), None)
         } else {
             let main = State::in_body_scope(
-                GenericFunc::from_id(&proj.scopes, proj.main.unwrap()),
+                GenericFn::from_id(&proj.scopes, proj.main.unwrap()),
                 &proj.scopes,
             );
             (
@@ -845,7 +845,7 @@ impl Codegen {
         let mut emitted = HashSet::new();
         let mut emitted_statics = HashSet::new();
         let static_state = &mut State::new(
-            GenericFunc::from_id(&this.proj.scopes, FunctionId::RESERVED),
+            GenericFn::from_id(&this.proj.scopes, FunctionId::RESERVED),
             ScopeId::ROOT,
         );
         while !this.funcs.is_empty() || !this.statics.is_empty() {
@@ -935,7 +935,7 @@ impl Codegen {
                     &self.proj.types,
                     self.proj.scopes.get(tr),
                 ) {
-                    let func = GenericFunc::new(f.id, vtable.tr.ty_args.clone());
+                    let func = GenericFn::new(f.id, vtable.tr.ty_args.clone());
                     let func_data = self.proj.scopes.get(f.id);
 
                     write_de!(self.buffer, ".");
@@ -1013,10 +1013,8 @@ impl Codegen {
             .cloned()
             .filter(|_| self.proj.scopes.get(main.func.id).params.len() == 1)
         {
-            let state = State::in_body_scope(
-                GenericFunc::from_id(&self.proj.scopes, id),
-                &self.proj.scopes,
-            );
+            let state =
+                State::in_body_scope(GenericFn::from_id(&self.proj.scopes, id), &self.proj.scopes);
             if returns {
                 write_de!(self.buffer, "return ");
             }
@@ -1221,7 +1219,7 @@ impl Codegen {
                 self.emit_vtable(vtable);
             }
             CheckedExprData::Call(callee, args) => {
-                let func = self.proj.types.get(callee.ty).as_func().unwrap();
+                let func = self.proj.types.get(callee.ty).as_fn().unwrap();
                 if let Some(name) = self.proj.scopes.intrinsic_name(func.id) {
                     let mut func = func.clone();
                     func.fill_templates(&mut self.proj.types, &state.func.ty_args);
@@ -1368,7 +1366,7 @@ impl Codegen {
                 tmpbuf_emit!(self, state, |tmp| {
                     self.emit_with_capacity(expr.ty, &tmp, &ut, exprs.len());
                     let insert = State::with_inst(
-                        GenericFunc::from_id(
+                        GenericFn::from_id(
                             &self.proj.scopes,
                             self.proj
                                 .scopes
@@ -1403,7 +1401,7 @@ impl Codegen {
 
                 tmpbuf_emit!(self, state, |tmp| {
                     let insert = State::with_inst(
-                        GenericFunc::from_id(
+                        GenericFn::from_id(
                             &self.proj.scopes,
                             self.proj
                                 .scopes
@@ -1477,7 +1475,7 @@ impl Codegen {
                 write_de!(self.buffer, "0x{:x}", value as u32);
             }
             CheckedExprData::Void => self.buffer.emit(VOID_INSTANCE),
-            CheckedExprData::Func(mut func, scope) => {
+            CheckedExprData::Fn(mut func, scope) => {
                 func.fill_templates(&mut self.proj.types, &state.func.ty_args);
                 let state = State::new(func, scope);
                 self.buffer.emit_fn_name(
@@ -1488,7 +1486,7 @@ impl Codegen {
                 );
                 self.funcs.insert(state);
             }
-            CheckedExprData::MemFunc(mut mfn, scope) => {
+            CheckedExprData::MemFn(mut mfn, scope) => {
                 let parent = &self.proj.scopes[self.proj.scopes.get(mfn.func.id).scope];
                 if let Some((trait_id, this)) = parent
                     .kind
@@ -1690,7 +1688,7 @@ impl Codegen {
                     self.buffer.emit(src);
                 } else {
                     let ut = self.proj.types.get(expr.ty).as_user().unwrap().clone();
-                    let mut func = GenericFunc::from_type_args(
+                    let mut func = GenericFn::from_type_args(
                         &self.proj.scopes,
                         self.proj
                             .scopes
@@ -2453,7 +2451,7 @@ impl Codegen {
         // none of the constructors for literals use trait functions in any way, it doesn't matter
         // right now
         let new_state = State::in_body_scope(
-            GenericFunc::new(
+            GenericFn::new(
                 self.proj
                     .scopes
                     .get(ut.id)
@@ -2487,7 +2485,7 @@ impl Codegen {
         // none of the constructors for literals use trait functions in any way, it doesn't matter
         // right now
         let state = State::in_body_scope(
-            GenericFunc::new(
+            GenericFn::new(
                 self.proj
                     .scopes
                     .get(ut.id)
@@ -2512,7 +2510,7 @@ impl Codegen {
         &mut self,
         name: &str,
         ret: TypeId,
-        func: &GenericFunc,
+        func: &GenericFn,
         mut args: IndexMap<String, CheckedExpr>,
         state: &mut State,
     ) {
@@ -2577,7 +2575,7 @@ impl Codegen {
             }
             "panic" => {
                 let panic = State::in_body_scope(
-                    GenericFunc::from_id(
+                    GenericFn::from_id(
                         &self.proj.scopes,
                         self.proj
                             .scopes
@@ -3255,7 +3253,7 @@ impl Codegen {
         method: &str,
         scope: ScopeId,
         finish: impl FnOnce(&mut TypeChecker, FunctionId) -> TypeArgs + Clone,
-    ) -> GenericFunc {
+    ) -> GenericFn {
         // TODO: fix this disgusting hack
         let m = TypeChecker::with_project(&mut self.proj, |tc| {
             tc.get_member_fn_ex(inst, Some(trait_id), method, scope, finish)

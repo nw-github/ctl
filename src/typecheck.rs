@@ -12,7 +12,7 @@ use crate::{
     project::{Dependencies, Project},
     sym::*,
     typeid::{
-        CInt, FnPtr, GenericExtension, GenericFunc, GenericTrait, GenericUserType, Type, TypeArgs,
+        CInt, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType, Type, TypeArgs,
         TypeId, Types, WithTypeArgs,
     },
     THIS_PARAM, THIS_TYPE,
@@ -105,7 +105,7 @@ macro_rules! bail {
 
 #[derive(Debug, Clone)]
 pub struct MemberFn {
-    pub func: GenericFunc,
+    pub func: GenericFn,
     pub owner: ScopeId,
     pub dynamic: bool,
     pub public: bool,
@@ -122,7 +122,7 @@ pub enum ResolvedType {
 #[derive(Default)]
 pub enum ResolvedValue {
     UnionConstructor(GenericUserType),
-    Fn(GenericFunc),
+    Fn(GenericFn),
     MemberFn(MemberFn),
     Var(VariableId),
     NotFound(Error),
@@ -2331,14 +2331,14 @@ impl TypeChecker {
                         match &expr.data {
                             CheckedExprData::Call(inner, _) => {
                                 // FIXME: don't test by name
-                                if matches!(&inner.data, CheckedExprData::Func(f, _)
+                                if matches!(&inner.data, CheckedExprData::Fn(f, _)
                                     if self.proj.scopes.get(f.id).name.data.starts_with("$sub"))
                                 {
                                     self.proj.diag.warn(Error::subscript_addr(span));
                                 }
                             }
-                            CheckedExprData::Func(_, _) => {
-                                let Type::Func(f) = self.proj.types.get(expr.ty) else {
+                            CheckedExprData::Fn(_, _) => {
+                                let Type::Fn(f) = self.proj.types.get(expr.ty) else {
                                     unreachable!()
                                 };
                                 let f = f.clone();
@@ -2365,19 +2365,19 @@ impl TypeChecker {
                         match &expr.data {
                             CheckedExprData::Call(inner, _) => {
                                 // FIXME: don't test by name
-                                if matches!(&inner.data, CheckedExprData::Func(f, _)
+                                if matches!(&inner.data, CheckedExprData::Fn(f, _)
                                     if self.proj.scopes.get(f.id).name.data.starts_with("$sub"))
                                 {
                                     self.proj.diag.warn(Error::subscript_addr(span));
                                 }
                             }
-                            CheckedExprData::Func(_, _) => {
+                            CheckedExprData::Fn(_, _) => {
                                 self.proj.diag.warn(Error::new(
                                     "&mut on function creates immutable function pointer (use &)",
                                     span,
                                 ));
 
-                                let Type::Func(f) = self.proj.types.get(expr.ty) else {
+                                let Type::Fn(f) = self.proj.types.get(expr.ty) else {
                                     unreachable!()
                                 };
                                 let f = f.clone();
@@ -2398,13 +2398,13 @@ impl TypeChecker {
                         match &expr.data {
                             CheckedExprData::Call(inner, _) => {
                                 // FIXME: don't test by name
-                                if matches!(&inner.data, CheckedExprData::Func(f, _)
+                                if matches!(&inner.data, CheckedExprData::Fn(f, _)
                                     if self.proj.scopes.get(f.id).name.data.starts_with("$sub"))
                                 {
                                     self.proj.diag.warn(Error::subscript_addr(span));
                                 }
                             }
-                            CheckedExprData::Func(_, _) => self
+                            CheckedExprData::Fn(_, _) => self
                                 .error(Error::new("cannot create raw pointer to function", span)),
                             _ => {}
                         }
@@ -2744,7 +2744,7 @@ impl TypeChecker {
                                     ))),
                                     CheckedExprData::call(
                                         &mut self.proj.types,
-                                        GenericFunc::new(f, Default::default()),
+                                        GenericFn::new(f, Default::default()),
                                         Default::default(),
                                         self.current,
                                     ),
@@ -2866,8 +2866,8 @@ impl TypeChecker {
                     }
 
                     CheckedExpr::new(
-                        self.proj.types.insert(Type::Func(func.clone())),
-                        CheckedExprData::Func(func, self.current),
+                        self.proj.types.insert(Type::Fn(func.clone())),
+                        CheckedExprData::Fn(func, self.current),
                     )
                 }
                 ResolvedValue::MemberFn(mut mfn) => {
@@ -2906,8 +2906,8 @@ impl TypeChecker {
                     }
 
                     CheckedExpr::new(
-                        self.proj.types.insert(Type::Func(mfn.func.clone())),
-                        CheckedExprData::MemFunc(mfn, self.current),
+                        self.proj.types.insert(Type::Fn(mfn.func.clone())),
+                        CheckedExprData::MemFn(mfn, self.current),
                     )
                 }
                 ResolvedValue::UnionConstructor(ut) => bail!(
@@ -3562,7 +3562,7 @@ impl TypeChecker {
                     continue;
                 }
 
-                let mut func = GenericFunc::from_id(&self.proj.scopes, f);
+                let mut func = GenericFn::from_id(&self.proj.scopes, f);
                 func.ty_args.copy_args(&ut.ty_args);
 
                 let args = args.clone();
@@ -4253,7 +4253,7 @@ impl TypeChecker {
         let callee = self.check_expr(callee, None);
         match self.proj.types.get(callee.ty) {
             Type::Unknown => Default::default(),
-            Type::Func(func) => self.check_known_fn_call(func.clone(), args, target, span),
+            Type::Fn(func) => self.check_known_fn_call(func.clone(), args, target, span),
             Type::FnPtr(f) => {
                 let f = f.clone();
                 let mut result = vec![];
@@ -4297,7 +4297,7 @@ impl TypeChecker {
 
     fn check_known_fn_call(
         &mut self,
-        mut func: GenericFunc,
+        mut func: GenericFn,
         args: Vec<(Option<String>, Expr)>,
         target: Option<TypeId>,
         span: Span,
@@ -4356,7 +4356,7 @@ impl TypeChecker {
 
     fn check_fn_args(
         &mut self,
-        func: &mut GenericFunc,
+        func: &mut GenericFn,
         recv: Option<CheckedExpr>,
         args: Vec<(Option<String>, Expr)>,
         target: Option<TypeId>,
@@ -4500,7 +4500,7 @@ impl TypeChecker {
 
     fn check_bounds_filtered(
         &mut self,
-        func: &GenericFunc,
+        func: &GenericFn,
         unknowns: &HashSet<UserTypeId>,
         span: Span,
     ) -> bool {
@@ -5236,7 +5236,7 @@ impl TypeChecker {
                     search(&this.proj.scopes, &this.proj.scopes.get(ext.id).fns, method)
                 {
                     if fn_is_impl(this, wanted_tr, *f) {
-                        let mut func = GenericFunc::new(f.id, finish(this, f.id));
+                        let mut func = GenericFn::new(f.id, finish(this, f.id));
                         func.ty_args.copy_args(&ext.ty_args);
                         return Some(MemberFn {
                             func,
@@ -5264,7 +5264,7 @@ impl TypeChecker {
                             search(&this.proj.scopes, &this.proj.scopes.get(imp).fns, method)
                         {
                             let ty_args = tr.ty_args.clone();
-                            let mut func = GenericFunc::new(f.id, finish(this, f.id));
+                            let mut func = GenericFn::new(f.id, finish(this, f.id));
                             if let Type::User(ut) = this.proj.types.get(inst) {
                                 let ut = ut.clone();
                                 func.ty_args.copy_args_with(
@@ -5302,7 +5302,7 @@ impl TypeChecker {
             let src_scope = self.proj.scopes.get(ut.id).scope;
             if let Some(f) = search(&self.proj.scopes, &self.proj.scopes.get(ut.id).fns, method) {
                 if fn_is_impl(self, wanted_tr, *f) {
-                    let mut func = GenericFunc::new(f.id, finish(self, f.id));
+                    let mut func = GenericFn::new(f.id, finish(self, f.id));
                     func.ty_args.copy_args(&ut.ty_args);
                     return Some(MemberFn {
                         func,
@@ -5338,7 +5338,7 @@ impl TypeChecker {
                         search(&self.proj.scopes, &self.proj.scopes.get(imp).fns, method)
                     {
                         let ty_args = tr.ty_args.clone();
-                        let mut func = GenericFunc::new(f.id, finish(self, f.id));
+                        let mut func = GenericFn::new(f.id, finish(self, f.id));
                         func.ty_args
                             .copy_args_with(&mut self.proj.types, &ty_args, &ut.ty_args);
                         func.ty_args
@@ -5362,7 +5362,7 @@ impl TypeChecker {
             for imp in self.proj.scopes.get_trait_impls(tr.id) {
                 if let Some(f) = search(&self.proj.scopes, &self.proj.scopes.get(imp).fns, method) {
                     let src_scope = data.scope;
-                    let mut func = GenericFunc::new(f.id, finish(self, f.id));
+                    let mut func = GenericFn::new(f.id, finish(self, f.id));
                     func.ty_args.copy_args(&tr.ty_args);
                     return Some(MemberFn {
                         func,
@@ -5622,7 +5622,7 @@ impl TypeChecker {
                     Err(expr)
                 }
             }
-            (Type::Func(lhs), Type::FnPtr(rhs)) => {
+            (Type::Fn(lhs), Type::FnPtr(rhs)) => {
                 let rhs = rhs.clone();
                 let fptr = lhs
                     .clone()
@@ -6984,7 +6984,7 @@ impl TypeChecker {
                         Some(ValueItem::Fn(id)) => {
                             self.resolve_proto(id);
                             self.check_hover(name.span, id.into());
-                            ResolvedValue::Fn(GenericFunc::new(
+                            ResolvedValue::Fn(GenericFn::new(
                                 id,
                                 self.resolve_type_args(id, ty_args, false, name.span),
                             ))
@@ -6992,7 +6992,7 @@ impl TypeChecker {
                         Some(ValueItem::StructConstructor(id, init)) => {
                             self.resolve_proto(init);
                             self.check_hover(name.span, init.into());
-                            ResolvedValue::Fn(GenericFunc::new(
+                            ResolvedValue::Fn(GenericFn::new(
                                 init,
                                 self.resolve_type_args(id, ty_args, false, name.span),
                             ))
@@ -7131,13 +7131,13 @@ impl TypeChecker {
                 self.check_hover(last_name.span, id.into());
                 ty_args.copy_args(&self.resolve_type_args(id, last_args, false, last_name.span));
 
-                ResolvedValue::Fn(GenericFunc::new(id, ty_args))
+                ResolvedValue::Fn(GenericFn::new(id, ty_args))
             }
             ValueItem::StructConstructor(id, init) => {
                 self.resolve_proto(init);
                 self.check_hover(last_name.span, init.into());
                 ty_args.copy_args(&self.resolve_type_args(id, last_args, false, last_name.span));
-                ResolvedValue::Fn(GenericFunc::new(init, ty_args))
+                ResolvedValue::Fn(GenericFn::new(init, ty_args))
             }
             ValueItem::UnionConstructor(id) => {
                 self.check_hover(last_name.span, id.into());

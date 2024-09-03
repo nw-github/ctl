@@ -144,9 +144,9 @@ impl<T> WithTypeArgs<T> {
     }
 }
 
-pub type GenericFunc = WithTypeArgs<FunctionId>;
+pub type GenericFn = WithTypeArgs<FunctionId>;
 
-impl GenericFunc {
+impl GenericFn {
     pub fn from_id(scopes: &Scopes, id: FunctionId) -> Self {
         Self::from_id_unknown(scopes, id)
     }
@@ -317,7 +317,7 @@ pub enum Type {
     F64,
     Bool,
     Char,
-    Func(GenericFunc),
+    Fn(GenericFn),
     FnPtr(FnPtr),
     User(GenericUserType),
     Ptr(TypeId),
@@ -529,7 +529,7 @@ impl TypeId {
                 }
                 format!("{result}) => {}", f.ret.name(scopes, types))
             }
-            Type::Func(func) => {
+            Type::Fn(func) => {
                 let ty_args = func.ty_args.clone();
                 let f = scopes.get(func.id);
                 let mut result = format!("fn {}(", f.name.data);
@@ -820,10 +820,10 @@ impl TypeId {
                     self
                 }
             }
-            Type::Func(f) => {
+            Type::Fn(f) => {
                 let mut tr = f.clone();
                 tr.fill_templates(types, map);
-                types.insert(Type::Func(tr))
+                types.insert(Type::Fn(tr))
             }
             Type::FnPtr(f) => {
                 let f = f.clone();
