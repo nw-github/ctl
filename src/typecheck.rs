@@ -5461,7 +5461,9 @@ impl TypeChecker {
         };
 
         let stats = self.proj.types.get(ty).as_integral().unwrap();
-        let mut result = match BigInt::from_str_radix(value, *base as u32) {
+        let mut parsable = value.clone();
+        parsable.retain(|c| c != '_');
+        let mut result = match BigInt::from_str_radix(&parsable, *base as u32) {
             Ok(result) => result,
             Err(e) => {
                 return self.error(Error::new(

@@ -734,7 +734,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Token::Int {
                         base: 16,
-                        value: self.advance_while(|ch| ch.is_ascii_hexdigit()),
+                        value: self.advance_while(|ch| ch.is_ascii_hexdigit() || ch == '_'),
                         width: self.numeric_suffix(),
                     };
                 }
@@ -742,7 +742,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Token::Int {
                         base: 8,
-                        value: self.advance_while(|ch| ch.is_digit(8)),
+                        value: self.advance_while(|ch| ch.is_digit(8) || ch == '_'),
                         width: self.numeric_suffix(),
                     };
                 }
@@ -750,7 +750,7 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     return Token::Int {
                         base: 2,
-                        value: self.advance_while(|ch| ch.is_digit(2)),
+                        value: self.advance_while(|ch| ch.is_digit(2) || ch == '_'),
                         width: self.numeric_suffix(),
                     };
                 }
@@ -761,10 +761,10 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        self.advance_while(|ch| ch.is_ascii_digit());
+        self.advance_while(|ch| ch.is_ascii_digit() || ch == '_');
         if self.peek() == Some('.') && self.peek_next().is_some_and(|f| f.is_ascii_digit()) {
             self.advance();
-            self.advance_while(|ch| ch.is_ascii_digit());
+            self.advance_while(|ch| ch.is_ascii_digit() || ch == '_');
             Token::Float(&self.src[start..self.pos])
         } else {
             let value = &self.src[start..self.pos];

@@ -1480,8 +1480,9 @@ impl Codegen {
                 self.buffer.emit(if value { "1" } else { "0" })
             }
             CheckedExprData::Integer(value) => self.emit_literal(&value, expr.ty),
-            CheckedExprData::Float(value) => {
+            CheckedExprData::Float(mut value) => {
                 self.emit_cast(expr.ty);
+                value.retain(|c| c != '_');
                 self.buffer.emit(value);
             }
             CheckedExprData::String(value) => {
