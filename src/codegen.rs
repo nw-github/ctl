@@ -517,14 +517,7 @@ impl Buffer {
                 if matches!(ty, Type::CUint(_)) {
                     write_de!(self, "unsigned ");
                 }
-
-                match inner {
-                    CInt::Char => write_de!(self, "char"),
-                    CInt::Short => write_de!(self, "short"),
-                    CInt::Int => write_de!(self, "int"),
-                    CInt::Long => write_de!(self, "long"),
-                    CInt::LongLong => write_de!(self, "long long"),
-                }
+                write_de!(self, "{inner}");
             }
             Type::Isize => write_de!(self, "isize"),
             Type::Usize => write_de!(self, "usize"),
@@ -3420,9 +3413,9 @@ impl Codegen {
     ) {
         let bf = self.proj.scopes.get(id).kind.as_packed_struct().unwrap();
         let word_size_bits = (bf.align * 8) as u32;
-        let bits = match &self.proj.types[ty] {
+        let bits = match self.proj.types[ty] {
             Type::Bool => 1,
-            Type::Int(n) | Type::Uint(n) => *n,
+            Type::Int(n) | Type::Uint(n) => n,
             _ => ty.size_and_align(&self.proj.scopes, &mut self.proj.types).0 as u32 * 8,
         };
 

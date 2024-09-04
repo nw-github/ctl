@@ -1,4 +1,4 @@
-use std::ops::Index;
+use std::{fmt::Display, ops::Index};
 
 use crate::{
     ast::{parsed::TypeHint, BinaryOp, UnaryOp},
@@ -285,6 +285,19 @@ impl CInt {
             CInt::Int => std::mem::size_of::<c_int>(),
             CInt::Long => std::mem::size_of::<c_long>(),
             CInt::LongLong => std::mem::size_of::<c_longlong>(),
+        }
+    }
+}
+
+impl Display for CInt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CInt::Char => write!(f, "char"),
+            CInt::Short => write!(f, "short"),
+            CInt::Int => write!(f, "int"),
+            CInt::Long => write!(f, "long"),
+            CInt::LongLong if f.alternate() => write!(f, "longlong"),
+            CInt::LongLong => write!(f, "long long"),
         }
     }
 }
@@ -582,21 +595,7 @@ impl TypeId {
             Type::Isize => "int".into(),
             Type::Usize => "uint".into(),
             id @ (Type::CInt(ty) | Type::CUint(ty)) => {
-                format!(
-                    "c_{}{}",
-                    if matches!(id, Type::CUint(_)) {
-                        "u"
-                    } else {
-                        ""
-                    },
-                    match ty {
-                        CInt::Char => "char",
-                        CInt::Short => "short",
-                        CInt::Int => "int",
-                        CInt::Long => "long",
-                        CInt::LongLong => "longlong",
-                    }
-                )
+                format!("c_{}{ty:#}", ["", "u"][matches!(id, Type::CUint(_)) as usize])
             }
             Type::CVoid => "c_void".into(),
         }

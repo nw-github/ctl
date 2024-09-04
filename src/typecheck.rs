@@ -20,8 +20,8 @@ use crate::{
 
 macro_rules! resolve_type {
     ($self: expr, $ty: expr) => {{
-        let id = match &$self.proj.types[$ty] {
-            &Type::Unresolved(id) => {
+        let id = match $self.proj.types[$ty] {
+            Type::Unresolved(id) => {
                 let (hint, scope) = $self.proj.types.take_unresolved(id);
                 $self.enter_id_and_resolve(scope, |this| this.resolve_typehint(&hint))
             }
@@ -2305,14 +2305,14 @@ impl TypeChecker {
                             self.check_expr(*expr, target)
                         };
 
-                        match &self.proj.types[expr.ty] {
-                            Type::Ptr(inner) | Type::MutPtr(inner) => (*inner, expr),
+                        match self.proj.types[expr.ty] {
+                            Type::Ptr(inner) | Type::MutPtr(inner) => (inner, expr),
                             Type::RawPtr(inner) => {
                                 if self.safety != Safety::Unsafe {
                                     self.proj.diag.error(Error::is_unsafe(span));
                                 }
 
-                                (*inner, expr)
+                                (inner, expr)
                             }
                             Type::Unknown => return Default::default(),
                             _ => {
@@ -4865,7 +4865,13 @@ impl TypeChecker {
                     )),
                 }
             }
-            kind.size = crate::nearest_pow_of_two(bits) / 8;
+
+            const MAX_ALIGN_BITS: u32 = crate::typeid::MAX_ALIGN as u32 * 8;
+            if bits < MAX_ALIGN_BITS {
+                kind.size = crate::nearest_pow_of_two(bits) / 8;
+            } else {
+                kind.size = ((((bits / MAX_ALIGN_BITS) + 1) * MAX_ALIGN_BITS) / 8) as usize;
+            }
             kind.align = kind.size.clamp(1, crate::typeid::MAX_ALIGN);
         }
 
