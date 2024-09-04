@@ -99,7 +99,7 @@ impl<T> WithTypeArgs<T> {
 
     pub fn infer_type_args(&mut self, types: &Types, mut src: TypeId, mut target: TypeId) {
         loop {
-            match (types.get(src), types.get(target)) {
+            match (&types[src], &types[target]) {
                 (
                     Type::Ptr(gi) | Type::MutPtr(gi) | Type::RawPtr(gi),
                     Type::Ptr(ti) | Type::MutPtr(ti) | Type::RawPtr(ti),
@@ -256,7 +256,7 @@ impl GenericUserType {
     pub fn can_omit_tag(&self, scopes: &Scopes, types: &Types) -> Option<TypeId> {
         self.as_option_inner(scopes).filter(|&inner| {
             matches!(
-                types.get(inner),
+                types[inner],
                 Type::FnPtr(_) | Type::RawPtr(_) | Type::Ptr(_) | Type::MutPtr(_)
             )
         })
@@ -499,6 +499,14 @@ impl Default for Types {
     }
 }
 
+impl Index<TypeId> for Types {
+    type Output = Type;
+
+    fn index(&self, index: TypeId) -> &Self::Output {
+        self.get(index)
+    }
+}
+
 // TODO
 pub const MAX_ALIGN: usize = core::mem::align_of::<usize>();
 
@@ -522,7 +530,7 @@ impl TypeId {
     pub const CVOID: TypeId = TypeId(10);
 
     pub fn name(self, scopes: &Scopes, types: &mut Types) -> String {
-        match types.get(self) {
+        match &types[self] {
             Type::Unknown => "{unknown}".into(),
             // for debug purposes, ideally this should never be visible
             Type::Unresolved(_) => "{unresolved}".into(),
@@ -595,19 +603,19 @@ impl TypeId {
     }
 
     pub fn as_option_inner(self, scopes: &Scopes, types: &Types) -> Option<TypeId> {
-        types.get(self).as_option_inner(scopes)
+        types[self].as_option_inner(scopes)
     }
 
     pub fn strip_references(self, types: &Types) -> TypeId {
         let mut id = self;
-        while let Type::Ptr(inner) | Type::MutPtr(inner) = types.get(id) {
+        while let Type::Ptr(inner) | Type::MutPtr(inner) = &types[id] {
             id = *inner;
         }
         id
     }
 
     pub fn strip_references_r(self, types: &Types) -> &Type {
-        types.get(self.strip_references(types))
+        &types[self.strip_references(types)]
     }
 
     pub fn strip_options(self, scopes: &Scopes, types: &Types) -> TypeId {
@@ -620,7 +628,7 @@ impl TypeId {
 
     pub fn supports_binary(self, types: &Types, op: BinaryOp) -> bool {
         use BinaryOp::*;
-        let this = types.get(self);
+        let this = &types[self];
         match op {
             Assign => true,
             Add | AddAssign | Sub | SubAssign => this.is_numeric() || this.is_raw_ptr(),
@@ -668,7 +676,7 @@ impl TypeId {
 
     pub fn supports_unary(self, scopes: &Scopes, types: &Types, op: UnaryOp) -> bool {
         use UnaryOp::*;
-        let this = types.get(self);
+        let this = &types[self];
         match op {
             Neg => {
                 this.as_integral().is_some_and(|s| s.signed)
@@ -687,7 +695,7 @@ impl TypeId {
     }
 
     pub fn as_pointee(self, types: &Types) -> Option<TypeId> {
-        if let Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) = types.get(self) {
+        if let Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) = &types[self] {
             Some(*inner)
         } else {
             None
@@ -695,7 +703,7 @@ impl TypeId {
     }
 
     pub fn size_and_align(self, scopes: &Scopes, types: &mut Types) -> (usize, usize) {
-        let sz = match types.get(self) {
+        let sz = match &types[self] {
             Type::Int(0) | Type::Uint(0) => 0,
             Type::Int(bits) | Type::Uint(bits) => nearest_pow_of_two(*bits) / 8,
             Type::CInt(inner) | Type::CUint(inner) => inner.size(),
@@ -785,13 +793,13 @@ impl TypeId {
     }
 
     pub fn matched_inner_type(self, types: &mut Types, ty: TypeId) -> TypeId {
-        let mut id = types.get(self);
+        let mut id = &types[self];
         if !matches!(id, Type::Ptr(_) | Type::MutPtr(_)) {
             return ty;
         }
 
         while let Type::MutPtr(inner) = id {
-            id = types.get(*inner);
+            id = &types[*inner];
         }
 
         if matches!(id, Type::Ptr(_)) {
@@ -813,7 +821,7 @@ impl TypeId {
             return self;
         }
 
-        match types.get(self) {
+        match &types[self] {
             &Type::Array(ty, len) => {
                 let ty = Type::Array(ty.with_templates(types, map), len);
                 types.insert(ty)
@@ -873,7 +881,7 @@ impl TypeId {
     }
 
     pub fn with_ut_templates(self, types: &mut Types, id: TypeId) -> TypeId {
-        if let Some(ut) = types.get(id).as_user() {
+        if let Some(ut) = types[id].as_user() {
             self.with_templates(types, &ut.ty_args.clone())
         } else {
             self
@@ -885,11 +893,11 @@ impl TypeId {
     }
 
     pub fn is_packed_struct(self, proj: &Project) -> bool {
-        matches!(proj.types.get(self), Type::User(ut)
+        matches!(&proj.types[self], Type::User(ut)
             if proj.scopes.get(ut.id).kind.is_packed_struct())
     }
 
     pub fn as_integral(self, types: &Types) -> Option<Integer> {
-        types.get(self).as_integral()
+        types[self].as_integral()
     }
 }

@@ -251,17 +251,17 @@ impl CheckedExpr {
     pub fn is_assignable(&self, scopes: &Scopes, types: &Types) -> bool {
         match &self.data {
             CheckedExprData::AutoDeref(expr, _) => {
-                matches!(types.get(expr.ty), Type::MutPtr(_) | Type::RawPtr(_))
+                matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
             }
             CheckedExprData::Unary { op, expr } => {
                 matches!(op, UnaryOp::Deref)
-                    && matches!(types.get(expr.ty), Type::MutPtr(_) | Type::RawPtr(_))
+                    && matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
             }
             CheckedExprData::Var(id) => scopes.get(*id).mutable,
             CheckedExprData::Member { source, .. } => source.is_assignable(scopes, types),
             CheckedExprData::Subscript { callee, .. } => match &callee.data {
                 CheckedExprData::Var(id) => {
-                    matches!(types.get(callee.ty), Type::MutPtr(_) | Type::RawPtr(_))
+                    matches!(types[callee.ty], Type::MutPtr(_) | Type::RawPtr(_))
                         || scopes.get(*id).mutable
                 }
                 CheckedExprData::Member { source, .. } => source.is_assignable(scopes, types),
@@ -274,15 +274,15 @@ impl CheckedExpr {
     pub fn can_addrmut(&self, scopes: &Scopes, types: &Types) -> bool {
         match &self.data {
             CheckedExprData::AutoDeref(expr, _) => {
-                matches!(types.get(expr.ty), Type::MutPtr(_) | Type::RawPtr(_))
+                matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
             }
             CheckedExprData::Unary { op, expr } => {
                 !matches!(op, UnaryOp::Deref)
-                    || matches!(types.get(expr.ty), Type::MutPtr(_) | Type::RawPtr(_))
+                    || matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
             }
             CheckedExprData::Var(id) => scopes.get(*id).mutable,
             CheckedExprData::Member { source, .. } => {
-                matches!(types.get(source.ty), Type::MutPtr(_)) || source.can_addrmut(scopes, types)
+                matches!(types[source.ty], Type::MutPtr(_)) || source.can_addrmut(scopes, types)
             }
             CheckedExprData::Subscript { callee, .. } => callee.can_addrmut(scopes, types),
             _ => true,
@@ -292,7 +292,7 @@ impl CheckedExpr {
     pub fn auto_deref(self, types: &mut Types, target: TypeId) -> CheckedExpr {
         let mut needed = 0;
         let mut current = target;
-        while let Type::Ptr(inner) | Type::MutPtr(inner) = types.get(current) {
+        while let Type::Ptr(inner) | Type::MutPtr(inner) = &types[current] {
             current = *inner;
             needed += 1;
         }
@@ -300,19 +300,19 @@ impl CheckedExpr {
         let mut prev = self.ty;
         let mut ty = self.ty;
         let mut indirection = 0;
-        while let Type::Ptr(inner) | Type::MutPtr(inner) = types.get(ty) {
+        while let Type::Ptr(inner) | Type::MutPtr(inner) = &types[ty] {
             prev = ty;
             ty = *inner;
             indirection += 1;
         }
 
-        if let Type::DynMutPtr(_) | Type::DynPtr(_) = types.get(ty) {
+        if let Type::DynMutPtr(_) | Type::DynPtr(_) = types[ty] {
             indirection += 1;
         }
 
         match indirection.cmp(&needed) {
             std::cmp::Ordering::Less => {
-                if matches!(types.get(target), Type::Ptr(_)) {
+                if matches!(types[target], Type::Ptr(_)) {
                     CheckedExpr::new(
                         types.insert(Type::Ptr(self.ty)),
                         CheckedExprData::Unary {

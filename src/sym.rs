@@ -651,7 +651,7 @@ impl Scopes {
     }
 
     pub fn has_builtin_impl(&self, types: &Types, id: TypeId, bound: &GenericTrait) -> bool {
-        let ty = types.get(id);
+        let ty = &types[id];
         if ty.is_numeric() && Some(&bound.id) == self.lang_traits.get("numeric") {
             return true;
         }

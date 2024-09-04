@@ -707,7 +707,7 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes, types: &mut Type
             res += "kw ";
         }
 
-        if param.label == THIS_PARAM && types.get(param.ty).is_mut_ptr() {
+        if param.label == THIS_PARAM && types[param.ty].is_mut_ptr() {
             res += "mut ";
         }
 
@@ -896,7 +896,7 @@ fn visualize_variant_body(
     small: bool,
 ) {
     *res += name;
-    match ty.map(|id| (id, types.get(id))) {
+    match ty.map(|id| (id, &types[id])) {
         Some((_, Type::User(ut))) => {
             let ut = ut.clone();
             let inner = scopes.get(ut.id);
