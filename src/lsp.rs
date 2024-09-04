@@ -804,7 +804,10 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types) -> String 
     if ut.type_params.is_empty()
         && matches!(
             ut.kind,
-            UserTypeKind::Struct | UserTypeKind::Union(_) | UserTypeKind::UnsafeUnion
+            UserTypeKind::Struct
+                | UserTypeKind::PackedStruct(_)
+                | UserTypeKind::Union(_)
+                | UserTypeKind::UnsafeUnion
         )
         && !ut.recursive
     {
