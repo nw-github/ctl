@@ -190,8 +190,10 @@ pub extension SignedExt<T: Numeric + Signed> for T {
     }
 
     pub unsafe fn to_str_radix_unchecked(this, radix: u32, buf: [mut u8..]): str {
+        // FIXME: T might be too small to store the radix
         let radix: T = intrin::numeric_cast(radix);
         mut pos = buf.len();
+        // FIXME: for T::min_value(), this.abs() will overflow
         mut val = this.abs();
         loop {
             unsafe *buf.get_mut_unchecked(--pos) = DIGITS[intrin::numeric_cast(val % radix)];
@@ -220,6 +222,7 @@ pub extension SignedExt<T: Numeric + Signed> for T {
 
 pub extension UnsignedExt<T: Numeric + Unsigned> for T {
     pub unsafe fn to_str_radix_unchecked(this, radix: u32, buf: [mut u8..]): str {
+        // FIXME: T might be too small to store the radix
         let radix: T = intrin::numeric_cast(radix);
         mut pos = buf.len();
         mut val = *this;

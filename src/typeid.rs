@@ -1,3 +1,5 @@
+use std::ops::Index;
+
 use crate::{
     ast::{parsed::TypeHint, BinaryOp, UnaryOp},
     nearest_pow_of_two,
@@ -885,5 +887,9 @@ impl TypeId {
     pub fn is_packed_struct(self, proj: &Project) -> bool {
         matches!(proj.types.get(self), Type::User(ut)
             if proj.scopes.get(ut.id).kind.is_packed_struct())
+    }
+
+    pub fn as_integral(self, types: &Types) -> Option<Integer> {
+        types.get(self).as_integral()
     }
 }

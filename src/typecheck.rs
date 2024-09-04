@@ -1514,8 +1514,7 @@ impl TypeChecker {
                     let Some(union) = &this.proj.scopes.get(id).kind.as_union() else {
                         return;
                     };
-                    let tag = this.proj.types.get(union.tag);
-                    if let Some(stats) = tag.as_integral() {
+                    if let Some(stats) = union.tag.as_integral(&this.proj.types) {
                         if stats.bits < discriminant_bits(union.variants.len()) {
                             let msg = format!(
                                 "type '{}' does not have sufficient range to represent the tag for this type", 

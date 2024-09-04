@@ -4,7 +4,8 @@ use std::{
 };
 
 use indexmap::IndexMap;
-use num_bigint::BigInt;
+use num_bigint::{BigInt, BigUint, Sign};
+use num_traits::Zero;
 
 use crate::{
     ast::{checked::*, parsed::RangePattern, BinaryOp, UnaryOp},
@@ -1479,7 +1480,7 @@ impl Codegen {
                 self.emit_cast(expr.ty);
                 self.buffer.emit(if value { "1" } else { "0" })
             }
-            CheckedExprData::Integer(value) => self.emit_literal(&value, expr.ty),
+            CheckedExprData::Integer(value) => self.emit_literal(value, expr.ty),
             CheckedExprData::Float(mut value) => {
                 self.emit_cast(expr.ty);
                 value.retain(|c| c != '_');
@@ -2616,22 +2617,8 @@ impl Codegen {
                 self.emit_expr(args.next().unwrap().1, state);
                 write_de!(self.buffer, ")");
             }
-            "max_value" => {
-                self.emit_cast(ret);
-                write_de!(
-                    self.buffer,
-                    "({})",
-                    self.proj.types.get(ret).as_integral().unwrap().max()
-                );
-            }
-            "min_value" => {
-                self.emit_cast(ret);
-                write_de!(
-                    self.buffer,
-                    "({}-1)",
-                    self.proj.types.get(ret).as_integral().unwrap().min() + 1
-                );
-            }
+            "max_value" => self.emit_literal(ret.as_integral(&self.proj.types).unwrap().max(), ret),
+            "min_value" => self.emit_literal(ret.as_integral(&self.proj.types).unwrap().min(), ret),
             "size_of" => {
                 write_de!(
                     self.buffer,
@@ -2818,7 +2805,7 @@ impl Codegen {
                 conditions.next(|buffer| {
                     usebuf!(self, buffer, {
                         write_de!(self.buffer, "{}==", Self::deref(&self.proj.types, src, ty));
-                        self.emit_literal(value, ty.strip_references(&self.proj.types));
+                        self.emit_literal(value.clone(), ty.strip_references(&self.proj.types));
                     });
                 });
             }
@@ -2833,14 +2820,14 @@ impl Codegen {
                     conditions.next(|buffer| {
                         usebuf!(self, buffer, {
                             write_de!(self.buffer, "{src}>=");
-                            self.emit_literal(start, base);
+                            self.emit_literal(start.clone(), base);
                         });
                     });
                 }
                 conditions.next(|buffer| {
                     usebuf!(self, buffer, {
                         write_de!(self.buffer, "{src}{}", if *inclusive { "<=" } else { "<" });
-                        self.emit_literal(end, base);
+                        self.emit_literal(end.clone(), base);
                     });
                 });
             }
@@ -3461,36 +3448,53 @@ impl Codegen {
         }
     }
 
-    fn emit_literal(&mut self, literal: &BigInt, ty: TypeId) {
-        let signed = self.proj.types.get(ty).as_integral().unwrap().signed;
+    fn emit_literal(&mut self, literal: BigInt, ty: TypeId) {
         let largest_type = Integer {
             bits: CInt::LongLong.size() as u32 * 8,
-            signed,
+            signed: false,
         };
-        let max_literal = largest_type.max();
+        let base = ty.as_integral(&self.proj.types).unwrap();
+        if base.bits <= largest_type.bits {
+            self.emit_cast(ty);
+            if base.signed && literal == base.min() {
+                return write_de!(self.buffer, "({} - 1)", literal + 1);
+            } else {
+                return write_de!(self.buffer, "{literal}{}", ["u", ""][base.signed as usize]);
+            }
+        }
 
         let mut result = JoiningBuilder::new("|", "0");
-        let mut number = |this: &mut Self, number: &BigInt, shift: u32| {
+        let mut number = |this: &mut Self, number: &BigUint, shift: u32| {
             result.next(|buffer| {
                 usebuf!(this, buffer, {
                     write_if!(shift != 0, this.buffer, "(");
                     this.emit_cast(ty);
-                    write_de!(this.buffer, "{number:#x}{}ll", ["u", ""][signed as usize]);
+                    write_de!(this.buffer, "{number:#x}u");
                     write_if!(shift != 0, this.buffer, "<< {shift})");
                 });
             });
         };
 
+        let large_mask = (BigUint::from(1u64) << largest_type.bits) - 1u64;
+        let max_literal = largest_type.max();
+        let max_literal = max_literal.magnitude();
+        let (sign, mut literal) = literal.into_parts();
         let mut shift = 0;
-        let mut literal = literal.clone();
-        while literal > max_literal {
-            number(self, &max_literal, shift);
+        while literal > *max_literal {
+            let value = &literal & &large_mask;
+            if value != BigUint::zero() {
+                number(self, &value, shift);
+            }
             literal >>= largest_type.bits;
             shift += largest_type.bits;
         }
 
         number(self, &literal, shift);
-        write_de!(self.buffer, "({})", result.finish());
+        if sign == Sign::Minus {
+            write_de!(self.buffer, "(~({}) + 1)", result.finish());
+        } else {
+            write_de!(self.buffer, "({})", result.finish());
+        }
     }
 
     fn has_side_effects(expr: &CheckedExpr) -> bool {
