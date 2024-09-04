@@ -4,6 +4,8 @@ use std::{
 };
 
 use indexmap::IndexMap;
+use num_bigint::BigUint;
+use num_traits::One;
 
 use crate::{
     ast::{checked::*, parsed::RangePattern, BinaryOp, UnaryOp},
@@ -17,6 +19,15 @@ use crate::{
     },
     write_de, writeln_de, CodegenFlags, THIS_PARAM,
 };
+
+#[macro_export]
+macro_rules! write_if {
+    ($cond: expr, $dst:expr, $($arg:tt)*) => {{
+        if $cond {
+            _ = write!($dst, $($arg)*)
+        }
+    }};
+}
 
 #[macro_export]
 macro_rules! write_nm {
@@ -169,32 +180,48 @@ impl TypeGen {
         write_de!(defs, "{{");
 
         let members = &scopes.get(ut.id).members;
-        if let UserTypeKind::Union(union) = &ut_data.kind {
-            if !matches!(types.get(union.tag), Type::Uint(0) | Type::Int(0)) {
-                defs.emit_type(scopes, types, union.tag, flags.minify);
-                write_de!(defs, " {UNION_TAG_NAME};");
-            }
+        match &ut_data.kind {
+            UserTypeKind::Union(union) => {
+                if !matches!(types.get(union.tag), Type::Uint(0) | Type::Int(0)) {
+                    defs.emit_type(scopes, types, union.tag, flags.minify);
+                    write_de!(defs, " {UNION_TAG_NAME};");
+                }
 
-            for (name, member) in members {
-                emit_member(scopes, types, ut, name, member.ty, defs, flags.minify);
-            }
+                for (name, member) in members {
+                    emit_member(scopes, types, ut, name, member.ty, defs, flags.minify);
+                }
 
-            write_de!(defs, "union{{");
-            for (name, variant) in union.variants.iter() {
-                if let Some(ty) = variant.ty {
-                    emit_member(scopes, types, ut, name, ty, defs, flags.minify);
+                write_de!(defs, "union{{");
+                for (name, variant) in union.variants.iter() {
+                    if let Some(ty) = variant.ty {
+                        emit_member(scopes, types, ut, name, ty, defs, flags.minify);
+                    }
+                }
+                write_de!(defs, "}};");
+            }
+            UserTypeKind::PackedStruct(data) => {
+                if members.is_empty() {
+                    write_de!(defs, "CTL_DUMMY_MEMBER;");
+                }
+
+                write_de!(
+                    defs,
+                    "u{} {ARRAY_DATA_NAME}[{}];",
+                    data.align * 8,
+                    data.size / data.align
+                );
+            }
+            _ => {
+                if members.is_empty() {
+                    write_de!(defs, "CTL_DUMMY_MEMBER;");
+                }
+
+                for (name, member) in members {
+                    emit_member(scopes, types, ut, name, member.ty, defs, flags.minify);
                 }
             }
-            write_de!(defs, "}};");
-        } else {
-            if members.is_empty() {
-                write_de!(defs, "CTL_DUMMY_MEMBER;");
-            }
-
-            for (name, member) in members {
-                emit_member(scopes, types, ut, name, member.ty, defs, flags.minify);
-            }
         }
+
         write_de!(defs, "}};");
     }
 
@@ -325,11 +352,17 @@ impl TypeGen {
                     dependency!(m.ty.with_templates(types, &ut.ty_args));
                 }
 
-                if let Some(union) = scopes.get(ut.id).kind.as_union() {
-                    dependency!(union.tag);
-                    for ty in union.variants.values().flat_map(|v| v.ty) {
-                        dependency!(ty.with_templates(types, &ut.ty_args));
+                match &scopes.get(ut.id).kind {
+                    UserTypeKind::Union(union) => {
+                        dependency!(union.tag);
+                        for ty in union.variants.values().flat_map(|v| v.ty) {
+                            dependency!(ty.with_templates(types, &ut.ty_args));
+                        }
                     }
+                    UserTypeKind::PackedStruct(data) => {
+                        dependency!(types.insert(Type::Uint(data.align as u32 * 8)))
+                    }
+                    _ => {}
                 }
             }
             Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) => {
@@ -659,15 +692,26 @@ impl Write for Buffer {
     }
 }
 
-#[derive(Default)]
-struct ConditionBuilder(Buffer);
+struct JoiningBuilder {
+    buffer: Buffer,
+    join: &'static str,
+    default: &'static str,
+}
 
-impl ConditionBuilder {
-    pub fn next(&mut self, f: impl FnOnce(&mut Buffer)) {
-        if !self.0 .0.is_empty() {
-            write_de!(self.0, "&&");
+impl JoiningBuilder {
+    pub fn new(join: &'static str, default: &'static str) -> Self {
+        Self {
+            buffer: Default::default(),
+            join,
+            default,
         }
-        f(&mut self.0);
+    }
+
+    pub fn next(&mut self, f: impl FnOnce(&mut Buffer)) {
+        if !self.buffer.0.is_empty() {
+            self.buffer.emit(self.join);
+        }
+        f(&mut self.buffer);
     }
 
     pub fn next_str(&mut self, s: impl AsRef<str>) {
@@ -675,10 +719,10 @@ impl ConditionBuilder {
     }
 
     pub fn finish(self) -> String {
-        if self.0 .0.is_empty() {
-            "1".into()
+        if self.buffer.0.is_empty() {
+            self.default.into()
         } else {
-            self.0.finish()
+            self.buffer.finish()
         }
     }
 }
@@ -1537,12 +1581,25 @@ impl Codegen {
             }
             CheckedExprData::Member { source, member } => {
                 let id = self.proj.types.get(source.ty).as_user().map(|ut| ut.id);
-                self.emit_expr(*source, state);
-                write_de!(
-                    self.buffer,
-                    ".{}",
-                    member_name(&self.proj.scopes, id, &member)
-                );
+                if let Some(id) = id.filter(|&id| self.proj.scopes.get(id).kind.is_packed_struct())
+                {
+                    let tmp = tmpbuf!(self, state, |tmp| {
+                        let ptr = self.proj.types.insert(Type::Ptr(source.ty));
+                        self.emit_type(ptr);
+                        writeln_de!(self.buffer, " {tmp}=&");
+                        self.emit_expr_inline(*source, state);
+                        writeln_de!(self.buffer, ";");
+                        tmp
+                    });
+                    self.emit_bitfield_read(&format!("(*{tmp})"), id, &member, expr.ty);
+                } else {
+                    self.emit_expr(*source, state);
+                    write_de!(
+                        self.buffer,
+                        ".{}",
+                        member_name(&self.proj.scopes, id, &member)
+                    );
+                }
             }
             CheckedExprData::Block(block) => enter_block!(self, block.scope, expr.ty, |name| {
                 let yields = block.is_yielding(&self.proj.scopes);
@@ -1978,9 +2035,21 @@ impl Codegen {
         ty: TypeId,
         members: IndexMap<String, CheckedExpr>,
     ) {
+        let ut_id = self.proj.types.get(ty).as_user().unwrap().id;
+        if self.proj.scopes.get(ut_id).kind.is_packed_struct() {
+            return tmpbuf_emit!(self, state, |tmp| {
+                self.emit_type(ty);
+                write_de!(self.buffer, " {tmp} = {{}};");
+                for (name, value) in members {
+                    let ty = value.ty;
+                    let expr = hoist!(self, self.emit_tmpvar(value, state));
+                    self.emit_bitfield_write(&tmp, ut_id, &name, ty, &expr);
+                }
+            });
+        }
+
         self.emit_cast(ty);
         write_de!(self.buffer, "{{");
-        let ut_id = self.proj.types.get(ty).as_user().unwrap().id;
         if members.is_empty() {
             write_de!(self.buffer, "CTL_DUMMY_INIT");
         }
@@ -2233,6 +2302,15 @@ impl Codegen {
                     self.emit_cast(ret);
                 }
                 if op.is_assignment() {
+                    if matches!(&lhs.data, CheckedExprData::Member { source, .. }
+                        if source.ty.is_packed_struct(&self.proj))
+                    {
+                        let CheckedExprData::Member { source, member } = lhs.data else {
+                            unreachable!()
+                        };
+                        return self.emit_bitfield_assign(*source, state, &member, lhs.ty, rhs, op);
+                    }
+
                     write_de!(self.buffer, "VOID(");
                 }
                 write_de!(self.buffer, "(");
@@ -2305,7 +2383,20 @@ impl Codegen {
                 if !array {
                     write_de!(self.buffer, "&");
                 }
-                if Self::is_lvalue(&lhs) {
+                let is_lvalue = match &lhs.data {
+                    CheckedExprData::Unary {
+                        op: UnaryOp::Deref, ..
+                    }
+                    | CheckedExprData::AutoDeref { .. }
+                    | CheckedExprData::Var(_)
+                    | CheckedExprData::Subscript { .. } => true,
+                    CheckedExprData::Member { source, .. } => {
+                        !source.ty.is_packed_struct(&self.proj)
+                    }
+                    _ => false,
+                };
+
+                if is_lvalue {
                     self.emit_expr_inner(lhs, state);
                 } else {
                     self.emit_tmpvar_ident(lhs, state);
@@ -2732,7 +2823,7 @@ impl Codegen {
         ty: TypeId,
         borrow: bool,
         bindings: &mut Buffer,
-        conditions: &mut ConditionBuilder,
+        conditions: &mut JoiningBuilder,
     ) {
         match pattern {
             CheckedPatternData::Int(value) => {
@@ -2972,7 +3063,7 @@ impl Codegen {
                     }
                 });
             }
-            CheckedPatternData::Void => conditions.next_str("1"),
+            CheckedPatternData::Void => {}
             CheckedPatternData::Error => panic!("ICE: CheckedPatternData::Error in gen_pattern"),
         }
     }
@@ -2983,9 +3074,9 @@ impl Codegen {
         pattern: &CheckedPatternData,
         src: &str,
         ty: TypeId,
-    ) -> (Buffer, ConditionBuilder) {
+    ) -> (Buffer, JoiningBuilder) {
         let mut bindings = Buffer::default();
-        let mut conditions = ConditionBuilder::default();
+        let mut conditions = JoiningBuilder::new("&&", "1");
         self.emit_pattern_inner(
             state,
             pattern,
@@ -3215,6 +3306,176 @@ impl Codegen {
         ty
     }
 
+    fn emit_bitfield_assign(
+        &mut self,
+        source: CheckedExpr,
+        state: &mut State,
+        member: &str,
+        ty: TypeId,
+        rhs: CheckedExpr,
+        op: BinaryOp,
+    ) {
+        let id = self
+            .proj
+            .types
+            .get(source.ty)
+            .as_user()
+            .map(|ut| ut.id)
+            .unwrap();
+        let src = tmpbuf!(self, state, |tmp| {
+            let ptr = self.proj.types.insert(Type::MutPtr(source.ty));
+            self.emit_type(ptr);
+            writeln_de!(self.buffer, " {tmp}=&");
+            self.emit_expr_inline(source, state);
+            writeln_de!(self.buffer, ";");
+            format!("(*{tmp})")
+        });
+
+        let expr = tmpbuf!(self, state, |tmp| {
+            self.emit_type(ty);
+            writeln_de!(self.buffer, " {tmp}=");
+            if op != BinaryOp::Assign {
+                writeln_de!(self.buffer, "(");
+                self.emit_bitfield_read(&src, id, member, ty);
+                writeln_de!(
+                    self.buffer,
+                    "){}",
+                    match op {
+                        BinaryOp::AddAssign => "+",
+                        BinaryOp::SubAssign => "-",
+                        BinaryOp::MulAssign => "*",
+                        BinaryOp::DivAssign => "/",
+                        BinaryOp::RemAssign => "%",
+                        BinaryOp::BitAndAssign => "&",
+                        BinaryOp::XorAssign => "^",
+                        BinaryOp::BitOrAssign => "|",
+                        BinaryOp::ShlAssign => "<<",
+                        BinaryOp::ShrAssign => ">>",
+                        _ => unreachable!(),
+                    }
+                );
+            }
+            self.emit_expr_inline(rhs, state);
+
+            writeln_de!(self.buffer, ";");
+            tmp
+        });
+        hoist!(self, self.emit_bitfield_write(&src, id, member, ty, &expr));
+        self.buffer.emit(VOID_INSTANCE);
+    }
+
+    fn emit_bitfield_read(&mut self, tmp: &str, id: UserTypeId, member: &str, ty: TypeId) {
+        let mut result = JoiningBuilder::new("|", "0");
+        self.bitfield_access(id, member, ty, |this, access| {
+            let BitfieldAccess {
+                reading,
+                word,
+                bit_offset,
+                needed_bits,
+                bits,
+                word_size_bits,
+            } = access;
+            result.next(|buffer| {
+                usebuf!(this, buffer, {
+                    let offset = bits - needed_bits;
+                    let partial = reading != word_size_bits;
+                    let mask = 1u64.wrapping_shl(reading).wrapping_sub(1);
+
+                    write_if!(offset != 0, this.buffer, "(");
+                    this.emit_cast(ty);
+                    write_if!(partial, this.buffer, "(");
+                    write_if!(bit_offset != 0, this.buffer, "(");
+                    write_de!(this.buffer, "{tmp}.{ARRAY_DATA_NAME}[{word}]");
+                    write_if!(bit_offset != 0, this.buffer, " >> {bit_offset})");
+                    write_if!(partial, this.buffer, "& {mask:#x})");
+                    write_if!(offset != 0, this.buffer, "<< {offset})");
+                })
+            });
+        });
+        self.buffer.emit(result.finish());
+    }
+
+    fn emit_bitfield_write(
+        &mut self,
+        tmp: &str,
+        id: UserTypeId,
+        member: &str,
+        ty: TypeId,
+        expr: &str,
+    ) {
+        let mut word_type = None;
+        self.bitfield_access(id, member, ty, |this, access| {
+            let BitfieldAccess {
+                reading,
+                word,
+                bit_offset,
+                needed_bits,
+                bits,
+                word_size_bits,
+            } = access;
+
+            let mask = (BigUint::one() << reading) - 1u32;
+            let offset = bits - needed_bits;
+            let ty =
+                word_type.get_or_insert_with(|| this.proj.types.insert(Type::Uint(word_size_bits)));
+            let partial = reading != word_size_bits;
+
+            write_de!(this.buffer, "{tmp}.{ARRAY_DATA_NAME}[{word}] &= ~(");
+            this.emit_cast(*ty);
+            write_de!(this.buffer, "{mask:#x}");
+            write_if!(bit_offset != 0, this.buffer, " << {bit_offset}");
+            write_de!(this.buffer, ");");
+
+            write_de!(this.buffer, "{tmp}.{ARRAY_DATA_NAME}[{word}] |= ");
+            write_if!(partial, this.buffer, "(");
+            this.emit_cast(*ty);
+            write_if!(bit_offset != 0, this.buffer, "(");
+            write_if!(offset != 0, this.buffer, "(");
+            write_de!(this.buffer, "{expr}");
+            write_if!(offset != 0, this.buffer, ">> {offset})");
+            write_if!(partial, this.buffer, "& {mask:#x})");
+            write_if!(bit_offset != 0, this.buffer, " << {bit_offset})");
+            write_de!(this.buffer, ";");
+        });
+    }
+
+    fn bitfield_access(
+        &mut self,
+        id: UserTypeId,
+        member: &str,
+        ty: TypeId,
+        mut f: impl FnMut(&mut Self, BitfieldAccess),
+    ) {
+        let bf = self.proj.scopes.get(id).kind.as_packed_struct().unwrap();
+        let word_size_bits = (bf.align * 8) as u32;
+        let bits = match self.proj.types.get(ty) {
+            Type::Bool => 1,
+            Type::Int(n) | Type::Uint(n) => *n,
+            _ => ty.size_and_align(&self.proj.scopes, &mut self.proj.types).0 as u32 * 8,
+        };
+
+        let mut word = bf.bit_offsets[member] / word_size_bits;
+        let mut bit_offset = bf.bit_offsets[member] % word_size_bits;
+        let mut needed_bits = bits;
+        while needed_bits != 0 {
+            let reading = needed_bits.min(word_size_bits - bit_offset);
+            f(
+                self,
+                BitfieldAccess {
+                    word_size_bits,
+                    reading,
+                    word,
+                    bit_offset,
+                    needed_bits,
+                    bits,
+                },
+            );
+            word += 1;
+            bit_offset = 0;
+            needed_bits -= reading;
+        }
+    }
+
     fn has_side_effects(expr: &CheckedExpr) -> bool {
         match &expr.data {
             CheckedExprData::Unary {
@@ -3231,19 +3492,6 @@ impl Codegen {
             CheckedExprData::Binary { op, .. } if op.is_assignment() => true,
             _ => false,
         }
-    }
-
-    fn is_lvalue(expr: &CheckedExpr) -> bool {
-        matches!(
-            &expr.data,
-            CheckedExprData::Unary {
-                op: UnaryOp::Deref,
-                ..
-            } | CheckedExprData::AutoDeref { .. }
-                | CheckedExprData::Var(_)
-                | CheckedExprData::Member { .. }
-                | CheckedExprData::Subscript { .. }
-        )
     }
 
     fn find_implementation(
@@ -3300,6 +3548,15 @@ impl Codegen {
         }
         count
     }
+}
+
+struct BitfieldAccess {
+    reading: u32,
+    word: u32,
+    bit_offset: u32,
+    needed_bits: u32,
+    bits: u32,
+    word_size_bits: u32,
 }
 
 fn vtable_methods(scopes: &Scopes, types: &Types, tr: &UserType) -> Vec<Vis<FunctionId>> {

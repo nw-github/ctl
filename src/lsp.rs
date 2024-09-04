@@ -817,7 +817,11 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types) -> String 
         res += "pub ";
     }
     match &ut.kind {
-        UserTypeKind::Struct => {
+        UserTypeKind::PackedStruct(_) | UserTypeKind::Struct => {
+            if ut.kind.is_packed_struct() {
+                write_de!(res, "packed ");
+            }
+
             write_de!(res, "struct {}", &ut.item.name.data);
             visualize_type_params(&mut res, &ut.type_params, scopes, types);
             res += " {";

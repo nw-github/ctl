@@ -44,7 +44,9 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
             print_expr(body, indent + 2);
         }
         StmtData::Fn(f) => print_fn(f, indent),
-        StmtData::Struct(base) => print_struct("Struct", base, indent),
+        StmtData::Struct { base, packed } => {
+            print_struct(&format!("Struct({})", packed), base, indent)
+        }
         StmtData::Union {
             tag,
             base,
@@ -374,7 +376,12 @@ pub fn print_expr(expr: &Expr, indent: usize) {
         ExprData::None => {
             eprintln!("{tabs}None");
         }
-        ExprData::For { patt, iter, body, label } => {
+        ExprData::For {
+            patt,
+            iter,
+            body,
+            label,
+        } => {
             eprintln!("{tabs}For[{patt:?}, {label:?}]");
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}In: ");

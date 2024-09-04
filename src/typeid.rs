@@ -1,7 +1,11 @@
 use crate::{
     ast::{parsed::TypeHint, BinaryOp, UnaryOp},
     nearest_pow_of_two,
-    sym::{ExtensionId, FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, TraitId, UserTypeId},
+    project::Project,
+    sym::{
+        ExtensionId, FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, TraitId, UserTypeId,
+        UserTypeKind,
+    },
 };
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
@@ -270,6 +274,19 @@ pub enum CInt {
     LongLong,
 }
 
+impl CInt {
+    pub fn size(&self) -> usize {
+        use std::ffi::*;
+        match self {
+            CInt::Char => std::mem::size_of::<c_char>(),
+            CInt::Short => std::mem::size_of::<c_short>(),
+            CInt::Int => std::mem::size_of::<c_int>(),
+            CInt::Long => std::mem::size_of::<c_long>(),
+            CInt::LongLong => std::mem::size_of::<c_longlong>(),
+        }
+    }
+}
+
 pub struct Integer {
     pub bits: u32,
     pub signed: bool,
@@ -480,6 +497,9 @@ impl Default for Types {
     }
 }
 
+// TODO
+pub const MAX_ALIGN: usize = core::mem::align_of::<usize>();
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct TypeId(usize);
 
@@ -673,18 +693,10 @@ impl TypeId {
     }
 
     pub fn size_and_align(self, scopes: &Scopes, types: &mut Types) -> (usize, usize) {
-        use std::ffi::*;
-
         let sz = match types.get(self) {
             Type::Int(0) | Type::Uint(0) => 0,
             Type::Int(bits) | Type::Uint(bits) => nearest_pow_of_two(*bits) / 8,
-            Type::CInt(inner) | Type::CUint(inner) => match inner {
-                CInt::Char => std::mem::size_of::<c_char>(),
-                CInt::Short => std::mem::size_of::<c_short>(),
-                CInt::Int => std::mem::size_of::<c_int>(),
-                CInt::Long => std::mem::size_of::<c_long>(),
-                CInt::LongLong => std::mem::size_of::<c_longlong>(),
-            },
+            Type::CInt(inner) | Type::CUint(inner) => inner.size(),
             Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_) => std::mem::size_of::<*const ()>(),
             Type::DynPtr(_) | Type::DynMutPtr(_) => std::mem::size_of::<*const ()>() * 2,
             Type::Isize => std::mem::size_of::<isize>(),
@@ -694,63 +706,9 @@ impl TypeId {
             Type::Bool => std::mem::size_of::<bool>(),
             Type::Char => std::mem::size_of::<char>(),
             Type::FnPtr(_) => std::mem::size_of::<fn()>(),
-            Type::User(ut) => {
-                struct SizeAndAlign {
-                    size: usize,
-                    align: usize,
-                }
-
-                impl SizeAndAlign {
-                    fn new() -> Self {
-                        Self { size: 0, align: 1 }
-                    }
-
-                    fn next(&mut self, (s, a): (usize, usize)) {
-                        self.size += (a - self.size % a) % a + s;
-                        self.align = self.align.max(a);
-                    }
-                }
-
-                if scopes.get(ut.id).recursive {
-                    return (0, 1);
-                }
-
-                let mut sa = SizeAndAlign::new();
+            Type::User(ut) if !scopes.get(ut.id).recursive => {
                 let ut = ut.clone();
-                let ut_data = scopes.get(ut.id);
-                if let Some(union) = ut_data.kind.as_union() {
-                    if self.can_omit_tag(scopes, types).is_none() {
-                        sa.next(union.tag.size_and_align(scopes, types));
-                    }
-                    for member in ut_data.members.values() {
-                        let ty = member.ty.with_templates(types, &ut.ty_args);
-                        sa.next(ty.size_and_align(scopes, types));
-                    }
-
-                    sa.next(union.variants.values().flat_map(|v| v.ty).fold(
-                        (0, 1),
-                        |(sz, align), ty| {
-                            let (s, a) = ty
-                                .with_templates(types, &ut.ty_args)
-                                .size_and_align(scopes, types);
-                            (sz.max(s), align.max(a))
-                        },
-                    ));
-                } else if ut_data.kind.is_unsafe_union() {
-                    sa.next(ut_data.members.values().fold((0, 1), |(sz, align), m| {
-                        let (s, a) =
-                            m.ty.with_templates(types, &ut.ty_args)
-                                .size_and_align(scopes, types);
-                        (sz.max(s), align.max(a))
-                    }));
-                } else {
-                    for member in ut_data.members.values() {
-                        let ty = member.ty.with_templates(types, &ut.ty_args);
-                        sa.next(ty.size_and_align(scopes, types));
-                    }
-                }
-                sa.next((0, sa.align));
-                return (sa.size, sa.align);
+                return self.ut_size_and_align(&ut, scopes, types);
             }
             &Type::Array(ty, len) => {
                 let (s, a) = ty.size_and_align(scopes, types);
@@ -760,7 +718,68 @@ impl TypeId {
         };
 
         // assume self-alignment or 1 for 0 size types
-        (sz, sz.max(1))
+        (sz, sz.clamp(1, MAX_ALIGN))
+    }
+
+    fn ut_size_and_align(
+        &self,
+        ut: &GenericUserType,
+        scopes: &Scopes,
+        types: &mut Types,
+    ) -> (usize, usize) {
+        struct SizeAndAlign {
+            size: usize,
+            align: usize,
+        }
+
+        impl SizeAndAlign {
+            fn next(&mut self, (s, a): (usize, usize)) {
+                self.size += (a - self.size % a) % a + s;
+                self.align = self.align.max(a);
+            }
+        }
+
+        let mut sa = SizeAndAlign { size: 0, align: 1 };
+        let ut_data = scopes.get(ut.id);
+        match &ut_data.kind {
+            UserTypeKind::Union(union) => {
+                if self.can_omit_tag(scopes, types).is_none() {
+                    sa.next(union.tag.size_and_align(scopes, types));
+                }
+                for member in ut_data.members.values() {
+                    let ty = member.ty.with_templates(types, &ut.ty_args);
+                    sa.next(ty.size_and_align(scopes, types));
+                }
+
+                sa.next(union.variants.values().flat_map(|v| v.ty).fold(
+                    (0, 1),
+                    |(sz, align), ty| {
+                        let (s, a) = ty
+                            .with_templates(types, &ut.ty_args)
+                            .size_and_align(scopes, types);
+                        (sz.max(s), align.max(a))
+                    },
+                ));
+            }
+            UserTypeKind::UnsafeUnion => {
+                sa.next(ut_data.members.values().fold((0, 1), |(sz, align), m| {
+                    let (s, a) =
+                        m.ty.with_templates(types, &ut.ty_args)
+                            .size_and_align(scopes, types);
+                    (sz.max(s), align.max(a))
+                }));
+            }
+            UserTypeKind::PackedStruct(data) => sa.next((data.size, data.align)),
+            _ => {
+                for member in ut_data.members.values() {
+                    let ty = member.ty.with_templates(types, &ut.ty_args);
+                    sa.next(ty.size_and_align(scopes, types));
+                }
+            }
+        }
+
+        sa.next((0, sa.align));
+        (sa.size, sa.align)
     }
 
     pub fn matched_inner_type(self, types: &mut Types, ty: TypeId) -> TypeId {
@@ -861,5 +880,10 @@ impl TypeId {
 
     pub fn is_void(self) -> bool {
         matches!(self, TypeId::NEVER | TypeId::VOID | TypeId::CVOID)
+    }
+
+    pub fn is_packed_struct(self, proj: &Project) -> bool {
+        matches!(proj.types.get(self), Type::User(ut)
+            if proj.scopes.get(ut.id).kind.is_packed_struct())
     }
 }

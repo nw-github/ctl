@@ -99,186 +99,210 @@ impl<'a, 'b> Parser<'a, 'b> {
             Err(attrs) => attrs,
         };
 
-        if let Some(token) = self.next_if_kind(Token::Struct) {
-            if let Some(token) = is_unsafe {
-                self.error_no_sync(Error::not_valid_here(&token));
-            }
+        match self.peek().data {
+            Token::Struct | Token::Packed => {
+                let token = self.next();
+                if token.data == Token::Packed {
+                    self.expect_kind(Token::Struct);
+                }
 
-            if let Some(token) = is_extern {
-                self.error_no_sync(Error::not_valid_here(&token));
-            }
+                if let Some(token) = is_unsafe {
+                    self.error_no_sync(Error::not_valid_here(&token));
+                }
 
-            Ok(Stmt {
-                attrs,
-                data: StmtData::Struct(self.structure(public.is_some(), token.span, false)),
-            })
-        } else if let Some(token) = self.next_if_kind(Token::Union) {
-            if let Some(token) = is_extern {
-                self.error_no_sync(Error::not_valid_here(&token));
-            }
+                if let Some(token) = is_extern {
+                    self.error_no_sync(Error::not_valid_here(&token));
+                }
 
-            Ok(Stmt {
-                attrs,
-                data: if is_unsafe.is_some() {
-                    StmtData::UnsafeUnion(self.structure(public.is_some(), token.span, true))
+                // TODO: packed struct Foo: u64 {}
+                Ok(Stmt {
+                    attrs,
+                    data: StmtData::Struct {
+                        base: self.structure(public.is_some(), token.span, false),
+                        packed: matches!(token.data, Token::Packed),
+                    },
+                })
+            }
+            Token::Union => {
+                let token = self.next();
+                if let Some(token) = is_extern {
+                    self.error_no_sync(Error::not_valid_here(&token));
+                }
+
+                Ok(Stmt {
+                    attrs,
+                    data: if is_unsafe.is_some() {
+                        StmtData::UnsafeUnion(self.structure(public.is_some(), token.span, true))
+                    } else {
+                        self.union(public.is_some(), token.span)
+                    },
+                })
+            }
+            Token::Trait => {
+                let token = self.next();
+                if let Some(token) = is_extern {
+                    self.error_no_sync(Error::not_valid_here(&token));
+                }
+
+                Ok(Stmt {
+                    attrs,
+                    data: self.r#trait(public.is_some(), token.span, is_unsafe.is_some()),
+                })
+            }
+            Token::Extension => {
+                let token = self.next();
+                if let Some(token) = is_unsafe {
+                    self.error_no_sync(Error::not_valid_here(&token));
+                }
+
+                if let Some(token) = is_extern {
+                    self.error_no_sync(Error::not_valid_here(&token));
+                }
+
+                Ok(Stmt {
+                    attrs,
+                    data: self.extension(public.is_some(), token.span),
+                })
+            }
+            Token::Mod => {
+                let token = self.next();
+                if let Some(token) = is_unsafe {
+                    self.error_no_sync(Error::not_valid_here(&token));
+                }
+
+                if let Some(token) = is_extern {
+                    self.error_no_sync(Error::not_valid_here(&token));
+                }
+
+                let name = self.expect_id_l("expected name");
+                let mut body = Vec::new();
+                self.expect_kind(Token::LCurly);
+                self.next_until(Token::RCurly, token.span, |this| body.push(this.item()));
+                Ok(Stmt {
+                    data: StmtData::Module {
+                        public: public.is_some(),
+                        file: false,
+                        name,
+                        body,
+                    },
+                    attrs,
+                })
+            }
+            Token::Use => {
+                self.next();
+                if let Some(token) = is_unsafe {
+                    self.error_no_sync(Error::not_valid_here(&token));
+                }
+
+                if let Some(token) = is_extern {
+                    self.error_no_sync(Error::not_valid_here(&token));
+                }
+
+                let mut components = Vec::new();
+                let origin = if self.next_if_kind(Token::ScopeRes).is_some() {
+                    let ident = self.expect_id_l("expected path component");
+                    if self.next_if_kind(Token::ScopeRes).is_none() {
+                        self.expect_kind(Token::Semicolon);
+                        return Ok(Stmt {
+                            data: StmtData::Use(UsePath {
+                                components,
+                                origin: PathOrigin::Root,
+                                public: public.is_some(),
+                                tail: UsePathTail::Ident(ident),
+                            }),
+                            attrs,
+                        });
+                    }
+
+                    components.push(ident);
+                    PathOrigin::Root
+                } else if let Some(token) = self.next_if_kind(Token::Super) {
+                    self.expect_kind(Token::ScopeRes);
+                    PathOrigin::Super(token.span)
                 } else {
-                    self.union(public.is_some(), token.span)
-                },
-            })
-        } else if let Some(token) = self.next_if_kind(Token::Trait) {
-            if let Some(token) = is_extern {
-                self.error_no_sync(Error::not_valid_here(&token));
-            }
+                    let ident = self.expect_id_l("expected path component");
+                    if self.next_if_kind(Token::ScopeRes).is_none() {
+                        self.expect_kind(Token::Semicolon);
+                        return Ok(Stmt {
+                            data: StmtData::Use(UsePath {
+                                components,
+                                origin: PathOrigin::Normal,
+                                public: public.is_some(),
+                                tail: UsePathTail::Ident(ident),
+                            }),
+                            attrs,
+                        });
+                    }
 
-            Ok(Stmt {
-                attrs,
-                data: self.r#trait(public.is_some(), token.span, is_unsafe.is_some()),
-            })
-        } else if let Some(token) = self.next_if_kind(Token::Extension) {
-            if let Some(token) = is_unsafe {
-                self.error_no_sync(Error::not_valid_here(&token));
-            }
+                    components.push(ident);
+                    PathOrigin::Normal
+                };
 
-            if let Some(token) = is_extern {
-                self.error_no_sync(Error::not_valid_here(&token));
-            }
+                loop {
+                    if self.next_if_kind(Token::Asterisk).is_some() {
+                        self.expect_kind(Token::Semicolon);
+                        return Ok(Stmt {
+                            data: StmtData::Use(UsePath {
+                                components,
+                                origin,
+                                public: public.is_some(),
+                                tail: UsePathTail::All,
+                            }),
+                            attrs,
+                        });
+                    }
 
-            Ok(Stmt {
-                attrs,
-                data: self.extension(public.is_some(), token.span),
-            })
-        } else if let Some(token) = self.next_if_kind(Token::Mod) {
-            if let Some(token) = is_unsafe {
-                self.error_no_sync(Error::not_valid_here(&token));
-            }
+                    let ident = self.expect_id_l("expected path component or '*'");
+                    if self.next_if_kind(Token::ScopeRes).is_none() {
+                        self.expect_kind(Token::Semicolon);
+                        return Ok(Stmt {
+                            data: StmtData::Use(UsePath {
+                                components,
+                                origin,
+                                public: public.is_some(),
+                                tail: UsePathTail::Ident(ident),
+                            }),
+                            attrs,
+                        });
+                    }
 
-            if let Some(token) = is_extern {
-                self.error_no_sync(Error::not_valid_here(&token));
+                    components.push(ident);
+                }
             }
-
-            let name = self.expect_id_l("expected name");
-            let mut body = Vec::new();
-            self.expect_kind(Token::LCurly);
-            self.next_until(Token::RCurly, token.span, |this| body.push(this.item()));
-            Ok(Stmt {
-                data: StmtData::Module {
-                    public: public.is_some(),
-                    file: false,
-                    name,
-                    body,
-                },
-                attrs,
-            })
-        } else if self.next_if_kind(Token::Use).is_some() {
-            if let Some(token) = is_unsafe {
-                self.error_no_sync(Error::not_valid_here(&token));
-            }
-
-            if let Some(token) = is_extern {
-                self.error_no_sync(Error::not_valid_here(&token));
-            }
-
-            let mut components = Vec::new();
-            let origin = if self.next_if_kind(Token::ScopeRes).is_some() {
-                let ident = self.expect_id_l("expected path component");
-                if self.next_if_kind(Token::ScopeRes).is_none() {
-                    self.expect_kind(Token::Semicolon);
-                    return Ok(Stmt {
-                        data: StmtData::Use(UsePath {
-                            components,
-                            origin: PathOrigin::Root,
-                            public: public.is_some(),
-                            tail: UsePathTail::Ident(ident),
-                        }),
-                        attrs,
-                    });
+            Token::Static | Token::Const => {
+                let token = self.next();
+                if let Some(token) = is_unsafe {
+                    self.error_no_sync(Error::not_valid_here(&token));
                 }
 
-                components.push(ident);
-                PathOrigin::Root
-            } else if let Some(token) = self.next_if_kind(Token::Super) {
-                self.expect_kind(Token::ScopeRes);
-                PathOrigin::Super(token.span)
-            } else {
-                let ident = self.expect_id_l("expected path component");
-                if self.next_if_kind(Token::ScopeRes).is_none() {
-                    self.expect_kind(Token::Semicolon);
-                    return Ok(Stmt {
-                        data: StmtData::Use(UsePath {
-                            components,
-                            origin: PathOrigin::Normal,
-                            public: public.is_some(),
-                            tail: UsePathTail::Ident(ident),
-                        }),
-                        attrs,
-                    });
+                if let Some(token) = is_extern {
+                    self.error_no_sync(Error::not_valid_here(&token));
                 }
 
-                components.push(ident);
-                PathOrigin::Normal
-            };
-
-            loop {
-                if self.next_if_kind(Token::Asterisk).is_some() {
-                    self.expect_kind(Token::Semicolon);
-                    return Ok(Stmt {
-                        data: StmtData::Use(UsePath {
-                            components,
-                            origin,
-                            public: public.is_some(),
-                            tail: UsePathTail::All,
-                        }),
-                        attrs,
-                    });
+                let name = self.expect_id_l("expected name");
+                self.expect_kind(Token::Colon);
+                let ty = self.type_hint();
+                self.expect_kind(Token::Assign);
+                let value = self.expression();
+                self.expect_kind(Token::Semicolon);
+                Ok(Stmt {
+                    data: StmtData::Binding {
+                        public: public.is_some(),
+                        constant: matches!(token.data, Token::Const),
+                        name,
+                        ty,
+                        value,
+                    },
+                    attrs,
+                })
+            }
+            _ => {
+                if let Some(token) = is_extern {
+                    self.error_no_sync(Error::not_valid_here(&token));
                 }
 
-                let ident = self.expect_id_l("expected path component or '*'");
-                if self.next_if_kind(Token::ScopeRes).is_none() {
-                    self.expect_kind(Token::Semicolon);
-                    return Ok(Stmt {
-                        data: StmtData::Use(UsePath {
-                            components,
-                            origin,
-                            public: public.is_some(),
-                            tail: UsePathTail::Ident(ident),
-                        }),
-                        attrs,
-                    });
-                }
-
-                components.push(ident);
+                Err((is_unsafe, attrs))
             }
-        } else if let Some(token) = self.next_if(|tk| matches!(tk, Token::Static | Token::Const)) {
-            if let Some(token) = is_unsafe {
-                self.error_no_sync(Error::not_valid_here(&token));
-            }
-
-            if let Some(token) = is_extern {
-                self.error_no_sync(Error::not_valid_here(&token));
-            }
-
-            let name = self.expect_id_l("expected name");
-            self.expect_kind(Token::Colon);
-            let ty = self.type_hint();
-            self.expect_kind(Token::Assign);
-            let value = self.expression();
-            self.expect_kind(Token::Semicolon);
-            Ok(Stmt {
-                data: StmtData::Binding {
-                    public: public.is_some(),
-                    constant: matches!(token.data, Token::Const),
-                    name,
-                    ty,
-                    value,
-                },
-                attrs,
-            })
-        } else {
-            if let Some(token) = is_extern {
-                self.error_no_sync(Error::not_valid_here(&token));
-            }
-
-            Err((is_unsafe, attrs))
         }
     }
 

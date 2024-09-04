@@ -57,7 +57,10 @@ pub enum StmtData {
         value: Option<Expr>,
     },
     Fn(Fn),
-    Struct(Struct),
+    Struct {
+        base: Struct,
+        packed: bool,
+    },
     Union {
         tag: Option<Path>,
         base: Struct,

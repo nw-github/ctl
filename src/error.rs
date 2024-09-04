@@ -262,7 +262,14 @@ impl Error {
 
     pub fn subscript_addr(span: Span) -> Self {
         Self::new(
-            "taking address of subcript that returns a value creates a temporary",
+            "taking address of subscript that returns a value creates a temporary",
+            span,
+        )
+    }
+
+    pub fn bitfield_addr(span: Span) -> Self {
+        Self::new(
+            "taking address of bitfield creates a temporary",
             span,
         )
     }

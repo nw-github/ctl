@@ -243,9 +243,17 @@ impl Union {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct PackedStruct {
+    pub bit_offsets: HashMap<String, u32>,
+    pub size: usize,
+    pub align: usize,
+}
+
 #[derive(Debug, EnumAsInner, Clone)]
 pub enum UserTypeKind {
     Struct,
+    PackedStruct(PackedStruct),
     Union(Union),
     UnsafeUnion,
     Template,

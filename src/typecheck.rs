@@ -578,7 +578,7 @@ impl TypeChecker {
         id
     }
 
-    fn declare_struct(&mut self, base: Struct, attrs: Attributes) -> DeclaredStmt {
+    fn declare_struct(&mut self, base: Struct, attrs: Attributes, packed: bool) -> DeclaredStmt {
         let name = base.name.clone();
         let (ut, init, fns, impls) = self.enter(ScopeKind::None, |this| {
             let init = this.enter(ScopeKind::None, |this| {
@@ -630,12 +630,17 @@ impl TypeChecker {
 
             let (impls, blocks, subscripts) = this.declare_impl_blocks(base.impls, base.operators);
             let mut fns = this.declare_fns(base.functions);
+            let kind = if packed {
+                UserTypeKind::PackedStruct(PackedStruct::default())
+            } else {
+                UserTypeKind::Struct
+            };
             let ut = this.ut_from_stuff(
                 attrs,
                 base.name,
                 base.public,
                 members,
-                UserTypeKind::Struct,
+                kind,
                 base.type_params,
                 &fns,
                 impls,
@@ -960,7 +965,7 @@ impl TypeChecker {
                     }
                 })
             }
-            StmtData::Struct(base) => self.declare_struct(base, stmt.attrs),
+            StmtData::Struct { base, packed } => self.declare_struct(base, stmt.attrs, packed),
             StmtData::Union {
                 tag,
                 base,
@@ -2337,6 +2342,11 @@ impl TypeChecker {
                                     self.proj.diag.warn(Error::subscript_addr(span));
                                 }
                             }
+                            CheckedExprData::Member { source, .. } => {
+                                if source.ty.is_packed_struct(&self.proj) {
+                                    self.proj.diag.warn(Error::bitfield_addr(span));
+                                }
+                            }
                             CheckedExprData::Fn(_, _) => {
                                 let Type::Fn(f) = self.proj.types.get(expr.ty) else {
                                     unreachable!()
@@ -2371,6 +2381,11 @@ impl TypeChecker {
                                     self.proj.diag.warn(Error::subscript_addr(span));
                                 }
                             }
+                            CheckedExprData::Member { source, .. } => {
+                                if source.ty.is_packed_struct(&self.proj) {
+                                    self.proj.diag.warn(Error::bitfield_addr(span));
+                                }
+                            }
                             CheckedExprData::Fn(_, _) => {
                                 self.proj.diag.warn(Error::new(
                                     "&mut on function creates immutable function pointer (use &)",
@@ -2402,6 +2417,11 @@ impl TypeChecker {
                                     if self.proj.scopes.get(f.id).name.data.starts_with("$sub"))
                                 {
                                     self.proj.diag.warn(Error::subscript_addr(span));
+                                }
+                            }
+                            CheckedExprData::Member { source, .. } => {
+                                if source.ty.is_packed_struct(&self.proj) {
+                                    self.proj.diag.warn(Error::bitfield_addr(span));
                                 }
                             }
                             CheckedExprData::Fn(_, _) => self
@@ -4829,7 +4849,28 @@ impl TypeChecker {
             self.proj.scopes.get_mut(id).kind = UserTypeKind::Union(union);
         }
 
-        self.proj.scopes.get_mut(id).members_resolved = true;
+        let data = &mut self.proj.scopes.get_mut(id).item;
+        if let UserTypeKind::PackedStruct(kind) = &mut data.kind {
+            let mut bits = 0;
+            for (name, mem) in data.members.iter() {
+                kind.bit_offsets.insert(name.clone(), bits);
+                // TODO: allow *raw and nested packed structs
+                match self.proj.types.get(mem.ty) {
+                    Type::Int(n) | Type::Uint(n) => bits += n,
+                    Type::CInt(n) | Type::CUint(n) => bits += n.size() as u32 * 8,
+                    Type::Bool => bits += 1,
+                    Type::Unknown | Type::Unresolved(_) => {}
+                    _ => self.proj.diag.error(Error::new(
+                        format!("member '{name}' of packed struct must have integer type"),
+                        mem.span,
+                    )),
+                }
+            }
+            kind.size = crate::nearest_pow_of_two(bits) / 8;
+            kind.align = kind.size.clamp(1, crate::typeid::MAX_ALIGN);
+        }
+
+        data.members_resolved = true;
     }
 
     fn resolve_dependencies(&mut self, ut: UserTypeId, this: TypeId, mut canonical: bool) -> bool {

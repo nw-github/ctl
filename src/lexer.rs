@@ -98,6 +98,7 @@ pub enum Token<'a> {
     While,
     Match,
     Extension,
+    Packed,
     Extern,
     Mod,
     Async,
@@ -173,6 +174,7 @@ impl std::fmt::Display for Token<'_> {
             Token::Raw => write!(f, "raw"),
             Token::This => write!(f, "This"),
             Token::Struct => write!(f, "struct"),
+            Token::Packed => write!(f, "packed"),
             Token::Else => write!(f, "else"),
             _ => write!(f, "FIXME: {self:?}"),
         }
@@ -821,6 +823,7 @@ impl<'a> Lexer<'a> {
             "mut" => Token::Mut,
             "null" => Token::None,
             "or" => Token::Or,
+            "packed" => Token::Packed,
             "pub" => Token::Pub,
             "raise" => Token::Raise,
             "raw" => Token::Raw,

@@ -6,6 +6,10 @@ pub fn size_of_val<T>(_: *T): uint {
     size_of::<T>()
 }
 
+pub fn align_of_val<T>(_: *T): uint {
+    align_of::<T>()
+}
+
 /// Copies `num` T's from `src` to `dst` without destroying the contents in `dst`.
 pub unsafe fn copy<T>(kw dst: *raw T, kw src: *raw T, kw num: uint) {
     unsafe intrin::memcpy(dst as *mut c_void, src as *c_void, num * size_of::<T>());
