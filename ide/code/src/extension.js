@@ -1,11 +1,5 @@
-import {
-    workspace,
-    window,
-    StatusBarAlignment,
-    MarkdownString,
-    commands,
-} from "vscode";
-import { LanguageClient, State } from "vscode-languageclient/node";
+const { workspace, window, StatusBarAlignment, MarkdownString, commands } = require("vscode");
+const { LanguageClient, State } = require("vscode-languageclient/node");
 
 const CMD_STOP = "ctlsp.stop_server";
 const CMD_RESTART = "ctlsp.restart_server";
@@ -23,7 +17,7 @@ let client;
 /**
  * @param {import("vscode").ExtensionContext} context
  */
-export function activate(context) {
+function activate(context) {
     context.subscriptions.push(
         commands.registerCommand(CMD_STOP, async () => {
             await client.stop();
@@ -60,7 +54,7 @@ export function activate(context) {
     });
 }
 
-export function deactivate() {
+function deactivate() {
     return client?.stop();
 }
 
@@ -106,7 +100,7 @@ function initClient() {
 }
 
 /**
- * 
+ *
  * @param {State} state
  */
 function updateTooltip(state) {
@@ -130,3 +124,8 @@ function updateTooltip(state) {
     );
     statusItem.show();
 }
+
+module.exports = {
+    activate,
+    deactivate,
+};
