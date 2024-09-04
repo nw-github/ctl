@@ -56,3 +56,5 @@ mod union_ {
 
     union Bar: Bar { A, B, }
 }
+
+fn main() {}

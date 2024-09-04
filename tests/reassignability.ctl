@@ -18,4 +18,6 @@ fn hello(x: *mut i32) {
     let z = &mut 10;
     *z = 20;
     z = &mut 30;
-} 
+}
+
+fn main() {}
