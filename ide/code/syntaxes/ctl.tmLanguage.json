@@ -590,6 +590,11 @@
           "match": "\\bmut\\b"
         },
         {
+          "comment": "my",
+          "name": "storage.modifier.my.ctl",
+          "match": "\\bmy\\b"
+        },
+        {
           "comment": "raw",
           "name": "storage.modifier.raw.ctl",
           "match": "\\braw\\b"

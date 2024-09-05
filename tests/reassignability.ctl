@@ -1,6 +1,7 @@
 // Error: expression is not assignable
 // Error: expression is not assignable
 // Error: expression is not assignable
+// Error: expression is not assignable
 
 struct Foo {
     pub x: i32,
@@ -8,6 +9,14 @@ struct Foo {
     fn hello(mut this) {
         *this = Foo(x: 20);
         this = &mut Foo(x: 40);
+    }
+
+    fn foo(my this) {
+        this = Foo(x: 0);
+    }
+
+    fn bar(my mut this) {
+        this = Foo(x: 0);
     }
 }
 

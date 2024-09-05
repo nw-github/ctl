@@ -46,6 +46,8 @@ pub extension NumericExt<T: Numeric> for T {
         fn ne(this, rhs: *T): bool { this != rhs }
     }
 
+    impl TotalCmp { }
+
     #(intrinsic(binary_op))
     pub fn +(this, rhs: T): T { this + rhs }
 
@@ -60,25 +62,6 @@ pub extension NumericExt<T: Numeric> for T {
 
     #(intrinsic(binary_op))
     pub fn %(this, rhs: T): T { this % rhs }
-
-    // TODO: these 3 functions should be implemented for T: Cmp<T> (and take this by value)
-    pub fn max(this, rhs: T): T {
-        if *this > rhs { *this } else { rhs }
-    }
-
-    pub fn min(this, rhs: T): T {
-        if *this > rhs { rhs } else { *this }
-    }
-
-    pub fn clamp(this, low: T, hi: T): T {
-        if *this < low {
-            low
-        } else if *this > hi {
-            hi
-        } else {
-            *this
-        }
-    }
 }
 
 mod gcc_intrin {

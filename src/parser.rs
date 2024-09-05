@@ -1911,19 +1911,25 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
 
             let keyword = self.next_if_kind(Token::Keyword).is_some();
+            let my = self.next_if_kind(Token::My);
             let mutable = self.next_if_kind(Token::Mut).is_some();
             if let Some(token) = self.next_if_kind(Token::This) {
                 if count != 0 {
                     self.error_no_sync(Error::not_valid_here(&token));
                 }
 
+                let patt = if my.is_some() && mutable {
+                    Pattern::MutBinding(THIS_PARAM.into())
+                } else {
+                    Pattern::Path(Path::from(Located::new(token.span, THIS_PARAM.to_string())))
+                };
+
                 params.push(Param {
                     keyword,
-                    patt: Located::new(
-                        token.span,
-                        Pattern::Path(Path::from(Located::new(token.span, THIS_PARAM.to_string()))),
-                    ),
-                    ty: if mutable {
+                    patt: Located::new(token.span, patt),
+                    ty: if my.is_some() {
+                        TypeHint::This(token.span)
+                    } else if mutable {
                         TypeHint::MutPtr(TypeHint::This(token.span).into())
                     } else {
                         TypeHint::Ptr(TypeHint::This(token.span).into())
@@ -1931,6 +1937,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                     default: None,
                 });
             } else {
+                if let Some(token) = my {
+                    self.error_no_sync(Error::not_valid_here(&token));
+                }
+
                 let patt = if mutable {
                     self.expect_id_l("expected name").map(Pattern::MutBinding)
                 } else if keyword {
