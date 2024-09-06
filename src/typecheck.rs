@@ -1750,16 +1750,23 @@ impl TypeChecker {
     }
 
     fn check_impl_block(&mut self, this: TypeId, tr: &GenericTrait, block: DeclaredImplBlock) {
-        for dep in self
+        let this_id = *self.proj.scopes.get(tr.id).kind.as_trait().unwrap();
+        for mut dep in self
             .proj
             .scopes
             .get(tr.id)
             .impls
             .clone()
-            .iter()
-            .flat_map(|tr| tr.as_checked())
+            .into_iter()
+            .flat_map(|tr| tr.into_checked())
         {
-            if !self.implements_trait(this, dep) {
+            for ty_arg in dep.ty_args.values_mut() {
+                if self.proj.types[*ty_arg].as_user().is_some_and(|ut| ut.id == this_id) {
+                    *ty_arg = this;
+                }
+            }
+
+            if !self.implements_trait(this, &dep) {
                 self.proj.diag.error(Error::new(
                     format!(
                         "trait '{}' requires implementation of trait '{}'",
@@ -2251,9 +2258,7 @@ impl TypeChecker {
                         let span = right.span;
                         let right = self.check_expr(*right, Some(left.ty));
                         let right = self.try_coerce(right, left.ty);
-                        if !self.proj.types[right.ty].is_integral()
-                            && right.ty != TypeId::UNKNOWN
-                        {
+                        if !self.proj.types[right.ty].is_integral() && right.ty != TypeId::UNKNOWN {
                             self.proj.diag.error(Error::type_mismatch_s(
                                 "{integer}",
                                 &right.ty.name(&self.proj.scopes, &mut self.proj.types),
@@ -2743,7 +2748,7 @@ impl TypeChecker {
                 CheckedExprData::String(s),
             ),
             ExprData::StringInterpolation(parts) => {
-                let Some(write_id) = self.proj.scopes.lang_traits.get("format").copied() else {
+                let Some(fmt_id) = self.proj.scopes.lang_traits.get("format").copied() else {
                     return self.error(Error::no_lang_item("Format", span));
                 };
                 let formatter = self
@@ -2776,7 +2781,7 @@ impl TypeChecker {
                     let span = expr.span;
                     let expr = self.check_expr(expr, None);
                     let ty = expr.ty.strip_references(&self.proj.types);
-                    if ty != TypeId::UNKNOWN && self.get_trait_impl(ty, write_id).is_none() {
+                    if ty != TypeId::UNKNOWN && self.get_trait_impl(ty, fmt_id).is_none() {
                         self.proj.diag.error(Error::doesnt_implement(
                             &ty.name(&self.proj.scopes, &mut self.proj.types),
                             "Format",
@@ -3678,7 +3683,7 @@ impl TypeChecker {
     }
 
     fn check_cast(&mut self, mut from_id: TypeId, to_id: TypeId, throwing: bool, span: Span) {
-        if let Some(ut) = self.proj.types[from_id].as_user() {
+        if let Type::User(ut) = &self.proj.types[from_id] {
             let id = ut.id;
             self.resolve_members(id);
             if let Some(tag) = self
@@ -5033,8 +5038,7 @@ impl TypeChecker {
     fn has_direct_impl(&mut self, ut: &GenericUserType, bound: &GenericTrait) -> bool {
         for i in 0..self.proj.scopes.get(ut.id).impls.len() {
             resolve_impl!(self, self.proj.scopes.get_mut(ut.id).impls[i]);
-            let tr = &self.proj.scopes.get(ut.id).impls[i];
-            if let Some(mut tr) = tr.as_checked().cloned() {
+            if let Some(mut tr) = self.proj.scopes.get(ut.id).impls[i].as_checked().cloned() {
                 tr.fill_templates(&mut self.proj.types, &ut.ty_args);
                 if &tr == bound {
                     return true;
@@ -5054,7 +5058,7 @@ impl TypeChecker {
             return true;
         }
 
-        if let Some(ut) = self.proj.types[ty].as_user() {
+        if let Type::User(ut) = &self.proj.types[ty] {
             if self.has_direct_impl(&ut.clone(), bound) {
                 return true;
             }
@@ -5086,7 +5090,7 @@ impl TypeChecker {
                 return true;
             }
 
-            if let Some(ut) = this.proj.types[ty].as_user() {
+            if let Type::User(ut) = &this.proj.types[ty] {
                 if this.has_direct_impl(&ut.clone(), bound) {
                     return true;
                 }
@@ -5212,7 +5216,7 @@ impl TypeChecker {
             None
         }
 
-        if let Some(ut) = self.proj.types[ty].as_user() {
+        if let Type::User(ut) = &self.proj.types[ty] {
             if let Some(ut) = get_trait_impl_helper(self, ut.id, id) {
                 return Some(ut);
             }

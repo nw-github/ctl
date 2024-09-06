@@ -402,7 +402,7 @@ impl State {
     }
 
     pub fn with_inst(mut func: GenericFn, types: &Types, inst: TypeId, caller: ScopeId) -> Self {
-        if let Some(ut) = types[inst].as_user() {
+        if let Type::User(ut) = &types[inst] {
             func.ty_args.copy_args(&ut.ty_args);
         }
 

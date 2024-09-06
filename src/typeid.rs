@@ -127,7 +127,7 @@ impl<T> WithTypeArgs<T> {
                         }
 
                         entry.insert(target);
-                    } else if let Some(target) = target_ty.as_user() {
+                    } else if let Type::User(target) = target_ty {
                         if src.id == target.id {
                             for (&src, &target) in src.ty_args.values().zip(target.ty_args.values())
                             {
@@ -880,7 +880,7 @@ impl TypeId {
     }
 
     pub fn with_ut_templates(self, types: &mut Types, id: TypeId) -> TypeId {
-        if let Some(ut) = types[id].as_user() {
+        if let Type::User(ut) = &types[id] {
             self.with_templates(types, &ut.ty_args.clone())
         } else {
             self
