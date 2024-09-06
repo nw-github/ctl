@@ -6,7 +6,7 @@ use core::reflect::*;
 use core::string::str;
 use core::intrin;
 
-static DIGITS: *[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+static DIGITS: [u8; 36] = *b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 extension _<T> for T {
     pub fn as_byte_span(this): [u8..] {
