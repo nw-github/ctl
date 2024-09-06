@@ -8,6 +8,7 @@ use core::panic;
 use core::fmt::*;
 use core::intrin;
 use core::reflect::*;
+use core::ext::U8Ext;
 
 #(lang(string))
 pub struct str {
@@ -62,6 +63,15 @@ pub struct str {
             panic("str::substr(): range does not end at char boundary");
         }
         str(span:)
+    }
+
+    pub fn trim_start(this): str {
+        for (i, ch) in this.as_bytes().iter().enumerate() {
+            if !ch.is_ascii_whitespace() {
+                return this[i..];
+            }
+        }
+        this[this.len()..]
     }
 
     impl Hash {

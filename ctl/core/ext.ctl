@@ -14,6 +14,49 @@ extension _<T> for T {
     }
 }
 
+pub extension U8Ext for u8 {
+    pub fn is_ascii(my this): bool {
+        this < 0b1000_0000
+    }
+
+    pub fn is_ascii_whitespace(my this): bool {
+        // TODO: or pattern when possible
+        this is b'\t' or this is b'\n' or this is b'\x0C' or this is b'\r' or this is b' '
+    }
+
+    pub fn is_ascii_upper(my this): bool {
+        this is b'A'..=b'Z'
+    }
+
+    pub fn is_ascii_lower(my this): bool {
+        this is b'a'..=b'z'
+    }
+
+    pub fn is_ascii_digit(my this): bool {
+        this is b'0'..=b'9'
+    }
+
+    pub fn is_ascii_hexdigit(my this): bool {
+        this is b'0'..=b'9' or this is b'A'..=b'F'
+    }
+
+    pub fn make_ascii_upper(mut this) {
+        *this = this.to_ascii_upper();
+    }
+
+    pub fn make_ascii_lower(mut this) {
+        *this = this.to_ascii_upper();
+    }
+
+    pub fn to_ascii_upper(my this): u8 {
+        this ^ (0b100000 * this.is_ascii_upper() as u8)
+    }
+
+    pub fn to_ascii_lower(my this): u8 {
+        this ^ (0b100000 * this.is_ascii_lower() as u8)
+    }
+}
+
 pub extension NumericExt<T: Numeric> for T {
     impl Hash {
         fn hash<H: Hasher>(this, h: *mut H) {
@@ -321,35 +364,19 @@ pub extension CharExt for char {
     }
 
     pub fn make_ascii_upper(mut this) {
-        if this.is_ascii_upper() {
-            *this = this.to_ascii_upper();
-        }
+        *this = this.to_ascii_upper();
     }
 
     pub fn make_ascii_lower(mut this) {
-        if this.is_ascii_lower() {
-            *this = this.to_ascii_lower();
-        }
+        *this = this.to_ascii_lower();
     }
 
     pub fn to_ascii_upper(my this): char {
-        if this.is_ascii_lower() {
-            this.toggled_ascii_case()
-        } else {
-            this
-        }
+        (this as u32 ^ (0b100000 * this.is_ascii_upper() as u32)) as! char
     }
 
     pub fn to_ascii_lower(my this): char {
-        if this.is_ascii_upper() {
-            this.toggled_ascii_case()
-        } else {
-            this
-        }
-    }
-
-    fn toggled_ascii_case(my this): char {
-        (this as u32 ^ 0b100000) as! char
+        (this as u32 ^ (0b100000 * this.is_ascii_lower() as u32)) as! char
     }
 
     unsafe fn encode_utf8_unchecked(my this, len_utf8: uint, buf: [mut u8..]): str {
