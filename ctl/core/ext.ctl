@@ -63,7 +63,9 @@ pub extension NumericExt<T: Numeric> for T {
     #(intrinsic(binary_op))
     pub fn %(this, rhs: T): T { this % rhs }
 
-    fn zero(): T { intrin::numeric_cast(0) }
+    /// C-style cast from `this` to type U with overflow/truncation.
+    #(inline)
+    pub fn cast<U: Numeric>(my this): U { intrin::numeric_cast(this) }
 }
 
 mod gcc_intrin {
@@ -172,17 +174,15 @@ pub extension SignedExt<T: Numeric + Integral + Signed> for T {
     }
 
     pub unsafe fn to_str_radix_unchecked(my this, radix: u32, buf: [mut u8..]): str {
-        let zero = T::zero();
         mut pos = buf.len();
-        mut val = if this < zero { this } else { -this };
+        mut val = if this < 0u.cast() { this } else { -this };
         loop {
-            let (new_val, digit) = casting_divmod(val, radix as! i32);
-            let digit: int = intrin::numeric_cast(digit);
-            unsafe *buf.get_mut_unchecked(--pos) = DIGITS[-digit];
-            val = new_val;
-        } while val != zero;
+            let (v, digit) = casting_divmod(val, radix as! i32);
+            unsafe *buf.get_mut_unchecked(--pos) = DIGITS[-digit.cast::<int>()];
+            val = v;
+        } while val != 0u.cast();
 
-        if this < zero {
+        if this < 0u.cast() {
             unsafe *buf.get_mut_unchecked(--pos) = b'-';
         }
 
@@ -199,11 +199,11 @@ pub extension SignedExt<T: Numeric + Integral + Signed> for T {
     }
 
     #(intrinsic(unary_op))
-    pub fn -(this): T { -*this }
+    pub fn -(this): T { -this }
 
     #(inline)
     pub fn overflowing_div(this, rhs: T): (T, bool) {
-        if this == T::min_value() and rhs == intrin::numeric_cast(-1) {
+        if this == T::min_value() and rhs == (-1).cast() {
             (*this, true)
         } else {
             (this / rhs, false)
@@ -222,10 +222,10 @@ pub extension UnsignedExt<T: Numeric + Unsigned> for T {
     pub unsafe fn to_str_radix_unchecked(my mut this, radix: u32, buf: [mut u8..]): str {
         mut pos = buf.len();
         loop {
-            let (val, digit) = casting_divmod(this, radix);
-            unsafe *buf.get_mut_unchecked(--pos) = DIGITS[intrin::numeric_cast(digit)];
-            this = val;
-        } while this != T::zero();
+            let (v, digit) = casting_divmod(this, radix);
+            unsafe *buf.get_mut_unchecked(--pos) = DIGITS[digit.cast()];
+            this = v;
+        } while this != 0u.cast();
 
         unsafe str::from_utf8_unchecked(buf[pos..])
     }
@@ -237,8 +237,8 @@ pub extension UnsignedExt<T: Numeric + Unsigned> for T {
         }
     }
 
-    /// This exists for parity with the SignedExt::overflowing_div. Unsigned division cannot
-    /// overflow, and as such this function always returns false.
+    /// This exists for parity with SignedExt::overflowing_div. Unsigned division cannot overflow,
+    /// and as such this function always returns false.
     #(inline)
     pub fn overflowing_div(this, rhs: T): (T, bool) {
         (this / rhs, false)
@@ -290,8 +290,8 @@ pub extension CharExt for char {
         }
     }
 
-    pub fn len_utf8(this): uint {
-        let cp = *this as u32;
+    pub fn len_utf8(my this): uint {
+        let cp = this as u32;
         if cp < 0x80 {
             1
         } else if cp < 0x800 {
@@ -303,7 +303,7 @@ pub extension CharExt for char {
         }
     }
 
-    pub fn encode_utf8(this, buf: [mut u8..]): str {
+    pub fn encode_utf8(my this, buf: [mut u8..]): str {
         let len = this.len_utf8();
         if buf.len() < len {
             core::panic("char::encode_utf8(): buffer size is insufficient");
@@ -312,11 +312,11 @@ pub extension CharExt for char {
         unsafe this.encode_utf8_unchecked(len, buf)
     }
 
-    pub fn is_ascii_upper(this): bool {
+    pub fn is_ascii_upper(my this): bool {
         this is 'A'..='Z'
     }
 
-    pub fn is_ascii_lower(this): bool {
+    pub fn is_ascii_lower(my this): bool {
         this is 'a'..='z'
     }
 
@@ -332,29 +332,29 @@ pub extension CharExt for char {
         }
     }
 
-    pub fn to_ascii_upper(this): char {
+    pub fn to_ascii_upper(my this): char {
         if this.is_ascii_lower() {
             this.toggled_ascii_case()
         } else {
-            *this
+            this
         }
     }
 
-    pub fn to_ascii_lower(this): char {
+    pub fn to_ascii_lower(my this): char {
         if this.is_ascii_upper() {
             this.toggled_ascii_case()
         } else {
-            *this
+            this
         }
     }
 
-    fn toggled_ascii_case(this): char {
-        (*this as u32 ^ 0b100000) as! char
+    fn toggled_ascii_case(my this): char {
+        (this as u32 ^ 0b100000) as! char
     }
 
-    unsafe fn encode_utf8_unchecked(this, len_utf8: uint, buf: [mut u8..]): str {
+    unsafe fn encode_utf8_unchecked(my this, len_utf8: uint, buf: [mut u8..]): str {
         unsafe {
-            let cp = *this as u32;
+            let cp = this as u32;
             mut ptr = buf.as_raw();
             match len_utf8 {
                 1 => {
@@ -369,13 +369,12 @@ pub extension CharExt for char {
                     *ptr++ = (((cp >> 6) & 0x3f) | 0x80) as! u8;
                     *ptr   = ((cp & 0x3f) | 0x80) as! u8;
                 }
-                4 => {
+                _ => {
                     *ptr++ = ((cp >> 18) | 0xf0) as! u8;
                     *ptr++ = (((cp >> 12) & 0x3f) | 0x80) as! u8;
                     *ptr++ = (((cp >> 6) & 0x3f) | 0x80) as! u8;
                     *ptr   = ((cp & 0x3f) | 0x80) as! u8;
                 }
-                _ => core::unreachable_unchecked(),
             }
             str::from_utf8_unchecked(buf[..len_utf8])
         }
@@ -415,8 +414,8 @@ pub extension BoolExt for bool {
         }
     }
 
-    pub fn then_some<T>(this, t: T): ?T {
-        if *this { t }
+    pub fn then_some<T>(my this, t: T): ?T {
+        if this { t }
     }
 }
 
@@ -444,14 +443,14 @@ use super::ryu::Float32Ext;
 use super::ryu::Float64Ext;
 
 mod libm {
-    pub extern fn sqrt(num: f64): f64;
+    pub extern fn sqrt(n: f64): f64;
     pub extern fn sin(n: f64): f64;
     pub extern fn cos(n: f64): f64;
     pub extern fn tan(n: f64): f64;
     pub extern fn floor(n: f64): f64;
     pub extern fn ceil(n: f64): f64;
 
-    pub extern fn sqrtf(num: f32): f32;
+    pub extern fn sqrtf(n: f32): f32;
     pub extern fn sinf(n: f32): f32;
     pub extern fn cosf(n: f32): f32;
     pub extern fn tanf(n: f32): f32;
@@ -460,32 +459,32 @@ mod libm {
 }
 
 pub extension F32Ext for f32 {
-    pub fn to_bits(this): u32 {
-        unsafe core::mem::transmute(*this)
+    pub fn to_bits(my this): u32 {
+        unsafe core::mem::transmute(this)
     }
 
-    pub fn sqrt(this): f32 {
-        libm::sqrtf(*this)
+    pub fn sqrt(my this): f32 {
+        libm::sqrtf(this)
     }
 
-    pub fn sin(this): f32 {
-        libm::sinf(*this)
+    pub fn sin(my this): f32 {
+        libm::sinf(this)
     }
 
-    pub fn cos(this): f32 {
-        libm::cosf(*this)
+    pub fn cos(my this): f32 {
+        libm::cosf(this)
     }
 
-    pub fn tan(this): f32 {
-        libm::tanf(*this)
+    pub fn tan(my this): f32 {
+        libm::tanf(this)
     }
 
-    pub fn floor(this): f32 {
-        libm::floorf(*this)
+    pub fn floor(my this): f32 {
+        libm::floorf(this)
     }
 
-    pub fn ceil(this): f32 {
-        libm::ceilf(*this)
+    pub fn ceil(my this): f32 {
+        libm::ceilf(this)
     }
 
     pub fn pi(): f32 {
@@ -500,32 +499,32 @@ pub extension F32Ext for f32 {
 }
 
 pub extension F64Ext for f64 {
-    pub fn to_bits(this): u64 {
-        unsafe core::mem::transmute(*this)
+    pub fn to_bits(my this): u64 {
+        unsafe core::mem::transmute(this)
     }
 
-    pub fn sqrt(this): f64 {
-        libm::sqrt(*this)
+    pub fn sqrt(my this): f64 {
+        libm::sqrt(this)
     }
 
-    pub fn sin(this): f64 {
-        libm::sin(*this)
+    pub fn sin(my this): f64 {
+        libm::sin(this)
     }
 
-    pub fn cos(this): f64 {
-        libm::cos(*this)
+    pub fn cos(my this): f64 {
+        libm::cos(this)
     }
 
-    pub fn tan(this): f64 {
-        libm::tan(*this)
+    pub fn tan(my this): f64 {
+        libm::tan(this)
     }
 
-    pub fn floor(this): f64 {
-        libm::floor(*this)
+    pub fn floor(my this): f64 {
+        libm::floor(this)
     }
 
-    pub fn ceil(this): f64 {
-        libm::ceil(*this)
+    pub fn ceil(my this): f64 {
+        libm::ceil(this)
     }
 
     pub fn pi(): f64 {
@@ -542,10 +541,10 @@ pub extension F64Ext for f64 {
 fn casting_divmod<T: Numeric, U: Numeric>(dividend: T, divisor: U): (T, T) {
     // TODO: do this at CTL compile time
     if core::mem::size_of::<T>() >= core::mem::size_of::<U>() {
-        let divisor: T = intrin::numeric_cast(divisor);
+        let divisor: T = divisor.cast();
         (dividend / divisor, dividend % divisor)
     } else {
-        let dividend: U = intrin::numeric_cast(dividend);
-        (intrin::numeric_cast(dividend / divisor), intrin::numeric_cast(dividend % divisor))
+        let dividend: U = dividend.cast();
+        ((dividend / divisor).cast(), (dividend % divisor).cast())
     }
 }
