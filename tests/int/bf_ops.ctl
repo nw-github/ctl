@@ -1,4 +1,4 @@
-// Output: true true true true true
+// Output: 7 0 3 1 1
 // Output: 16 8
 
 packed struct Foo {
@@ -15,7 +15,6 @@ fn main() {
     foo.b -= 4;
     foo.d = 1;
 
-    // FIXME: format is currently broken for numbers too small to store the radix
-    println("{foo.a == 7} {foo.b == 0} {foo.c == 3} {foo.d == 1} {foo.e == 1}");
+    println("{foo.a} {foo.b} {foo.c} {foo.d} {foo.e}");
     println("{std::mem::size_of_val(&foo)} {std::mem::align_of_val(&foo)}");
 }

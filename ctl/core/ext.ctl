@@ -62,6 +62,8 @@ pub extension NumericExt<T: Numeric> for T {
 
     #(intrinsic(binary_op))
     pub fn %(this, rhs: T): T { this % rhs }
+
+    fn zero(): T { intrin::numeric_cast(0) }
 }
 
 mod gcc_intrin {
@@ -69,13 +71,13 @@ mod gcc_intrin {
 
     // TODO: compiler independent fallback for these functions
     #(c_opaque)
-    pub extern fn __builtin_add_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
+    pub extern fn __builtin_add_overflow<T: Integral>(x: T, y: T, res: *raw T): bool;
 
     #(c_opaque)
-    pub extern fn __builtin_sub_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
+    pub extern fn __builtin_sub_overflow<T: Integral>(x: T, y: T, res: *raw T): bool;
 
     #(c_opaque)
-    pub extern fn __builtin_mul_overflow<T: Integral>(x: T, y: T, res: *mut T): bool;
+    pub extern fn __builtin_mul_overflow<T: Integral>(x: T, y: T, res: *raw T): bool;
 }
 
 pub extension IntegralExt<T: Numeric + Integral> for T {
@@ -95,7 +97,7 @@ pub extension IntegralExt<T: Numeric + Integral> for T {
     pub fn >>(this, rhs: T): T { this >> rhs }
 
     #(intrinsic(unary_op))
-    pub fn !(this): T { !*this }
+    pub fn !(this): T { !this }
 
     #(intrinsic(unary_op))
     pub fn ++(mut this) { (*this)++; }
@@ -104,58 +106,55 @@ pub extension IntegralExt<T: Numeric + Integral> for T {
     pub fn --(mut this) { (*this)--; }
 
     #(inline)
-    pub fn wrapping_add(this, rhs: T): T { *this + rhs }
+    pub fn wrapping_add(this, rhs: T): T { this + rhs }
 
     #(inline)
-    pub fn wrapping_sub(this, rhs: T): T { *this - rhs }
+    pub fn wrapping_sub(this, rhs: T): T { this - rhs }
 
     #(inline)
-    pub fn wrapping_mul(this, rhs: T): T { *this * rhs }
+    pub fn wrapping_mul(this, rhs: T): T { this * rhs }
 
     #(inline)
-    pub fn wrapping_div(this, rhs: T): T { *this / rhs }
+    pub fn wrapping_div(this, rhs: T): T { this / rhs }
 
     #(inline)
     pub fn overflowing_add(this, rhs: T): (T, bool) {
         mut out: T;
-        let res = gcc_intrin::__builtin_add_overflow(*this, rhs, &mut out);
+        let res = gcc_intrin::__builtin_add_overflow(*this, rhs, &raw out);
         (out, res)
     }
 
     #(inline)
     pub fn overflowing_sub(this, rhs: T): (T, bool) {
         mut out: T;
-        let res = gcc_intrin::__builtin_sub_overflow(*this, rhs, &mut out);
+        let res = gcc_intrin::__builtin_sub_overflow(*this, rhs, &raw out);
         (out, res)
     }
 
     #(inline)
     pub fn overflowing_mul(this, rhs: T): (T, bool) {
         mut out: T;
-        let res = gcc_intrin::__builtin_mul_overflow(*this, rhs, &mut out);
+        let res = gcc_intrin::__builtin_mul_overflow(*this, rhs, &raw out);
         (out, res)
     }
 
     #(inline)
     pub fn checked_add(this, rhs: T): ?T {
-        mut out: T;
-        if !gcc_intrin::__builtin_add_overflow(*this, rhs, &mut out) {
+        if this.overflowing_add(rhs) is (out, false) {
             out
         }
     }
 
     #(inline)
     pub fn checked_sub(this, rhs: T): ?T {
-        mut out: T;
-        if !gcc_intrin::__builtin_sub_overflow(*this, rhs, &mut out) {
+        if this.overflowing_sub(rhs) is (out, false) {
             out
         }
     }
 
     #(inline)
     pub fn checked_mul(this, rhs: T): ?T {
-        mut out: T;
-        if !gcc_intrin::__builtin_mul_overflow(*this, rhs, &mut out) {
+        if this.overflowing_mul(rhs) is (out, false) {
             out
         }
     }
@@ -167,21 +166,20 @@ pub extension IntegralExt<T: Numeric + Integral> for T {
     pub fn min_value(): T { T::min_value() }
 }
 
-pub extension SignedExt<T: Numeric + Signed> for T {
+pub extension SignedExt<T: Numeric + Integral + Signed> for T {
     pub fn abs(this): T {
         intrin::numeric_abs(*this)
     }
 
-    pub unsafe fn to_str_radix_unchecked(this, radix: u32, buf: [mut u8..]): str {
-        // FIXME: T might be too small to store the radix
-        let radix: T = intrin::numeric_cast(radix);
-        let zero: T = intrin::numeric_cast(0);
-
+    pub unsafe fn to_str_radix_unchecked(my this, radix: u32, buf: [mut u8..]): str {
+        let zero = T::zero();
         mut pos = buf.len();
-        mut val = if this < zero { *this } else { -*this };
+        mut val = if this < zero { this } else { -this };
         loop {
-            unsafe *buf.get_mut_unchecked(--pos) = DIGITS[intrin::numeric_cast(-(val % radix))];
-            val = val / radix;
+            let (new_val, digit) = casting_divmod(val, radix as! i32);
+            let digit: int = intrin::numeric_cast(digit);
+            unsafe *buf.get_mut_unchecked(--pos) = DIGITS[-digit];
+            val = new_val;
         } while val != zero;
 
         if this < zero {
@@ -202,18 +200,32 @@ pub extension SignedExt<T: Numeric + Signed> for T {
 
     #(intrinsic(unary_op))
     pub fn -(this): T { -*this }
+
+    #(inline)
+    pub fn overflowing_div(this, rhs: T): (T, bool) {
+        if this == T::min_value() and rhs == intrin::numeric_cast(-1) {
+            (*this, true)
+        } else {
+            (this / rhs, false)
+        }
+    }
+
+    #(inline)
+    pub fn checked_div(this, rhs: T): ?T {
+        if this.overflowing_div(rhs) is (out, false) {
+            out
+        }
+    }
 }
 
 pub extension UnsignedExt<T: Numeric + Unsigned> for T {
-    pub unsafe fn to_str_radix_unchecked(this, radix: u32, buf: [mut u8..]): str {
-        // FIXME: T might be too small to store the radix
-        let radix: T = intrin::numeric_cast(radix);
+    pub unsafe fn to_str_radix_unchecked(my mut this, radix: u32, buf: [mut u8..]): str {
         mut pos = buf.len();
-        mut val = *this;
         loop {
-            unsafe *buf.get_mut_unchecked(--pos) = DIGITS[intrin::numeric_cast(val % radix)];
-            val = val / radix;
-        } while val != intrin::numeric_cast(0);
+            let (val, digit) = casting_divmod(this, radix);
+            unsafe *buf.get_mut_unchecked(--pos) = DIGITS[intrin::numeric_cast(digit)];
+            this = val;
+        } while this != T::zero();
 
         unsafe str::from_utf8_unchecked(buf[pos..])
     }
@@ -222,6 +234,20 @@ pub extension UnsignedExt<T: Numeric + Unsigned> for T {
         fn format<F: Formatter>(this, f: *mut F) {
             mut buffer: [u8; core::mem::size_of::<u128>() * 8 + 1];
             unsafe this.to_str_radix_unchecked(10, buffer[..]).format(f);
+        }
+    }
+
+    /// This exists for parity with the SignedExt::overflowing_div. Unsigned division cannot
+    /// overflow, and as such this function always returns false.
+    #(inline)
+    pub fn overflowing_div(this, rhs: T): (T, bool) {
+        (this / rhs, false)
+    }
+
+    #(inline)
+    pub fn checked_div(this, rhs: T): ?T {
+        if this.overflowing_div(rhs) is (out, false) {
+            out
         }
     }
 }
@@ -510,5 +536,16 @@ pub extension F64Ext for f64 {
         fn format<F: Formatter>(this, f: *mut F) {
             super::ryu::Buffer::new().format(*this).format(f);
         }
+    }
+}
+
+fn casting_divmod<T: Numeric, U: Numeric>(dividend: T, divisor: U): (T, T) {
+    // TODO: do this at CTL compile time
+    if core::mem::size_of::<T>() >= core::mem::size_of::<U>() {
+        let divisor: T = intrin::numeric_cast(divisor);
+        (dividend / divisor, dividend % divisor)
+    } else {
+        let dividend: U = intrin::numeric_cast(dividend);
+        (intrin::numeric_cast(dividend / divisor), intrin::numeric_cast(dividend % divisor))
     }
 }

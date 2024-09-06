@@ -3446,7 +3446,11 @@ impl Codegen {
             bits: CInt::LongLong.size() as u32 * 8,
             signed: false,
         };
-        let base = ty.as_integral(&self.proj.types).unwrap();
+        let base = match ty {
+            TypeId::BOOL => Integer { bits: 1, signed: false },
+            TypeId::CHAR => Integer { bits: 32, signed: false },
+            _ => ty.as_integral(&self.proj.types).unwrap(),
+        };
         if base.bits <= largest_type.bits {
             self.emit_cast(ty);
             if base.signed && literal == base.min() {
