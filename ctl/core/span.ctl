@@ -336,23 +336,23 @@ pub mod ext {
 
     pub extension SpanFormat<T: core::fmt::Format> for [T..] {
         impl core::fmt::Format {
-            fn format<F: core::fmt::Formatter>(this, f: *mut F) {
-                "[".format(f);
+            fn fmt<F: core::fmt::Formatter>(this, f: *mut F) {
+                "[".fmt(f);
                 for (i, item) in this.iter().enumerate() {
                     if i > 0 {
-                        ", ".format(f);
+                        ", ".fmt(f);
                     }
-                    item.format(f);
+                    item.fmt(f);
                 }
-                "]".format(f);
+                "]".fmt(f);
             }
         }
     }
 
     pub extension SpanMutFormat<T: core::fmt::Format> for [mut T..] {
         impl core::fmt::Format {
-            fn format<F: core::fmt::Formatter>(this, f: *mut F) {
-                this.as_span().format(f)
+            fn fmt<F: core::fmt::Formatter>(this, f: *mut F) {
+                this.as_span().fmt(f)
             }
         }
     }

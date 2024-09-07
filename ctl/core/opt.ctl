@@ -51,16 +51,15 @@ pub union Option<T> {
 pub mod ext {
     pub extension OptionFormat<T: core::fmt::Format> for ?T {
         impl core::fmt::Format {
-            fn format<F: core::fmt::Formatter>(this, f: *mut F) {
+            fn fmt<F: core::fmt::Formatter>(this, f: *mut F) {
                 if this is ?rhs {
-                    "Some(".format(f);
-                    rhs.format(f);
-                    ")".format(f);
+                    "Some(".fmt(f);
+                    rhs.fmt(f);
+                    ")".fmt(f);
                 } else {
-                    "null".format(f);
+                    "null".fmt(f);
                 }
             }
         }
     }
 }
-

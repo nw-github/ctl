@@ -13,5 +13,5 @@ pub trait Formatter: Write {
 
 #(lang(format))
 pub trait Format {
-    fn format<F: Formatter>(this, f: *mut F);
+    fn fmt<F: Formatter>(this, f: *mut F);
 }

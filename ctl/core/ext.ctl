@@ -266,11 +266,11 @@ pub extension SignedExt<T: Numeric + Integral + Signed> for T {
     }
 
     impl Format {
-        fn format<F: Formatter>(this, f: *mut F) {
+        fn fmt<F: Formatter>(this, f: *mut F) {
             // FIXME: fix this when there is a safer way to deal with uninitialized memory
             //        size_of should be size_of<T>
             mut buffer: [u8; core::mem::size_of::<u128>() * 8 + 1];
-            unsafe this.to_str_radix_unchecked(10, buffer[..]).format(f);
+            unsafe this.to_str_radix_unchecked(10, buffer[..]).fmt(f);
         }
     }
 
@@ -322,9 +322,9 @@ pub extension UnsignedExt<T: Numeric + Integral + Unsigned> for T {
     }
 
     impl Format {
-        fn format<F: Formatter>(this, f: *mut F) {
+        fn fmt<F: Formatter>(this, f: *mut F) {
             mut buffer: [u8; core::mem::size_of::<u128>() * 8 + 1];
-            unsafe this.to_str_radix_unchecked(10, buffer[..]).format(f);
+            unsafe this.to_str_radix_unchecked(10, buffer[..]).fmt(f);
         }
     }
 
@@ -383,8 +383,8 @@ pub extension CharExt for char {
     }
 
     impl Format {
-        fn format<F: Formatter>(this, f: *mut F) {
-            unsafe this.encode_utf8_unchecked(this.len_utf8(), [0u8; 4][..]).format(f);
+        fn fmt<F: Formatter>(this, f: *mut F) {
+            unsafe this.encode_utf8_unchecked(this.len_utf8(), [0u8; 4][..]).fmt(f);
         }
     }
 
@@ -511,8 +511,8 @@ pub extension BoolExt for bool {
     pub fn ^(this, rhs: This): This { this ^ rhs }
 
     impl Format {
-        fn format<F: Formatter>(this, f: *mut F) {
-            if *this { "true".format(f) } else { "false".format(f) }
+        fn fmt<F: Formatter>(this, f: *mut F) {
+            if *this { "true".fmt(f) } else { "false".fmt(f) }
         }
     }
 
@@ -535,8 +535,8 @@ pub extension VoidExt for void {
     }
 
     impl Format {
-        fn format<F: Formatter>(this, f: *mut F) {
-            "void".format(f);
+        fn fmt<F: Formatter>(this, f: *mut F) {
+            "void".fmt(f);
         }
     }
 }
@@ -594,8 +594,8 @@ pub extension F32Ext for f32 {
     }
 
     impl Format {
-        fn format<F: Formatter>(this, f: *mut F) {
-            super::ryu::Buffer::new().format(*this).format(f);
+        fn fmt<F: Formatter>(this, f: *mut F) {
+            super::ryu::Buffer::new().format(*this).fmt(f);
         }
     }
 }
@@ -634,8 +634,8 @@ pub extension F64Ext for f64 {
     }
 
     impl Format {
-        fn format<F: Formatter>(this, f: *mut F) {
-            super::ryu::Buffer::new().format(*this).format(f);
+        fn fmt<F: Formatter>(this, f: *mut F) {
+            super::ryu::Buffer::new().format(*this).fmt(f);
         }
     }
 }

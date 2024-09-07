@@ -1896,7 +1896,7 @@ impl Codegen {
                                 self.find_implementation(
                                     stripped,
                                     format_id,
-                                    "format",
+                                    "fmt",
                                     scope,
                                     |tc, id| TypeArgs::in_order(tc.scopes(), id, [formatter_ty]),
                                 ),
