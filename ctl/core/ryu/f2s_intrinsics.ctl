@@ -36,8 +36,7 @@ pub fn multiple_of_power_of_2_32(value: u32, p: u32): bool {
 fn mul_shift_32(m: u32, factor: u64, shift: i32): u32 {
     debug_assert(shift > 32);
 
-    // The casts here help MSVC to avoid calls to the __allmul library
-    // function.
+    // The casts here help MSVC to avoid calls to the __allmul library function.
     let factor_lo = factor as! u32;
     let factor_hi = (factor >> 32) as! u32;
     let bits0 = m as u64 * factor_lo as u64;
@@ -45,17 +44,14 @@ fn mul_shift_32(m: u32, factor: u64, shift: i32): u32 {
 
     let sum = (bits0 >> 32) + bits1;
     let shifted_sum = sum >> (shift - 32);
-    // debug_assert(shifted_sum <= u32::max_value() as u64);
-    debug_assert(shifted_sum <= !0u32 as u64);
+    debug_assert(shifted_sum <= u32::max_value() as u64);
     shifted_sum as! u32
 }
 
 pub fn mul_pow5_inv_div_pow2(m: u32, q: u32, j: i32): u32 {
-    debug_assert(q < DOUBLE_POW5_INV_TABLE_SIZE as! u32);
     mul_shift_32(m, DOUBLE_POW5_INV_SPLIT[q].1 + 1, j)
 }
 
 pub fn mul_pow5_div_pow2(m: u32, i: u32, j: i32): u32 {
-    debug_assert(i < DOUBLE_POW5_TABLE_SIZE as! u32);
     mul_shift_32(m, DOUBLE_POW5_SPLIT[i].1, j)
 }

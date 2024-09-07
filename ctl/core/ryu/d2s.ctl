@@ -1,4 +1,3 @@
-use super::debug_assert;
 use super::common::*;
 use super::d2s_intrinsics::*;
 use super::d2s_full_table::*;
@@ -14,8 +13,7 @@ pub const DOUBLE_POW5_BITCOUNT: i32 = 125;
 // A floating decimal representing m * 10^e.
 pub struct FloatingDecimal64 {
     pub mantissa: u64,
-    // Decimal exponent's range is -324 to 308
-    // inclusive, and can fit in i16 if needed.
+    // Decimal exponent's range is -324 to 308 inclusive, and can fit in i16 if needed.
     pub exponent: i32,
 }
 
@@ -29,8 +27,7 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
             (1u64 << DOUBLE_MANTISSA_BITS) | ieee_mantissa,
         )
     };
-    let even = (m2 & 1) == 0;
-    let accept_bounds = even;
+    let accept_bounds = m2 & 1 == 0;
 
     // Step 2: Determine the interval of valid decimal representations.
     let mv = m2 * 4;
@@ -55,17 +52,7 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
         let k = DOUBLE_POW5_INV_BITCOUNT + pow5bits(q as! i32) - 1;
         let i = -e2 + q as! i32 + k;
         vr = unsafe {
-            mul_shift_all_64(
-                m2,
-                {
-                    debug_assert(q < DOUBLE_POW5_INV_TABLE_SIZE as! u32);
-                    &DOUBLE_POW5_INV_SPLIT[q as! uint]
-                },
-                i as u32,
-                &mut vp,
-                &mut vm,
-                mm_shift,
-            )
+            mul_shift_all_64(m2, &DOUBLE_POW5_INV_SPLIT[q], i as u32, &mut vp, &mut vm, mm_shift)
         };
         if q <= 21 {
             // This should use q <= 22, but I think 21 is also safe. Smaller values
@@ -92,17 +79,7 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
         let k = pow5bits(i) - DOUBLE_POW5_BITCOUNT;
         let j = q as! i32 - k;
         vr = unsafe {
-            mul_shift_all_64(
-                m2,
-                {
-                    debug_assert(i < DOUBLE_POW5_TABLE_SIZE as! i32);
-                    &DOUBLE_POW5_SPLIT[i]
-                },
-                j as u32,
-                &mut vp,
-                &mut vm,
-                mm_shift,
-            )
+            mul_shift_all_64(m2, &DOUBLE_POW5_SPLIT[i], j as u32, &mut vp, &mut vm, mm_shift)
         };
         if q <= 1 {
             // {vr,vp,vm} is trailing zeros if {mv,mp,mm} has at least q trailing 0 bits.

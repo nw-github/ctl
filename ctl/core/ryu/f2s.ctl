@@ -1,4 +1,3 @@
-use super::debug_assert;
 use super::common::*;
 use super::f2s_intrinsics::*;
 use super::pretty::*;
@@ -10,8 +9,7 @@ const FLOAT_BIAS: i32 = 127;
 // A floating decimal representing m * 10^e.
 pub struct FloatingDecimal32 {
     pub mantissa: u32,
-    // Decimal exponent's range is -45 to 38
-    // inclusive, and can fit in i16 if needed.
+    // Decimal exponent's range is -45 to 38 inclusive, and can fit in i16 if needed.
     pub exponent: i32,
 }
 
@@ -28,8 +26,7 @@ pub fn f2d(ieee_mantissa: u32, ieee_exponent: u32): FloatingDecimal32 {
             (1u32 << FLOAT_MANTISSA_BITS) | ieee_mantissa,
         )
     };
-    let even = m2 & 1 == 0;
-    let accept_bounds = even;
+    let accept_bounds = m2 & 1 == 0;
 
     // Step 2: Determine the interval of valid decimal representations.
     let mv = m2 * 4;

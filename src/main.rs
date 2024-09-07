@@ -249,8 +249,7 @@ fn main() -> Result<()> {
         SubCommand::Lsp => {
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
-                .build()
-                .unwrap()
+                .build()?
                 .block_on(async {
                     let stdin = tokio::io::stdin();
                     let stdout = tokio::io::stdout();

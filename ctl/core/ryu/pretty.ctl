@@ -112,8 +112,8 @@ pub unsafe fn format64(f: f64, res: *raw u8): uint {
             // 1234e-2 -> 12.34
             write_mantissa_long(mantissa, res + index + length + 1);
             core::mem::copy_overlapping(
-                dst: res + index, 
-                src: res + index + 1, 
+                dst: res + index,
+                src: res + index + 1,
                 num: kk as uint,
             );
             *(res + index + kk) = b'.';
