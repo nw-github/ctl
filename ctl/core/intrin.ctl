@@ -4,9 +4,6 @@ use core::reflect::*;
 pub extern fn numeric_abs<T: Signed>(_: T): T;
 
 #(intrinsic)
-pub extern fn numeric_cast<T: Numeric, U: Numeric>(_: T): U;
-
-#(intrinsic)
 pub extern fn numeric_lt<T: Numeric, U: Numeric>(lhs: T, rhs: U): bool;
 
 #(intrinsic)

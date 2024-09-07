@@ -280,7 +280,7 @@ pub struct IterMut<T> {
 
 #(inline(always))
 fn raw_subscript_checked<T, I: Numeric + Integral>(ptr: *raw T, len: uint, idx: I): *raw T {
-    if !core::intrin::numeric_lt(idx, len) or idx < core::intrin::numeric_cast(0) {
+    if !core::intrin::numeric_lt(idx, len) or idx < 0.cast() {
         panic("Span::[]: index out of bounds");
     }
 

@@ -63,7 +63,7 @@ pub struct RangeFrom<T: Numeric + Integral> {
 
     impl Iterator<T> {
         fn next(mut this): ?T {
-            if this.start < this.start.wrapping_add(core::intrin::numeric_cast(1)) {
+            if this.start < this.start.wrapping_add(1.cast()) {
                 this.start++
             }
         }

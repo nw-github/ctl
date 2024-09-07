@@ -107,8 +107,8 @@ pub extension NumericExt<T: Numeric> for T {
     pub fn %(this, rhs: T): T { this % rhs }
 
     /// C-style cast from `this` to type U with overflow/truncation.
-    #(inline)
-    pub fn cast<U: Numeric>(my this): U { intrin::numeric_cast(this) }
+    #(intrinsic(numeric_cast))
+    pub fn cast<U: Numeric>(my this): U { this.cast() }
 }
 
 mod gcc_intrin {
@@ -204,11 +204,44 @@ pub extension IntegralExt<T: Numeric + Integral> for T {
         }
     }
 
+    #(inline)
+    pub fn saturating_add(this, rhs: T): T {
+        if this.checked_add(rhs) is ?out {
+            out
+        } else if rhs < 0.cast() {
+            T::min_value()
+        } else {
+            T::max_value()
+        }
+    }
+
     #(intrinsic)
     pub fn max_value(): T { T::max_value() }
 
     #(intrinsic)
     pub fn min_value(): T { T::min_value() }
+
+    /// Cast `this` to type `U` if the value of this is exactly representable in U
+    #(inline)
+    pub fn try_cast<U: Numeric>(my this): ?U {
+        let rhs: U = this.cast();
+        if this == rhs.cast() {
+            rhs
+        }
+    }
+
+    fn from_str_radix_common(chars: core::string::Chars, radix: u32): ?T {
+        mut value: ?T = null;
+        for ch in chars {
+            let digit = ch.to_digit(radix)?.try_cast::<T>()?;
+            if &mut value is ?value {
+                *value = value.checked_mul(radix.try_cast::<T>()?)?.checked_add(digit)?;
+            } else {
+                value = digit;
+            }
+        }
+        value
+    }
 }
 
 pub extension SignedExt<T: Numeric + Integral + Signed> for T {
@@ -259,9 +292,24 @@ pub extension SignedExt<T: Numeric + Integral + Signed> for T {
             out
         }
     }
+
+    pub fn from_str_radix(s: str, radix: u32): ?T {
+        mut chars = s.chars();
+        let negative = match chars.next()? {
+            '-' => true,
+            '+' => false,
+            _ => {
+                chars = s.chars();
+                false
+            }
+        };
+
+        let val = [1.cast::<T>(), -1.cast::<T>()];
+        T::from_str_radix_common(chars, radix)?.checked_mul(val[negative as u1])
+    }
 }
 
-pub extension UnsignedExt<T: Numeric + Unsigned> for T {
+pub extension UnsignedExt<T: Numeric + Integral + Unsigned> for T {
     pub unsafe fn to_str_radix_unchecked(my mut this, radix: u32, buf: [mut u8..]): str {
         mut pos = buf.len();
         loop {
@@ -289,9 +337,16 @@ pub extension UnsignedExt<T: Numeric + Unsigned> for T {
 
     #(inline)
     pub fn checked_div(this, rhs: T): ?T {
-        if this.overflowing_div(rhs) is (out, false) {
-            out
+        this / rhs
+    }
+
+    pub fn from_str_radix(s: str, radix: u32): ?T {
+        mut chars = s.chars();
+        if !(chars.next()? is '+') {
+            chars = s.chars();
         }
+
+        T::from_str_radix_common(chars, radix)
     }
 }
 
@@ -377,6 +432,26 @@ pub extension CharExt for char {
 
     pub fn to_ascii_lower(my this): char {
         (this as u32 ^ (0b100000 * this.is_ascii_lower() as u32)) as! char
+    }
+
+    pub fn to_digit(my this, radix: u32): ?u32 {
+        // don't mind if I do
+        // https://github.com/rust-lang/rust/blob/9afe7136958edaa403f0b0eb00f0353c125b7352/library/core/src/char/methods.rs#L378
+
+        // If not a digit, a number greater than radix will be created.
+        mut digit = (this as u32).wrapping_sub('0' as u32);
+        if radix > 10 {
+            if radix <= 36 {
+                core::panic("to_digit: radix is too high (maximum 36)");
+            }
+
+            if digit < 10 {
+                return digit;
+            }
+            // Force the 6th bit to be set to ensure ascii is lower case.
+            digit = (this as u32 | 0b10_0000).wrapping_sub('a' as u32).saturating_add(10);
+        }
+        (digit < radix).then_some(digit)
     }
 
     unsafe fn encode_utf8_unchecked(my this, len_utf8: uint, buf: [mut u8..]): str {
