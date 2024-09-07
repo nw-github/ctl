@@ -2254,7 +2254,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             self.next();
             Some(res)
         } else {
-            let span = token.span;
+            let span = self.next().span;
             self.error(Error::new(msg, span));
             None
         }
@@ -2265,7 +2265,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         if token.data == kind {
             self.next()
         } else {
-            let token = token.clone();
+            let token = self.next();
             self.error(Error::new(format!("expected '{kind}'"), token.span));
             token
         }
@@ -2278,7 +2278,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             self.next();
             name
         } else {
-            let span = token.span;
+            let span = self.next().span;
             self.error(Error::new(msg, span));
             Located::new(span, String::new())
         }
