@@ -478,6 +478,7 @@ impl Types {
                 Type::Usize,
                 Type::Bool,
                 Type::Uint(8),
+                Type::Uint(32),
                 Type::Char,
                 Type::F32,
                 Type::F64,
@@ -537,10 +538,11 @@ impl TypeId {
     pub const USIZE: TypeId = TypeId(4);
     pub const BOOL: TypeId = TypeId(5);
     pub const U8: TypeId = TypeId(6);
-    pub const CHAR: TypeId = TypeId(7);
-    pub const F32: TypeId = TypeId(8);
-    pub const F64: TypeId = TypeId(9);
-    pub const CVOID: TypeId = TypeId(10);
+    pub const U32: TypeId = TypeId(7);
+    pub const CHAR: TypeId = TypeId(8);
+    pub const F32: TypeId = TypeId(9);
+    pub const F64: TypeId = TypeId(10);
+    pub const CVOID: TypeId = TypeId(11);
 
     pub fn name(self, scopes: &Scopes, types: &mut Types) -> String {
         match &types[self] {

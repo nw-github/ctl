@@ -1761,7 +1761,10 @@ impl TypeChecker {
             .flat_map(|tr| tr.into_checked())
         {
             for ty_arg in dep.ty_args.values_mut() {
-                if self.proj.types[*ty_arg].as_user().is_some_and(|ut| ut.id == this_id) {
+                if self.proj.types[*ty_arg]
+                    .as_user()
+                    .is_some_and(|ut| ut.id == this_id)
+                {
                     *ty_arg = this;
                 }
             }
@@ -2245,8 +2248,27 @@ impl TypeChecker {
                     (
                         Type::RawPtr(_),
                         BinaryOp::Add | BinaryOp::AddAssign | BinaryOp::SubAssign,
-                    )
-                    | (
+                    ) => {
+                        let span = right.span;
+                        let right = self.check_expr(*right, Some(TypeId::USIZE));
+                        let right = self.try_coerce(right, TypeId::USIZE);
+                        if !self.proj.types[right.ty].is_integral() && right.ty != TypeId::UNKNOWN {
+                            self.proj.diag.error(Error::type_mismatch_s(
+                                "{integer}",
+                                &right.ty.name(&self.proj.scopes, &mut self.proj.types),
+                                span,
+                            ));
+                        }
+                        CheckedExpr::new(
+                            if assignment { TypeId::VOID } else { left.ty },
+                            CheckedExprData::Binary {
+                                op,
+                                left: left.into(),
+                                right: right.into(),
+                            },
+                        )
+                    }
+                    (
                         Type::Int(_)
                         | Type::Uint(_)
                         | Type::CInt(_)
@@ -2255,16 +2277,7 @@ impl TypeChecker {
                         | Type::Usize,
                         BinaryOp::Shl | BinaryOp::Shr | BinaryOp::ShlAssign | BinaryOp::ShrAssign,
                     ) => {
-                        let span = right.span;
-                        let right = self.check_expr(*right, Some(left.ty));
-                        let right = self.try_coerce(right, left.ty);
-                        if !self.proj.types[right.ty].is_integral() && right.ty != TypeId::UNKNOWN {
-                            self.proj.diag.error(Error::type_mismatch_s(
-                                "{integer}",
-                                &right.ty.name(&self.proj.scopes, &mut self.proj.types),
-                                span,
-                            ));
-                        }
+                        let right = self.type_check(*right, TypeId::U32);
                         CheckedExpr::new(
                             if assignment { TypeId::VOID } else { left.ty },
                             CheckedExprData::Binary {

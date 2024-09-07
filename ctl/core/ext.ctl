@@ -136,10 +136,10 @@ pub extension IntegralExt<T: Numeric + Integral> for T {
     pub fn ^(this, rhs: T): T { this ^ rhs }
 
     #(intrinsic(binary_op))
-    pub fn <<(this, rhs: T): T { this << rhs }
+    pub fn <<(this, rhs: u32): T { this << rhs }
 
     #(intrinsic(binary_op))
-    pub fn >>(this, rhs: T): T { this >> rhs }
+    pub fn >>(this, rhs: u32): T { this >> rhs }
 
     #(intrinsic(unary_op))
     pub fn !(this): T { !this }
