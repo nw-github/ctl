@@ -3927,10 +3927,7 @@ impl TypeChecker {
                 );
             };
 
-            let next_ty = ut
-                .first_type_arg()
-                .unwrap()
-                .with_ut_templates(&mut this.proj.types, iter.ty);
+            let next_ty = ut.first_type_arg().unwrap();
             let patt_span = patt.span;
             let patt = this.check_pattern(PatternParams {
                 binding: true,
@@ -5283,16 +5280,17 @@ impl TypeChecker {
     fn get_trait_impl(&mut self, ty: TypeId, id: TraitId) -> Option<GenericTrait> {
         fn get_trait_impl_helper(
             this: &mut TypeChecker,
-            id: UserTypeId,
+            ut: &GenericUserType,
             target: TraitId,
         ) -> Option<GenericTrait> {
-            for i in 0..this.proj.scopes.get(id).impls.len() {
-                resolve_impl!(this, this.proj.scopes.get_mut(id).impls[i]);
-                if let Some(tr) = this.proj.scopes.get(id).impls[i]
+            for i in 0..this.proj.scopes.get(ut.id).impls.len() {
+                resolve_impl!(this, this.proj.scopes.get_mut(ut.id).impls[i]);
+                if let Some(mut tr) = this.proj.scopes.get(ut.id).impls[i]
                     .as_checked()
                     .filter(|tr| tr.id == target)
                     .cloned()
                 {
+                    tr.fill_templates(&mut this.proj.types, &ut.ty_args);
                     return Some(tr);
                 }
             }
@@ -5301,13 +5299,13 @@ impl TypeChecker {
         }
 
         if let Type::User(ut) = &self.proj.types[ty] {
-            if let Some(ut) = get_trait_impl_helper(self, ut.id, id) {
+            if let Some(ut) = get_trait_impl_helper(self, &ut.clone(), id) {
                 return Some(ut);
             }
         }
 
         for ext in self.extensions_in_scope_for(ty, self.current) {
-            if let Some(ut) = get_trait_impl_helper(self, ext.id, id) {
+            if let Some(ut) = get_trait_impl_helper(self, &ext, id) {
                 return Some(ut);
             }
         }

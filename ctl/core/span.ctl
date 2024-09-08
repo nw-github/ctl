@@ -290,6 +290,8 @@ fn raw_subscript_checked<T, I: Numeric + Integral>(ptr: *raw T, len: uint, idx: 
 // TODO: make these member functions/impls when the syntax allows for it
 
 pub mod ext {
+    use core::range::ext::*;
+
     pub extension SpanEq<T: core::ops::Eq<T>> for [T..] {
         pub fn ==(this, rhs: *[T..]): bool {
             if this.len() != rhs.len() {
@@ -357,4 +359,3 @@ pub mod ext {
         }
     }
 }
-

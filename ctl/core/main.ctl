@@ -15,4 +15,5 @@ mod prelude {
     pub use super::ext::*;
     pub use super::span::ext::*;
     pub use super::opt::ext::*;
+    pub use super::range::ext::*;
 }

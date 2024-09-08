@@ -60,19 +60,11 @@ pub struct RangeFrom<T: Numeric + Integral> {
             Bound::Unbounded
         }
     }
-
-    impl Iterator<T> {
-        fn next(mut this): ?T {
-            if this.start < this.start.wrapping_add(1.cast()) {
-                this.start++
-            }
-        }
-    }
 }
 
 // foo..bar
 #(lang(range))
-pub struct Range<T: Numeric + Integral> {
+pub struct Range<T> {
     pub start: T,
     pub end: T,
 
@@ -85,27 +77,11 @@ pub struct Range<T: Numeric + Integral> {
             Bound::Exclusive(this.end)
         }
     }
-
-    impl Iterator<T> {
-        fn next(mut this): ?T {
-            if this.start < this.end {
-                this.start++
-            }
-        }
-    }
-
-    pub fn contains(this, rhs: *T): bool {
-        this.start <= rhs and this.end > rhs
-    }
 }
-
-// extension RangeExt<T: Numeric> for Range<T> {
-//     
-// }
 
 // foo..=bar
 #(lang(range_inclusive))
-pub struct RangeInclusive<T: Numeric + Integral> {
+pub struct RangeInclusive<T> {
     pub start: T,
     pub end: T,
 
@@ -117,22 +93,6 @@ pub struct RangeInclusive<T: Numeric + Integral> {
         fn end(this): Bound<T> {
             Bound::Inclusive(this.end)
         }
-    }
-
-    impl Iterator<T> {
-        fn next(mut this): ?T {
-            if this.start < this.end {
-                this.start++
-            } else if this.start == this.end {
-                // avoid overflow at the upper end
-                this.end--;
-                this.start
-            }
-        }
-    }
-
-    pub fn contains(this, rhs: *T): bool {
-        this.start <= rhs and this.end >= rhs
     }
 }
 
@@ -148,4 +108,50 @@ pub struct RangeFull {
 //             Bound::Unbounded()
 //         }
 //     }
+}
+
+pub mod ext {
+    use super::*;
+
+    pub extension RangeFromExt<T: Numeric + Integral> for RangeFrom<T> {
+        impl Iterator<T> {
+            fn next(mut this): ?T {
+                if this.start < this.start.wrapping_add(1.cast()) {
+                    this.start++
+                }
+            }
+        }
+    }
+
+    pub extension RangeExt<T: Numeric + Integral> for Range<T> {
+        impl Iterator<T> {
+            fn next(mut this): ?T {
+                if this.start < this.end {
+                    this.start++
+                }
+            }
+        }
+
+        pub fn contains(this, rhs: *T): bool {
+            this.start <= rhs and this.end > rhs
+        }
+    }
+
+    pub extension RangeInclusiveExt<T: Numeric + Integral> for RangeInclusive<T> {
+        impl Iterator<T> {
+            fn next(mut this): ?T {
+                if this.start < this.end {
+                    this.start++
+                } else if this.start == this.end {
+                    // avoid overflow at the upper end
+                    this.end--;
+                    this.start
+                }
+            }
+        }
+
+        pub fn contains(this, rhs: *T): bool {
+            this.start <= rhs and this.end >= rhs
+        }
+    }
 }
