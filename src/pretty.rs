@@ -73,9 +73,11 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
             impls,
             functions,
             is_unsafe,
+            sealed,
         } => {
             eprint!("{tabs}Trait[{name}]");
             print_bool!(public);
+            print_bool!(sealed);
             print_bool!(is_unsafe);
             eprintln!();
 

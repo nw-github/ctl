@@ -279,7 +279,7 @@ impl LanguageServer for LspBackend {
                                     UserTypeKind::Extension(_) => {
                                         Some(format!(" (from {})", scopes.get(owner).name.data))
                                     }
-                                    UserTypeKind::Trait(_) => {
+                                    UserTypeKind::Trait(_, _) => {
                                         Some(format!(" (as {})", scopes.get(owner).name.data))
                                     }
                                     _ => None,
@@ -311,7 +311,7 @@ impl LanguageServer for LspBackend {
                             label: ut.name.data.clone(),
                             kind: Some(match ut.kind {
                                 UserTypeKind::Union(_) => CompletionItemKind::ENUM,
-                                UserTypeKind::Trait(_) => CompletionItemKind::INTERFACE,
+                                UserTypeKind::Trait(_, _) => CompletionItemKind::INTERFACE,
                                 UserTypeKind::Template => CompletionItemKind::TYPE_PARAMETER,
                                 _ => CompletionItemKind::STRUCT,
                             }),
@@ -870,7 +870,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types) -> String 
                 }
             }
         }
-        UserTypeKind::Trait(_) => {
+        UserTypeKind::Trait(_, _) => {
             write_de!(res, "trait {}", ut.name.data);
             visualize_type_params(&mut res, &ut.type_params, scopes, types);
         }

@@ -69,6 +69,7 @@ pub enum StmtData {
     UnsafeUnion(Struct),
     Trait {
         public: bool,
+        sealed: bool,
         name: Located<String>,
         is_unsafe: bool,
         type_params: TypeParams,

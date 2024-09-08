@@ -1514,7 +1514,7 @@ impl Codegen {
             }
             CheckedExprData::MemFn(mut mfn, scope) => {
                 let parent = &self.proj.scopes[self.proj.scopes.get(mfn.func.id).scope];
-                if let Some((trait_id, this)) = parent
+                if let Some((trait_id, (this, _))) = parent
                     .kind
                     .as_user_type()
                     .and_then(|&id| Some(id).zip(self.proj.scopes.get(id).kind.as_trait()))
@@ -2884,10 +2884,12 @@ impl Codegen {
                         .and_then(|ut| self.proj.scopes.get(ut.id).kind.as_union())
                         .and_then(|union| union.discriminant(variant).cloned().zip(Some(union.tag)))
                         .unwrap();
-                    conditions.next(|buf| usebuf!(self, buf, {
-                        write_de!(self.buffer, "{src}.{UNION_TAG_NAME}==");
-                        self.emit_literal(tag, ty);
-                    }));
+                    conditions.next(|buf| {
+                        usebuf!(self, buf, {
+                            write_de!(self.buffer, "{src}.{UNION_TAG_NAME}==");
+                            self.emit_literal(tag, ty);
+                        })
+                    });
 
                     if let Some(pattern) = pattern {
                         self.emit_pattern_inner(
@@ -3593,7 +3595,7 @@ struct BitfieldAccess {
 }
 
 fn vtable_methods(scopes: &Scopes, types: &Types, tr: &UserType) -> Vec<Vis<FunctionId>> {
-    let this = *tr
+    let (&this, _) = tr
         .kind
         .as_trait()
         .expect("UserType passed to vtable_methods was not a trait");

@@ -138,15 +138,20 @@ impl<'a, 'b> Parser<'a, 'b> {
                     },
                 })
             }
-            Token::Trait => {
+            Token::Trait | Token::Sealed => {
                 let token = self.next();
+                let sealed = token.data == Token::Sealed;
+                if sealed {
+                    self.expect(Token::Trait);
+                }
+
                 if let Some(token) = is_extern {
                     self.error_no_sync(Error::not_valid_here(&token));
                 }
 
                 Ok(Stmt {
                     attrs,
-                    data: self.r#trait(public.is_some(), token.span, is_unsafe.is_some()),
+                    data: self.r#trait(public.is_some(), token.span, is_unsafe.is_some(), sealed),
                 })
             }
             Token::Extension => {
@@ -1750,7 +1755,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
     }
 
-    fn r#trait(&mut self, public: bool, span: Span, is_unsafe: bool) -> StmtData {
+    fn r#trait(&mut self, public: bool, span: Span, is_unsafe: bool, sealed: bool) -> StmtData {
         let name = self.expect_ident("expected name");
         let type_params = self.type_params();
         let impls = self.trait_impls();
@@ -1779,6 +1784,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         StmtData::Trait {
             public,
+            sealed,
             is_unsafe,
             name,
             type_params,

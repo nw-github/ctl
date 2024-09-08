@@ -269,7 +269,7 @@ pub enum UserTypeKind {
     Template,
     AnonStruct,
     Tuple,
-    Trait(UserTypeId),
+    Trait(UserTypeId, bool),
     Extension(TypeId),
 }
 

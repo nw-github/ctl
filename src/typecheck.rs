@@ -988,6 +988,7 @@ impl TypeChecker {
                 type_params,
                 impls,
                 functions,
+                sealed,
                 is_unsafe: _,
             } => {
                 let lang_item = stmt.attrs.val("lang").map(String::from);
@@ -1014,7 +1015,7 @@ impl TypeChecker {
                         name,
                         public,
                         Default::default(),
-                        UserTypeKind::Trait(this_id),
+                        UserTypeKind::Trait(this_id, sealed),
                         type_params,
                         &fns,
                         impls,
@@ -1528,7 +1529,7 @@ impl TypeChecker {
             }
             DeclaredStmt::Trait { id, fns } => {
                 self.enter_id(self.proj.scopes.get(id).body_scope, |this| {
-                    this.resolve_impls(*this.proj.scopes.get(id).kind.as_trait().unwrap());
+                    this.resolve_impls(*this.proj.scopes.get(id).kind.as_trait().unwrap().0);
                     // TODO: disable errors so this doesn't cause duplicate errors
                     this.resolve_impls(id);
                     for f in fns {
@@ -1675,7 +1676,7 @@ impl TypeChecker {
                 ty_args.insert(id, TypeId::UNKNOWN);
             }
         }
-        ty_args.insert(*scopes.get(tr).kind.as_trait().unwrap(), this);
+        ty_args.insert(*scopes.get(tr).kind.as_trait().unwrap().0, this);
 
         let mut compare_types = |has: TypeId, wants: TypeId| {
             let wants = wants.with_templates(types, &ty_args);
@@ -1743,7 +1744,15 @@ impl TypeChecker {
     }
 
     fn check_impl_block(&mut self, this: TypeId, tr: &GenericTrait, block: DeclaredImplBlock) {
-        let this_id = *self.proj.scopes.get(tr.id).kind.as_trait().unwrap();
+        let tr_ut = self.proj.scopes.get(tr.id);
+        let (&this_id, &sealed) = tr_ut.kind.as_trait().unwrap();
+        if sealed && !self.can_access_privates(tr_ut.scope) {
+            self.error(Error::new(
+                format!("cannot implement sealed trait '{}'", tr_ut.name),
+                block.span,
+            ))
+        }
+
         for mut dep in self
             .proj
             .scopes
@@ -4763,7 +4772,7 @@ impl TypeChecker {
                         ScopeKind::UserType(id) => {
                             check_hover!(self, span, id.into());
                             match &self.proj.scopes.get(id).kind {
-                                &UserTypeKind::Trait(this) => {
+                                &UserTypeKind::Trait(this, _) => {
                                     let ut = GenericUserType::from_id(
                                         &self.proj.scopes,
                                         &mut self.proj.types,
@@ -5399,8 +5408,10 @@ impl TypeChecker {
                                 &ty_args,
                                 &ext.ty_args,
                             );
-                            func.ty_args
-                                .insert(*this.proj.scopes.get(imp).kind.as_trait().unwrap(), inst);
+                            func.ty_args.insert(
+                                *this.proj.scopes.get(imp).kind.as_trait().unwrap().0,
+                                inst,
+                            );
 
                             return Some(MemberFn {
                                 func,
@@ -5463,7 +5474,7 @@ impl TypeChecker {
                         func.ty_args
                             .copy_args_with(&mut self.proj.types, &ty_args, &ut.ty_args);
                         func.ty_args
-                            .insert(*self.proj.scopes.get(imp).kind.as_trait().unwrap(), inst);
+                            .insert(*self.proj.scopes.get(imp).kind.as_trait().unwrap().0, inst);
                         return Some(MemberFn {
                             func,
                             owner: src_scope,
@@ -7080,7 +7091,7 @@ impl TypeChecker {
                         Some(TypeItem::Type(id)) => {
                             self.check_hover(name.span, id.into());
                             let mut ty_args = self.resolve_type_args(id, ty_args, false, name.span);
-                            if let Some(&this) = self.proj.scopes.get(id).kind.as_trait() {
+                            if let UserTypeKind::Trait(this, _) = self.proj.scopes.get(id).kind {
                                 ty_args.insert(this, TypeId::UNKNOWN);
                             } else {
                                 let ty = Type::User(GenericUserType::new(id, ty_args));
@@ -7146,7 +7157,7 @@ impl TypeChecker {
 
                     let ty = self.proj.scopes.get(id);
                     scope = ty.body_scope;
-                    if let Some(&this) = ty.kind.as_trait() {
+                    if let UserTypeKind::Trait(this, _) = ty.kind {
                         ty_args.insert(this, TypeId::UNKNOWN);
                     } else {
                         let ty = Type::User(GenericUserType::new(id, ty_args));
