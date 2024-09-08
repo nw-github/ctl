@@ -3725,8 +3725,8 @@ impl TypeChecker {
 
         match (from, to) {
             (a, b) if a == b => {}
-            (Type::Char, Type::Uint(n)) if *n >= 32 => {}
-            (Type::Char, Type::Int(n)) if *n >= 33 => {}
+            (Type::Char, Type::Uint(n)) if *n >= 21 => {}
+            (Type::Char, Type::Int(n)) if *n >= 22 => {}
             (Type::F32, Type::F64) => {}
             (Type::Uint(n), Type::F32) if *n <= 24 => {}
             (Type::Int(n), Type::F32) if *n <= 25 => {}

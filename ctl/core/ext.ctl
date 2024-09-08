@@ -388,6 +388,10 @@ pub extension CharExt for char {
         }
     }
 
+    pub unsafe fn from_u32_unchecked(v: u32): char {
+        unsafe core::mem::transmute(v)
+    }
+
     pub fn len_utf8(my this): uint {
         let cp = this as u32;
         if cp < 0x80 {
@@ -427,11 +431,11 @@ pub extension CharExt for char {
     }
 
     pub fn to_ascii_upper(my this): char {
-        (this as u32 ^ (0b100000 * this.is_ascii_upper() as u32)) as! char
+        unsafe char::from_u32_unchecked(this as u32 ^ (0b10_0000 * this.is_ascii_upper() as u32))
     }
 
     pub fn to_ascii_lower(my this): char {
-        (this as u32 ^ (0b100000 * this.is_ascii_lower() as u32)) as! char
+        unsafe char::from_u32_unchecked(this as u32 ^ (0b10_0000 * this.is_ascii_lower() as u32))
     }
 
     pub fn to_digit(my this, radix: u32): ?u32 {
@@ -452,6 +456,14 @@ pub extension CharExt for char {
             digit = (this as u32 | 0b10_0000).wrapping_sub('a' as u32).saturating_add(10);
         }
         (digit < radix).then_some(digit)
+    }
+
+    pub fn min_value(): char {
+        '\0'
+    }
+
+    pub fn max_value(): char {
+        '\u{10ffff}'
     }
 
     unsafe fn encode_utf8_unchecked(my this, len_utf8: uint, buf: [mut u8..]): str {
