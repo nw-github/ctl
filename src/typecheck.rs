@@ -1896,11 +1896,15 @@ impl TypeChecker {
             let old_safety = std::mem::take(&mut this.safety);
             let target = this.proj.scopes.get_mut(id).ret;
             let body = this.check_expr(body, Some(target));
-            let body = this.coerce(body, target);
+            let body = if body.ty == TypeId::VOID {
+                Err(body)
+            } else {
+                this.coerce(body, target)
+            };
             this.proj.scopes.get_mut(id).body = Some(match body {
                 Ok(body) => body,
                 Err(body) => {
-                    if !body.data.is_yielding_block(&this.proj.scopes) && target != TypeId::VOID && target != TypeId::UNKNOWN {
+                    if !body.data.is_yielding_block(&this.proj.scopes) && !matches!(target, TypeId::VOID | TypeId::UNKNOWN) {
                         let func = this.proj.scopes.get(id);
                         let err = Error::new(
                             format!("function '{}' must return a value of type '{}' from all code paths",
