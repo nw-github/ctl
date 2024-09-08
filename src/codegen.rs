@@ -2081,14 +2081,9 @@ impl Codegen {
                 .collect();
 
             let ut_id = self.proj.types[ty].as_user().unwrap().id;
+            write_de!(self.buffer, "{{");
             let ut = self.proj.scopes.get(ut_id);
             let union = ut.kind.as_union().unwrap();
-            write_de!(
-                self.buffer,
-                "{{.{UNION_TAG_NAME}={},",
-                union.variant_tag(variant).unwrap()
-            );
-
             for (name, value) in members
                 .iter()
                 .filter(|(name, _)| ut.members.contains_key(name))
@@ -2108,8 +2103,11 @@ impl Codegen {
                 {
                     write_de!(self.buffer, ".${name}={value},");
                 }
-                write_de!(self.buffer, "}}");
+                write_de!(self.buffer, "}},");
             }
+
+            write_de!(self.buffer, ".{UNION_TAG_NAME}=");
+            self.emit_literal(union.discriminant(variant).unwrap().clone(), union.tag);
             write_de!(self.buffer, "}}");
         }
     }
@@ -2168,7 +2166,7 @@ impl Codegen {
                                 .kind
                                 .as_union()
                                 .unwrap()
-                                .variant_tag("Some")
+                                .discriminant("Some")
                                 .unwrap();
                             write_de!(self.buffer, "{left}.{UNION_TAG_NAME}={tag}");
                         }
@@ -2244,17 +2242,24 @@ impl Codegen {
                     .kind
                     .as_union()
                     .unwrap();
-                let less = union.variant_tag("Less").unwrap();
-                let greater = union.variant_tag("Greater").unwrap();
-                let equal = union.variant_tag("Equal").unwrap();
+                let tag = union.tag;
+                let less = union.discriminant("Less").unwrap().clone();
+                let greater = union.discriminant("Greater").unwrap().clone();
+                let equal = union.discriminant("Equal").unwrap().clone();
 
                 write_de!(self.buffer, "({tmp}<0?");
                 self.emit_cast(ret);
-                write_de!(self.buffer, "{{.{UNION_TAG_NAME}={less}}}:({tmp}>0?");
+                write_de!(self.buffer, "{{.{UNION_TAG_NAME}=");
+                self.emit_literal(less, tag);
+                write_de!(self.buffer, "}}:({tmp}>0?");
                 self.emit_cast(ret);
-                write_de!(self.buffer, "{{.{UNION_TAG_NAME}={greater}}}:");
+                write_de!(self.buffer, "{{.{UNION_TAG_NAME}=");
+                self.emit_literal(greater, tag);
+                write_de!(self.buffer, "}}:");
                 self.emit_cast(ret);
-                write_de!(self.buffer, "{{.{UNION_TAG_NAME}={equal}}}))");
+                write_de!(self.buffer, "{{.{UNION_TAG_NAME}=");
+                self.emit_literal(equal, tag);
+                write_de!(self.buffer, "}}))");
             }
             BinaryOp::LogicalAnd | BinaryOp::LogicalOr => {
                 tmpbuf_emit!(self, state, |tmp| {
@@ -2871,15 +2876,18 @@ impl Codegen {
                         conditions.next_str(format!("{src}=={NULLPTR}"));
                     }
                 } else {
-                    let tag = self
+                    let (tag, ty) = self
                         .proj
                         .types
                         .get(base)
                         .as_user()
                         .and_then(|ut| self.proj.scopes.get(ut.id).kind.as_union())
-                        .and_then(|union| union.variant_tag(variant))
+                        .and_then(|union| union.discriminant(variant).cloned().zip(Some(union.tag)))
                         .unwrap();
-                    conditions.next_str(format!("{src}.{UNION_TAG_NAME}=={tag}"));
+                    conditions.next(|buf| usebuf!(self, buf, {
+                        write_de!(self.buffer, "{src}.{UNION_TAG_NAME}==");
+                        self.emit_literal(tag, ty);
+                    }));
 
                     if let Some(pattern) = pattern {
                         self.emit_pattern_inner(
@@ -3019,7 +3027,8 @@ impl Codegen {
                 usebuf!(self, bindings, {
                     let id = self.emit_var_decl(id, state);
                     let ty = &self.proj.types[id];
-                    if borrow && matches!(ty, Type::Ptr(i) | Type::MutPtr(i) | Type::RawPtr(i) 
+                    if borrow
+                        && matches!(ty, Type::Ptr(i) | Type::MutPtr(i) | Type::RawPtr(i)
                         if self.proj.types[*i].is_array())
                     {
                         write_de!(self.buffer, "={src}.{ARRAY_DATA_NAME};");
@@ -3447,8 +3456,14 @@ impl Codegen {
             signed: false,
         };
         let base = match ty {
-            TypeId::BOOL => Integer { bits: 1, signed: false },
-            TypeId::CHAR => Integer { bits: 32, signed: false },
+            TypeId::BOOL => Integer {
+                bits: 1,
+                signed: false,
+            },
+            TypeId::CHAR => Integer {
+                bits: 32,
+                signed: false,
+            },
             _ => ty.as_integral(&self.proj.types).unwrap(),
         };
         if base.bits <= largest_type.bits {

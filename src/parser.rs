@@ -509,6 +509,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let mut expr = self.precedence(Precedence::Prefix, ctx);
                 if matches!(op, UnaryOp::Neg) {
                     if let ExprData::Integer(patt) = &mut expr.data {
+                        expr.span = span.extended_to(expr.span);
                         patt.negative = true;
                         return expr;
                     }

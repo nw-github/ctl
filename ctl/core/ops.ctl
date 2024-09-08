@@ -1,8 +1,8 @@
 #(lang(ordering))
 pub union Ordering: i8 {
-    Less /* = -1 */,
-    Greater /* = 0 */,
-    Equal /* = 1 */,
+    Less = -1,
+    Greater = 0,
+    Equal = 1,
 }
 
 #(lang(op_cmp))

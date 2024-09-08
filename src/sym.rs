@@ -1,6 +1,7 @@
 use derive_more::{Constructor, Deref, DerefMut, From};
 use enum_as_inner::EnumAsInner;
 use indexmap::IndexMap;
+use num_bigint::BigInt;
 use std::collections::{HashMap, HashSet};
 
 use crate::{
@@ -224,10 +225,19 @@ pub struct CheckedMember {
     pub span: Span,
 }
 
+#[derive(Default, Debug, Clone, EnumAsInner)]
+pub enum Discriminant {
+    Unchecked(Expr),
+    #[default]
+    Next,
+    Checked(BigInt),
+}
+
 #[derive(Debug, Clone)]
 pub struct CheckedVariant {
     pub ty: Option<TypeId>,
     pub span: Span,
+    pub discrim: Discriminant,
 }
 
 #[derive(Debug, Clone)]
@@ -238,8 +248,8 @@ pub struct Union {
 }
 
 impl Union {
-    pub fn variant_tag(&self, name: &str) -> Option<usize> {
-        self.variants.get_index_of(name)
+    pub fn discriminant(&self, name: &str) -> Option<&BigInt> {
+        self.variants.get(name).and_then(|v| v.discrim.as_checked())
     }
 }
 

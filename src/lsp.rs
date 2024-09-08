@@ -935,6 +935,6 @@ fn visualize_variant_body(
         None => {}
     }
     if !small {
-        write_de!(res, " = {}", union.variant_tag(name).unwrap());
+        write_de!(res, " = {}", union.discriminant(name).unwrap());
     }
 }

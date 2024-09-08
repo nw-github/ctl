@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use indexmap::{map::Entry, IndexMap};
-use num_bigint::BigInt;
+use num_bigint::{BigInt, Sign};
 use num_traits::Num;
 use std::sync::LazyLock;
 
@@ -727,6 +727,10 @@ impl TypeChecker {
                             CheckedVariant {
                                 ty: None,
                                 span: variant.name.span,
+                                discrim: variant
+                                    .tag
+                                    .map(Discriminant::Unchecked)
+                                    .unwrap_or_default(),
                             },
                         );
                     }
@@ -744,6 +748,10 @@ impl TypeChecker {
                                     )),
                                 ),
                                 span: variant.name.span,
+                                discrim: variant
+                                    .tag
+                                    .map(Discriminant::Unchecked)
+                                    .unwrap_or_default(),
                             },
                         );
 
@@ -775,6 +783,10 @@ impl TypeChecker {
                                     members.iter().map(|(ty, _)| ty.clone()).collect(),
                                 ))),
                                 span: variant.name.span,
+                                discrim: variant
+                                    .tag
+                                    .map(Discriminant::Unchecked)
+                                    .unwrap_or_default(),
                             },
                         );
 
@@ -815,9 +827,7 @@ impl TypeChecker {
             let tag = if let Some(tag) = tag {
                 this.declare_type_hint(TypeHint::Regular(tag))
             } else {
-                this.proj
-                    .types
-                    .insert(Type::Uint(discriminant_bits(rvariants.len())))
+                TypeId::UNKNOWN
             };
             let ut = this.ut_from_stuff(
                 attrs,
@@ -1502,34 +1512,17 @@ impl TypeChecker {
                 self.enter_id(self.proj.scopes.get(id).body_scope, |this| {
                     this.resolve_impls(id);
                     this.resolve_members(id);
-                    let this_ty = Type::User(GenericUserType::from_id(&this.proj.scopes, &mut this.proj.types, id));
+                    let this_ty = Type::User(GenericUserType::from_id(
+                        &this.proj.scopes,
+                        &mut this.proj.types,
+                        id,
+                    ));
                     let this_ty = this.proj.types.insert(this_ty);
                     this.resolve_dependencies(id, this_ty, true);
                     this.check_impl_blocks(this_ty, id, impls);
 
                     for f in fns {
                         this.check_fn(f);
-                    }
-
-                    let Some(union) = &this.proj.scopes.get(id).kind.as_union() else {
-                        return;
-                    };
-                    if let Some(stats) = union.tag.as_integral(&this.proj.types) {
-                        if stats.bits < discriminant_bits(union.variants.len()) {
-                            let msg = format!(
-                                "type '{}' does not have sufficient range to represent the tag for this type", 
-                                union.tag.name(&this.proj.scopes, &mut this.proj.types)
-                            );
-                            this.error(Error::new(
-                                msg,
-                                this.proj.scopes.get(id).name.span,
-                            ))
-                        }
-                    } else if union.tag != TypeId::UNKNOWN {
-                        this.error(Error::new(
-                            "union tag must be an integer type",
-                            this.proj.scopes.get(id).name.span,
-                        ))
                     }
                 });
             }
@@ -2544,30 +2537,22 @@ impl TypeChecker {
                 )
             }
             ExprData::ArrayWithInit { init, count } => {
-                if let Some(&Type::Array(ty, _)) = target.map(|t| &self.proj.types[t]) {
-                    let init = self.type_check(*init, ty);
-                    match self.consteval(&count, Some(TypeId::USIZE)) {
-                        Ok(count) => CheckedExpr::new(
-                            self.proj.types.insert(Type::Array(init.ty, count)),
-                            CheckedExprData::ArrayWithInit {
-                                init: init.into(),
-                                count,
-                            },
-                        ),
-                        Err(err) => self.error(err),
-                    }
+                let init = if let Some(&Type::Array(ty, _)) = target.map(|t| &self.proj.types[t]) {
+                    self.type_check(*init, ty)
                 } else {
-                    let init = self.check_expr(*init, target);
-                    match self.consteval(&count, Some(TypeId::USIZE)) {
-                        Ok(count) => CheckedExpr::new(
-                            self.proj.types.insert(Type::Array(init.ty, count)),
-                            CheckedExprData::ArrayWithInit {
-                                init: init.into(),
-                                count,
-                            },
-                        ),
-                        Err(err) => self.error(err),
-                    }
+                    self.check_expr(*init, target)
+                };
+                if let Some(res) = self.consteval_check(*count, TypeId::USIZE) {
+                    let count = res.val.try_into().unwrap();
+                    CheckedExpr::new(
+                        self.proj.types.insert(Type::Array(init.ty, count)),
+                        CheckedExprData::ArrayWithInit {
+                            init: init.into(),
+                            count,
+                        },
+                    )
+                } else {
+                    Default::default()
                 }
             }
             ExprData::VecWithInit { init, count } => {
@@ -4804,12 +4789,13 @@ impl TypeChecker {
                 self.error(Error::new(format!("'{THIS_TYPE}' outside of type"), span))
             }
             TypeHint::Array(ty, count) => {
-                let n = match self.consteval(count, Some(TypeId::USIZE)) {
-                    Ok(n) => n,
-                    Err(err) => return self.error(err),
-                };
                 let id = self.resolve_typehint(ty);
-                self.proj.types.insert(Type::Array(id, n))
+                let Some(n) = self.consteval_check((**count).clone(), TypeId::USIZE) else {
+                    return self.proj.types.insert(Type::Array(id, 0));
+                };
+                self.proj
+                    .types
+                    .insert(Type::Array(id, n.val.try_into().unwrap()))
             }
             TypeHint::Option(ty) => self.resolve_lang_type("option", std::slice::from_ref(ty)),
             TypeHint::Vec(ty) => self.resolve_lang_type("vec", std::slice::from_ref(ty)),
@@ -4863,6 +4849,78 @@ impl TypeChecker {
             for variant in union.variants.values_mut().flat_map(|v| &mut v.ty) {
                 resolve_type!(self, *variant);
             }
+
+            let mut target = None;
+            let mut target_max = None;
+            if let Some(stats) = union.tag.as_integral(&self.proj.types) {
+                target_max = Some(stats.max());
+                target = Some(union.tag);
+            } else if union.tag != TypeId::UNKNOWN {
+                self.error(Error::new(
+                    "union tag must be an integer type",
+                    self.proj.scopes.get(id).name.span,
+                ))
+            }
+
+            let mut used = HashSet::new();
+            let mut next = BigInt::from(0);
+            let mut bits = 0;
+            let mut signed = false;
+            for (name, variant) in union.variants.iter_mut() {
+                let (val, span) = match std::mem::take(&mut variant.discrim) {
+                    Discriminant::Unchecked(expr) => {
+                        let span = expr.span;
+                        if let Some(target) = target {
+                            let Some(res) = self.consteval_check(expr, target) else {
+                                continue;
+                            };
+                            (res.val, span)
+                        } else {
+                            let expr = self.check_expr(expr, None);
+                            let Some(res) = self.consteval(&expr, span) else {
+                                continue;
+                            };
+
+                            // TODO: we need some kind of "compile time int" type so we don't assume
+                            // `int` for cases like union { Variant = 1 }, where we should pick the
+                            // smallest tag possible as with empty variants
+                            target = Some(res.ty);
+                            (res.val, span)
+                        }
+                    }
+                    Discriminant::Next => (next, variant.span),
+                    _ => unreachable!(),
+                };
+
+                if !used.insert(val.clone()) {
+                    self.error(Error::new(
+                        format!("duplicate assignment of discriminant '{val}'"),
+                        span,
+                    ))
+                }
+                if target_max.as_ref().is_some_and(|v| &val > v) {
+                    self.error(Error::new(
+                        format!("integer overflow attempting to assign discriminant '{val}' for '{name}'"),
+                        span,
+                    ))
+                }
+
+                variant.discrim = Discriminant::Checked(val.clone());
+                signed = signed || val.sign() == Sign::Minus;
+                bits = bits.max(val.bits());
+                next = val + 1;
+            }
+
+            if union.tag == TypeId::UNKNOWN {
+                union.tag = target.unwrap_or_else(|| {
+                    self.proj.types.insert(if signed {
+                        Type::Int(bits as u32)
+                    } else {
+                        Type::Uint(bits as u32)
+                    })
+                });
+            }
+
             self.proj.scopes.get_mut(id).kind = UserTypeKind::Union(union);
         }
 
@@ -5495,7 +5553,6 @@ impl TypeChecker {
             }
         };
         if *negative {
-            result = -result;
             if !stats.signed {
                 self.proj.diag.error(Error::new(
                     format!(
@@ -5504,7 +5561,9 @@ impl TypeChecker {
                     ),
                     span,
                 ));
+                return (ty, result);
             }
+            result = -result;
         }
 
         let min = stats.min();
@@ -5523,78 +5582,6 @@ impl TypeChecker {
         }
 
         (ty, result)
-    }
-
-    fn consteval(&mut self, expr: &Expr, target: Option<TypeId>) -> Result<usize, Error> {
-        match &expr.data {
-            ExprData::Integer(patt) => {
-                let (ty, val) = self.get_int_type_and_val(target, patt, expr.span);
-                if let Some(target) = target.filter(|&target| target != ty) {
-                    return Err(Error::type_mismatch(
-                        target,
-                        ty,
-                        &self.proj.scopes,
-                        &mut self.proj.types,
-                        expr.span,
-                    ));
-                }
-
-                return match val.try_into() {
-                    Ok(value) => Ok(value),
-                    Err(_) => Err(Error::new("value cannot be converted to uint", expr.span)),
-                };
-            }
-            ExprData::Binary { op, left, right } => {
-                let lhs = self.consteval(left, None)?;
-                let rhs = self.consteval(right, None)?;
-                return Ok(match op {
-                    BinaryOp::Add => lhs + rhs,
-                    BinaryOp::Sub => lhs - rhs,
-                    BinaryOp::Mul => lhs * rhs,
-                    BinaryOp::Div => lhs / rhs,
-                    BinaryOp::Rem => lhs % rhs,
-                    BinaryOp::BitAnd => lhs & rhs,
-                    BinaryOp::Xor => lhs ^ rhs,
-                    BinaryOp::BitOr => lhs | rhs,
-                    BinaryOp::Shl => lhs << rhs,
-                    BinaryOp::Shr => lhs >> rhs,
-                    op => {
-                        return Err(Error::invalid_operator(
-                            op,
-                            &TypeId::USIZE.name(&self.proj.scopes, &mut self.proj.types),
-                            expr.span,
-                        ))
-                    }
-                });
-            }
-            ExprData::Call { callee, args: _ } => {
-                if let ExprData::Path(path) = &callee.data {
-                    match self.resolve_value_path(path) {
-                        ResolvedValue::Fn(func) => {
-                            if self.proj.scopes.intrinsics.contains_key(&func.id)
-                                && self.proj.scopes.get(func.id).name.data == "size_of"
-                            {
-                                // TODO: make sure the first type arg has had resolve_members()
-                                // and resolve_dependencies() called on it
-                                return Ok(func
-                                    .first_type_arg()
-                                    .unwrap()
-                                    .size_and_align(&self.proj.scopes, &mut self.proj.types)
-                                    .0);
-                            }
-                        }
-                        ResolvedValue::NotFound(err) => return Err(err),
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        Err(Error::new(
-            "expression is not compile time evaluatable",
-            expr.span,
-        ))
     }
 
     fn loop_target(&self, target: Option<TypeId>, infinite: bool) -> Option<TypeId> {
@@ -7324,8 +7311,80 @@ impl TypeChecker {
     }
 }
 
-fn discriminant_bits(count: usize) -> u32 {
-    (count as f64).log2().ceil() as u32
+struct ConstValue {
+    ty: TypeId,
+    val: BigInt,
+}
+
+/// CTFE related functions
+impl TypeChecker {
+    fn consteval_check(&mut self, expr: Expr, target: TypeId) -> Option<ConstValue> {
+        let span = expr.span;
+        let expr = self.type_check(expr, target);
+        (expr.ty == target)
+            .then(|| self.consteval(&expr, span))
+            .flatten()
+    }
+
+    fn consteval(&mut self, expr: &CheckedExpr, span: Span) -> Option<ConstValue> {
+        match &expr.data {
+            CheckedExprData::Integer(val) => Some(ConstValue {
+                ty: expr.ty,
+                val: val.clone(),
+            }),
+            CheckedExprData::Binary { op, left, right } => {
+                let mut lhs = self.consteval(left, span)?;
+                let rhs = self.consteval(right, span)?;
+                lhs.val = match op {
+                    BinaryOp::Add => lhs.val + rhs.val,
+                    BinaryOp::Sub => lhs.val - rhs.val,
+                    BinaryOp::Mul => lhs.val * rhs.val,
+                    BinaryOp::Div => lhs.val / rhs.val,
+                    BinaryOp::Rem => lhs.val % rhs.val,
+                    BinaryOp::BitAnd => lhs.val & rhs.val,
+                    BinaryOp::Xor => lhs.val ^ rhs.val,
+                    BinaryOp::BitOr => lhs.val | rhs.val,
+                    BinaryOp::Shl => {
+                        let rhs: u32 = rhs.val.try_into().unwrap();
+                        lhs.val << rhs
+                    }
+                    BinaryOp::Shr => {
+                        let rhs: u32 = rhs.val.try_into().unwrap();
+                        lhs.val >> rhs
+                    }
+                    _ => return self.error(Error::no_consteval(span)),
+                };
+
+                // TODO: overflow check
+                Some(lhs)
+            }
+            CheckedExprData::Call(callee, _) => {
+                let CheckedExprData::Fn(func, _) = &callee.data else {
+                    return self.error(Error::no_consteval(span));
+                };
+
+                if !self.proj.scopes.intrinsics.contains_key(&func.id) {
+                    return self.error(Error::no_consteval(span));
+                }
+
+                match &self.proj.scopes.get(func.id).name.data[..] {
+                    "size_of" => {
+                        let ty = func.first_type_arg().unwrap();
+                        // TODO: make sure the ty has had resolve_members()
+                        // and resolve_dependencies() called on it and doesn't have any template args
+                        let (sz, _) = ty.size_and_align(&self.proj.scopes, &mut self.proj.types);
+                        Some(ConstValue {
+                            ty: TypeId::USIZE,
+                            val: BigInt::from(sz),
+                        })
+                    }
+                    _ => self.error(Error::no_consteval(span)),
+                }
+            }
+            CheckedExprData::Error => None,
+            _ => self.error(Error::no_consteval(span)),
+        }
+    }
 }
 
 static BINARY_OP_TRAITS: LazyLock<HashMap<BinaryOp, (&str, &str)>> = LazyLock::new(|| {

@@ -268,10 +268,7 @@ impl Error {
     }
 
     pub fn bitfield_addr(span: Span) -> Self {
-        Self::new(
-            "taking address of bitfield creates a temporary",
-            span,
-        )
+        Self::new("taking address of bitfield creates a temporary", span)
     }
 
     pub fn recursive_type(member: &str, span: Span, variant: bool) -> Self {
@@ -282,5 +279,9 @@ impl Error {
             ),
             span,
         )
+    }
+
+    pub fn no_consteval(span: Span) -> Self {
+        Self::new("expression is not compile time evaluatable", span)
     }
 }
