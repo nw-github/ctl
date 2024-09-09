@@ -660,6 +660,29 @@ impl Scopes {
         result
     }
 
+    pub fn get_trait_impls_ex(&self, types: &mut Types, tr: GenericTrait) -> HashSet<GenericTrait> {
+        fn inner(
+            this: &Scopes,
+            types: &mut Types,
+            tr: GenericTrait,
+            results: &mut HashSet<GenericTrait>,
+        ) {
+            if !results.insert(tr.clone()) {
+                return;
+            }
+
+            for imp in this.get(tr.id).impls.iter().flat_map(|tr| tr.as_checked()) {
+                let mut imp = imp.clone();
+                imp.fill_templates(types, &tr.ty_args);
+                inner(this, types, imp, results);
+            }
+        }
+
+        let mut result = HashSet::new();
+        inner(self, types, tr, &mut result);
+        result
+    }
+
     pub fn has_builtin_impl(&self, types: &Types, id: TypeId, bound: &GenericTrait) -> bool {
         let ty = &types[id];
         if ty.is_numeric() && Some(&bound.id) == self.lang_traits.get("numeric") {

@@ -5127,9 +5127,19 @@ impl TypeChecker {
     }
 
     fn has_direct_impl(&mut self, ut: &GenericUserType, bound: &GenericTrait) -> bool {
+        self.resolve_impls_recursive(ut.id);
         for i in 0..self.proj.scopes.get(ut.id).impls.len() {
-            resolve_impl!(self, self.proj.scopes.get_mut(ut.id).impls[i]);
-            if let Some(mut tr) = self.proj.scopes.get(ut.id).impls[i].as_checked().cloned() {
+            let Some(tr) = self.proj.scopes.get(ut.id).impls[i].as_checked().cloned() else {
+                continue;
+            };
+
+            for mut tr in self
+                .proj
+                .scopes
+                .get_trait_impls_ex(&mut self.proj.types, tr)
+                .into_iter()
+                .filter(|tr| tr.id == bound.id)
+            {
                 tr.fill_templates(&mut self.proj.types, &ut.ty_args);
                 if &tr == bound {
                     return true;

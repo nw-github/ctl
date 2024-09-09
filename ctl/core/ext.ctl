@@ -14,7 +14,7 @@ extension _<T> for T {
     }
 }
 
-pub extension U8Ext for u8 {
+pub extension U8Impl for u8 {
     pub fn is_ascii(my this): bool {
         this < 0b1000_0000
     }
@@ -57,7 +57,7 @@ pub extension U8Ext for u8 {
     }
 }
 
-pub extension NumericExt<T: Numeric> for T {
+pub extension NumericImpl<T: Numeric> for T {
     impl Hash {
         fn hash<H: Hasher>(this, h: *mut H) {
             h.hash(this.as_byte_span());
@@ -125,7 +125,7 @@ mod gcc_intrin {
     pub extern fn __builtin_mul_overflow<T: Integral>(x: T, y: T, res: *raw T): bool;
 }
 
-pub extension IntegralExt<T: Numeric + Integral> for T {
+pub extension IntegralImpl<T: Integral> for T {
     #(intrinsic(binary_op))
     pub fn &(this, rhs: T): T { this & rhs }
 
@@ -244,7 +244,7 @@ pub extension IntegralExt<T: Numeric + Integral> for T {
     }
 }
 
-pub extension SignedExt<T: Numeric + Integral + Signed> for T {
+pub extension SignedImpl<T: Signed> for T {
     pub fn abs(this): T {
         intrin::numeric_abs(*this)
     }
@@ -309,7 +309,7 @@ pub extension SignedExt<T: Numeric + Integral + Signed> for T {
     }
 }
 
-pub extension UnsignedExt<T: Numeric + Integral + Unsigned> for T {
+pub extension UnsignedImpl<T: Unsigned> for T {
     pub unsafe fn to_str_radix_unchecked(my mut this, radix: u32, buf: [mut u8..]): str {
         mut pos = buf.len();
         loop {
@@ -350,7 +350,7 @@ pub extension UnsignedExt<T: Numeric + Integral + Unsigned> for T {
     }
 }
 
-pub extension CharExt for char {
+pub extension CharImpl for char {
     impl Hash {
         fn hash<H: Hasher>(this, h: *mut H) {
             h.hash(this.as_byte_span());
@@ -495,7 +495,7 @@ pub extension CharExt for char {
     }
 }
 
-pub extension BoolExt for bool {
+pub extension BoolImpl for bool {
     impl Hash {
         fn hash<H: Hasher>(this, h: *mut H) {
             h.hash(this.as_byte_span());
@@ -533,7 +533,7 @@ pub extension BoolExt for bool {
     }
 }
 
-pub extension VoidExt for void {
+pub extension VoidImpl for void {
     impl Hash {
         fn hash<H: Hasher>(this, h: *mut H) {
             h.hash([0u8][..]);
@@ -572,7 +572,7 @@ mod libm {
     pub extern fn ceilf(n: f32): f32;
 }
 
-pub extension F32Ext for f32 {
+pub extension F32Impl for f32 {
     pub fn to_bits(my this): u32 {
         unsafe core::mem::transmute(this)
     }
@@ -612,7 +612,7 @@ pub extension F32Ext for f32 {
     }
 }
 
-pub extension F64Ext for f64 {
+pub extension F64Impl for f64 {
     pub fn to_bits(my this): u64 {
         unsafe core::mem::transmute(this)
     }

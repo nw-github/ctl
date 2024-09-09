@@ -8,7 +8,7 @@ use core::panic;
 use core::fmt::*;
 use core::intrin;
 use core::reflect::*;
-use core::ext::U8Ext;
+use core::ext::*;
 
 #(lang(string))
 pub struct str {
@@ -83,7 +83,6 @@ pub struct str {
     impl Eq<str> {
         fn eq(this, rhs: *str): bool {
             use core::span::ext::SpanEq;
-            use core::ext::NumericExt;
 
             this.as_bytes() == rhs.as_bytes()
         }
@@ -95,7 +94,7 @@ pub struct str {
         }
     }
 
-    pub fn []<I: Numeric + Integral>(this, idx: I): *u8 {
+    pub fn []<I: Integral>(this, idx: I): *u8 {
         &this.span[idx]
     }
 

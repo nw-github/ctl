@@ -232,17 +232,17 @@ pub struct Vec<T> {
     }
 
     #(inline(always))
-    pub fn []<I: Numeric + Integral>(this, idx: I): *T {
+    pub fn []<I: Integral>(this, idx: I): *T {
         &this[..][idx]
     }
 
     #(inline(always))
-    pub fn []<I: Numeric + Integral>(mut this, idx: I): *mut T {
+    pub fn []<I: Integral>(mut this, idx: I): *mut T {
         &mut this[..][idx]
     }
 
     #(inline(always))
-    pub fn []=<I: Numeric + Integral>(mut this, idx: I, val: T) {
+    pub fn []=<I: Integral>(mut this, idx: I, val: T) {
         this[..][idx] = val;
     }
 

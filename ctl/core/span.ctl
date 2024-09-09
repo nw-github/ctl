@@ -79,7 +79,7 @@ pub struct Span<T> {
     }
 
     #(inline)
-    pub fn []<I: Numeric + Integral>(this, idx: I): *T {
+    pub fn []<I: Integral>(this, idx: I): *T {
         unsafe raw_subscript_checked(this.ptr, this.len, idx) as *T
     }
 
@@ -208,12 +208,12 @@ pub struct SpanMut<T> {
     }
 
     #(inline)
-    pub fn []<I: Numeric + Integral>(this, idx: I): *mut T {
+    pub fn []<I: Integral>(this, idx: I): *mut T {
         unsafe raw_subscript_checked(this.ptr, this.len, idx) as *mut T
     }
 
     #(inline)
-    pub fn []=<I: Numeric + Integral>(this, idx: I, val: T) {
+    pub fn []=<I: Integral>(this, idx: I, val: T) {
         unsafe {
             *raw_subscript_checked(this.ptr, this.len, idx) = val;
         }
@@ -279,7 +279,7 @@ pub struct IterMut<T> {
 }
 
 #(inline(always))
-fn raw_subscript_checked<T, I: Numeric + Integral>(ptr: *raw T, len: uint, idx: I): *raw T {
+fn raw_subscript_checked<T, I: Integral>(ptr: *raw T, len: uint, idx: I): *raw T {
     if !core::intrin::numeric_lt(idx, len) or idx < 0.cast() {
         panic("Span::[]: index out of bounds");
     }

@@ -48,7 +48,7 @@ pub struct RangeToInclusive<T> {
 
 // foo..
 #(lang(range_from))
-pub struct RangeFrom<T: Numeric + Integral> {
+pub struct RangeFrom<T: Integral> {
     pub start: T,
 
     impl RangeBounds<T> {
@@ -113,7 +113,7 @@ pub struct RangeFull {
 pub mod ext {
     use super::*;
 
-    pub extension RangeFromExt<T: Numeric + Integral> for RangeFrom<T> {
+    pub extension RangeFromExt<T: Integral> for RangeFrom<T> {
         impl Iterator<T> {
             fn next(mut this): ?T {
                 if this.start < this.start.wrapping_add(1.cast()) {
@@ -123,7 +123,7 @@ pub mod ext {
         }
     }
 
-    pub extension RangeExt<T: Numeric + Integral> for Range<T> {
+    pub extension RangeExt<T: Integral> for Range<T> {
         impl Iterator<T> {
             fn next(mut this): ?T {
                 if this.start < this.end {
@@ -137,7 +137,7 @@ pub mod ext {
         }
     }
 
-    pub extension RangeInclusiveExt<T: Numeric + Integral> for RangeInclusive<T> {
+    pub extension RangeInclusiveExt<T: Integral> for RangeInclusive<T> {
         impl Iterator<T> {
             fn next(mut this): ?T {
                 if this.start < this.end {
