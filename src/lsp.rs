@@ -158,7 +158,7 @@ impl LanguageServer for LspBackend {
                 &LspItem::Type(id) => scopes.get(id).name.span,
                 &LspItem::Module(id) => scopes[id].kind.name(scopes).unwrap().span,
                 &LspItem::Fn(id, _) => scopes.get(id).name.span,
-                LspItem::Property(id, member) => {
+                LspItem::Property(_, id, member) => {
                     let ut = scopes.get(*id);
                     return ut.members.get(member).map(|m| m.span).or_else(|| {
                         ut.kind
@@ -225,7 +225,7 @@ impl LanguageServer for LspBackend {
             .iter()
             .flat_map(|completion| {
                 Some(match completion {
-                    LspItem::Property(id, name) => {
+                    LspItem::Property(_, id, name) => {
                         let ut = scopes.get(*id);
                         let member = ut.members.get(name).unwrap();
                         let detail = member.ty.name(scopes, types);
@@ -384,18 +384,23 @@ impl LanguageServer for LspBackend {
             &LspItem::Var(id) => Some(visualize_var(id, scopes, types)),
             &LspItem::Fn(id, _) => Some(visualize_func(id, false, scopes, types)),
             &LspItem::Type(id) => Some(visualize_type(id, scopes, types)),
-            LspItem::Property(id, name) => {
+            LspItem::Property(src_ty, id, name) => {
                 let ut = scopes.get(*id);
-                let ty = ut
-                    .members
-                    .get(name)
-                    .map(|m| m.ty)
-                    .unwrap_or(TypeId::UNKNOWN);
-                Some(format!(
-                    "{}{name}: {}",
-                    visualize_location(ut.body_scope, scopes),
-                    ty.name(scopes, types)
-                ))
+                let mem = ut.members.get(name);
+                let public = ["", "pub "][mem.map_or(false, |m| m.public) as usize];
+                let ty = mem.map_or(TypeId::UNKNOWN, |m| m.ty);
+                if matches!(ut.kind, UserTypeKind::Tuple | UserTypeKind::AnonStruct) {
+                    let real = src_ty
+                        .map(|src| ty.with_ut_templates(types, src))
+                        .unwrap_or(ty);
+                    Some(format!("{public}{name}: {}", real.name(scopes, types)))
+                } else {
+                    Some(format!(
+                        "{}{public}{name}: {}",
+                        visualize_location(ut.body_scope, scopes),
+                        ty.name(scopes, types)
+                    ))
+                }
             }
             &LspItem::Module(id) => {
                 let scope = &scopes[id];

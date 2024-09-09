@@ -145,7 +145,7 @@ pub enum LspItem {
     Fn(FunctionId, Option<UserTypeId>),
     Var(VariableId),
     Attribute(String),
-    Property(UserTypeId, String),
+    Property(Option<TypeId>, UserTypeId, String),
     BuiltinType(&'static str),
 }
 
@@ -369,7 +369,7 @@ impl TypeChecker {
             let cap = self.can_access_privates(data.scope);
             if method {
                 for (name, _) in data.members.iter().filter(|(_, m)| m.public || cap) {
-                    completions.push(LspItem::Property(ut_id, name.clone()))
+                    completions.push(LspItem::Property(Some(ty), ut_id, name.clone()))
                 }
             }
 
@@ -573,7 +573,7 @@ impl TypeChecker {
             self.proj.scopes.lang_types.insert(name.into(), id);
         }
         for (name, m) in self.proj.scopes.get(id).members.iter() {
-            check_hover!(self, m.span, LspItem::Property(id, name.clone()));
+            check_hover!(self, m.span, LspItem::Property(None, id, name.clone()));
         }
         id
     }
@@ -3129,7 +3129,10 @@ impl TypeChecker {
                     }
                 };
                 self.resolve_members(ut_id);
-                self.check_hover(name.span, LspItem::Property(ut_id, name.data.clone()));
+                self.check_hover(
+                    name.span,
+                    LspItem::Property(Some(source.ty), ut_id, name.data.clone()),
+                );
 
                 let ut = self.proj.scopes.get(ut_id);
                 let Some(member) = ut.members.get(&name.data) else {
