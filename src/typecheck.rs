@@ -6590,7 +6590,7 @@ impl TypeChecker {
                     return self.error(Error::no_lang_item("option", pattern.span));
                 };
                 let value = self.resolve_value_path_in(
-                    &[(Located::new(pattern.span, "Some".into()), vec![])],
+                    &[(Located::new(Span::default(), "Some".into()), vec![])],
                     Default::default(),
                     self.proj.scopes.get(id).body_scope,
                     pattern.span,
@@ -6609,7 +6609,7 @@ impl TypeChecker {
                     return self.error(Error::no_lang_item("option", pattern.span));
                 };
                 let value = self.resolve_value_path_in(
-                    &[(Located::new(pattern.span, "None".into()), vec![])],
+                    &[(Located::new(Span::default(), "None".into()), vec![])],
                     Default::default(),
                     self.proj.scopes.get(id).body_scope,
                     pattern.span,
@@ -7172,7 +7172,7 @@ impl TypeChecker {
                             self.check_hover(name.span, id.into());
                             if let Some(id) = self.proj.scopes.get(id).constructor {
                                 if self.proj.scopes.get(id).kind.is_union() {
-                                    self.proj.tokens.push(SpanSemanticToken::Variant(span));
+                                    self.proj.tokens.push(SpanSemanticToken::Variant(name.span));
                                 }
                             }
 
@@ -7320,14 +7320,14 @@ impl TypeChecker {
         let span = last_name.span;
         match *item {
             ValueItem::Fn(id) => {
+                self.resolve_proto(id);
+                self.check_hover(span, id.into());
                 if let Some(id) = self.proj.scopes.get(id).constructor {
                     if self.proj.scopes.get(id).kind.is_union() {
                         self.proj.tokens.push(SpanSemanticToken::Variant(span));
                     }
                 }
 
-                self.resolve_proto(id);
-                self.check_hover(span, id.into());
                 ty_args.copy_args(&self.resolve_type_args(id, last_args, false, span));
 
                 ResolvedValue::Fn(GenericFn::new(id, ty_args))
@@ -7372,13 +7372,13 @@ impl TypeChecker {
             return ResolvedValue::NotFound(Error::no_symbol(&name.data, name.span));
         };
 
+        self.check_hover(name.span, mfn.func.id.into());
         if let Some(id) = self.proj.scopes.get(mfn.func.id).constructor {
             if self.proj.scopes.get(id).kind.is_union() {
                 self.proj.tokens.push(SpanSemanticToken::Variant(name.span));
             }
         }
 
-        self.check_hover(name.span, mfn.func.id.into());
         if let Some((name, _)) = rest.first() {
             return ResolvedValue::NotFound(Error::no_symbol(&name.data, name.span));
         }

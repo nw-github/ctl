@@ -597,6 +597,7 @@ impl LspBackend {
                 let line = r.start.line;
                 let start = r.start.character;
 
+                // TODO: save the other semantic tokens so they don't have to be recalculated
                 doc.tokens.push(SemanticToken {
                     delta_line: line - prev_line,
                     delta_start: if line == prev_line {
