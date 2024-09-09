@@ -583,10 +583,11 @@ impl TypeChecker {
 
     fn declare_struct(&mut self, base: Struct, attrs: Attributes, packed: bool) -> DeclaredStmt {
         let name = base.name.clone();
+        let pub_constructor = base.public && !base.members.iter().any(|m| !m.public);
         let (ut, init, fns, impls) = self.enter(ScopeKind::None, |this| {
             let init = this.enter(ScopeKind::None, |this| {
                 this.declare_fn(Fn {
-                    public: base.public && !base.members.iter().any(|m| !m.public),
+                    public: pub_constructor,
                     name: base.name.clone(),
                     is_async: false,
                     is_extern: false,
@@ -659,7 +660,7 @@ impl TypeChecker {
         let id = self.insert_user_type(ut, base.public);
         let prev = self.proj.scopes[self.current].vns.insert(
             name.data,
-            Vis::new(ValueItem::StructConstructor(id, init.id), base.public),
+            Vis::new(ValueItem::StructConstructor(id, init.id), pub_constructor),
         );
         if prev.is_some() {
             self.error(Error::redefinition(
@@ -6916,11 +6917,15 @@ impl TypeChecker {
                         _ => (*item).into(),
                     },
                 );
+                let mut skip = false;
                 if !item.public && !self.can_access_privates(scope) {
-                    self.error(Error::private(&tail.data, tail.span))
+                    if !found {
+                        self.error(Error::private(&tail.data, tail.span))
+                    }
+                    skip = true;
                 }
 
-                if self.proj.scopes[self.current]
+                if !skip && self.proj.scopes[self.current]
                     .vns
                     .insert(tail.data.clone(), Vis::new(*item, public))
                     .is_some()
