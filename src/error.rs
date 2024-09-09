@@ -73,7 +73,7 @@ impl Diagnostics {
 
     pub fn get_span_range(data: &str, span: Span, mode: OffsetMode) -> Range {
         // maybe do this first and keep a vector of positions?
-        let mut start = (0u32, 0u32);
+        let mut start = (0, 0);
         let mut chars = data.char_indices();
         for (i, ch) in &mut chars {
             if i as u32 >= span.pos {

@@ -9,7 +9,7 @@ use crate::{
     ast::{checked::*, declared::*, parsed::*, Attributes, BinaryOp, UnaryOp},
     error::{Diagnostics, Error},
     lexer::{Located, Span},
-    project::{Dependencies, Project},
+    project::{Dependencies, Project, SpanSemanticToken},
     sym::*,
     typeid::{
         CInt, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType, Type, TypeArgs,
@@ -326,6 +326,14 @@ impl TypeChecker {
             .unwrap_or_default()
     }
 
+    #[inline(always)]
+    pub(crate) fn scopes(&self) -> &Scopes {
+        &self.proj.scopes
+    }
+}
+
+/// LSP routines
+impl TypeChecker {
     #[inline]
     fn check_hover(&mut self, span: Span, item: LspItem) {
         check_hover!(self, span, item);
@@ -558,11 +566,6 @@ impl TypeChecker {
             method: false,
         });
     }
-
-    #[inline(always)]
-    pub(crate) fn scopes(&self) -> &Scopes {
-        &self.proj.scopes
-    }
 }
 
 /// Forward declaration pass routines
@@ -719,6 +722,10 @@ impl TypeChecker {
             let ret = Self::typehint_for_struct(&base.name, &base.type_params);
             let mut enum_union = true;
             for variant in variants {
+                this.proj
+                    .tokens
+                    .push(SpanSemanticToken::Variant(variant.name.span));
+
                 let mut params = params.clone();
                 match variant.data {
                     VariantData::Empty => {
@@ -6873,6 +6880,7 @@ impl TypeChecker {
                 return self.error(Error::new("expected variant name", comp.span));
             };
             self.check_hover(tail.span, (*id).into());
+            self.proj.tokens.push(SpanSemanticToken::Variant(tail.span));
 
             if self.proj.scopes[self.current]
                 .vns
@@ -7052,6 +7060,12 @@ impl TypeChecker {
                         Some(ValueItem::Fn(id)) => {
                             self.resolve_proto(id);
                             self.check_hover(name.span, id.into());
+                            if let Some(id) = self.proj.scopes.get(id).constructor {
+                                if self.proj.scopes.get(id).kind.is_union() {
+                                    self.proj.tokens.push(SpanSemanticToken::Variant(span));
+                                }
+                            }
+
                             ResolvedValue::Fn(GenericFn::new(
                                 id,
                                 self.resolve_type_args(id, ty_args, false, name.span),
@@ -7193,32 +7207,39 @@ impl TypeChecker {
             self.error(Error::private(&last_name.data, last_name.span))
         }
 
+        let span = last_name.span;
         match *item {
             ValueItem::Fn(id) => {
+                if let Some(id) = self.proj.scopes.get(id).constructor {
+                    if self.proj.scopes.get(id).kind.is_union() {
+                        self.proj.tokens.push(SpanSemanticToken::Variant(span));
+                    }
+                }
+
                 self.resolve_proto(id);
-                self.check_hover(last_name.span, id.into());
-                ty_args.copy_args(&self.resolve_type_args(id, last_args, false, last_name.span));
+                self.check_hover(span, id.into());
+                ty_args.copy_args(&self.resolve_type_args(id, last_args, false, span));
 
                 ResolvedValue::Fn(GenericFn::new(id, ty_args))
             }
             ValueItem::StructConstructor(id, init) => {
                 self.resolve_proto(init);
-                self.check_hover(last_name.span, init.into());
-                ty_args.copy_args(&self.resolve_type_args(id, last_args, false, last_name.span));
+                self.check_hover(span, init.into());
+                ty_args.copy_args(&self.resolve_type_args(id, last_args, false, span));
                 ResolvedValue::Fn(GenericFn::new(init, ty_args))
             }
             ValueItem::UnionConstructor(id) => {
-                self.check_hover(last_name.span, id.into());
-                ty_args.copy_args(&self.resolve_type_args(id, last_args, false, last_name.span));
+                self.check_hover(span, id.into());
+                ty_args.copy_args(&self.resolve_type_args(id, last_args, false, span));
                 ResolvedValue::UnionConstructor(GenericUserType::new(id, ty_args))
             }
             ValueItem::Var(id) => {
-                self.check_hover(last_name.span, id.into());
+                self.check_hover(span, id.into());
                 resolve_type!(self, self.proj.scopes.get_mut(id).ty);
                 if !last_args.is_empty() {
                     self.error(Error::new(
                         "variables cannot be parameterized with type arguments",
-                        last_name.span,
+                        span,
                     ))
                 }
 
@@ -7240,6 +7261,12 @@ impl TypeChecker {
         else {
             return ResolvedValue::NotFound(Error::no_symbol(&name.data, name.span));
         };
+
+        if let Some(id) = self.proj.scopes.get(mfn.func.id).constructor {
+            if self.proj.scopes.get(id).kind.is_union() {
+                self.proj.tokens.push(SpanSemanticToken::Variant(name.span));
+            }
+        }
 
         self.check_hover(name.span, mfn.func.id.into());
         if let Some((name, _)) = rest.first() {

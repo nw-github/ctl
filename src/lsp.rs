@@ -9,7 +9,7 @@ use tower_lsp::{Client, LanguageServer};
 
 use crate::error::{Diagnostics, FileId, OffsetMode};
 use crate::lexer::Span;
-use crate::project::Project;
+use crate::project::{Project, SpanSemanticToken};
 use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeId, UserTypeKind, VariableId};
 use crate::typecheck::{LspInput, LspItem};
 use crate::typeid::{GenericUserType, Type, TypeId, Types};
@@ -32,6 +32,12 @@ macro_rules! writeln_de {
     };
 }
 
+macro_rules! info {
+    ($self: expr, $($arg: tt)*) => {
+        $self.client.log_message(MessageType::INFO, format!($($arg)*))
+    };
+}
+
 #[derive(serde::Deserialize, Clone, Copy, Debug)]
 struct Configuration {
     #[serde(rename = "debounceMs")]
@@ -49,10 +55,20 @@ impl Default for Configuration {
     }
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 struct Document {
     text: String,
     inlay_hints: Vec<InlayHint>,
+    tokens: Vec<SemanticToken>,
+}
+
+impl Document {
+    pub fn new(text: String) -> Self {
+        Self {
+            text,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -83,6 +99,19 @@ impl LanguageServer for LspBackend {
                         label_details_support: Some(true),
                     }),
                 }),
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            work_done_progress_options: Default::default(),
+                            legend: SemanticTokensLegend {
+                                token_types: vec![SemanticTokenType::ENUM_MEMBER],
+                                token_modifiers: vec![],
+                            },
+                            range: None,
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                        },
+                    ),
+                ),
                 // inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
                 //     InlayHintOptions {
                 //         resolve_provider: Some(true),
@@ -95,9 +124,7 @@ impl LanguageServer for LspBackend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        self.client
-            .log_message(MessageType::INFO, "Server initialized!")
-            .await;
+        info!(self, "Server initialized!").await;
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
@@ -111,10 +138,7 @@ impl LanguageServer for LspBackend {
         self.documents
             .entry(params.text_document.uri.clone())
             .and_modify(|doc| doc.text = std::mem::take(&mut params.text_document.text))
-            .or_insert(Document {
-                text: std::mem::take(&mut params.text_document.text),
-                inlay_hints: vec![],
-            });
+            .or_insert_with(|| Document::new(std::mem::take(&mut params.text_document.text)));
         _ = self
             .check_project(&params.text_document.uri, None, None)
             .await;
@@ -124,10 +148,7 @@ impl LanguageServer for LspBackend {
         self.documents
             .entry(params.text_document.uri.clone())
             .and_modify(|doc| doc.text = std::mem::take(&mut params.content_changes[0].text))
-            .or_insert(Document {
-                text: std::mem::take(&mut params.content_changes[0].text),
-                inlay_hints: vec![],
-            });
+            .or_insert_with(|| Document::new(std::mem::take(&mut params.content_changes[0].text)));
         _ = self
             .check_project(&params.text_document.uri, None, None)
             .await;
@@ -193,25 +214,19 @@ impl LanguageServer for LspBackend {
         let uri = &params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
         if let Some(ctx) = params.context.and_then(|ctx| ctx.trigger_character) {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!(
-                        "looking for completion at line {}, character {} due to trigger '{}'",
-                        pos.line, pos.character, ctx
-                    ),
-                )
-                .await;
+            info!(
+                self,
+                "looking for completion at line {}, character {} due to trigger '{ctx}'",
+                pos.line,
+                pos.character,
+            )
+            .await;
         } else {
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    format!(
-                        "looking for completion at line {}, character {}",
-                        pos.line, pos.character
-                    ),
-                )
-                .await;
+            info!(
+                self,
+                "looking for completion at line {}, character {}", pos.line, pos.character,
+            )
+            .await;
         }
 
         let mut proj = self.check_project(uri, None, Some(pos)).await?;
@@ -425,6 +440,19 @@ impl LanguageServer for LspBackend {
         }))
     }
 
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        info!(self, "Requesting semantic tokens").await;
+        Ok(self.documents.get(&params.text_document.uri).map(|c| {
+            SemanticTokensResult::Tokens(SemanticTokens {
+                result_id: None,
+                data: c.tokens.clone(),
+            })
+        }))
+    }
+
     async fn shutdown(&self) -> Result<()> {
         self.documents.clear();
         Ok(())
@@ -558,6 +586,33 @@ impl LspBackend {
                     padding_right: Default::default(),
                     data: Default::default(),
                 });
+            }
+
+            doc.tokens.clear();
+            let [mut prev_line, mut prev_start] = [0; 2];
+            proj.tokens.sort_by_key(|v| v.span().pos);
+            for token in proj.tokens.iter().filter(|v| v.span().file == file) {
+                let span = *token.span();
+                let r = Diagnostics::get_span_range(&doc.text, span, OffsetMode::Utf16);
+                let line = r.start.line;
+                let start = r.start.character;
+
+                doc.tokens.push(SemanticToken {
+                    delta_line: line - prev_line,
+                    delta_start: if line == prev_line {
+                        start - prev_start
+                    } else {
+                        start
+                    },
+                    length: span.len, // TODO: use UTF-16 length
+                    token_type: match token {
+                        SpanSemanticToken::Variant(_) => 0,
+                    },
+                    token_modifiers_bitset: 0,
+                });
+
+                prev_line = line;
+                prev_start = start;
             }
         }
 

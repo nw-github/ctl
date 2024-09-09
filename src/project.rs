@@ -4,8 +4,20 @@ use crate::{
     sym::{FunctionId, ScopeId, Scopes},
     typecheck::{Completions, LspItem},
     typeid::{TypeId, Types},
-    Diagnostics,
+    Diagnostics, Span,
 };
+
+pub enum SpanSemanticToken {
+    Variant(Span),
+}
+
+impl SpanSemanticToken {
+    pub fn span(&self) -> &Span {
+        match self {
+            SpanSemanticToken::Variant(span) => span,
+        }
+    }
+}
 
 pub enum Dependencies {
     Resolving,
@@ -22,6 +34,7 @@ pub struct Project {
     pub hover: Option<LspItem>,
     pub completions: Option<Completions>,
     pub deps: HashMap<TypeId, Dependencies>,
+    pub tokens: Vec<SpanSemanticToken>,
     pub main: Option<FunctionId>,
 }
 
