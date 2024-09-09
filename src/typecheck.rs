@@ -2290,7 +2290,19 @@ impl TypeChecker {
                         | Type::Usize,
                         BinaryOp::Shl | BinaryOp::Shr | BinaryOp::ShlAssign | BinaryOp::ShrAssign,
                     ) => {
-                        let right = self.type_check(*right, TypeId::U32);
+                        let right = self.check_expr(*right, Some(TypeId::U32));
+                        let right = self.try_coerce(right, TypeId::U32);
+                        if !self.proj.types[right.ty]
+                            .as_integral()
+                            .is_some_and(|v| !v.signed)
+                            && right.ty != TypeId::UNKNOWN
+                        {
+                            self.proj.diag.error(Error::type_mismatch_s(
+                                "{unsigned}",
+                                &right.ty.name(&self.proj.scopes, &mut self.proj.types),
+                                span,
+                            ));
+                        }
                         CheckedExpr::new(
                             if assignment { TypeId::VOID } else { left.ty },
                             CheckedExprData::Binary {
