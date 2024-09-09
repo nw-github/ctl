@@ -318,6 +318,7 @@ pub enum Pattern {
     Array(Vec<Located<Pattern>>),
     Rest(Option<(bool, Located<String>)>),
     Bool(bool),
+    Or(Vec<Located<Pattern>>),
     Void,
     Error,
 }

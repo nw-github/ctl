@@ -10,11 +10,7 @@ pub trait Cmp<T> {
     fn cmp(this, rhs: *T): Ordering;
 
     fn ge(this, rhs: *T): bool {
-        match this.cmp(rhs) {
-            Ordering::Greater => true,
-            Ordering::Equal => true,
-            _ => false,
-        }
+        this.cmp(rhs) is Ordering::Greater | Ordering::Equal
     }
 
     fn gt(this, rhs: *T): bool {
@@ -22,11 +18,7 @@ pub trait Cmp<T> {
     }
 
     fn le(this, rhs: *T): bool {
-        match this.cmp(rhs) {
-            Ordering::Less => true,
-            Ordering::Equal => true,
-            _ => false,
-        }
+        this.cmp(rhs) is Ordering::Less | Ordering::Equal
     }
 
     fn lt(this, rhs: *T): bool {

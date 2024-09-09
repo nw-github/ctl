@@ -54,8 +54,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
 
     pub fn remove(mut this, key: *K): ?V {
         match this.buckets.get_mut(this.entry_pos(key))? {
-            Bucket::None => null,
-            Bucket::Tombstone => null,
+            Bucket::Tombstone | Bucket::None => null,
             entry => {
                 this.len--;
                 if std::mem::replace(entry, Bucket::Tombstone) is Bucket::Some(_, v) {

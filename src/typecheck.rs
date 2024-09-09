@@ -3438,11 +3438,21 @@ impl TypeChecker {
     }
 
     fn type_check_with_listen(&mut self, expr: Expr) -> (CheckedExpr, Vec<VariableId>) {
+        self.listen_for_vars(self.current_expr + 1, |this| {
+            this.type_check(expr, TypeId::BOOL)
+        })
+    }
+
+    fn listen_for_vars<T>(
+        &mut self,
+        expr: usize,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> (T, Vec<VariableId>) {
         let prev = std::mem::take(&mut self.listening_vars);
-        let prev_insp = std::mem::replace(&mut self.listening_expr, self.current_expr + 1);
-        let expr = self.type_check(expr, TypeId::BOOL);
+        let prev_insp = std::mem::replace(&mut self.listening_expr, expr);
+        let res = f(self);
         self.listening_expr = prev_insp;
-        (expr, std::mem::replace(&mut self.listening_vars, prev))
+        (res, std::mem::replace(&mut self.listening_vars, prev))
     }
 
     fn define(&mut self, vars: &[VariableId]) {
@@ -6416,6 +6426,83 @@ impl TypeChecker {
         }
     }
 
+    fn check_or_pattern(
+        &mut self,
+        scrutinee: TypeId,
+        mutable: bool,
+        subpatterns: Vec<Located<Pattern>>,
+        typ: PatternType,
+    ) -> CheckedPattern {
+        let mut prev_vars = HashMap::new();
+        let mut patterns = vec![];
+        let nsubpatterns = subpatterns.len();
+        for (i, pattern) in subpatterns.into_iter().enumerate() {
+            let patt_span = pattern.span;
+            let (res, vars) = self.listen_for_vars(self.current_expr, |this| {
+                this.check_pattern(PatternParams {
+                    binding: true,
+                    scrutinee,
+                    mutable,
+                    pattern,
+                    typ: if i + 1 != nsubpatterns {
+                        PatternType::BodylessFn
+                    } else {
+                        typ
+                    },
+                    has_hint: false,
+                })
+            });
+            patterns.push(res);
+            if self.current_expr == self.listening_expr {
+                self.listening_vars.extend_from_slice(&vars);
+            }
+
+            if i == 0 {
+                prev_vars = vars
+                    .into_iter()
+                    .map(|v| (self.proj.scopes.get(v).name.data.clone(), v))
+                    .collect();
+                continue;
+            }
+
+            let mut prev_vars = prev_vars.clone();
+            for &id in vars.iter() {
+                let var = self.proj.scopes.get(id);
+                if let Some(old_ty) = prev_vars
+                    .remove(&var.name.data)
+                    .map(|v| self.proj.scopes.get(v).ty)
+                {
+                    if var.ty != old_ty {
+                        let ty_name = var.ty.name(&self.proj.scopes, &mut self.proj.types);
+                        let old_ty_name = old_ty.name(&self.proj.scopes, &mut self.proj.types);
+                        self.error(Error::new(
+                            format!(
+                                "type of variable '{}' ({ty_name}) differs from its original type '{old_ty_name}'",
+                                var.name.data,
+                            ),
+                            var.name.span,
+                        ))
+                    }
+                } else {
+                    self.error(Error::new(
+                        format!("variable '{}' is not defined in all cases", var.name.data),
+                        var.name.span,
+                    ))
+                }
+            }
+
+            for (name, _) in prev_vars {
+                self.error(Error::new(
+                    format!("pattern must bind variable '{name}'"),
+                    patt_span,
+                ))
+            }
+        }
+
+        // TODO: the pattern can be irrefutable if it is exhaustive
+        CheckedPattern::refutable(CheckedPatternData::Or(patterns))
+    }
+
     fn check_pattern(
         &mut self,
         PatternParams {
@@ -6671,6 +6758,7 @@ impl TypeChecker {
 
                 CheckedPattern::irrefutable(CheckedPatternData::Void)
             }
+            Pattern::Or(sub) => self.check_or_pattern(scrutinee, mutable, sub, typ),
             Pattern::Error => Default::default(),
         }
     }

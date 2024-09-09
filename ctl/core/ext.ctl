@@ -20,8 +20,7 @@ pub extension U8Impl for u8 {
     }
 
     pub fn is_ascii_whitespace(my this): bool {
-        // TODO: or pattern when possible
-        this is b'\t' or this is b'\n' or this is b'\x0C' or this is b'\r' or this is b' '
+        this is b'\t' | b'\n' | b'\x0C' | b'\r' | b' '
     }
 
     pub fn is_ascii_upper(my this): bool {
@@ -37,7 +36,7 @@ pub extension U8Impl for u8 {
     }
 
     pub fn is_ascii_hexdigit(my this): bool {
-        this is b'0'..=b'9' or this is b'A'..=b'F'
+        this is b'0'..=b'9' | b'A'..=b'F'
     }
 
     pub fn make_ascii_upper(mut this) {

@@ -62,6 +62,7 @@ pub enum CheckedPatternData {
         inner: TypeId,
     },
     Variable(VariableId),
+    Or(Vec<CheckedPattern>),
     Void,
     #[default]
     Error,

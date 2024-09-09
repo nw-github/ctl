@@ -3040,6 +3040,29 @@ impl Codegen {
                 });
             }
             CheckedPatternData::Void => {}
+            CheckedPatternData::Or(patterns) => {
+                let mut conds = JoiningBuilder::new("||", "1");
+                let mut binds = Buffer::default();
+                for pattern in patterns {
+                    let mut tmp = JoiningBuilder::new("&&", "1");
+                    self.emit_pattern_inner(
+                        state,
+                        &pattern.data,
+                        src,
+                        ty,
+                        borrow,
+                        &mut binds,
+                        &mut tmp,
+                    );
+                    conds.next_str(format!("({})", tmp.finish()));
+                }
+
+                if !binds.0.is_empty() {
+                    todo!("codegen for or pattern with variable bindings");
+                }
+
+                conditions.next_str(format!("({})", conds.finish()));
+            }
             CheckedPatternData::Error => panic!("ICE: CheckedPatternData::Error in gen_pattern"),
         }
     }

@@ -1046,12 +1046,10 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.expect(Token::LCurly);
         let mut body = Vec::new();
         let span = self.next_until(Token::RCurly, token, |this| {
-            let pattern = this
-                .pattern_ex(false, EvalContext::Normal)
-                .map(|data| FullPattern {
-                    data,
-                    if_expr: this.next_if(Token::If).map(|_| this.expression().into()),
-                });
+            let pattern = this.pattern(false).map(|data| FullPattern {
+                data,
+                if_expr: this.next_if(Token::If).map(|_| this.expression().into()),
+            });
             this.expect(Token::FatArrow);
             let (needs_comma, expr) = this.block_or_normal_expr(None);
             if needs_comma {
@@ -1333,11 +1331,12 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.csv_one(Token::RParen, span, |this| this.pattern(mut_var))
     }
 
-    fn pattern_ex(&mut self, mut_var: bool, ctx: EvalContext) -> Located<Pattern> {
+    fn pattern_impl(&mut self, mut_var: bool, ctx: EvalContext) -> Located<Pattern> {
         match self.peek().data {
             Token::Question => {
+                // call pattern_impl so `?x | y` is not interpreted as `?(x | y)`
                 self.next();
-                self.pattern_ex(false, ctx)
+                self.pattern_impl(false, ctx)
                     .map(|inner| Pattern::Option(inner.into()))
             }
             Token::None => Located::new(self.next().span, Pattern::Null),
@@ -1397,6 +1396,22 @@ impl<'a, 'b> Parser<'a, 'b> {
                     _ => Located::new(path.span(), Pattern::Path(path)),
                 }
             }
+        }
+    }
+
+    fn pattern_ex(&mut self, mut_var: bool, ctx: EvalContext) -> Located<Pattern> {
+        let patt = self.pattern_impl(mut_var, ctx);
+        if self.peek().data == Token::BitOr {
+            let mut span = patt.span;
+            let mut patterns = vec![patt];
+            while self.next_if(Token::BitOr).is_some() {
+                let patt = self.pattern_ex(mut_var, ctx);
+                span.extend_to(patt.span);
+                patterns.push(patt);
+            }
+            Located::new(span, Pattern::Or(patterns))
+        } else {
+            patt
         }
     }
 
