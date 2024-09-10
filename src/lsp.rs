@@ -768,8 +768,12 @@ fn visualize_func(id: FunctionId, small: bool, scopes: &Scopes, types: &mut Type
             res += "kw ";
         }
 
-        if param.label == THIS_PARAM && types[param.ty].is_mut_ptr() {
-            res += "mut ";
+        if param.label == THIS_PARAM {
+            match types[param.ty] {
+                Type::MutPtr(_) => res += "mut ",
+                Type::Ptr(_) => {}
+                _ => res += "my ",
+            }
         }
 
         if param
