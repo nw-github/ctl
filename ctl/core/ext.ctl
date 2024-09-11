@@ -5,12 +5,17 @@ use core::span::*;
 use core::reflect::*;
 use core::string::str;
 use core::intrin;
+use core::range::ext::*;
 
 static DIGITS: [u8; 36] = *b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 extension _<T> for T {
     pub fn as_byte_span(this): [u8..] {
         unsafe Span::new(this as *raw u8, core::mem::size_of::<T>())
+    }
+
+    pub fn as_byte_span_mut(mut this): [mut u8..] {
+        unsafe SpanMut::new(this as *raw u8, core::mem::size_of::<T>())
     }
 }
 
@@ -227,6 +232,18 @@ pub extension IntegralImpl<T: Integral> for T {
         if this == rhs.cast() {
             rhs
         }
+    }
+
+    #(inline)
+    pub fn bswap(my mut this): T {
+        // TODO: make calls to compiler intrinsics when possible
+        //  GCC & clang are smart enough to optimize this as-is to a bswap instruction
+        //  when possible, other compilers (cough cough MSVC) may not.
+        let span = this.as_byte_span_mut();
+        for i in 0u..span.len() / 2 {
+            span.swap(i, span.len() - i - 1);
+        }
+        this
     }
 
     fn from_str_radix_common(chars: core::string::Chars, radix: u32): ?T {
