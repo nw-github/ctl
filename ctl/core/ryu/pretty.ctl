@@ -22,8 +22,8 @@ pub unsafe fn format32(f: f32, res: *raw u8): uint {
         }
 
         let {exponent, mantissa} = f2d(ieee_mantissa, ieee_exponent);
-        let length = decimal_length9(mantissa) as int;
-        let k = exponent as int;
+        let length = decimal_length9(mantissa) as! int;
+        let k = exponent as! int;
         let kk = length + k; // 10^(kk-1) <= v < 10^kk
         debug_assert(k >= -45);
 
@@ -35,17 +35,17 @@ pub unsafe fn format32(f: f32, res: *raw u8): uint {
             }
             *(res + index + kk) = b'.';
             *(res + index + kk + 1) = b'0';
-            index as uint + kk as uint + 2
+            index as! uint + kk as! uint + 2
         } else if 0 < kk and kk <= 13 {
             // 1234e-2 -> 12.34
             write_mantissa(mantissa, (res + index + length + 1));
             core::mem::copy_overlapping(
                 dst: res + index, 
                 src: res + index + 1, 
-                num: kk as uint,
+                num: kk as! uint,
             );
             *(res + index + kk) = b'.';
-            index as uint + length as uint + 1
+            index as! uint + length as! uint + 1
         } else if -6 < kk and kk <= 0 {
             // 1234e-6 -> 0.001234
             *(res + index) = b'0';
@@ -55,20 +55,20 @@ pub unsafe fn format32(f: f32, res: *raw u8): uint {
                 *(res + index + i) = b'0';
             }
             write_mantissa(mantissa, res + index + length + offset);
-            index as uint + length as uint + offset as uint
+            index as! uint + length as! uint + offset as! uint
         } else if length == 1 {
             // 1e30
             *(res + index) = b'0' + mantissa as! u8;
             *(res + index + 1) = b'e';
-            index as uint + 2 + write_exponent2(kk - 1, res + index + 2)
+            index as! uint + 2 + write_exponent2(kk - 1, res + index + 2)
         } else {
             // 1234e30 -> 1.234e33
             write_mantissa(mantissa, res + index + length + 1);
             *(res + index) = *(res + index + 1);
             *(res + index + 1) = b'.';
             *(res + index + length + 1) = b'e';
-            index as uint
-                + length as uint
+            index as! uint
+                + length as! uint
                 + 2
                 + write_exponent2(kk - 1, res + index + length + 2)
         }
@@ -95,8 +95,8 @@ pub unsafe fn format64(f: f64, res: *raw u8): uint {
         }
 
         let {exponent, mantissa} = d2d(ieee_mantissa, ieee_exponent);
-        let length = decimal_length17(mantissa) as int;
-        let k = exponent as int;
+        let length = decimal_length17(mantissa) as! int;
+        let k = exponent as! int;
         let kk = length + k; // 10^(kk-1) <= v < 10^kk
         debug_assert(k >= -324);
 
@@ -108,17 +108,17 @@ pub unsafe fn format64(f: f64, res: *raw u8): uint {
             }
             *(res + index + kk) = b'.';
             *(res + index + kk + 1) = b'0';
-            index as uint + kk as uint + 2
+            index as! uint + kk as! uint + 2
         } else if 0 < kk and kk <= 16 {
             // 1234e-2 -> 12.34
             write_mantissa_long(mantissa, res + index + length + 1);
             core::mem::copy_overlapping(
                 dst: res + index,
                 src: res + index + 1,
-                num: kk as uint,
+                num: kk as! uint,
             );
             *(res + index + kk) = b'.';
-            index as uint + length as uint + 1
+            index as! uint + length as! uint + 1
         } else if -5 < kk and kk <= 0 {
             // 1234e-6 -> 0.001234
             *(res + index) = b'0';
@@ -128,20 +128,20 @@ pub unsafe fn format64(f: f64, res: *raw u8): uint {
                 *(res + index + i) = b'0';
             }
             write_mantissa_long(mantissa, res + index + length + offset);
-            index as uint + length as uint + offset as uint
+            index as! uint + length as! uint + offset as! uint
         } else if length == 1 {
             // 1e30
             *(res + index) = b'0' + mantissa as! u8;
             *(res + index + 1) = b'e';
-            index as uint + 2 + write_exponent3(kk - 1, res + index + 2)
+            index as! uint + 2 + write_exponent3(kk - 1, res + index + 2)
         } else {
             // 1234e30 -> 1.234e33
             write_mantissa_long(mantissa, res + index + length + 1);
             *(res + index) = *(res + index + 1);
             *(res + index + 1) = b'.';
             *(res + index + length + 1) = b'e';
-            index as uint
-                + length as uint
+            index as! uint
+                + length as! uint
                 + 2
                 + write_exponent3(kk - 1, res + index + length + 2)
         }

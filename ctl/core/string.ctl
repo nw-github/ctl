@@ -134,7 +134,7 @@ pub struct Chars {
                     core::unreachable_unchecked();
                 }
 
-                cp as! char
+                char::from_u32_unchecked(cp)
             }
         }
     }
