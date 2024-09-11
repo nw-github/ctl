@@ -10,12 +10,14 @@ pub enum PathOrigin {
     Root,
     Super(Span),
     Normal,
+    Infer,
 }
 
 impl std::fmt::Display for PathOrigin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Root => write!(f, "::"),
+            Self::Infer => write!(f, ":"),
             Self::Super(_) => write!(f, "super::"),
             _ => Ok(()),
         }

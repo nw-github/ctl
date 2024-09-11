@@ -431,10 +431,6 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::Char(value) => Expr::new(span, ExprData::Char(value)),
             Token::ByteString(value) => Expr::new(span, ExprData::ByteString(value)),
             Token::ByteChar(value) => Expr::new(span, ExprData::ByteChar(value)),
-            Token::Ident(ident) => {
-                let data = self.path_components(Some(Located::new(span, ident.into())), &mut span);
-                Expr::new(span, ExprData::Path(Path::new(PathOrigin::Normal, data)))
-            }
             Token::This => Expr::new(
                 span,
                 ExprData::Path(Located::new(span, THIS_PARAM.to_owned()).into()),
@@ -443,6 +439,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                 span,
                 ExprData::Path(Located::new(span, THIS_TYPE.to_owned()).into()),
             ),
+            Token::Ident(ident) => {
+                let data = self.path_components(Some(Located::new(span, ident.into())), &mut span);
+                Expr::new(span, ExprData::Path(Path::new(PathOrigin::Normal, data)))
+            }
             Token::ScopeRes => {
                 let ident = self.expect_ident("expected name");
                 let data = self.path_components(Some(ident), &mut span);
@@ -457,6 +457,16 @@ impl<'a, 'b> Parser<'a, 'b> {
                 Expr::new(
                     span,
                     ExprData::Path(Path::new(PathOrigin::Super(original), data)),
+                )
+            }
+            Token::Colon => {
+                let ident = self.expect_ident("expected identifier");
+                Expr::new(
+                    span.extended_to(ident.span),
+                    ExprData::Path(Path::new(
+                        PathOrigin::Infer,
+                        vec![(ident, Default::default())],
+                    )),
                 )
             }
             Token::StringPart(value) => {
@@ -1332,44 +1342,51 @@ impl<'a, 'b> Parser<'a, 'b> {
     }
 
     fn pattern_impl(&mut self, mut_var: bool, ctx: EvalContext) -> Located<Pattern> {
-        match self.peek().data {
+        let path = match self.peek().data {
             Token::Question => {
                 // call pattern_impl so `?x | y` is not interpreted as `?(x | y)`
                 self.next();
-                self.pattern_impl(false, ctx)
-                    .map(|inner| Pattern::Option(inner.into()))
+                return self
+                    .pattern_impl(false, ctx)
+                    .map(|inner| Pattern::Option(inner.into()));
             }
-            Token::None => Located::new(self.next().span, Pattern::Null),
+            Token::None => return Located::new(self.next().span, Pattern::Null),
             Token::LParen => {
                 let span = self.next().span;
-                self.tuple_like(span, mut_var).map(Pattern::Tuple)
+                return self.tuple_like(span, mut_var).map(Pattern::Tuple);
             }
             Token::LCurly => {
                 let span = self.next().span;
-                self.struct_like(span, mut_var).map(Pattern::Struct)
+                return self.struct_like(span, mut_var).map(Pattern::Struct);
             }
             Token::LBrace => {
                 let span = self.next().span;
-                self.csv(Vec::new(), Token::RBrace, span, |this| {
-                    if let Some(token) = this.next_if(Token::Ellipses) {
-                        let pattern = if this.next_if(Token::Mut).is_some() {
-                            let ident = this.expect_ident("expected name");
-                            Some((true, ident))
-                        } else {
-                            let ident = this.next_if_map(|t| {
-                                t.data
-                                    .as_ident()
-                                    .map(|&i| Located::new(t.span, i.to_string()))
-                            });
-                            Some(false).zip(ident)
-                        };
+                return self
+                    .csv(Vec::new(), Token::RBrace, span, |this| {
+                        if let Some(token) = this.next_if(Token::Ellipses) {
+                            let pattern = if this.next_if(Token::Mut).is_some() {
+                                let ident = this.expect_ident("expected name");
+                                Some((true, ident))
+                            } else {
+                                let ident = this.next_if_map(|t| {
+                                    t.data
+                                        .as_ident()
+                                        .map(|&i| Located::new(t.span, i.to_string()))
+                                });
+                                Some(false).zip(ident)
+                            };
 
-                        Located::new(token.span, Pattern::Rest(pattern))
-                    } else {
-                        this.pattern(mut_var)
-                    }
-                })
-                .map(Pattern::Array)
+                            Located::new(token.span, Pattern::Rest(pattern))
+                        } else {
+                            this.pattern(mut_var)
+                        }
+                    })
+                    .map(Pattern::Array);
+            }
+            Token::Colon => {
+                self.next();
+                let ident = self.expect_ident("expected identifier");
+                Path::new(PathOrigin::Infer, vec![(ident, Default::default())])
             }
             _ => {
                 if mut_var || self.next_if(Token::Mut).is_some() {
@@ -1381,21 +1398,22 @@ impl<'a, 'b> Parser<'a, 'b> {
                     }
                 }
 
-                let path = self.type_path();
-                match self.peek().data {
-                    Token::LParen => {
-                        let span = self.next().span;
-                        self.tuple_like(span, mut_var)
-                            .map(|subpatterns| Pattern::TupleLike { path, subpatterns })
-                    }
-                    Token::LCurly if ctx != EvalContext::IfWhile => {
-                        let span = self.next().span;
-                        self.struct_like(span, mut_var)
-                            .map(|subpatterns| Pattern::StructLike { path, subpatterns })
-                    }
-                    _ => Located::new(path.span(), Pattern::Path(path)),
-                }
+                self.type_path()
             }
+        };
+
+        match self.peek().data {
+            Token::LParen => {
+                let span = self.next().span;
+                self.tuple_like(span, mut_var)
+                    .map(|subpatterns| Pattern::TupleLike { path, subpatterns })
+            }
+            Token::LCurly if ctx != EvalContext::IfWhile => {
+                let span = self.next().span;
+                self.struct_like(span, mut_var)
+                    .map(|subpatterns| Pattern::StructLike { path, subpatterns })
+            }
+            _ => Located::new(path.span(), Pattern::Path(path)),
         }
     }
 

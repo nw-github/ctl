@@ -2870,7 +2870,7 @@ impl TypeChecker {
                     .unwrap_or(TypeId::F64),
                 CheckedExprData::Float(value),
             ),
-            ExprData::Path(path) => match self.resolve_value_path(&path) {
+            ExprData::Path(path) => match self.resolve_value_path(&path, target) {
                 ResolvedValue::Var(id) => {
                     let var = self.proj.scopes.get(id);
                     if !var.is_static
@@ -4265,7 +4265,7 @@ impl TypeChecker {
                     );
                 }
             }
-            ExprData::Path(ref path) => match self.resolve_value_path(path) {
+            ExprData::Path(ref path) => match self.resolve_value_path(path, target) {
                 ResolvedValue::UnionConstructor(ut) => {
                     return self.check_unsafe_union_constructor(target, ut, args, span);
                 }
@@ -6395,8 +6395,8 @@ impl TypeChecker {
                 })
             }
             Ok((None, _)) => self.error(Error::expected_found(
-                "tuple variant pattern",
                 "empty variant pattern",
+                "tuple variant pattern",
                 span,
             )),
             Err(Some(err)) => self.error(err),
@@ -6518,11 +6518,11 @@ impl TypeChecker {
         let span = pattern.span;
         match pattern.data {
             Pattern::TupleLike { path, subpatterns } => {
-                let value = self.resolve_value_path(&path);
+                let value = self.resolve_value_path(&path, Some(scrutinee));
                 self.check_tuple_union_pattern(scrutinee, mutable, value, subpatterns, span, typ)
             }
             Pattern::StructLike { path, subpatterns } => {
-                let value = self.resolve_value_path(&path);
+                let value = self.resolve_value_path(&path, Some(scrutinee));
                 match self.get_union_variant(scrutinee, value, span) {
                     Ok((Some(scrutinee), variant)) => {
                         CheckedPattern::refutable(CheckedPatternData::Variant {
@@ -6542,7 +6542,7 @@ impl TypeChecker {
                         })
                     }
                     Ok((None, _)) => self.error(Error::expected_found(
-                        "tuple variant pattern",
+                        "struct variant pattern",
                         "empty variant pattern",
                         span,
                     )),
@@ -6551,7 +6551,7 @@ impl TypeChecker {
                 }
             }
             Pattern::Path(path) => {
-                let value = self.resolve_value_path(&path);
+                let value = self.resolve_value_path(&path, Some(scrutinee));
                 if let Some(ident) = path.as_identifier() {
                     match self.get_union_variant(scrutinee, value, span) {
                         Ok(_) if binding => self.error(Error::new(
@@ -6862,6 +6862,7 @@ impl TypeChecker {
                 }
                 self.resolve_use_in(ScopeId::ROOT, *public, components, tail)
             }
+            PathOrigin::Infer => unreachable!("Infer origin in use path"),
         }
     }
 
@@ -6925,10 +6926,11 @@ impl TypeChecker {
                     skip = true;
                 }
 
-                if !skip && self.proj.scopes[self.current]
-                    .vns
-                    .insert(tail.data.clone(), Vis::new(*item, public))
-                    .is_some()
+                if !skip
+                    && self.proj.scopes[self.current]
+                        .vns
+                        .insert(tail.data.clone(), Vis::new(*item, public))
+                        .is_some()
                 {
                     self.error(Error::redefinition(&tail.data, tail.span))
                 }
@@ -7079,6 +7081,7 @@ impl TypeChecker {
                     ),
                 }
             }
+            PathOrigin::Infer => unreachable!("Infer path in type path"),
         }
     }
 
@@ -7145,7 +7148,7 @@ impl TypeChecker {
         unreachable!()
     }
 
-    fn resolve_value_path(&mut self, path: &Path) -> ResolvedValue {
+    fn resolve_value_path(&mut self, path: &Path, target: Option<TypeId>) -> ResolvedValue {
         let span = path.span();
         match path.origin {
             PathOrigin::Root => self.resolve_value_path_in(
@@ -7259,6 +7262,43 @@ impl TypeChecker {
                         ),
                     }
                 }
+            }
+            PathOrigin::Infer => {
+                let Some(scope) = target
+                    .and_then(|t| self.proj.types[t.strip_references(&self.proj.types)].as_user())
+                    .map(|ut| self.proj.scopes.get(ut.id))
+                    .filter(|ut| ut.kind.is_union())
+                    .map(|ut| ut.body_scope)
+                else {
+                    return self.error(Error::new("cannot infer union type", span));
+                };
+
+                let res =
+                    self.resolve_value_path_in(&path.components, Default::default(), scope, span);
+                let func = match &res {
+                    ResolvedValue::NotFound(_) | ResolvedValue::Error => return res,
+                    ResolvedValue::Fn(func) => func,
+                    ResolvedValue::MemberFn(mfn) => &mfn.func,
+                    ResolvedValue::UnionConstructor(_) | ResolvedValue::Var(_) => {
+                        self.proj
+                            .diag
+                            .error(Error::new("infer path must be to union variant", span));
+                        return res;
+                    }
+                };
+
+                let f = self.proj.scopes.get(func.id);
+                if !f
+                    .constructor
+                    .is_some_and(|id| self.proj.scopes.get(id).kind.is_union())
+                {
+                    self.proj.diag.error(Error::new(
+                        format!("function '{}' is not a union variant", f.name),
+                        span,
+                    ));
+                }
+
+                res
             }
         }
     }
