@@ -689,7 +689,7 @@ impl Scopes {
             return true;
         }
 
-        if let Some(int) = ty.as_integral() {
+        if let Some(int) = ty.as_integral(false) {
             if Some(&bound.id) == self.lang_traits.get("integral") {
                 return true;
             }

@@ -15,8 +15,8 @@ use crate::{
     sym::*,
     typecheck::TypeChecker,
     typeid::{
-        CInt, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, Type, TypeArgs, TypeId,
-        Types,
+        BitSizeResult, CInt, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, Type,
+        TypeArgs, TypeId, Types,
     },
     write_de, writeln_de, CodegenFlags, THIS_PARAM,
 };
@@ -1498,7 +1498,7 @@ impl Codegen {
             }
             CheckedExprData::Char(value) => {
                 self.emit_cast(expr.ty);
-                write_de!(self.buffer, "0x{:x}", value as u32);
+                write_de!(self.buffer, "{:#x}", value as u32);
             }
             CheckedExprData::Void => self.buffer.emit(VOID_INSTANCE),
             CheckedExprData::Fn(mut func, scope) => {
@@ -2217,7 +2217,7 @@ impl Codegen {
                     let ty = &self.proj.types[lhs.ty];
                     if matches!(ty, Type::RawPtr(_)) {
                         self.emit_type(TypeId::ISIZE);
-                    } else if let Some(int) = ty.as_integral() {
+                    } else if let Some(int) = ty.as_integral(true) {
                         let ty = self
                             .proj
                             .types
@@ -2615,8 +2615,12 @@ impl Codegen {
                 self.emit_expr(args.next().unwrap().1, state);
                 write_de!(self.buffer, ")");
             }
-            "max_value" => self.emit_literal(ret.as_integral(&self.proj.types).unwrap().max(), ret),
-            "min_value" => self.emit_literal(ret.as_integral(&self.proj.types).unwrap().min(), ret),
+            "max_value" => {
+                self.emit_literal(ret.as_integral(&self.proj.types, true).unwrap().max(), ret)
+            }
+            "min_value" => {
+                self.emit_literal(ret.as_integral(&self.proj.types, true).unwrap().min(), ret)
+            }
             "size_of" => {
                 write_de!(
                     self.buffer,
@@ -3367,19 +3371,16 @@ impl Codegen {
         let mut result = JoiningBuilder::new("|", "0");
         self.bitfield_access(id, member, ty, |this, access| {
             let BitfieldAccess {
-                reading,
                 word,
                 bit_offset,
-                needed_bits,
-                bits,
-                word_size_bits,
                 enum_tag,
+                partial,
+                offset,
+                mask,
+                word_size_bits: _,
             } = access;
             result.next(|buffer| {
                 usebuf!(this, buffer, {
-                    let offset = bits - needed_bits;
-                    let partial = reading != word_size_bits;
-                    let mask = 1u64.wrapping_shl(reading).wrapping_sub(1);
                     if enum_tag.is_some() {
                         this.emit_cast(ty);
                         write_de!(this.buffer, "{{ .{UNION_TAG_NAME}=");
@@ -3410,20 +3411,16 @@ impl Codegen {
         let mut word_type = None;
         self.bitfield_access(id, member, ty, |this, access| {
             let BitfieldAccess {
-                reading,
                 word,
                 bit_offset,
-                needed_bits,
-                bits,
                 word_size_bits,
                 enum_tag,
+                mask,
+                offset,
+                partial,
             } = access;
-
-            let mask = 1u64.wrapping_shl(reading).wrapping_sub(1);
-            let offset = bits - needed_bits;
             let ty =
                 word_type.get_or_insert_with(|| this.proj.types.insert(Type::Uint(word_size_bits)));
-            let partial = reading != word_size_bits;
 
             write_de!(this.buffer, "{tmp}.{ARRAY_DATA_NAME}[{word}] &= ~(");
             this.emit_cast(*ty);
@@ -3455,18 +3452,10 @@ impl Codegen {
     ) {
         let bf = self.proj.scopes.get(id).kind.as_packed_struct().unwrap();
         let word_size_bits = (bf.align * 8) as u32;
-        let mut enum_tag = None;
-        let bits = match &self.proj.types[ty] {
-            Type::Bool => 1,
-            Type::Int(n) | Type::Uint(n) => *n,
-            Type::User(ut) => {
-                let tag = enum_tag.insert(self.proj.scopes.get(ut.id).kind.as_union().unwrap().tag);
-                match self.proj.types[*tag] {
-                    Type::Int(n) | Type::Uint(n) => n,
-                    _ => tag.size_and_align(&self.proj.scopes, &mut self.proj.types).0 as u32 * 8,
-                }
-            }
-            _ => ty.size_and_align(&self.proj.scopes, &mut self.proj.types).0 as u32 * 8,
+        let (bits, enum_tag) = match ty.bit_size(&self.proj) {
+            BitSizeResult::Size(n) => (n, None),
+            BitSizeResult::Tag(tag, n) => (n, Some(tag)),
+            _ => unreachable!(),
         };
 
         let mut word = bf.bit_offsets[member] / word_size_bits;
@@ -3478,12 +3467,12 @@ impl Codegen {
                 self,
                 BitfieldAccess {
                     word_size_bits,
-                    reading,
                     word,
                     bit_offset,
-                    needed_bits,
-                    bits,
                     enum_tag,
+                    offset: bits - needed_bits,
+                    partial: reading != word_size_bits,
+                    mask: 1u64.wrapping_shl(reading).wrapping_sub(1),
                 },
             );
             word += 1;
@@ -3493,21 +3482,8 @@ impl Codegen {
     }
 
     fn emit_literal(&mut self, literal: BigInt, ty: TypeId) {
-        let largest_type = Integer {
-            bits: CInt::LongLong.size() as u32 * 8,
-            signed: false,
-        };
-        let base = match ty {
-            TypeId::BOOL => Integer {
-                bits: 1,
-                signed: false,
-            },
-            TypeId::CHAR => Integer {
-                bits: 32,
-                signed: false,
-            },
-            _ => ty.as_integral(&self.proj.types).unwrap(),
-        };
+        let largest_type = Integer::from_cint(CInt::LongLong, false);
+        let base = ty.as_integral(&self.proj.types, true).unwrap();
         if base.bits <= largest_type.bits {
             self.emit_cast(ty);
             if base.signed && literal == base.min() {
@@ -3626,13 +3602,13 @@ impl Codegen {
 }
 
 struct BitfieldAccess {
-    reading: u32,
     word: u32,
     bit_offset: u32,
-    needed_bits: u32,
-    bits: u32,
     word_size_bits: u32,
     enum_tag: Option<TypeId>,
+    offset: u32,
+    partial: bool,
+    mask: u64,
 }
 
 fn vtable_methods(scopes: &Scopes, types: &Types, tr: &UserType) -> Vec<Vis<FunctionId>> {

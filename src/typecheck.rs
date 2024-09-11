@@ -12,8 +12,8 @@ use crate::{
     project::{Dependencies, Project, SpanSemanticToken},
     sym::*,
     typeid::{
-        CInt, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType, Type, TypeArgs,
-        TypeId, Types, WithTypeArgs,
+        BitSizeResult, CInt, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType,
+        Type, TypeArgs, TypeId, Types, WithTypeArgs,
     },
     THIS_PARAM, THIS_TYPE,
 };
@@ -197,6 +197,82 @@ enum PatternType {
     Regular,
     BodylessFn,
     Fn,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Cast {
+    None,
+    Unsafe,
+    Fallible,
+    Infallible,
+}
+
+impl Cast {
+    fn get(src: &Type, dst: &Type) -> Cast {
+        if matches!(src, Type::Usize | Type::Isize) {
+            match dst {
+                Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) => Cast::Unsafe,
+                Type::Uint(_) | Type::Int(_) | Type::CInt(_) | Type::CUint(_) => Cast::Fallible,
+                Type::Usize | Type::Isize => Cast::Fallible,
+                Type::RawPtr(_) | Type::F32 | Type::F64 => Cast::Infallible,
+                _ => Cast::None,
+            }
+        } else if matches!(src, Type::CInt(_) | Type::CUint(_)) {
+            match dst {
+                Type::Uint(_) | Type::Int(_) | Type::CInt(_) | Type::CUint(_) => Cast::Fallible,
+                Type::Usize | Type::Isize => Cast::Fallible,
+                Type::F32 | Type::F64 => Cast::Infallible,
+                _ => Cast::None,
+            }
+        } else if let Some(a) = src.as_integral(true) {
+            // from can only be Uint(n) | Int(n) | Char | Bool now
+            match dst {
+                Type::Usize | Type::Isize | Type::CInt(_) | Type::CUint(_) if !src.is_bool() => {
+                    Cast::Fallible
+                }
+                Type::F32 | Type::F64 => Cast::Infallible,
+                // d800-e000 is invalid for a char, u15::MAX is 0x7fff
+                Type::Char if matches!(src, Type::Uint(n) if *n <= 15) => Cast::Infallible,
+                // TODO: Fallible conversion for i* and >= u16 ?
+                _ => {
+                    if let Some(b) = dst.as_integral(false) {
+                        if (a.signed == b.signed && a.bits <= b.bits)
+                            || (a.signed != b.signed && a.bits < b.bits)
+                        {
+                            Cast::Infallible
+                        } else {
+                            Cast::Fallible
+                        }
+                    } else {
+                        Cast::None
+                    }
+                }
+            }
+        } else if matches!(src, Type::F32 | Type::F64) {
+            match dst {
+                Type::Uint(_)
+                | Type::Int(_)
+                | Type::CInt(_)
+                | Type::CUint(_)
+                | Type::Isize
+                | Type::Usize
+                | Type::F32
+                | Type::F64 => Cast::Infallible,
+                _ => Cast::None,
+            }
+        } else if matches!(
+            src,
+            Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) | Type::RawPtr(_)
+        ) {
+            match dst {
+                Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) => return Cast::Unsafe,
+                Type::Usize | Type::Isize | Type::RawPtr(_) => return Cast::Infallible, // maybe only *T to *raw T should be infallible
+                _ => return Cast::None,
+            }
+        } else {
+            Cast::None
+        }
+    }
 }
 
 struct PatternParams {
@@ -2294,7 +2370,7 @@ impl TypeChecker {
                         let right = self.check_expr(*right, Some(TypeId::U32));
                         let right = self.try_coerce(right, TypeId::U32);
                         if !self.proj.types[right.ty]
-                            .as_integral()
+                            .as_integral(false)
                             .is_some_and(|v| !v.signed)
                             && right.ty != TypeId::UNKNOWN
                         {
@@ -3318,15 +3394,61 @@ impl TypeChecker {
                 )
             }
             ExprData::As { expr, ty, throwing } => {
-                let ty = self.resolve_typehint(&ty);
-                let expr = self.check_expr(*expr, Some(ty));
-                match self.coerce(expr, ty) {
-                    Ok(expr) => expr,
-                    Err(expr) => {
-                        self.check_cast(expr.ty, ty, throwing, span);
-                        CheckedExpr::new(ty, CheckedExprData::As(expr.into(), throwing))
+                let to_id = self.resolve_typehint(&ty);
+                let expr = self.check_expr(*expr, Some(to_id));
+                let expr = match self.coerce(expr, to_id) {
+                    Ok(expr) => return expr,
+                    Err(expr) => expr,
+                };
+
+                let mut from_id = expr.ty;
+                if let Type::User(ut) = &self.proj.types[from_id] {
+                    let id = ut.id;
+                    self.resolve_members(id);
+                    if let Some(tag) = self
+                        .proj
+                        .scopes
+                        .get(id)
+                        .kind
+                        .as_union()
+                        .filter(|u| u.enum_union)
+                        .map(|u| u.tag)
+                    {
+                        from_id = tag;
                     }
                 }
+
+                match Cast::get(&self.proj.types[from_id], &self.proj.types[to_id]) {
+                    Cast::None => self.proj.diag.error(Error::new(
+                        format!(
+                            "cannot cast expression of type '{}' to '{}'",
+                            from_id.name(&self.proj.scopes, &mut self.proj.types),
+                            to_id.name(&self.proj.scopes, &mut self.proj.types),
+                        ),
+                        span,
+                    )),
+                    Cast::Unsafe if self.safety != Safety::Unsafe => {
+                        self.error(Error::is_unsafe(span))
+                    }
+                    Cast::Fallible if !throwing => self.proj.diag.error(Error::new(
+                        format!(
+                            "cast of expression of type '{}' to '{}' requires fallible cast",
+                            from_id.name(&self.proj.scopes, &mut self.proj.types),
+                            to_id.name(&self.proj.scopes, &mut self.proj.types),
+                        ),
+                        span,
+                    )),
+                    Cast::Infallible if throwing => self.proj.diag.warn(Error::new(
+                        format!(
+                            "cast from type '{}' to '{}' is infallible and may use an `as` cast",
+                            from_id.name(&self.proj.scopes, &mut self.proj.types),
+                            to_id.name(&self.proj.scopes, &mut self.proj.types),
+                        ),
+                        span,
+                    )),
+                    _ => {}
+                }
+                CheckedExpr::new(to_id, CheckedExprData::As(expr.into(), throwing))
             }
             ExprData::Error => CheckedExpr::default(),
             ExprData::Lambda {
@@ -3724,111 +3846,6 @@ impl TypeChecker {
         }
 
         matches!(ty, Type::Ptr(_) | Type::DynPtr(_))
-    }
-
-    fn check_cast(&mut self, mut from_id: TypeId, to_id: TypeId, throwing: bool, span: Span) {
-        if let Type::User(ut) = &self.proj.types[from_id] {
-            let id = ut.id;
-            self.resolve_members(id);
-            if let Some(tag) = self
-                .proj
-                .scopes
-                .get(id)
-                .kind
-                .as_union()
-                .filter(|u| u.enum_union)
-                .map(|u| u.tag)
-            {
-                from_id = tag;
-            }
-        }
-
-        let from = &self.proj.types[from_id];
-        let to = &self.proj.types[to_id];
-        if let Some((a, b)) = from.as_integral().zip(to.as_integral()) {
-            if (a.signed == b.signed || (a.signed && !b.signed)) && a.bits <= b.bits {
-                return;
-            }
-            if (!a.signed && b.signed) && a.bits < b.bits {
-                return;
-            }
-        }
-
-        match (from, to) {
-            (a, b) if a == b => {}
-            (Type::Char, Type::Uint(n)) if *n >= 21 => {}
-            (Type::Char, Type::Int(n)) if *n >= 22 => {}
-            (Type::F32, Type::F64) => {}
-            (Type::Uint(n), Type::F32) if *n <= 24 => {}
-            (Type::Int(n), Type::F32) if *n <= 25 => {}
-            (Type::Uint(n), Type::F64) if *n <= 53 => {}
-            (Type::Int(n), Type::F64) if *n <= 53 => {}
-            (Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_), Type::Usize) => {}
-            (
-                Type::Bool,
-                Type::Int(_)
-                | Type::Uint(_)
-                | Type::CInt(_)
-                | Type::CUint(_)
-                | Type::Usize
-                | Type::Isize,
-            ) => {}
-            (Type::Usize | Type::MutPtr(_) | Type::Ptr(_) | Type::RawPtr(_), Type::RawPtr(_)) => {}
-            (Type::Usize, Type::Ptr(_) | Type::MutPtr(_))
-            | (Type::MutPtr(_) | Type::Ptr(_) | Type::RawPtr(_), Type::MutPtr(_) | Type::Ptr(_)) => {
-                if self.safety != Safety::Unsafe {
-                    self.error(Error::is_unsafe(span))
-                }
-            }
-            (Type::CUint(a), Type::CUint(b)) if a <= b => {}
-            (
-                Type::Int(_)
-                | Type::Uint(_)
-                | Type::CInt(_)
-                | Type::CUint(_)
-                | Type::Usize
-                | Type::Isize,
-                Type::F32 | Type::F64,
-            ) if throwing => {}
-            (
-                Type::F32 | Type::F64,
-                Type::Int(_)
-                | Type::Uint(_)
-                | Type::CInt(_)
-                | Type::CUint(_)
-                | Type::Usize
-                | Type::Isize,
-            ) if throwing => {}
-            (
-                Type::Int(_)
-                | Type::Uint(_)
-                | Type::CInt(_)
-                | Type::CUint(_)
-                | Type::Usize
-                | Type::Isize
-                | Type::Char,
-                Type::Int(_)
-                | Type::Uint(_)
-                | Type::CInt(_)
-                | Type::CUint(_)
-                | Type::Usize
-                | Type::Isize
-                | Type::Char,
-            ) if throwing => {}
-            (Type::F64, Type::F32) if throwing => {}
-            _ => bail!(
-                self,
-                Error::new(
-                    format!(
-                        "cannot{}cast expression of type '{}' to '{}'",
-                        if !throwing { " infallibly " } else { " " },
-                        from_id.name(&self.proj.scopes, &mut self.proj.types),
-                        to_id.name(&self.proj.scopes, &mut self.proj.types),
-                    ),
-                    span,
-                )
-            ),
-        }
     }
 
     fn check_return(&mut self, expr: Expr, span: Span) -> CheckedExpr {
@@ -4903,7 +4920,7 @@ impl TypeChecker {
 
             let mut target = None;
             let mut target_max = None;
-            if let Some(stats) = union.tag.as_integral(&self.proj.types) {
+            if let Some(stats) = union.tag.as_integral(&self.proj.types, false) {
                 target_max = Some(stats.max());
                 target = Some(union.tag);
             } else if union.tag != TypeId::UNKNOWN {
@@ -4975,50 +4992,10 @@ impl TypeChecker {
             self.proj.scopes.get_mut(id).kind = UserTypeKind::Union(union);
         }
 
-        if let Some(mut kind) = self.proj.scopes.get(id).kind.as_packed_struct().cloned() {
-            let mut bits = 0;
-            for (name, mem) in self.proj.scopes.get(id).members.iter() {
-                kind.bit_offsets.insert(name.clone(), bits);
-                // TODO:
-                // - allow *raw
-                // - nested packed structs (may have to move this inside resolve_dependencies)
-                match &self.proj.types[mem.ty] {
-                    Type::Int(n) | Type::Uint(n) => bits += n,
-                    Type::CInt(n) | Type::CUint(n) => bits += n.size() as u32 * 8,
-                    Type::Bool => bits += 1,
-                    Type::Unknown | Type::Unresolved(_) => {}
-                    Type::User(ut) => {
-                        let ut = self.proj.scopes.get(ut.id);
-                        let Some(u) = ut.kind.as_union().filter(|u| u.enum_union) else {
-                            self.proj.diag.error(Error::bitfield_member(name, mem.span));
-                            continue;
-                        };
-
-                        match self.proj.types[u.tag] {
-                            Type::Int(n) | Type::Uint(n) => bits += n,
-                            Type::CInt(n) | Type::CUint(n) => bits += n.size() as u32 * 8,
-                            _ => {}
-                        }
-                    }
-                    _ => self.proj.diag.error(Error::bitfield_member(name, mem.span)),
-                }
-            }
-
-            const MAX_ALIGN_BITS: u32 = crate::typeid::MAX_ALIGN as u32 * 8;
-            if bits < MAX_ALIGN_BITS {
-                kind.size = crate::nearest_pow_of_two(bits) / 8;
-            } else {
-                kind.size = ((((bits / MAX_ALIGN_BITS) + 1) * MAX_ALIGN_BITS) / 8) as usize;
-            }
-            kind.align = kind.size.clamp(1, crate::typeid::MAX_ALIGN);
-
-            self.proj.scopes.get_mut(id).kind = UserTypeKind::PackedStruct(kind);
-        }
-
         self.proj.scopes.get_mut(id).members_resolved = true;
     }
 
-    fn resolve_dependencies(&mut self, ut: UserTypeId, this: TypeId, mut canonical: bool) -> bool {
+    fn resolve_dependencies(&mut self, id: UserTypeId, this: TypeId, mut canonical: bool) -> bool {
         match self.proj.deps.get(&this) {
             Some(Dependencies::Resolved(_)) => return false,
             Some(_) => return true,
@@ -5033,7 +5010,7 @@ impl TypeChecker {
             let canonical_ty = Type::User(GenericUserType::from_id(
                 &self.proj.scopes,
                 &mut self.proj.types,
-                ut,
+                id,
             ));
             canonical = this == self.proj.types.insert(canonical_ty);
         }
@@ -5051,23 +5028,23 @@ impl TypeChecker {
             };
         }
 
-        for i in 0..self.proj.scopes.get(ut).members.len() {
+        for i in 0..self.proj.scopes.get(id).members.len() {
             check_ty!(
-                self.proj.scopes.get(ut).members[i].ty,
+                self.proj.scopes.get(id).members[i].ty,
                 Error::recursive_type(
-                    self.proj.scopes.get(ut).members.get_index(i).unwrap().0,
-                    self.proj.scopes.get(ut).members[i].span,
+                    self.proj.scopes.get(id).members.get_index(i).unwrap().0,
+                    self.proj.scopes.get(id).members[i].span,
                     false,
                 )
             );
         }
 
-        if let Some(union) = self.proj.scopes.get(ut).kind.as_union().cloned() {
+        if let Some(union) = self.proj.scopes.get(id).kind.as_union().cloned() {
             check_ty!(
                 union.tag,
                 Error::new(
                     "union tag makes this struct recursive",
-                    self.proj.scopes.get(ut).name.span
+                    self.proj.scopes.get(id).name.span
                 )
             );
             for (name, var) in union.variants.iter() {
@@ -5077,10 +5054,39 @@ impl TypeChecker {
             }
         }
 
+        if let Some(mut kind) = self.proj.scopes.get(id).kind.as_packed_struct().cloned() {
+            let mut bits = 0;
+            for (name, mem) in self.proj.scopes.get(id).members.iter() {
+                kind.bit_offsets.insert(name.clone(), bits);
+                // TODO:
+                // - allow *raw
+                // - nested packed structs
+                match mem.ty.bit_size(&self.proj) {
+                    BitSizeResult::Tag(_, n) | BitSizeResult::Size(n) => bits += n,
+                    BitSizeResult::NonEnum => {
+                        self.proj.diag.error(Error::bitfield_member(name, mem.span))
+                    }
+                    BitSizeResult::Bad => {
+                        self.proj.diag.error(Error::bitfield_member(name, mem.span))
+                    }
+                }
+            }
+
+            const MAX_ALIGN_BITS: u32 = crate::typeid::MAX_ALIGN as u32 * 8;
+            if bits < MAX_ALIGN_BITS {
+                kind.size = crate::nearest_pow_of_two(bits) / 8;
+            } else {
+                kind.size = ((((bits / MAX_ALIGN_BITS) + 1) * MAX_ALIGN_BITS) / 8) as usize;
+            }
+            kind.align = kind.size.clamp(1, crate::typeid::MAX_ALIGN);
+
+            self.proj.scopes.get_mut(id).kind = UserTypeKind::PackedStruct(kind);
+        }
+
         if failed {
             self.proj.deps.insert(this, Dependencies::Recursive);
             if canonical {
-                self.proj.scopes.get_mut(ut).recursive = true;
+                self.proj.scopes.get_mut(id).recursive = true;
             }
         } else {
             self.proj.deps.insert(this, Dependencies::Resolved(deps));
@@ -5617,7 +5623,7 @@ impl TypeChecker {
                 .unwrap_or(TypeId::ISIZE)
         };
 
-        let stats = self.proj.types[ty].as_integral().unwrap();
+        let stats = ty.as_integral(&self.proj.types, false).unwrap();
         let mut parsable = value.clone();
         parsable.retain(|c| c != '_');
         let mut result = match BigInt::from_str_radix(&parsable, *base as u32) {
@@ -5699,7 +5705,7 @@ impl TypeChecker {
         }
     }
 
-    pub fn coerce(
+    fn coerce(
         &mut self,
         mut expr: CheckedExpr,
         target: TypeId,
@@ -5794,7 +5800,7 @@ impl TypeChecker {
         }
     }
 
-    pub fn try_coerce(&mut self, expr: CheckedExpr, target: TypeId) -> CheckedExpr {
+    fn try_coerce(&mut self, expr: CheckedExpr, target: TypeId) -> CheckedExpr {
         match self.coerce(expr, target) {
             Ok(expr) => expr,
             Err(expr) => expr,
@@ -5854,15 +5860,7 @@ impl TypeChecker {
         span: Span,
     ) {
         let ty = &self.proj.types[ty.strip_references(&self.proj.types)];
-        if let Some((mut value, max)) = ty
-            .as_integral()
-            .map(|int| (int.min(), int.max()))
-            .or_else(|| {
-                ty.is_char()
-                    .then(|| (BigInt::default(), BigInt::from(char::MAX as u32)))
-            })
-            .or_else(|| ty.is_bool().then(|| (BigInt::default(), BigInt::from(1))))
-        {
+        if let Some((mut value, max)) = ty.as_integral(true).map(|int| (int.min(), int.max())) {
             'outer: while value <= max {
                 if ty.is_char() && (0xd800.into()..=0xe000.into()).contains(&value) {
                     value = 0xe000.into();

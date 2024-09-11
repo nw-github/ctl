@@ -277,7 +277,7 @@ pub enum CInt {
 }
 
 impl CInt {
-    pub fn size(&self) -> usize {
+    pub const fn size(&self) -> usize {
         use std::ffi::*;
         match self {
             CInt::Char => std::mem::size_of::<c_char>(),
@@ -302,9 +302,11 @@ impl Display for CInt {
     }
 }
 
+#[derive(Debug)]
 pub struct Integer {
     pub bits: u32,
     pub signed: bool,
+    pub char: bool,
 }
 
 impl Integer {
@@ -319,9 +321,19 @@ impl Integer {
     pub fn max(&self) -> BigInt {
         if self.bits == 0 {
             return BigInt::default();
+        } else if self.char {
+            return BigInt::from(char::MAX as u32);
         }
 
         (BigInt::from(1) << (self.bits - self.signed as u32)) - 1
+    }
+
+    pub const fn from_cint(cint: CInt, signed: bool) -> Self {
+        Self {
+            bits: cint.size() as u32 * 8,
+            signed,
+            char: false,
+        }
     }
 }
 
@@ -399,27 +411,20 @@ impl Type {
         )
     }
 
-    pub fn as_integral(&self) -> Option<Integer> {
-        use std::ffi::*;
-
-        let (bits, signed) = match self {
-            Type::Int(bits) | Type::Uint(bits) => (*bits, matches!(self, Type::Int(_))),
-            Type::CInt(cint) | Type::CUint(cint) => {
-                let bytes = match cint {
-                    CInt::Char => std::mem::size_of::<c_char>(),
-                    CInt::Short => std::mem::size_of::<c_short>(),
-                    CInt::Int => std::mem::size_of::<c_int>(),
-                    CInt::Long => std::mem::size_of::<c_long>(),
-                    CInt::LongLong => std::mem::size_of::<c_longlong>(),
-                };
-                (bytes as u32 * 8, matches!(self, Type::CInt(_)))
-            }
-            Type::Isize => (std::mem::size_of::<isize>() as u32 * 8, true),
-            Type::Usize => (std::mem::size_of::<usize>() as u32 * 8, false),
+    pub fn as_integral(&self, extra: bool) -> Option<Integer> {
+        let (bits, signed, char) = match self {
+            &Type::Int(bits) => (bits, true, false),
+            &Type::Uint(bits) => (bits, false, false),
+            &Type::CInt(cint) => return Some(Integer::from_cint(cint, true)),
+            &Type::CUint(cint) => return Some(Integer::from_cint(cint, false)),
+            Type::Isize => (std::mem::size_of::<isize>() as u32 * 8, true, false),
+            Type::Usize => (std::mem::size_of::<usize>() as u32 * 8, false, false),
+            Type::Char if extra => (32 - (char::MAX as u32).leading_zeros(), false, true),
+            Type::Bool if extra => (1, false, false),
             _ => return None,
         };
 
-        Some(Integer { bits, signed })
+        Some(Integer { bits, signed, char })
     }
 
     pub fn from_int_name(name: &str, ty: bool) -> Option<Type> {
@@ -530,6 +535,14 @@ pub struct TypeId(usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct UnresolvedTypeId(usize);
 
+#[derive(Debug, Clone, Copy, EnumAsInner)]
+pub enum BitSizeResult {
+    Size(u32),
+    Tag(TypeId, u32),
+    NonEnum,
+    Bad,
+}
+
 impl TypeId {
     pub const UNKNOWN: TypeId = TypeId(0);
     pub const VOID: TypeId = TypeId(1);
@@ -597,7 +610,10 @@ impl TypeId {
             Type::Isize => "int".into(),
             Type::Usize => "uint".into(),
             id @ (Type::CInt(ty) | Type::CUint(ty)) => {
-                format!("c_{}{ty:#}", ["", "u"][matches!(id, Type::CUint(_)) as usize])
+                format!(
+                    "c_{}{ty:#}",
+                    ["", "u"][matches!(id, Type::CUint(_)) as usize]
+                )
             }
             Type::CVoid => "c_void".into(),
         }
@@ -680,7 +696,7 @@ impl TypeId {
         let this = &types[self];
         match op {
             Neg => {
-                this.as_integral().is_some_and(|s| s.signed)
+                this.as_integral(false).is_some_and(|s| s.signed)
                     || matches!(this, Type::F32 | Type::F64)
             }
             PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
@@ -719,7 +735,59 @@ impl TypeId {
             Type::FnPtr(_) => std::mem::size_of::<fn()>(),
             Type::User(ut) if !scopes.get(ut.id).recursive => {
                 let ut = ut.clone();
-                return self.ut_size_and_align(&ut, scopes, types);
+                struct SizeAndAlign {
+                    size: usize,
+                    align: usize,
+                }
+
+                impl SizeAndAlign {
+                    fn next(&mut self, (s, a): (usize, usize)) {
+                        self.size += (a - self.size % a) % a + s;
+                        self.align = self.align.max(a);
+                    }
+                }
+
+                let mut sa = SizeAndAlign { size: 0, align: 1 };
+                let ut_data = scopes.get(ut.id);
+                match &ut_data.kind {
+                    UserTypeKind::Union(union) => {
+                        if self.can_omit_tag(scopes, types).is_none() {
+                            sa.next(union.tag.size_and_align(scopes, types));
+                        }
+                        for member in ut_data.members.values() {
+                            let ty = member.ty.with_templates(types, &ut.ty_args);
+                            sa.next(ty.size_and_align(scopes, types));
+                        }
+
+                        sa.next(union.variants.values().flat_map(|v| v.ty).fold(
+                            (0, 1),
+                            |(sz, align), ty| {
+                                let (s, a) = ty
+                                    .with_templates(types, &ut.ty_args)
+                                    .size_and_align(scopes, types);
+                                (sz.max(s), align.max(a))
+                            },
+                        ));
+                    }
+                    UserTypeKind::UnsafeUnion => {
+                        sa.next(ut_data.members.values().fold((0, 1), |(sz, align), m| {
+                            let (s, a) =
+                                m.ty.with_templates(types, &ut.ty_args)
+                                    .size_and_align(scopes, types);
+                            (sz.max(s), align.max(a))
+                        }));
+                    }
+                    UserTypeKind::PackedStruct(data) => sa.next((data.size, data.align)),
+                    _ => {
+                        for member in ut_data.members.values() {
+                            let ty = member.ty.with_templates(types, &ut.ty_args);
+                            sa.next(ty.size_and_align(scopes, types));
+                        }
+                    }
+                }
+
+                sa.next((0, sa.align));
+                return (sa.size, sa.align);
             }
             &Type::Array(ty, len) => {
                 let (s, a) = ty.size_and_align(scopes, types);
@@ -732,65 +800,27 @@ impl TypeId {
         (sz, sz.clamp(1, MAX_ALIGN))
     }
 
-    fn ut_size_and_align(
-        &self,
-        ut: &GenericUserType,
-        scopes: &Scopes,
-        types: &mut Types,
-    ) -> (usize, usize) {
-        struct SizeAndAlign {
-            size: usize,
-            align: usize,
-        }
-
-        impl SizeAndAlign {
-            fn next(&mut self, (s, a): (usize, usize)) {
-                self.size += (a - self.size % a) % a + s;
-                self.align = self.align.max(a);
-            }
-        }
-
-        let mut sa = SizeAndAlign { size: 0, align: 1 };
-        let ut_data = scopes.get(ut.id);
-        match &ut_data.kind {
-            UserTypeKind::Union(union) => {
-                if self.can_omit_tag(scopes, types).is_none() {
-                    sa.next(union.tag.size_and_align(scopes, types));
+    pub fn bit_size(self, proj: &Project) -> BitSizeResult {
+        if let Some(int) = self.as_integral(&proj.types, true) {
+            BitSizeResult::Size(int.bits)
+        } else {
+            match &proj.types[self] {
+                Type::Unknown | Type::Unresolved(_) => BitSizeResult::Size(0),
+                Type::User(ut) => {
+                    let ut = proj.scopes.get(ut.id);
+                    if let Some(u) = ut.kind.as_union().filter(|u| u.enum_union) {
+                        match u.tag.bit_size(proj) {
+                            BitSizeResult::NonEnum | BitSizeResult::Bad => BitSizeResult::Size(0),
+                            BitSizeResult::Size(n) => BitSizeResult::Tag(u.tag, n),
+                            res => res,
+                        }
+                    } else {
+                        BitSizeResult::NonEnum
+                    }
                 }
-                for member in ut_data.members.values() {
-                    let ty = member.ty.with_templates(types, &ut.ty_args);
-                    sa.next(ty.size_and_align(scopes, types));
-                }
-
-                sa.next(union.variants.values().flat_map(|v| v.ty).fold(
-                    (0, 1),
-                    |(sz, align), ty| {
-                        let (s, a) = ty
-                            .with_templates(types, &ut.ty_args)
-                            .size_and_align(scopes, types);
-                        (sz.max(s), align.max(a))
-                    },
-                ));
-            }
-            UserTypeKind::UnsafeUnion => {
-                sa.next(ut_data.members.values().fold((0, 1), |(sz, align), m| {
-                    let (s, a) =
-                        m.ty.with_templates(types, &ut.ty_args)
-                            .size_and_align(scopes, types);
-                    (sz.max(s), align.max(a))
-                }));
-            }
-            UserTypeKind::PackedStruct(data) => sa.next((data.size, data.align)),
-            _ => {
-                for member in ut_data.members.values() {
-                    let ty = member.ty.with_templates(types, &ut.ty_args);
-                    sa.next(ty.size_and_align(scopes, types));
-                }
+                _ => BitSizeResult::Bad,
             }
         }
-
-        sa.next((0, sa.align));
-        (sa.size, sa.align)
     }
 
     pub fn matched_inner_type(self, types: &mut Types, ty: TypeId) -> TypeId {
@@ -898,7 +928,7 @@ impl TypeId {
             if proj.scopes.get(ut.id).kind.is_packed_struct())
     }
 
-    pub fn as_integral(self, types: &Types) -> Option<Integer> {
-        types[self].as_integral()
+    pub fn as_integral(self, types: &Types, extra: bool) -> Option<Integer> {
+        types[self].as_integral(extra)
     }
 }
