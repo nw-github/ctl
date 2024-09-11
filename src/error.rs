@@ -284,4 +284,11 @@ impl Error {
     pub fn no_consteval(span: Span) -> Self {
         Self::new("expression is not compile time evaluatable", span)
     }
+
+    pub fn bitfield_member(name: &str, span: Span) -> Self {
+        Self::new(
+            format!("member '{name}' of packed struct must have integer or enum union type (union with all empty variants)"),
+            span,
+        )
+    }
 }

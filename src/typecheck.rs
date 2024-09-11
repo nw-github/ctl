@@ -4251,6 +4251,14 @@ impl TypeChecker {
                             span,
                         ))
                     }
+
+                    if matches!(&recv.data, CheckedExprData::Member { source, member: _ } if source.ty.is_packed_struct(&self.proj))
+                    {
+                        self.proj.diag.warn(Error::new(
+                            "call to mutating method with bitfield receiver operates on a copy",
+                            span,
+                        ))
+                    }
                 }
 
                 let recv = recv.auto_deref(&mut self.proj.types, this_param_ty);
@@ -4967,21 +4975,32 @@ impl TypeChecker {
             self.proj.scopes.get_mut(id).kind = UserTypeKind::Union(union);
         }
 
-        let data = &mut self.proj.scopes.get_mut(id).item;
-        if let UserTypeKind::PackedStruct(kind) = &mut data.kind {
+        if let Some(mut kind) = self.proj.scopes.get(id).kind.as_packed_struct().cloned() {
             let mut bits = 0;
-            for (name, mem) in data.members.iter() {
+            for (name, mem) in self.proj.scopes.get(id).members.iter() {
                 kind.bit_offsets.insert(name.clone(), bits);
-                // TODO: allow *raw and nested packed structs
-                match self.proj.types[mem.ty] {
+                // TODO:
+                // - allow *raw
+                // - nested packed structs (may have to move this inside resolve_dependencies)
+                match &self.proj.types[mem.ty] {
                     Type::Int(n) | Type::Uint(n) => bits += n,
                     Type::CInt(n) | Type::CUint(n) => bits += n.size() as u32 * 8,
                     Type::Bool => bits += 1,
                     Type::Unknown | Type::Unresolved(_) => {}
-                    _ => self.proj.diag.error(Error::new(
-                        format!("member '{name}' of packed struct must have integer type"),
-                        mem.span,
-                    )),
+                    Type::User(ut) => {
+                        let ut = self.proj.scopes.get(ut.id);
+                        let Some(u) = ut.kind.as_union().filter(|u| u.enum_union) else {
+                            self.proj.diag.error(Error::bitfield_member(name, mem.span));
+                            continue;
+                        };
+
+                        match self.proj.types[u.tag] {
+                            Type::Int(n) | Type::Uint(n) => bits += n,
+                            Type::CInt(n) | Type::CUint(n) => bits += n.size() as u32 * 8,
+                            _ => {}
+                        }
+                    }
+                    _ => self.proj.diag.error(Error::bitfield_member(name, mem.span)),
                 }
             }
 
@@ -4992,9 +5011,11 @@ impl TypeChecker {
                 kind.size = ((((bits / MAX_ALIGN_BITS) + 1) * MAX_ALIGN_BITS) / 8) as usize;
             }
             kind.align = kind.size.clamp(1, crate::typeid::MAX_ALIGN);
+
+            self.proj.scopes.get_mut(id).kind = UserTypeKind::PackedStruct(kind);
         }
 
-        data.members_resolved = true;
+        self.proj.scopes.get_mut(id).members_resolved = true;
     }
 
     fn resolve_dependencies(&mut self, ut: UserTypeId, this: TypeId, mut canonical: bool) -> bool {

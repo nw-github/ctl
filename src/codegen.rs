@@ -3373,21 +3373,26 @@ impl Codegen {
                 needed_bits,
                 bits,
                 word_size_bits,
+                enum_tag,
             } = access;
             result.next(|buffer| {
                 usebuf!(this, buffer, {
                     let offset = bits - needed_bits;
                     let partial = reading != word_size_bits;
                     let mask = 1u64.wrapping_shl(reading).wrapping_sub(1);
-
+                    if enum_tag.is_some() {
+                        this.emit_cast(ty);
+                        write_de!(this.buffer, "{{ .{UNION_TAG_NAME}=");
+                    }
                     write_if!(offset != 0, this.buffer, "(");
-                    this.emit_cast(ty);
+                    this.emit_cast(enum_tag.unwrap_or(ty));
                     write_if!(partial, this.buffer, "(");
                     write_if!(bit_offset != 0, this.buffer, "(");
                     write_de!(this.buffer, "{tmp}.{ARRAY_DATA_NAME}[{word}]");
                     write_if!(bit_offset != 0, this.buffer, " >> {bit_offset})");
                     write_if!(partial, this.buffer, "& {mask:#x})");
                     write_if!(offset != 0, this.buffer, "<< {offset})");
+                    write_if!(enum_tag.is_some(), this.buffer, "}}");
                 })
             });
         });
@@ -3411,6 +3416,7 @@ impl Codegen {
                 needed_bits,
                 bits,
                 word_size_bits,
+                enum_tag,
             } = access;
 
             let mask = 1u64.wrapping_shl(reading).wrapping_sub(1);
@@ -3431,6 +3437,8 @@ impl Codegen {
             write_if!(bit_offset != 0, this.buffer, "(");
             write_if!(offset != 0, this.buffer, "(");
             write_de!(this.buffer, "{expr}");
+            write_if!(enum_tag.is_some(), this.buffer, ".{UNION_TAG_NAME}");
+
             write_if!(offset != 0, this.buffer, ">> {offset})");
             write_if!(partial, this.buffer, "& {mask:#x})");
             write_if!(bit_offset != 0, this.buffer, " << {bit_offset})");
@@ -3447,9 +3455,17 @@ impl Codegen {
     ) {
         let bf = self.proj.scopes.get(id).kind.as_packed_struct().unwrap();
         let word_size_bits = (bf.align * 8) as u32;
-        let bits = match self.proj.types[ty] {
+        let mut enum_tag = None;
+        let bits = match &self.proj.types[ty] {
             Type::Bool => 1,
-            Type::Int(n) | Type::Uint(n) => n,
+            Type::Int(n) | Type::Uint(n) => *n,
+            Type::User(ut) => {
+                let tag = enum_tag.insert(self.proj.scopes.get(ut.id).kind.as_union().unwrap().tag);
+                match self.proj.types[*tag] {
+                    Type::Int(n) | Type::Uint(n) => n,
+                    _ => tag.size_and_align(&self.proj.scopes, &mut self.proj.types).0 as u32 * 8,
+                }
+            }
             _ => ty.size_and_align(&self.proj.scopes, &mut self.proj.types).0 as u32 * 8,
         };
 
@@ -3467,6 +3483,7 @@ impl Codegen {
                     bit_offset,
                     needed_bits,
                     bits,
+                    enum_tag,
                 },
             );
             word += 1;
@@ -3615,6 +3632,7 @@ struct BitfieldAccess {
     needed_bits: u32,
     bits: u32,
     word_size_bits: u32,
+    enum_tag: Option<TypeId>,
 }
 
 fn vtable_methods(scopes: &Scopes, types: &Types, tr: &UserType) -> Vec<Vis<FunctionId>> {
