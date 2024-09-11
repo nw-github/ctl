@@ -227,13 +227,13 @@ impl Cast {
         } else if let Some(a) = src.as_integral(true) {
             // from can only be Uint(n) | Int(n) | Char | Bool now
             match dst {
-                Type::Usize | Type::Isize | Type::CInt(_) | Type::CUint(_) if !src.is_bool() => {
-                    Cast::Fallible
-                }
+                // we definitely don't support any targets with < 16 bit pointers
+                Type::Usize | Type::Isize if !src.is_bool() && a.bits > 16 => Cast::Fallible,
+                Type::CInt(_) | Type::CUint(_) if !src.is_bool() => Cast::Fallible,
                 Type::F32 | Type::F64 => Cast::Infallible,
                 // d800-e000 is invalid for a char, u15::MAX is 0x7fff
                 Type::Char if matches!(src, Type::Uint(n) if *n <= 15) => Cast::Infallible,
-                // TODO: Fallible conversion for i* and >= u16 ?
+                Type::Char => Cast::Fallible,
                 _ => {
                     if let Some(b) = dst.as_integral(false) {
                         if (a.signed == b.signed && a.bits <= b.bits)
