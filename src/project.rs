@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    sym::{FunctionId, ScopeId, Scopes},
+    sym::{FunctionId, ScopeId, Scopes, TypeItem, ValueItem, Vis},
     typecheck::{Completions, LspItem},
     typeid::{TypeId, Types},
     Diagnostics, Span,
@@ -36,6 +36,11 @@ pub struct Project {
     pub deps: HashMap<TypeId, Dependencies>,
     pub tokens: Vec<SpanSemanticToken>,
     pub main: Option<FunctionId>,
+    // these should really be a part of Scopes or Typechecker, but it can't be in typechecker or the
+    // information would be lost when Codegen calls with_project, and putting it in Scopes causes
+    // needless clones in Typechecker::check when resolving autouses.
+    pub autouse_tns: HashMap<String, Vis<TypeItem>>,
+    pub autouse_vns: HashMap<String, Vis<ValueItem>>,
 }
 
 impl Project {

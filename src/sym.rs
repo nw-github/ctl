@@ -703,6 +703,20 @@ impl Scopes {
 
         false
     }
+
+    pub fn borrow_twice(&mut self, a: ScopeId, b: ScopeId) -> Option<(&mut Scope, &mut Scope)> {
+        match a.0.cmp(&b.0) {
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Less => {
+                let (left, right) = self.scopes.split_at_mut(b.0);
+                Some((&mut left[a.0], &mut right[0]))
+            }
+            std::cmp::Ordering::Greater => {
+                let (left, right) = self.scopes.split_at_mut(a.0);
+                Some((&mut right[0], &mut left[b.0]))
+            }
+        }
+    }
 }
 
 impl std::ops::Index<ScopeId> for Scopes {

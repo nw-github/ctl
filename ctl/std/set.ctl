@@ -1,6 +1,5 @@
 use std::hash::Hash;
 use std::ops::Eq;
-use std::map::Map;
 use std::iter::FromIter;
 
 #(lang(set))

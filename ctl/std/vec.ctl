@@ -119,8 +119,8 @@ pub struct Vec<T> {
         let src = this.ptr + idx;
         if idx < this.len {
             unsafe mem::copy_overlapping(
-                dst: src + 1, 
-                src:, 
+                dst: src + 1,
+                src:,
                 num: this.len - idx,
             );
         }

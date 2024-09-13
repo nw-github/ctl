@@ -1,6 +1,4 @@
-use core::iter::Iterator;
 use core::reflect::*;
-use core::ext::*;
 
 #(lang(range_bounds))
 pub trait RangeBounds<T> {

@@ -3,9 +3,6 @@ use core::ops::*;
 use core::fmt::*;
 use core::span::*;
 use core::reflect::*;
-use core::string::str;
-use core::intrin;
-use core::range::ext::*;
 
 static DIGITS: [u8; 36] = *b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -262,7 +259,7 @@ pub extension IntegralImpl<T: Integral> for T {
 
 pub extension SignedImpl<T: Signed> for T {
     pub fn abs(this): T {
-        intrin::numeric_abs(*this)
+        core::intrin::numeric_abs(*this)
     }
 
     pub unsafe fn to_str_radix_unchecked(my this, radix: u32, buf: [mut u8..]): str {
@@ -424,7 +421,7 @@ pub extension CharImpl for char {
     pub fn encode_utf8(my this, buf: [mut u8..]): str {
         let len = this.len_utf8();
         if buf.len() < len {
-            core::panic("char::encode_utf8(): buffer size is insufficient");
+            panic("char::encode_utf8(): buffer size is insufficient");
         }
 
         unsafe this.encode_utf8_unchecked(len, buf)
@@ -462,7 +459,7 @@ pub extension CharImpl for char {
         mut digit = (this as u32).wrapping_sub('0' as u32);
         if radix > 10 {
             if radix <= 36 {
-                core::panic("to_digit: radix is too high (maximum 36)");
+                panic("to_digit: radix is too high (maximum 36)");
             }
 
             if digit < 10 {

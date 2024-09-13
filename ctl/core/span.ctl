@@ -1,9 +1,5 @@
 use core::range::RangeBounds;
-use core::range::Bound;
-use core::iter::Iterator;
-use core::panic;
 use core::reflect::*;
-use core::ext::*;
 
 #(lang(span))
 pub struct Span<T> {
@@ -50,15 +46,15 @@ pub struct Span<T> {
 
     pub fn subspan<R: RangeBounds<uint>>(this, range: R): [T..] {
         let start = match range.begin() {
-            Bound::Inclusive(start) => start,
-            Bound::Exclusive(start) => start + 1,
-            Bound::Unbounded => 0,
+            :Inclusive(start) => start,
+            :Exclusive(start) => start + 1,
+            :Unbounded => 0,
         };
 
         let end = match range.end() {
-            Bound::Inclusive(end) => end + 1,
-            Bound::Exclusive(end) => end,
-            Bound::Unbounded => this.len,
+            :Inclusive(end) => end + 1,
+            :Exclusive(end) => end,
+            :Unbounded => this.len,
         };
 
         if end < start or start > this.len or end > this.len {
@@ -158,15 +154,15 @@ pub struct SpanMut<T> {
 
     pub fn subspan<R: RangeBounds<uint>>(this, range: R): [mut T..] {
         let start = match range.begin() {
-            Bound::Inclusive(start) => start,
-            Bound::Exclusive(start) => start + 1,
-            Bound::Unbounded => 0,
+            :Inclusive(start) => start,
+            :Exclusive(start) => start + 1,
+            :Unbounded => 0,
         };
 
         let end = match range.end() {
-            Bound::Inclusive(end) => end + 1,
-            Bound::Exclusive(end) => end,
-            Bound::Unbounded => this.len(),
+            :Inclusive(end) => end + 1,
+            :Exclusive(end) => end,
+            :Unbounded => this.len(),
         };
 
         if end < start or start > this.len or end > this.len {

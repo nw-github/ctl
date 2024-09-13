@@ -1,5 +1,3 @@
-use core::panic;
-
 #(lang(option))
 pub union Option<T> {
     Some(T),

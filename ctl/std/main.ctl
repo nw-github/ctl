@@ -9,7 +9,7 @@ pub fn exit(code: u32): never {
 
 #(lang(convert_argv))
 fn convert_argv(argc: c_int, argv: **c_char): [str..] {
-    mut result: [str] = std::vec::Vec::with_capacity(argc as! uint);
+    mut result: [str] = Vec::with_capacity(argc as! uint);
     unsafe {
         for arg in std::span::Span::new(ptr: argv as *raw *c_char, len: argc as! uint).iter() {
             result.push(

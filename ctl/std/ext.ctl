@@ -33,7 +33,7 @@ pub extension StringExt for str {
 pub extension SignedExt<T: Signed> for T {
     pub fn to_str_radix(this, radix: u32): str {
         guard radix is 2..=36 else {
-            core::panic("to_str_radix(): invalid radix");
+            panic("to_str_radix(): invalid radix");
         }
 
         mut buffer = @[b'0'; core::mem::size_of::<T>() * 8 + 1];
@@ -46,7 +46,7 @@ pub extension SignedExt<T: Signed> for T {
 pub extension UnsignedExt<T: Unsigned> for T {
     pub fn to_str_radix(this, radix: u32): str {
         guard radix is 2..=36 else {
-            core::panic("to_str_radix(): invalid radix");
+            panic("to_str_radix(): invalid radix");
         }
 
         mut buffer = @[b'0'; core::mem::size_of::<T>() * 8];

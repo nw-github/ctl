@@ -2,7 +2,6 @@ use super::common::*;
 use super::d2s_intrinsics::*;
 use super::d2s_full_table::*;
 use super::pretty::*;
-use core::ext::*;
 
 pub const DOUBLE_MANTISSA_BITS: u32 = 52;
 pub const DOUBLE_EXPONENT_BITS: u32 = 11;

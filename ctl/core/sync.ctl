@@ -62,17 +62,17 @@ pub struct Atomic<T> {
     }
 
     #(inline(always))
-    pub fn store(mut this, val: T, order: MemoryOrder = MemoryOrder::SeqCst) {
+    pub fn store(mut this, val: T, order: MemoryOrder = :SeqCst) {
         c11::atomic_store_explicit(&mut this.val, val, order as u32);
     }
 
     #(inline(always))
-    pub fn load(this, order: MemoryOrder = MemoryOrder::SeqCst): T {
+    pub fn load(this, order: MemoryOrder = :SeqCst): T {
         c11::atomic_load_explicit(&this.val, order as u32)
     }
 
     #(inline(always))
-    pub fn replace(mut this, val: T, order: MemoryOrder = MemoryOrder::SeqCst): T {
+    pub fn replace(mut this, val: T, order: MemoryOrder = :SeqCst): T {
         c11::atomic_exchange_explicit(&mut this.val, val, order as u32)
     }
 
@@ -82,8 +82,8 @@ pub struct Atomic<T> {
         mut this,
         kw mut expected: T,
         kw val: T,
-        kw success: MemoryOrder = MemoryOrder::SeqCst,
-        kw failure: MemoryOrder = MemoryOrder::SeqCst,
+        kw success: MemoryOrder = :SeqCst,
+        kw failure: MemoryOrder = :SeqCst,
     ): ?T {
         if !c11::atomic_compare_exchange_strong_explicit(
             &mut this.val,
@@ -101,8 +101,8 @@ pub struct Atomic<T> {
         mut this,
         kw mut expected: T,
         kw val: T,
-        kw success: MemoryOrder = MemoryOrder::SeqCst,
-        kw failure: MemoryOrder = MemoryOrder::SeqCst,
+        kw success: MemoryOrder = :SeqCst,
+        kw failure: MemoryOrder = :SeqCst,
     ): ?T {
         if !c11::atomic_compare_exchange_weak_explicit(
             &mut this.val,
@@ -125,39 +125,31 @@ pub struct Atomic<T> {
         &raw this.val
     }
 
-    // TODO: when extensions are fixed or where clauses are added, remove/fix these functions
-
     #(inline(always))
-    pub fn fetch_add(mut this, val: T, order: MemoryOrder = MemoryOrder::SeqCst): T {
+    pub fn fetch_add(mut this, val: T, order: MemoryOrder = :SeqCst): T {
         c11::atomic_fetch_add_explicit(&mut this.val, val, order as u32)
     }
 
     #(inline(always))
-    pub fn fetch_sub(mut this, val: T, order: MemoryOrder = MemoryOrder::SeqCst): T {
+    pub fn fetch_sub(mut this, val: T, order: MemoryOrder = :SeqCst): T {
         c11::atomic_fetch_sub_explicit(&mut this.val, val, order as u32)
     }
 
     #(inline(always))
-    pub fn fetch_and(mut this, val: T, order: MemoryOrder = MemoryOrder::SeqCst): T {
+    pub fn fetch_and(mut this, val: T, order: MemoryOrder = :SeqCst): T {
         c11::atomic_fetch_and_explicit(&mut this.val, val, order as u32)
     }
 
     #(inline(always))
-    pub fn fetch_or(mut this, val: T, order: MemoryOrder = MemoryOrder::SeqCst): T {
+    pub fn fetch_or(mut this, val: T, order: MemoryOrder = :SeqCst): T {
         c11::atomic_fetch_or_explicit(&mut this.val, val, order as u32)
     }
 
     #(inline(always))
-    pub fn fetch_xor(mut this, val: T, order: MemoryOrder = MemoryOrder::SeqCst): T {
+    pub fn fetch_xor(mut this, val: T, order: MemoryOrder = :SeqCst): T {
         c11::atomic_fetch_xor_explicit(&mut this.val, val, order as u32)
     }
 }
-
-// pub extension AtomicAdd<T: std::ops::Add<T, T>> for Atomic<T> {
-//     pub fn fetch_add(mut this, val: T, order: MemoryOrder = MemoryOrder::SeqCst): T {
-//         c11::atomic_fetch_add_explicit(&mut this.val, val, order)
-//     }
-// }
 
 // pub type AtomicU8 = Atomic<u8>;
 // pub type AtomicU16 = Atomic<u16>;

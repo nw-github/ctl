@@ -1,5 +1,4 @@
 use super::debug_assert;
-use core::ext::*;
 
 pub fn pow5_factor(mut value: u64): u32 {
     const M_INV_5: u64 = 14757395258967641293; // 5 * m_inv_5 = 1 (mod 2^64)

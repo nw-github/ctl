@@ -1,14 +1,8 @@
-use core::span::Span;
-use core::hash::Hash;
-use core::hash::Hasher;
+use core::hash::*;
 use core::ops::Eq;
 use core::range::RangeBounds;
-use core::iter::Iterator;
-use core::panic;
 use core::fmt::*;
-use core::intrin;
 use core::reflect::*;
-use core::ext::*;
 
 #(lang(string))
 pub struct str {
@@ -82,8 +76,6 @@ pub struct str {
 
     impl Eq<str> {
         fn eq(this, rhs: *str): bool {
-            use core::span::ext::SpanEq;
-
             this.as_bytes() == rhs.as_bytes()
         }
     }

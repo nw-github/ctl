@@ -285,7 +285,6 @@ struct PatternParams {
 }
 
 pub struct TypeChecker {
-    universal: Vec<ScopeId>,
     safety: Safety,
     current: ScopeId,
     lsp_input: LspInput,
@@ -298,7 +297,6 @@ pub struct TypeChecker {
 impl TypeChecker {
     pub fn check(project: Vec<Stmt>, diag: Diagnostics, lsp: LspInput) -> Project {
         let mut this = Self {
-            universal: Vec::new(),
             safety: Safety::Safe,
             current: ScopeId::ROOT,
             lsp_input: lsp,
@@ -308,12 +306,33 @@ impl TypeChecker {
             current_expr: 0,
         };
 
+        let mut autouse = vec![];
         for module in project {
-            let mut autouse = vec![];
             let stmt = this.declare_stmt(&mut autouse, module);
+            for scope in autouse.drain(..) {
+                this.enter_id_and_resolve(scope, |_| {});
+
+                for (name, item) in this.proj.scopes[scope].tns.iter() {
+                    if item.public {
+                        this.proj
+                            .autouse_tns
+                            .entry(name.clone())
+                            .or_insert(Vis::new(**item, false));
+                    }
+                }
+
+                for (name, item) in this.proj.scopes[scope].vns.iter() {
+                    if item.public {
+                        this.proj
+                            .autouse_vns
+                            .entry(name.clone())
+                            .or_insert(Vis::new(**item, false));
+                    }
+                }
+            }
+
             this.proj.scope = *stmt.as_module().unwrap().0;
             this.check_stmt(stmt);
-            this.universal.extend(autouse);
         }
 
         this.proj.main = this.proj.scopes[this.proj.scope]
@@ -344,7 +363,6 @@ impl TypeChecker {
 
     pub fn with_project<T>(proj: &mut Project, f: impl FnOnce(&mut TypeChecker) -> T) -> T {
         let mut tc = Self {
-            universal: Vec::new(),
             safety: Safety::Safe,
             current: ScopeId::ROOT,
             lsp_input: Default::default(),
@@ -1028,13 +1046,13 @@ impl TypeChecker {
                         this.error(Error::redefinition(&name.data, name.span))
                     }
 
-                    let core = this.proj.scopes[ScopeId::ROOT]
-                        .find_in_tns("core")
-                        .and_then(|inner| inner.as_module().copied());
-                    let std = this.proj.scopes[ScopeId::ROOT]
-                        .find_in_tns("std")
-                        .and_then(|inner| inner.as_module().copied());
                     if stmt.attrs.iter().any(|attr| attr.name.data == "autouse") {
+                        let core = this.proj.scopes[ScopeId::ROOT]
+                            .find_in_tns("core")
+                            .and_then(|inner| inner.as_module().copied());
+                        let std = this.proj.scopes[ScopeId::ROOT]
+                            .find_in_tns("std")
+                            .and_then(|inner| inner.as_module().copied());
                         if this
                             .proj
                             .scopes
@@ -1542,12 +1560,6 @@ impl TypeChecker {
                 .collect::<Vec<_>>()
             {
                 this.enter_id(id, |this| {
-                    if this.proj.scopes[this.current].kind.is_module() {
-                        for scope in this.universal.clone() {
-                            this.use_all(scope, false);
-                        }
-                    }
-
                     for stmt in std::mem::take(&mut this.proj.scopes[this.current].use_stmts) {
                         if let Err(err) = this.resolve_use(&stmt) {
                             this.error(err)
@@ -5316,17 +5328,26 @@ impl TypeChecker {
             return vec![];
         }
 
+        fn get_tns_extensions<'a>(
+            scopes: &'a Scopes,
+            tns: &'a HashMap<String, Vis<TypeItem>>,
+        ) -> impl Iterator<Item = UserTypeId> + 'a {
+            tns.iter().flat_map(|s| {
+                s.1.as_type()
+                    .filter(|&&id| scopes.get(id).kind.is_extension())
+                    .cloned()
+            })
+        }
+
         let exts: Vec<_> = self
             .proj
             .scopes
             .walk(scope)
-            .flat_map(|(_, scope)| {
-                scope.tns.iter().flat_map(|s| {
-                    s.1.as_type()
-                        .filter(|&&id| self.proj.scopes.get(id).kind.is_extension())
-                        .cloned()
-                })
-            })
+            .flat_map(|(_, scope)| get_tns_extensions(&self.proj.scopes, &scope.tns))
+            .chain(get_tns_extensions(
+                &self.proj.scopes,
+                &self.proj.autouse_tns,
+            ))
             .collect();
         let mut cache = vec![HashMap::new(); exts.len()];
         for (i, &id) in exts.iter().enumerate() {
@@ -6802,6 +6823,10 @@ impl TypeChecker {
 /// Path resolution routines
 impl TypeChecker {
     fn find_in_tns(&self, name: &str) -> Option<Vis<TypeItem>> {
+        if let Some(item) = self.proj.autouse_tns.get(name).copied() {
+            return Some(item);
+        }
+
         for (id, scope) in self.proj.scopes.walk(self.current) {
             if let Some(item) = self.proj.scopes[id].find_in_tns(name) {
                 return Some(item);
@@ -6816,6 +6841,10 @@ impl TypeChecker {
     }
 
     fn find_in_vns(&self, name: &str) -> Option<Vis<ValueItem>> {
+        if let Some(item) = self.proj.autouse_vns.get(name).copied() {
+            return Some(item);
+        }
+
         for (id, scope) in self.proj.scopes.walk(self.current) {
             if let Some(item) = self.proj.scopes[id].find_in_vns(name) {
                 if item.is_fn() && matches!(scope.kind, ScopeKind::UserType(_)) {
@@ -6963,30 +6992,29 @@ impl TypeChecker {
                 ));
             }
         } else {
-            self.use_all(scope, public);
+            let cap = self.can_access_privates(scope);
+            if let Some((scope, current)) = self.proj.scopes.borrow_twice(scope, self.current) {
+                for (name, item) in scope.tns.iter() {
+                    if item.public || cap {
+                        current
+                            .tns
+                            .entry(name.clone())
+                            .or_insert(Vis::new(**item, public));
+                    }
+                }
+
+                for (name, item) in scope.vns.iter() {
+                    if item.public || cap {
+                        current
+                            .vns
+                            .entry(name.clone())
+                            .or_insert(Vis::new(**item, public));
+                    }
+                }
+            }
         }
 
         Ok(())
-    }
-
-    fn use_all(&mut self, scope: ScopeId, public: bool) {
-        for (name, item) in self.proj.scopes[scope].tns.clone().iter() {
-            if item.public || self.can_access_privates(scope) {
-                self.proj.scopes[self.current]
-                    .tns
-                    .entry(name.clone())
-                    .or_insert(Vis::new(**item, public));
-            }
-        }
-
-        for (name, item) in self.proj.scopes[scope].vns.clone().iter() {
-            if item.public || self.can_access_privates(scope) {
-                self.proj.scopes[self.current]
-                    .vns
-                    .entry(name.clone())
-                    .or_insert(Vis::new(**item, public));
-            }
-        }
     }
 
     fn resolve_use_union(

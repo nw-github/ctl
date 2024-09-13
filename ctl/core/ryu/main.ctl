@@ -1,7 +1,4 @@
-use super::span::Span;
-use super::string::str;
-use super::panic;
-use core::ext::*;
+use core::span::Span;
 
 static NAN: str = "NaN";
 static INFINITY: str = "inf";
