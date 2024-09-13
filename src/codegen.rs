@@ -443,19 +443,8 @@ impl Buffer {
             Type::Never => write_de!(self, "never"),
             Type::Int(bits) => write_de!(self, "i{bits}"),
             Type::Uint(bits) => write_de!(self, "u{bits}"),
-            id @ (Type::CInt(ty) | Type::CUint(ty)) => {
-                write_de!(self, "c_");
-                if matches!(id, Type::CUint(_)) {
-                    write_de!(self, "u");
-                }
-                match ty {
-                    CInt::Char => write_de!(self, "char"),
-                    CInt::Short => write_de!(self, "short"),
-                    CInt::Int => write_de!(self, "int"),
-                    CInt::Long => write_de!(self, "long"),
-                    CInt::LongLong => write_de!(self, "longlong"),
-                }
-            }
+            Type::CInt(inner) => write_de!(self, "c_{inner:#}"),
+            Type::CUint(inner) => write_de!(self, "c_u{inner:#}"),
             Type::Isize => write_de!(self, "isize"),
             Type::Usize => write_de!(self, "usize"),
             Type::F32 => write_de!(self, "f32"),
@@ -509,16 +498,10 @@ impl Buffer {
     fn emit_type(&mut self, scopes: &Scopes, types: &mut Types, id: TypeId, min: bool) {
         match &types[id] {
             Type::Void | Type::Never | Type::CVoid => write_de!(self, "$void"),
-            ty @ (Type::Int(bits) | Type::Uint(bits)) => {
-                let ch = if matches!(ty, Type::Int(_)) { 's' } else { 'u' };
-                write_de!(self, "{ch}{bits}");
-            }
-            ty @ (Type::CInt(inner) | Type::CUint(inner)) => {
-                if matches!(ty, Type::CUint(_)) {
-                    write_de!(self, "unsigned ");
-                }
-                write_de!(self, "{inner}");
-            }
+            Type::Int(bits) => write_de!(self, "s{bits}"),
+            Type::Uint(bits) => write_de!(self, "u{bits}"),
+            Type::CInt(inner) => write_de!(self, "{inner}"),
+            Type::CUint(inner) => write_de!(self, "unsigned {inner}"),
             Type::Isize => write_de!(self, "isize"),
             Type::Usize => write_de!(self, "usize"),
             Type::F32 => write_de!(self, "f32"),

@@ -166,21 +166,21 @@ pub extension IntegralImpl<T: Integral> for T {
     #(inline)
     pub fn overflowing_add(this, rhs: T): (T, bool) {
         mut out: T;
-        let res = gcc_intrin::__builtin_add_overflow(*this, rhs, &raw out);
+        let res = unsafe gcc_intrin::__builtin_add_overflow(*this, rhs, &raw out);
         (out, res)
     }
 
     #(inline)
     pub fn overflowing_sub(this, rhs: T): (T, bool) {
         mut out: T;
-        let res = gcc_intrin::__builtin_sub_overflow(*this, rhs, &raw out);
+        let res = unsafe gcc_intrin::__builtin_sub_overflow(*this, rhs, &raw out);
         (out, res)
     }
 
     #(inline)
     pub fn overflowing_mul(this, rhs: T): (T, bool) {
         mut out: T;
-        let res = gcc_intrin::__builtin_mul_overflow(*this, rhs, &raw out);
+        let res = unsafe gcc_intrin::__builtin_mul_overflow(*this, rhs, &raw out);
         (out, res)
     }
 
@@ -591,27 +591,27 @@ pub extension F32Impl for f32 {
     }
 
     pub fn sqrt(my this): f32 {
-        libm::sqrtf(this)
+        unsafe libm::sqrtf(this)
     }
 
     pub fn sin(my this): f32 {
-        libm::sinf(this)
+        unsafe libm::sinf(this)
     }
 
     pub fn cos(my this): f32 {
-        libm::cosf(this)
+        unsafe libm::cosf(this)
     }
 
     pub fn tan(my this): f32 {
-        libm::tanf(this)
+        unsafe libm::tanf(this)
     }
 
     pub fn floor(my this): f32 {
-        libm::floorf(this)
+        unsafe libm::floorf(this)
     }
 
     pub fn ceil(my this): f32 {
-        libm::ceilf(this)
+        unsafe libm::ceilf(this)
     }
 
     pub fn pi(): f32 {
@@ -631,27 +631,27 @@ pub extension F64Impl for f64 {
     }
 
     pub fn sqrt(my this): f64 {
-        libm::sqrt(this)
+        unsafe libm::sqrt(this)
     }
 
     pub fn sin(my this): f64 {
-        libm::sin(this)
+        unsafe libm::sin(this)
     }
 
     pub fn cos(my this): f64 {
-        libm::cos(this)
+        unsafe libm::cos(this)
     }
 
     pub fn tan(my this): f64 {
-        libm::tan(this)
+        unsafe libm::tan(this)
     }
 
     pub fn floor(my this): f64 {
-        libm::floor(this)
+        unsafe libm::floor(this)
     }
 
     pub fn ceil(my this): f64 {
-        libm::ceil(this)
+        unsafe libm::ceil(this)
     }
 
     pub fn pi(): f64 {

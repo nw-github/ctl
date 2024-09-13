@@ -4,26 +4,26 @@
 // clang & msvc require that the pointers are to _Atomic types
 #if !defined(__GNUC__) || defined(__clang__)
 #define ctl_atomic_store_explicit(a, b, c) \
-    atomic_store_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
+  atomic_store_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
 #define ctl_atomic_load_explicit(a, b) atomic_load_explicit((const _Atomic __typeof__(*(a)) *)a, b)
 #define ctl_atomic_exchange_explicit(a, b, c) \
-    atomic_exchange_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
+  atomic_exchange_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
 #define ctl_atomic_compare_exchange_strong_explicit(a, b, c, d, e) \
-    atomic_compare_exchange_strong_explicit(                       \
-        (_Atomic __typeof__(*(a)) *)a, (_Atomic __typeof__(*(b)) *)b, c, d, e)
+  atomic_compare_exchange_strong_explicit(                         \
+      (_Atomic __typeof__(*(a)) *)a, (_Atomic __typeof__(*(b)) *)b, c, d, e)
 #define ctl_atomic_compare_exchange_weak_explicit(a, b) \
-    atomic_compare_exchange_weak_explicit(              \
-        (_Atomic __typeof__(*(a)) *)a, (_Atomic __typeof__(*(b)) *)b, c, d, e)
+  atomic_compare_exchange_weak_explicit(                \
+      (_Atomic __typeof__(*(a)) *)a, (_Atomic __typeof__(*(b)) *)b, c, d, e)
 #define ctl_atomic_fetch_add_explicit(a, b, c) \
-    atomic_fetch_add_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
+  atomic_fetch_add_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
 #define ctl_atomic_fetch_sub_explicit(a, b, c) \
-    atomic_fetch_sub_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
+  atomic_fetch_sub_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
 #define ctl_atomic_fetch_and_explicit(a, b, c) \
-    atomic_fetch_and_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
+  atomic_fetch_and_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
 #define ctl_atomic_fetch_or_explicit(a, b, c) \
-    atomic_fetch_or_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
+  atomic_fetch_or_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
 #define ctl_atomic_fetch_xor_explicit(a, b, c) \
-    atomic_fetch_xor_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
+  atomic_fetch_xor_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
 #define ctl_atomic_is_lock_free(a) atomic_is_lock_free((_Atomic __typeof__(*(a)) *)a)
 #else
 
@@ -48,13 +48,13 @@
 #if !defined(CTL_NOGC)
 #include <gc.h>
 
-#define CTL_MALLOC(sz)       GC_MALLOC(sz)
-#define CTL_REALLOC(ptr, sz) GC_REALLOC(ptr, sz)
+#define CTL_MALLOC(sz, align)       GC_MALLOC(sz)
+#define CTL_REALLOC(ptr, sz, align) GC_REALLOC(ptr, sz)
 #else
 #include <stdlib.h>
 
-#define CTL_MALLOC(sz)    malloc(sz)
-#define CTL_REALLOC(a, b) realloc(a, b)
+#define CTL_MALLOC(sz, align)       malloc(sz)
+#define CTL_REALLOC(ptr, sz, align) realloc(ptr, sz)
 #endif
 
 #if defined(CTL_NOBITINT)
@@ -85,10 +85,10 @@
 // courtesy of: https://stackoverflow.com/questions/1113409/attribute-constructor-equivalent-in-vc
 // TODO: testing is required to see if or on what versions this gets optimized away
 #pragma section(".CRT$XCU", read)
-#define INIT_(f, p)                                          \
-    static void f(void);                                     \
-    __declspec(allocate(".CRT$XCU")) void (*f##_)(void) = f; \
-    __pragma(comment(linker, "/include:" p #f "_")) static void f(void)
+#define INIT_(f, p)                                        \
+  static void f(void);                                     \
+  __declspec(allocate(".CRT$XCU")) void (*f##_)(void) = f; \
+  __pragma(comment(linker, "/include:" p #f "_")) static void f(void)
 #if defined(_WIN64)
 #define CTL_INIT(f) INIT_(f, "")
 #else
@@ -112,22 +112,22 @@
 #if defined(NDEBUG)
 #define CTL_UNREACHABLE() __builtin_unreachable()
 #else
-#define CTL_UNREACHABLE()        \
-    do {                         \
-        __asm__ volatile("ud2"); \
-        __builtin_unreachable(); \
-    } while (0)
+#define CTL_UNREACHABLE()    \
+  do {                       \
+    __asm__ volatile("ud2"); \
+    __builtin_unreachable(); \
+  } while (0)
 #endif
 #else
 #define CTL_UNREACHABLE() __asm__ volatile("ud2")
 #endif
 
-#define CTL_ASSUME(x)          \
-    do {                       \
-        if (!(x)) {            \
-            CTL_UNREACHABLE(); \
-        }                      \
-    } while (0)
+#define CTL_ASSUME(x)    \
+  do {                   \
+    if (!(x)) {          \
+      CTL_UNREACHABLE(); \
+    }                    \
+  } while (0)
 
 #define CTL_INIT(f)   static __attribute__((constructor)) void f(void)
 #define CTL_DEINIT(f) static __attribute__((destructor)) void f(void)
@@ -140,12 +140,12 @@
 
 #define SINT(bits) _BitInt(bits)
 #define UINT(bits) unsigned _BitInt(bits)
-#define STRLIT(s, data, n)                               \
-    (s) {                                                \
-        .$span = {.$ptr = (u8 *)data, .$len = (usize)n } \
-    }
+#define STRLIT(s, data, n)                           \
+  (s) {                                              \
+    .$span = {.$ptr = (u8 *)data, .$len = (usize)n } \
+  }
 #define COERCE(ty, expr) (expr, *(ty *)(NULL))
-#define VOID(expr) (expr, CTL_VOID)
+#define VOID(expr)       (expr, CTL_VOID)
 
 #if defined(__clang__)
 #pragma clang diagnostic ignored "-Wundefined-internal"
@@ -156,23 +156,23 @@ static void $ctl_static_init(void);
 static void $ctl_static_deinit(void);
 
 CTL_DEINIT($ctl_runtime_deinit) {
-    $ctl_static_deinit();
+  $ctl_static_deinit();
 
 #if !defined(CTL_NOGC)
-    GC_deinit();
+  GC_deinit();
 #endif
 }
 
 CTL_INIT($ctl_runtime_init) {
 #if !defined(CTL_NOGC)
-    GC_INIT();
+  GC_INIT();
 #endif
-    $ctl_static_init();
+  $ctl_static_init();
 
 #if defined(_MSC_VER)
-    int __cdecl atexit(void(__cdecl *)(void));
+  int __cdecl atexit(void(__cdecl *)(void));
 
-    atexit($ctl_runtime_deinit);
+  atexit($ctl_runtime_deinit);
 #endif
 }
 
@@ -189,10 +189,10 @@ typedef uint8_t $bool;
 typedef float f32;
 typedef double f64;
 typedef struct {
-    CTL_DUMMY_MEMBER;
+  CTL_DUMMY_MEMBER;
 } $void;
 
-#define CTL_VOID       \
-    ($void) {          \
-        CTL_DUMMY_INIT \
-    }
+#define CTL_VOID   \
+  ($void) {        \
+    CTL_DUMMY_INIT \
+  }

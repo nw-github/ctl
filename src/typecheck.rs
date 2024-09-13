@@ -302,8 +302,8 @@ impl TypeChecker {
             lsp_input: lsp,
             proj: Project::new(diag),
             listening_vars: Vec::new(),
-            listening_expr: 0,
-            current_expr: 0,
+            listening_expr: 1,
+            current_expr: 1,
         };
 
         let mut autouse = vec![];
@@ -368,8 +368,8 @@ impl TypeChecker {
             lsp_input: Default::default(),
             proj: std::mem::take(proj),
             listening_vars: Vec::new(),
-            listening_expr: 0,
-            current_expr: 0,
+            listening_expr: 1,
+            current_expr: 1,
         };
         let res = f(&mut tc);
         std::mem::swap(proj, &mut tc.proj);
@@ -1260,6 +1260,7 @@ impl TypeChecker {
             true,
         );
 
+        let mut instrinsic = false;
         for attr in self.proj.scopes.get::<FunctionId>(id).attrs.clone().iter() {
             match &attr.name.data[..] {
                 "lang" => {
@@ -1275,6 +1276,7 @@ impl TypeChecker {
                         .insert(inner.name.data.clone(), id);
                 }
                 "intrinsic" => {
+                    instrinsic = true;
                     let (name, span) = if let Some(attr) = attr.props.first() {
                         (&attr.name.data[..], attr.name.span)
                     } else {
@@ -1306,6 +1308,10 @@ impl TypeChecker {
         }
 
         self.enter(ScopeKind::Function(id), |this| {
+            if !instrinsic && f.is_extern && f.body.is_none() {
+                this.proj.scopes.get_mut(id).is_unsafe = true;
+            }
+
             this.proj.scopes.get_mut(id).body_scope = this.current;
             this.proj.scopes.get_mut(id).type_params = this.declare_type_params(f.type_params);
             this.proj.scopes.get_mut(id).params = f
@@ -3549,6 +3555,8 @@ impl TypeChecker {
                         .warn(Error::new("unsafe expression in unsafe context", span))
                 }
 
+                // consider the body of the 
+                self.current_expr -= 1;
                 let old_safety = std::mem::replace(&mut self.safety, Safety::Unsafe);
                 let expr = self.check_expr(*expr, target);
                 self.safety = old_safety;

@@ -4,7 +4,7 @@ mod libc {
 }
 
 pub fn exit(code: u32): never {
-    libc::exit(code as! c_int)
+    unsafe libc::exit(code as! c_int)
 }
 
 #(lang(convert_argv))
@@ -27,7 +27,7 @@ fn convert_argv(argc: c_int, argv: **c_char): [str..] {
 fn panic_handler(s: str): never {
     io::eprint("fatal error: ");
     io::eprintln(s);
-    libc::abort();
+    unsafe libc::abort();
 }
 
 #(autouse)

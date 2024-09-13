@@ -695,7 +695,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 Expr::new(span, ExprData::Break(expr, label))
             }
             Token::Unsafe => {
-                let expr = self.expression();
+                let expr = self.precedence(Precedence::Min, ctx);
                 Expr::new(span, ExprData::Unsafe(expr.into()))
             }
             Token::Continue => {

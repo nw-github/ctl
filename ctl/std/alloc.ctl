@@ -1,14 +1,14 @@
-use std::mem::size_of;
-use std::intrin;
+use std::mem::*;
 
 pub fn alloc<T>(count: uint): ?*raw T {
-    if intrin::malloc(size_of::<T>() * count) is ?ptr {
+    if unsafe std::intrin::malloc(size_of::<T>().checked_mul(count)?, align_of::<T>()) is ?ptr {
         ptr as *raw T
     }
 }
 
 pub fn realloc<T>(addr: *mut T, count: uint): ?*raw T {
-    if intrin::realloc(unsafe addr as *mut c_void, size_of::<T>() * count) is ?ptr {
+    let size = size_of::<T>().checked_mul(count)?;
+    if unsafe std::intrin::realloc(addr as *raw c_void, size, align_of::<T>()) is ?ptr {
         ptr as *raw T
     }
 }
