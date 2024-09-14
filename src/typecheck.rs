@@ -2909,22 +2909,32 @@ impl TypeChecker {
                     let span = expr.span;
                     let expr = self.check_expr(expr, None);
                     let ty = expr.ty.strip_references(&self.proj.types);
-                    if ty != TypeId::UNKNOWN && self.get_trait_impl(ty, fmt_id).is_none() {
+                    if ty == TypeId::UNKNOWN {
+                        continue;
+                    }
+
+                    let Some(mfn) =
+                        self.get_member_fn_ex(ty, Some(fmt_id), "fmt", self.current, |this, id| {
+                            TypeArgs::in_order(&this.proj.scopes, id, [formatter.ty])
+                        })
+                    else {
                         self.proj.diag.error(Error::doesnt_implement(
                             &ty.name(&self.proj.scopes, &mut self.proj.types),
                             "Format",
                             span,
                         ));
-                    }
+                        continue;
+                    };
+
                     let ptr_to_unk = self.proj.types.insert(Type::Ptr(TypeId::UNKNOWN));
                     if !matches!(&expr.data, CheckedExprData::String(s) if s.is_empty()) {
-                        out_parts.push(expr.auto_deref(&mut self.proj.types, ptr_to_unk));
+                        out_parts.push((mfn, expr.auto_deref(&mut self.proj.types, ptr_to_unk)));
                     }
                 }
 
                 CheckedExpr::new(
                     self.make_lang_type_by_name("string", [], span),
-                    CheckedExprData::StringInterpolation {
+                    CheckedExprData::StringInterp {
                         parts: out_parts,
                         formatter: formatter.into(),
                         scope: self.current,
@@ -2962,7 +2972,7 @@ impl TypeChecker {
             }
             ExprData::Float(value) => CheckedExpr::new(
                 target
-                    .map(|target| target.strip_options(&self.proj.scopes, &self.proj.types))
+                    .map(|target| target.strip_options(&self.proj))
                     .filter(|&t| t == TypeId::F32 || t == TypeId::F64)
                     .unwrap_or(TypeId::F64),
                 CheckedExprData::Float(value),
@@ -3988,19 +3998,26 @@ impl TypeChecker {
             branches: false,
         });
         self.enter(kind, |this| {
-            let Some(ut) = this.get_trait_impl(iter.ty, iter_tr_id) else {
+            let Some(mfn) = this.get_member_fn(
+                iter.ty,
+                Some(iter_tr_id),
+                "next",
+                &[],
+                Span::default(),
+                this.current,
+            ) else {
                 this.check_block(body);
-                bail!(
-                    this,
-                    Error::doesnt_implement(
-                        &iter.ty.name(&this.proj.scopes, &mut this.proj.types),
-                        "Iterator",
-                        span,
-                    )
-                );
+                let name = iter.ty.name(&this.proj.scopes, &mut this.proj.types);
+                return this.error(Error::doesnt_implement(&name, "Iterator", span));
             };
 
-            let next_ty = ut.first_type_arg().unwrap();
+            let next_ty = this
+                .proj
+                .scopes
+                .get(mfn.func.id)
+                .ret
+                .strip_options(&this.proj)
+                .with_templates(&mut this.proj.types, &mfn.func.ty_args);
             let patt_span = patt.span;
             let patt = this.check_pattern(PatternParams {
                 binding: true,
@@ -4042,17 +4059,6 @@ impl TypeChecker {
             );
 
             let next_fn_call = {
-                let Some(mfn) = this.get_member_fn(
-                    iter.ty,
-                    Some(iter_tr_id),
-                    "next",
-                    &[],
-                    Span::default(),
-                    this.current,
-                ) else {
-                    panic!("ICE: for loop, can't find next function for iterator type");
-                };
-
                 let f = this.proj.scopes.get(mfn.func.id);
                 let Some(p0) = f.params.first().map(|p| p.label.clone()) else {
                     panic!("ICE: Iterator::next() has 0 parameters");
@@ -5379,42 +5385,6 @@ impl TypeChecker {
             .collect()
     }
 
-    fn get_trait_impl(&mut self, ty: TypeId, id: TraitId) -> Option<GenericTrait> {
-        fn get_trait_impl_helper(
-            this: &mut TypeChecker,
-            ut: &GenericUserType,
-            target: TraitId,
-        ) -> Option<GenericTrait> {
-            for i in 0..this.proj.scopes.get(ut.id).impls.len() {
-                resolve_impl!(this, this.proj.scopes.get_mut(ut.id).impls[i]);
-                if let Some(mut tr) = this.proj.scopes.get(ut.id).impls[i]
-                    .as_checked()
-                    .filter(|tr| tr.id == target)
-                    .cloned()
-                {
-                    tr.fill_templates(&mut this.proj.types, &ut.ty_args);
-                    return Some(tr);
-                }
-            }
-
-            None
-        }
-
-        if let Type::User(ut) = &self.proj.types[ty] {
-            if let Some(ut) = get_trait_impl_helper(self, &ut.clone(), id) {
-                return Some(ut);
-            }
-        }
-
-        for ext in self.extensions_in_scope_for(ty, self.current) {
-            if let Some(ut) = get_trait_impl_helper(self, &ext, id) {
-                return Some(ut);
-            }
-        }
-
-        None
-    }
-
     pub(crate) fn get_member_fn_ex(
         &mut self,
         inst: TypeId,
@@ -5612,7 +5582,7 @@ impl TypeChecker {
             }
         } else {
             target
-                .map(|target| target.strip_options(&self.proj.scopes, &self.proj.types))
+                .map(|target| target.strip_options(&self.proj))
                 .filter(|&target| self.proj.types[target].is_integral())
                 .unwrap_or(TypeId::ISIZE)
         };

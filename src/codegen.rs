@@ -13,7 +13,7 @@ use crate::{
     nearest_pow_of_two,
     project::Project,
     sym::*,
-    typecheck::TypeChecker,
+    typecheck::{MemberFn, TypeChecker},
     typeid::{
         BitSizeResult, CInt, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, Type,
         TypeArgs, TypeId, Types,
@@ -1495,45 +1495,7 @@ impl Codegen {
                 );
                 self.funcs.insert(state);
             }
-            CheckedExprData::MemFn(mut mfn, scope) => {
-                let parent = &self.proj.scopes[self.proj.scopes.get(mfn.func.id).scope];
-                if let Some((trait_id, (this, _))) = parent
-                    .kind
-                    .as_user_type()
-                    .and_then(|&id| Some(id).zip(self.proj.scopes.get(id).kind.as_trait()))
-                {
-                    let inst = mfn
-                        .func
-                        .ty_args
-                        .get(this)
-                        .unwrap()
-                        .with_templates(&mut self.proj.types, &state.func.ty_args);
-                    mfn.func = self.find_implementation(
-                        inst,
-                        trait_id,
-                        &self.proj.scopes.get(mfn.func.id).name.data.clone(),
-                        state.caller,
-                        |tc, id| {
-                            TypeArgs::in_order(
-                                tc.scopes(),
-                                id,
-                                mfn.func.ty_args.0.into_iter().map(|kv| kv.1),
-                            )
-                        },
-                    );
-                }
-
-                mfn.func
-                    .fill_templates(&mut self.proj.types, &state.func.ty_args);
-                let state = State::new(mfn.func, scope);
-                self.buffer.emit_fn_name(
-                    &self.proj.scopes,
-                    &mut self.proj.types,
-                    &state.func,
-                    self.flags.minify,
-                );
-                self.funcs.insert(state);
-            }
+            CheckedExprData::MemFn(mfn, scope) => self.emit_member_fn(state, mfn, scope),
             CheckedExprData::Var(id) => {
                 if self.proj.scopes.get(id).is_static {
                     self.statics.insert(id);
@@ -1860,7 +1822,7 @@ impl Codegen {
                 self.emit_cast(expr.ty);
                 write_de!(self.buffer, "{{.$ptr={tmp}.$ptr,.$len={tmp}.$len}}");
             }
-            CheckedExprData::StringInterpolation {
+            CheckedExprData::StringInterp {
                 mut formatter,
                 parts,
                 scope,
@@ -1870,37 +1832,16 @@ impl Codegen {
                     .with_templates(&mut self.proj.types, &state.func.ty_args);
                 let formatter_ty = formatter.ty;
                 let formatter = hoist!(self, {
-                    let format_id = self.proj.scopes.lang_traits.get("format").copied().unwrap();
                     let formatter = self.emit_tmpvar(*formatter, state);
-                    for mut expr in parts {
+                    for (mfn, mut expr) in parts {
                         hoist_point!(self, {
                             expr.ty = expr
                                 .ty
                                 .with_templates(&mut self.proj.types, &state.func.ty_args);
-                            let stripped = expr.ty.strip_references(&self.proj.types);
-                            let format_state = State::with_inst(
-                                self.find_implementation(
-                                    stripped,
-                                    format_id,
-                                    "fmt",
-                                    scope,
-                                    |tc, id| TypeArgs::in_order(tc.scopes(), id, [formatter_ty]),
-                                ),
-                                &self.proj.types,
-                                stripped,
-                                scope,
-                            );
-
-                            self.buffer.emit_fn_name(
-                                &self.proj.scopes,
-                                &mut self.proj.types,
-                                &format_state.func,
-                                self.flags.minify,
-                            );
+                            self.emit_member_fn(state, mfn, scope);
                             write_de!(self.buffer, "(");
                             self.emit_tmpvar_ident(expr, state);
                             write_de!(self.buffer, ",&{formatter});");
-                            self.funcs.insert(format_state);
                         });
                     }
                     formatter
@@ -1995,6 +1936,46 @@ impl Codegen {
             .ty
             .with_templates(&mut self.proj.types, &state.func.ty_args);
         self.emit_expr_inner(expr, state);
+    }
+
+    fn emit_member_fn(&mut self, state: &mut State, mut mfn: MemberFn, scope: ScopeId) {
+        let parent = &self.proj.scopes[self.proj.scopes.get(mfn.func.id).scope];
+        if let Some((trait_id, (this, _))) = parent
+            .kind
+            .as_user_type()
+            .and_then(|&id| Some(id).zip(self.proj.scopes.get(id).kind.as_trait()))
+        {
+            let inst = mfn
+                .func
+                .ty_args
+                .get(this)
+                .unwrap()
+                .with_templates(&mut self.proj.types, &state.func.ty_args);
+            mfn.func = self.find_implementation(
+                inst,
+                trait_id,
+                &self.proj.scopes.get(mfn.func.id).name.data.clone(),
+                state.caller,
+                |tc, id| {
+                    TypeArgs::in_order(
+                        tc.scopes(),
+                        id,
+                        mfn.func.ty_args.0.into_iter().map(|kv| kv.1),
+                    )
+                },
+            );
+        }
+
+        mfn.func
+            .fill_templates(&mut self.proj.types, &state.func.ty_args);
+        let state = State::new(mfn.func, scope);
+        self.buffer.emit_fn_name(
+            &self.proj.scopes,
+            &mut self.proj.types,
+            &state.func,
+            self.flags.minify,
+        );
+        self.funcs.insert(state);
     }
 
     fn emit_instance(

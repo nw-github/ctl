@@ -150,9 +150,9 @@ pub enum CheckedExprData {
     Integer(BigInt),
     Float(String),
     String(String),
-    StringInterpolation {
+    StringInterp {
         formatter: Box<CheckedExpr>,
-        parts: Vec<CheckedExpr>,
+        parts: Vec<(MemberFn, CheckedExpr)>,
         scope: ScopeId,
     },
     ByteString(Vec<u8>),
