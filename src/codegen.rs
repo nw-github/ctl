@@ -1728,7 +1728,7 @@ impl Codegen {
                         &new_state.func,
                         self.flags.minify,
                     );
-                    write_de!(self.buffer, "(&{src}, ");
+                    write_de!(self.buffer, "({src}, ");
                     self.emit_expr_inline(*arg, state);
                     write_de!(self.buffer, ")");
                     self.funcs.insert(new_state);
@@ -1852,7 +1852,10 @@ impl Codegen {
                     write_de!(self.buffer, ")");
                 }
             }
-            CheckedExprData::SpanMutCoerce(inner) => {
+            CheckedExprData::SpanMutCoerce(mut inner) => {
+                inner.ty = inner
+                    .ty
+                    .with_templates(&mut self.proj.types, &state.func.ty_args);
                 let tmp = hoist!(self, self.emit_tmpvar(*inner, state));
                 self.emit_cast(expr.ty);
                 write_de!(self.buffer, "{{.$ptr={tmp}.$ptr,.$len={tmp}.$len}}");
@@ -2589,15 +2592,6 @@ impl Codegen {
                 self.emit_cast(ret);
                 self.emit_expr(expr, state);
             }
-            "numeric_lt" => {
-                let mut args = args.into_iter();
-                self.emit_cast(TypeId::BOOL);
-                write_de!(self.buffer, "(");
-                self.emit_expr(args.next().unwrap().1, state);
-                write_de!(self.buffer, "<");
-                self.emit_expr(args.next().unwrap().1, state);
-                write_de!(self.buffer, ")");
-            }
             "max_value" => {
                 self.emit_literal(ret.as_integral(&self.proj.types, true).unwrap().max(), ret)
             }
@@ -2720,16 +2714,6 @@ impl Codegen {
                     ret,
                     arg0,
                 );
-            }
-            "raw_offset" => {
-                write_de!(self.buffer, "(");
-                let (_, ptr) = args.shift_remove_index(0).unwrap();
-                self.emit_expr(ptr, state);
-                write_de!(self.buffer, "+");
-
-                let (_, offset) = args.shift_remove_index(0).unwrap();
-                self.emit_expr(offset, state);
-                write_de!(self.buffer, ")");
             }
             _ => unreachable!(),
         }

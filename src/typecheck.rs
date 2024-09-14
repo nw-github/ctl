@@ -1290,10 +1290,8 @@ impl TypeChecker {
                         | "unary_op"
                         | "numeric_cast"
                         | "numeric_abs"
-                        | "numeric_lt"
                         | "max_value"
                         | "min_value"
-                        | "raw_offset"
                         | "unreachable_unchecked" => {
                             self.proj.scopes.intrinsics.insert(id, name.to_string());
                         }

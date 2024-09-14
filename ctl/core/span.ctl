@@ -18,33 +18,33 @@ pub struct Span<T> {
         Span(ptr: core::ptr::raw_dangling(), len: 0)
     }
 
-    pub fn len(this): uint {
+    pub fn len(my this): uint {
         this.len
     }
 
-    pub fn is_empty(this): bool {
+    pub fn is_empty(my this): bool {
         this.len == 0
     }
 
-    pub fn get(this, idx: uint): ?*T {
+    pub fn get(my this, idx: uint): ?*T {
         if idx < this.len {
             unsafe this.get_unchecked(idx)
         }
     }
 
-    pub unsafe fn get_unchecked(this, idx: uint): *T {
+    pub unsafe fn get_unchecked(my this, idx: uint): *T {
         unsafe (this.ptr + idx) as *T
     }
 
-    pub fn as_raw(this): *raw T {
+    pub fn as_raw(my this): *raw T {
         this.ptr
     }
 
-    pub fn iter(this): Iter<T> {
+    pub fn iter(my this): Iter<T> {
         Iter(ptr: this.ptr, end: this.ptr + this.len)
     }
 
-    pub fn subspan<R: RangeBounds<uint>>(this, range: R): [T..] {
+    pub fn subspan<R: RangeBounds<uint>>(my this, range: R): [T..] {
         let start = match range.begin() {
             :Inclusive(start) => start,
             :Exclusive(start) => start + 1,
@@ -64,30 +64,30 @@ pub struct Span<T> {
         unsafe Span::new(this.ptr + start, end - start)
     }
 
-    pub fn first(this): ?*T {
+    pub fn first(my this): ?*T {
         this.get(0)
     }
 
-    pub fn last(this): ?*T {
+    pub fn last(my this): ?*T {
         if !this.is_empty() {
             unsafe this.get_unchecked(this.len() - 1)
         }
     }
 
     #(inline)
-    pub fn []<I: Integral>(this, idx: I): *T {
+    pub fn []<I: Integral>(my this, idx: I): *T {
         unsafe raw_subscript_checked(this.ptr, this.len, idx) as *T
     }
 
     #(inline(always))
-    pub fn []<R: RangeBounds<uint>>(this, range: R): [T..] {
+    pub fn []<R: RangeBounds<uint>>(my this, range: R): [T..] {
         this.subspan(range)
     }
 
     // TODO: remove this when RangeFull can implement rangebounds
     #(inline(always))
-    pub fn [](this, _: core::range::RangeFull): [T..] {
-        *this
+    pub fn [](my this, _: core::range::RangeFull): [T..] {
+        this
     }
 }
 
@@ -108,39 +108,39 @@ pub struct SpanMut<T> {
         SpanMut(ptr: core::ptr::raw_dangling(), len: 0)
     }
 
-    pub fn len(this): uint {
+    pub fn len(my this): uint {
         this.len
     }
 
-    pub fn is_empty(this): bool {
+    pub fn is_empty(my this): bool {
         this.len == 0
     }
 
-    pub fn get(this, idx: uint): ?*T {
+    pub fn get(my this, idx: uint): ?*T {
         if idx < this.len {
             unsafe this.get_unchecked(idx)
         }
     }
 
-    pub fn get_mut(this, idx: uint): ?*mut T {
+    pub fn get_mut(my this, idx: uint): ?*mut T {
         if idx < this.len {
             unsafe this.get_mut_unchecked(idx)
         }
     }
 
-    pub unsafe fn get_unchecked(this, idx: uint): *T {
+    pub unsafe fn get_unchecked(my this, idx: uint): *T {
         unsafe (this.ptr + idx) as *T
     }
 
-    pub unsafe fn get_mut_unchecked(this, idx: uint): *mut T {
+    pub unsafe fn get_mut_unchecked(my this, idx: uint): *mut T {
         unsafe (this.ptr + idx) as *mut T
     }
 
-    pub fn as_span(this): [T..] {
-        unsafe Span::new(this.ptr, this.len)
+    pub fn as_span(my this): [T..] {
+        this
     }
 
-    pub fn as_raw(this): *raw T {
+    pub fn as_raw(my this): *raw T {
         this.ptr
     }
 
@@ -148,11 +148,11 @@ pub struct SpanMut<T> {
         Iter(ptr: this.ptr, end: this.ptr + this.len)
     }
 
-    pub fn iter_mut(this): IterMut<T> {
+    pub fn iter_mut(my this): IterMut<T> {
         IterMut(ptr: this.ptr, end: this.ptr + this.len)
     }
 
-    pub fn subspan<R: RangeBounds<uint>>(this, range: R): [mut T..] {
+    pub fn subspan<R: RangeBounds<uint>>(my this, range: R): [mut T..] {
         let start = match range.begin() {
             :Inclusive(start) => start,
             :Exclusive(start) => start + 1,
@@ -172,62 +172,62 @@ pub struct SpanMut<T> {
         unsafe SpanMut::new(this.ptr + start, end - start)
     }
 
-    pub fn fill(this, t: T) {
+    pub fn fill(my this, t: T) {
         // TODO: use memset when possible
         for item in this.iter_mut() {
             *item = t;
         }
     }
 
-    pub fn swap(this, a: uint, b: uint) {
+    pub fn swap(my this, a: uint, b: uint) {
         core::mem::swap(&mut this[a], &mut this[b]);
     }
 
-    pub fn first(this): ?*T {
+    pub fn first(my this): ?*T {
         this.get(0)
     }
 
-    pub fn first_mut(this): ?*mut T {
+    pub fn first_mut(my this): ?*mut T {
         this.get_mut(0)
     }
 
-    pub fn last(this): ?*T {
+    pub fn last(my this): ?*T {
         if !this.is_empty() {
             unsafe this.get_unchecked(this.len() - 1)
         }
     }
 
-    pub fn last_mut(this): ?*mut T {
+    pub fn last_mut(my this): ?*mut T {
         if !this.is_empty() {
             unsafe this.get_mut_unchecked(this.len() - 1)
         }
     }
 
     #(inline)
-    pub fn []<I: Integral>(this, idx: I): *mut T {
+    pub fn []<I: Integral>(my this, idx: I): *mut T {
         unsafe raw_subscript_checked(this.ptr, this.len, idx) as *mut T
     }
 
     #(inline)
-    pub fn []=<I: Integral>(this, idx: I, val: T) {
+    pub fn []=<I: Integral>(my this, idx: I, val: T) {
         unsafe {
             *raw_subscript_checked(this.ptr, this.len, idx) = val;
         }
     }
 
     #(inline(always))
-    pub fn []<R: RangeBounds<uint>>(this, range: R): [mut T..] {
+    pub fn []<R: RangeBounds<uint>>(my this, range: R): [mut T..] {
         this.subspan(range)
     }
 
     // TODO: remove this when RangeFull can implement rangebounds
     #(inline(always))
-    pub fn [](this, _: core::range::RangeFull): [mut T..] {
-        *this
+    pub fn [](my this, _: core::range::RangeFull): [mut T..] {
+        this
     }
 
     #(inline(always))
-    pub fn []=<R: RangeBounds<uint>>(this, range: R, rhs: [T..]) {
+    pub fn []=<R: RangeBounds<uint>>(my this, range: R, rhs: [T..]) {
         let subspan = this.subspan(range);
         if subspan.len() != rhs.len() {
             panic("Span assignment requires that both sides are the same length");
@@ -243,7 +243,7 @@ pub struct SpanMut<T> {
 
     // TODO: remove this when RangeFull can implement rangebounds
     #(inline(always))
-    pub fn []=(this, _: core::range::RangeFull, rhs: [T..]) {
+    pub fn []=(my this, _: core::range::RangeFull, rhs: [T..]) {
         this[0u..] = rhs;
     }
 }
@@ -276,18 +276,16 @@ pub struct IterMut<T> {
 
 #(inline(always))
 fn raw_subscript_checked<T, I: Integral>(ptr: *raw T, len: uint, idx: I): *raw T {
-    if !core::intrin::numeric_lt(idx, len) or idx < 0.cast() {
+    if idx.try_cast::<uint>() is ?idx and (0u..len).contains(&idx) {
+        ptr + idx
+    } else {
         panic("Span::[]: index out of bounds");
     }
-
-    core::intrin::raw_offset(ptr, idx)
 }
 
 // TODO: make these member functions/impls when the syntax allows for it
 
 pub mod ext {
-    use core::range::ext::*;
-
     pub extension SpanEq<T: core::ops::Eq<T>> for [T..] {
         pub fn ==(this, rhs: *[T..]): bool {
             if this.len() != rhs.len() {

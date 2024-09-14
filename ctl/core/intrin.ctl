@@ -4,22 +4,16 @@ use core::reflect::*;
 pub extern fn numeric_abs<T: Signed>(_: T): T;
 
 #(intrinsic)
-pub extern fn numeric_lt<T: Numeric, U: Numeric>(lhs: T, rhs: U): bool;
-
-#(intrinsic)
 pub extern fn size_of<T>(): uint;
 
 #(intrinsic)
 pub extern fn align_of<T>(): uint;
 
 #(intrinsic)
-pub extern fn panic(s: core::string::str): never;
+pub extern fn panic(s: str): never;
 
 #(intrinsic)
 pub extern fn unreachable_unchecked(): never;
-
-#(intrinsic)
-pub extern fn raw_offset<T, U: Integral>(ptr: *raw T, offset: U): *raw T;
 
 
 
