@@ -15,6 +15,7 @@ pub struct DeclaredImplBlock {
     pub span: Span,
     pub scope: ScopeId,
     pub fns: Vec<DeclaredFn>,
+    pub type_params: Vec<UserTypeId>,
 }
 
 #[derive(EnumAsInner)]

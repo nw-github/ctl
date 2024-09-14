@@ -97,15 +97,15 @@ pub struct RangeInclusive<T> {
 // ..
 #(lang(range_full))
 pub struct RangeFull {
-//     impl<T> RangeBounds<T> {
-//         fn begin(this): Bound<T> {
-//             Bound::Unbounded()
-//         }
-// 
-//         fn end(this): Bound<T> {
-//             Bound::Unbounded()
-//         }
-//     }
+    impl<T> RangeBounds<T> {
+        fn begin(this): Bound<T> {
+            Bound::Unbounded
+        }
+
+        fn end(this): Bound<T> {
+            Bound::Unbounded
+        }
+    }
 }
 
 pub mod ext {

@@ -156,17 +156,21 @@ pub enum ParamPattern {
     Checked(CheckedPattern),
 }
 
+#[derive(Debug, Clone)]
+pub enum TraitImplData {
+    Path(Path),
+    Operator {
+        tr: &'static str,
+        ty_args: Vec<TypeHint>,
+        span: Span,
+    }
+}
+
 #[derive(Debug, Clone, EnumAsInner, Default)]
 pub enum TraitImpl {
     Unchecked {
         scope: ScopeId,
-        path: Path,
-    },
-    Known {
-        scope: ScopeId,
-        tr: &'static str,
-        ty_args: Vec<TypeHint>,
-        span: Span,
+        data: TraitImplData,
     },
     Checked(GenericTrait),
     #[default]
