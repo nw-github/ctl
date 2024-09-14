@@ -186,7 +186,6 @@ pub struct CheckedParam {
     pub default: Option<DefaultExpr>,
 }
 
-#[derive(Debug, Clone)]
 pub struct Variable {
     pub public: bool,
     pub name: Located<String>,
@@ -198,7 +197,7 @@ pub struct Variable {
     pub has_hint: bool,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default)]
 pub struct Function {
     pub public: bool,
     pub attrs: Attributes,
@@ -222,7 +221,7 @@ impl FunctionId {
     pub const RESERVED: FunctionId = FunctionId(0);
 }
 
-#[derive(Debug, Clone, Constructor)]
+#[derive(Debug, Constructor)]
 pub struct CheckedMember {
     pub public: bool,
     pub ty: TypeId,
@@ -264,7 +263,7 @@ pub struct PackedStruct {
     pub align: usize,
 }
 
-#[derive(Debug, EnumAsInner, Clone)]
+#[derive(Debug, EnumAsInner)]
 pub enum UserTypeKind {
     Struct,
     PackedStruct(PackedStruct),
@@ -277,7 +276,6 @@ pub enum UserTypeKind {
     Extension(TypeId),
 }
 
-#[derive(Debug, Clone)]
 pub struct UserType {
     pub attrs: Attributes,
     pub public: bool,
@@ -389,7 +387,7 @@ pub enum ValueItem {
     UnionConstructor(UserTypeId),
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default)]
 pub struct Scope {
     pub public: bool,
     pub kind: ScopeKind,
@@ -409,7 +407,6 @@ impl Scope {
     }
 }
 
-#[derive(Clone)]
 pub struct Scopes {
     scopes: Vec<Scope>,
     fns: Vec<Scoped<Function>>,
