@@ -123,7 +123,7 @@ pub enum ScopeKind {
     Lambda(Option<TypeId>, bool),
     Function(FunctionId),
     UserType(UserTypeId),
-    Impl(TraitImpl),
+    Impl(usize),
     Module(Located<String>),
     Defer,
     #[default]
@@ -163,7 +163,7 @@ pub enum TraitImplData {
         tr: &'static str,
         ty_args: Vec<TypeHint>,
         span: Span,
-    }
+    },
 }
 
 #[derive(Debug, Clone, EnumAsInner, Default)]
@@ -276,6 +276,10 @@ pub enum UserTypeKind {
     Extension(TypeId),
 }
 
+pub struct ImplBlockData {
+    pub type_params: Vec<UserTypeId>,
+}
+
 pub struct UserType {
     pub attrs: Attributes,
     pub public: bool,
@@ -283,6 +287,7 @@ pub struct UserType {
     pub body_scope: ScopeId,
     pub kind: UserTypeKind,
     pub impls: Vec<TraitImpl>,
+    pub impl_blocks: Vec<ImplBlockData>,
     pub type_params: Vec<UserTypeId>,
     pub fns: Vec<Vis<FunctionId>>,
     pub subscripts: Vec<FunctionId>,
@@ -316,6 +321,7 @@ impl UserType {
             kind: UserTypeKind::Template,
             type_params: Vec::new(),
             impls,
+            impl_blocks: Vec::new(),
             fns: vec![],
             attrs: Default::default(),
             members: Default::default(),
@@ -522,6 +528,7 @@ impl Scopes {
                             body_scope: ScopeId::ROOT,
                             kind: UserTypeKind::Template,
                             impls: Vec::new(),
+                            impl_blocks: Vec::new(),
                             type_params: Vec::new(),
                             attrs: Default::default(),
                             fns: Vec::new(),
@@ -556,8 +563,9 @@ impl Scopes {
                     type_params,
                     kind: UserTypeKind::Tuple,
                     attrs: Default::default(),
-                    impls: vec![],
-                    fns: vec![],
+                    impls: Vec::new(),
+                    impl_blocks: Vec::new(),
+                    fns: Vec::new(),
                     subscripts: Vec::new(),
                     members_resolved: true,
                     recursive: false,
@@ -593,6 +601,7 @@ impl Scopes {
                             body_scope: ScopeId::ROOT,
                             kind: UserTypeKind::Template,
                             impls: Vec::new(),
+                            impl_blocks: Vec::new(),
                             type_params: Vec::new(),
                             attrs: Default::default(),
                             fns: Vec::new(),
@@ -627,8 +636,9 @@ impl Scopes {
                     kind: UserTypeKind::AnonStruct,
                     type_params,
                     attrs: Default::default(),
-                    impls: vec![],
-                    fns: vec![],
+                    impls: Vec::new(),
+                    impl_blocks: Vec::new(),
+                    fns: Vec::new(),
                     subscripts: Vec::new(),
                     members_resolved: true,
                     recursive: false,

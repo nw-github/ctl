@@ -195,7 +195,6 @@ pub enum CheckedExprData {
     SliceArray {
         callee: Box<CheckedExpr>,
         arg: Box<CheckedExpr>,
-        range_full: bool,
     },
     As(Box<CheckedExpr>, bool),
     Is(Box<CheckedExpr>, CheckedPattern),

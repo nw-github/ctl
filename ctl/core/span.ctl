@@ -83,12 +83,6 @@ pub struct Span<T> {
     pub fn []<R: RangeBounds<uint>>(my this, range: R): [T..] {
         this.subspan(range)
     }
-
-    // TODO: remove this when RangeFull can implement rangebounds
-    #(inline(always))
-    pub fn [](my this, _: core::range::RangeFull): [T..] {
-        this
-    }
 }
 
 #(lang(span_mut))
@@ -220,12 +214,6 @@ pub struct SpanMut<T> {
         this.subspan(range)
     }
 
-    // TODO: remove this when RangeFull can implement rangebounds
-    #(inline(always))
-    pub fn [](my this, _: core::range::RangeFull): [mut T..] {
-        this
-    }
-
     #(inline(always))
     pub fn []=<R: RangeBounds<uint>>(my this, range: R, rhs: [T..]) {
         let subspan = this.subspan(range);
@@ -239,12 +227,6 @@ pub struct SpanMut<T> {
             src: rhs.as_raw(),
             num: subspan.len(),
         );
-    }
-
-    // TODO: remove this when RangeFull can implement rangebounds
-    #(inline(always))
-    pub fn []=(my this, _: core::range::RangeFull, rhs: [T..]) {
-        this[0u..] = rhs;
     }
 }
 

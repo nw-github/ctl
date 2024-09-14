@@ -13,7 +13,7 @@ use crate::{
     nearest_pow_of_two,
     project::Project,
     sym::*,
-    typecheck::{MemberFn, TypeChecker},
+    typecheck::{MemberFn, MemberFnType, TypeChecker},
     typeid::{
         BitSizeResult, CInt, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, Type,
         TypeArgs, TypeId, Types,
@@ -950,13 +950,17 @@ impl Codegen {
             write_de!(self.buffer, " ");
             self.emit_vtable_name(&vtable);
             write_de!(self.buffer, "={{");
-            for tr in self.proj.scopes.get_trait_impls(vtable.tr.id) {
+            for tr in self
+                .proj
+                .scopes
+                .get_trait_impls_ex(&mut self.proj.types, vtable.tr.clone())
+            {
                 for f in vtable_methods(
                     &self.proj.scopes,
                     &self.proj.types,
-                    self.proj.scopes.get(tr),
+                    self.proj.scopes.get(tr.id),
                 ) {
-                    let func = GenericFn::new(f.id, vtable.tr.ty_args.clone());
+                    let func = GenericFn::new(f.id, tr.ty_args.clone());
                     let func_data = self.proj.scopes.get(f.id);
 
                     write_de!(self.buffer, ".");
@@ -1001,7 +1005,7 @@ impl Codegen {
 
                     let func = self.find_implementation(
                         vtable.ty,
-                        tr,
+                        &tr,
                         &self.proj.scopes.get(f.id).name.data.clone(),
                         vtable.scope,
                         |_, _| Default::default(),
@@ -1643,11 +1647,7 @@ impl Codegen {
                 self.emit_expr(*arg, state);
                 write_de!(self.buffer, "]");
             }
-            CheckedExprData::SliceArray {
-                callee,
-                arg,
-                range_full,
-            } => {
+            CheckedExprData::SliceArray { callee, arg } => {
                 let indirection = Self::indirection(&self.proj.types, callee.ty);
                 let src = tmpbuf!(self, state, |tmp| {
                     let len = *callee
@@ -1668,33 +1668,29 @@ impl Codegen {
                     write_de!(self.buffer, ",.$len={len}}};");
                     tmp
                 });
-                if range_full {
-                    self.buffer.emit(src);
-                } else {
-                    let ut = self.proj.types[expr.ty].as_user().unwrap().clone();
-                    let mut func = GenericFn::from_type_args(
-                        &self.proj.scopes,
-                        self.proj
-                            .scopes
-                            .get(ut.id)
-                            .find_associated_fn(&self.proj.scopes, "subspan")
-                            .unwrap(),
-                        [arg.ty
-                            .with_templates(&mut self.proj.types, &state.func.ty_args)],
-                    );
-                    func.ty_args.copy_args(&ut.ty_args);
-                    let new_state = State::in_body_scope(func, &self.proj.scopes);
-                    self.buffer.emit_fn_name(
-                        &self.proj.scopes,
-                        &mut self.proj.types,
-                        &new_state.func,
-                        self.flags.minify,
-                    );
-                    write_de!(self.buffer, "({src}, ");
-                    self.emit_expr_inline(*arg, state);
-                    write_de!(self.buffer, ")");
-                    self.funcs.insert(new_state);
-                }
+                let ut = self.proj.types[expr.ty].as_user().unwrap().clone();
+                let mut func = GenericFn::from_type_args(
+                    &self.proj.scopes,
+                    self.proj
+                        .scopes
+                        .get(ut.id)
+                        .find_associated_fn(&self.proj.scopes, "subspan")
+                        .unwrap(),
+                    [arg.ty
+                        .with_templates(&mut self.proj.types, &state.func.ty_args)],
+                );
+                func.ty_args.copy_args(&ut.ty_args);
+                let new_state = State::in_body_scope(func, &self.proj.scopes);
+                self.buffer.emit_fn_name(
+                    &self.proj.scopes,
+                    &mut self.proj.types,
+                    &new_state.func,
+                    self.flags.minify,
+                );
+                write_de!(self.buffer, "({src}, ");
+                self.emit_expr_inline(*arg, state);
+                write_de!(self.buffer, ")");
+                self.funcs.insert(new_state);
             }
             CheckedExprData::Return(mut expr) => never_expr!(self, {
                 expr.ty = expr
@@ -1856,7 +1852,7 @@ impl Codegen {
                 let finish_state = State::with_inst(
                     self.find_implementation(
                         formatter_ty,
-                        formatter_id,
+                        &GenericTrait::from_type_args(&self.proj.scopes, formatter_id, []),
                         "written",
                         scope,
                         |_, _| Default::default(),
@@ -1939,21 +1935,14 @@ impl Codegen {
     }
 
     fn emit_member_fn(&mut self, state: &mut State, mut mfn: MemberFn, scope: ScopeId) {
-        let parent = &self.proj.scopes[self.proj.scopes.get(mfn.func.id).scope];
-        if let Some((trait_id, (this, _))) = parent
-            .kind
-            .as_user_type()
-            .and_then(|&id| Some(id).zip(self.proj.scopes.get(id).kind.as_trait()))
-        {
+        if let MemberFnType::Trait(mut tr) = mfn.typ {
             let inst = mfn
-                .func
-                .ty_args
-                .get(this)
-                .unwrap()
+                .inst
                 .with_templates(&mut self.proj.types, &state.func.ty_args);
+            tr.fill_templates(&mut self.proj.types, &state.func.ty_args);
             mfn.func = self.find_implementation(
                 inst,
-                trait_id,
+                &tr,
                 &self.proj.scopes.get(mfn.func.id).name.data.clone(),
                 state.caller,
                 |tc, id| {
@@ -3496,35 +3485,33 @@ impl Codegen {
     fn find_implementation(
         &mut self,
         inst: TypeId,
-        trait_id: TraitId,
+        tr: &GenericTrait,
         method: &str,
         scope: ScopeId,
         finish: impl FnOnce(&mut TypeChecker, FunctionId) -> TypeArgs + Clone,
     ) -> GenericFn {
         // TODO: fix this disgusting hack
-        let m = TypeChecker::with_project(&mut self.proj, |tc| {
-            tc.get_member_fn_ex(inst, Some(trait_id), method, scope, finish)
-        });
-
-        let Some(m) = m else {
+        let Some(mfn) = TypeChecker::with_project(&mut self.proj, |tc| {
+            tc.get_member_fn_ex(inst, Some(tr), method, scope, finish)
+        }) else {
             panic!(
                 "searching from scope: '{}', cannot find implementation for method '{}::{method}' for type '{}'",
                 self.proj.scopes.full_name(scope, ""),
-                self.proj.scopes.get(trait_id).name.data,
+                tr.name(&self.proj.scopes, &mut self.proj.types),
                 inst.name(&self.proj.scopes, &mut self.proj.types)
             )
         };
 
-        if !self.proj.scopes.get(m.func.id).has_body {
+        if !self.proj.scopes.get(mfn.func.id).has_body {
             panic!(
                 "searching from scope: '{}', get_member_fn_ex picked invalid function for implementation for method '{}::{method}' for type '{}'",
                 self.proj.scopes.full_name(scope, ""),
-                self.proj.scopes.get(trait_id).name.data,
+                tr.name(&self.proj.scopes, &mut self.proj.types),
                 inst.name(&self.proj.scopes, &mut self.proj.types)
             )
         }
 
-        m.func
+        mfn.func
     }
 
     fn deref(types: &Types, src: &str, ty: TypeId) -> String {
