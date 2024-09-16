@@ -7439,16 +7439,20 @@ impl TypeChecker {
                         Some(ValueItem::Fn(id)) => {
                             self.resolve_proto(id);
                             self.check_hover(name.span, id.into());
+                            let mut ty_args = self.resolve_type_args(id, ty_args, false, name.span);
                             if let Some(id) = self.proj.scopes.get(id).constructor {
                                 if self.proj.scopes.get(id).kind.is_union() {
                                     self.proj.tokens.push(SpanSemanticToken::Variant(name.span));
                                 }
+
+                                ty_args.copy_args(&TypeArgs::in_order(
+                                    &self.proj.scopes,
+                                    id,
+                                    std::iter::repeat(TypeId::UNKNOWN),
+                                ));
                             }
 
-                            ResolvedValue::Fn(GenericFn::new(
-                                id,
-                                self.resolve_type_args(id, ty_args, false, name.span),
-                            ))
+                            ResolvedValue::Fn(GenericFn::new(id, ty_args))
                         }
                         Some(ValueItem::StructConstructor(id, init)) => {
                             self.resolve_proto(init);
@@ -7534,12 +7538,12 @@ impl TypeChecker {
                     return self.error(Error::new("cannot infer union type", span));
                 };
 
-                let res =
+                let mut res =
                     self.resolve_value_path_in(&path.components, Default::default(), scope, span);
-                let func = match &res {
+                let func = match &mut res {
                     ResolvedValue::NotFound(_) | ResolvedValue::Error => return res,
                     ResolvedValue::Fn(func) => func,
-                    ResolvedValue::MemberFn(mfn) => &mfn.func,
+                    ResolvedValue::MemberFn(mfn) => &mut mfn.func,
                     ResolvedValue::UnionConstructor(_) | ResolvedValue::Var(_) => {
                         self.proj
                             .diag
@@ -7549,10 +7553,19 @@ impl TypeChecker {
                 };
 
                 let f = self.proj.scopes.get(func.id);
-                if !f
-                    .constructor
-                    .is_some_and(|id| self.proj.scopes.get(id).kind.is_union())
-                {
+                let mut good = false;
+                if let Some(id) = f.constructor {
+                    if self.proj.scopes.get(id).kind.is_union() {
+                        good = true;
+                    }
+                    func.ty_args.copy_args(&TypeArgs::in_order(
+                        &self.proj.scopes,
+                        id,
+                        std::iter::repeat(TypeId::UNKNOWN),
+                    ));
+                }
+
+                if !good {
                     self.proj.diag.error(Error::new(
                         format!("function '{}' is not a union variant", f.name),
                         span,
