@@ -4,7 +4,7 @@ use std::iter::FromIter;
 
 #(lang(set))
 pub struct Set<T: Hash + Eq<T>> {
-    inner: Map<T, void>,
+    inner: [T: void],
 
     pub fn new(): This {
         Set(inner: Map::new())
@@ -19,7 +19,7 @@ pub struct Set<T: Hash + Eq<T>> {
     }
 
     pub fn remove(mut this, key: *T): bool {
-        this.inner.remove(key) is ?_
+        this.inner.remove(key).is_some()
     }
 
     pub fn clear(mut this) {
@@ -27,7 +27,7 @@ pub struct Set<T: Hash + Eq<T>> {
     }
 
     pub fn contains(this, key: *T): bool {
-        this.inner.get(key) is ?_
+        this.inner.get(key).is_some()
     }
 
     pub fn len(this): uint {

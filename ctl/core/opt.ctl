@@ -35,6 +35,14 @@ pub union Option<T> {
         core::mem::replace(this, null)
     }
 
+    pub fn is_some(this): bool {
+        this is ?_
+    }
+
+    pub fn is_null(this): bool {
+        this is null
+    }
+
     impl core::ops::Unwrap<T> {
         fn unwrap(this): T {
             if this is ?inner {

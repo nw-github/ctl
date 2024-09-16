@@ -14,7 +14,7 @@ fn convert_argv(argc: c_int, argv: **c_char): [str..] {
         for arg in std::span::Span::new(ptr: &raw *argv, len: argc as! uint).iter() {
             result.push(
                 str::from_utf8_unchecked(core::span::Span::new(
-                    (&raw *arg).cast(),
+                    (&raw **arg).cast(),
                     core::intrin::strlen(*arg),
                 ))
             );
