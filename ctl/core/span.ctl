@@ -11,7 +11,7 @@ pub struct Span<T> {
     }
 
     pub fn from_ptr(ptr: *T): [T..] {
-        unsafe Span::new(ptr as *raw T, 1)
+        unsafe Span::new(&raw *ptr, 1)
     }
 
     pub fn empty(): [T..] {
@@ -95,7 +95,7 @@ pub struct SpanMut<T> {
     }
 
     pub fn from_ptr(ptr: *mut T): [mut T..] {
-        unsafe SpanMut::new(ptr as *raw T, 1)
+        unsafe SpanMut::new(&raw *ptr, 1)
     }
 
     pub fn empty(): [mut T..] {

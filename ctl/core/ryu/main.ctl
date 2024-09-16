@@ -21,7 +21,7 @@ pub struct Buffer {
 
     pub fn format_finite<F: Float>(mut this, f: F): str {
         unsafe {
-            let p = &raw this.bytes as *raw u8;
+            let p = &raw this.bytes[0];
             let n = f.write_to_ryu_buffer(p);
             debug_assert(n <= 24);
             str::from_utf8_unchecked(Span::new(p, n))

@@ -17,7 +17,7 @@ pub unsafe fn format32(f: f32, res: *raw u8): uint {
         }
 
         if ieee_exponent == 0 and ieee_mantissa == 0 {
-            core::mem::copy(dst: res + index, src: b"0.0" as *raw u8, num: 3);
+            core::mem::copy(dst: res + index, src: &raw b"0.0"[0], num: 3);
             return sign as uint + 3;
         }
 
@@ -90,7 +90,7 @@ pub unsafe fn format64(f: f64, res: *raw u8): uint {
         }
 
         if ieee_exponent == 0 and ieee_mantissa == 0 {
-            core::mem::copy(dst: res + index, src: b"0.0" as *raw u8, num: 3);
+            core::mem::copy(dst: res + index, src: &raw b"0.0"[0], num: 3);
             return sign as uint + 3;
         }
 

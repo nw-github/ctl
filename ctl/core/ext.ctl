@@ -8,11 +8,11 @@ static DIGITS: [u8; 36] = *b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 extension _<T> for T {
     pub fn as_byte_span(this): [u8..] {
-        unsafe Span::new(this as *raw u8, core::mem::size_of::<T>())
+        unsafe Span::new((&raw *this).cast(), core::mem::size_of::<T>())
     }
 
     pub fn as_byte_span_mut(mut this): [mut u8..] {
-        unsafe SpanMut::new(this as *raw u8, core::mem::size_of::<T>())
+        unsafe SpanMut::new((&raw *this).cast(), core::mem::size_of::<T>())
     }
 }
 
@@ -563,6 +563,24 @@ pub extension VoidImpl for void {
         fn fmt<F: Formatter>(this, f: *mut F) {
             "void".fmt(f);
         }
+    }
+}
+
+pub extension RawImpl<T> for *raw T {
+    pub fn cast<U>(my this): *raw U {
+        this as *raw U
+    }
+
+    pub fn addr(my this): uint {
+        this as uint
+    }
+
+    pub fn offset(my this, offs: int): *raw T {
+        this + offs
+    }
+
+    pub unsafe fn write(my this, val: T) {
+        unsafe *this = val;
     }
 }
 

@@ -21,11 +21,11 @@ pub struct str {
     }
 
     pub unsafe fn from_cstr(s: *c_char): ?str {
-        str::from_utf8(unsafe core::span::Span::new(s as *raw u8, core::intrin::strlen(s)))
+        str::from_utf8(unsafe core::span::Span::new((&raw *s).cast(), core::intrin::strlen(s)))
     }
 
     pub unsafe fn from_cstr_unchecked(s: *c_char): str {
-        str(span: unsafe core::span::Span::new(s as *raw u8, core::intrin::strlen(s)))
+        str(span: unsafe core::span::Span::new((&raw *s).cast(), core::intrin::strlen(s)))
     }
 
     pub fn len(this): uint {

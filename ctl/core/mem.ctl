@@ -12,22 +12,22 @@ pub fn align_of_val<T>(_: *T): uint {
 
 /// Copies `num` T's from `src` to `dst` without destroying the contents in `dst`.
 pub unsafe fn copy<T>(kw dst: *raw T, kw src: *raw T, kw num: uint) {
-    unsafe intrin::memcpy(dst as *mut c_void, src as *c_void, num * size_of::<T>());
+    unsafe intrin::memcpy(dst.cast(), src.cast(), num * size_of::<T>());
 }
 
 /// Copies `num` T's from `src` to `dst` without destroying the contents in `dst`. Behaves as if
 /// `src` is first copied to a temporary buffer, then copied to dst.
 pub unsafe fn copy_overlapping<T>(kw dst: *raw T, kw src: *raw T, kw num: uint) {
-    unsafe intrin::memmove(dst as *raw c_void, src as *c_void, num * size_of::<T>());
+    unsafe intrin::memmove(dst.cast(), src.cast(), num * size_of::<T>());
 }
 
 pub unsafe fn compare<T>(lhs: *raw T, rhs: *raw T, num: uint): bool {
-    unsafe intrin::memcmp(lhs as *c_void, rhs as *c_void, num * size_of::<T>()) == 0
+    unsafe intrin::memcmp(lhs.cast(), rhs.cast(), num * size_of::<T>()) == 0
 }
 
 pub unsafe fn zeroed<T>(): T {
     mut t: T;
-    unsafe intrin::memset(&raw t as *raw c_void, 0, size_of::<T>());
+    unsafe intrin::memset((&raw t).cast(), 0, size_of::<T>());
     t
 }
 
