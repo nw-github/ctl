@@ -3310,27 +3310,28 @@ impl Codegen {
         self.bitfield_access(id, member, ty, |this, access| {
             let BitfieldAccess {
                 word,
-                bit_offset,
+                word_offset,
                 enum_tag,
-                partial,
+                reading,
                 offset,
-                mask,
-                word_size_bits: _,
+                word_size_bits,
+                bits: _,
             } = access;
+            let partial = reading != word_size_bits;
             result.next(|buffer| {
                 usebuf!(this, buffer, {
                     if enum_tag.is_some() {
                         this.emit_cast(ty);
-                        write_de!(this.buffer, "{{ .{UNION_TAG_NAME}=");
+                        write_de!(this.buffer, "{{.{UNION_TAG_NAME}=");
                     }
                     write_if!(offset != 0, this.buffer, "(");
                     this.emit_cast(enum_tag.unwrap_or(ty));
                     write_if!(partial, this.buffer, "(");
-                    write_if!(bit_offset != 0, this.buffer, "(");
+                    write_if!(word_offset != 0, this.buffer, "(");
                     write_de!(this.buffer, "{tmp}.{ARRAY_DATA_NAME}[{word}]");
-                    write_if!(bit_offset != 0, this.buffer, " >> {bit_offset})");
-                    write_if!(partial, this.buffer, "& {mask:#x})");
-                    write_if!(offset != 0, this.buffer, "<< {offset})");
+                    write_if!(word_offset != 0, this.buffer, ">>{word_offset})");
+                    write_if!(partial, this.buffer, "&{:#x})", bit_mask(reading));
+                    write_if!(offset != 0, this.buffer, "<<{offset})");
                     write_if!(enum_tag.is_some(), this.buffer, "}}");
                 })
             });
@@ -3350,33 +3351,44 @@ impl Codegen {
         self.bitfield_access(id, member, ty, |this, access| {
             let BitfieldAccess {
                 word,
-                bit_offset,
+                word_offset,
                 word_size_bits,
                 enum_tag,
-                mask,
                 offset,
-                partial,
+                reading,
+                bits,
             } = access;
-            let ty =
+            let word_ty =
                 word_type.get_or_insert_with(|| this.proj.types.insert(Type::Uint(word_size_bits)));
+            let mask = bit_mask(reading);
 
-            write_de!(this.buffer, "{tmp}.{ARRAY_DATA_NAME}[{word}] &= ~(");
-            this.emit_cast(*ty);
-            write_de!(this.buffer, "{mask:#x}");
-            write_if!(bit_offset != 0, this.buffer, " << {bit_offset}");
-            write_de!(this.buffer, ");");
+            write_de!(this.buffer, "{tmp}.{ARRAY_DATA_NAME}[{word}]&=");
+            this.emit_cast(*word_ty);
+            write_de!(
+                this.buffer,
+                "{:#x};",
+                !(mask << word_offset) & bit_mask(word_size_bits)
+            );
 
-            write_de!(this.buffer, "{tmp}.{ARRAY_DATA_NAME}[{word}] |= ");
-            write_if!(partial, this.buffer, "(");
-            this.emit_cast(*ty);
-            write_if!(bit_offset != 0, this.buffer, "(");
+            // negative signed bitints contain 1s in the inaccessible bits (ie -1i2 == 0b1111_1111, 
+            // not 0b0000_0011) so we need the mask even for a non-partial write
+            let needs_mask = reading != bits
+                || enum_tag
+                    .unwrap_or(ty)
+                    .as_integral(&this.proj.types, true)
+                    .unwrap()
+                    .signed;
+
+            write_de!(this.buffer, "{tmp}.{ARRAY_DATA_NAME}[{word}]|=");
+            write_if!(word_offset != 0, this.buffer, "(");
+            write_if!(needs_mask, this.buffer, "(");
+            this.emit_cast(*word_ty);
             write_if!(offset != 0, this.buffer, "(");
             write_de!(this.buffer, "{expr}");
             write_if!(enum_tag.is_some(), this.buffer, ".{UNION_TAG_NAME}");
-
-            write_if!(offset != 0, this.buffer, ">> {offset})");
-            write_if!(partial, this.buffer, "& {mask:#x})");
-            write_if!(bit_offset != 0, this.buffer, " << {bit_offset})");
+            write_if!(offset != 0, this.buffer, ">>{offset})");
+            write_if!(needs_mask, this.buffer, "&{mask:#x})");
+            write_if!(word_offset != 0, this.buffer, "<<{word_offset})");
             write_de!(this.buffer, ";");
         });
     }
@@ -3397,24 +3409,24 @@ impl Codegen {
         };
 
         let mut word = bf.bit_offsets[member] / word_size_bits;
-        let mut bit_offset = bf.bit_offsets[member] % word_size_bits;
+        let mut word_offset = bf.bit_offsets[member] % word_size_bits;
         let mut needed_bits = bits;
         while needed_bits != 0 {
-            let reading = needed_bits.min(word_size_bits - bit_offset);
+            let reading = needed_bits.min(word_size_bits - word_offset);
             f(
                 self,
                 BitfieldAccess {
                     word_size_bits,
                     word,
-                    bit_offset,
+                    word_offset,
                     enum_tag,
+                    reading,
                     offset: bits - needed_bits,
-                    partial: reading != word_size_bits,
-                    mask: 1u64.wrapping_shl(reading).wrapping_sub(1),
+                    bits,
                 },
             );
             word += 1;
-            bit_offset = 0;
+            word_offset = 0;
             needed_bits -= reading;
         }
     }
@@ -3537,14 +3549,23 @@ impl Codegen {
     }
 }
 
+#[derive(Debug)]
 struct BitfieldAccess {
+    /// Which word of the bitfield are we accessing
     word: u32,
-    bit_offset: u32,
+    /// The bit offset into the current word
+    word_offset: u32,
+    /// The size in bits of each word in the bitfield (always <= MAX_ALIGN * 8)
     word_size_bits: u32,
+
+    /// If reading a partial enum, this is the underlying integer tag type
     enum_tag: Option<TypeId>,
+    /// The bit offset into the integer we are trying to read/write
     offset: u32,
-    partial: bool,
-    mask: u64,
+    /// The amount of bits we are reading from this word
+    reading: u32,
+    /// Bit size of the integer we are trying to read/write
+    bits: u32,
 }
 
 fn vtable_methods(scopes: &Scopes, types: &Types, tr: &UserType) -> Vec<Vis<FunctionId>> {
@@ -3580,4 +3601,12 @@ fn loop_cont_label(scope: ScopeId) -> String {
 
 fn scope_var_or_label(scope: ScopeId) -> String {
     format!("$sv{}", scope.0)
+}
+
+fn bit_mask(bits: u32) -> u64 {
+    if bits < 64 {
+        (1 << bits) - 1
+    } else {
+        u64::MAX
+    }
 }
