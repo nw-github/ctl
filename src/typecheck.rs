@@ -5108,7 +5108,7 @@ impl TypeChecker {
             }
 
             const MAX_ALIGN_BITS: u32 = crate::typeid::MAX_ALIGN as u32 * 8;
-            if bits < MAX_ALIGN_BITS {
+            if bits <= MAX_ALIGN_BITS {
                 kind.size = crate::nearest_pow_of_two(bits) / 8;
             } else {
                 kind.size = ((((bits / MAX_ALIGN_BITS) + 1) * MAX_ALIGN_BITS) / 8) as usize;
