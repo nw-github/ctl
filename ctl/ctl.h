@@ -74,6 +74,8 @@
 #define CTL_DUMMY_MEMBER  CTL_ZST char dummy
 #define CTL_NORETURN      __declspec(noreturn)
 #define CTL_FORCEINLINE   __forceinline inline
+#define CTL_NEVERINLINE   __declspec(noinline)
+#define CTL_INLINE        inline
 #define CTL_MEMCPY        memcpy
 #define CTL_MEMSET        memset
 #define CTL_MEMMOVE       memmove
@@ -103,6 +105,8 @@
 #define CTL_ZST
 #define CTL_NORETURN    _Noreturn
 #define CTL_FORCEINLINE __attribute__((always_inline)) inline
+#define CTL_NEVERINLINE __attribute__((noinline))
+#define CTL_INLINE      inline
 #define CTL_MEMCPY      __builtin_memcpy
 #define CTL_MEMSET      __builtin_memset
 #define CTL_MEMMOVE     __builtin_memmove

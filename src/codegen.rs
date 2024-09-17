@@ -3106,10 +3106,11 @@ impl Codegen {
         } else {
             write_de!(self.buffer, "static ");
             // TODO: inline manually
-            if f.attrs.val("inline").is_some_and(|v| v == "always") {
-                write_de!(self.buffer, "CTL_FORCEINLINE ");
-            } else if f.attrs.has("inline") {
-                write_de!(self.buffer, "inline ");
+            match f.attrs.val("inline") {
+                Some("always") => write_de!(self.buffer, "CTL_FORCEINLINE "),
+                Some("never") => write_de!(self.buffer, "CTL_NEVERINLINE "),
+                _ if f.attrs.has("inline") => write_de!(self.buffer, "CTL_INLINE "),
+                _ => {}
             }
         }
 
