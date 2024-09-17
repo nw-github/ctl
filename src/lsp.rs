@@ -410,8 +410,15 @@ impl LanguageServer for LspBackend {
                         .unwrap_or(ty);
                     Some(format!("{public}{name}: {}", real.name(scopes, types)))
                 } else {
+                    let offs = if let UserTypeKind::PackedStruct(data) = &ut.kind {
+                        format!("// bit offset: {}\n", data.bit_offsets[name])
+                    } else {
+                        // TODO: normal offset
+                        "".to_string()
+                    };
+
                     Some(format!(
-                        "{}{public}{name}: {}",
+                        "{}{offs}{public}{name}: {}",
                         visualize_location(ut.body_scope, scopes),
                         ty.name(scopes, types)
                     ))
