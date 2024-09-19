@@ -315,18 +315,20 @@ impl TypeChecker {
             for scope in autouse.drain(..) {
                 this.enter_id_and_resolve(scope, |_| {});
 
-                for (name, item) in this.proj.scopes[scope].tns.iter() {
+                for (name, item) in this.proj.scopes[scope].tns.clone().iter() {
                     if item.public {
                         this.proj
+                            .scopes
                             .autouse_tns
                             .entry(name.clone())
                             .or_insert(Vis::new(**item, false));
                     }
                 }
 
-                for (name, item) in this.proj.scopes[scope].vns.iter() {
+                for (name, item) in this.proj.scopes[scope].vns.clone().iter() {
                     if item.public {
                         this.proj
+                            .scopes
                             .autouse_vns
                             .entry(name.clone())
                             .or_insert(Vis::new(**item, false));
@@ -5429,7 +5431,7 @@ impl TypeChecker {
             .flat_map(|(_, scope)| get_tns_extensions(&self.proj.scopes, &scope.tns))
             .chain(get_tns_extensions(
                 &self.proj.scopes,
-                &self.proj.autouse_tns,
+                &self.proj.scopes.autouse_tns,
             ))
             .collect();
         let mut cache = vec![HashMap::new(); exts.len()];
@@ -7036,7 +7038,7 @@ impl TypeChecker {
 /// Path resolution routines
 impl TypeChecker {
     fn find_in_tns(&self, name: &str) -> Option<Vis<TypeItem>> {
-        if let Some(item) = self.proj.autouse_tns.get(name).copied() {
+        if let Some(item) = self.proj.scopes.autouse_tns.get(name).copied() {
             return Some(item);
         }
 
@@ -7054,7 +7056,7 @@ impl TypeChecker {
     }
 
     fn find_in_vns(&self, name: &str) -> Option<Vis<ValueItem>> {
-        if let Some(item) = self.proj.autouse_vns.get(name).copied() {
+        if let Some(item) = self.proj.scopes.autouse_vns.get(name).copied() {
             return Some(item);
         }
 

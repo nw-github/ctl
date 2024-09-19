@@ -424,6 +424,8 @@ pub struct Scopes {
     pub lang_traits: HashMap<String, TraitId>,
     pub lang_fns: HashMap<String, FunctionId>,
     pub intrinsics: HashMap<FunctionId, String>,
+    pub autouse_tns: HashMap<String, Vis<TypeItem>>,
+    pub autouse_vns: HashMap<String, Vis<ValueItem>>,
 }
 
 impl Scopes {
@@ -439,6 +441,8 @@ impl Scopes {
             lang_traits: HashMap::new(),
             lang_fns: HashMap::new(),
             intrinsics: HashMap::new(),
+            autouse_tns: HashMap::new(),
+            autouse_vns: HashMap::new(),
         }
     }
 
