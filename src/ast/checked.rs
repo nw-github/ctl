@@ -13,7 +13,7 @@ use super::parsed::RangePattern;
 
 #[derive(Debug, Clone)]
 pub struct Block {
-    pub body: Vec<CheckedStmt>,
+    pub body: Vec<Stmt>,
     pub scope: ScopeId,
 }
 
@@ -38,51 +38,51 @@ pub struct ArrayPattern<T> {
 }
 
 #[derive(Debug, Clone, Default, EnumAsInner)]
-pub enum CheckedPatternData {
+pub enum PatternData {
     Variant {
-        pattern: Option<Box<CheckedPattern>>,
+        pattern: Option<Box<Pattern>>,
         variant: String,
         inner: TypeId,
         borrows: bool,
     },
     Destrucure {
-        patterns: Vec<(String, TypeId, CheckedPattern)>,
+        patterns: Vec<(String, TypeId, Pattern)>,
         borrows: bool,
     },
     Array {
-        patterns: ArrayPattern<CheckedPattern>,
+        patterns: ArrayPattern<Pattern>,
         borrows: bool,
     },
     Int(ComptimeInt),
     IntRange(RangePattern<ComptimeInt>),
     String(String),
     Span {
-        patterns: Vec<CheckedPattern>,
+        patterns: Vec<Pattern>,
         rest: Option<RestPattern>,
         inner: TypeId,
     },
     Variable(VariableId),
-    Or(Vec<CheckedPattern>),
+    Or(Vec<Pattern>),
     Void,
     #[default]
     Error,
 }
 
 #[derive(Debug, Clone, derive_more::Constructor)]
-pub struct CheckedPattern {
+pub struct Pattern {
     pub irrefutable: bool,
-    pub data: CheckedPatternData,
+    pub data: PatternData,
 }
 
-impl CheckedPattern {
-    pub fn irrefutable(data: CheckedPatternData) -> Self {
+impl Pattern {
+    pub fn irrefutable(data: PatternData) -> Self {
         Self {
             irrefutable: true,
             data,
         }
     }
 
-    pub fn refutable(data: CheckedPatternData) -> Self {
+    pub fn refutable(data: PatternData) -> Self {
         Self {
             irrefutable: false,
             data,
@@ -90,68 +90,68 @@ impl CheckedPattern {
     }
 }
 
-impl Default for CheckedPattern {
+impl Default for Pattern {
     fn default() -> Self {
         Self::irrefutable(Default::default())
     }
 }
 
 #[derive(Debug, Default, Clone)]
-pub enum CheckedStmt {
-    Expr(CheckedExpr),
-    Let(CheckedPattern, Option<CheckedExpr>),
-    Defer(CheckedExpr),
+pub enum Stmt {
+    Expr(Expr),
+    Let(Pattern, Option<Expr>),
+    Defer(Expr),
     Guard {
-        cond: CheckedExpr,
-        body: CheckedExpr,
+        cond: Expr,
+        body: Expr,
     },
     #[default]
     None,
 }
 
 #[derive(Default, Debug, Clone)]
-pub enum CheckedExprData {
+pub enum ExprData {
     Binary {
         op: BinaryOp,
-        left: Box<CheckedExpr>,
-        right: Box<CheckedExpr>,
+        left: Box<Expr>,
+        right: Box<Expr>,
     },
     Unary {
         op: UnaryOp,
-        expr: Box<CheckedExpr>,
+        expr: Box<Expr>,
     },
-    AutoDeref(Box<CheckedExpr>, usize),
-    Call(Box<CheckedExpr>, IndexMap<String, CheckedExpr>),
-    CallDyn(GenericFn, IndexMap<String, CheckedExpr>),
-    CallFnPtr(Box<CheckedExpr>, Vec<CheckedExpr>),
+    AutoDeref(Box<Expr>, usize),
+    Call(Box<Expr>, IndexMap<String, Expr>),
+    CallDyn(GenericFn, IndexMap<String, Expr>),
+    CallFnPtr(Box<Expr>, Vec<Expr>),
     DynCoerce {
-        expr: Box<CheckedExpr>,
+        expr: Box<Expr>,
         scope: ScopeId,
     },
     VariantInstance {
-        members: IndexMap<String, CheckedExpr>,
+        members: IndexMap<String, Expr>,
         variant: String,
     },
-    SpanMutCoerce(Box<CheckedExpr>),
-    Instance(IndexMap<String, CheckedExpr>),
-    Array(Vec<CheckedExpr>),
+    SpanMutCoerce(Box<Expr>),
+    Instance(IndexMap<String, Expr>),
+    Array(Vec<Expr>),
     ArrayWithInit {
-        init: Box<CheckedExpr>,
+        init: Box<Expr>,
         count: usize,
     },
-    Vec(Vec<CheckedExpr>),
+    Vec(Vec<Expr>),
     VecWithInit {
-        init: Box<CheckedExpr>,
-        count: Box<CheckedExpr>,
+        init: Box<Expr>,
+        count: Box<Expr>,
     },
-    Set(Vec<CheckedExpr>, ScopeId),
-    Map(Vec<(CheckedExpr, CheckedExpr)>, ScopeId),
+    Set(Vec<Expr>, ScopeId),
+    Map(Vec<(Expr, Expr)>, ScopeId),
     Int(ComptimeInt),
     Float(String),
     String(String),
     StringInterp {
-        formatter: Box<CheckedExpr>,
-        parts: Vec<(MemberFn, CheckedExpr)>,
+        formatter: Box<Expr>,
+        parts: Vec<(MemberFn, Expr)>,
         scope: ScopeId,
     },
     ByteString(Vec<u8>),
@@ -161,64 +161,64 @@ pub enum CheckedExprData {
     Var(VariableId),
     Block(Block),
     AffixOperator {
-        callee: Box<CheckedExpr>,
+        callee: Box<Expr>,
         mfn: MemberFn,
         param: String,
         scope: ScopeId,
         postfix: bool,
     },
     If {
-        cond: Box<CheckedExpr>,
-        if_branch: Box<CheckedExpr>,
-        else_branch: Option<Box<CheckedExpr>>,
+        cond: Box<Expr>,
+        if_branch: Box<Expr>,
+        else_branch: Option<Box<Expr>>,
     },
     Loop {
-        cond: Option<Box<CheckedExpr>>,
+        cond: Option<Box<Expr>>,
         body: Block,
         do_while: bool,
         optional: bool,
     },
     Match {
-        expr: Box<CheckedExpr>,
-        body: Vec<(CheckedPattern, CheckedExpr)>,
+        expr: Box<Expr>,
+        body: Vec<(Pattern, Expr)>,
     },
     Member {
-        source: Box<CheckedExpr>,
+        source: Box<Expr>,
         member: String,
     },
     Subscript {
-        callee: Box<CheckedExpr>,
-        arg: Box<CheckedExpr>,
+        callee: Box<Expr>,
+        arg: Box<Expr>,
     },
     SliceArray {
-        callee: Box<CheckedExpr>,
-        arg: Box<CheckedExpr>,
+        callee: Box<Expr>,
+        arg: Box<Expr>,
     },
-    As(Box<CheckedExpr>, bool),
-    Is(Box<CheckedExpr>, CheckedPattern),
-    Return(Box<CheckedExpr>),
-    Yield(Option<Box<CheckedExpr>>, ScopeId),
-    Break(Option<Box<CheckedExpr>>, ScopeId),
-    Lambda(Vec<CheckedStmt>),
-    NeverCoerce(Box<CheckedExpr>),
+    As(Box<Expr>, bool),
+    Is(Box<Expr>, Pattern),
+    Return(Box<Expr>),
+    Yield(Option<Box<Expr>>, ScopeId),
+    Break(Option<Box<Expr>>, ScopeId),
+    Lambda(Vec<Stmt>),
+    NeverCoerce(Box<Expr>),
     Continue(ScopeId),
     #[default]
     Error,
 }
 
-impl CheckedExprData {
+impl ExprData {
     pub fn is_yielding_block(&self, scopes: &Scopes) -> bool {
-        matches!(self, CheckedExprData::Block(block) if block.is_yielding(scopes))
+        matches!(self, ExprData::Block(block) if block.is_yielding(scopes))
     }
 
     pub fn member_call(
         types: &mut Types,
         mfn: MemberFn,
-        args: IndexMap<String, CheckedExpr>,
+        args: IndexMap<String, Expr>,
         scope: ScopeId,
     ) -> Self {
         Self::Call(
-            Box::new(CheckedExpr::new(
+            Box::new(Expr::new(
                 types.insert(Type::Fn(mfn.func.clone())),
                 Self::MemFn(mfn, scope),
             )),
@@ -229,40 +229,40 @@ impl CheckedExprData {
     pub fn call(
         types: &mut Types,
         func: GenericFn,
-        args: IndexMap<String, CheckedExpr>,
+        args: IndexMap<String, Expr>,
         scope: ScopeId,
     ) -> Self {
         Self::Call(
-            CheckedExpr::new(types.insert(Type::Fn(func.clone())), Self::Fn(func, scope)).into(),
+            Expr::new(types.insert(Type::Fn(func.clone())), Self::Fn(func, scope)).into(),
             args,
         )
     }
 }
 
 #[derive(Debug, Default, Clone, derive_more::Constructor)]
-pub struct CheckedExpr {
+pub struct Expr {
     pub ty: TypeId,
-    pub data: CheckedExprData,
+    pub data: ExprData,
 }
 
-impl CheckedExpr {
+impl Expr {
     pub fn is_assignable(&self, scopes: &Scopes, types: &Types) -> bool {
         match &self.data {
-            CheckedExprData::AutoDeref(expr, _) => {
+            ExprData::AutoDeref(expr, _) => {
                 matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
             }
-            CheckedExprData::Unary { op, expr } => {
+            ExprData::Unary { op, expr } => {
                 matches!(op, UnaryOp::Deref)
                     && matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
             }
-            CheckedExprData::Var(id) => scopes.get(*id).mutable,
-            CheckedExprData::Member { source, .. } => source.is_assignable(scopes, types),
-            CheckedExprData::Subscript { callee, .. } => match &callee.data {
-                CheckedExprData::Var(id) => {
+            ExprData::Var(id) => scopes.get(*id).mutable,
+            ExprData::Member { source, .. } => source.is_assignable(scopes, types),
+            ExprData::Subscript { callee, .. } => match &callee.data {
+                ExprData::Var(id) => {
                     matches!(types[callee.ty], Type::MutPtr(_) | Type::RawPtr(_))
                         || scopes.get(*id).mutable
                 }
-                CheckedExprData::Member { source, .. } => source.is_assignable(scopes, types),
+                ExprData::Member { source, .. } => source.is_assignable(scopes, types),
                 _ => true,
             },
             _ => false,
@@ -271,23 +271,23 @@ impl CheckedExpr {
 
     pub fn can_addrmut(&self, scopes: &Scopes, types: &Types) -> bool {
         match &self.data {
-            CheckedExprData::AutoDeref(expr, _) => {
+            ExprData::AutoDeref(expr, _) => {
                 matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
             }
-            CheckedExprData::Unary { op, expr } => {
+            ExprData::Unary { op, expr } => {
                 !matches!(op, UnaryOp::Deref)
                     || matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
             }
-            CheckedExprData::Var(id) => scopes.get(*id).mutable,
-            CheckedExprData::Member { source, .. } => {
+            ExprData::Var(id) => scopes.get(*id).mutable,
+            ExprData::Member { source, .. } => {
                 matches!(types[source.ty], Type::MutPtr(_)) || source.can_addrmut(scopes, types)
             }
-            CheckedExprData::Subscript { callee, .. } => callee.can_addrmut(scopes, types),
+            ExprData::Subscript { callee, .. } => callee.can_addrmut(scopes, types),
             _ => true,
         }
     }
 
-    pub fn auto_deref(self, types: &mut Types, target: TypeId) -> CheckedExpr {
+    pub fn auto_deref(self, types: &mut Types, target: TypeId) -> Expr {
         let mut needed = 0;
         let mut current = target;
         while let Type::Ptr(inner) | Type::MutPtr(inner) = &types[current] {
@@ -311,17 +311,17 @@ impl CheckedExpr {
         match indirection.cmp(&needed) {
             std::cmp::Ordering::Less => {
                 if matches!(types[target], Type::Ptr(_)) {
-                    CheckedExpr::new(
+                    Expr::new(
                         types.insert(Type::Ptr(self.ty)),
-                        CheckedExprData::Unary {
+                        ExprData::Unary {
                             op: UnaryOp::Addr,
                             expr: self.into(),
                         },
                     )
                 } else {
-                    CheckedExpr::new(
+                    Expr::new(
                         types.insert(Type::MutPtr(self.ty)),
-                        CheckedExprData::Unary {
+                        ExprData::Unary {
                             op: UnaryOp::AddrMut,
                             expr: self.into(),
                         },
@@ -329,17 +329,17 @@ impl CheckedExpr {
                 }
             }
             std::cmp::Ordering::Equal => self,
-            std::cmp::Ordering::Greater => CheckedExpr::new(
+            std::cmp::Ordering::Greater => Expr::new(
                 if needed != 0 { prev } else { ty },
-                CheckedExprData::AutoDeref(self.into(), indirection - needed),
+                ExprData::AutoDeref(self.into(), indirection - needed),
             ),
         }
     }
 
-    pub fn option_null(opt: TypeId) -> CheckedExpr {
-        CheckedExpr::new(
+    pub fn option_null(opt: TypeId) -> Expr {
+        Expr::new(
             opt,
-            CheckedExprData::VariantInstance {
+            ExprData::VariantInstance {
                 members: Default::default(),
                 variant: "None".into(),
             },

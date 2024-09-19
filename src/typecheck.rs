@@ -6,7 +6,11 @@ use std::sync::LazyLock;
 
 use crate::{
     ast::{
-        checked::*,
+        checked::{
+            ArrayPattern, Block, Expr as CheckedExpr, ExprData as CheckedExprData,
+            Pattern as CheckedPattern, PatternData as CheckedPatternData, RestPattern,
+            Stmt as CheckedStmt,
+        },
         declared::{Fn as DeclaredFn, ImplBlock as DeclaredImplBlock, Stmt as DeclaredStmt},
         parsed::*,
         Attributes, BinaryOp, UnaryOp,

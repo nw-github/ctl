@@ -818,7 +818,7 @@ pub struct Codegen {
     flags: CodegenFlags,
     vtables: Buffer,
     emitted_vtables: HashSet<Vtable>,
-    defers: Vec<(ScopeId, Vec<CheckedExpr>)>,
+    defers: Vec<(ScopeId, Vec<Expr>)>,
     tg: TypeGen,
 }
 
@@ -1112,7 +1112,7 @@ impl Codegen {
                 let Some(patt) = param
                     .patt
                     .as_checked()
-                    .filter(|patt| !matches!(patt.data, CheckedPatternData::Variable(_)))
+                    .filter(|patt| !matches!(patt.data, PatternData::Variable(_)))
                 else {
                     continue;
                 };
@@ -1136,7 +1136,7 @@ impl Codegen {
         }
     }
 
-    fn emit_expr_stmt(&mut self, expr: CheckedExpr, state: &mut State) {
+    fn emit_expr_stmt(&mut self, expr: Expr, state: &mut State) {
         if Self::has_side_effects(&expr) && !expr.ty.is_void() {
             self.emit_expr_inline(expr, state);
             write_de!(self.buffer, ";");
@@ -1147,13 +1147,13 @@ impl Codegen {
         }
     }
 
-    fn emit_stmt(&mut self, stmt: CheckedStmt, state: &mut State) {
+    fn emit_stmt(&mut self, stmt: Stmt, state: &mut State) {
         match stmt {
-            CheckedStmt::Expr(expr) => {
+            Stmt::Expr(expr) => {
                 hoist_point!(self, self.emit_expr_stmt(expr, state))
             }
-            CheckedStmt::Let(patt, value) => hoist_point!(self, {
-                if let CheckedPatternData::Variable(id) = patt.data {
+            Stmt::Let(patt, value) => hoist_point!(self, {
+                if let PatternData::Variable(id) = patt.data {
                     if !self.proj.scopes.get(id).unused {
                         let ty = self.emit_var_decl(id, state);
                         if let Some(mut expr) = value {
@@ -1174,19 +1174,19 @@ impl Codegen {
                     self.emit_pattern_bindings(state, &patt.data, &tmp, ty);
                 }
             }),
-            CheckedStmt::Defer(expr) => self.defers.last_mut().unwrap().1.push(expr),
-            CheckedStmt::Guard { cond, body } => hoist_point!(self, {
+            Stmt::Defer(expr) => self.defers.last_mut().unwrap().1.push(expr),
+            Stmt::Guard { cond, body } => hoist_point!(self, {
                 write_de!(self.buffer, "if(!(");
                 self.emit_expr_inline(cond, state);
                 write_de!(self.buffer, ")) {{");
                 hoist_point!(self, self.emit_expr_stmt(body, state));
                 write_de!(self.buffer, "}}");
             }),
-            CheckedStmt::None => {}
+            Stmt::None => {}
         }
     }
 
-    fn emit_expr(&mut self, mut expr: CheckedExpr, state: &mut State) {
+    fn emit_expr(&mut self, mut expr: Expr, state: &mut State) {
         expr.ty = expr
             .ty
             .with_templates(&mut self.proj.types, &state.func.ty_args);
@@ -1197,20 +1197,18 @@ impl Codegen {
         }
     }
 
-    fn emit_expr_inner(&mut self, expr: CheckedExpr, state: &mut State) {
+    fn emit_expr_inner(&mut self, expr: Expr, state: &mut State) {
         match expr.data {
-            CheckedExprData::Binary { op, left, right } => {
+            ExprData::Binary { op, left, right } => {
                 self.emit_binary(state, op, expr.ty, *left, *right)
             }
-            CheckedExprData::Unary { op, expr: inner } => {
-                self.emit_unary(state, op, expr.ty, *inner)
-            }
-            CheckedExprData::AutoDeref(expr, count) => {
+            ExprData::Unary { op, expr: inner } => self.emit_unary(state, op, expr.ty, *inner),
+            ExprData::AutoDeref(expr, count) => {
                 write_de!(self.buffer, "({:*<1$}", "", count);
                 self.emit_expr(*expr, state);
                 write_de!(self.buffer, ")");
             }
-            CheckedExprData::DynCoerce {
+            ExprData::DynCoerce {
                 expr: mut inner,
                 scope,
             } => {
@@ -1242,7 +1240,7 @@ impl Codegen {
                 write_de!(self.buffer, "}}");
                 self.emit_vtable(vtable);
             }
-            CheckedExprData::Call(callee, args) => {
+            ExprData::Call(callee, args) => {
                 let func = self.proj.types[callee.ty].as_fn().unwrap();
                 if let Some(name) = self.proj.scopes.intrinsic_name(func.id) {
                     let mut func = func.clone();
@@ -1273,7 +1271,7 @@ impl Codegen {
                     write_de!(self.buffer, ")");
                 }
             }
-            CheckedExprData::CallDyn(func, mut args) => {
+            ExprData::CallDyn(func, mut args) => {
                 if expr.ty.is_void() {
                     write_de!(self.buffer, "VOID(");
                 }
@@ -1297,7 +1295,7 @@ impl Codegen {
                     write_de!(self.buffer, ")");
                 }
             }
-            CheckedExprData::CallFnPtr(inner, args) => {
+            ExprData::CallFnPtr(inner, args) => {
                 if expr.ty.is_void() {
                     write_de!(self.buffer, "VOID(");
                 }
@@ -1316,7 +1314,7 @@ impl Codegen {
                     write_de!(self.buffer, ")");
                 }
             }
-            CheckedExprData::Array(exprs) => {
+            ExprData::Array(exprs) => {
                 write_de!(self.buffer, "(");
                 self.emit_type(expr.ty);
                 write_de!(self.buffer, "){{.{ARRAY_DATA_NAME}={{");
@@ -1326,7 +1324,7 @@ impl Codegen {
                 }
                 write_de!(self.buffer, "}}}}");
             }
-            CheckedExprData::ArrayWithInit { init, count } => {
+            ExprData::ArrayWithInit { init, count } => {
                 // number chosen arbitrarily
                 if count <= 32 {
                     write_de!(self.buffer, "(");
@@ -1349,7 +1347,7 @@ impl Codegen {
                     })
                 }
             }
-            CheckedExprData::Vec(exprs) => {
+            ExprData::Vec(exprs) => {
                 let ut = self.proj.types[expr.ty].as_user().unwrap().clone();
                 if exprs.is_empty() {
                     return self.emit_new(&ut);
@@ -1366,7 +1364,7 @@ impl Codegen {
                     write_de!(self.buffer, "{tmp}.$len={len};");
                 });
             }
-            CheckedExprData::VecWithInit { init, count } => {
+            ExprData::VecWithInit { init, count } => {
                 tmpbuf_emit!(self, state, |tmp| {
                     let ut = self.proj.types[expr.ty].as_user().unwrap().clone();
                     let len = self.emit_tmpvar(*count, state);
@@ -1381,7 +1379,7 @@ impl Codegen {
                     });
                 });
             }
-            CheckedExprData::Set(exprs, scope) => {
+            ExprData::Set(exprs, scope) => {
                 let ut = self.proj.types[expr.ty].as_user().unwrap().clone();
                 if exprs.is_empty() {
                     return self.emit_new(&ut);
@@ -1417,7 +1415,7 @@ impl Codegen {
                     self.funcs.insert(insert);
                 });
             }
-            CheckedExprData::Map(exprs, scope) => {
+            ExprData::Map(exprs, scope) => {
                 let ut = self.proj.types[expr.ty].as_user().unwrap().clone();
                 if exprs.is_empty() {
                     return self.emit_new(&ut);
@@ -1455,13 +1453,13 @@ impl Codegen {
                     self.funcs.insert(insert);
                 });
             }
-            CheckedExprData::Int(value) => self.emit_literal(value, expr.ty),
-            CheckedExprData::Float(mut value) => {
+            ExprData::Int(value) => self.emit_literal(value, expr.ty),
+            ExprData::Float(mut value) => {
                 self.emit_cast(expr.ty);
                 value.retain(|c| c != '_');
                 self.buffer.emit(value);
             }
-            CheckedExprData::String(value) => {
+            ExprData::String(value) => {
                 write_de!(self.buffer, "STRLIT(");
                 self.emit_type(expr.ty);
                 write_de!(self.buffer, ",\"");
@@ -1470,7 +1468,7 @@ impl Codegen {
                 }
                 write_de!(self.buffer, "\",{})", value.len());
             }
-            CheckedExprData::ByteString(value) => {
+            ExprData::ByteString(value) => {
                 self.emit_cast(expr.ty);
                 write_de!(self.buffer, "\"");
                 for byte in value {
@@ -1478,8 +1476,8 @@ impl Codegen {
                 }
                 write_de!(self.buffer, "\"");
             }
-            CheckedExprData::Void => self.buffer.emit(VOID_INSTANCE),
-            CheckedExprData::Fn(mut func, scope) => {
+            ExprData::Void => self.buffer.emit(VOID_INSTANCE),
+            ExprData::Fn(mut func, scope) => {
                 func.fill_templates(&mut self.proj.types, &state.func.ty_args);
                 let state = State::new(func, scope);
                 self.buffer.emit_fn_name(
@@ -1490,18 +1488,18 @@ impl Codegen {
                 );
                 self.funcs.insert(state);
             }
-            CheckedExprData::MemFn(mfn, scope) => self.emit_member_fn(state, mfn, scope),
-            CheckedExprData::Var(id) => {
+            ExprData::MemFn(mfn, scope) => self.emit_member_fn(state, mfn, scope),
+            ExprData::Var(id) => {
                 if self.proj.scopes.get(id).is_static {
                     self.statics.insert(id);
                 }
                 self.emit_var_name(id, state);
             }
-            CheckedExprData::Instance(members) => self.emit_instance(state, expr.ty, members),
-            CheckedExprData::VariantInstance { members, variant } => {
+            ExprData::Instance(members) => self.emit_instance(state, expr.ty, members),
+            ExprData::VariantInstance { members, variant } => {
                 self.emit_variant_instance(state, expr.ty, &variant, members)
             }
-            CheckedExprData::Member { source, member } => {
+            ExprData::Member { source, member } => {
                 let id = self.proj.types[source.ty].as_user().map(|ut| ut.id);
                 if let Some(id) = id.filter(|&id| self.proj.scopes.get(id).kind.is_packed_struct())
                 {
@@ -1523,7 +1521,7 @@ impl Codegen {
                     );
                 }
             }
-            CheckedExprData::Block(block) => enter_block!(self, block.scope, expr.ty, |name| {
+            ExprData::Block(block) => enter_block!(self, block.scope, expr.ty, |name| {
                 let yields = block.is_yielding(&self.proj.scopes);
                 write_nm!(self, "{{");
                 self.emit_block(block, state);
@@ -1534,7 +1532,7 @@ impl Codegen {
                 }
                 write_nm!(self, "}}");
             }),
-            CheckedExprData::If {
+            ExprData::If {
                 cond,
                 if_branch,
                 else_branch,
@@ -1564,7 +1562,7 @@ impl Codegen {
                     write_de!(self.buffer, ";}}");
                 })
             }
-            CheckedExprData::Loop {
+            ExprData::Loop {
                 cond,
                 body,
                 do_while,
@@ -1607,11 +1605,11 @@ impl Codegen {
                     }
                 });
             }
-            CheckedExprData::Subscript { callee, arg } => {
+            ExprData::Subscript { callee, arg } => {
                 // TODO: bounds check
                 if self.proj.types[callee.ty].is_array() {
                     match callee.data {
-                        CheckedExprData::Unary {
+                        ExprData::Unary {
                             op: UnaryOp::Deref,
                             expr,
                         } => {
@@ -1638,7 +1636,7 @@ impl Codegen {
                 self.emit_expr(*arg, state);
                 write_de!(self.buffer, "]");
             }
-            CheckedExprData::SliceArray { callee, arg } => {
+            ExprData::SliceArray { callee, arg } => {
                 let indirection = Self::indirection(&self.proj.types, callee.ty);
                 let src = tmpbuf!(self, state, |tmp| {
                     let len = *callee
@@ -1683,7 +1681,7 @@ impl Codegen {
                 write_de!(self.buffer, ")");
                 self.funcs.insert(new_state);
             }
-            CheckedExprData::Return(mut expr) => never_expr!(self, {
+            ExprData::Return(mut expr) => never_expr!(self, {
                 expr.ty = expr
                     .ty
                     .with_templates(&mut self.proj.types, &state.func.ty_args);
@@ -1697,7 +1695,7 @@ impl Codegen {
                 };
                 self.leave_scope(state, &str, self.proj.scopes.get(state.func.id).body_scope);
             }),
-            CheckedExprData::Yield(expr, scope) => never_expr!(self, {
+            ExprData::Yield(expr, scope) => never_expr!(self, {
                 write_de!(self.buffer, "{}=", scope_var_or_label(scope));
                 if let Some(expr) = expr {
                     self.emit_expr_inline(*expr, state);
@@ -1710,7 +1708,7 @@ impl Codegen {
                 self.leave_scope(state, &format!("goto {}", scope_var_or_label(scope)), scope);
                 // }
             }),
-            CheckedExprData::Break(expr, scope) => never_expr!(self, {
+            ExprData::Break(expr, scope) => never_expr!(self, {
                 write_de!(self.buffer, "{}=", scope_var_or_label(scope));
                 if let Some(expr) = expr {
                     self.emit_expr_inline(*expr, state);
@@ -1724,14 +1722,14 @@ impl Codegen {
                     self.leave_scope(state, &format!("goto {}", scope_var_or_label(scope)), scope);
                 }
             }),
-            CheckedExprData::Continue(scope) => never_expr!(self, {
+            ExprData::Continue(scope) => never_expr!(self, {
                 if self.cur_loop == scope {
                     self.leave_scope(state, "continue", scope);
                 } else {
                     self.leave_scope(state, &format!("goto {}", loop_cont_label(scope)), scope);
                 }
             }),
-            CheckedExprData::Match {
+            ExprData::Match {
                 expr: mut scrutinee,
                 body,
             } => {
@@ -1764,7 +1762,7 @@ impl Codegen {
                     write_de!(self.buffer, "else{{CTL_UNREACHABLE();}}");
                 })
             }
-            CheckedExprData::As(mut inner, _) => {
+            ExprData::As(mut inner, _) => {
                 inner.ty = inner
                     .ty
                     .with_templates(&mut self.proj.types, &state.func.ty_args);
@@ -1779,7 +1777,7 @@ impl Codegen {
                     write_de!(self.buffer, ")");
                 }
             }
-            CheckedExprData::Is(mut inner, patt) => {
+            ExprData::Is(mut inner, patt) => {
                 inner.ty = inner
                     .ty
                     .with_templates(&mut self.proj.types, &state.func.ty_args);
@@ -1789,8 +1787,8 @@ impl Codegen {
                 hoist!(self, self.buffer.emit(bindings.finish()));
                 write_de!(self.buffer, "({})", conditions.finish());
             }
-            CheckedExprData::Lambda(_) => todo!(),
-            CheckedExprData::NeverCoerce(inner) => {
+            ExprData::Lambda(_) => todo!(),
+            ExprData::NeverCoerce(inner) => {
                 if matches!(expr.ty, TypeId::VOID | TypeId::CVOID) {
                     self.emit_expr_inline(*inner, state);
                 } else {
@@ -1801,7 +1799,7 @@ impl Codegen {
                     write_de!(self.buffer, ")");
                 }
             }
-            CheckedExprData::SpanMutCoerce(mut inner) => {
+            ExprData::SpanMutCoerce(mut inner) => {
                 inner.ty = inner
                     .ty
                     .with_templates(&mut self.proj.types, &state.func.ty_args);
@@ -1809,7 +1807,7 @@ impl Codegen {
                 self.emit_cast(expr.ty);
                 write_de!(self.buffer, "{{.$ptr={tmp}.$ptr,.$len={tmp}.$len}}");
             }
-            CheckedExprData::StringInterp {
+            ExprData::StringInterp {
                 mut formatter,
                 parts,
                 scope,
@@ -1861,7 +1859,7 @@ impl Codegen {
                 write_de!(self.buffer, "(&{formatter})");
                 self.funcs.insert(finish_state);
             }
-            CheckedExprData::AffixOperator {
+            ExprData::AffixOperator {
                 callee,
                 mfn,
                 param,
@@ -1871,13 +1869,13 @@ impl Codegen {
                 let deref = "*".repeat(Self::indirection(&self.proj.types, callee.ty));
                 if !postfix {
                     hoist!(self, {
-                        let expr = CheckedExpr::new(
+                        let expr = Expr::new(
                             self.proj
                                 .scopes
                                 .get(mfn.func.id)
                                 .ret
                                 .with_templates(&mut self.proj.types, &state.func.ty_args),
-                            CheckedExprData::member_call(
+                            ExprData::member_call(
                                 &mut self.proj.types,
                                 mfn,
                                 [(param, (*callee).clone())].into(),
@@ -1896,13 +1894,13 @@ impl Codegen {
                         self.emit_expr_inline((*callee).clone(), state);
                         write_de!(self.buffer, ";");
 
-                        let expr = CheckedExpr::new(
+                        let expr = Expr::new(
                             self.proj
                                 .scopes
                                 .get(mfn.func.id)
                                 .ret
                                 .with_templates(&mut self.proj.types, &state.func.ty_args),
-                            CheckedExprData::member_call(
+                            ExprData::member_call(
                                 &mut self.proj.types,
                                 mfn,
                                 [(param, *callee)].into(),
@@ -1913,12 +1911,12 @@ impl Codegen {
                     });
                 }
             }
-            CheckedExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
+            ExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }
     }
 
     #[inline(always)]
-    fn emit_expr_inline(&mut self, mut expr: CheckedExpr, state: &mut State) {
+    fn emit_expr_inline(&mut self, mut expr: Expr, state: &mut State) {
         expr.ty = expr
             .ty
             .with_templates(&mut self.proj.types, &state.func.ty_args);
@@ -1958,12 +1956,7 @@ impl Codegen {
         self.funcs.insert(state);
     }
 
-    fn emit_instance(
-        &mut self,
-        state: &mut State,
-        ty: TypeId,
-        members: IndexMap<String, CheckedExpr>,
-    ) {
+    fn emit_instance(&mut self, state: &mut State, ty: TypeId, members: IndexMap<String, Expr>) {
         let ut_id = self.proj.types[ty].as_user().unwrap().id;
         if self.proj.scopes.get(ut_id).kind.is_packed_struct() {
             return tmpbuf_emit!(self, state, |tmp| {
@@ -2003,7 +1996,7 @@ impl Codegen {
         state: &mut State,
         ty: TypeId,
         variant: &str,
-        mut members: IndexMap<String, CheckedExpr>,
+        mut members: IndexMap<String, Expr>,
     ) {
         if ty
             .can_omit_tag(&self.proj.scopes, &self.proj.types)
@@ -2064,8 +2057,8 @@ impl Codegen {
         state: &mut State,
         op: BinaryOp,
         ret: TypeId,
-        mut lhs: CheckedExpr,
-        rhs: CheckedExpr,
+        mut lhs: Expr,
+        rhs: Expr,
     ) {
         match op {
             BinaryOp::NoneCoalesceAssign => {
@@ -2088,7 +2081,7 @@ impl Codegen {
                 hoist!(self, {
                     self.emit_pattern_if_stmt(
                         state,
-                        &CheckedPatternData::Variant {
+                        &PatternData::Variant {
                             pattern: None,
                             variant: "None".into(),
                             inner: ret,
@@ -2135,7 +2128,7 @@ impl Codegen {
                     let name = hoist!(self, self.emit_tmpvar(lhs, state));
                     self.emit_pattern_if_stmt(
                         state,
-                        &CheckedPatternData::Variant {
+                        &PatternData::Variant {
                             pattern: None,
                             variant: "None".into(),
                             inner: ret,
@@ -2236,10 +2229,10 @@ impl Codegen {
                     self.emit_cast(ret);
                 }
                 if op.is_assignment() {
-                    if matches!(&lhs.data, CheckedExprData::Member { source, .. }
+                    if matches!(&lhs.data, ExprData::Member { source, .. }
                         if source.ty.is_packed_struct(&self.proj))
                     {
-                        let CheckedExprData::Member { source, member } = lhs.data else {
+                        let ExprData::Member { source, member } = lhs.data else {
                             unreachable!()
                         };
                         return self.emit_bitfield_assign(*source, state, &member, lhs.ty, rhs, op);
@@ -2259,7 +2252,7 @@ impl Codegen {
         }
     }
 
-    fn emit_unary(&mut self, state: &mut State, op: UnaryOp, ret: TypeId, mut lhs: CheckedExpr) {
+    fn emit_unary(&mut self, state: &mut State, op: UnaryOp, ret: TypeId, mut lhs: Expr) {
         match op {
             UnaryOp::Plus => self.emit_expr(lhs, state),
             UnaryOp::Neg => {
@@ -2318,15 +2311,13 @@ impl Codegen {
                     write_de!(self.buffer, "&");
                 }
                 let is_lvalue = match &lhs.data {
-                    CheckedExprData::Unary {
+                    ExprData::Unary {
                         op: UnaryOp::Deref, ..
                     }
-                    | CheckedExprData::AutoDeref { .. }
-                    | CheckedExprData::Var(_)
-                    | CheckedExprData::Subscript { .. } => true,
-                    CheckedExprData::Member { source, .. } => {
-                        !source.ty.is_packed_struct(&self.proj)
-                    }
+                    | ExprData::AutoDeref { .. }
+                    | ExprData::Var(_)
+                    | ExprData::Subscript { .. } => true,
+                    ExprData::Member { source, .. } => !source.ty.is_packed_struct(&self.proj),
                     _ => false,
                 };
 
@@ -2353,7 +2344,7 @@ impl Codegen {
                     let inner_tmp = self.emit_tmpvar(lhs, state);
                     self.emit_pattern_if_stmt(
                         state,
-                        &CheckedPatternData::Variant {
+                        &PatternData::Variant {
                             pattern: None,
                             variant: "None".into(),
                             inner: ret,
@@ -2369,7 +2360,7 @@ impl Codegen {
                             let mut ret_type = self.proj.scopes.get(state.func.id).ret;
                             ret_type =
                                 ret_type.with_templates(&mut self.proj.types, &state.func.ty_args);
-                            self.emit_expr_inner(CheckedExpr::option_null(ret_type), state);
+                            self.emit_expr_inner(Expr::option_null(ret_type), state);
                         });
                         self.leave_scope(
                             state,
@@ -2396,7 +2387,7 @@ impl Codegen {
         &mut self,
         state: &mut State,
         original_id: FunctionId,
-        args: IndexMap<String, CheckedExpr>,
+        args: IndexMap<String, Expr>,
     ) {
         let mut args: IndexMap<_, _> = args
             .into_iter()
@@ -2435,7 +2426,7 @@ impl Codegen {
     fn emit_loop_break(&mut self, state: &mut State, ty: TypeId, optional: bool) {
         if optional {
             write_de!(self.buffer, "{}=", scope_var_or_label(self.cur_loop));
-            self.emit_expr_inline(CheckedExpr::option_null(ty), state);
+            self.emit_expr_inline(Expr::option_null(ty), state);
         } else {
             write_de!(
                 self.buffer,
@@ -2536,7 +2527,7 @@ impl Codegen {
         name: &str,
         ret: TypeId,
         func: &GenericFn,
-        mut args: IndexMap<String, CheckedExpr>,
+        mut args: IndexMap<String, Expr>,
         state: &mut State,
     ) {
         match name {
@@ -2680,7 +2671,7 @@ impl Codegen {
         }
     }
 
-    fn emit_tmpvar_ident(&mut self, expr: CheckedExpr, state: &mut State) {
+    fn emit_tmpvar_ident(&mut self, expr: Expr, state: &mut State) {
         tmpbuf_emit!(self, state, |tmp| {
             self.emit_type(expr.ty);
             write_de!(self.buffer, " {tmp}=");
@@ -2689,7 +2680,7 @@ impl Codegen {
         });
     }
 
-    fn emit_tmpvar(&mut self, expr: CheckedExpr, state: &mut State) -> String {
+    fn emit_tmpvar(&mut self, expr: Expr, state: &mut State) -> String {
         let tmp = state.tmpvar();
         self.emit_type(expr.ty);
         write_de!(self.buffer, " {tmp}=");
@@ -2723,7 +2714,7 @@ impl Codegen {
     fn emit_pattern_inner(
         &mut self,
         state: &mut State,
-        pattern: &CheckedPatternData,
+        pattern: &PatternData,
         src: &str,
         ty: TypeId,
         borrow: bool,
@@ -2731,7 +2722,7 @@ impl Codegen {
         conditions: &mut JoiningBuilder,
     ) {
         match pattern {
-            CheckedPatternData::Int(value) => {
+            PatternData::Int(value) => {
                 conditions.next(|buffer| {
                     usebuf!(self, buffer, {
                         write_de!(self.buffer, "{}==", Self::deref(&self.proj.types, src, ty));
@@ -2739,7 +2730,7 @@ impl Codegen {
                     });
                 });
             }
-            CheckedPatternData::IntRange(RangePattern {
+            PatternData::IntRange(RangePattern {
                 inclusive,
                 start,
                 end,
@@ -2761,7 +2752,7 @@ impl Codegen {
                     });
                 });
             }
-            CheckedPatternData::String(value) => {
+            PatternData::String(value) => {
                 conditions.next(|buffer| {
                     usebuf!(self, buffer, {
                         write_de!(
@@ -2777,7 +2768,7 @@ impl Codegen {
                     });
                 });
             }
-            CheckedPatternData::Variant {
+            PatternData::Variant {
                 pattern,
                 variant,
                 inner,
@@ -2836,7 +2827,7 @@ impl Codegen {
                     }
                 }
             }
-            CheckedPatternData::Span {
+            PatternData::Span {
                 patterns,
                 rest,
                 inner,
@@ -2883,7 +2874,7 @@ impl Codegen {
                     );
                 }
             }
-            CheckedPatternData::Destrucure { patterns, borrows } => {
+            PatternData::Destrucure { patterns, borrows } => {
                 let src = Self::deref(&self.proj.types, src, ty);
                 let ty = ty.strip_references(&self.proj.types);
                 let ut_id = self.proj.types[ty].as_user().map(|ut| ut.id);
@@ -2900,7 +2891,7 @@ impl Codegen {
                     );
                 }
             }
-            CheckedPatternData::Array {
+            PatternData::Array {
                 patterns:
                     ArrayPattern {
                         patterns,
@@ -2953,7 +2944,7 @@ impl Codegen {
                     );
                 }
             }
-            &CheckedPatternData::Variable(id) => {
+            &PatternData::Variable(id) => {
                 if self.proj.scopes.get(id).unused {
                     return;
                 }
@@ -2971,8 +2962,8 @@ impl Codegen {
                     }
                 });
             }
-            CheckedPatternData::Void => {}
-            CheckedPatternData::Or(patterns) => {
+            PatternData::Void => {}
+            PatternData::Or(patterns) => {
                 let mut conds = JoiningBuilder::new("||", "1");
                 let mut binds = Buffer::default();
                 for pattern in patterns {
@@ -2995,14 +2986,14 @@ impl Codegen {
 
                 conditions.next_str(format!("({})", conds.finish()));
             }
-            CheckedPatternData::Error => panic!("ICE: CheckedPatternData::Error in gen_pattern"),
+            PatternData::Error => panic!("ICE: CheckedPatternData::Error in gen_pattern"),
         }
     }
 
     fn emit_pattern(
         &mut self,
         state: &mut State,
-        pattern: &CheckedPatternData,
+        pattern: &PatternData,
         src: &str,
         ty: TypeId,
     ) -> (Buffer, JoiningBuilder) {
@@ -3023,7 +3014,7 @@ impl Codegen {
     fn emit_pattern_if_stmt(
         &mut self,
         state: &mut State,
-        pattern: &CheckedPatternData,
+        pattern: &PatternData,
         src: &str,
         ty: TypeId,
     ) {
@@ -3035,7 +3026,7 @@ impl Codegen {
     fn emit_pattern_bindings(
         &mut self,
         state: &mut State,
-        pattern: &CheckedPatternData,
+        pattern: &PatternData,
         src: &str,
         ty: TypeId,
     ) {
@@ -3142,8 +3133,8 @@ impl Codegen {
 
             if is_import || is_prototype {
                 self.emit_type(ty);
-            } else if let ParamPattern::Checked(CheckedPattern {
-                data: CheckedPatternData::Variable(id),
+            } else if let ParamPattern::Checked(Pattern {
+                data: PatternData::Variable(id),
                 ..
             }) = &param.patt
             {
@@ -3240,11 +3231,11 @@ impl Codegen {
 
     fn emit_bitfield_assign(
         &mut self,
-        source: CheckedExpr,
+        source: Expr,
         state: &mut State,
         member: &str,
         ty: TypeId,
-        rhs: CheckedExpr,
+        rhs: Expr,
         op: BinaryOp,
     ) {
         let id = self
@@ -3469,9 +3460,9 @@ impl Codegen {
         }
     }
 
-    fn has_side_effects(expr: &CheckedExpr) -> bool {
+    fn has_side_effects(expr: &Expr) -> bool {
         match &expr.data {
-            CheckedExprData::Unary {
+            ExprData::Unary {
                 op:
                     UnaryOp::PostIncrement
                     | UnaryOp::PostDecrement
@@ -3479,10 +3470,8 @@ impl Codegen {
                     | UnaryOp::PreDecrement,
                 ..
             } => true,
-            CheckedExprData::Call { .. }
-            | CheckedExprData::CallFnPtr { .. }
-            | CheckedExprData::CallDyn { .. } => true,
-            CheckedExprData::Binary { op, .. } if op.is_assignment() => true,
+            ExprData::Call { .. } | ExprData::CallFnPtr { .. } | ExprData::CallDyn { .. } => true,
+            ExprData::Binary { op, .. } if op.is_assignment() => true,
             _ => false,
         }
     }

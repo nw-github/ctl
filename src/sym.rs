@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     ast::{
-        checked::{CheckedExpr, CheckedPattern},
+        checked::{Expr as CheckedExpr, Pattern as CheckedPattern},
         parsed::{Expr, Path, Pattern, TypeHint, UsePath},
         Attributes,
     },
