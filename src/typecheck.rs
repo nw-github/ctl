@@ -2006,10 +2006,7 @@ impl TypeChecker {
                 this.proj.scopes.get_mut(id).body = Some(CheckedExpr::new(
                     this.proj.types.insert(ut),
                     if this.proj.scopes.get(ut_id).kind.is_union() {
-                        CheckedExprData::VariantInstance {
-                            variant,
-                            members: args,
-                        }
+                        CheckedExprData::VariantInstance(variant, args)
                     } else {
                         CheckedExprData::Instance(args)
                     },
@@ -2248,11 +2245,11 @@ impl TypeChecker {
                                 let right = self.type_check(*right, left.ty);
                                 return CheckedExpr::new(
                                     TypeId::VOID,
-                                    CheckedExprData::Binary {
-                                        op: BinaryOp::Assign,
-                                        left: left.into(),
-                                        right: right.into(),
-                                    },
+                                    CheckedExprData::Binary(
+                                        BinaryOp::Assign,
+                                        left.into(),
+                                        right.into(),
+                                    ),
                                 );
                             } else {
                                 args.push((None, *right));
@@ -2297,11 +2294,7 @@ impl TypeChecker {
                         let rhs = self.type_check_checked(rhs, target, span);
                         return CheckedExpr::new(
                             if assignment { TypeId::VOID } else { target },
-                            CheckedExprData::Binary {
-                                op,
-                                left: lhs.into(),
-                                right: rhs.into(),
-                            },
+                            CheckedExprData::Binary(op, lhs.into(), rhs.into()),
                         );
                     }
                     BinaryOp::LogicalAnd => {
@@ -2318,11 +2311,7 @@ impl TypeChecker {
 
                         return CheckedExpr::new(
                             TypeId::BOOL,
-                            CheckedExprData::Binary {
-                                op,
-                                left: left.into(),
-                                right: right.into(),
-                            },
+                            CheckedExprData::Binary(op, left.into(), right.into()),
                         );
                     }
                     _ => {}
@@ -2351,22 +2340,14 @@ impl TypeChecker {
                         if right.ty == left.ty {
                             CheckedExpr::new(
                                 TypeId::ISIZE,
-                                CheckedExprData::Binary {
-                                    op,
-                                    left: left.into(),
-                                    right: right.into(),
-                                },
+                                CheckedExprData::Binary(op, left.into(), right.into()),
                             )
                         } else if self.proj.types[right.ty].is_integral()
                             || right.ty == TypeId::UNKNOWN
                         {
                             CheckedExpr::new(
                                 left.ty,
-                                CheckedExprData::Binary {
-                                    op,
-                                    left: left.into(),
-                                    right: right.into(),
-                                },
+                                CheckedExprData::Binary(op, left.into(), right.into()),
                             )
                         } else {
                             self.proj.diag.error(Error::type_mismatch_s(
@@ -2393,11 +2374,7 @@ impl TypeChecker {
                         }
                         CheckedExpr::new(
                             if assignment { TypeId::VOID } else { left.ty },
-                            CheckedExprData::Binary {
-                                op,
-                                left: left.into(),
-                                right: right.into(),
-                            },
+                            CheckedExprData::Binary(op, left.into(), right.into()),
                         )
                     }
                     (
@@ -2424,11 +2401,7 @@ impl TypeChecker {
                         }
                         CheckedExpr::new(
                             if assignment { TypeId::VOID } else { left.ty },
-                            CheckedExprData::Binary {
-                                op,
-                                left: left.into(),
-                                right: right.into(),
-                            },
+                            CheckedExprData::Binary(op, left.into(), right.into()),
                         )
                     }
                     _ => {
@@ -2448,11 +2421,7 @@ impl TypeChecker {
                                 op if op.is_assignment() => TypeId::VOID,
                                 _ => left.ty,
                             },
-                            CheckedExprData::Binary {
-                                op,
-                                left: left.into(),
-                                right: right.into(),
-                            },
+                            CheckedExprData::Binary(op, left.into(), right.into()),
                         )
                     }
                 }
@@ -2658,13 +2627,7 @@ impl TypeChecker {
                     }
                 };
 
-                CheckedExpr::new(
-                    out_ty,
-                    CheckedExprData::Unary {
-                        op,
-                        expr: expr.into(),
-                    },
-                )
+                CheckedExpr::new(out_ty, CheckedExprData::Unary(op, expr.into()))
             }
             ExprData::Call { callee, args } => self.check_call(target, *callee, args, span),
             ExprData::Array(elements) => {
@@ -3044,10 +3007,10 @@ impl TypeChecker {
                                 self.proj
                                     .types
                                     .insert(Type::User(GenericUserType::new(id, func.ty_args))),
-                                CheckedExprData::VariantInstance {
-                                    members: Default::default(),
-                                    variant: self.proj.scopes.get(func.id).name.data.clone(),
-                                },
+                                CheckedExprData::VariantInstance(
+                                    self.proj.scopes.get(func.id).name.data.clone(),
+                                    Default::default(),
+                                ),
                             );
                         }
                     }
@@ -3084,10 +3047,10 @@ impl TypeChecker {
                                 self.proj
                                     .types
                                     .insert(Type::User(GenericUserType::new(id, mfn.func.ty_args))),
-                                CheckedExprData::VariantInstance {
-                                    members: Default::default(),
-                                    variant: self.proj.scopes.get(mfn.func.id).name.data.clone(),
-                                },
+                                CheckedExprData::VariantInstance(
+                                    self.proj.scopes.get(mfn.func.id).name.data.clone(),
+                                    Default::default(),
+                                ),
                             );
                         }
                     }
@@ -4080,10 +4043,10 @@ impl TypeChecker {
                 };
                 let arg0 = CheckedExpr::new(
                     this.proj.types.insert(Type::MutPtr(iter.ty)),
-                    CheckedExprData::Unary {
-                        op: UnaryOp::AddrMut,
-                        expr: CheckedExpr::new(iter.ty, CheckedExprData::Var(iter_var)).into(),
-                    },
+                    CheckedExprData::Unary(
+                        UnaryOp::AddrMut,
+                        CheckedExpr::new(iter.ty, CheckedExprData::Var(iter_var)).into(),
+                    ),
                 );
 
                 CheckedExpr::new(
@@ -5980,10 +5943,7 @@ impl TypeChecker {
                 if self.implements_trait(lhs, &rhs.clone()) {
                     Ok(CheckedExpr::new(
                         target,
-                        CheckedExprData::DynCoerce {
-                            expr: expr.into(),
-                            scope: self.current,
-                        },
+                        CheckedExprData::DynCoerce(expr.into(), self.current),
                     ))
                 } else {
                     Err(expr)
@@ -5993,10 +5953,7 @@ impl TypeChecker {
                 if self.implements_trait(*lhs, &rhs.clone()) {
                     Ok(CheckedExpr::new(
                         target,
-                        CheckedExprData::DynCoerce {
-                            expr: expr.into(),
-                            scope: self.current,
-                        },
+                        CheckedExprData::DynCoerce(expr.into(), self.current),
                     ))
                 } else {
                     Err(expr)
@@ -6026,10 +5983,10 @@ impl TypeChecker {
                     match self.coerce(expr, inner) {
                         Ok(expr) => Ok(CheckedExpr::new(
                             target,
-                            CheckedExprData::VariantInstance {
-                                members: [("0".into(), expr)].into(),
-                                variant: "Some".into(),
-                            },
+                            CheckedExprData::VariantInstance(
+                                "Some".into(),
+                                [("0".into(), expr)].into(),
+                            ),
                         )),
                         Err(expr) => Err(expr),
                     }
@@ -7814,9 +7771,9 @@ impl TypeChecker {
                 ty: expr.ty,
                 val: val.clone(),
             }),
-            CheckedExprData::Binary { op, left, right } => {
-                let mut lhs = self.consteval(left, span)?;
-                let rhs = self.consteval(right, span)?;
+            CheckedExprData::Binary(op, lhs, rhs) => {
+                let mut lhs = self.consteval(lhs, span)?;
+                let rhs = self.consteval(rhs, span)?;
                 let int = lhs.ty.as_integral(&self.proj.types, false).unwrap();
                 lhs.val = match op {
                     BinaryOp::Add => lhs.val + &rhs.val,

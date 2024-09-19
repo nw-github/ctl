@@ -111,27 +111,14 @@ pub enum Stmt {
 
 #[derive(Default, Debug, Clone)]
 pub enum ExprData {
-    Binary {
-        op: BinaryOp,
-        left: Box<Expr>,
-        right: Box<Expr>,
-    },
-    Unary {
-        op: UnaryOp,
-        expr: Box<Expr>,
-    },
+    Binary(BinaryOp, Box<Expr>, Box<Expr>),
+    Unary(UnaryOp, Box<Expr>),
     AutoDeref(Box<Expr>, usize),
     Call(Box<Expr>, IndexMap<String, Expr>),
     CallDyn(GenericFn, IndexMap<String, Expr>),
     CallFnPtr(Box<Expr>, Vec<Expr>),
-    DynCoerce {
-        expr: Box<Expr>,
-        scope: ScopeId,
-    },
-    VariantInstance {
-        members: IndexMap<String, Expr>,
-        variant: String,
-    },
+    DynCoerce(Box<Expr>, ScopeId),
+    VariantInstance(String, IndexMap<String, Expr>),
     SpanMutCoerce(Box<Expr>),
     Instance(IndexMap<String, Expr>),
     Array(Vec<Expr>),
@@ -251,7 +238,7 @@ impl Expr {
             ExprData::AutoDeref(expr, _) => {
                 matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
             }
-            ExprData::Unary { op, expr } => {
+            ExprData::Unary(op, expr) => {
                 matches!(op, UnaryOp::Deref)
                     && matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
             }
@@ -274,7 +261,7 @@ impl Expr {
             ExprData::AutoDeref(expr, _) => {
                 matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
             }
-            ExprData::Unary { op, expr } => {
+            ExprData::Unary(op, expr) => {
                 !matches!(op, UnaryOp::Deref)
                     || matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
             }
@@ -313,18 +300,12 @@ impl Expr {
                 if matches!(types[target], Type::Ptr(_)) {
                     Expr::new(
                         types.insert(Type::Ptr(self.ty)),
-                        ExprData::Unary {
-                            op: UnaryOp::Addr,
-                            expr: self.into(),
-                        },
+                        ExprData::Unary(UnaryOp::Addr, self.into()),
                     )
                 } else {
                     Expr::new(
                         types.insert(Type::MutPtr(self.ty)),
-                        ExprData::Unary {
-                            op: UnaryOp::AddrMut,
-                            expr: self.into(),
-                        },
+                        ExprData::Unary(UnaryOp::AddrMut, self.into()),
                     )
                 }
             }
@@ -339,10 +320,7 @@ impl Expr {
     pub fn option_null(opt: TypeId) -> Expr {
         Expr::new(
             opt,
-            ExprData::VariantInstance {
-                members: Default::default(),
-                variant: "None".into(),
-            },
+            ExprData::VariantInstance("None".into(), Default::default()),
         )
     }
 }

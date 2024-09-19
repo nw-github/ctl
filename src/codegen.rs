@@ -1199,19 +1199,14 @@ impl Codegen {
 
     fn emit_expr_inner(&mut self, expr: Expr, state: &mut State) {
         match expr.data {
-            ExprData::Binary { op, left, right } => {
-                self.emit_binary(state, op, expr.ty, *left, *right)
-            }
-            ExprData::Unary { op, expr: inner } => self.emit_unary(state, op, expr.ty, *inner),
+            ExprData::Binary(op, lhs, rhs) => self.emit_binary(state, op, expr.ty, *lhs, *rhs),
+            ExprData::Unary(op, inner) => self.emit_unary(state, op, expr.ty, *inner),
             ExprData::AutoDeref(expr, count) => {
                 write_de!(self.buffer, "({:*<1$}", "", count);
                 self.emit_expr(*expr, state);
                 write_de!(self.buffer, ")");
             }
-            ExprData::DynCoerce {
-                expr: mut inner,
-                scope,
-            } => {
+            ExprData::DynCoerce(mut inner, scope) => {
                 inner.ty = inner
                     .ty
                     .with_templates(&mut self.proj.types, &state.func.ty_args);
@@ -1496,8 +1491,8 @@ impl Codegen {
                 self.emit_var_name(id, state);
             }
             ExprData::Instance(members) => self.emit_instance(state, expr.ty, members),
-            ExprData::VariantInstance { members, variant } => {
-                self.emit_variant_instance(state, expr.ty, &variant, members)
+            ExprData::VariantInstance(name, members) => {
+                self.emit_variant_instance(state, expr.ty, &name, members)
             }
             ExprData::Member { source, member } => {
                 let id = self.proj.types[source.ty].as_user().map(|ut| ut.id);
@@ -1609,10 +1604,7 @@ impl Codegen {
                 // TODO: bounds check
                 if self.proj.types[callee.ty].is_array() {
                     match callee.data {
-                        ExprData::Unary {
-                            op: UnaryOp::Deref,
-                            expr,
-                        } => {
+                        ExprData::Unary(UnaryOp::Deref, expr) => {
                             // we compile pointers to arrays as T *, not Array_T_N *, so in the case
                             // there will be no data member
                             self.emit_expr(*expr, state);
@@ -2311,9 +2303,7 @@ impl Codegen {
                     write_de!(self.buffer, "&");
                 }
                 let is_lvalue = match &lhs.data {
-                    ExprData::Unary {
-                        op: UnaryOp::Deref, ..
-                    }
+                    ExprData::Unary(UnaryOp::Deref, _)
                     | ExprData::AutoDeref { .. }
                     | ExprData::Var(_)
                     | ExprData::Subscript { .. } => true,
@@ -3462,16 +3452,15 @@ impl Codegen {
 
     fn has_side_effects(expr: &Expr) -> bool {
         match &expr.data {
-            ExprData::Unary {
-                op:
-                    UnaryOp::PostIncrement
-                    | UnaryOp::PostDecrement
-                    | UnaryOp::PreIncrement
-                    | UnaryOp::PreDecrement,
-                ..
-            } => true,
+            ExprData::Unary(
+                UnaryOp::PostIncrement
+                | UnaryOp::PostDecrement
+                | UnaryOp::PreIncrement
+                | UnaryOp::PreDecrement,
+                _,
+            ) => true,
             ExprData::Call { .. } | ExprData::CallFnPtr { .. } | ExprData::CallDyn { .. } => true,
-            ExprData::Binary { op, .. } if op.is_assignment() => true,
+            ExprData::Binary(op, _, _) if op.is_assignment() => true,
             _ => false,
         }
     }
