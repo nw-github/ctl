@@ -654,13 +654,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::Hash => {
                 self.expect(Token::LBrace);
                 self.csv(Vec::new(), Token::RBrace, span, Self::expression)
-                    .map(|params| {
-                        if data == Token::At {
-                            ExprData::Vec(params)
-                        } else {
-                            ExprData::Set(params)
-                        }
-                    })
+                    .map(ExprData::Set)
             }
             Token::Move => {
                 let token = self.next();
@@ -1458,7 +1452,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn attributes(&mut self) -> Attributes {
         let mut attrs = vec![];
-        while let Some(token) = self.next_if(Token::HashLParen) {
+        while let Some(token) = self.next_if(Token::AtLParen) {
             let attr = self.csv_one(Token::RParen, token.span, Self::attribute);
             attrs.extend(attr.data);
         }

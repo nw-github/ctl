@@ -214,47 +214,50 @@ enum Cast {
 
 impl Cast {
     fn get(src: &Type, dst: &Type) -> Cast {
-        if matches!(src, Type::Usize | Type::Isize) {
-            match dst {
+        match src {
+            Type::Usize | Type::Isize => match dst {
                 Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) => Cast::Unsafe,
                 Type::Uint(_) | Type::Int(_) | Type::CInt(_) | Type::CUint(_) => Cast::Fallible,
                 Type::Usize | Type::Isize => Cast::Fallible,
                 Type::RawPtr(_) | Type::F32 | Type::F64 => Cast::Infallible,
                 _ => Cast::None,
-            }
-        } else if matches!(src, Type::CInt(_) | Type::CUint(_)) {
-            match dst {
+            },
+            Type::CInt(_) | Type::CUint(_) => match dst {
                 Type::Uint(_) | Type::Int(_) | Type::CInt(_) | Type::CUint(_) => Cast::Fallible,
                 Type::Usize | Type::Isize => Cast::Fallible,
                 Type::F32 | Type::F64 => Cast::Infallible,
                 _ => Cast::None,
-            }
-        } else if let Some(a) = src.as_integral(true) {
-            // from can only be Uint(n) | Int(n) | Char | Bool now
-            match dst {
-                // we definitely don't support any targets with < 16 bit pointers
-                Type::Usize | Type::Isize if !src.is_bool() && a.bits > 16 => Cast::Fallible,
-                Type::CInt(_) | Type::CUint(_) if !src.is_bool() => Cast::Fallible,
-                Type::F32 | Type::F64 => Cast::Infallible,
-                // d800-e000 is invalid for a char, u15::MAX is 0x7fff
-                Type::Char if matches!(src, Type::Uint(n) if *n <= 15) => Cast::Infallible,
-                Type::Char => Cast::Fallible,
-                _ => {
-                    if let Some(b) = dst.as_integral(false) {
-                        if (a.signed == b.signed && a.bits <= b.bits)
-                            || (a.signed != b.signed && a.bits < b.bits)
-                        {
-                            Cast::Infallible
+            },
+            src if src.as_integral(true).is_some() => {
+                let a = src.as_integral(true).unwrap();
+                // from can only be Uint(n) | Int(n) | Char | Bool now
+                match dst {
+                    // we definitely don't support any targets with < 16 bit pointers
+                    Type::Usize | Type::Isize if !src.is_bool() && a.bits > 16 => Cast::Fallible,
+                    // C types should never be < 8 bits? at least we won't support anything like that
+                    Type::CInt(_) | Type::CUint(_) if !src.is_bool() && a.bits > 8 => {
+                        Cast::Fallible
+                    }
+                    Type::F32 | Type::F64 => Cast::Infallible,
+                    // d800-e000 is invalid for a char, u15::MAX is 0x7fff
+                    Type::Char if matches!(src, Type::Uint(n) if *n <= 15) => Cast::Infallible,
+                    Type::Char => Cast::Fallible,
+                    _ => {
+                        if let Some(b) = dst.as_integral(false) {
+                            if (a.signed == b.signed && a.bits <= b.bits)
+                                || (a.signed != b.signed && a.bits < b.bits)
+                            {
+                                Cast::Infallible
+                            } else {
+                                Cast::Fallible
+                            }
                         } else {
-                            Cast::Fallible
+                            Cast::None
                         }
-                    } else {
-                        Cast::None
                     }
                 }
             }
-        } else if matches!(src, Type::F32 | Type::F64) {
-            match dst {
+            Type::F32 | Type::F64 => match dst {
                 Type::Uint(_)
                 | Type::Int(_)
                 | Type::CInt(_)
@@ -264,18 +267,13 @@ impl Cast {
                 | Type::F32
                 | Type::F64 => Cast::Infallible,
                 _ => Cast::None,
-            }
-        } else if matches!(
-            src,
-            Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) | Type::RawPtr(_)
-        ) {
-            match dst {
-                Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) => return Cast::Unsafe,
-                Type::Usize | Type::Isize | Type::RawPtr(_) => return Cast::Infallible, // maybe only *T to *raw T should be infallible
-                _ => return Cast::None,
-            }
-        } else {
-            Cast::None
+            },
+            Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) | Type::RawPtr(_) => match dst {
+                Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) => Cast::Unsafe,
+                Type::Usize | Type::Isize | Type::RawPtr(_) => Cast::Infallible, // maybe only *T to *raw T should be infallible
+                _ => Cast::None,
+            },
+            _ => Cast::None,
         }
     }
 }

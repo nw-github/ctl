@@ -4,7 +4,7 @@ use core::range::RangeBounds;
 use core::fmt::*;
 use core::reflect::*;
 
-#(lang(string))
+@(lang(string))
 pub struct str {
     span: [u8..],
 

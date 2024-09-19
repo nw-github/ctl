@@ -44,7 +44,7 @@
     {
       "comment": "attributes",
       "name": "meta.attribute.ctl",
-      "begin": "(#)(\\!?)(\\()",
+      "begin": "(@)(\\!?)(\\()",
       "beginCaptures": {
         "1": {
           "name": "punctuation.definition.attribute.ctl"

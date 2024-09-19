@@ -66,49 +66,49 @@ pub extension NumericImpl<T: Numeric> for T {
     }
 
     impl Cmp<T> {
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn cmp(this, rhs: *T): Ordering { this <=> rhs }
 
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn ge(this, rhs: *T): bool { this >= rhs }
 
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn gt(this, rhs: *T): bool { this > rhs }
 
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn le(this, rhs: *T): bool { this <= rhs }
 
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn lt(this, rhs: *T): bool { this < rhs }
     }
 
     impl Eq<T> {
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn eq(this, rhs: *T): bool { this == rhs }
 
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn ne(this, rhs: *T): bool { this != rhs }
     }
 
     impl TotalCmp { }
 
-    #(intrinsic(binary_op))
+    @(intrinsic(binary_op))
     pub fn +(this, rhs: T): T { this + rhs }
 
-    #(intrinsic(binary_op))
+    @(intrinsic(binary_op))
     pub fn -(this, rhs: T): T { this - rhs }
 
-    #(intrinsic(binary_op))
+    @(intrinsic(binary_op))
     pub fn *(this, rhs: T): T { this * rhs }
 
-    #(intrinsic(binary_op))
+    @(intrinsic(binary_op))
     pub fn /(this, rhs: T): T { this / rhs }
 
-    #(intrinsic(binary_op))
+    @(intrinsic(binary_op))
     pub fn %(this, rhs: T): T { this % rhs }
 
     /// C-style cast from `this` to type U with overflow/truncation.
-    #(intrinsic(numeric_cast))
+    @(intrinsic(numeric_cast))
     pub fn cast<U: Numeric>(my this): U { this.cast() }
 }
 
@@ -116,96 +116,96 @@ mod gcc_intrin {
     use super::Integral;
 
     // TODO: compiler independent fallback for these functions
-    #(c_opaque)
+    @(c_opaque)
     pub extern fn __builtin_add_overflow<T: Integral>(x: T, y: T, res: *raw T): bool;
 
-    #(c_opaque)
+    @(c_opaque)
     pub extern fn __builtin_sub_overflow<T: Integral>(x: T, y: T, res: *raw T): bool;
 
-    #(c_opaque)
+    @(c_opaque)
     pub extern fn __builtin_mul_overflow<T: Integral>(x: T, y: T, res: *raw T): bool;
 }
 
 pub extension IntegralImpl<T: Integral> for T {
-    #(intrinsic(binary_op))
+    @(intrinsic(binary_op))
     pub fn &(this, rhs: T): T { this & rhs }
 
-    #(intrinsic(binary_op))
+    @(intrinsic(binary_op))
     pub fn |(this, rhs: T): T { this | rhs }
 
-    #(intrinsic(binary_op))
+    @(intrinsic(binary_op))
     pub fn ^(this, rhs: T): T { this ^ rhs }
 
-    #(intrinsic(binary_op))
+    @(intrinsic(binary_op))
     pub fn <<(this, rhs: u32): T { this << rhs }
 
-    #(intrinsic(binary_op))
+    @(intrinsic(binary_op))
     pub fn >>(this, rhs: u32): T { this >> rhs }
 
-    #(intrinsic(unary_op))
+    @(intrinsic(unary_op))
     pub fn !(this): T { !this }
 
-    #(intrinsic(unary_op))
+    @(intrinsic(unary_op))
     pub fn ++(mut this) { (*this)++; }
 
-    #(intrinsic(unary_op))
+    @(intrinsic(unary_op))
     pub fn --(mut this) { (*this)--; }
 
-    #(inline)
+    @(inline)
     pub fn wrapping_add(this, rhs: T): T { this + rhs }
 
-    #(inline)
+    @(inline)
     pub fn wrapping_sub(this, rhs: T): T { this - rhs }
 
-    #(inline)
+    @(inline)
     pub fn wrapping_mul(this, rhs: T): T { this * rhs }
 
-    #(inline)
+    @(inline)
     pub fn wrapping_div(this, rhs: T): T { this / rhs }
 
-    #(inline)
+    @(inline)
     pub fn overflowing_add(this, rhs: T): (T, bool) {
         mut out: T;
         let res = unsafe gcc_intrin::__builtin_add_overflow(*this, rhs, &raw out);
         (out, res)
     }
 
-    #(inline)
+    @(inline)
     pub fn overflowing_sub(this, rhs: T): (T, bool) {
         mut out: T;
         let res = unsafe gcc_intrin::__builtin_sub_overflow(*this, rhs, &raw out);
         (out, res)
     }
 
-    #(inline)
+    @(inline)
     pub fn overflowing_mul(this, rhs: T): (T, bool) {
         mut out: T;
         let res = unsafe gcc_intrin::__builtin_mul_overflow(*this, rhs, &raw out);
         (out, res)
     }
 
-    #(inline)
+    @(inline)
     pub fn checked_add(this, rhs: T): ?T {
         if this.overflowing_add(rhs) is (out, false) {
             out
         }
     }
 
-    #(inline)
+    @(inline)
     pub fn checked_sub(this, rhs: T): ?T {
         if this.overflowing_sub(rhs) is (out, false) {
             out
         }
     }
 
-    #(inline)
+    @(inline)
     pub fn checked_mul(this, rhs: T): ?T {
         if this.overflowing_mul(rhs) is (out, false) {
             out
         }
     }
 
-    #(inline)
+    @(inline)
     pub fn saturating_add(this, rhs: T): T {
         if this.checked_add(rhs) is ?out {
             out
@@ -216,14 +216,14 @@ pub extension IntegralImpl<T: Integral> for T {
         }
     }
 
-    #(intrinsic)
+    @(intrinsic)
     pub fn max_value(): T { T::max_value() }
 
-    #(intrinsic)
+    @(intrinsic)
     pub fn min_value(): T { T::min_value() }
 
     /// Cast `this` to type `U` if the value of this is exactly representable in U
-    #(inline)
+    @(inline)
     pub fn try_cast<U: Numeric>(my this): ?U {
         let rhs: U = this.cast();
         if this == rhs.cast() {
@@ -231,7 +231,7 @@ pub extension IntegralImpl<T: Integral> for T {
         }
     }
 
-    #(inline)
+    @(inline)
     pub fn bswap(my mut this): T {
         // TODO: make calls to compiler intrinsics when possible
         //  GCC & clang are smart enough to optimize this as-is to a bswap instruction
@@ -287,10 +287,10 @@ pub extension SignedImpl<T: Signed> for T {
         }
     }
 
-    #(intrinsic(unary_op))
+    @(intrinsic(unary_op))
     pub fn -(this): T { -this }
 
-    #(inline)
+    @(inline)
     pub fn overflowing_div(this, rhs: T): (T, bool) {
         if this == T::min_value() and rhs == (-1).cast() {
             (*this, true)
@@ -299,7 +299,7 @@ pub extension SignedImpl<T: Signed> for T {
         }
     }
 
-    #(inline)
+    @(inline)
     pub fn checked_div(this, rhs: T): ?T {
         if this.overflowing_div(rhs) is (out, false) {
             out
@@ -343,12 +343,12 @@ pub extension UnsignedImpl<T: Unsigned> for T {
 
     /// This exists for parity with SignedExt::overflowing_div. Unsigned division cannot overflow,
     /// and as such this function always returns false.
-    #(inline)
+    @(inline)
     pub fn overflowing_div(this, rhs: T): (T, bool) {
         (this / rhs, false)
     }
 
-    #(inline)
+    @(inline)
     pub fn checked_div(this, rhs: T): ?T {
         this / rhs
     }
@@ -371,27 +371,27 @@ pub extension CharImpl for char {
     }
 
     impl Eq<This> {
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn eq(this, rhs: *This): bool { this == rhs }
 
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn ne(this, rhs: *This): bool { this != rhs }
     }
 
     impl Cmp<This> {
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn cmp(this, rhs: *This): Ordering { this <=> rhs }
 
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn ge(this, rhs: *This): bool { this >= rhs }
 
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn gt(this, rhs: *This): bool { this > rhs }
 
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn le(this, rhs: *This): bool { this <= rhs }
 
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn lt(this, rhs: *This): bool { this < rhs }
     }
 
@@ -516,23 +516,23 @@ pub extension BoolImpl for bool {
     }
 
     impl Eq<This> {
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn eq(this, rhs: *This): bool { this == rhs }
 
-        #(intrinsic(binary_op))
+        @(intrinsic(binary_op))
         fn ne(this, rhs: *This): bool { this != rhs }
     }
 
-    #(intrinsic(unary_op))
+    @(intrinsic(unary_op))
     pub fn !(this): This { !*this }
 
-    #(intrinsic(binary_op))
+    @(intrinsic(binary_op))
     pub fn &(this, rhs: This): This { this & rhs }
 
-    #(intrinsic(binary_op))
+    @(intrinsic(binary_op))
     pub fn |(this, rhs: This): This { this | rhs }
 
-    #(intrinsic(binary_op))
+    @(intrinsic(binary_op))
     pub fn ^(this, rhs: This): This { this ^ rhs }
 
     impl Format {

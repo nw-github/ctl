@@ -1,7 +1,7 @@
 use core::range::RangeBounds;
 use core::reflect::*;
 
-#(lang(span))
+@(lang(span))
 pub struct Span<T> {
     ptr: *raw T,
     len: uint,
@@ -74,18 +74,18 @@ pub struct Span<T> {
         }
     }
 
-    #(inline)
+    @(inline)
     pub fn []<I: Integral>(my this, idx: I): *T {
         unsafe raw_subscript_checked(this.ptr, this.len, idx) as *T
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn []<R: RangeBounds<uint>>(my this, range: R): [T..] {
         this.subspan(range)
     }
 }
 
-#(lang(span_mut))
+@(lang(span_mut))
 pub struct SpanMut<T> {
     ptr: *raw T,
     len: uint,
@@ -197,24 +197,24 @@ pub struct SpanMut<T> {
         }
     }
 
-    #(inline)
+    @(inline)
     pub fn []<I: Integral>(my this, idx: I): *mut T {
         unsafe raw_subscript_checked(this.ptr, this.len, idx) as *mut T
     }
 
-    #(inline)
+    @(inline)
     pub fn []=<I: Integral>(my this, idx: I, val: T) {
         unsafe {
             *raw_subscript_checked(this.ptr, this.len, idx) = val;
         }
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn []<R: RangeBounds<uint>>(my this, range: R): [mut T..] {
         this.subspan(range)
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn []=<R: RangeBounds<uint>>(my this, range: R, rhs: [T..]) {
         let subspan = this.subspan(range);
         if subspan.len() != rhs.len() {
@@ -256,7 +256,7 @@ pub struct IterMut<T> {
     }
 }
 
-#(inline(always))
+@(inline(always))
 fn raw_subscript_checked<T, I: Integral>(ptr: *raw T, len: uint, idx: I): *raw T {
     if idx.try_cast::<uint>() is ?idx and (0u..len).contains(&idx) {
         ptr + idx

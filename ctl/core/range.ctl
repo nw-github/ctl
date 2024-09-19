@@ -1,6 +1,6 @@
 use core::reflect::*;
 
-#(lang(range_bounds))
+@(lang(range_bounds))
 pub trait RangeBounds<T> {
     fn begin(this): Bound<T>;
     fn end(this): Bound<T>;
@@ -13,7 +13,7 @@ pub union Bound<T> {
 }
 
 // ..bar
-#(lang(range_to))
+@(lang(range_to))
 pub struct RangeTo<T> {
     pub end: T,
 
@@ -29,7 +29,7 @@ pub struct RangeTo<T> {
 }
 
 // ..=bar
-#(lang(range_to_inclusive))
+@(lang(range_to_inclusive))
 pub struct RangeToInclusive<T> {
     pub end: T,
 
@@ -45,7 +45,7 @@ pub struct RangeToInclusive<T> {
 }
 
 // foo..
-#(lang(range_from))
+@(lang(range_from))
 pub struct RangeFrom<T: Integral> {
     pub start: T,
 
@@ -61,7 +61,7 @@ pub struct RangeFrom<T: Integral> {
 }
 
 // foo..bar
-#(lang(range))
+@(lang(range))
 pub struct Range<T> {
     pub start: T,
     pub end: T,
@@ -78,7 +78,7 @@ pub struct Range<T> {
 }
 
 // foo..=bar
-#(lang(range_inclusive))
+@(lang(range_inclusive))
 pub struct RangeInclusive<T> {
     pub start: T,
     pub end: T,
@@ -95,7 +95,7 @@ pub struct RangeInclusive<T> {
 }
 
 // ..
-#(lang(range_full))
+@(lang(range_full))
 pub struct RangeFull {
     impl<T> RangeBounds<T> {
         fn begin(this): Bound<T> {

@@ -33,7 +33,7 @@ pub enum Token<'a> {
     Colon,
     Semicolon,
     Hash,
-    HashLParen,
+    AtLParen,
     At,
     Move,
 
@@ -164,7 +164,7 @@ impl std::fmt::Display for Token<'_> {
             Token::Colon => write!(f, ":"),
             Token::Semicolon => write!(f, ";"),
             Token::Hash => write!(f, "#"),
-            Token::HashLParen => write!(f, "#("),
+            Token::AtLParen => write!(f, "@("),
             Token::Assign => write!(f, "="),
             Token::Fn => write!(f, "fn"),
             Token::Import => write!(f, "import"),
@@ -335,12 +335,12 @@ impl<'a> Lexer<'a> {
             ')' => Token::RParen,
             ',' => Token::Comma,
             ';' => Token::Semicolon,
-            '@' => Token::At,
-            '#' => {
+            '#' => Token::Hash,
+            '@' => {
                 if self.advance_if('(') {
-                    Token::HashLParen
+                    Token::AtLParen
                 } else {
-                    Token::Hash
+                    Token::At
                 }
             }
             '.' => {

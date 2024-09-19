@@ -7,7 +7,7 @@ pub fn exit(code: u32): never {
     unsafe libc::exit(code as! c_int)
 }
 
-#(lang(convert_argv))
+@(lang(convert_argv))
 fn convert_argv(argc: c_int, argv: **c_char): [str..] {
     mut result: [str] = Vec::with_capacity(argc as! uint);
     unsafe {
@@ -23,14 +23,14 @@ fn convert_argv(argc: c_int, argv: **c_char): [str..] {
     result[..]
 }
 
-#(lang(panic_handler))
+@(lang(panic_handler))
 fn panic_handler(s: str): never {
     io::eprint("fatal error: ");
     io::eprintln(s);
     unsafe libc::abort();
 }
 
-#(autouse)
+@(autouse)
 mod prelude {
     pub use super::vec::Vec;
     pub use super::map::Map;

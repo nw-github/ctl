@@ -8,16 +8,16 @@ pub union MemoryOrder {
 }
 
 mod c11 {
-    #(c_opaque, c_name(ctl_atomic_store_explicit))
+    @(c_opaque, c_name(ctl_atomic_store_explicit))
     pub extern fn atomic_store_explicit<T>(obj: *mut T, desired: T, order: u32);
 
-    #(c_opaque, c_name(ctl_atomic_load_explicit))
+    @(c_opaque, c_name(ctl_atomic_load_explicit))
     pub extern fn atomic_load_explicit<T>(obj: *T, order: u32): T;
 
-    #(c_opaque, c_name(ctl_atomic_exchange_explicit))
+    @(c_opaque, c_name(ctl_atomic_exchange_explicit))
     pub extern fn atomic_exchange_explicit<T>(obj: *mut T, desired: T, order: u32): T;
 
-    #(c_opaque, c_name(ctl_atomic_compare_exchange_strong_explicit))
+    @(c_opaque, c_name(ctl_atomic_compare_exchange_strong_explicit))
     pub extern fn atomic_compare_exchange_strong_explicit<T>(
         obj: *mut T,
         expected: *mut T,
@@ -26,7 +26,7 @@ mod c11 {
         failure: u32,
     ): bool; // _Bool
 
-    #(c_opaque, c_name(ctl_atomic_compare_exchange_weak_explicit))
+    @(c_opaque, c_name(ctl_atomic_compare_exchange_weak_explicit))
     pub extern fn atomic_compare_exchange_weak_explicit<T>(
         obj: *mut T,
         expected: *mut T,
@@ -35,22 +35,22 @@ mod c11 {
         failure: u32,
     ): bool; // _Bool
 
-    #(c_opaque, c_name(ctl_atomic_fetch_add_explicit))
+    @(c_opaque, c_name(ctl_atomic_fetch_add_explicit))
     pub extern fn atomic_fetch_add_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
-    #(c_opaque, c_name(ctl_atomic_fetch_sub_explicit))
+    @(c_opaque, c_name(ctl_atomic_fetch_sub_explicit))
     pub extern fn atomic_fetch_sub_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
-    #(c_opaque, c_name(ctl_atomic_fetch_and_explicit))
+    @(c_opaque, c_name(ctl_atomic_fetch_and_explicit))
     pub extern fn atomic_fetch_and_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
-    #(c_opaque, c_name(ctl_atomic_fetch_or_explicit))
+    @(c_opaque, c_name(ctl_atomic_fetch_or_explicit))
     pub extern fn atomic_fetch_or_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
-    #(c_opaque, c_name(ctl_atomic_fetch_xor_explicit))
+    @(c_opaque, c_name(ctl_atomic_fetch_xor_explicit))
     pub extern fn atomic_fetch_xor_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
-    #(c_opaque, c_name(ctl_atomic_is_lock_free))
+    @(c_opaque, c_name(ctl_atomic_is_lock_free))
     pub extern fn atomic_is_lock_free<T>(obj: *T): bool; // _Bool
 }
 
@@ -61,23 +61,23 @@ pub struct Atomic<T> {
         Atomic(val:)
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn store(mut this, val: T, order: MemoryOrder = :SeqCst) {
         unsafe c11::atomic_store_explicit(&mut this.val, val, order as u32);
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn load(this, order: MemoryOrder = :SeqCst): T {
         unsafe c11::atomic_load_explicit(&this.val, order as u32)
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn replace(mut this, val: T, order: MemoryOrder = :SeqCst): T {
         unsafe c11::atomic_exchange_explicit(&mut this.val, val, order as u32)
     }
 
     // On success, this function returns null. On error, it returns Some(actual value)
-    #(inline(always))
+    @(inline(always))
     pub fn compare_exchange(
         mut this,
         kw mut expected: T,
@@ -96,7 +96,7 @@ pub struct Atomic<T> {
         }
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn compare_exchange_weak(
         mut this,
         kw mut expected: T,
@@ -115,37 +115,37 @@ pub struct Atomic<T> {
         }
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn is_lock_free(this): bool {
         unsafe c11::atomic_is_lock_free(&this.val)
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn as_raw(this): *raw T {
         &raw this.val
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn fetch_add(mut this, val: T, order: MemoryOrder = :SeqCst): T {
         unsafe c11::atomic_fetch_add_explicit(&mut this.val, val, order as u32)
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn fetch_sub(mut this, val: T, order: MemoryOrder = :SeqCst): T {
         unsafe c11::atomic_fetch_sub_explicit(&mut this.val, val, order as u32)
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn fetch_and(mut this, val: T, order: MemoryOrder = :SeqCst): T {
         unsafe c11::atomic_fetch_and_explicit(&mut this.val, val, order as u32)
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn fetch_or(mut this, val: T, order: MemoryOrder = :SeqCst): T {
         unsafe c11::atomic_fetch_or_explicit(&mut this.val, val, order as u32)
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn fetch_xor(mut this, val: T, order: MemoryOrder = :SeqCst): T {
         unsafe c11::atomic_fetch_xor_explicit(&mut this.val, val, order as u32)
     }

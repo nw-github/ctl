@@ -1,6 +1,6 @@
 use core::fmt::*;
 
-#(lang(string_formatter))
+@(lang(string_formatter))
 struct StringFormatter {
     buffer: [u8] = @[],
 

@@ -6,12 +6,12 @@ pub trait Write {
     }
 }
 
-#(lang(formatter))
+@(lang(formatter))
 pub trait Formatter: Write {
     fn written(this): str;
 }
 
-#(lang(format))
+@(lang(format))
 pub trait Format {
     fn fmt<F: Formatter>(this, f: *mut F);
 }

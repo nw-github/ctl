@@ -3,7 +3,7 @@ use std::span::*;
 use std::range::RangeBounds;
 use std::reflect::*;
 
-#(lang(vec))
+@(lang(vec))
 pub struct Vec<T> {
     ptr: *raw T,
     len: uint,
@@ -231,32 +231,32 @@ pub struct Vec<T> {
         }
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn []<I: Integral>(this, idx: I): *T {
         &this[..][idx]
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn []<I: Integral>(mut this, idx: I): *mut T {
         &mut this[..][idx]
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn []=<I: Integral>(mut this, idx: I, val: T) {
         this[..][idx] = val;
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn []<R: RangeBounds<uint>>(this, range: R): [T..] {
         this.as_span()[range]
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn []<R: RangeBounds<uint>>(mut this, range: R): [mut T..] {
         this.as_span_mut()[range]
     }
 
-    #(inline(always))
+    @(inline(always))
     pub fn []=<R: RangeBounds<uint>>(mut this, range: R, rhs: [T..]) {
         this[range] = rhs;
     }

@@ -2,7 +2,7 @@ use std::hash::Hash;
 use std::ops::Eq;
 use std::iter::FromIter;
 
-#(lang(set))
+@(lang(set))
 pub struct Set<T: Hash + Eq<T>> {
     inner: [T: void],
 

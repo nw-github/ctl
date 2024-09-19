@@ -10,8 +10,8 @@ pub fn print(s: str) {
 }
 
 pub fn eprintln(s: str = "") {
-    eprint(s);
-    unsafe write(2, &b'\n' as *c_void, 1);
+    eprint(s + "\n");
+    // unsafe write(2, &b'\n' as *c_void, 1);
 }
 
 pub fn eprint(s: str) {

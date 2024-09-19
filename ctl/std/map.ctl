@@ -7,7 +7,7 @@ union Bucket<K, V> {
     Tombstone,
 }
 
-#(lang(map))
+@(lang(map))
 pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     buckets: [mut Bucket<K, V>..],
     len:     uint,
