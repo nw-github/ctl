@@ -6,20 +6,20 @@ use crate::{
     sym::{ExtensionId, FunctionId, ScopeId, TraitId, UserTypeId, VariableId},
 };
 
-pub struct DeclaredFn {
+pub struct Fn {
     pub id: FunctionId,
     pub body: Option<Expr>,
 }
 
-pub struct DeclaredImplBlock {
+pub struct ImplBlock {
     pub span: Span,
     pub scope: ScopeId,
-    pub fns: Vec<DeclaredFn>,
+    pub fns: Vec<Fn>,
     pub type_params: Vec<UserTypeId>,
 }
 
 #[derive(EnumAsInner)]
-pub enum DeclaredStmt {
+pub enum Stmt {
     Expr(Expr),
     Defer(Expr),
     Guard {
@@ -36,30 +36,30 @@ pub enum DeclaredStmt {
         value: Expr,
         constant: bool,
     },
-    Fn(DeclaredFn),
+    Fn(Fn),
     Struct {
         id: UserTypeId,
-        impls: Vec<DeclaredImplBlock>,
-        fns: Vec<DeclaredFn>,
-        init: DeclaredFn,
+        impls: Vec<ImplBlock>,
+        fns: Vec<Fn>,
+        init: Fn,
     },
     Union {
         id: UserTypeId,
-        impls: Vec<DeclaredImplBlock>,
-        fns: Vec<DeclaredFn>,
+        impls: Vec<ImplBlock>,
+        fns: Vec<Fn>,
     },
     Trait {
         id: TraitId,
-        fns: Vec<DeclaredFn>,
+        fns: Vec<Fn>,
     },
     Extension {
         id: ExtensionId,
-        impls: Vec<DeclaredImplBlock>,
-        fns: Vec<DeclaredFn>,
+        impls: Vec<ImplBlock>,
+        fns: Vec<Fn>,
     },
     Module {
         id: ScopeId,
-        body: Vec<DeclaredStmt>,
+        body: Vec<Stmt>,
     },
     None,
 }

@@ -5,7 +5,12 @@ use indexmap::{map::Entry, IndexMap};
 use std::sync::LazyLock;
 
 use crate::{
-    ast::{checked::*, declared::*, parsed::*, Attributes, BinaryOp, UnaryOp},
+    ast::{
+        checked::*,
+        declared::{Fn as DeclaredFn, ImplBlock as DeclaredImplBlock, Stmt as DeclaredStmt},
+        parsed::*,
+        Attributes, BinaryOp, UnaryOp,
+    },
     comptime_int::ComptimeInt,
     error::{Diagnostics, Error},
     lexer::{Located, Span},
