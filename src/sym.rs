@@ -1,7 +1,6 @@
 use derive_more::{Constructor, Deref, DerefMut, From};
 use enum_as_inner::EnumAsInner;
 use indexmap::IndexMap;
-use num_bigint::BigInt;
 use std::collections::{HashMap, HashSet};
 
 use crate::{
@@ -9,9 +8,7 @@ use crate::{
         checked::{CheckedExpr, CheckedPattern},
         parsed::{Expr, Path, Pattern, TypeHint, UsePath},
         Attributes,
-    },
-    lexer::{Located, Span},
-    typeid::{GenericTrait, GenericUserType, Type, TypeId, Types},
+    }, comptime_int::ComptimeInt, lexer::{Located, Span}, typeid::{GenericTrait, GenericUserType, Type, TypeId, Types}
 };
 
 macro_rules! id {
@@ -233,7 +230,7 @@ pub enum Discriminant {
     Unchecked(Expr),
     #[default]
     Next,
-    Checked(BigInt),
+    Checked(ComptimeInt),
 }
 
 #[derive(Debug, Clone)]
@@ -251,7 +248,7 @@ pub struct Union {
 }
 
 impl Union {
-    pub fn discriminant(&self, name: &str) -> Option<&BigInt> {
+    pub fn discriminant(&self, name: &str) -> Option<&ComptimeInt> {
         self.variants.get(name).and_then(|v| v.discrim.as_checked())
     }
 }

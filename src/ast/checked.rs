@@ -1,9 +1,9 @@
 use enum_as_inner::EnumAsInner;
 use indexmap::IndexMap;
-use num_bigint::BigInt;
 
 use crate::{
     ast::{BinaryOp, UnaryOp},
+    comptime_int::ComptimeInt,
     sym::{ScopeId, ScopeKind, Scopes, VariableId},
     typecheck::MemberFn,
     typeid::{GenericFn, Type, TypeId, Types},
@@ -53,8 +53,8 @@ pub enum CheckedPatternData {
         patterns: ArrayPattern<CheckedPattern>,
         borrows: bool,
     },
-    Int(BigInt),
-    IntRange(RangePattern<BigInt>),
+    Int(ComptimeInt),
+    IntRange(RangePattern<ComptimeInt>),
     String(String),
     Span {
         patterns: Vec<CheckedPattern>,
@@ -146,8 +146,7 @@ pub enum CheckedExprData {
     },
     Set(Vec<CheckedExpr>, ScopeId),
     Map(Vec<(CheckedExpr, CheckedExpr)>, ScopeId),
-    Bool(bool),
-    Integer(BigInt),
+    Int(ComptimeInt),
     Float(String),
     String(String),
     StringInterp {
@@ -156,7 +155,6 @@ pub enum CheckedExprData {
         scope: ScopeId,
     },
     ByteString(Vec<u8>),
-    Char(char),
     Void,
     Fn(GenericFn, ScopeId),
     MemFn(MemberFn, ScopeId),

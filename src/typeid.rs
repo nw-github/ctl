@@ -2,6 +2,7 @@ use std::{fmt::Display, ops::Index};
 
 use crate::{
     ast::{parsed::TypeHint, BinaryOp, UnaryOp},
+    comptime_int::ComptimeInt,
     nearest_pow_of_two,
     project::Project,
     sym::{
@@ -12,7 +13,6 @@ use crate::{
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
 use indexmap::{map::Entry, IndexMap, IndexSet};
-use num_bigint::BigInt;
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Deref, DerefMut)]
 pub struct TypeArgs(pub IndexMap<UserTypeId, TypeId>);
@@ -310,22 +310,22 @@ pub struct Integer {
 }
 
 impl Integer {
-    pub fn min(&self) -> BigInt {
+    pub fn min(&self) -> ComptimeInt {
         if !self.signed || self.bits == 0 {
-            return BigInt::default();
+            ComptimeInt::new(0)
+        } else {
+            -(ComptimeInt::new(1) << (self.bits - 1))
         }
-
-        -(BigInt::from(1) << (self.bits - 1))
     }
 
-    pub fn max(&self) -> BigInt {
+    pub fn max(&self) -> ComptimeInt {
         if self.bits == 0 {
-            return BigInt::default();
+            ComptimeInt::new(0)
         } else if self.char {
-            return BigInt::from(char::MAX as u32);
+            ComptimeInt::from(char::MAX as u32)
+        } else {
+            (ComptimeInt::new(1) << (self.bits - self.signed as u32)) - 1
         }
-
-        (BigInt::from(1) << (self.bits - self.signed as u32)) - 1
     }
 
     pub const fn from_cint(cint: CInt, signed: bool) -> Self {

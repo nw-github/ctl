@@ -2,12 +2,11 @@ use std::collections::{HashMap, HashSet};
 
 use enum_as_inner::EnumAsInner;
 use indexmap::{map::Entry, IndexMap};
-use num_bigint::{BigInt, Sign};
-use num_traits::Num;
 use std::sync::LazyLock;
 
 use crate::{
     ast::{checked::*, declared::*, parsed::*, Attributes, BinaryOp, UnaryOp},
+    comptime_int::ComptimeInt,
     error::{Diagnostics, Error},
     lexer::{Located, Span},
     project::{Dependencies, Project, SpanSemanticToken},
@@ -2963,9 +2962,12 @@ impl TypeChecker {
                     CheckedExprData::ByteString(s),
                 )
             }
-            ExprData::Char(s) => CheckedExpr::new(TypeId::CHAR, CheckedExprData::Char(s)),
+            ExprData::Char(s) => CheckedExpr::new(
+                TypeId::CHAR,
+                CheckedExprData::Int(ComptimeInt::from(s as u32)),
+            ),
             ExprData::ByteChar(c) => {
-                CheckedExpr::new(TypeId::U8, CheckedExprData::Integer(BigInt::from(c)))
+                CheckedExpr::new(TypeId::U8, CheckedExprData::Int(ComptimeInt::from(c)))
             }
             ExprData::None => {
                 if let Some(inner) = target
@@ -2977,13 +2979,12 @@ impl TypeChecker {
                 }
             }
             ExprData::Void => CheckedExpr::new(TypeId::VOID, CheckedExprData::Void),
-            ExprData::Bool(value) => CheckedExpr {
-                ty: TypeId::BOOL,
-                data: CheckedExprData::Bool(value),
-            },
+            ExprData::Bool(value) => {
+                CheckedExpr::new(TypeId::BOOL, CheckedExprData::Int(ComptimeInt::from(value)))
+            }
             ExprData::Integer(integer) => {
                 let (ty, value) = self.get_int_type_and_val(target, &integer, span);
-                CheckedExpr::new(ty, CheckedExprData::Integer(value))
+                CheckedExpr::new(ty, CheckedExprData::Int(value))
             }
             ExprData::Float(value) => CheckedExpr::new(
                 target
@@ -4966,7 +4967,7 @@ impl TypeChecker {
             }
 
             let mut used = HashSet::new();
-            let mut next = BigInt::from(0);
+            let mut next = ComptimeInt::new(0);
             let mut bits = 0;
             let mut signed = false;
             for (name, variant) in union.variants.iter_mut() {
@@ -5009,7 +5010,7 @@ impl TypeChecker {
                 }
 
                 variant.discrim = Discriminant::Checked(val.clone());
-                signed = signed || val.sign() == Sign::Minus;
+                signed = signed || val.is_negative();
                 bits = bits.max(val.bits());
                 next = val + 1;
             }
@@ -5017,9 +5018,9 @@ impl TypeChecker {
             if union.tag == TypeId::UNKNOWN {
                 union.tag = target.unwrap_or_else(|| {
                     self.proj.types.insert(if signed {
-                        Type::Int(bits as u32)
+                        Type::Int(bits)
                     } else {
-                        Type::Uint(bits as u32)
+                        Type::Uint(bits)
                     })
                 });
             }
@@ -5243,23 +5244,23 @@ impl TypeChecker {
                 *val = bound.ty_args[arg];
             }
 
-//             for (&arg, &val) in ty_args.iter() {
-//                 let a = self.scopes().get(arg);
-//                 eprintln!(
-//                     "---> {}: {}",
-//                     self.scopes().full_name(a.scope, &a.name.data),
-//                     val.name(&self.proj.scopes, &mut self.proj.types)
-//                 );
-// 
-//                 // self.resolve_impls_recursive(arg);
-//                 // TODO: check that this type implements the bounds
-//                 // eprintln!(
-//                 //     "inserting {} for {}, now has: {}",
-//                 //     bound.ty_args[i].name(&self.proj.scopes, &mut self.proj.types),
-//                 //     arg.name(&self.proj.scopes),
-//                 //     tr.name(&self.proj.scopes, &mut self.proj.types)
-//                 // );
-//             }
+            //             for (&arg, &val) in ty_args.iter() {
+            //                 let a = self.scopes().get(arg);
+            //                 eprintln!(
+            //                     "---> {}: {}",
+            //                     self.scopes().full_name(a.scope, &a.name.data),
+            //                     val.name(&self.proj.scopes, &mut self.proj.types)
+            //                 );
+            //
+            //                 // self.resolve_impls_recursive(arg);
+            //                 // TODO: check that this type implements the bounds
+            //                 // eprintln!(
+            //                 //     "inserting {} for {}, now has: {}",
+            //                 //     bound.ty_args[i].name(&self.proj.scopes, &mut self.proj.types),
+            //                 //     arg.name(&self.proj.scopes),
+            //                 //     tr.name(&self.proj.scopes, &mut self.proj.types)
+            //                 // );
+            //             }
 
             // TODO: check block.type_params trait bounds
             Some(ty_args)
@@ -5841,7 +5842,7 @@ impl TypeChecker {
             width,
         }: &IntPattern,
         span: Span,
-    ) -> (TypeId, BigInt) {
+    ) -> (TypeId, ComptimeInt) {
         let ty = if let Some(width) = width {
             if let Some(ty) = Type::from_int_name(width, false) {
                 self.proj.types.insert(ty)
@@ -5861,11 +5862,11 @@ impl TypeChecker {
         let stats = ty.as_integral(&self.proj.types, false).unwrap();
         let mut parsable = value.clone();
         parsable.retain(|c| c != '_');
-        let mut result = match BigInt::from_str_radix(&parsable, *base as u32) {
-            Ok(result) => result,
-            Err(e) => {
+        let mut result = match ComptimeInt::from_str_radix(&parsable, *base as u32) {
+            Some(result) => result,
+            None => {
                 return self.error(Error::new(
-                    format!("integer literal '{value}' could not be parsed: {e}"),
+                    format!("'{value}' is not a valid integer literal"),
                     span,
                 ));
             }
@@ -6097,8 +6098,8 @@ impl TypeChecker {
         let ty = &self.proj.types[ty.strip_references(&self.proj.types)];
         if let Some((mut value, max)) = ty.as_integral(true).map(|int| (int.min(), int.max())) {
             'outer: while value <= max {
-                if ty.is_char() && (0xd800.into()..=0xe000.into()).contains(&value) {
-                    value = 0xe000.into();
+                if ty.is_char() && (0xd800u64.into()..=0xe000u64.into()).contains(&value) {
+                    value = 0xe000u64.into();
                 }
 
                 for patt in patterns.clone() {
@@ -6283,7 +6284,7 @@ impl TypeChecker {
         target: TypeId,
         patt: &IntPattern,
         span: Span,
-    ) -> Option<BigInt> {
+    ) -> Option<ComptimeInt> {
         let inner = target.strip_references(&self.proj.types);
         if !self.proj.types[inner].is_integral() {
             let (ty, _) = self.get_int_type_and_val(None, patt, span);
@@ -6942,7 +6943,7 @@ impl TypeChecker {
                     );
                 }
 
-                CheckedPattern::refutable(CheckedPatternData::Int(BigInt::from(ch as u32)))
+                CheckedPattern::refutable(CheckedPatternData::Int(ComptimeInt::from(ch as u32)))
             }
             Pattern::CharRange(RangePattern {
                 inclusive,
@@ -6971,8 +6972,8 @@ impl TypeChecker {
 
                 CheckedPattern::refutable(CheckedPatternData::IntRange(RangePattern {
                     inclusive,
-                    start: start.map(|start| BigInt::from(start as u32)),
-                    end: BigInt::from(end as u32),
+                    start: start.map(|start| ComptimeInt::from(start as u32)),
+                    end: ComptimeInt::from(end as u32),
                 }))
             }
             Pattern::Rest { .. } => self.error(Error::new(
@@ -6994,7 +6995,7 @@ impl TypeChecker {
                     );
                 }
 
-                CheckedPattern::refutable(CheckedPatternData::Int(BigInt::from(val as u32)))
+                CheckedPattern::refutable(CheckedPatternData::Int(ComptimeInt::from(val)))
             }
             Pattern::Tuple(sub) => self.check_tuple_pattern(scrutinee, mutable, sub, span, typ),
             Pattern::Void => {
@@ -7785,7 +7786,7 @@ impl TypeChecker {
 
 struct ConstValue {
     ty: TypeId,
-    val: BigInt,
+    val: ComptimeInt,
 }
 
 /// CTFE related functions
@@ -7800,34 +7801,49 @@ impl TypeChecker {
 
     fn consteval(&mut self, expr: &CheckedExpr, span: Span) -> Option<ConstValue> {
         match &expr.data {
-            CheckedExprData::Integer(val) => Some(ConstValue {
+            CheckedExprData::Int(val) => Some(ConstValue {
                 ty: expr.ty,
                 val: val.clone(),
             }),
             CheckedExprData::Binary { op, left, right } => {
                 let mut lhs = self.consteval(left, span)?;
                 let rhs = self.consteval(right, span)?;
+                let int = lhs.ty.as_integral(&self.proj.types, false).unwrap();
                 lhs.val = match op {
-                    BinaryOp::Add => lhs.val + rhs.val,
-                    BinaryOp::Sub => lhs.val - rhs.val,
-                    BinaryOp::Mul => lhs.val * rhs.val,
-                    BinaryOp::Div => lhs.val / rhs.val,
-                    BinaryOp::Rem => lhs.val % rhs.val,
-                    BinaryOp::BitAnd => lhs.val & rhs.val,
-                    BinaryOp::Xor => lhs.val ^ rhs.val,
-                    BinaryOp::BitOr => lhs.val | rhs.val,
+                    BinaryOp::Add => lhs.val + &rhs.val,
+                    BinaryOp::Sub => lhs.val - &rhs.val,
+                    BinaryOp::Mul => lhs.val * &rhs.val,
+                    BinaryOp::Div => lhs.val / &rhs.val,
+                    BinaryOp::Rem => lhs.val % &rhs.val,
+                    BinaryOp::BitAnd => lhs.val & &rhs.val,
+                    BinaryOp::Xor => lhs.val ^ &rhs.val,
+                    BinaryOp::BitOr => lhs.val | &rhs.val,
                     BinaryOp::Shl => {
-                        let rhs: u32 = rhs.val.try_into().unwrap();
-                        lhs.val << rhs
+                        if let Some(rhs) = rhs.val.into_word().filter(|w| (0..int.bits).contains(w))
+                        {
+                            lhs.val << rhs
+                        } else {
+                            self.proj.diag.error(Error::no_consteval(span)); // TODO: span of the expression that caused it
+                            ComptimeInt::from(0)
+                        }
                     }
                     BinaryOp::Shr => {
-                        let rhs: u32 = rhs.val.try_into().unwrap();
-                        lhs.val >> rhs
+                        if let Some(rhs) = rhs.val.into_word().filter(|w| (0..int.bits).contains(w))
+                        {
+                            lhs.val >> rhs
+                        } else {
+                            self.proj.diag.error(Error::no_consteval(span)); // TODO: span of the expression that caused it
+                            ComptimeInt::from(0)
+                        }
                     }
                     _ => return self.error(Error::no_consteval(span)),
                 };
 
-                // TODO: overflow check
+                if !lhs.val.fits_into(int.bits, int.signed) {
+                    lhs.val = ComptimeInt::from(0);
+                    self.error(Error::consteval_overflow(span))
+                }
+
                 Some(lhs)
             }
             CheckedExprData::Call(callee, _) => {
@@ -7847,7 +7863,17 @@ impl TypeChecker {
                         let (sz, _) = ty.size_and_align(&self.proj.scopes, &mut self.proj.types);
                         Some(ConstValue {
                             ty: TypeId::USIZE,
-                            val: BigInt::from(sz),
+                            val: ComptimeInt::from(sz),
+                        })
+                    }
+                    "align_of" => {
+                        let ty = func.first_type_arg().unwrap();
+                        // TODO: make sure the ty has had resolve_members()
+                        // and resolve_dependencies() called on it and doesn't have any template args
+                        let (_, align) = ty.size_and_align(&self.proj.scopes, &mut self.proj.types);
+                        Some(ConstValue {
+                            ty: TypeId::USIZE,
+                            val: ComptimeInt::from(align),
                         })
                     }
                     _ => self.error(Error::no_consteval(span)),

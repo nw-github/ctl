@@ -4,11 +4,10 @@ use std::{
 };
 
 use indexmap::IndexMap;
-use num_bigint::{BigInt, BigUint, Sign};
-use num_traits::Zero;
 
 use crate::{
     ast::{checked::*, parsed::RangePattern, BinaryOp, UnaryOp},
+    comptime_int::ComptimeInt,
     error::Diagnostics,
     nearest_pow_of_two,
     project::Project,
@@ -1456,11 +1455,7 @@ impl Codegen {
                     self.funcs.insert(insert);
                 });
             }
-            CheckedExprData::Bool(value) => {
-                self.emit_cast(expr.ty);
-                self.buffer.emit(if value { "1" } else { "0" })
-            }
-            CheckedExprData::Integer(value) => self.emit_literal(value, expr.ty),
+            CheckedExprData::Int(value) => self.emit_literal(value, expr.ty),
             CheckedExprData::Float(mut value) => {
                 self.emit_cast(expr.ty);
                 value.retain(|c| c != '_');
@@ -1482,10 +1477,6 @@ impl Codegen {
                     write_de!(self.buffer, "\\x{byte:x}");
                 }
                 write_de!(self.buffer, "\"");
-            }
-            CheckedExprData::Char(value) => {
-                self.emit_cast(expr.ty);
-                write_de!(self.buffer, "{:#x}", value as u32);
             }
             CheckedExprData::Void => self.buffer.emit(VOID_INSTANCE),
             CheckedExprData::Fn(mut func, scope) => {
@@ -3370,7 +3361,7 @@ impl Codegen {
                 !(mask << word_offset) & bit_mask(word_size_bits)
             );
 
-            // negative signed bitints contain 1s in the inaccessible bits (ie -1i2 == 0b1111_1111, 
+            // negative signed bitints contain 1s in the inaccessible bits (ie -1i2 == 0b1111_1111,
             // not 0b0000_0011) so we need the mask even for a non-partial write
             let needs_mask = reading != bits
                 || enum_tag
@@ -3431,7 +3422,7 @@ impl Codegen {
         }
     }
 
-    fn emit_literal(&mut self, literal: BigInt, ty: TypeId) {
+    fn emit_literal(&mut self, literal: ComptimeInt, ty: TypeId) {
         let largest_type = Integer::from_cint(CInt::LongLong, false);
         let base = ty.as_integral(&self.proj.types, true).unwrap();
         if base.bits <= largest_type.bits {
@@ -3444,7 +3435,7 @@ impl Codegen {
         }
 
         let mut result = JoiningBuilder::new("|", "0");
-        let mut number = |this: &mut Self, number: &BigUint, shift: u32| {
+        let mut number = |this: &mut Self, number: &ComptimeInt, shift: u32| {
             result.next(|buffer| {
                 usebuf!(this, buffer, {
                     write_if!(shift != 0, this.buffer, "(");
@@ -3455,14 +3446,15 @@ impl Codegen {
             });
         };
 
-        let large_mask = (BigUint::from(1u64) << largest_type.bits) - 1u64;
+        let large_mask = (ComptimeInt::new(1) << largest_type.bits) - 1;
+        // let max_literal = largest_type.max().magnitude();
         let max_literal = largest_type.max();
-        let max_literal = max_literal.magnitude();
-        let (sign, mut literal) = literal.into_parts();
+        let was_negative = literal.is_negative();
+        let mut literal = literal.abs();
         let mut shift = 0;
-        while literal > *max_literal {
+        while literal > max_literal {
             let value = &literal & &large_mask;
-            if value != BigUint::zero() {
+            if value != ComptimeInt::new(0) {
                 number(self, &value, shift);
             }
             literal >>= largest_type.bits;
@@ -3470,7 +3462,7 @@ impl Codegen {
         }
 
         number(self, &literal, shift);
-        if sign == Sign::Minus {
+        if was_negative {
             write_de!(self.buffer, "(~({}) + 1)", result.finish());
         } else {
             write_de!(self.buffer, "({})", result.finish());
