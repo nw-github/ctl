@@ -8,7 +8,10 @@ use crate::{
         checked::{CheckedExpr, CheckedPattern},
         parsed::{Expr, Path, Pattern, TypeHint, UsePath},
         Attributes,
-    }, comptime_int::ComptimeInt, lexer::{Located, Span}, typeid::{GenericTrait, GenericUserType, Type, TypeId, Types}
+    },
+    comptime_int::ComptimeInt,
+    lexer::{Located, Span},
+    typeid::{GenericTrait, GenericUserType, Type, TypeId, Types},
 };
 
 macro_rules! id {

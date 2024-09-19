@@ -1,5 +1,8 @@
-use std::{collections::HashMap, path::{Path, PathBuf}};
 use anyhow::{Context, Result};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 pub trait SourceProvider {
     fn get_source<T>(&mut self, path: &Path, get: impl FnOnce(&str) -> T) -> Result<Option<T>>;
@@ -22,7 +25,7 @@ impl SourceProvider for FileSourceProvider {
 #[derive(Default)]
 pub struct CachingSourceProvider {
     cache: HashMap<PathBuf, String>,
-} 
+}
 
 impl CachingSourceProvider {
     pub fn new() -> Self {
