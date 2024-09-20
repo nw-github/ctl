@@ -240,18 +240,20 @@ impl TypeGen {
             Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
                 Self::gen_dynptr(flags, decls, &mut defs, scopes, types, &tr.clone());
             }
-            &Type::Int(bits) | &Type::Uint(bits) if bits != 0 => {
-                let signed = types[id].is_int();
+            &Type::Int(bits) if bits != 0 => {
                 let nearest = nearest_pow_of_two(bits);
-                let ch = if signed { 's' } else { 'u' };
                 if flags.no_bit_int || nearest == bits as usize {
-                    write_de!(
-                        decls,
-                        "typedef {}int{nearest}_t {ch}{bits};",
-                        if signed { "" } else { "u" },
-                    );
+                    write_de!(decls, "typedef int{nearest}_t s{bits};",);
                 } else {
-                    write_de!(decls, "typedef {}INT({bits}){ch}{bits};", ch.to_uppercase());
+                    write_de!(decls, "typedef _BitInt({bits}) s{bits};",);
+                }
+            }
+            &Type::Uint(bits) if bits != 0 => {
+                let nearest = nearest_pow_of_two(bits);
+                if flags.no_bit_int || nearest == bits as usize {
+                    write_de!(decls, "typedef uint{nearest}_t u{bits};");
+                } else {
+                    write_de!(decls, "typedef unsigned _BitInt({bits}) u{bits};");
                 }
             }
             &Type::Array(ty, len) => {
@@ -1426,7 +1428,7 @@ impl Codegen {
                 value.retain(|c| c != '_');
                 self.buffer.emit(value);
             }
-            ExprData::String(value) => self.emit_string_literal(expr.ty, &value),
+            ExprData::String(value) => self.emit_string_literal(&value),
             ExprData::ByteString(value) => {
                 self.emit_cast(expr.ty);
                 write_de!(self.buffer, "\"");
@@ -1781,7 +1783,7 @@ impl Codegen {
                                 .with_templates(&mut self.proj.types, &state.func.ty_args);
                             self.emit_member_fn(state, mfn, scope);
                             write_de!(self.buffer, "(");
-                            self.emit_tmpvar_ident(expr, state);
+                            self.emit_expr_inline(expr, state);
                             write_de!(self.buffer, ",&{formatter});");
                         });
                     }
@@ -2634,7 +2636,7 @@ impl Codegen {
                     .first_type_arg()
                     .unwrap()
                     .name(&self.proj.scopes, &mut self.proj.types);
-                self.emit_string_literal(ret, &name);
+                self.emit_string_literal(&name);
             }
             _ => unreachable!(),
         }
@@ -3429,10 +3431,8 @@ impl Codegen {
         }
     }
 
-    fn emit_string_literal(&mut self, str: TypeId, value: &str) {
-        write_de!(self.buffer, "STRLIT(");
-        self.emit_type(str);
-        write_de!(self.buffer, ",\"");
+    fn emit_string_literal(&mut self, value: &str) {
+        write_de!(self.buffer, "STRLIT(\"");
         for byte in value.as_bytes() {
             write_de!(self.buffer, "\\x{byte:x}");
         }

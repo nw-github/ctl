@@ -336,7 +336,7 @@ pub extension UnsignedImpl<T: Unsigned> for T {
 
     impl Format {
         fn fmt<F: Formatter>(this, f: *mut F) {
-            mut buffer: [u8; core::mem::size_of::<u128>() * 8 + 1];
+            mut buffer: [u8; core::mem::size_of::<u128>() * 8];
             unsafe this.to_str_radix_unchecked(10, buffer[..]).fmt(f);
         }
     }
@@ -581,6 +581,21 @@ pub extension RawImpl<T> for *raw T {
 
     pub unsafe fn write(my this, val: T) {
         unsafe *this = val;
+    }
+
+    impl Format {
+        fn fmt<F: Formatter>(this, f: *mut F) {
+            // TODO: just format (this as uint) when format specifiers are added
+            mut buffer: [u8; core::mem::size_of::<uint>() * 2 + 2];
+            unsafe {
+                let res = (*this as uint).to_str_radix_unchecked(16, buffer[2u..]);
+                // kinda gross, but avoids multiple calls to fmt()
+                mut ptr = res.as_raw();
+                *--ptr = b'x';
+                *--ptr = b'0';
+                str::from_utf8_unchecked(Span::new(ptr, res.len() + 2)).fmt(f);
+            }
+        }
     }
 }
 

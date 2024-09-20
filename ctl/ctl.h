@@ -142,10 +142,8 @@
 
 #endif
 
-#define SINT(bits) _BitInt(bits)
-#define UINT(bits) unsigned _BitInt(bits)
-#define STRLIT(s, data, n)                           \
-  (s) {                                              \
+#define STRLIT(data, n)                              \
+  (core_string_str) {                                \
     .$span = {.$ptr = (u8 *)data, .$len = (usize)n } \
   }
 #define COERCE(ty, expr) (expr, *(ty *)(NULL))
