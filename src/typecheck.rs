@@ -7872,5 +7872,6 @@ static INTRINSICS: LazyLock<HashSet<&str>> = LazyLock::new(|| {
         "min_value",
         "unreachable_unchecked",
         "type_id",
+        "type_name",
     ])
 });

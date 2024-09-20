@@ -28,3 +28,9 @@ pub struct TypeId {
         core::intrin::type_id::<T>()
     }
 }
+
+pub use core::intrin::type_name;
+
+pub fn type_name_of_val<T>(_: *T): str {
+    type_name::<T>()
+}

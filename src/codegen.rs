@@ -1426,15 +1426,7 @@ impl Codegen {
                 value.retain(|c| c != '_');
                 self.buffer.emit(value);
             }
-            ExprData::String(value) => {
-                write_de!(self.buffer, "STRLIT(");
-                self.emit_type(expr.ty);
-                write_de!(self.buffer, ",\"");
-                for byte in value.as_bytes() {
-                    write_de!(self.buffer, "\\x{byte:x}");
-                }
-                write_de!(self.buffer, "\",{})", value.len());
-            }
+            ExprData::String(value) => self.emit_string_literal(expr.ty, &value),
             ExprData::ByteString(value) => {
                 self.emit_cast(expr.ty);
                 write_de!(self.buffer, "\"");
@@ -2637,6 +2629,13 @@ impl Codegen {
                     func.first_type_arg().unwrap().as_raw()
                 );
             }
+            "type_name" => {
+                let name = func
+                    .first_type_arg()
+                    .unwrap()
+                    .name(&self.proj.scopes, &mut self.proj.types);
+                self.emit_string_literal(ret, &name);
+            }
             _ => unreachable!(),
         }
     }
@@ -3428,6 +3427,16 @@ impl Codegen {
         } else {
             write_de!(self.buffer, "({})", result.finish());
         }
+    }
+
+    fn emit_string_literal(&mut self, str: TypeId, value: &str) {
+        write_de!(self.buffer, "STRLIT(");
+        self.emit_type(str);
+        write_de!(self.buffer, ",\"");
+        for byte in value.as_bytes() {
+            write_de!(self.buffer, "\\x{byte:x}");
+        }
+        write_de!(self.buffer, "\",{})", value.len());
     }
 
     fn has_side_effects(expr: &Expr) -> bool {

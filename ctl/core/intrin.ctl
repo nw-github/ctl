@@ -18,6 +18,10 @@ pub extern fn unreachable_unchecked(): never;
 @(intrinsic)
 pub extern fn type_id<T>(): core::intrin::TypeId;
 
+@(intrinsic)
+pub extern fn type_name<T>(): str;
+
+
 
 @(c_opaque, c_name(CTL_MEMSET))
 pub extern fn memset(dst: *raw u8, c: c_int, len: uint): *raw u8;
