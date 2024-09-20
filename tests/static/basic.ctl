@@ -8,4 +8,3 @@ fn main() {
     static INNER: int = 20;
     println("{func() + INNER}");
 }
-

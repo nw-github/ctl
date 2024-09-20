@@ -17,9 +17,10 @@ use crate::{
         Attributes, BinaryOp, UnaryOp,
     },
     comptime_int::ComptimeInt,
+    dgraph::Dependencies,
     error::{Diagnostics, Error},
     lexer::{Located, Span},
-    project::{Dependencies, Project, SpanSemanticToken},
+    project::{Project, SpanSemanticToken},
     sym::*,
     typeid::{
         BitSizeResult, CInt, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType,
@@ -305,6 +306,7 @@ pub struct TypeChecker {
     listening_vars: Vec<VariableId>,
     listening_expr: usize,
     current_expr: usize,
+    current_static: Option<(VariableId, Vec<VariableId>)>,
 }
 
 impl TypeChecker {
@@ -317,6 +319,7 @@ impl TypeChecker {
             listening_vars: Vec::new(),
             listening_expr: 1,
             current_expr: 1,
+            current_static: None,
         };
 
         let mut autouse = vec![];
@@ -385,6 +388,7 @@ impl TypeChecker {
             listening_vars: Vec::new(),
             listening_expr: 1,
             current_expr: 1,
+            current_static: None,
         };
         let res = f(&mut tc);
         std::mem::swap(proj, &mut tc.proj);
@@ -1754,7 +1758,13 @@ impl TypeChecker {
                 // FIXME: detect cycles like static X: usize = X;
                 // FIXME: non-const statics should be disallowed
                 let ty = resolve_type!(self, self.proj.scopes.get_mut(id).ty);
+
+                self.proj.static_deps.insert(id, Dependencies::Resolving);
+                let prev = self.current_static.replace((id, Vec::new()));
                 let value = self.type_check(value, ty);
+                let (_, deps) = std::mem::replace(&mut self.current_static, prev).unwrap();
+                self.proj.static_deps.insert(id, Dependencies::Resolved(deps));
+
                 let var = self.proj.scopes.get_mut(id);
                 var.value = Some(value);
             }
@@ -2928,13 +2938,32 @@ impl TypeChecker {
             PExprData::Path(path) => match self.resolve_value_path(&path, target) {
                 ResolvedValue::Var(id) => {
                     let var = self.proj.scopes.get(id);
-                    if !var.is_static
-                        && self.current_function() != self.proj.scopes.function_of(var.scope)
-                    {
-                        self.proj.diag.error(Error::new(
-                            "cannot reference local variable of enclosing function",
-                            span,
-                        ));
+                    if !var.is_static {
+                        if self.current_function() != self.proj.scopes.function_of(var.scope) {
+                            self.proj.diag.error(Error::new(
+                                "cannot reference local variable of enclosing function",
+                                span,
+                            ));
+                        }
+                        if self.current_static.is_some() {
+                            self.proj.diag.error(Error::new(
+                                "cannot reference local variable from the initializer of a static or constant variable",
+                                span,
+                            ));
+                        }
+                    } else if let Some((cur, deps)) = &mut self.current_static {
+                        deps.push(id);
+                        let recursive = match self.proj.static_deps.get(&id) {
+                            Some(Dependencies::Resolved(v_deps)) => v_deps.contains(cur),
+                            Some(Dependencies::Resolving) => true,
+                            _ => false,
+                        };
+                        if recursive {
+                            self.proj.diag.error(Error::new(
+                                "static initializer depends directly or indirectly on itself",
+                                span,
+                            ));
+                        }
                     }
 
                     let ty = var.ty;

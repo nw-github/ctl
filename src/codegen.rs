@@ -8,6 +8,7 @@ use indexmap::IndexMap;
 use crate::{
     ast::{checked::*, parsed::RangePattern, BinaryOp, UnaryOp},
     comptime_int::ComptimeInt,
+    dgraph::{Dependencies, DependencyGraph},
     error::Diagnostics,
     nearest_pow_of_two,
     project::Project,
@@ -46,7 +47,7 @@ const ATTR_LINKNAME: &str = "c_name";
 const NULLPTR: &str = "((void*)0)";
 
 #[derive(Default)]
-struct TypeGen(HashMap<TypeId, Vec<TypeId>>);
+struct TypeGen(DependencyGraph<TypeId>);
 
 impl TypeGen {
     fn gen_fnptr(
@@ -226,26 +227,8 @@ impl TypeGen {
     }
 
     fn emit(&self, scopes: &Scopes, types: &mut Types, decls: &mut Buffer, flags: &CodegenFlags) {
-        fn dfs(
-            id: TypeId,
-            tree: &HashMap<TypeId, Vec<TypeId>>,
-            visited: &mut HashSet<TypeId>,
-            gen: &mut impl FnMut(TypeId),
-        ) {
-            visited.insert(id);
-            if let Some(deps) = tree.get(&id) {
-                for dep in deps.iter() {
-                    if !visited.contains(dep) {
-                        dfs(*dep, tree, visited, gen);
-                    }
-                }
-            }
-
-            gen(id);
-        }
-
         let mut defs = Buffer::default();
-        let mut gen_type = |id| match &types[id] {
+        self.0.visit_all(|&id| match &types[id] {
             Type::Fn(f) => {
                 let f = f.clone().as_fn_ptr(scopes, types);
                 Self::gen_fnptr(scopes, types, &mut defs, flags, &f);
@@ -285,15 +268,7 @@ impl TypeGen {
                 write_de!(defs, " {ARRAY_DATA_NAME}[{len}];}};");
             }
             _ => {}
-        };
-
-        let mut visited = HashSet::new();
-        for id in self.0.keys() {
-            if !visited.contains(id) {
-                dfs(*id, &self.0, &mut visited, &mut gen_type);
-            }
-        }
-
+        });
         decls.emit(defs.finish());
     }
 
@@ -346,7 +321,7 @@ impl TypeGen {
             }
             &Type::Array(ty, _) => dependency!(ty),
             Type::User(ut) => {
-                self.0.insert(ty, Vec::new());
+                self.0.insert(ty, Dependencies::Resolving);
                 let ut = ut.clone();
                 for m in scopes.get(ut.id).members.values() {
                     dependency!(m.ty.with_templates(types, &ut.ty_args));
@@ -371,7 +346,7 @@ impl TypeGen {
             _ => return,
         }
 
-        self.0.insert(ty, deps);
+        self.0.insert(ty, Dependencies::Resolved(deps));
     }
 }
 
@@ -868,6 +843,7 @@ impl Codegen {
             GenericFn::from_id(&this.proj.scopes, FunctionId::RESERVED),
             ScopeId::ROOT,
         );
+        let static_deps = std::mem::take(&mut this.proj.static_deps);
         while !this.funcs.is_empty() || !this.statics.is_empty() {
             let diff = this.funcs.difference(&emitted).cloned().collect::<Vec<_>>();
             emitted.extend(this.funcs.drain());
@@ -876,32 +852,28 @@ impl Codegen {
                 this.emit_fn(&mut state, &mut prototypes);
             }
 
-            let sdiff = this
-                .statics
-                .difference(&emitted_statics)
-                .cloned()
-                .collect::<Vec<_>>();
-            emitted_statics.extend(this.statics.drain());
-            for id in sdiff {
-                static_state.caller = this.proj.scopes.get(id).scope;
-                usebuf!(this, &mut static_defs, {
-                    this.emit_var_decl(id, static_state);
-                    write_de!(this.buffer, ";");
-                });
-
-                usebuf!(
-                    this,
-                    &mut static_init,
-                    hoist_point!(this, {
-                        this.emit_var_name(id, static_state);
-                        write_de!(this.buffer, "=");
-                        this.emit_expr_inner(
-                            this.proj.scopes.get(id).value.clone().unwrap(),
-                            static_state,
-                        );
+            for var in std::mem::take(&mut this.statics) {
+                static_deps.dfs(var, &mut emitted_statics, |id| {
+                    static_state.caller = this.proj.scopes.get(id).scope;
+                    usebuf!(this, &mut static_defs, {
+                        this.emit_var_decl(id, static_state);
                         write_de!(this.buffer, ";");
-                    })
-                );
+                    });
+
+                    usebuf!(
+                        this,
+                        &mut static_init,
+                        hoist_point!(this, {
+                            this.emit_var_name(id, static_state);
+                            write_de!(this.buffer, "=");
+                            this.emit_expr_inner(
+                                this.proj.scopes.get(id).value.clone().unwrap(),
+                                static_state,
+                            );
+                            write_de!(this.buffer, ";");
+                        })
+                    );
+                });
             }
         }
         let functions = std::mem::take(&mut this.buffer);
@@ -2659,7 +2631,11 @@ impl Codegen {
             }
             "type_id" => {
                 self.emit_cast(ret);
-                write_de!(self.buffer, "{{ .$tag = {} }}", func.first_type_arg().unwrap().as_raw());
+                write_de!(
+                    self.buffer,
+                    "{{ .$tag = {} }}",
+                    func.first_type_arg().unwrap().as_raw()
+                );
             }
             _ => unreachable!(),
         }

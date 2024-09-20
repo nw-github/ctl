@@ -1,7 +1,6 @@
-use std::collections::HashMap;
-
 use crate::{
-    sym::{FunctionId, ScopeId, Scopes},
+    dgraph::DependencyGraph,
+    sym::{FunctionId, ScopeId, Scopes, VariableId},
     typecheck::{Completions, LspItem},
     typeid::{TypeId, Types},
     Diagnostics, Span,
@@ -19,12 +18,6 @@ impl SpanSemanticToken {
     }
 }
 
-pub enum Dependencies {
-    Resolving,
-    Resolved(Vec<TypeId>),
-    Recursive,
-}
-
 #[derive(Default)]
 pub struct Project {
     pub scope: ScopeId,
@@ -33,9 +26,10 @@ pub struct Project {
     pub diag: Diagnostics,
     pub hover: Option<LspItem>,
     pub completions: Option<Completions>,
-    pub deps: HashMap<TypeId, Dependencies>,
     pub tokens: Vec<SpanSemanticToken>,
     pub main: Option<FunctionId>,
+    pub deps: DependencyGraph<TypeId>,
+    pub static_deps: DependencyGraph<VariableId>,
 }
 
 impl Project {

@@ -1,6 +1,7 @@
 mod ast;
 mod codegen;
 mod comptime_int;
+mod dgraph;
 mod error;
 mod lexer;
 mod lsp;
