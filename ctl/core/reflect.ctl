@@ -13,3 +13,18 @@ pub sealed trait Signed: Integral {}
 // i*, int, c_u*
 @(lang(unsigned))
 pub sealed trait Unsigned: Integral {}
+
+/// A unique numeric identifier for each type. This value is not stable and may change between
+/// compilations of even identical source code, and thus should only be used for comparisons within
+/// the same compilation unit and never serialized or read directly.
+pub struct TypeId {
+    tag: u64,
+
+    pub fn ==(this, rhs: *TypeId): bool {
+        this.tag == rhs.tag
+    }
+
+    pub fn get<T>(): TypeId {
+        core::intrin::type_id::<T>()
+    }
+}

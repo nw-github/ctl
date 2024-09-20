@@ -1297,23 +1297,13 @@ impl TypeChecker {
                     } else {
                         (&self.proj.scopes.get(id).name.data[..], attr.name.span)
                     };
-                    match name {
-                        "size_of"
-                        | "align_of"
-                        | "panic"
-                        | "binary_op"
-                        | "unary_op"
-                        | "numeric_cast"
-                        | "numeric_abs"
-                        | "max_value"
-                        | "min_value"
-                        | "unreachable_unchecked" => {
-                            self.proj.scopes.intrinsics.insert(id, name.to_string());
-                        }
-                        _ => self.error(Error::new(
+                    if INTRINSICS.contains(name) {
+                        self.proj.scopes.intrinsics.insert(id, name.to_string());
+                    } else {
+                        self.error(Error::new(
                             format!("intrinsic '{name}' is not supported"),
                             span,
-                        )),
+                        ))
                     }
                 }
                 _ => {}
@@ -7818,4 +7808,20 @@ static UNARY_OP_TRAITS: LazyLock<HashMap<UnaryOp, (&str, &str)>> = LazyLock::new
         (UnaryOp::PreIncrement, ("op_inc", "inc")),
     ]
     .into()
+});
+
+static INTRINSICS: LazyLock<HashSet<&str>> = LazyLock::new(|| {
+    HashSet::from([
+        "size_of",
+        "align_of",
+        "panic",
+        "binary_op",
+        "unary_op",
+        "numeric_cast",
+        "numeric_abs",
+        "max_value",
+        "min_value",
+        "unreachable_unchecked",
+        "type_id",
+    ])
 });

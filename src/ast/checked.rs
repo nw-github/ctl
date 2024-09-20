@@ -292,7 +292,9 @@ impl Expr {
         }
 
         if let Type::DynMutPtr(_) | Type::DynPtr(_) = types[ty] {
-            indirection += 1;
+            if !matches!(types[target], Type::DynMutPtr(_) | Type::DynPtr(_)) {
+                indirection += 1;
+            }
         }
 
         match indirection.cmp(&needed) {

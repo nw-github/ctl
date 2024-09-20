@@ -1,8 +1,6 @@
 use super::debug_assert;
 use super::d2s::*;
 use super::f2s::*;
-use core::ext::*;
-use core::range::ext::*;
 
 pub unsafe fn format32(f: f32, res: *raw u8): uint {
     unsafe {

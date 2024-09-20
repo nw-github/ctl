@@ -2657,6 +2657,10 @@ impl Codegen {
                     arg0,
                 );
             }
+            "type_id" => {
+                self.emit_cast(ret);
+                write_de!(self.buffer, "{{ .$tag = {} }}", func.first_type_arg().unwrap().as_raw());
+            }
             _ => unreachable!(),
         }
     }

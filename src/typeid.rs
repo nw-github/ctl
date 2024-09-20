@@ -532,6 +532,12 @@ pub const MAX_ALIGN: usize = core::mem::align_of::<usize>();
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct TypeId(usize);
 
+impl TypeId {
+    pub fn as_raw(self) -> usize {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct UnresolvedTypeId(usize);
 

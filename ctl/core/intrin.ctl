@@ -15,7 +15,8 @@ pub extern fn panic(s: str): never;
 @(intrinsic)
 pub extern fn unreachable_unchecked(): never;
 
-
+@(intrinsic)
+pub extern fn type_id<T>(): core::intrin::TypeId;
 
 
 @(c_opaque, c_name(CTL_MEMSET))
