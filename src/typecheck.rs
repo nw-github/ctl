@@ -1761,9 +1761,11 @@ impl TypeChecker {
 
                 self.proj.static_deps.insert(id, Dependencies::Resolving);
                 let prev = self.current_static.replace((id, Vec::new()));
-                let value = self.type_check(value, ty);
+                let value = self.enter(ScopeKind::Static(id), |this| this.type_check(value, ty));
                 let (_, deps) = std::mem::replace(&mut self.current_static, prev).unwrap();
-                self.proj.static_deps.insert(id, Dependencies::Resolved(deps));
+                self.proj
+                    .static_deps
+                    .insert(id, Dependencies::Resolved(deps));
 
                 let var = self.proj.scopes.get_mut(id);
                 var.value = Some(value);
@@ -2945,9 +2947,13 @@ impl TypeChecker {
                                 span,
                             ));
                         }
-                        if self.current_static.is_some() {
+                        if self
+                            .current_static
+                            .as_ref()
+                            .is_some_and(|v| !self.is_var_accessible(v.0, var.scope))
+                        {
                             self.proj.diag.error(Error::new(
-                                "cannot reference local variable from the initializer of a static or constant variable",
+                                "cannot reference local variable from outside of static initializer",
                                 span,
                             ));
                         }
@@ -3848,6 +3854,20 @@ impl TypeChecker {
         }
 
         matches!(ty, Type::Ptr(_) | Type::DynPtr(_))
+    }
+
+    fn is_var_accessible(&self, static_var: VariableId, scope: ScopeId) -> bool {
+        for (_, scope) in self.proj.scopes.walk(scope) {
+            match scope.kind {
+                ScopeKind::None | ScopeKind::Defer | ScopeKind::Block(_) | ScopeKind::Loop(_) => {
+                    continue
+                }
+                ScopeKind::Static(v) if v == static_var => return true,
+                _ => break,
+            }
+        }
+
+        false
     }
 
     fn check_return(&mut self, expr: PExpr, span: Span) -> CExpr {

@@ -125,6 +125,7 @@ pub enum ScopeKind {
     UserType(UserTypeId),
     Impl(usize),
     Module(Located<String>),
+    Static(VariableId),
     Defer,
     #[default]
     None,
