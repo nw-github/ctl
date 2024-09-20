@@ -619,8 +619,8 @@ impl TypeId {
         }
     }
 
-    pub fn as_option_inner(self, scopes: &Scopes, types: &Types) -> Option<TypeId> {
-        types[self].as_option_inner(scopes)
+    pub fn as_option_inner(self, proj: &Project) -> Option<TypeId> {
+        proj.types[self].as_option_inner(&proj.scopes)
     }
 
     pub fn strip_references(self, types: &Types) -> TypeId {
@@ -637,7 +637,7 @@ impl TypeId {
 
     pub fn strip_options(self, proj: &Project) -> TypeId {
         let mut id = self;
-        while let Some(inner) = id.as_option_inner(&proj.scopes, &proj.types) {
+        while let Some(inner) = id.as_option_inner(proj) {
             id = inner;
         }
         id

@@ -2264,9 +2264,7 @@ impl TypeChecker {
                         };
                         let lhs_span = left.span;
                         let lhs = self.check_expr(*left, target);
-                        let Some(target) =
-                            lhs.ty.as_option_inner(&self.proj.scopes, &self.proj.types)
-                        else {
+                        let Some(target) = lhs.ty.as_option_inner(&self.proj) else {
                             if lhs.ty != TypeId::UNKNOWN {
                                 self.proj.diag.error(Error::invalid_operator(
                                     op,
@@ -2550,24 +2548,14 @@ impl TypeChecker {
                         (self.proj.types.insert(Type::RawPtr(expr.ty)), expr)
                     }
                     UnaryOp::Try => {
-                        let expr = self.check_expr(
-                            *expr,
-                            target.and_then(|t| {
-                                t.as_option_inner(&self.proj.scopes, &self.proj.types)
-                            }),
-                        );
-                        if let Some(inner) =
-                            expr.ty.as_option_inner(&self.proj.scopes, &self.proj.types)
-                        {
+                        let expr = self
+                            .check_expr(*expr, target.and_then(|t| t.as_option_inner(&self.proj)));
+                        if let Some(inner) = expr.ty.as_option_inner(&self.proj) {
                             // TODO: lambdas
                             if self
                                 .current_function()
                                 .and_then(|id| {
-                                    self.proj
-                                        .scopes
-                                        .get(id)
-                                        .ret
-                                        .as_option_inner(&self.proj.scopes, &self.proj.types)
+                                    self.proj.scopes.get(id).ret.as_option_inner(&self.proj)
                                 })
                                 .is_none()
                             {
@@ -2928,9 +2916,7 @@ impl TypeChecker {
             }
             PExprData::ByteChar(c) => CExpr::new(TypeId::U8, CExprData::Int(ComptimeInt::from(c))),
             PExprData::None => {
-                if let Some(inner) = target
-                    .and_then(|target| target.as_option_inner(&self.proj.scopes, &self.proj.types))
-                {
+                if let Some(inner) = target.and_then(|target| target.as_option_inner(&self.proj)) {
                     CExpr::option_null(self.make_lang_type_by_name("option", [inner], span))
                 } else {
                     self.error(Error::new("cannot infer type of option null literal", span))
@@ -3083,7 +3069,7 @@ impl TypeChecker {
             } => {
                 let (cond, vars) = self.type_check_with_listen(*cond);
                 let target = if else_branch.is_none() {
-                    target.and_then(|t| t.as_option_inner(&self.proj.scopes, &self.proj.types))
+                    target.and_then(|t| t.as_option_inner(&self.proj))
                 } else {
                     target
                 };
@@ -3108,7 +3094,17 @@ impl TypeChecker {
                         } else {
                             let span = expr.span;
                             let source = self.check_expr_inner(*expr, target.or(Some(out_type)));
-                            Some(self.type_check_checked(source, out_type, span))
+                            if source
+                                .ty
+                                .as_option_inner(&self.proj)
+                                .is_some_and(|v| v == out_type)
+                            {
+                                if_branch = self.coerce(if_branch, source.ty).unwrap();
+                                out_type = source.ty;
+                                Some(source)
+                            } else {
+                                Some(self.type_check_checked(source, out_type, span))
+                            }
                         }
                     } else if if_branch.data.is_yielding_block(&self.proj.scopes) {
                         if out_type == TypeId::NEVER
@@ -4491,7 +4487,7 @@ impl TypeChecker {
                 .iter()
                 .enumerate()
                 .skip(last_pos)
-                .find(|(_, param)| !param.keyword)
+                .find(|(_, param)| !param.keyword && !result.contains_key(&param.label))
             {
                 let name = param.label.clone();
                 let (expr, f) = self.check_arg(func, expr, param.ty);
