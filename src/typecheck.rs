@@ -1279,7 +1279,7 @@ impl TypeChecker {
             true,
         );
 
-        let mut instrinsic = false;
+        let mut allow_safe_extern = false;
         for attr in self.proj.scopes.get::<FunctionId>(id).attrs.clone().iter() {
             match &attr.name.data[..] {
                 "lang" => {
@@ -1295,7 +1295,7 @@ impl TypeChecker {
                         .insert(inner.name.data.clone(), id);
                 }
                 "intrinsic" => {
-                    instrinsic = true;
+                    allow_safe_extern = true;
                     let (name, span) = if let Some(attr) = attr.props.first() {
                         (&attr.name.data[..], attr.name.span)
                     } else {
@@ -1310,12 +1310,13 @@ impl TypeChecker {
                         ))
                     }
                 }
+                "safe" => allow_safe_extern = true,
                 _ => {}
             }
         }
 
         self.enter(ScopeKind::Function(id), |this| {
-            if !instrinsic && f.is_extern && f.body.is_none() {
+            if !allow_safe_extern && f.is_extern && f.body.is_none() {
                 this.proj.scopes.get_mut(id).is_unsafe = true;
             }
 

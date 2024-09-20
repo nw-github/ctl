@@ -35,6 +35,7 @@ Cpp11BracedListStyle: true
 IndentCaseBlocks: false
 IndentCaseLabels: false
 IndentGotoLabels: false
+IndentPPDirectives: AfterHash
 NamespaceIndentation: All
 PointerAlignment: Right
 SpaceAfterCStyleCast: false

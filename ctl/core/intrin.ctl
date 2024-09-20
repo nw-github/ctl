@@ -43,3 +43,9 @@ pub extern fn realloc(addr: *raw u8, size: uint, align: uint): ?*raw u8;
 
 @(c_opaque, c_name(CTL_STRLEN))
 pub extern fn strlen(ptr: *c_char): uint;
+
+@(safe, c_opaque, c_name(CTL_LIKELY))
+pub extern fn likely(val: bool): bool;
+
+@(safe, c_opaque, c_name(CTL_UNLIKELY))
+pub extern fn unlikely(val: bool): bool;
