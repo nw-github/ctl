@@ -608,6 +608,10 @@ pub extension F32Impl for f32 {
         unsafe core::mem::transmute(this)
     }
 
+    pub fn from_bits(v: u32): f32 {
+        unsafe core::mem::transmute(v)
+    }
+
     pub fn sqrt(my this): f32 {
         unsafe libm::sqrtf(this)
     }
@@ -646,6 +650,10 @@ pub extension F32Impl for f32 {
 pub extension F64Impl for f64 {
     pub fn to_bits(my this): u64 {
         unsafe core::mem::transmute(this)
+    }
+
+    pub fn from_bits(v: u64): f64 {
+        unsafe core::mem::transmute(v)
     }
 
     pub fn sqrt(my this): f64 {
