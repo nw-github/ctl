@@ -2638,6 +2638,34 @@ impl Codegen {
                     .name(&self.proj.scopes, &mut self.proj.types);
                 self.emit_string_literal(&name);
             }
+            "read_volatile" => {
+                write_de!(self.buffer, "*(volatile ");
+                self.emit_type(ret);
+                write_de!(self.buffer, " const *)(");
+                self.emit_expr_inline(
+                    args.into_iter()
+                        .next()
+                        .expect("ICE: read_volatile should receive one argument")
+                        .1,
+                    state,
+                );
+                write_de!(self.buffer, ")");
+            }
+            "write_volatile" => {
+                const COMPLAINT: &str = "ICE: write_volatile should receive two arguments";
+                let mut args = args.into_iter();
+                let mut arg0 = args.next().expect(COMPLAINT).1;
+                arg0.ty = arg0
+                    .ty
+                    .with_templates(&mut self.proj.types, &state.func.ty_args);
+                write_de!(self.buffer, "VOID(*(volatile ");
+                self.emit_type(arg0.ty);
+                write_de!(self.buffer, ")(");
+                self.emit_expr_inline(arg0, state);
+                write_de!(self.buffer, ") = ");
+                self.emit_expr_inline(args.next().expect(COMPLAINT).1, state);
+                write_de!(self.buffer, ")");
+            }
             _ => unreachable!(),
         }
     }

@@ -579,8 +579,20 @@ pub extension RawImpl<T> for *raw T {
         this + offs
     }
 
+    pub unsafe fn read(my this): T {
+        unsafe *this
+    }
+
     pub unsafe fn write(my this, val: T) {
         unsafe *this = val;
+    }
+
+    pub unsafe fn read_volatile(my this): T {
+        unsafe core::ptr::read_volatile(this)
+    }
+
+    pub unsafe fn write_volatile(my this, val: T) {
+        unsafe core::ptr::write_volatile(this, val)
     }
 
     impl Format {

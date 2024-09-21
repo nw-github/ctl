@@ -21,6 +21,12 @@ pub extern fn type_id<T>(): core::intrin::TypeId;
 @(intrinsic)
 pub extern fn type_name<T>(): str;
 
+@(intrinsic)
+pub extern unsafe fn read_volatile<T>(p: *raw T): T;
+
+@(intrinsic)
+pub extern unsafe fn write_volatile<T>(p: *raw T, val: T);
+
 
 
 @(c_opaque, c_name(CTL_MEMSET))

@@ -5,3 +5,6 @@ pub fn raw_dangling<T>(): *raw T {
 pub fn eq<T>(lhs: *T, rhs: *T): bool {
     lhs as *raw T == rhs as *raw T
 }
+
+pub use core::intrin::read_volatile;
+pub use core::intrin::write_volatile;

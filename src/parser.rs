@@ -69,8 +69,8 @@ impl<'a, 'b> Parser<'a, 'b> {
     fn try_item(&mut self) -> Result<Stmt, (Option<Located<Token<'a>>>, Attributes)> {
         let attrs = self.attributes();
         let public = self.next_if(Token::Pub);
-        let is_unsafe = self.next_if(Token::Unsafe);
         let is_extern = self.next_if(Token::Extern);
+        let is_unsafe = self.next_if(Token::Unsafe);
         let attrs = match self.try_function(
             FnConfig {
                 is_public: public.is_some(),
