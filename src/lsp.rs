@@ -354,6 +354,7 @@ impl LanguageServer for LspBackend {
                     }
                     &LspItem::Var(id) => {
                         let var = scopes.get(id);
+                        let typ = var.ty.name(scopes, types);
                         CompletionItem {
                             label: var.name.data.clone(),
                             kind: Some(if var.is_static {
@@ -363,7 +364,7 @@ impl LanguageServer for LspBackend {
                             }),
                             label_details: Some(CompletionItemLabelDetails {
                                 detail: None,
-                                description: Some(var.name.data.clone()),
+                                description: Some(typ.clone()),
                             }),
                             detail: Some(var.name.data.clone()),
                             ..Default::default()

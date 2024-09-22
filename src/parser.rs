@@ -952,6 +952,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 (false, self.block_expr(token.span, label.map(|l| l.data)))
             }
             Token::Unsafe => {
+                self.next();
                 if let Some(label) = label {
                     self.label_error(label)
                 }

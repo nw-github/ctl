@@ -27,7 +27,7 @@ pub struct Set<T: Hash + Eq<T>> {
     }
 
     pub fn contains(this, key: *T): bool {
-        this.inner.get(key).is_some()
+        this.inner.contains(key)
     }
 
     pub fn len(this): uint {
