@@ -52,6 +52,15 @@ impl TypeArgs {
                 .collect(),
         )
     }
+
+    pub fn unknown(v: &impl HasTypeParams) -> Self {
+        TypeArgs(
+            v.get_type_params()
+                .iter()
+                .map(|&t| (t, TypeId::UNKNOWN))
+                .collect(),
+        )
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash, Constructor)]

@@ -111,6 +111,18 @@ macro_rules! bail {
     }};
 }
 
+macro_rules! mute_errors {
+    ($self: expr, $mute: expr, $body: expr) => {{
+        let prev = $self.proj.diag.set_errors_enabled($mute);
+        let res = $body;
+        $self.proj.diag.set_errors_enabled(prev);
+        res
+    }};
+    ($self: expr, $body: expr) => {
+        mute_errors!($self, false, $body)
+    };
+}
+
 #[derive(Debug, Clone, EnumAsInner)]
 pub enum MemberFnType {
     Normal,
@@ -2100,9 +2112,7 @@ impl TypeChecker {
         };
 
         let stripped = lhs.ty.strip_references(&self.proj.types);
-        let Some(mfn) =
-            self.get_member_fn_legacy(stripped, Some(tr_id), fn_name, &[], lhs_span, self.current)
-        else {
+        let Some(mfn) = self.get_member_fn_legacy(stripped, tr_id, fn_name, self.current) else {
             bail!(
                 self,
                 Error::doesnt_implement(
@@ -2160,9 +2170,7 @@ impl TypeChecker {
         };
 
         let stripped = expr.ty.strip_references(&self.proj.types);
-        let Some(mfn) =
-            self.get_member_fn_legacy(stripped, Some(tr_id), fn_name, &[], span, self.current)
-        else {
+        let Some(mfn) = self.get_member_fn_legacy(stripped, tr_id, fn_name, self.current) else {
             bail!(
                 self,
                 Error::doesnt_implement(
@@ -3773,10 +3781,10 @@ impl TypeChecker {
                 let recv = callee
                     .clone()
                     .auto_deref(&mut self.proj.types, self.proj.scopes.get(f).params[0].ty);
-                let prev = self.proj.diag.set_errors_enabled(false);
-                let (args, ret, failed) =
-                    self.check_fn_args(&mut func, Some(recv), args, target, span);
-                self.proj.diag.set_errors_enabled(prev);
+                let (args, ret, failed) = mute_errors!(
+                    self,
+                    self.check_fn_args(&mut func, Some(recv), args, target, span)
+                );
                 // TODO: if the arguments have non overload related errors, just stop overload
                 // resolution
                 if failed
@@ -3988,14 +3996,8 @@ impl TypeChecker {
             branches: false,
         });
         self.enter(kind, |this| {
-            let Some(mfn) = this.get_member_fn_legacy(
-                iter.ty,
-                Some(iter_tr_id),
-                "next",
-                &[],
-                Span::default(),
-                this.current,
-            ) else {
+            let Some(mfn) = this.get_member_fn_legacy(iter.ty, iter_tr_id, "next", this.current)
+            else {
                 this.check_block(body);
                 let name = iter.ty.name(&this.proj.scopes, &mut this.proj.types);
                 return this.error(Error::doesnt_implement(&name, "Iterator", span));
@@ -4225,7 +4227,7 @@ impl TypeChecker {
                 // to end up here
                 self.check_dot_completions(member.span, id, true);
                 let Some(mut mfn) =
-                    self.get_member_fn(id, None, &member.data, &generics, span, self.current)
+                    self.get_member_fn(id, &member.data, &generics, span, self.current)
                 else {
                     bail!(
                         self,
@@ -5158,32 +5160,26 @@ impl TypeChecker {
     fn resolve_proto(&mut self, id: FunctionId) {
         // disable errors to avoid duplicate errors when the struct and the constructor
         // are typechecked
-        let prev = self
-            .proj
-            .diag
-            .set_errors_enabled(self.proj.scopes.get(id).constructor.is_none());
-        for i in 0..self.proj.scopes.get(id).params.len() {
-            let target = resolve_type!(self, self.proj.scopes.get_mut(id).params[i].ty);
-            match std::mem::take(&mut self.proj.scopes.get_mut(id).params[i].default) {
-                Some(DefaultExpr::Unchecked(scope, expr)) => {
-                    let prev = self.proj.diag.set_errors_enabled(true);
-                    self.enter_id_and_resolve(scope, |this| {
-                        this.proj.scopes.get_mut(id).params[i].default =
-                            Some(DefaultExpr::Checked(this.type_check(expr, target)));
-                    });
-                    self.proj.diag.set_errors_enabled(prev);
+        mute_errors!(self, self.proj.scopes.get(id).constructor.is_none(), {
+            for i in 0..self.proj.scopes.get(id).params.len() {
+                let target = resolve_type!(self, self.proj.scopes.get_mut(id).params[i].ty);
+                match std::mem::take(&mut self.proj.scopes.get_mut(id).params[i].default) {
+                    Some(DefaultExpr::Unchecked(scope, expr)) => mute_errors!(self, {
+                        self.enter_id_and_resolve(scope, |this| {
+                            this.proj.scopes.get_mut(id).params[i].default =
+                                Some(DefaultExpr::Checked(this.type_check(expr, target)));
+                        });
+                    }),
+                    other => self.proj.scopes.get_mut(id).params[i].default = other,
                 }
-                other => self.proj.scopes.get_mut(id).params[i].default = other,
             }
-        }
 
-        resolve_type!(self, self.proj.scopes.get_mut(id).ret);
+            resolve_type!(self, self.proj.scopes.get_mut(id).ret);
 
-        for i in 0..self.proj.scopes.get(id).type_params.len() {
-            self.resolve_impls(self.proj.scopes.get(id).type_params[i]);
-        }
-
-        self.proj.diag.set_errors_enabled(prev);
+            for i in 0..self.proj.scopes.get(id).type_params.len() {
+                self.resolve_impls(self.proj.scopes.get(id).type_params[i]);
+            }
+        });
     }
 
     fn is_impl_usable(
@@ -5194,21 +5190,20 @@ impl TypeChecker {
         bound: &GenericTrait,
     ) -> Option<TypeArgs> {
         if let Some(block) = self.proj.scopes.get(ut).impl_blocks.get(idx) {
-            if block.type_params.is_empty() {
-                return Some(Default::default());
+            let mut ty_args = TypeArgs::unknown(block);
+            if ty_args.is_empty() {
+                return Some(ty_args);
             } else if bound.id != tr.id {
                 return None;
             }
 
-            // bound:  RangeBounds<T = int>
-            // tr:     RangeBounds<T = X>
-            let mut ty_args = TypeArgs(
-                block
-                    .type_params
-                    .iter()
-                    .map(|&t| (t, TypeId::UNKNOWN))
-                    .collect(),
-            );
+            // trait Trait<T>
+            // impl<X> Trait<X>
+
+            // bound:  Trait<T = int>
+            // tr:     Trait<T = X>
+
+            // ty_args: [X = int]
             for (arg, val) in tr.ty_args.iter_mut() {
                 let Type::User(ut) = &self.proj.types[*val] else {
                     return None;
@@ -5218,26 +5213,22 @@ impl TypeChecker {
                 *val = bound.ty_args[arg];
             }
 
-            //             for (&arg, &val) in ty_args.iter() {
-            //                 let a = self.scopes().get(arg);
-            //                 eprintln!(
-            //                     "---> {}: {}",
-            //                     self.scopes().full_name(a.scope, &a.name.data),
-            //                     val.name(&self.proj.scopes, &mut self.proj.types)
-            //                 );
-            //
-            //                 // self.resolve_impls_recursive(arg);
-            //                 // TODO: check that this type implements the bounds
-            //                 // eprintln!(
-            //                 //     "inserting {} for {}, now has: {}",
-            //                 //     bound.ty_args[i].name(&self.proj.scopes, &mut self.proj.types),
-            //                 //     arg.name(&self.proj.scopes),
-            //                 //     tr.name(&self.proj.scopes, &mut self.proj.types)
-            //                 // );
-            //             }
+            let mut good = true;
+            mute_errors!(self, {
+                for (&arg, &val) in ty_args.iter() {
+                    if val == TypeId::UNKNOWN {
+                        continue;
+                    }
 
-            // TODO: check block.type_params trait bounds
-            Some(ty_args)
+                    let bounds = self.proj.scopes.get(arg).impls.clone();
+                    if self.check_bounds(&ty_args, val, bounds, Span::default()) {
+                        good = false;
+                        break;
+                    }
+                }
+            });
+
+            good.then_some(ty_args)
         } else {
             Some(Default::default())
         }
@@ -5427,6 +5418,15 @@ impl TypeChecker {
             .collect()
     }
 
+    fn search(scopes: &Scopes, id: UserTypeId, method: &str) -> Option<Vis<FunctionId>> {
+        scopes
+            .get(id)
+            .fns
+            .iter()
+            .find(|&&id| (scopes.get(*id).name.data == method))
+            .copied()
+    }
+
     pub(crate) fn get_member_fn_ex(
         &mut self,
         inst: TypeId,
@@ -5435,17 +5435,6 @@ impl TypeChecker {
         scope: ScopeId,
         finish: impl FnOnce(&mut Self, FunctionId) -> TypeArgs + Clone,
     ) -> Option<MemberFn> {
-        fn search(
-            scopes: &Scopes,
-            funcs: &[Vis<FunctionId>],
-            method: &str,
-        ) -> Option<Vis<FunctionId>> {
-            funcs
-                .iter()
-                .find(|&&id| (scopes.get(*id).name.data == method))
-                .copied()
-        }
-
         fn finish_fn(
             this: &mut TypeChecker,
             inst: TypeId,
@@ -5456,18 +5445,28 @@ impl TypeChecker {
         ) -> Option<MemberFn> {
             let scopes = &this.proj.scopes;
             let src_scope = scopes.get(ut.id).scope;
-            let imp_ty_args = if let Some(wanted_tr) = wanted_tr {
-                let scope = scopes.get(f.id).scope;
-                let &impl_i = scopes[scope].kind.as_impl()?;
-                let &impl_ut = scopes[scopes[scope].parent?].kind.as_user_type()?;
+
+            let scope = scopes.get(f.id).scope;
+            let mut impl_block = if let Some((impl_i, impl_ut)) = scopes[scope]
+                .kind
+                .as_impl()
+                .cloned()
+                .zip(scopes[scopes[scope].parent?].kind.as_user_type().cloned())
+            {
                 resolve_impl!(this, this.proj.scopes.get_mut(impl_ut).impls[impl_i]);
                 let mut imp = this.proj.scopes.get(impl_ut).impls[impl_i]
                     .as_checked()
                     .cloned()
                     .unwrap();
                 imp.fill_templates(&mut this.proj.types, &ut.ty_args);
-                let ty_args = this.is_impl_usable(impl_ut, impl_i, &mut imp, wanted_tr)?;
-                if &imp != wanted_tr {
+                Some((impl_i, impl_ut, imp))
+            } else {
+                None
+            };
+            let imp_ty_args = if let Some(wanted_tr) = wanted_tr {
+                let (impl_i, impl_ut, imp) = impl_block.as_mut()?;
+                let ty_args = this.is_impl_usable(*impl_ut, *impl_i, imp, wanted_tr)?;
+                if imp != wanted_tr {
                     return None;
                 }
 
@@ -5480,6 +5479,9 @@ impl TypeChecker {
             func.ty_args.copy_args(&ut.ty_args);
             if let Some(imp_ty_args) = imp_ty_args {
                 func.ty_args.copy_args(&imp_ty_args);
+            } else if let Some((i, ut, _)) = impl_block {
+                func.ty_args
+                    .copy_args(&TypeArgs::unknown(&this.proj.scopes.get(ut).impl_blocks[i]));
             }
 
             Some(MemberFn {
@@ -5518,35 +5520,35 @@ impl TypeChecker {
                         continue;
                     }
 
-                    if let Some(f) =
-                        search(&this.proj.scopes, &this.proj.scopes.get(imp.id).fns, method)
-                    {
-                        let ty_args = imp.ty_args.clone();
-                        let mut func = GenericFn::new(f.id, finish(this, f.id));
-                        if IS_EXT {
-                            if let Type::User(ut) = &this.proj.types[inst] {
-                                let ut = ut.clone();
-                                func.ty_args.copy_args_with(
-                                    &mut this.proj.types,
-                                    &ty_args,
-                                    &ut.ty_args,
-                                );
-                            }
+                    let Some(f) = TypeChecker::search(&this.proj.scopes, imp.id, method) else {
+                        continue;
+                    };
+
+                    let ty_args = imp.ty_args.clone();
+                    let mut func = GenericFn::new(f.id, finish(this, f.id));
+                    if IS_EXT {
+                        if let Type::User(ut) = &this.proj.types[inst] {
+                            let ut = ut.clone();
+                            func.ty_args.copy_args_with(
+                                &mut this.proj.types,
+                                &ty_args,
+                                &ut.ty_args,
+                            );
                         }
-                        func.ty_args
-                            .copy_args_with(&mut this.proj.types, &ty_args, &ut.ty_args);
-                        func.ty_args.insert(
-                            *this.proj.scopes.get(imp.id).kind.as_trait().unwrap().0,
-                            inst,
-                        );
-                        return Some(MemberFn {
-                            func,
-                            owner: src_scope,
-                            typ: MemberFnType::Trait(imp),
-                            public: f.public,
-                            inst,
-                        });
                     }
+                    func.ty_args
+                        .copy_args_with(&mut this.proj.types, &ty_args, &ut.ty_args);
+                    func.ty_args.insert(
+                        *this.proj.scopes.get(imp.id).kind.as_trait().unwrap().0,
+                        inst,
+                    );
+                    return Some(MemberFn {
+                        func,
+                        owner: src_scope,
+                        typ: MemberFnType::Trait(imp),
+                        public: f.public,
+                        inst,
+                    });
                 }
             }
 
@@ -5557,7 +5559,7 @@ impl TypeChecker {
         // impl Eq<f32> { ... } impl Eq<i32> { ... }
         let ut = if let Type::User(ut) = &self.proj.types[inst] {
             let ut = ut.clone();
-            if let Some(f) = search(&self.proj.scopes, &self.proj.scopes.get(ut.id).fns, method) {
+            if let Some(f) = Self::search(&self.proj.scopes, ut.id, method) {
                 if let Some(f) = finish_fn(self, inst, wanted_tr, f, &ut, finish.clone()) {
                     return Some(f);
                 }
@@ -5569,7 +5571,7 @@ impl TypeChecker {
             self.resolve_impls_recursive(tr.id);
             let data = self.proj.scopes.get(tr.id);
             for imp in self.proj.scopes.get_trait_impls(tr.id) {
-                if let Some(f) = search(&self.proj.scopes, &self.proj.scopes.get(imp).fns, method) {
+                if let Some(f) = Self::search(&self.proj.scopes, imp, method) {
                     let src_scope = data.scope;
                     let mut func = GenericFn::new(f.id, finish(self, f.id));
                     func.ty_args.copy_args(&tr.ty_args);
@@ -5589,7 +5591,7 @@ impl TypeChecker {
 
         let exts = self.extensions_in_scope_for(inst, scope);
         if let Some(f) = exts.iter().find_map(|ext| {
-            let f = search(&self.proj.scopes, &self.proj.scopes.get(ext.id).fns, method);
+            let f = Self::search(&self.proj.scopes, ext.id, method);
             f.and_then(|f| finish_fn(self, inst, wanted_tr, f, ext, finish.clone()))
         }) {
             return Some(f);
@@ -5613,60 +5615,48 @@ impl TypeChecker {
     fn get_member_fn(
         &mut self,
         ty: TypeId,
-        wanted_tr: Option<&GenericTrait>,
         method: &str,
         generics: &[TypeHint],
         span: Span,
         scope: ScopeId,
     ) -> Option<MemberFn> {
-        self.get_member_fn_ex(ty, wanted_tr, method, scope, |this, id| {
+        self.get_member_fn_ex(ty, None, method, scope, |this, id| {
             this.resolve_type_args(id, generics, false, span)
         })
         .inspect(|memfn| self.resolve_proto(memfn.func.id))
     }
 
-    fn get_member_fn_ex_legacy(
+    fn get_member_fn_legacy(
         &mut self,
         inst: TypeId,
-        wanted_tr: Option<TraitId>,
+        wanted_tr: TraitId,
         method: &str,
         scope: ScopeId,
-        finish: impl FnOnce(&mut Self, FunctionId) -> TypeArgs + Clone,
     ) -> Option<MemberFn> {
-        fn search(
-            scopes: &Scopes,
-            funcs: &[Vis<FunctionId>],
-            method: &str,
-        ) -> Option<Vis<FunctionId>> {
-            funcs
-                .iter()
-                .find(|&&id| (scopes.get(*id).name.data == method))
-                .copied()
-        }
-
         fn finish_fn(
             this: &mut TypeChecker,
             inst: TypeId,
-            wanted_tr: Option<TraitId>,
+            wanted_tr: TraitId,
             f: Vis<FunctionId>,
             ut: &GenericUserType,
-            finish: impl FnOnce(&mut TypeChecker, FunctionId) -> TypeArgs + Clone,
         ) -> Option<MemberFn> {
             let scopes = &this.proj.scopes;
             let src_scope = scopes.get(ut.id).scope;
-            if let Some(wanted_tr) = wanted_tr {
-                let scope = scopes.get(f.id).scope;
-                let &impl_idx = scopes[scope].kind.as_impl()?;
-                let &impl_ut = scopes[scopes[scope].parent?].kind.as_user_type()?;
-                resolve_impl!(this, this.proj.scopes.get_mut(impl_ut).impls[impl_idx]);
-                let imp = &this.proj.scopes.get_mut(impl_ut).impls[impl_idx];
-                if !matches!(imp, TraitImpl::Checked(tr) if tr.id == wanted_tr) {
-                    return None;
-                }
+
+            let scope = scopes.get(f.id).scope;
+            let &impl_i = scopes[scope].kind.as_impl()?;
+            let &impl_ut = scopes[scopes[scope].parent?].kind.as_user_type()?;
+            resolve_impl!(this, this.proj.scopes.get_mut(impl_ut).impls[impl_i]);
+            let imp = &this.proj.scopes.get_mut(impl_ut).impls[impl_i];
+            if !matches!(imp, TraitImpl::Checked(tr) if tr.id == wanted_tr) {
+                return None;
             }
 
-            let mut func = GenericFn::new(f.id, finish(this, f.id));
+            let mut func = GenericFn::from_id_unknown(&this.proj.scopes, f.id);
             func.ty_args.copy_args(&ut.ty_args);
+            func.ty_args.copy_args(&TypeArgs::unknown(
+                &this.proj.scopes.get(impl_ut).impl_blocks[impl_i],
+            ));
             Some(MemberFn {
                 func,
                 owner: src_scope,
@@ -5679,10 +5669,9 @@ impl TypeChecker {
         fn search_impls<const IS_EXT: bool>(
             this: &mut TypeChecker,
             inst: TypeId,
-            wanted_tr: Option<TraitId>,
+            wanted_tr: TraitId,
             method: &str,
             ut: &GenericUserType,
-            finish: impl FnOnce(&mut TypeChecker, FunctionId) -> TypeArgs + Clone,
         ) -> Option<MemberFn> {
             let src_scope = this.proj.scopes.get(ut.id).scope;
             for tr in this
@@ -5694,116 +5683,80 @@ impl TypeChecker {
                 .flat_map(|ut| ut.as_checked())
             {
                 for imp in this.proj.scopes.get_trait_impls(tr.id) {
-                    if wanted_tr.is_some_and(|id| id != imp) {
+                    if wanted_tr != imp {
                         continue;
                     }
 
-                    if let Some(f) =
-                        search(&this.proj.scopes, &this.proj.scopes.get(imp).fns, method)
-                    {
-                        let ty_args = tr.ty_args.clone();
-                        let mut func = GenericFn::new(f.id, finish(this, f.id));
-                        if IS_EXT {
-                            if let Type::User(ut) = &this.proj.types[inst] {
-                                let ut = ut.clone();
-                                func.ty_args.copy_args_with(
-                                    &mut this.proj.types,
-                                    &ty_args,
-                                    &ut.ty_args,
-                                );
-                            }
+                    let Some(f) = TypeChecker::search(&this.proj.scopes, imp, method) else {
+                        continue;
+                    };
+
+                    let ty_args = tr.ty_args.clone();
+                    let mut func = GenericFn::from_id_unknown(&this.proj.scopes, f.id);
+                    if IS_EXT {
+                        if let Type::User(ut) = &this.proj.types[inst] {
+                            let ut = ut.clone();
+                            func.ty_args.copy_args_with(
+                                &mut this.proj.types,
+                                &ty_args,
+                                &ut.ty_args,
+                            );
                         }
-                        func.ty_args
-                            .copy_args_with(&mut this.proj.types, &ty_args, &ut.ty_args);
-                        func.ty_args
-                            .insert(*this.proj.scopes.get(imp).kind.as_trait().unwrap().0, inst);
-                        return Some(MemberFn {
-                            func,
-                            owner: src_scope,
-                            typ: MemberFnType::Trait(GenericTrait::from_id_unknown(
-                                &this.proj.scopes,
-                                imp,
-                            )),
-                            public: f.public,
-                            inst,
-                        });
                     }
+                    func.ty_args
+                        .copy_args_with(&mut this.proj.types, &ty_args, &ut.ty_args);
+                    func.ty_args
+                        .insert(*this.proj.scopes.get(imp).kind.as_trait().unwrap().0, inst);
+                    return Some(MemberFn {
+                        func,
+                        owner: src_scope,
+                        typ: MemberFnType::Trait(GenericTrait::from_id_unknown(
+                            &this.proj.scopes,
+                            imp,
+                        )),
+                        public: f.public,
+                        inst,
+                    });
                 }
             }
 
             None
         }
 
-        // TODO: trait implement overload ie.
-        // impl Eq<f32> { ... } impl Eq<i32> { ... }
         let ut = if let Type::User(ut) = &self.proj.types[inst] {
             let ut = ut.clone();
-            if let Some(f) = search(&self.proj.scopes, &self.proj.scopes.get(ut.id).fns, method) {
-                if let Some(f) = finish_fn(self, inst, wanted_tr, f, &ut, finish.clone()) {
+            if let Some(f) = Self::search(&self.proj.scopes, ut.id, method) {
+                if let Some(f) = finish_fn(self, inst, wanted_tr, f, &ut) {
+                    self.resolve_proto(f.func.id);
                     return Some(f);
                 }
             }
             Some(ut)
-        } else if let Some(tr) = self.proj.types[inst].as_dyn_pointee() {
-            // TODO: wanted_tr
-            let tr = tr.clone();
-            self.resolve_impls_recursive(tr.id);
-            let data = self.proj.scopes.get(tr.id);
-            for imp in self.proj.scopes.get_trait_impls(tr.id) {
-                if let Some(f) = search(&self.proj.scopes, &self.proj.scopes.get(imp).fns, method) {
-                    let src_scope = data.scope;
-                    let mut func = GenericFn::new(f.id, finish(self, f.id));
-                    func.ty_args.copy_args(&tr.ty_args);
-                    return Some(MemberFn {
-                        func,
-                        owner: src_scope,
-                        typ: MemberFnType::Dynamic,
-                        public: f.public,
-                        inst,
-                    });
-                }
-            }
-            None
         } else {
+            // TODO: dyn pointers
             None
         };
 
         let exts = self.extensions_in_scope_for(inst, scope);
         if let Some(f) = exts.iter().find_map(|ext| {
-            let f = search(&self.proj.scopes, &self.proj.scopes.get(ext.id).fns, method);
-            f.and_then(|f| finish_fn(self, inst, wanted_tr, f, ext, finish.clone()))
+            let f = Self::search(&self.proj.scopes, ext.id, method);
+            f.and_then(|f| finish_fn(self, inst, wanted_tr, f, ext))
         }) {
+            self.resolve_proto(f.func.id);
             return Some(f);
         }
 
         // look through trait impls AFTER exhausting all concrete functions
         if let Some(ut) = ut {
             self.resolve_impls_recursive(ut.id);
-            if let Some(f) =
-                search_impls::<false>(self, inst, wanted_tr, method, &ut, finish.clone())
-            {
+            if let Some(f) = search_impls::<false>(self, inst, wanted_tr, method, &ut) {
+                self.resolve_proto(f.func.id);
                 return Some(f);
             }
         }
 
-        exts.iter().find_map(|ext| {
-            search_impls::<true>(self, inst, wanted_tr, method, ext, finish.clone())
-        })
-    }
-
-    fn get_member_fn_legacy(
-        &mut self,
-        ty: TypeId,
-        wanted_tr: Option<TraitId>,
-        method: &str,
-        generics: &[TypeHint],
-        span: Span,
-        scope: ScopeId,
-    ) -> Option<MemberFn> {
-        self.get_member_fn_ex_legacy(ty, wanted_tr, method, scope, |this, id| {
-            this.resolve_type_args(id, generics, false, span)
-        })
-        .inspect(|memfn| self.resolve_proto(memfn.func.id))
+        exts.iter()
+            .find_map(|ext| search_impls::<true>(self, inst, wanted_tr, method, ext))
     }
 
     fn get_int_type_and_val(
@@ -7626,8 +7579,7 @@ impl TypeChecker {
         let ((name, args), rest) = rest.split_first().unwrap();
         self.check_dot_completions(total_span, ty, false);
 
-        let Some(mfn) = self.get_member_fn(ty, None, &name.data, args, name.span, self.current)
-        else {
+        let Some(mfn) = self.get_member_fn(ty, &name.data, args, name.span, self.current) else {
             return ResolvedValue::NotFound(Error::no_symbol(&name.data, name.span));
         };
 

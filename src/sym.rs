@@ -281,6 +281,12 @@ pub struct ImplBlockData {
     pub type_params: Vec<UserTypeId>,
 }
 
+impl HasTypeParams for ImplBlockData {
+    fn get_type_params(&self) -> &[UserTypeId] {
+        &self.type_params
+    }
+}
+
 pub struct UserType {
     pub attrs: Attributes,
     pub public: bool,
