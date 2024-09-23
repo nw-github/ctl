@@ -48,13 +48,13 @@ pub struct str {
         Chars(s: this.as_bytes())
     }
 
-    pub fn substr<R: RangeBounds<uint>>(this, range: R): str {
+    pub fn substr<R: RangeBounds<uint>>(this, range: R): ?str {
         let span = this.span[range];
         if span.first() is ?ch and !is_char_boundary(*ch) {
-            panic("str::substr(): range does not start at char boundary");
+            return null;
         }
         if span.last() is ?ch and !is_char_boundary(*ch) {
-            panic("str::substr(): range does not end at char boundary");
+            return null;
         }
         str(span:)
     }
@@ -91,7 +91,7 @@ pub struct str {
     }
 
     pub fn []<R: RangeBounds<uint>>(this, range: R): str {
-        this.substr(range)
+        this.substr(range).unwrap()
     }
 }
 

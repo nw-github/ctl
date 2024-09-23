@@ -479,6 +479,10 @@ pub extension CharImpl for char {
         '\u{10ffff}'
     }
 
+    pub fn is_ascii_whitespace(my this): bool {
+        this is '\t' | '\n' | '\x0C' | '\r' | ' '
+    }
+
     unsafe fn encode_utf8_unchecked(my this, len_utf8: uint, buf: [mut u8..]): str {
         unsafe {
             let cp = this as u32;

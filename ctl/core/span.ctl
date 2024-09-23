@@ -268,7 +268,14 @@ fn raw_subscript_checked<T, I: Integral>(ptr: *raw T, len: uint, idx: I): *raw T
 // TODO: make these member functions/impls when the syntax allows for it
 
 pub mod ext {
-    pub extension SpanEq<T: core::ops::Eq<T>> for [T..] {
+    use core::ops::Eq;
+    use core::ops::Cmp;
+    use core::hash::Hash;
+    use core::hash::Hasher;
+    use core::fmt::Format;
+    use core::fmt::Formatter;
+
+    pub extension SpanEq<T: Eq<T>> for [T..] {
         pub fn ==(this, rhs: *[T..]): bool {
             if this.len() != rhs.len() {
                 return false;
@@ -284,13 +291,33 @@ pub mod ext {
         }
     }
 
-    pub extension SpanMutEq<T: core::ops::Eq<T>> for [mut T..] {
+    pub extension SpanHash<T: Hash> for [T..] {
+        impl Hash {
+            fn hash<H: Hasher>(this, hasher: *mut H) {
+                for v in this.iter() {
+                    v.hash(hasher);
+                }
+            }
+        }
+    }
+
+    pub extension SpanMutHash<T: Hash> for [mut T..] {
+        impl Hash {
+            fn hash<H: Hasher>(this, hasher: *mut H) {
+                for v in this.iter() {
+                    v.hash(hasher);
+                }
+            }
+        }
+    }
+
+    pub extension SpanMutEq<T: Eq<T>> for [mut T..] {
         pub fn ==(this, rhs: *[T..]): bool {
             this.as_span() == rhs
         }
     }
 
-    pub extension SpanMutSort<T: core::ops::Cmp<T>> for [mut T..] {
+    pub extension SpanMutSort<T: Cmp<T>> for [mut T..] {
         pub fn sort(this) {
             guard !this.is_empty() else {
                 return;
@@ -312,9 +339,9 @@ pub mod ext {
         }
     }
 
-    pub extension SpanFormat<T: core::fmt::Format> for [T..] {
-        impl core::fmt::Format {
-            fn fmt<F: core::fmt::Formatter>(this, f: *mut F) {
+    pub extension SpanFormat<T: Format> for [T..] {
+        impl Format {
+            fn fmt<F: Formatter>(this, f: *mut F) {
                 "[".fmt(f);
                 for (i, item) in this.iter().enumerate() {
                     if i > 0 {
@@ -327,9 +354,9 @@ pub mod ext {
         }
     }
 
-    pub extension SpanMutFormat<T: core::fmt::Format> for [mut T..] {
-        impl core::fmt::Format {
-            fn fmt<F: core::fmt::Formatter>(this, f: *mut F) {
+    pub extension SpanMutFormat<T: Format> for [mut T..] {
+        impl Format {
+            fn fmt<F: Formatter>(this, f: *mut F) {
                 this.as_span().fmt(f)
             }
         }

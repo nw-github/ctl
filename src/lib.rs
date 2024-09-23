@@ -41,6 +41,13 @@ impl<T> CompileState for Source<T> {}
 impl CompileState for Parsed {}
 impl CompileState for Checked {}
 
+#[derive(serde::Deserialize)]
+pub struct ProjectConfig {
+    pub root: Option<String>,
+    pub name: Option<String>,
+    pub build: Option<String>,
+}
+
 pub struct Compiler<S: CompileState> {
     state: S,
 }
@@ -62,19 +69,43 @@ impl<T: SourceProvider> Compiler<Source<T>> {
         let mut diag = Diagnostics::default();
         let project = project
             .into_iter()
-            .map(|path| {
-                self.load_module(&mut diag, path).and_then(|ast| {
-                    ast.context("compile target must be directory or have extension '.ctl'")
-                })
+            .map(|mut path| {
+                let config = match std::fs::read_to_string(path.join("ctl.toml")) {
+                    Ok(val) => {
+                        let mut config = toml::from_str::<ProjectConfig>(&val)?;
+                        if let Some(root) = config.root.take() {
+                            path = PathBuf::from(root);
+                        }
+                        if let Some(name) = config.name {
+                            // TODO: prevent duplicate names, naming module core/std, etc.
+                            config.name = Some(Self::safe_name(&name));
+                        }
+
+                        Some(config)
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(err) => return Err(err.into()),
+                };
+
+                self.load_module(&mut diag, path, config.and_then(|c| c.name))
+                    .and_then(|ast| {
+                        ast.context("compile target must be directory or have extension '.ctl'")
+                    })
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(Compiler {
             state: Parsed(project, diag),
         })
     }
 
-    fn load_module(&mut self, diag: &mut Diagnostics, path: PathBuf) -> Result<Option<Stmt>> {
+    fn load_module(
+        &mut self,
+        diag: &mut Diagnostics,
+        path: PathBuf,
+        name: Option<String>,
+    ) -> Result<Option<Stmt>> {
+        let name = name.unwrap_or_else(|| Self::derive_module_name(&path));
         if path.is_dir() {
             let mut body = Vec::new();
             let mut main = None;
@@ -83,7 +114,9 @@ impl<T: SourceProvider> Compiler<Source<T>> {
                 .with_context(|| format!("loading path {}", path.display()))?
             {
                 let path = entry?.path();
-                if let Some(stmt) = self.load_module(diag, path.canonicalize().unwrap_or(path))? {
+                if let Some(stmt) =
+                    self.load_module(diag, path.canonicalize().unwrap_or(path), None)?
+                {
                     match &stmt.data {
                         StmtData::Module { name, .. } if name.data == "main" => {
                             main = Some(name.span);
@@ -98,10 +131,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
                 data: ast::parsed::StmtData::Module {
                     public: true,
                     file: false,
-                    name: lexer::Located::new(
-                        main.unwrap_or_default(),
-                        Self::derive_module_name(&path),
-                    ),
+                    name: lexer::Located::new(main.unwrap_or_default(), name),
                     body,
                 },
                 attrs: Default::default(),
@@ -109,7 +139,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
         } else {
             self.state.0.get_source(&path, |src| {
                 let file_id = diag.add_file(path.clone());
-                Parser::parse(src, Self::derive_module_name(&path), diag, file_id)
+                Parser::parse(src, name, diag, file_id)
             })
         }
     }
@@ -121,9 +151,11 @@ impl<T: SourceProvider> Compiler<Source<T>> {
             path.file_name()
         };
 
-        base.unwrap()
-            .to_string_lossy()
-            .chars()
+        Self::safe_name(base.unwrap().to_string_lossy().as_ref())
+    }
+
+    fn safe_name(s: &str) -> String {
+        s.chars()
             .enumerate()
             .map(|(i, ch)| match (i, ch) {
                 (0, ch) if Lexer::is_identifier_first_char(ch) => ch,

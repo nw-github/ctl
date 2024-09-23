@@ -2,20 +2,30 @@
 pub trait Iterator<T> {
     fn next(mut this): ?T;
 
-    fn enumerate(this): Enumerate<T, This> {
-        Enumerate::new(*this)
+    fn enumerate(my this): Enumerate<T, This> {
+        Enumerate::new(this)
     }
 
-    fn take(this, count: uint): Take<T, This> {
-        Take::new(*this, count)
+    fn take(my this, count: uint): Take<T, This> {
+        Take::new(this, count)
     }
 
-    fn zip<U, I: Iterator<U>>(this, rhs: I): Zip<T, U, This, I> {
-        Zip::new(*this, rhs)
+    fn zip<U, I: Iterator<U>>(my this, rhs: I): Zip<T, U, This, I> {
+        Zip::new(this, rhs)
     }
 
-    fn chain<I: Iterator<T>>(this, rhs: I): Chain<T, This, I> {
-        Chain::new(*this, rhs)
+    fn chain<I: Iterator<T>>(my this, rhs: I): Chain<T, This, I> {
+        Chain::new(this, rhs)
+    }
+
+    fn peekable(my this): Peekable<T, This> {
+        Peekable::new(this)
+    }
+
+    fn count(my mut this): uint {
+        mut count = 0u;
+        while this.next().is_some() { count++; }
+        count
     }
 
     fn collect<I: FromIter<T>>(this): I {
@@ -95,6 +105,34 @@ pub struct Chain<T, I: Iterator<T>, J: Iterator<T>> {
                 return a;
             }
             this.iter2.next()
+        }
+    }
+}
+
+pub struct Peekable<T, I: Iterator<T>> {
+    iter: I,
+    item: ?T,
+
+    pub fn new(iter: I): This {
+        Peekable(iter:, item: null)
+    }
+
+    pub fn peek(mut this): ?*T {
+        this.prime();
+        this.item.as_ptr()
+    }
+
+    impl Iterator<T> {
+        fn next(mut this): ?T {
+            this.prime();
+            this.item.take()
+        }
+    }
+
+    @(inline(always))
+    fn prime(mut this) {
+        if this.item is null {
+            this.item = this.iter.next();
         }
     }
 }

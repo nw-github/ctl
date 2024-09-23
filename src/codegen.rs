@@ -1960,7 +1960,7 @@ impl Codegen {
             .can_omit_tag(&self.proj.scopes, &self.proj.types)
             .is_some()
         {
-            if let Some(some) = members.remove("0") {
+            if let Some(some) = members.swap_remove("0") {
                 self.emit_expr(some, state);
             } else {
                 self.buffer.emit(NULLPTR);
