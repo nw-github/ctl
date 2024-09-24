@@ -69,28 +69,10 @@ impl<T: SourceProvider> Compiler<Source<T>> {
         let mut diag = Diagnostics::default();
         let project = project
             .into_iter()
-            .map(|mut path| {
-                let config = match std::fs::read_to_string(path.join("ctl.toml")) {
-                    Ok(val) => {
-                        let mut config = toml::from_str::<ProjectConfig>(&val)?;
-                        if let Some(root) = config.root.take() {
-                            path = PathBuf::from(root);
-                        }
-                        if let Some(name) = config.name {
-                            // TODO: prevent duplicate names, naming module core/std, etc.
-                            config.name = Some(Self::safe_name(&name));
-                        }
-
-                        Some(config)
-                    }
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(err) => return Err(err.into()),
-                };
-
-                self.load_module(&mut diag, path, config.and_then(|c| c.name))
-                    .and_then(|ast| {
-                        ast.context("compile target must be directory or have extension '.ctl'")
-                    })
+            .map(|path| {
+                self.load_module(&mut diag, path).and_then(|ast| {
+                    ast.context("compile target must be directory or have extension '.ctl'")
+                })
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -99,14 +81,24 @@ impl<T: SourceProvider> Compiler<Source<T>> {
         })
     }
 
-    fn load_module(
-        &mut self,
-        diag: &mut Diagnostics,
-        path: PathBuf,
-        name: Option<String>,
-    ) -> Result<Option<Stmt>> {
-        let name = name.unwrap_or_else(|| Self::derive_module_name(&path));
+    fn load_module(&mut self, diag: &mut Diagnostics, mut path: PathBuf) -> Result<Option<Stmt>> {
+        let mut name = Self::derive_module_name(&path);
         if path.is_dir() {
+            match std::fs::read_to_string(path.join("ctl.toml")) {
+                Ok(val) => {
+                    let mut config = toml::from_str::<ProjectConfig>(&val)?;
+                    if let Some(root) = config.root.take() {
+                        path = PathBuf::from(root);
+                    }
+                    if let Some(rename) = config.name {
+                        // TODO: prevent duplicate names, naming module core/std, etc.
+                        name = Self::safe_name(&rename);
+                    }
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
+            }
+
             let mut body = Vec::new();
             let mut main = None;
             for entry in path
@@ -114,9 +106,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
                 .with_context(|| format!("loading path {}", path.display()))?
             {
                 let path = entry?.path();
-                if let Some(stmt) =
-                    self.load_module(diag, path.canonicalize().unwrap_or(path), None)?
-                {
+                if let Some(stmt) = self.load_module(diag, path.canonicalize().unwrap_or(path))? {
                     match &stmt.data {
                         StmtData::Module { name, .. } if name.data == "main" => {
                             main = Some(name.span);
