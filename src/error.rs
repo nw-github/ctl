@@ -118,6 +118,14 @@ impl Diagnostics {
         self.errors_disabled = !enabled;
         prev
     }
+
+    pub fn capture_errors(&self) -> usize {
+        self.errors.len()
+    }
+
+    pub fn truncate_errors(&mut self, idx: usize) {
+        self.errors.truncate(idx);
+    }
 }
 
 #[derive(Debug, Clone)]

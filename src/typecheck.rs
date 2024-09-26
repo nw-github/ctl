@@ -3787,10 +3787,8 @@ impl TypeChecker {
                 let recv = callee
                     .clone()
                     .auto_deref(&mut self.proj.types, self.proj.scopes.get(f).params[0].ty);
-                let (args, ret, failed) = mute_errors!(
-                    self,
-                    self.check_fn_args(&mut func, Some(recv), args, target, span)
-                );
+                let err_idx = self.proj.diag.capture_errors();
+                let (args, ret, failed) = self.check_fn_args(&mut func, Some(recv), args, target, span);
                 // TODO: if the arguments have non overload related errors, just stop overload
                 // resolution
                 if failed
@@ -3798,6 +3796,7 @@ impl TypeChecker {
                         .iter()
                         .any(|arg| matches!(arg.1.data, CExprData::Error))
                 {
+                    self.proj.diag.truncate_errors(err_idx);
                     continue;
                 }
                 // unsafe doesnt cause check_fn_args to fail, but we mute errors, so check again
