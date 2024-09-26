@@ -5169,7 +5169,7 @@ impl TypeChecker {
             for i in 0..self.proj.scopes.get(id).params.len() {
                 let target = resolve_type!(self, self.proj.scopes.get_mut(id).params[i].ty);
                 match std::mem::take(&mut self.proj.scopes.get_mut(id).params[i].default) {
-                    Some(DefaultExpr::Unchecked(scope, expr)) => mute_errors!(self, {
+                    Some(DefaultExpr::Unchecked(scope, expr)) => mute_errors!(self, true, {
                         self.enter_id_and_resolve(scope, |this| {
                             this.proj.scopes.get_mut(id).params[i].default =
                                 Some(DefaultExpr::Checked(this.type_check(expr, target)));
