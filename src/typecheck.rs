@@ -1215,21 +1215,27 @@ impl TypeChecker {
             PStmtData::Binding {
                 public,
                 constant,
-                name,
+                mut name,
                 ty,
                 value,
             } => {
                 let ty = self.declare_type_hint(ty);
+                let mut unused = true;
+                if name.data == "_" {
+                    name.data = "".into();
+                    unused = false;
+                }
+
                 DStmt::Binding {
                     id: self.insert::<VariableId>(
                         Variable {
                             public,
                             name,
                             ty,
+                            unused,
                             is_static: true,
                             mutable: false,
                             value: None,
-                            unused: true,
                             has_hint: true,
                         },
                         public,
@@ -5976,25 +5982,30 @@ impl TypeChecker {
         ty: TypeId,
         mutable: bool,
         has_hint: bool,
-    ) -> VariableId {
-        let id = self.insert(
-            Variable {
-                public: false,
-                name,
-                ty,
-                is_static: false,
-                mutable,
-                value: None,
-                unused: typ != PatternType::BodylessFn,
-                has_hint,
-            },
-            false,
-            typ != PatternType::Regular,
-        );
-        if self.current_expr == self.listening_expr {
-            self.listening_vars.push(id);
+    ) -> Option<VariableId> {
+        if name.data != "_" {
+            let id = self.insert(
+                Variable {
+                    public: false,
+                    name,
+                    ty,
+                    is_static: false,
+                    mutable,
+                    value: None,
+                    unused: typ != PatternType::BodylessFn,
+                    has_hint,
+                },
+                false,
+                typ != PatternType::Regular,
+            );
+            if self.current_expr == self.listening_expr {
+                self.listening_vars.push(id);
+            }
+            Some(id)
+        } else {
+            // TODO: hover
+            None
         }
-        id
     }
 
     fn check_match_coverage<'a>(
@@ -6069,14 +6080,23 @@ impl TypeChecker {
             .as_user()
             .and_then(|ut| self.proj.scopes.get(ut.id).kind.as_union())
         {
+            let patt_applies = |patt: &PatternData, name: &str| {
+                patt.as_variant().is_some_and(|(sub, variant, _, _)| {
+                    name == variant && sub.as_ref().map_or(true, |sub| sub.irrefutable)
+                })
+            };
+
             let mut missing = vec![];
             'outer: for (name, _) in union.variants.iter() {
                 for patt in patterns.clone() {
                     if patt.irrefutable {
                         return;
-                    } else if patt.data.as_variant().is_some_and(|(sub, variant, _, _)| {
-                        name == variant && sub.as_ref().map_or(true, |sub| sub.irrefutable)
-                    }) {
+                    } else if patt_applies(&patt.data, name)
+                        || patt
+                            .data
+                            .as_or()
+                            .is_some_and(|p| p.iter().any(|sub| patt_applies(&sub.data, name)))
+                    {
                         continue 'outer;
                     }
                 }
@@ -6229,13 +6249,13 @@ impl TypeChecker {
         let mut result = Vec::new();
         for (i, patt) in patterns.into_iter().enumerate() {
             if let Pattern::Rest(var) = patt.data {
-                let id = var.map(|(mutable, name)| {
-                    self.insert_pattern_var(typ, name, TypeId::UNKNOWN, mutable, false)
+                let id = var.and_then(|(m, name)| {
+                    self.insert_pattern_var(typ, name, TypeId::UNKNOWN, m, false)
                 });
 
                 if rest.is_some() {
                     self.error(Error::new(
-                        "... can only be used once in an array pattern",
+                        "'...' can only be used once in an array pattern",
                         patt.span,
                     ))
                 } else {
@@ -6332,7 +6352,7 @@ impl TypeChecker {
         let mut result = Vec::new();
         for (i, patt) in patterns.into_iter().enumerate() {
             if let Pattern::Rest(var) = patt.data {
-                let id = var.map(|(mutable, name)| {
+                let id = var.and_then(|(mutable, name)| {
                     self.insert_pattern_var(typ, name, TypeId::UNKNOWN, mutable, false)
                 });
 
@@ -6723,13 +6743,16 @@ impl TypeChecker {
                             borrows: false,
                         }),
                         Err(Some(_)) => {
-                            CPattern::irrefutable(PatternData::Variable(self.insert_pattern_var(
+                            let Some(var) = self.insert_pattern_var(
                                 typ,
                                 Located::new(span, ident.into()),
                                 scrutinee,
                                 mutable,
                                 has_hint,
-                            )))
+                            ) else {
+                                return CPattern::irrefutable(PatternData::Void);
+                            };
+                            CPattern::irrefutable(PatternData::Variable(var))
                         }
                         Err(None) => Default::default(),
                     }
@@ -6768,9 +6791,18 @@ impl TypeChecker {
                 );
                 self.check_empty_union_pattern(scrutinee, value, pattern.span)
             }
-            Pattern::MutBinding(name) => CPattern::irrefutable(PatternData::Variable(
-                self.insert_pattern_var(typ, Located::new(span, name), scrutinee, true, has_hint),
-            )),
+            Pattern::MutBinding(name) => {
+                let Some(var) = self.insert_pattern_var(
+                    typ,
+                    Located::new(span, name),
+                    scrutinee,
+                    true,
+                    has_hint,
+                ) else {
+                    return CPattern::irrefutable(PatternData::Void);
+                };
+                CPattern::irrefutable(PatternData::Variable(var))
+            }
             Pattern::Struct(sub) => self.check_struct_pattern(scrutinee, mutable, sub, span, typ),
             Pattern::String(value) => {
                 let string = self.make_lang_type_by_name("string", [], span);
