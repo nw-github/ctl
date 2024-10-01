@@ -48,6 +48,10 @@ pub struct str {
         Chars(s: this.as_bytes())
     }
 
+    pub fn chars_indices(this): CharIndices {
+        CharIndices(chars: this.chars(), len: this.len())
+    }
+
     pub fn substr<R: RangeBounds<uint>>(this, range: R): ?str {
         let span = this.span[range];
         if span.first() is ?ch and !is_char_boundary(*ch) {
@@ -131,6 +135,21 @@ pub struct Chars {
         }
     }
 }
+
+pub struct CharIndices {
+    len: uint,
+    chars: Chars,
+
+    impl Iterator<(uint, char)> {
+        fn next(mut this): ?(uint, char) {
+            let i = this.len - this.chars.s.len();
+            if this.chars.next() is ?ch {
+                (i, ch)
+            }
+        }
+    }
+}
+
 
 fn is_char_boundary(b: u8): bool {
     // From the Rust standard library:

@@ -104,4 +104,12 @@ pub mod ext {
             this is ?lhs and lhs == rhs
         }
     }
+
+    pub extension OptionFlatten<T> for ??T {
+        pub fn flatten(my this): ?T {
+            if this is ? ?val {
+                val
+            }
+        }
+    }
 }

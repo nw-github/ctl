@@ -60,26 +60,26 @@ pub struct Vec<T> {
         this[..].iter_mut()
     }
 
-    pub fn push(mut this, t: T) {
+    pub fn push(mut this, val: T) {
         if !this.can_insert(1) {
             this.grow();
         }
 
-        unsafe *(this.ptr + this.len++) = t;
+        unsafe this.ptr.uoffset(this.len++).write(val);
     }
 
-    pub fn push_within_capacity(mut this, t: T): ?T {
+    pub fn push_within_capacity(mut this, val: T): ?T {
         if this.can_insert(1) {
-            unsafe *(this.ptr + this.len++) = t;
+            unsafe this.ptr.uoffset(this.len++).write(val);
             null
         } else {
-            t
+            val
         }
     }
 
     pub fn pop(mut this): ?T {
         if this.len > 0 {
-            unsafe *(this.ptr + --this.len)
+            unsafe this.ptr.uoffset(--this.len).read()
         }
     }
 
@@ -89,7 +89,7 @@ pub struct Vec<T> {
         }
 
         unsafe mem::copy(
-            dst: this.ptr + this.len,
+            dst: this.ptr.uoffset(this.len),
             src: rhs.ptr,
             num: rhs.len,
         );
@@ -107,7 +107,7 @@ pub struct Vec<T> {
         this.len = 0;
     }
 
-    pub fn insert(mut this, kw idx: uint, t: T) {
+    pub fn insert(mut this, kw idx: uint, val: T) {
         if idx > this.len {
             panic("Vec::insert(): index > len!");
         }
@@ -116,16 +116,12 @@ pub struct Vec<T> {
             this.grow();
         }
 
-        let src = this.ptr + idx;
+        let src = this.ptr.uoffset(idx);
         if idx < this.len {
-            unsafe mem::copy_overlapping(
-                dst: src + 1,
-                src:,
-                num: this.len - idx,
-            );
+            unsafe mem::copy_overlapping(dst: src.offset(1), src:, num: this.len - idx);
         }
 
-        unsafe *src = t;
+        unsafe src.write(val);
         this.len++;
     }
 
@@ -135,14 +131,10 @@ pub struct Vec<T> {
         }
 
         unsafe {
-            let dst = this.ptr + idx;
-            let res = *dst;
+            let dst = this.ptr.uoffset(idx);
+            let res = dst.read();
             if idx + 1 < this.len {
-                mem::copy_overlapping(
-                    dst:,
-                    src: dst + 1,
-                    num: this.len - idx,
-                );
+                mem::copy_overlapping(dst:, src: dst.offset(1), num: this.len - idx);
             }
 
             this.len--;
@@ -157,11 +149,11 @@ pub struct Vec<T> {
 
         this.len--;
 
-        let ptr = this.ptr + idx;
+        let ptr = this.ptr.uoffset(idx);
         if idx < this.len {
-            unsafe mem::replace(ptr as *mut T, *(this.ptr + this.len))
+            unsafe mem::replace(&mut *ptr, this.ptr.uoffset(this.len).read())
         } else {
-            unsafe *ptr
+            unsafe ptr.read()
         }
     }
 
@@ -177,13 +169,13 @@ pub struct Vec<T> {
 
     pub fn get(this, idx: uint): ?*T {
         if idx < this.len {
-            unsafe (this.ptr + idx) as *T
+            unsafe &*this.ptr.uoffset(idx)
         }
     }
 
     pub fn get_mut(mut this, idx: uint): ?*mut T {
         if idx < this.len {
-            unsafe (this.ptr + idx) as *mut T
+            unsafe &mut *this.ptr.uoffset(idx)
         }
     }
 
@@ -196,7 +188,7 @@ pub struct Vec<T> {
     }
 
     fn grow(mut this) {
-        this._reserve(if this.cap > 0 { this.cap * 2 } else { 1 });
+        this._reserve(this.cap * 2);
     }
 
     fn can_insert(this, count: uint): bool {
@@ -204,7 +196,14 @@ pub struct Vec<T> {
     }
 
     fn _reserve(mut this, cap: uint) {
+        let cap = cap.max(1);
         if cap <= this.cap {
+            return;
+        }
+
+        // TODO: some kind of "if const"
+        if std::mem::size_of::<T>() == 0 {
+            this.cap = cap;
             return;
         }
 
@@ -217,7 +216,8 @@ pub struct Vec<T> {
             this.ptr = ptr;
             this.cap = cap;
         } else {
-            panic("Vec::_reserve(): out of memory!");
+            let bytes = cap * std::mem::size_of::<T>();
+            panic("Vec::_reserve(): out of memory trying to allocate {bytes} bytes!");
         }
     }
 

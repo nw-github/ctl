@@ -136,3 +136,21 @@ pub struct Peekable<T, I: Iterator<T>> {
         }
     }
 }
+
+pub struct Once<T> {
+    val: ?T,
+
+    pub fn new(val: T): This {
+        Once(val:)
+    }
+
+    impl Iterator<T> {
+        fn next(mut this): ?T {
+            this.val.take()
+        }
+    }
+}
+
+pub fn once<T>(val: T): Once<T> {
+    Once::new(val)
+}

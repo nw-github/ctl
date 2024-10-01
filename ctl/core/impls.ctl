@@ -317,8 +317,12 @@ pub extension SignedImpl<T: Signed> for T {
             }
         };
 
-        let val = [1.cast::<T>(), -1.cast::<T>()];
-        T::from_str_radix_common(chars, radix)?.checked_mul(val[negative as u1])
+        let val = T::from_str_radix_common(chars, radix)?;
+        if negative {
+            val.checked_mul((-1).cast())
+        } else {
+            val
+        }
     }
 }
 
@@ -433,6 +437,10 @@ pub extension CharImpl for char {
 
     pub fn is_ascii_lower(my this): bool {
         this is 'a'..='z'
+    }
+
+    pub fn is_ascii_digit(my this): bool {
+        this is '0'..='9'
     }
 
     pub fn make_ascii_upper(mut this) {
@@ -580,6 +588,10 @@ pub extension RawImpl<T> for *raw T {
     }
 
     pub fn offset(my this, offs: int): *raw T {
+        this + offs
+    }
+
+    pub fn uoffset(my this, offs: uint): *raw T {
         this + offs
     }
 

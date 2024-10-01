@@ -34,6 +34,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         }
     }
 
+    /// Returns the old value associated with `key`, or null if it doesn't exist
     pub fn insert(mut this, key: K, val: V): ?V {
         if this.len + 1 > this.capacity() * 3 / 4 {
             this.adjust_cap(this.capacity() * 2);
@@ -42,7 +43,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         match this.buckets.get_mut(this.entry_pos(&key))? {
             :Some(_, prev) => std::mem::replace(prev, val) as V,
             entry => {
-                if !(entry is :Tombstone) {
+                if entry is :None {
                     this.len++;
                 }
 
@@ -78,7 +79,12 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     }
 
     pub fn len(this): uint {
+        // TODO: len() currenty includes tombstones, so this isn't a useful number to return
         this.len
+    }
+
+    pub fn is_empty(this): bool {
+        this.len == 0
     }
 
     pub fn capacity(this): uint {
@@ -118,12 +124,10 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
 
         mut tombstone: ?uint = null;
         loop {
-            match this.buckets.get(idx)! {
-                :Some(key, _) => if k.eq(key) { break idx; }
+            match &this.buckets[idx] {
+                :Some(key, _) => if k == key { break idx; },
                 :None => break tombstone ?? idx,
-                :Tombstone => {
-                    tombstone.get_or_insert(idx);
-                }
+                :Tombstone => { tombstone.get_or_insert(idx); }
             }
 
             idx = (idx + 1) % this.capacity();
@@ -131,7 +135,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     }
 
     fn adjust_cap(mut this, cap: uint) {
-        let cap = if cap > 8 { cap } else { 8 };
+        let cap = cap.max(8);
         guard cap > this.capacity() else {
             return;
         }

@@ -14,6 +14,7 @@ pub struct Set<T: Hash + Eq<T>> {
         Set(inner: Map::with_capacity(cap:))
     }
 
+    /// Returns true if the key was not previously in the set
     pub fn insert(mut this, key: T): bool {
         this.inner.insert(key, {}) is null
     }
