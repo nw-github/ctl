@@ -2111,28 +2111,10 @@ impl Codegen {
                 });
             }
             BinaryOp::Cmp => {
-                let tmp = tmpbuf!(self, state, |tmp| {
-                    let ty = &self.proj.types[lhs.ty];
-                    if matches!(ty, Type::RawPtr(_)) {
-                        self.emit_type(TypeId::ISIZE);
-                    } else if let Some(int) = ty.as_integral(true) {
-                        let ty = self
-                            .proj
-                            .types
-                            .insert(Type::Int(int.bits + int.signed as u32));
-                        self.emit_type(ty);
-                    } else {
-                        self.emit_type(lhs.ty);
-                    }
-                    write_de!(self.buffer, " {tmp}=");
-                    self.emit_expr(lhs, state);
-                    write_de!(self.buffer, "-");
-                    self.emit_expr(rhs, state);
-                    write_de!(self.buffer, ";");
-
-                    tmp
-                });
-
+                let (lhs, rhs) = hoist!(
+                    self,
+                    (self.emit_tmpvar(lhs, state), self.emit_tmpvar(rhs, state))
+                );
                 let union = self
                     .proj
                     .scopes
@@ -2145,11 +2127,11 @@ impl Codegen {
                 let greater = union.discriminant("Greater").unwrap().clone();
                 let equal = union.discriminant("Equal").unwrap().clone();
 
-                write_de!(self.buffer, "({tmp}<0?");
+                write_de!(self.buffer, "({lhs}<{rhs}?");
                 self.emit_cast(ret);
                 write_de!(self.buffer, "{{.{UNION_TAG_NAME}=");
                 self.emit_literal(less, tag);
-                write_de!(self.buffer, "}}:({tmp}>0?");
+                write_de!(self.buffer, "}}:({lhs}>{rhs}?");
                 self.emit_cast(ret);
                 write_de!(self.buffer, "{{.{UNION_TAG_NAME}=");
                 self.emit_literal(greater, tag);
