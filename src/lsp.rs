@@ -400,6 +400,7 @@ impl LanguageServer for LspBackend {
             &LspItem::Var(id) => Some(visualize_var(id, scopes, types)),
             &LspItem::Fn(id, _) => Some(visualize_func(id, false, scopes, types)),
             &LspItem::Type(id) => Some(visualize_type(id, scopes, types)),
+            LspItem::Underscore(ty) => Some(ty.name(scopes, types)),
             LspItem::Property(src_ty, id, name) => {
                 let ut = scopes.get(*id);
                 let mem = ut.members.get(name);

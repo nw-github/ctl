@@ -170,6 +170,7 @@ pub enum LspItem {
     Type(UserTypeId),
     Module(ScopeId),
     Literal(CExpr),
+    Underscore(TypeId),
     Fn(FunctionId, Option<UserTypeId>),
     Var(VariableId),
     Attribute(String),
@@ -2018,10 +2019,10 @@ impl TypeChecker {
                 let args = func
                     .params
                     .iter()
-                    .map(|param| (param.label.clone(), CExpr::new(
+                    .flat_map(|param| Some((param.label.clone(), CExpr::new(
                         param.ty,
-                        CExprData::Var(*param.patt.as_checked().and_then(|p| p.data.as_variable()).unwrap())
-                    )))
+                        CExprData::Var(*param.patt.as_checked().and_then(|p| p.data.as_variable())?)
+                    ))))
                     .collect();
                 let variant = func.name.data.clone();
                 let ut = Type::User(GenericUserType::from_id(&this.proj.scopes, &mut this.proj.types, ut_id));
@@ -2118,7 +2119,8 @@ impl TypeChecker {
         };
 
         let stripped = lhs.ty.strip_references(&self.proj.types);
-        let Some(mfn) = self.get_member_fn_legacy(stripped, tr_id, fn_name, self.current) else {
+        let Some(mut mfn) = self.get_member_fn_legacy(stripped, tr_id, fn_name, self.current)
+        else {
             bail!(
                 self,
                 Error::doesnt_implement(
@@ -2148,6 +2150,8 @@ impl TypeChecker {
         let rhs = self.check_expr(rhs, Some(p1_ty.strip_references(&self.proj.types)));
         let rhs = rhs.auto_deref(&mut self.proj.types, p1_ty);
         let arg0val = (rhs_name, self.type_check_checked(rhs, p1_ty, rhs_span));
+        self.trait_hack(&mut mfn, p1_ty.strip_references(&self.proj.types));
+
         CExpr::new(
             ret,
             CExprData::member_call(
@@ -3788,7 +3792,8 @@ impl TypeChecker {
                     .clone()
                     .auto_deref(&mut self.proj.types, self.proj.scopes.get(f).params[0].ty);
                 let err_idx = self.proj.diag.capture_errors();
-                let (args, ret, failed) = self.check_fn_args(&mut func, Some(recv), args, target, span);
+                let (args, ret, failed) =
+                    self.check_fn_args(&mut func, Some(recv), args, target, span);
                 // TODO: if the arguments have non overload related errors, just stop overload
                 // resolution
                 if failed
@@ -4001,7 +4006,8 @@ impl TypeChecker {
             branches: false,
         });
         self.enter(kind, |this| {
-            let Some(mfn) = this.get_member_fn_legacy(iter.ty, iter_tr_id, "next", this.current)
+            let Some(mut mfn) =
+                this.get_member_fn_legacy(iter.ty, iter_tr_id, "next", this.current)
             else {
                 this.check_block(body);
                 let name = iter.ty.name(&this.proj.scopes, &mut this.proj.types);
@@ -4015,6 +4021,8 @@ impl TypeChecker {
                 .ret
                 .strip_options(&this.proj)
                 .with_templates(&mut this.proj.types, &mfn.func.ty_args);
+            this.trait_hack(&mut mfn, next_ty);
+
             let patt_span = patt.span;
             let patt = this.check_pattern(PatternParams {
                 binding: true,
@@ -6002,6 +6010,7 @@ impl TypeChecker {
             }
             Some(id)
         } else {
+            self.check_hover(name.span, LspItem::Underscore(ty));
             // TODO: hover
             None
         }
@@ -7803,6 +7812,17 @@ impl TypeChecker {
             }
             CExprData::Error => None,
             _ => self.error(Error::no_consteval(span)),
+        }
+    }
+
+    fn trait_hack(&self, mfn: &mut MemberFn, ty: TypeId) {
+        // FIXME: get rid of this function
+        if let MemberFnType::Trait(tr) = &mut mfn.typ {
+            for v in tr.ty_args.values_mut() {
+                if *v == TypeId::UNKNOWN {
+                    *v = ty;
+                }
+            }
         }
     }
 }
