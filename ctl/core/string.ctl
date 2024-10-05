@@ -48,7 +48,7 @@ pub struct str {
         Chars(s: this.as_bytes())
     }
 
-    pub fn chars_indices(this): CharIndices {
+    pub fn char_indices(this): CharIndices {
         CharIndices(chars: this.chars(), len: this.len())
     }
 

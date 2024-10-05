@@ -38,7 +38,7 @@ pub extension U8Impl for u8 {
     }
 
     pub fn is_ascii_hexdigit(my this): bool {
-        this is b'0'..=b'9' | b'A'..=b'F'
+        this is b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'
     }
 
     pub fn make_ascii_upper(mut this) {
@@ -431,6 +431,10 @@ pub extension CharImpl for char {
         unsafe this.encode_utf8_unchecked(len, buf)
     }
 
+    pub fn is_ascii(my this): bool {
+        (this as u32) < 0b1000_0000
+    }
+
     pub fn is_ascii_upper(my this): bool {
         this is 'A'..='Z'
     }
@@ -441,6 +445,10 @@ pub extension CharImpl for char {
 
     pub fn is_ascii_digit(my this): bool {
         this is '0'..='9'
+    }
+
+    pub fn is_ascii_hexdigit(my this): bool {
+        this is '0'..='9' | 'a'..='f' | 'A'..='F'
     }
 
     pub fn make_ascii_upper(mut this) {
@@ -466,7 +474,7 @@ pub extension CharImpl for char {
         // If not a digit, a number greater than radix will be created.
         mut digit = (this as u32).wrapping_sub('0' as u32);
         if radix > 10 {
-            if radix <= 36 {
+            guard radix <= 36 else {
                 panic("to_digit: radix is too high (maximum 36)");
             }
 
