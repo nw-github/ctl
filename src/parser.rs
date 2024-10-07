@@ -1319,7 +1319,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let span = name.span;
                 Destructure {
                     name: name.clone(),
-                    mutable,
+                    mutable: mutable || mut_var,
                     pattern: name.map(|name| Pattern::Path(Path::from(Located::new(span, name)))),
                 }
             } else {
