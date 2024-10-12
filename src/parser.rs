@@ -416,7 +416,6 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::Void => Expr::new(span, ExprData::Void),
             Token::False => Expr::new(span, ExprData::Bool(false)),
             Token::True => Expr::new(span, ExprData::Bool(true)),
-            Token::None => Expr::new(span, ExprData::None),
             Token::Int { base, value, width } => Expr::new(
                 span,
                 ExprData::Integer(IntPattern {
@@ -1345,7 +1344,6 @@ impl<'a, 'b> Parser<'a, 'b> {
                     .pattern_impl(false, ctx)
                     .map(|inner| Pattern::Option(inner.into()));
             }
-            Token::None => return Located::new(self.next().span, Pattern::Null),
             Token::LParen => {
                 let span = self.next().span;
                 return self.tuple_like(span, mut_var).map(Pattern::Tuple);

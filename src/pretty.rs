@@ -375,9 +375,6 @@ pub fn print_expr(expr: &Expr, indent: usize) {
         ExprData::Continue(label) => {
             eprintln!("{tabs}Continue({label:?})");
         }
-        ExprData::None => {
-            eprintln!("{tabs}None");
-        }
         ExprData::For {
             patt,
             iter,

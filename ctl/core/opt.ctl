@@ -1,7 +1,7 @@
 @(lang(option))
 pub union Option<T> {
     Some(T),
-    None,
+    null,
 
     pub fn unwrap_or(this, rhs: T): T {
         if this is ?val {

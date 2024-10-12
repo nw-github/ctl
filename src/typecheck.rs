@@ -303,7 +303,6 @@ impl Cast {
 }
 
 struct PatternParams {
-    binding: bool,
     scrutinee: TypeId,
     mutable: bool,
     pattern: Located<Pattern>,
@@ -1703,7 +1702,6 @@ impl TypeChecker {
                     if let Some(value) = value {
                         let value = self.type_check(value, ty);
                         let patt = self.check_pattern(PatternParams {
-                            binding: true,
                             scrutinee: ty,
                             mutable: false,
                             pattern: patt,
@@ -1717,7 +1715,6 @@ impl TypeChecker {
                         return CStmt::Let(patt, Some(value));
                     } else {
                         let patt = self.check_pattern(PatternParams {
-                            binding: true,
                             scrutinee: ty,
                             mutable: false,
                             pattern: patt,
@@ -1740,7 +1737,6 @@ impl TypeChecker {
                     let span = patt.span;
                     let value = self.check_expr(value, None);
                     let patt = self.check_pattern(PatternParams {
-                        binding: true,
                         scrutinee: value.ty,
                         mutable: false,
                         pattern: patt,
@@ -2000,7 +1996,6 @@ impl TypeChecker {
                 let ty = this.proj.scopes.get(id).params[i].ty;
                 let span = patt.span;
                 let patt = this.check_pattern(PatternParams {
-                    binding: true,
                     scrutinee: ty,
                     mutable: false,
                     pattern: patt,
@@ -2936,13 +2931,6 @@ impl TypeChecker {
                 CExpr::new(TypeId::CHAR, CExprData::Int(ComptimeInt::from(s as u32)))
             }
             PExprData::ByteChar(c) => CExpr::new(TypeId::U8, CExprData::Int(ComptimeInt::from(c))),
-            PExprData::None => {
-                if let Some(inner) = target.and_then(|target| target.as_option_inner(&self.proj)) {
-                    CExpr::option_null(self.make_lang_type_by_name("option", [inner], span))
-                } else {
-                    self.error(Error::new("cannot infer type of option null literal", span))
-                }
-            }
             PExprData::Void => CExpr::new(TypeId::VOID, CExprData::Void),
             PExprData::Bool(v) => CExpr::new(TypeId::BOOL, CExprData::Int(ComptimeInt::from(v))),
             PExprData::Integer(integer) => {
@@ -3128,46 +3116,42 @@ impl TypeChecker {
                 }
 
                 let mut out_type = if_branch.ty;
-                let else_branch =
-                    if let Some(expr) = else_branch {
-                        if out_type == TypeId::NEVER {
-                            let expr = self.check_expr_inner(*expr, None);
-                            out_type = expr.ty;
-                            if_branch = self.try_coerce(if_branch, expr.ty);
-                            Some(expr)
-                        } else {
-                            let span = expr.span;
-                            let source = self.check_expr_inner(*expr, target.or(Some(out_type)));
-                            if source
-                                .ty
-                                .as_option_inner(&self.proj)
-                                .is_some_and(|v| v == out_type)
-                            {
-                                if_branch = self.coerce(if_branch, source.ty).unwrap();
-                                out_type = source.ty;
-                                Some(source)
-                            } else {
-                                Some(self.type_check_checked(source, out_type, span))
-                            }
-                        }
-                    } else if if_branch.data.is_yielding_block(&self.proj.scopes) {
-                        if out_type == TypeId::NEVER
-                            || out_type == TypeId::VOID
-                            || out_type == TypeId::UNKNOWN
-                        {
-                            out_type = TypeId::VOID;
-                            Some(CExpr::new(TypeId::VOID, CExprData::Void))
-                        } else {
-                            out_type = self.make_lang_type_by_name("option", [out_type], span);
-                            if_branch = self.try_coerce(if_branch, out_type);
-                            Some(self.check_expr_inner(
-                                Located::new(span, PExprData::None),
-                                Some(out_type),
-                            ))
-                        }
+                let else_branch = if let Some(expr) = else_branch {
+                    if out_type == TypeId::NEVER {
+                        let expr = self.check_expr_inner(*expr, None);
+                        out_type = expr.ty;
+                        if_branch = self.try_coerce(if_branch, expr.ty);
+                        Some(expr)
                     } else {
-                        None
-                    };
+                        let span = expr.span;
+                        let source = self.check_expr_inner(*expr, target.or(Some(out_type)));
+                        if source
+                            .ty
+                            .as_option_inner(&self.proj)
+                            .is_some_and(|v| v == out_type)
+                        {
+                            if_branch = self.coerce(if_branch, source.ty).unwrap();
+                            out_type = source.ty;
+                            Some(source)
+                        } else {
+                            Some(self.type_check_checked(source, out_type, span))
+                        }
+                    }
+                } else if if_branch.data.is_yielding_block(&self.proj.scopes) {
+                    if out_type == TypeId::NEVER
+                        || out_type == TypeId::VOID
+                        || out_type == TypeId::UNKNOWN
+                    {
+                        out_type = TypeId::VOID;
+                        Some(CExpr::new(TypeId::VOID, CExprData::Void))
+                    } else {
+                        out_type = self.make_lang_type_by_name("option", [out_type], span);
+                        if_branch = self.try_coerce(if_branch, out_type);
+                        Some(CExpr::option_null(out_type))
+                    }
+                } else {
+                    None
+                };
 
                 CExpr::new(
                     out_type,
@@ -3375,7 +3359,6 @@ impl TypeChecker {
                 let expr = this.check_expr(*expr, None);
                 std::mem::swap(&mut this.current_expr, &mut prev);
                 let patt = this.check_pattern(PatternParams {
-                    binding: false,
                     scrutinee: expr.ty,
                     mutable: false,
                     pattern,
@@ -4025,7 +4008,6 @@ impl TypeChecker {
 
             let patt_span = patt.span;
             let patt = this.check_pattern(PatternParams {
-                binding: true,
                 scrutinee: next_ty,
                 mutable: false,
                 pattern: patt,
@@ -6271,7 +6253,6 @@ impl TypeChecker {
                 }
             } else {
                 result.push(self.check_pattern(PatternParams {
-                    binding: true,
                     scrutinee: inner_ptr,
                     mutable: false,
                     pattern: patt,
@@ -6374,7 +6355,6 @@ impl TypeChecker {
                 }
             } else {
                 let patt = self.check_pattern(PatternParams {
-                    binding: true,
                     scrutinee: inner,
                     mutable: false,
                     pattern: patt,
@@ -6475,7 +6455,6 @@ impl TypeChecker {
             let inner = member.ty.with_ut_templates(&mut self.proj.types, stripped);
             let scrutinee = scrutinee.matched_inner_type(&mut self.proj.types, inner);
             let patt = self.check_pattern(PatternParams {
-                binding: true,
                 scrutinee,
                 mutable: mutable || pm,
                 pattern,
@@ -6542,7 +6521,6 @@ impl TypeChecker {
             };
 
             let patt = self.check_pattern(PatternParams {
-                binding: true,
                 scrutinee: ty,
                 mutable,
                 pattern: patt,
@@ -6630,7 +6608,6 @@ impl TypeChecker {
             let patt_span = pattern.span;
             let (res, vars) = self.listen_for_vars(self.current_expr, |this| {
                 this.check_pattern(PatternParams {
-                    binding: true,
                     scrutinee,
                     mutable,
                     pattern,
@@ -6696,7 +6673,6 @@ impl TypeChecker {
     fn check_pattern(
         &mut self,
         PatternParams {
-            binding,
             scrutinee,
             mutable,
             pattern,
@@ -6735,10 +6711,6 @@ impl TypeChecker {
                 let value = self.resolve_value_path(&path, Some(scrutinee));
                 if let Some(ident) = path.as_identifier() {
                     match self.get_union_variant(scrutinee, value, span) {
-                        Ok(_) if binding => self.error(Error::new(
-                            "cannot create binding that shadows union variant",
-                            span,
-                        )),
                         Ok((Some(_), _)) => self.error(Error::expected_found(
                             "empty variant pattern",
                             "tuple variant pattern",
@@ -6786,18 +6758,6 @@ impl TypeChecker {
                     pattern.span,
                     typ,
                 )
-            }
-            Pattern::Null => {
-                let Some(id) = self.proj.scopes.get_option_id() else {
-                    return self.error(Error::no_lang_item("option", pattern.span));
-                };
-                let value = self.resolve_value_path_in(
-                    &[(Located::new(Span::default(), "None".into()), vec![])],
-                    Default::default(),
-                    self.proj.scopes.get(id).body_scope,
-                    pattern.span,
-                );
-                self.check_empty_union_pattern(scrutinee, value, pattern.span)
             }
             Pattern::MutBinding(name) => {
                 let Some(var) = self.insert_pattern_var(
@@ -6957,7 +6917,6 @@ impl TypeChecker {
 
     fn check_full_pattern(&mut self, scrutinee: TypeId, pattern: Located<FullPattern>) -> CPattern {
         self.check_pattern(PatternParams {
-            binding: false,
             scrutinee,
             mutable: false,
             pattern: pattern.map(|inner| inner.data),

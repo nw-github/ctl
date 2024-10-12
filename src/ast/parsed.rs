@@ -155,7 +155,6 @@ pub enum ExprData {
     ByteChar(u8),
     Path(Path),
     Void,
-    None,
     Block(Vec<Stmt>, Option<String>),
     If {
         cond: Box<Expr>,
@@ -307,8 +306,6 @@ pub enum Pattern {
     MutBinding(String),
     // x is ?mut y
     Option(Box<Pattern>),
-    // x is null
-    Null,
     // let {x, y} = z;
     Struct(Vec<Destructure>),
     Tuple(Vec<Located<Pattern>>),

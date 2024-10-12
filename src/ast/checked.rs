@@ -322,7 +322,7 @@ impl Expr {
     pub fn option_null(opt: TypeId) -> Expr {
         Expr::new(
             opt,
-            ExprData::VariantInstance("None".into(), Default::default()),
+            ExprData::VariantInstance("null".into(), Default::default()),
         )
     }
 }

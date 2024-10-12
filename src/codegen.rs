@@ -2037,18 +2037,7 @@ impl Codegen {
                 let left = left.finish();
 
                 hoist!(self, {
-                    self.emit_pattern_if_stmt(
-                        state,
-                        &PatternData::Variant {
-                            pattern: None,
-                            variant: "None".into(),
-                            inner: ret,
-                            borrows: false,
-                        },
-                        &left,
-                        opt_type,
-                    );
-
+                    self.emit_pattern_if_stmt(state, &null_variant(ret), &left, opt_type);
                     hoist_point!(self, {
                         write_de!(self.buffer, "{left}{tag}=");
                         self.emit_expr_inline(rhs, state);
@@ -2084,17 +2073,7 @@ impl Codegen {
                         .with_templates(&mut self.proj.types, &state.func.ty_args);
                     let opt_type = lhs.ty;
                     let name = hoist!(self, self.emit_tmpvar(lhs, state));
-                    self.emit_pattern_if_stmt(
-                        state,
-                        &PatternData::Variant {
-                            pattern: None,
-                            variant: "None".into(),
-                            inner: ret,
-                            borrows: false,
-                        },
-                        &name,
-                        opt_type,
-                    );
+                    self.emit_pattern_if_stmt(state, &null_variant(ret), &name, opt_type);
                     hoist_point!(self, {
                         write_de!(self.buffer, "{tmp}=");
                         self.emit_expr_inline(rhs, state);
@@ -2280,17 +2259,7 @@ impl Codegen {
 
                     let inner_ty = lhs.ty;
                     let inner_tmp = self.emit_tmpvar(lhs, state);
-                    self.emit_pattern_if_stmt(
-                        state,
-                        &PatternData::Variant {
-                            pattern: None,
-                            variant: "None".into(),
-                            inner: ret,
-                            borrows: false,
-                        },
-                        &inner_tmp,
-                        inner_ty,
-                    );
+                    self.emit_pattern_if_stmt(state, &null_variant(ret), &inner_tmp, inner_ty);
                     hoist_point!(self, {
                         let mut buffer = Buffer::default();
                         usebuf!(self, &mut buffer, {
@@ -3577,5 +3546,14 @@ fn bit_mask(bits: u32) -> u64 {
         (1 << bits) - 1
     } else {
         u64::MAX
+    }
+}
+
+fn null_variant(typ: TypeId) -> PatternData {
+    PatternData::Variant {
+        pattern: None,
+        variant: "null".into(),
+        inner: typ,
+        borrows: false,
     }
 }
