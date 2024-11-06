@@ -52,3 +52,7 @@ fn main(): c_int {
 ```
 cargo r -r -- run main.ctl
 ```
+
+### Overview
+
+A short and rather incomplete overview of the language can be found [here](docs/OVERVIEW.md).
