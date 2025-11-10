@@ -2391,9 +2391,9 @@ impl TypeChecker {
                     ) => {
                         let right = self.check_expr(*right, Some(TypeId::U32));
                         let right = self.try_coerce(right, TypeId::U32);
-                        if !self.proj.types[right.ty]
+                        if self.proj.types[right.ty]
                             .as_integral(false)
-                            .is_some_and(|v| !v.signed)
+                            .is_none_or(|v| v.signed)
                             && right.ty != TypeId::UNKNOWN
                         {
                             self.proj.diag.error(Error::type_mismatch_s(
@@ -5119,7 +5119,7 @@ impl TypeChecker {
                 return true;
             }
             if let Some(Dependencies::Resolved(member_deps)) = self.proj.deps.get(&this) {
-                if member_deps.iter().any(|&v| v == ut) {
+                if member_deps.contains(&ut) {
                     return true;
                 }
 
@@ -5418,7 +5418,7 @@ impl TypeChecker {
             .get(id)
             .fns
             .iter()
-            .find(|&&id| (scopes.get(*id).name.data == method))
+            .find(|&&id| scopes.get(*id).name.data == method)
             .copied()
     }
 
@@ -6072,7 +6072,7 @@ impl TypeChecker {
         {
             let patt_applies = |patt: &PatternData, name: &str| {
                 patt.as_variant().is_some_and(|(sub, variant, _, _)| {
-                    name == variant && sub.as_ref().map_or(true, |sub| sub.irrefutable)
+                    name == variant && sub.as_ref().is_none_or(|sub| sub.irrefutable)
                 })
             };
 
@@ -6095,10 +6095,10 @@ impl TypeChecker {
             }
 
             if !missing.is_empty() {
-                return self.error(Error::match_statement(
+                self.error(Error::match_statement(
                     &format!("(missing variant(s) {})", missing.join(", ")),
                     span,
-                ));
+                ))
             }
         } else if !patterns.any(|patt| patt.irrefutable) {
             // covers struct/array/void
@@ -7636,10 +7636,10 @@ impl TypeChecker {
                     args.iter()
                         .map(|ty| self.resolve_typehint(ty))
                         .take(params.len())
-                        .chain(
-                            std::iter::repeat(TypeId::UNKNOWN)
-                                .take(params.len().checked_sub(args.len()).unwrap_or_default()),
-                        ),
+                        .chain(std::iter::repeat_n(
+                            TypeId::UNKNOWN,
+                            params.len().checked_sub(args.len()).unwrap_or_default(),
+                        )),
                 )
                 .collect(),
         );

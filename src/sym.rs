@@ -464,7 +464,7 @@ impl Scopes {
         id
     }
 
-    pub fn walk(&self, id: ScopeId) -> ScopeIter {
+    pub fn walk(&self, id: ScopeId) -> ScopeIter<'_> {
         ScopeIter {
             scopes: self,
             next: Some(id),

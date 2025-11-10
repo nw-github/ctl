@@ -404,7 +404,7 @@ impl LanguageServer for LspBackend {
             LspItem::Property(src_ty, id, name) => {
                 let ut = scopes.get(*id);
                 let mem = ut.members.get(name);
-                let public = ["", "pub "][mem.map_or(false, |m| m.public) as usize];
+                let public = ["", "pub "][mem.is_some_and(|m| m.public) as usize];
                 let ty = mem.map_or(TypeId::UNKNOWN, |m| m.ty);
                 if matches!(ut.kind, UserTypeKind::Tuple | UserTypeKind::AnonStruct) {
                     let real = src_ty
