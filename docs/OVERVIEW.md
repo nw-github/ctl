@@ -28,7 +28,7 @@ There are three kinds of integer types in CTL:
 
 -   Regular integers: These integers start with `i` or `u` and are bit-precise, meaning you can write `i24`, `u38`, or any other number from `0 - 65535`. However, the types `u8`, `u16`, `u32`, `u64`, and `u128`, and their signed counterparts are the only ones that are FFI-safe.
 -   Pointer sized integers: The types `int` and `uint`, which can be casted to and from raw pointers and are guaranteed to be pointer-sized, and the types `c_*`, which are equivalent to their C counterparts.
--   Integers by technicality: The types `bool` and `char` are technically integer types, even though they mostly behave uniquely. The only valid values for a `bool` are `true` and `false`. `char` is a [Unicode scalar value](https://www.unicode.org/glossary/#unicode_scalar_value). It's valid values are `0 - 0xD7FF` and `0xE000 - 0x10FFFF`. From now on, when integers/integer types are mentioned, these two types are NOT incuded.
+-   Integers by technicality: The types `bool` and `char` are technically integer types, even though they mostly behave uniquely. The only valid values for a `bool` are `true` and `false`. `char` is a [Unicode scalar value](https://www.unicode.org/glossary/#unicode_scalar_value). It's valid values are `0 - 0xD7FF` and `0xE000 - 0x10FFFF`. From now on, when integers/integer types are mentioned, these two types are NOT included.
 
 All integers in CTL use 2s complement representation. Methods exist that can deal with wrapping safely (either by explicitly allowing it `wrapping_add()`, allowing it and telling you if it happened `overflowing_add()`, or returning an optional that is null on overflow `checked_add()`). The arithmetic operators panic by default on overflow, but this behavior is configurable by release mode (either panic or wrap on overflow, UNIMPLEMENTED).
 
@@ -42,7 +42,11 @@ let z = 10u;    // uint typed literal
 
 Integer types do not have any implicit conversion between each other, but there are several options for explicit conversions.
 
-The `as` operator can only be used for integer casts which are infallible, meaning all values of the source type can be expressed in the target type. This means: - any `uX` to any `uY` where `Y >= X` - any `iX` to any `iY` where `Y >= X` - any `uX` to any `iY` where `Y >= X + 1`
+The `as` operator can only be used for integer casts which are infallible, meaning all values of the source type can be expressed in the target type. This means:
+
+-   any `uX` to any `uY` where `Y >= X`
+-   any `iX` to any `iY` where `Y >= X`
+-   any `uX` to any `iY` where `Y >= X + 1`
 
 For other casts, you will need a fallible cast operator. The `as!` operator will panic (UNIMPLEMENTED) if the conversion would overflow, and the `as?` (UNIMPLEMENTED) operator returns an optional that is `None` if the conversion failed, and `Some` with a value if it didn't. Integer casts to/from `int`, `uint`, or any of the `c_*` types require infallible casts, as their size may change from platform to platform.
 
@@ -95,9 +99,9 @@ for ch in foo.chars() {
 
 ```rs
 mut foo = @[1, 2, 3];
-foo.push(1);            // push 1 onto the back of the array
+foo.push(1);            // push 1 onto the back of the vector
 
-let last = foo.pop();   // pop the last element from the array.
+let last = foo.pop();   // pop the last element from the vector.
 println("{last}");      // prints "Some(1)"
 
 foo.insert(idx: 0, 0);  // insert 0 at index 0
@@ -140,7 +144,7 @@ These are the standard pointer types. They must be non-null, aligned and point t
 
 Raw pointers do not have the validity or alignment requirements of normal pointers, but they also must be non-null. Dereferencing or converting a raw pointer to a normal one requires an `unsafe` context.
 
--   `fn(A, B): R` A function pointer taking arguments of type A and C and returning R. Created from `&func`
+-   `fn(A, B): R` A function pointer taking arguments of type A and B and returning R. Created from `&func`
 
 Function pointers are not often needed due to dynamic dispatch, but they are occasionaly useful, especially for FFI. They do not currently support parameter labels.
 
@@ -337,7 +341,7 @@ println("{foo}"); // prints null
 
 ```
 
-Loop-while expressions are similar to while, but the condition is checked at the end, meaning they will always run at least once. `is` expressions are not available in the body.
+Loop-while expressions are similar to while, but the condition is checked at the end, meaning they will always run at least once. Variables created by `is` expressions are not available in the body.
 
 ```rs
 let a = 10;
@@ -611,7 +615,7 @@ let z = Bar; // this doesn't work
 // let y = Bar(x: 5, y: "hello world"); // this generates a compile time error, but a "function" like this can't be represented in CTL
 ```
 
-Unions mainly exist for FFI purposes and may be further restricted or removed in later versions. You should use `union`s instead.
+Unsafe unions mainly exist for FFI purposes and may be further restricted or removed in later versions. You should use `union`s instead.
 
 ## Methods
 
@@ -659,7 +663,7 @@ struct Foo {
         // the `my` modifier more useful in the future
     }
 
-    fn owning_mut(my this) {
+    fn owning_mut(my mut this) {
         this.a = 0; // OK, changes are not reflected in the caller
     }
 }
