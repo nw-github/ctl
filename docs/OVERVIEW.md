@@ -133,14 +133,15 @@ println("{a} {b}{c}"); // prints "hello world"
 
 ## Pointers
 
-There are six pointer types in CTL. All CTL pointer types are non-nullable, and creating a null pointer through another method (ex `std::mem::transmute`) is undefined behavior. Instead, use an optional pointer (like `?*T`/`?*mut T`), which is guaranteed to have the same layout as a normal pointer and is FFI-safe.
+There are seven pointer types in CTL. All CTL pointer types are non-nullable, and creating a null pointer through another method (ex `std::mem::transmute`) is undefined behavior. Instead, use an optional pointer (like `?*T`/`?*mut T`), which is guaranteed to have the same layout as a normal pointer and is FFI-safe.
 
--   `*T` An immutable pointer to `T`, created with `&expr`
--   `*mut T` A mutable pointer to `T`, created with `&mut expr`
+-   `*T` An pointer to an immutable `T`, created with `&expr`
+-   `*mut T` A pointer to a mutable `T`, created with `&mut expr`
 
 These are the standard pointer types. They must be non-null, aligned and point to a valid object.
 
--   `*raw T` A raw pointer to a mutable `T`. Implicitly convertible from `*mut T`, and `as` castable from `*T`
+-   `^T` A raw pointer to an immutable `T`. Creatable with `&raw expr`, implicitly convertible from `*T/*mut T`, and `as` castable from `*T/*mut T`
+-   `^mut T` A raw pointer to a mutable `T`. Creatable with `&raw mut expr`, implicitly convertible from `*mut T`, and `as` castable from `*T/*mut T`
 
 Raw pointers do not have the validity or alignment requirements of normal pointers, but they also must be non-null. Dereferencing or converting a raw pointer to a normal one requires an `unsafe` context.
 
@@ -163,7 +164,7 @@ The following is a table of operator availablilty on the built in types, and abi
 
 ### Binary operators
 
-|     | Integer types | `*raw T`  | `bool`    | Override Trait   |
+|     | Integer types | `^mut T`  | `bool`    | Override Trait   |
 | --- | ------------- | --------- | --------- | ---------------- |
 | +   | Same type     | Any int   | -         | std::ops::Add    |
 | -   | Same type     | Any int   | -         | std::ops::Sub    |
@@ -187,7 +188,7 @@ The following is a table of operator availablilty on the built in types, and abi
 
 ### Unary operators
 
-|     | `u*/uint/c_u*` | `i*/int/c_*` | `*raw T` | `bool` | Override Trait    |
+|     | `u*/uint/c_u*` | `i*/int/c_*` | `^mut T` | `bool` | Override Trait    |
 | --- | -------------- | ------------ | -------- | ------ | ----------------- |
 | !\* | Yes            | Yes          | -        | Yes    | std::ops::Not     |
 | -   | -              | Yes          | -        | -      | std::ops::Neg     |

@@ -284,8 +284,8 @@ impl TypeGen {
             ($ty: expr) => {{
                 let dep = $ty;
                 let mut inner = dep;
-                while let Type::Ptr(id) | Type::MutPtr(id) | Type::RawPtr(id) = &types[inner] {
-                    inner = *id;
+                while let Some(id) = inner.as_pointee(types) {
+                    inner = id;
                 }
                 if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_)) {
                     deps.push(inner);
@@ -342,8 +342,8 @@ impl TypeGen {
                     _ => {}
                 }
             }
-            Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) => {
-                return self.add_type(scopes, types, *inner);
+            Type::Ptr(id) | Type::MutPtr(id) | Type::RawPtr(id) | Type::RawMutPtr(id) => {
+                return self.add_type(scopes, types, *id);
             }
             _ => return,
         }
@@ -439,6 +439,10 @@ impl Buffer {
                 self.emit(if min { "r" } else { "rawptr_" });
                 self.emit_mangled_name(scopes, types, inner, min);
             }
+            &Type::RawMutPtr(inner) => {
+                self.emit(if min { "rm" } else { "rawmutptr_" });
+                self.emit_mangled_name(scopes, types, inner, min);
+            }
             Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
                 self.emit_type_name(scopes, types, &tr.clone(), min);
             }
@@ -484,19 +488,19 @@ impl Buffer {
             Type::F64 => write_de!(self, "f64"),
             Type::Bool => write_de!(self, "$bool"),
             Type::Char => write_de!(self, "$char"),
-            id @ (&Type::Ptr(inner) | &Type::MutPtr(inner) | &Type::RawPtr(inner)) => {
-                let id_is_ptr = id.is_ptr();
-                if let &Type::Array(ty, _) = &types[inner] {
+            base @ (&Type::Ptr(i) | &Type::MutPtr(i) | &Type::RawPtr(i) | &Type::RawMutPtr(i)) => {
+                let id_is_ptr = base.is_ptr() || base.is_raw_ptr();
+                if let &Type::Array(ty, _) = &types[i] {
                     self.emit_type(scopes, types, ty, min);
                     if !min {
                         write_de!(self, "/*");
-                        self.emit_type(scopes, types, inner, min);
+                        self.emit_type(scopes, types, i, min);
                         write_de!(self, "*/");
                     }
-                } else if types[inner].is_c_void() {
+                } else if types[i].is_c_void() {
                     write_de!(self, "void");
                 } else {
-                    self.emit_type(scopes, types, inner, min);
+                    self.emit_type(scopes, types, i, min);
                 }
                 if id_is_ptr {
                     write_de!(self, " const*");
@@ -2220,7 +2224,7 @@ impl Codegen {
                     write_de!(self.buffer, ")");
                 }
             }
-            UnaryOp::Addr | UnaryOp::AddrMut | UnaryOp::AddrRaw => {
+            UnaryOp::Addr | UnaryOp::AddrMut | UnaryOp::AddrRaw | UnaryOp::AddrRawMut => {
                 lhs.ty = lhs
                     .ty
                     .with_templates(&mut self.proj.types, &state.func.ty_args);
@@ -2901,10 +2905,10 @@ impl Codegen {
 
                 usebuf!(self, bindings, {
                     let id = self.emit_var_decl(id, state);
-                    let ty = &self.proj.types[id];
                     if borrow
-                        && matches!(ty, Type::Ptr(i) | Type::MutPtr(i) | Type::RawPtr(i)
-                        if self.proj.types[*i].is_array())
+                        && id
+                            .as_pointee(&self.proj.types)
+                            .is_some_and(|i| self.proj.types[i].is_array())
                     {
                         write_de!(self.buffer, "={src}.{ARRAY_DATA_NAME};");
                     } else {

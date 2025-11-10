@@ -343,6 +343,7 @@ pub enum TypeHint {
     Ptr(Box<TypeHint>),
     MutPtr(Box<TypeHint>),
     RawPtr(Box<TypeHint>),
+    RawMutPtr(Box<TypeHint>),
     DynPtr(Path),
     DynMutPtr(Path),
     Fn {
@@ -389,7 +390,8 @@ impl std::fmt::Debug for TypeHint {
             TypeHint::Option(inner) => write!(f, "?{inner:?}"),
             TypeHint::Ptr(inner) => write!(f, "*{inner:?}"),
             TypeHint::MutPtr(inner) => write!(f, "*mut {inner:?}"),
-            TypeHint::RawPtr(inner) => write!(f, "*raw {inner:?}"),
+            TypeHint::RawPtr(inner) => write!(f, "^{inner:?}"),
+            TypeHint::RawMutPtr(inner) => write!(f, "^mut {inner:?}"),
             TypeHint::DynPtr(inner) => write!(f, "*dyn {inner:?}"),
             TypeHint::DynMutPtr(inner) => write!(f, "*dyn mut {inner:?}"),
             TypeHint::Fn {

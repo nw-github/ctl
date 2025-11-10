@@ -36,7 +36,7 @@ pub struct str {
         this.span.is_empty()
     }
 
-    pub fn as_raw(this): *raw u8 {
+    pub fn as_raw(this): ^u8 {
         this.span.as_raw()
     }
 

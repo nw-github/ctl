@@ -110,8 +110,8 @@ impl<T> WithTypeArgs<T> {
         loop {
             match (&types[src], &types[target]) {
                 (
-                    Type::Ptr(gi) | Type::MutPtr(gi) | Type::RawPtr(gi),
-                    Type::Ptr(ti) | Type::MutPtr(ti) | Type::RawPtr(ti),
+                    Type::Ptr(gi) | Type::MutPtr(gi) | Type::RawPtr(gi) | Type::RawMutPtr(gi),
+                    Type::Ptr(ti) | Type::MutPtr(ti) | Type::RawPtr(ti) | Type::RawMutPtr(ti),
                 ) => {
                     src = *gi;
                     target = *ti;
@@ -266,7 +266,11 @@ impl GenericUserType {
         self.as_option_inner(scopes).filter(|&inner| {
             matches!(
                 types[inner],
-                Type::FnPtr(_) | Type::RawPtr(_) | Type::Ptr(_) | Type::MutPtr(_)
+                Type::FnPtr(_)
+                    | Type::RawPtr(_)
+                    | Type::RawMutPtr(_)
+                    | Type::Ptr(_)
+                    | Type::MutPtr(_)
             )
         })
     }
@@ -376,6 +380,7 @@ pub enum Type {
     Ptr(TypeId),
     MutPtr(TypeId),
     RawPtr(TypeId),
+    RawMutPtr(TypeId),
     DynPtr(GenericTrait),
     DynMutPtr(GenericTrait),
     Array(TypeId, usize),
@@ -405,7 +410,10 @@ impl Type {
     }
 
     pub fn is_any_ptr(&self) -> bool {
-        matches!(self, Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_))
+        matches!(
+            self,
+            Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_) | Type::RawMutPtr(_)
+        )
     }
 
     pub fn is_integral(&self) -> bool {
@@ -587,7 +595,8 @@ impl TypeId {
             Type::Char => "char".into(),
             &Type::Ptr(id) => format!("*{}", id.name(scopes, types)),
             &Type::MutPtr(id) => format!("*mut {}", id.name(scopes, types)),
-            &Type::RawPtr(id) => format!("*raw {}", id.name(scopes, types)),
+            &Type::RawPtr(id) => format!("^{}", id.name(scopes, types)),
+            &Type::RawMutPtr(id) => format!("^mut {}", id.name(scopes, types)),
             Type::DynPtr(id) => format!("*dyn {}", id.clone().name(scopes, types)),
             Type::DynMutPtr(id) => format!("*dyn mut {}", id.clone().name(scopes, types)),
             Type::FnPtr(f) => {
@@ -663,7 +672,9 @@ impl TypeId {
         let this = &types[self];
         match op {
             Assign => true,
-            Add | AddAssign | Sub | SubAssign => this.is_numeric() || this.is_raw_ptr(),
+            Add | AddAssign | Sub | SubAssign => {
+                this.is_numeric() || this.is_raw_ptr() || this.is_raw_mut_ptr()
+            }
             Mul | Div | Rem | MulAssign | DivAssign | RemAssign => this.is_numeric(),
             BitAnd | Xor | BitOr | BitAndAssign | XorAssign | BitOrAssign => {
                 this.is_integral() || this.is_bool()
@@ -682,6 +693,7 @@ impl TypeId {
                         | Type::CUint(_)
                         | Type::Char
                         | Type::RawPtr(_)
+                        | Type::RawMutPtr(_)
                         | Type::Bool,
                 )
             }
@@ -699,6 +711,7 @@ impl TypeId {
                         | Type::CUint(_)
                         | Type::Char
                         | Type::RawPtr(_)
+                        | Type::RawMutPtr(_)
                 )
             }
             LogicalOr | LogicalAnd => this.is_bool(),
@@ -715,20 +728,22 @@ impl TypeId {
                     || matches!(this, Type::F32 | Type::F64)
             }
             PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
-                this.is_integral() || this.is_raw_ptr()
+                this.is_integral() || this.is_raw_ptr() || this.is_raw_mut_ptr()
             }
             Not => this.is_integral() || this.is_bool(),
             Try => this.as_option_inner(scopes).is_some(),
             Plus => this.is_numeric(),
             Deref => this.is_any_ptr(),
-            Addr | AddrMut | AddrRaw => true,
+            Addr | AddrMut | AddrRaw | AddrRawMut => true,
             Unwrap => false,
         }
     }
 
     pub fn as_pointee(self, types: &Types) -> Option<TypeId> {
-        if let Type::Ptr(inner) | Type::MutPtr(inner) | Type::RawPtr(inner) = &types[self] {
-            Some(*inner)
+        if let Type::Ptr(id) | Type::MutPtr(id) | Type::RawPtr(id) | Type::RawMutPtr(id) =
+            &types[self]
+        {
+            Some(*id)
         } else {
             None
         }
@@ -739,7 +754,9 @@ impl TypeId {
             Type::Int(0) | Type::Uint(0) => 0,
             Type::Int(bits) | Type::Uint(bits) => nearest_pow_of_two(*bits) / 8,
             Type::CInt(inner) | Type::CUint(inner) => inner.size(),
-            Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_) => std::mem::size_of::<*const ()>(),
+            Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_) | Type::RawMutPtr(_) => {
+                std::mem::size_of::<*const ()>()
+            }
             Type::DynPtr(_) | Type::DynMutPtr(_) => std::mem::size_of::<*const ()>() * 2,
             Type::Isize => std::mem::size_of::<isize>(),
             Type::Usize => std::mem::size_of::<usize>(),
@@ -882,6 +899,10 @@ impl TypeId {
             }
             Type::RawPtr(t) => {
                 let ty = Type::RawPtr(t.with_templates(types, map));
+                types.insert(ty)
+            }
+            Type::RawMutPtr(t) => {
+                let ty = Type::RawMutPtr(t.with_templates(types, map));
                 types.insert(ty)
             }
             Type::User(ut) => {

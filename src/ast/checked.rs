@@ -236,17 +236,17 @@ impl Expr {
     pub fn is_assignable(&self, scopes: &Scopes, types: &Types) -> bool {
         match &self.data {
             ExprData::AutoDeref(expr, _) => {
-                matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
+                matches!(types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
             }
             ExprData::Unary(op, expr) => {
                 matches!(op, UnaryOp::Deref)
-                    && matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
+                    && matches!(types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
             }
             ExprData::Var(id) => scopes.get(*id).mutable,
             ExprData::Member { source, .. } => source.is_assignable(scopes, types),
             ExprData::Subscript { callee, .. } => match &callee.data {
                 ExprData::Var(id) => {
-                    matches!(types[callee.ty], Type::MutPtr(_) | Type::RawPtr(_))
+                    matches!(types[callee.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
                         || scopes.get(*id).mutable
                 }
                 ExprData::Member { source, .. } => source.is_assignable(scopes, types),
@@ -259,11 +259,11 @@ impl Expr {
     pub fn can_addrmut(&self, scopes: &Scopes, types: &Types) -> bool {
         match &self.data {
             ExprData::AutoDeref(expr, _) => {
-                matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
+                matches!(types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
             }
             ExprData::Unary(op, expr) => {
                 !matches!(op, UnaryOp::Deref)
-                    || matches!(types[expr.ty], Type::MutPtr(_) | Type::RawPtr(_))
+                    || matches!(types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
             }
             ExprData::Var(id) => scopes.get(*id).mutable,
             ExprData::Member { source, .. } => {

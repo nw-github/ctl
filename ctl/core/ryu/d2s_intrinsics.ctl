@@ -40,8 +40,8 @@ pub unsafe fn mul_shift_all_64(
     m: u64,
     mul: *(u64, u64),
     j: u32,
-    vp: *raw u64,
-    vm: *raw u64,
+    vp: ^mut u64,
+    vm: ^mut u64,
     mm_shift: u32,
 ): u64 {
     unsafe {

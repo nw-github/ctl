@@ -5,7 +5,7 @@ use std::reflect::*;
 
 @(lang(vec))
 pub struct Vec<T> {
-    ptr: *raw T,
+    ptr: ^mut T,
     len: uint,
     cap: uint,
 
@@ -179,7 +179,7 @@ pub struct Vec<T> {
         }
     }
 
-    pub fn as_raw(this): *raw T {
+    pub fn as_raw(this): ^mut T {
         this.ptr
     }
 

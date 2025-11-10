@@ -2,7 +2,7 @@ use super::debug_assert;
 use super::d2s::*;
 use super::f2s::*;
 
-pub unsafe fn format32(f: f32, res: *raw u8): uint {
+pub unsafe fn format32(f: f32, res: ^mut u8): uint {
     unsafe {
         let bits = f.to_bits();
         let sign = (bits >> (FLOAT_MANTISSA_BITS + FLOAT_EXPONENT_BITS)) & 1 != 0;
@@ -73,7 +73,7 @@ pub unsafe fn format32(f: f32, res: *raw u8): uint {
     }
 }
 
-pub unsafe fn format64(f: f64, res: *raw u8): uint {
+pub unsafe fn format64(f: f64, res: ^mut u8): uint {
     unsafe {
         let bits = f.to_bits();
         let sign = ((bits >> (DOUBLE_MANTISSA_BITS + DOUBLE_EXPONENT_BITS)) & 1) != 0;
@@ -220,7 +220,7 @@ fn decimal_length17(v: u64): u32 {
 // generation by copying pairs of digits into the final output.
 static DIGIT_TABLE: [u8; 200] = *b"00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899";
 
-unsafe fn write_exponent3(mut k: int, mut res: *raw u8): uint {
+unsafe fn write_exponent3(mut k: int, mut res: ^mut u8): uint {
     unsafe {
         let sign = k < 0;
         if sign {
@@ -244,7 +244,7 @@ unsafe fn write_exponent3(mut k: int, mut res: *raw u8): uint {
     }
 }
 
-unsafe fn write_exponent2(mut k: int, mut res: *raw u8): uint {
+unsafe fn write_exponent2(mut k: int, mut res: ^mut u8): uint {
     unsafe {
         let sign = k < 0;
         if sign {
@@ -263,7 +263,7 @@ unsafe fn write_exponent2(mut k: int, mut res: *raw u8): uint {
     }
 }
 
-unsafe fn write_mantissa_long(mut output: u64, mut res: *raw u8) {
+unsafe fn write_mantissa_long(mut output: u64, mut res: ^mut u8) {
     unsafe {
         if output >> 32 != 0 {
             // One expensive 64-bit division.
@@ -283,7 +283,7 @@ unsafe fn write_mantissa_long(mut output: u64, mut res: *raw u8) {
     }
 }
 
-unsafe fn write_mantissa(mut output: u32, mut res: *raw u8) {
+unsafe fn write_mantissa(mut output: u32, mut res: ^mut u8) {
     unsafe {
         while output >= 10000 {
             let c = output - (output / 10000) * 10000;

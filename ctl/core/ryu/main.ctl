@@ -21,7 +21,7 @@ pub struct Buffer {
 
     pub fn format_finite<F: Float>(mut this, f: F): str {
         unsafe {
-            let p = &raw this.bytes[0];
+            let p = &raw mut this.bytes[0];
             let n = f.write_to_ryu_buffer(p);
             debug_assert(n <= 24);
             str::from_utf8_unchecked(Span::new(p, n))
@@ -32,7 +32,7 @@ pub struct Buffer {
 trait Float {
     fn is_nonfinite(this): bool;
     fn format_nonfinite(this): str;
-    unsafe fn write_to_ryu_buffer(this, result: *raw u8): uint;
+    unsafe fn write_to_ryu_buffer(this, result: ^mut u8): uint;
 }
 
 pub extension Float32Ext for f32 {
@@ -55,7 +55,7 @@ pub extension Float32Ext for f32 {
             }
         }
 
-        unsafe fn write_to_ryu_buffer(this, result: *raw u8): uint {
+        unsafe fn write_to_ryu_buffer(this, result: ^mut u8): uint {
             unsafe pretty::format32(*this, result)
         }
     }
@@ -81,7 +81,7 @@ pub extension Float64Ext for f64 {
             }
         }
 
-        unsafe fn write_to_ryu_buffer(this, result: *raw u8): uint {
+        unsafe fn write_to_ryu_buffer(this, result: ^mut u8): uint {
             unsafe pretty::format64(*this, result)
         }
     }

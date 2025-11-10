@@ -22,30 +22,30 @@ pub extern fn type_id<T>(): core::intrin::TypeId;
 pub extern fn type_name<T>(): str;
 
 @(intrinsic)
-pub extern unsafe fn read_volatile<T>(p: *raw T): T;
+pub extern unsafe fn read_volatile<T>(p: ^T): T;
 
 @(intrinsic)
-pub extern unsafe fn write_volatile<T>(p: *raw T, val: T);
+pub extern unsafe fn write_volatile<T>(p: ^mut T, val: T);
 
 
 
 @(c_opaque, c_name(CTL_MEMSET))
-pub extern fn memset(dst: *raw u8, c: c_int, len: uint): *raw u8;
+pub extern fn memset(dst: ^mut u8, c: c_int, len: uint): ^mut u8;
 
 @(c_opaque, c_name(CTL_MEMCPY))
-pub extern fn memcpy(dst: *raw u8, src: *raw u8, len: uint): *raw u8;
+pub extern fn memcpy(dst: ^mut u8, src: ^u8, len: uint): ^mut u8;
 
 @(c_opaque, c_name(CTL_MEMMOVE))
-pub extern fn memmove(dst: *raw u8, src: *raw u8, len: uint): *raw u8;
+pub extern fn memmove(dst: ^mut u8, src: ^u8, len: uint): ^mut u8;
 
 @(c_opaque, c_name(CTL_MEMCMP))
-pub extern fn memcmp(dst: *raw u8, src: *raw u8, len: uint): c_int;
+pub extern fn memcmp(dst: ^mut u8, src: ^u8, len: uint): c_int;
 
 @(c_opaque, c_name(CTL_MALLOC))
-pub extern fn malloc(size: uint, align: uint): ?*raw u8;
+pub extern fn malloc(size: uint, align: uint): ?^mut u8;
 
 @(c_opaque, c_name(CTL_REALLOC))
-pub extern fn realloc(addr: *raw u8, size: uint, align: uint): ?*raw u8;
+pub extern fn realloc(addr: ^mut u8, size: uint, align: uint): ?^mut u8;
 
 @(c_opaque, c_name(CTL_STRLEN))
 pub extern fn strlen(ptr: *c_char): uint;

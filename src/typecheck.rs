@@ -243,7 +243,7 @@ impl Cast {
                 Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) => Cast::Unsafe,
                 Type::Uint(_) | Type::Int(_) | Type::CInt(_) | Type::CUint(_) => Cast::Fallible,
                 Type::Usize | Type::Isize => Cast::Fallible,
-                Type::RawPtr(_) | Type::F32 | Type::F64 => Cast::Infallible,
+                Type::RawPtr(_) | Type::RawMutPtr(_) | Type::F32 | Type::F64 => Cast::Infallible,
                 _ => Cast::None,
             },
             Type::CInt(_) | Type::CUint(_) => match dst {
@@ -292,11 +292,19 @@ impl Cast {
                 | Type::F64 => Cast::Infallible,
                 _ => Cast::None,
             },
-            Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) | Type::RawPtr(_) => match dst {
-                Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) => Cast::Unsafe,
-                Type::Usize | Type::Isize | Type::RawPtr(_) => Cast::Infallible, // maybe only *T to *raw T should be infallible
-                _ => Cast::None,
-            },
+            Type::Ptr(_)
+            | Type::MutPtr(_)
+            | Type::FnPtr(_)
+            | Type::RawPtr(_)
+            | Type::RawMutPtr(_) => {
+                match dst {
+                    Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) => Cast::Unsafe,
+                    Type::Usize | Type::Isize | Type::RawPtr(_) | Type::RawMutPtr(_) => {
+                        Cast::Infallible
+                    } // maybe only *T to ^mut T should be infallible
+                    _ => Cast::None,
+                }
+            }
             _ => Cast::None,
         }
     }
@@ -2339,7 +2347,7 @@ impl TypeChecker {
                 }
 
                 match (&self.proj.types[left.ty], op) {
-                    (Type::RawPtr(_), BinaryOp::Sub) => {
+                    (Type::RawPtr(_) | Type::RawMutPtr(_), BinaryOp::Sub) => {
                         let span = right.span;
                         let right = self.check_expr(*right, Some(TypeId::ISIZE));
                         let right = self.try_coerce(right, TypeId::ISIZE);
@@ -2362,7 +2370,7 @@ impl TypeChecker {
                         }
                     }
                     (
-                        Type::RawPtr(_),
+                        Type::RawPtr(_) | Type::RawMutPtr(_),
                         BinaryOp::Add | BinaryOp::AddAssign | BinaryOp::SubAssign,
                     ) => {
                         let span = right.span;
@@ -2441,7 +2449,7 @@ impl TypeChecker {
 
                         match self.proj.types[expr.ty] {
                             Type::Ptr(inner) | Type::MutPtr(inner) => (inner, expr),
-                            Type::RawPtr(inner) => {
+                            Type::RawPtr(inner) | Type::RawMutPtr(inner) => {
                                 if self.safety != Safety::Unsafe {
                                     self.proj.diag.error(Error::is_unsafe(span));
                                 }
@@ -2562,6 +2570,37 @@ impl TypeChecker {
                             _ => {}
                         }
                         (self.proj.types.insert(Type::RawPtr(expr.ty)), expr)
+                    }
+                    UnaryOp::AddrRawMut => {
+                        let expr = self.check_expr(
+                            *expr,
+                            target.and_then(|id| id.as_pointee(&self.proj.types)),
+                        );
+                        if !expr.can_addrmut(&self.proj.scopes, &self.proj.types) {
+                            self.error(Error::new(
+                                "cannot create mutable pointer to immutable memory location",
+                                span,
+                            ))
+                        }
+                        match &expr.data {
+                            CExprData::Call(inner, _) => {
+                                // FIXME: don't test by name
+                                if matches!(&inner.data, CExprData::Fn(f, _)
+                                    if self.proj.scopes.get(f.id).name.data.starts_with("$sub"))
+                                {
+                                    self.proj.diag.warn(Error::subscript_addr(span));
+                                }
+                            }
+                            CExprData::Member { source, .. } => {
+                                if source.ty.is_packed_struct(&self.proj) {
+                                    self.proj.diag.warn(Error::bitfield_addr(span));
+                                }
+                            }
+                            CExprData::Fn(_, _) => self
+                                .error(Error::new("cannot create raw pointer to function", span)),
+                            _ => {}
+                        }
+                        (self.proj.types.insert(Type::RawMutPtr(expr.ty)), expr)
                     }
                     UnaryOp::Try => {
                         let expr = self
@@ -4823,6 +4862,7 @@ impl TypeChecker {
             TypeHint::Ptr(ty) => create_ptr(Type::Ptr, ty),
             TypeHint::MutPtr(ty) => create_ptr(Type::MutPtr, ty),
             TypeHint::RawPtr(ty) => create_ptr(Type::RawPtr, ty),
+            TypeHint::RawMutPtr(ty) => create_ptr(Type::RawMutPtr, ty),
             TypeHint::DynPtr(path) => self
                 .resolve_dyn_ptr(path)
                 .map(|tr| self.proj.types.insert(Type::DynPtr(tr)))
@@ -5066,7 +5106,7 @@ impl TypeChecker {
             for (name, mem) in self.proj.scopes.get(id).members.iter() {
                 kind.bit_offsets.insert(name.clone(), bits);
                 // TODO:
-                // - allow *raw
+                // - allow ^mut
                 // - nested packed structs
                 match mem.ty.bit_size(&self.proj) {
                     BitSizeResult::Tag(_, n) | BitSizeResult::Size(n) => bits += n,
@@ -5863,14 +5903,25 @@ impl TypeChecker {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     fn coerce(&mut self, mut expr: CExpr, target: TypeId) -> Result<CExpr, CExpr> {
-        fn may_ptr_coerce(types: &Types, lhs: &Type, rhs: &Type) -> bool {
-            match (lhs, rhs) {
-                (Type::MutPtr(s), Type::Ptr(t) | Type::RawPtr(t)) if s == t => true,
-                (Type::MutPtr(s), Type::RawPtr(t) | Type::MutPtr(t) | Type::Ptr(t)) => {
+        // TODO: This is cacheable by TypeId
+        fn may_ptr_coerce(types: &Types, from: &Type, to: &Type) -> bool {
+            match (from, to) {
+                (Type::MutPtr(s), Type::Ptr(t) | Type::RawPtr(t) | Type::RawMutPtr(t))
+                    if s == t =>
+                {
+                    true
+                }
+                (Type::Ptr(s), Type::RawPtr(t)) if s == t => true,
+                (Type::RawMutPtr(s), Type::RawPtr(t)) if s == t => true,
+                (
+                    Type::MutPtr(s),
+                    Type::RawPtr(t) | Type::RawMutPtr(t) | Type::MutPtr(t) | Type::Ptr(t),
+                ) => may_ptr_coerce(types, &types[*s], &types[*t]),
+                (Type::Ptr(s), Type::Ptr(t) | Type::RawPtr(t)) => {
                     may_ptr_coerce(types, &types[*s], &types[*t])
                 }
-                (Type::Ptr(s), Type::Ptr(t)) => may_ptr_coerce(types, &types[*s], &types[*t]),
                 _ => false,
             }
         }

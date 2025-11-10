@@ -515,7 +515,11 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let op = if data == Token::Ampersand && self.next_if(Token::Mut).is_some() {
                     UnaryOp::AddrMut
                 } else if data == Token::Ampersand && self.next_if(Token::Raw).is_some() {
-                    UnaryOp::AddrRaw
+                    if self.next_if(Token::Mut).is_some() {
+                        UnaryOp::AddrRawMut
+                    } else {
+                        UnaryOp::AddrRaw
+                    }
                 } else {
                     UnaryOp::try_from_prefix(data).unwrap()
                 };
@@ -1490,8 +1494,6 @@ impl<'a, 'b> Parser<'a, 'b> {
                 self.next();
                 if self.next_if(Token::Mut).is_some() {
                     TypeHint::MutPtr(self.type_hint().into())
-                } else if self.next_if(Token::Raw).is_some() {
-                    TypeHint::RawPtr(self.type_hint().into())
                 } else if self.next_if(Token::Dyn).is_some() {
                     if self.next_if(Token::Mut).is_some() {
                         TypeHint::DynMutPtr(self.type_path())
@@ -1500,6 +1502,14 @@ impl<'a, 'b> Parser<'a, 'b> {
                     }
                 } else {
                     TypeHint::Ptr(self.type_hint().into())
+                }
+            }
+            Token::Caret => {
+                self.next();
+                if self.next_if(Token::Mut).is_some() {
+                    TypeHint::RawMutPtr(self.type_hint().into())
+                } else {
+                    TypeHint::RawPtr(self.type_hint().into())
                 }
             }
             Token::Question => {

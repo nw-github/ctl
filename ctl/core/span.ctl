@@ -3,10 +3,10 @@ use core::reflect::*;
 
 @(lang(span))
 pub struct Span<T> {
-    ptr: *raw T,
+    ptr: ^T,
     len: uint,
 
-    pub unsafe fn new(ptr: *raw T, len: uint): [T..] {
+    pub unsafe fn new(ptr: ^T, len: uint): [T..] {
         Span(ptr:, len:)
     }
 
@@ -36,7 +36,7 @@ pub struct Span<T> {
         unsafe (this.ptr + idx) as *T
     }
 
-    pub fn as_raw(my this): *raw T {
+    pub fn as_raw(my this): ^T {
         this.ptr
     }
 
@@ -76,7 +76,7 @@ pub struct Span<T> {
 
     @(inline)
     pub fn []<I: Integral>(my this, idx: I): *T {
-        unsafe raw_subscript_checked(this.ptr, this.len, idx) as *T
+        unsafe raw_subscript_checked(this.ptr as ^mut T, this.len, idx) as *T
     }
 
     @(inline(always))
@@ -87,15 +87,15 @@ pub struct Span<T> {
 
 @(lang(span_mut))
 pub struct SpanMut<T> {
-    ptr: *raw T,
+    ptr: ^mut T,
     len: uint,
 
-    pub unsafe fn new(ptr: *raw T, len: uint): [mut T..] {
+    pub unsafe fn new(ptr: ^mut T, len: uint): [mut T..] {
         SpanMut(ptr:, len:)
     }
 
     pub fn from_ptr(ptr: *mut T): [mut T..] {
-        unsafe SpanMut::new(&raw *ptr, 1)
+        unsafe SpanMut::new(&raw mut *ptr, 1)
     }
 
     pub fn empty(): [mut T..] {
@@ -134,7 +134,11 @@ pub struct SpanMut<T> {
         this
     }
 
-    pub fn as_raw(my this): *raw T {
+    pub fn as_raw(my this): ^T {
+        this.ptr
+    }
+
+    pub fn as_raw_mut(my this): ^mut T {
         this.ptr
     }
 
@@ -223,7 +227,7 @@ pub struct SpanMut<T> {
 
         // copy_overlapping?
         unsafe core::mem::copy(
-            dst: subspan.as_raw(),
+            dst: subspan.as_raw_mut(),
             src: rhs.as_raw(),
             num: subspan.len(),
         );
@@ -231,8 +235,8 @@ pub struct SpanMut<T> {
 }
 
 pub struct Iter<T> {
-    ptr: *raw T,
-    end: *raw T,
+    ptr: ^T,
+    end: ^T,
 
     impl Iterator<*T> {
         fn next(mut this): ?*T {
@@ -244,8 +248,8 @@ pub struct Iter<T> {
 }
 
 pub struct IterMut<T> {
-    ptr: *raw T,
-    end: *raw T,
+    ptr: ^mut T,
+    end: ^mut T,
 
     impl Iterator<*mut T> {
         fn next(mut this): ?*mut T {
@@ -257,7 +261,7 @@ pub struct IterMut<T> {
 }
 
 @(inline(always))
-fn raw_subscript_checked<T, I: Integral>(ptr: *raw T, len: uint, idx: I): *raw T {
+fn raw_subscript_checked<T, I: Integral>(ptr: ^mut T, len: uint, idx: I): ^mut T {
     if idx.try_cast::<uint>() is ?idx and (0u..len).contains(&idx) {
         ptr + idx
     } else {

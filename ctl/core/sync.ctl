@@ -121,8 +121,13 @@ pub struct Atomic<T> {
     }
 
     @(inline(always))
-    pub fn as_raw(this): *raw T {
+    pub fn as_raw(this): ^T {
         &raw this.val
+    }
+
+    @(inline(always))
+    pub fn as_raw_mut(mut this): ^mut T {
+        &raw mut this.val
     }
 
     @(inline(always))
