@@ -44,7 +44,7 @@ pub fn replace<T>(ptr: *mut T, val: T): T {
 }
 
 pub unsafe fn transmute<In, Out>(from: In): Out {
-    // TODO: this is fine since we transpile to c, but whenever a spec gets written this usage of 
+    // TODO: this is fine since we transpile to c, but whenever a spec gets written this usage of
     // unions in CTL code should be considered UB
     unsafe union Transmuter<T, U> {
         from: T,

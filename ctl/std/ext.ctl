@@ -1,4 +1,6 @@
 use core::reflect::*;
+use core::fmt::Format;
+use core::fmt::Formatter;
 
 pub extension StringExt for str {
     pub fn repeat(this, n: uint): str {
@@ -23,7 +25,7 @@ pub extension StringExt for str {
         mut buf: [u8] = std::vec::Vec::with_capacity(llen + rlen);
         unsafe {
             std::mem::copy(dst: buf.as_raw(), src: this.as_raw(), num: llen);
-            std::mem::copy(dst: buf.as_raw() + llen, src: rhs.as_raw(), num: rlen);
+            std::mem::copy(dst: buf.as_raw().uoffset(llen), src: rhs.as_raw(), num: rlen);
             buf.set_len(llen + rlen);
             str::from_utf8_unchecked(buf[..])
         }
@@ -52,6 +54,47 @@ pub extension UnsignedExt<T: Unsigned> for T {
         mut buffer = @[b'0'; core::mem::size_of::<T>() * 8];
         unsafe {
             this.to_str_radix_unchecked(radix, buffer[..])
+        }
+    }
+}
+
+pub extension VecFormat<T: Format> for [T] {
+    impl Format {
+        fn fmt<F: Formatter>(this, f: *mut F) {
+            this[..].fmt(f);
+        }
+    }
+}
+
+pub extension MapFormat<K: Format, V: Format> for [K: V] {
+    impl Format {
+        fn fmt<F: Formatter>(this, f: *mut F) {
+            "[".fmt(f);
+            for (i, (key, value)) in this.iter().enumerate() {
+                if i > 0 {
+                    ", ".fmt(f);
+                }
+
+                key.fmt(f);
+                ": ".fmt(f);
+                value.fmt(f);
+            }
+            "]".fmt(f);
+        }
+    }
+}
+
+pub extension SetFormat<T: Format> for {T} {
+    impl Format {
+        fn fmt<F: Formatter>(this, f: *mut F) {
+            "\{".fmt(f);
+            for (i, item) in this.iter().enumerate() {
+                if i > 0 {
+                    ", ".fmt(f);
+                }
+                item.fmt(f);
+            }
+            "\}".fmt(f);
         }
     }
 }

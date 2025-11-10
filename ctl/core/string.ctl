@@ -113,14 +113,14 @@ pub struct Chars {
                     this.s = this.s[2u..];
                 } else if cp >> 4 == 0xe {
                     cp = (
-                        (cp << 12) & 0xffff) + 
+                        (cp << 12) & 0xffff) +
                         (((*this.s.get_unchecked(1) as u32 & 0xff) << 6) & 0xfff
                     );
                     cp += *this.s.get_unchecked(2) as u32 & 0x3f;
                     this.s = this.s[3u..];
                 } else if cp >> 4 == 0x1e {
                     cp = (
-                        (cp << 18) & 0x1fffff) + 
+                        (cp << 18) & 0x1fffff) +
                         (((*this.s.get_unchecked(1) as u32 & 0xff) << 12) & 0x3ffff
                     );
                     cp += ((*this.s.get_unchecked(2) as u32 & 0xff) << 6) & 0xfff;
