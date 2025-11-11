@@ -47,9 +47,7 @@ pub struct Enumerate<T, I: Iterator<T>> {
 
     impl Iterator<(uint, T)> {
         fn next(mut this): ?(uint, T) {
-            if this.iter.next() is ?val {
-                (this.idx++, val)
-            }
+            this.iter.next() is ?val then (this.idx++, val)
         }
     }
 }
@@ -84,9 +82,7 @@ pub struct Zip<T, U, I: Iterator<T>, J: Iterator<U>> {
 
     impl Iterator<(T, U)> {
         fn next(mut this): ?(T, U) {
-            if (this.iter1.next(), this.iter2.next()) is (?a, ?b) {
-                (a, b)
-            }
+            (this.iter1.next(), this.iter2.next()) is (?a, ?b) then (a, b)
         }
     }
 }

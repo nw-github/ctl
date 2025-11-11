@@ -186,23 +186,17 @@ pub extension IntegralImpl<T: Integral> for T {
 
     @(inline)
     pub fn checked_add(this, rhs: T): ?T {
-        if this.overflowing_add(rhs) is (out, false) {
-            out
-        }
+        this.overflowing_add(rhs) is (out, false) then out
     }
 
     @(inline)
     pub fn checked_sub(this, rhs: T): ?T {
-        if this.overflowing_sub(rhs) is (out, false) {
-            out
-        }
+        this.overflowing_sub(rhs) is (out, false) then out
     }
 
     @(inline)
     pub fn checked_mul(this, rhs: T): ?T {
-        if this.overflowing_mul(rhs) is (out, false) {
-            out
-        }
+        this.overflowing_mul(rhs) is (out, false) then out
     }
 
     @(inline)
@@ -226,9 +220,7 @@ pub extension IntegralImpl<T: Integral> for T {
     @(inline)
     pub fn try_cast<U: Numeric>(my this): ?U {
         let rhs: U = this.cast();
-        if this == rhs.cast() {
-            rhs
-        }
+        this == rhs.cast() then rhs
     }
 
     @(inline)
@@ -264,7 +256,7 @@ pub extension SignedImpl<T: Signed> for T {
 
     pub unsafe fn to_str_radix_unchecked(my this, radix: u32, buf: [mut u8..]): str {
         mut pos = buf.len();
-        mut val = if this < 0u.cast() { this } else { -this };
+        mut val = this < 0u.cast() then this else -this;
         loop {
             let (v, digit) = casting_divmod(val, radix as! i32);
             unsafe *buf.get_mut_unchecked(--pos) = DIGITS[-digit.cast::<int>()];
@@ -301,9 +293,7 @@ pub extension SignedImpl<T: Signed> for T {
 
     @(inline)
     pub fn checked_div(this, rhs: T): ?T {
-        if this.overflowing_div(rhs) is (out, false) {
-            out
-        }
+        this.overflowing_div(rhs) is (out, false) then out
     }
 
     pub fn from_str_radix(s: str, radix: u32): ?T {
@@ -318,11 +308,7 @@ pub extension SignedImpl<T: Signed> for T {
         };
 
         let val = T::from_str_radix_common(chars, radix)?;
-        if negative {
-            val.checked_mul((-1).cast())
-        } else {
-            val
-        }
+        negative then val.checked_mul((-1).cast()) else val
     }
 }
 
@@ -557,12 +543,12 @@ pub extension BoolImpl for bool {
 
     impl Format {
         fn fmt<F: Formatter>(this, f: *mut F) {
-            if *this { "true".fmt(f) } else { "false".fmt(f) }
+            *this then "true".fmt(f) else "false".fmt(f)
         }
     }
 
     pub fn then_some<T>(my this, t: T): ?T {
-        if this { t }
+        this then t
     }
 }
 

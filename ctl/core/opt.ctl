@@ -3,32 +3,20 @@ pub union Option<T> {
     Some(T),
     null,
 
-    pub fn unwrap_or(this, rhs: T): T {
-        if this is ?val {
-            *val
-        } else {
-            rhs
-        }
+    pub fn unwrap_or(my this, rhs: T): T {
+        this is ?val then val else rhs
     }
 
     pub fn as_ptr(this): ?*T {
-        if this is ?val {
-            val
-        }
+        this is ?val then val
     }
 
     pub fn as_mut(mut this): ?*mut T {
-        if this is ?val {
-            val
-        }
+        this is ?val then val
     }
 
     pub fn get_or_insert(mut this, rhs: T): *mut T {
-        if this is ?val {
-            val
-        } else {
-            this.insert(rhs)
-        }
+        this is ?val then val else this.insert(rhs)
     }
 
     pub fn insert(mut this, rhs: T): *mut T {
@@ -77,17 +65,13 @@ pub mod ext {
 
     pub extension OptionCopied<T /*: Copy */> for ?*T {
         pub fn copied(my this): ?T {
-            if this is ?val {
-                *val
-            }
+            this is ?val then *val
         }
     }
 
     pub extension OptionMutCopied<T /*: Copy */> for ?*mut T {
         pub fn copied(my this): ?T {
-            if this is ?val {
-                *val
-            }
+            this is ?val then *val
         }
     }
 
@@ -107,9 +91,7 @@ pub mod ext {
 
     pub extension OptionFlatten<T> for ??T {
         pub fn flatten(my this): ?T {
-            if this is ? ?val {
-                val
-            }
+            this is ? ?val then val
         }
     }
 }

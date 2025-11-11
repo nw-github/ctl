@@ -23,15 +23,11 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     }
 
     pub fn get(this, key: *K): ?*V {
-        if this.buckets.get(this.entry_pos(key)) is ?:Some(_, val) {
-            val
-        }
+        this.buckets.get(this.entry_pos(key)) is ?:Some(_, val) then val
     }
 
     pub fn get_mut(mut this, key: *K): ?*mut V {
-        if this.buckets.get_mut(this.entry_pos(key)) is ?:Some(_, val) {
-            val
-        }
+        this.buckets.get_mut(this.entry_pos(key)) is ?:Some(_, val) then val
     }
 
     /// Returns the old value associated with `key`, or null if it doesn't exist
@@ -236,9 +232,7 @@ pub struct Keys<K, V> {
 
     impl Iterator<*K> {
         fn next(mut this): ?*K {
-            if this.iter.next() is ?item {
-                item.0
-            }
+            this.iter.next() is ?item then item.0
         }
     }
 }
@@ -248,9 +242,7 @@ pub struct Values<K, V> {
 
     impl Iterator<*V> {
         fn next(mut this): ?*V {
-            if this.iter.next() is ?item {
-                item.1
-            }
+            this.iter.next() is ?item then item.1
         }
     }
 }
@@ -260,9 +252,7 @@ pub struct ValuesMut<K, V> {
 
     impl Iterator<*mut V> {
         fn next(mut this): ?*mut V {
-            if this.iter.next() is ?item {
-                item.1
-            }
+            this.iter.next() is ?item then item.1
         }
     }
 }

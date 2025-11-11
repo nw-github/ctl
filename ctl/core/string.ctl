@@ -56,8 +56,7 @@ pub struct str {
         let span = this.span[range];
         if span.first() is ?ch and !is_char_boundary(*ch) {
             return null;
-        }
-        if span.last() is ?ch and !is_char_boundary(*ch) {
+        } else if span.last() is ?ch and !is_char_boundary(*ch) {
             return null;
         }
         str(span:)
@@ -142,10 +141,7 @@ pub struct CharIndices {
 
     impl Iterator<(uint, char)> {
         fn next(mut this): ?(uint, char) {
-            let i = this.len - this.chars.s.len();
-            if this.chars.next() is ?ch {
-                (i, ch)
-            }
+            this.chars.next() is ?ch then (this.len - this.chars.s.len(), ch)
         }
     }
 }

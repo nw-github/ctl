@@ -114,9 +114,7 @@ pub mod ext {
     pub extension RangeFromExt<T: Integral> for RangeFrom<T> {
         impl Iterator<T> {
             fn next(mut this): ?T {
-                if this.start < this.start.wrapping_add(1.cast()) {
-                    this.start++
-                }
+                this.start < this.start.wrapping_add(1.cast()) then this.start++
             }
         }
     }
@@ -124,9 +122,7 @@ pub mod ext {
     pub extension RangeExt<T: Integral> for Range<T> {
         impl Iterator<T> {
             fn next(mut this): ?T {
-                if this.start < this.end {
-                    this.start++
-                }
+                this.start < this.end then this.start++
             }
         }
 

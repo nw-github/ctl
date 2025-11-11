@@ -38,11 +38,11 @@ pub trait Cmp<T> {
 
 pub trait TotalCmp: Cmp<This> {
     fn max(my this, rhs: This): This {
-        if this > rhs { this } else { rhs }
+        this > rhs then this else rhs
     }
 
     fn min(my this, rhs: This): This {
-        if this > rhs { rhs } else { this }
+        this > rhs then rhs else this
     }
 
     fn clamp(my this, low: This, hi: This): This {
