@@ -91,7 +91,7 @@ pub mod ext {
 
     pub extension OptionFlatten<T> for ??T {
         pub fn flatten(my this): ?T {
-            this is ? ?val then val
+            this is ??val then val
         }
     }
 }

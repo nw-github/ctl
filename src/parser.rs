@@ -1363,6 +1363,12 @@ impl<'a, 'b> Parser<'a, 'b> {
                     .pattern_impl(false, ctx)
                     .map(|inner| Pattern::Option(inner.into()));
             }
+            Token::NoneCoalesce => {
+                self.next();
+                return self
+                    .pattern_impl(false, ctx)
+                    .map(|inner| Pattern::Option(Pattern::Option(inner.into()).into()));
+            }
             Token::LParen => {
                 let span = self.next().span;
                 return self.tuple_like(span, mut_var).map(Pattern::Tuple);
