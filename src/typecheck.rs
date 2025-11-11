@@ -2634,6 +2634,12 @@ impl TypeChecker {
                             );
                         }
                     }
+                    UnaryOp::Option => {
+                        let expr = self
+                            .check_expr(*expr, target.and_then(|t| t.as_option_inner(&self.proj)));
+                        let ty = self.make_lang_type_by_name("option", [expr.ty], span);
+                        (ty, self.try_coerce(expr, ty))
+                    }
                     _ => {
                         let span = expr.span;
                         let expr = self.check_expr(*expr, target);

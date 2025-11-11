@@ -222,6 +222,8 @@ pub enum UnaryOp {
     Unwrap,
     #[display(fmt = "?")]
     Try,
+    #[display(fmt = "?")]
+    Option,
 }
 
 impl UnaryOp {
@@ -244,6 +246,7 @@ impl UnaryOp {
             Token::Increment => Some(UnaryOp::PreIncrement),
             Token::Decrement => Some(UnaryOp::PreDecrement),
             Token::Exclamation => Some(UnaryOp::Not),
+            Token::Question => Some(UnaryOp::Option),
             _ => None,
         }
     }

@@ -2177,7 +2177,8 @@ impl Codegen {
 
     fn emit_unary(&mut self, state: &mut State, op: UnaryOp, ret: TypeId, mut lhs: Expr) {
         match op {
-            UnaryOp::Plus => self.emit_expr(lhs, state),
+            // OK for option since lhs has already been coerced
+            UnaryOp::Plus | UnaryOp::Option => self.emit_expr(lhs, state),
             UnaryOp::Neg => {
                 write_de!(self.buffer, "-");
                 self.emit_expr(lhs, state);

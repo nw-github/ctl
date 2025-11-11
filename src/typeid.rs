@@ -734,7 +734,7 @@ impl TypeId {
             Try => this.as_option_inner(scopes).is_some(),
             Plus => this.is_numeric(),
             Deref => this.is_any_ptr(),
-            Addr | AddrMut | AddrRaw | AddrRawMut => true,
+            Addr | AddrMut | AddrRaw | AddrRawMut | Option => true,
             Unwrap => false,
         }
     }

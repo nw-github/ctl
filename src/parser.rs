@@ -511,7 +511,10 @@ impl<'a, 'b> Parser<'a, 'b> {
             | Token::Ampersand
             | Token::Increment
             | Token::Decrement
-            | Token::Exclamation => {
+            | Token::Exclamation
+            | Token::Question
+            | Token::NoneCoalesce => {
+                let mut double_opt = false;
                 let op = if data == Token::Ampersand && self.next_if(Token::Mut).is_some() {
                     UnaryOp::AddrMut
                 } else if data == Token::Ampersand && self.next_if(Token::Raw).is_some() {
@@ -520,6 +523,9 @@ impl<'a, 'b> Parser<'a, 'b> {
                     } else {
                         UnaryOp::AddrRaw
                     }
+                } else if data == Token::NoneCoalesce {
+                    double_opt = true;
+                    UnaryOp::Option
                 } else {
                     UnaryOp::try_from_prefix(data).unwrap()
                 };
@@ -531,6 +537,16 @@ impl<'a, 'b> Parser<'a, 'b> {
                         patt.negative = true;
                         return expr;
                     }
+                }
+
+                if double_opt {
+                    expr = Expr::new(
+                        expr.span,
+                        ExprData::Unary {
+                            op,
+                            expr: expr.into(),
+                        },
+                    );
                 }
 
                 Expr::new(
