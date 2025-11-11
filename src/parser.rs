@@ -895,6 +895,21 @@ impl<'a, 'b> Parser<'a, 'b> {
                     })
                 }
             }
+            Token::Then => {
+                let if_branch = self.expression();
+                let else_branch = self
+                    .next_if(Token::Else)
+                    .map(|_| Box::new(self.precedence(op.data.precedence(), ctx))); /* EvalContext::IfWhile? */
+                Expr::new(
+                    left.span
+                        .extended_to(else_branch.as_ref().map_or(if_branch.span, |e| e.span)),
+                    ExprData::If {
+                        cond: left.into(),
+                        if_branch: if_branch.into(),
+                        else_branch,
+                    },
+                )
+            }
             _ => {
                 self.error(Error::new("unexpected token", op.span));
                 Expr::new(op.span, ExprData::Error)

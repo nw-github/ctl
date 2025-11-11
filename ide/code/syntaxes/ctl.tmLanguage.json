@@ -527,7 +527,7 @@
         {
           "comment": "control flow keywords",
           "name": "keyword.control.ctl",
-          "match": "\\b(await|break|continue|do|else|for|if|guard|loop|match|return|defer|try|while|yield)\\b"
+          "match": "\\b(await|break|continue|do|else|for|if|then|guard|loop|match|return|defer|try|while|yield)\\b"
         },
         {
           "comment": "storage keywords",

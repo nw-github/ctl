@@ -195,7 +195,10 @@ pub enum ExprData {
 
 impl ExprData {
     pub fn is_yielding_block(&self, scopes: &Scopes) -> bool {
-        matches!(self, ExprData::Block(block) if block.is_yielding(scopes))
+        match self {
+            ExprData::Block(block) => block.is_yielding(scopes),
+            _ => true,
+        }
     }
 
     pub fn member_call(

@@ -119,6 +119,7 @@ pub enum Token<'a> {
     Unsafe,
     Shared,
     Use,
+    Then,
     Try,
     Catch,
     Defer,
@@ -189,6 +190,7 @@ pub enum Precedence {
     Min,
     Assignment,   // =
     Range,        // .. ..=
+    Ternary,      // then else
     LogicalOr,    // ||
     LogicalAnd,   // &&
     Eq,           // != ==
@@ -230,6 +232,7 @@ impl Token<'_> {
             LAngle | RAngle | GtEqual | LtEqual | Spaceship | Is => Precedence::Comparison,
             NoneCoalesce => Precedence::NoneCoalesce,
             As => Precedence::Cast,
+            Then => Precedence::Ternary,
             _ => Precedence::Min,
         }
     }
@@ -839,6 +842,7 @@ impl<'a> Lexer<'a> {
             "union" => Token::Union,
             "unsafe" => Token::Unsafe,
             "use" => Token::Use,
+            "then" => Token::Then,
             "trait" => Token::Trait,
             "true" => Token::True,
             "try" => Token::Try,
