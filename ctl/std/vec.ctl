@@ -179,7 +179,11 @@ pub struct Vec<T> {
         }
     }
 
-    pub fn as_raw(this): ^mut T {
+    pub fn as_raw(this): ^T {
+        this.ptr
+    }
+
+    pub fn as_raw_mut(this): ^mut T {
         this.ptr
     }
 

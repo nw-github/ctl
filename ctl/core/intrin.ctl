@@ -39,7 +39,7 @@ pub extern fn memcpy(dst: ^mut u8, src: ^u8, len: uint): ^mut u8;
 pub extern fn memmove(dst: ^mut u8, src: ^u8, len: uint): ^mut u8;
 
 @(c_opaque, c_name(CTL_MEMCMP))
-pub extern fn memcmp(dst: ^mut u8, src: ^u8, len: uint): c_int;
+pub extern fn memcmp(dst: ^u8, src: ^u8, len: uint): c_int;
 
 @(c_opaque, c_name(CTL_MALLOC))
 pub extern fn malloc(size: uint, align: uint): ?^mut u8;

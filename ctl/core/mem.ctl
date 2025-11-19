@@ -21,7 +21,7 @@ pub unsafe fn copy_overlapping<T>(kw dst: ^mut T, kw src: ^T, kw num: uint) {
     unsafe intrin::memmove(dst.cast(), src.cast(), num * size_of::<T>());
 }
 
-pub unsafe fn compare<T>(lhs: ^mut T, rhs: ^T, num: uint): bool {
+pub unsafe fn compare<T>(lhs: ^T, rhs: ^T, num: uint): bool {
     unsafe intrin::memcmp(lhs.cast(), rhs.cast(), num * size_of::<T>()) == 0
 }
 

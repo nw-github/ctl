@@ -8,7 +8,7 @@ pub extension StringExt for str {
         mut buf: [u8] = std::vec::Vec::with_capacity(num * n);
         for i in 0u..n {
             unsafe std::mem::copy(
-                dst: buf.as_raw() + num * i,
+                dst: buf.as_raw_mut() + num * i,
                 src: this.as_raw(),
                 num:,
             );
@@ -24,8 +24,8 @@ pub extension StringExt for str {
         let rlen = rhs.len();
         mut buf: [u8] = std::vec::Vec::with_capacity(llen + rlen);
         unsafe {
-            std::mem::copy(dst: buf.as_raw(), src: this.as_raw(), num: llen);
-            std::mem::copy(dst: buf.as_raw().uoffset(llen), src: rhs.as_raw(), num: rlen);
+            std::mem::copy(dst: buf.as_raw_mut(), src: this.as_raw(), num: llen);
+            std::mem::copy(dst: buf.as_raw_mut().uoffset(llen), src: rhs.as_raw(), num: rlen);
             buf.set_len(llen + rlen);
             str::from_utf8_unchecked(buf[..])
         }
@@ -84,7 +84,7 @@ pub extension MapFormat<K: Format, V: Format> for [K: V] {
     }
 }
 
-pub extension SetFormat<T: Format> for {T} {
+pub extension SetFormat<T: Format> for #[T] {
     impl Format {
         fn fmt<F: Formatter>(this, f: *mut F) {
             "\{".fmt(f);

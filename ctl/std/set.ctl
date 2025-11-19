@@ -41,7 +41,7 @@ pub struct Set<T: Hash + Eq<T>> {
 
     impl FromIter<T> {
         fn from_iter<I: Iterator<T>>(iter: I): This {
-            mut self: {T} = #[]; // TODO: size hint
+            mut self: #[T] = #[]; // TODO: size hint
             for i in iter {
                 self.insert(i);
             }

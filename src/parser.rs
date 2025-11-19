@@ -709,7 +709,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
             Token::Unsafe => {
                 let expr = self.precedence(Precedence::Min, ctx);
-                Expr::new(span, ExprData::Unsafe(expr.into()))
+                Expr::new(span.extended_to(expr.span), ExprData::Unsafe(expr.into()))
             }
             Token::Continue => {
                 let label = self
@@ -1586,10 +1586,11 @@ impl<'a, 'b> Parser<'a, 'b> {
                     }
                 }
             }
-            Token::LCurly => {
+            Token::Hash => {
                 self.next();
+                self.expect(Token::LBrace);
                 let inner = self.type_hint().into();
-                self.expect(Token::RCurly);
+                self.expect(Token::RBrace);
                 TypeHint::Set(inner)
             }
             Token::LParen => {
