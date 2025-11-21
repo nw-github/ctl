@@ -47,7 +47,10 @@ const ATTR_LINKNAME: &str = "c_name";
 const NULLPTR: &str = "((void*)0)";
 
 #[derive(Default)]
-struct TypeGen(DependencyGraph<TypeId>);
+struct TypeGen {
+    types: DependencyGraph<TypeId>,
+    dynptrs: HashSet<GenericTrait>,
+}
 
 impl TypeGen {
     fn gen_fnptr(
@@ -228,7 +231,7 @@ impl TypeGen {
 
     fn emit(&self, scopes: &Scopes, types: &mut Types, decls: &mut Buffer, flags: &CodegenFlags) {
         let mut defs = Buffer::default();
-        self.0.visit_all(|&id| match &types[id] {
+        self.types.visit_all(|&id| match &types[id] {
             Type::Fn(f) => {
                 let f = f.clone().as_fn_ptr(scopes, types);
                 Self::gen_fnptr(scopes, types, &mut defs, flags, &f);
@@ -275,7 +278,7 @@ impl TypeGen {
     }
 
     fn add_type(&mut self, scopes: &Scopes, types: &mut Types, ty: TypeId) {
-        if self.0.contains_key(&ty) {
+        if self.types.contains_key(&ty) {
             return;
         }
 
@@ -306,7 +309,14 @@ impl TypeGen {
         }
 
         match &types[ty] {
-            Type::Int(_) | Type::Uint(_) | Type::DynMutPtr(_) | Type::DynPtr(_) => {}
+            Type::Int(_) | Type::Uint(_) => {}
+            Type::DynMutPtr(tr) | Type::DynPtr(tr) => {
+                if self.dynptrs.contains(tr) {
+                    return;
+                }
+
+                self.dynptrs.insert(tr.clone());
+            }
             Type::FnPtr(f) => {
                 let ret = f.ret;
                 for param in f.params.clone() {
@@ -323,7 +333,7 @@ impl TypeGen {
             }
             &Type::Array(ty, _) => dependency!(ty),
             Type::User(ut) => {
-                self.0.insert(ty, Dependencies::Resolving);
+                self.types.insert(ty, Dependencies::Resolving);
                 let ut = ut.clone();
                 for m in scopes.get(ut.id).members.values() {
                     dependency!(m.ty.with_templates(types, &ut.ty_args));
@@ -348,7 +358,7 @@ impl TypeGen {
             _ => return,
         }
 
-        self.0.insert(ty, Dependencies::Resolved(deps));
+        self.types.insert(ty, Dependencies::Resolved(deps));
     }
 }
 
