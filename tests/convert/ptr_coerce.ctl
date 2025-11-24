@@ -1,3 +1,5 @@
+// Output: pass
+
 fn main() {
     let a = 0;
     mut b = 1;
@@ -6,4 +8,6 @@ fn main() {
     c = &a;
     c = &mut b;
     c = &raw mut b;
+
+    println("pass")
 }

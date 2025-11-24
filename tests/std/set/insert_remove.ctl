@@ -6,7 +6,7 @@
 // Output: false 4
 
 fn main() {
-    mut set: {str} = #[];
+    mut set: #[str] = #[];
     println("{set.len()}");
 
     let a = set.insert("jersey");
