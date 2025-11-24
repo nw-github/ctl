@@ -46,10 +46,13 @@ const ATTR_NOGEN: &str = "c_opaque";
 const ATTR_LINKNAME: &str = "c_name";
 const NULLPTR: &str = "((void*)0)";
 
+const VTABLE_TRAIT_START: &str = "$Start";
+const VTABLE_TRAIT_LEN: &str = "$Len";
+
 #[derive(Default)]
 struct TypeGen {
     types: DependencyGraph<TypeId>,
-    dynptrs: HashSet<GenericTrait>,
+    traits: HashSet<UserTypeId>,
 }
 
 impl TypeGen {
@@ -79,60 +82,41 @@ impl TypeGen {
         write_de!(buffer, ");");
     }
 
-    fn gen_dynptr(
+    fn gen_vtable_info(
         flags: &CodegenFlags,
-        decls: &mut Buffer,
-        defs: &mut Buffer,
+        buf: &mut Buffer,
         scopes: &Scopes,
-        types: &mut Types,
-        tr: &GenericTrait,
+        types: &Types,
+        trait_deps: &DependencyGraph<UserTypeId>,
+        tr: UserTypeId,
     ) {
-        write_de!(decls, "typedef struct ");
-        decls.emit_vtable_struct_name(scopes, types, tr, flags.minify);
-        write_de!(decls, " ");
-        decls.emit_vtable_struct_name(scopes, types, tr, flags.minify);
-        write_de!(decls, ";typedef struct ");
-        decls.emit_type_name(scopes, types, tr, flags.minify);
-        write_de!(decls, "{{void*self;");
-        decls.emit_vtable_struct_name(scopes, types, tr, flags.minify);
-        write_de!(decls, " const*vtable;}}");
-        decls.emit_type_name(scopes, types, tr, flags.minify);
-        write_de!(decls, ";");
+        // TODO: not sure if losing type information on the vtables will affect optimization in any
+        // way. if it does, we can go back to emitting full vtable structs per trait.
+        let Some(Dependencies::Resolved(deps)) = trait_deps.get(&tr) else {
+            panic!(
+                "ICE: Dyn pointer for trait '{}' has invalid dependencies",
+                tr.name(scopes)
+            );
+        };
 
-        write_de!(defs, "struct ");
-        defs.emit_vtable_struct_name(scopes, types, tr, flags.minify);
-        write_de!(defs, "{{");
-        for id in scopes.get_trait_impls(tr.id) {
+        write_de!(buf, "enum {{");
+
+        let mut offset = 0;
+        for id in std::iter::once(tr).chain(deps.iter().cloned()) {
+            buf.emit_vtable_prefix(scopes, tr, flags.minify);
+            buf.emit_vtable_prefix(scopes, id, flags.minify);
+            write_de!(buf, "{VTABLE_TRAIT_START}={offset},");
+
             for f in vtable_methods(scopes, types, scopes.get(id)) {
-                let ret = scopes.get(f.id).ret.with_templates(types, &tr.ty_args);
-                if ret.is_void() {
-                    write_de!(defs, "void");
-                } else {
-                    defs.emit_type(scopes, types, ret, flags.minify);
-                }
-                write_de!(defs, "(*const ");
-                defs.emit_fn_name(
-                    scopes,
-                    types,
-                    &GenericFn::new(f.id, tr.ty_args.clone()),
-                    flags.minify,
-                );
-                write_de!(defs, ")(");
-                for (i, param) in scopes.get(f.id).params.iter().enumerate() {
-                    let ty = param.ty.with_templates(types, &tr.ty_args);
-                    if i > 0 {
-                        write_de!(defs, ",");
-                        defs.emit_type(scopes, types, ty, flags.minify);
-                    } else if types[ty].is_ptr() {
-                        write_de!(defs, "const void*");
-                    } else {
-                        write_de!(defs, "void*");
-                    }
-                }
-                write_de!(defs, ");");
+                buf.emit_vtable_prefix(scopes, tr, flags.minify);
+                buf.emit_vtable_fn_name(scopes, f.id, flags.minify);
+                write_de!(buf, "={offset},");
+                offset += 1;
             }
         }
-        write_de!(defs, "}};");
+
+        buf.emit_vtable_prefix(scopes, tr, flags.minify);
+        write_de!(buf, "{VTABLE_TRAIT_LEN}={offset}}};");
     }
 
     fn gen_usertype(
@@ -229,7 +213,14 @@ impl TypeGen {
         write_de!(defs, "}};");
     }
 
-    fn emit(&self, scopes: &Scopes, types: &mut Types, decls: &mut Buffer, flags: &CodegenFlags) {
+    fn emit(
+        &self,
+        scopes: &Scopes,
+        types: &mut Types,
+        trait_deps: &DependencyGraph<UserTypeId>,
+        decls: &mut Buffer,
+        flags: &CodegenFlags,
+    ) {
         let mut defs = Buffer::default();
         self.types.visit_all(|&id| match &types[id] {
             Type::Fn(f) => {
@@ -241,7 +232,7 @@ impl TypeGen {
                 Self::gen_usertype(flags, decls, &mut defs, scopes, types, &ut.clone());
             }
             Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                Self::gen_dynptr(flags, decls, &mut defs, scopes, types, &tr.clone());
+                Self::gen_vtable_info(flags, &mut defs, scopes, types, trait_deps, tr.id);
             }
             &Type::Int(bits) if bits != 0 => {
                 let nearest = nearest_pow_of_two(bits);
@@ -311,11 +302,9 @@ impl TypeGen {
         match &types[ty] {
             Type::Int(_) | Type::Uint(_) => {}
             Type::DynMutPtr(tr) | Type::DynPtr(tr) => {
-                if self.dynptrs.contains(tr) {
+                if !self.traits.insert(tr.id) {
                     return;
                 }
-
-                self.dynptrs.insert(tr.clone());
             }
             Type::FnPtr(f) => {
                 let ret = f.ret;
@@ -534,9 +523,8 @@ impl Buffer {
                 }
             }
             &Type::Array(_, _) => self.emit_mangled_name(scopes, types, id, min),
-            Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                self.emit_type_name(scopes, types, &tr.clone(), min)
-            }
+            Type::DynPtr(_) => write_de!(self, "DynPtr"),
+            Type::DynMutPtr(_) => write_de!(self, "DynMutPtr"),
             Type::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
             Type::Unresolved(_) => panic!("ICE: TypeId::Unresolved in emit_type"),
         }
@@ -637,15 +625,54 @@ impl Buffer {
         }
     }
 
-    fn emit_vtable_struct_name(
+    fn emit_vtable_prefix(&mut self, scopes: &Scopes, tr: UserTypeId, min: bool) {
+        self.emit(if min { "v" } else { "$vtable_" });
+        if min {
+            write_de!(self, "t{tr}");
+        } else {
+            let ty = scopes.get(tr);
+            self.emit(scopes.full_name(ty.scope, &ty.name.data));
+        }
+        write_de!(self, "_");
+    }
+
+    fn emit_vtable_fn_name(&mut self, scopes: &Scopes, id: FunctionId, min: bool) {
+        if min {
+            write_de!(self, "p{id}");
+        } else {
+            let f = scopes.get(id);
+            self.emit(scopes.full_name(f.scope, &f.name.data));
+        }
+    }
+
+    fn emit_dyn_fn_type(
         &mut self,
         scopes: &Scopes,
         types: &mut Types,
-        tr: &GenericTrait,
+        func: &GenericFn,
         min: bool,
     ) {
-        self.emit(if min { "v" } else { "$vtable_" });
-        self.emit_type_name(scopes, types, tr, min);
+        let func_data = scopes.get(func.id);
+
+        let ret = func_data.ret.with_templates(types, &func.ty_args);
+        if ret.is_void() {
+            write_de!(self, "void");
+        } else {
+            self.emit_type(scopes, types, ret, min);
+        }
+        write_de!(self, "(*)(");
+        for (i, param) in func_data.params.iter().enumerate() {
+            let param_ty = param.ty.with_templates(types, &func.ty_args);
+            if i > 0 {
+                write_de!(self, ",");
+                self.emit_type(scopes, types, param_ty, min);
+            } else if types[param_ty].is_ptr() {
+                write_de!(self, "const void*");
+            } else {
+                write_de!(self, "void*");
+            }
+        }
+        write_de!(self, ")");
     }
 
     fn finish(self) -> String {
@@ -903,6 +930,7 @@ impl Codegen {
         this.tg.emit(
             &this.proj.scopes,
             &mut this.proj.types,
+            &this.proj.trait_deps,
             &mut this.buffer,
             &this.flags,
         );
@@ -927,16 +955,12 @@ impl Codegen {
 
         let mut buffer = Buffer::default();
         usebuf!(self, &mut buffer, {
-            write_de!(self.buffer, "static const ");
-            self.buffer.emit_vtable_struct_name(
-                &self.proj.scopes,
-                &mut self.proj.types,
-                &vtable.tr,
-                self.flags.minify,
-            );
-            write_de!(self.buffer, " ");
+            write_de!(self.buffer, "static const VirtualFn ");
             self.emit_vtable_name(&vtable);
-            write_de!(self.buffer, "={{");
+            write_de!(self.buffer, "[");
+            self.buffer
+                .emit_vtable_prefix(&self.proj.scopes, vtable.tr.id, self.flags.minify);
+            write_de!(self.buffer, "{VTABLE_TRAIT_LEN}] ={{");
             for tr in self
                 .proj
                 .scopes
@@ -947,49 +971,15 @@ impl Codegen {
                     &self.proj.types,
                     self.proj.scopes.get(tr.id),
                 ) {
-                    let func = GenericFn::new(f.id, tr.ty_args.clone());
-                    let func_data = self.proj.scopes.get(f.id);
-
-                    write_de!(self.buffer, ".");
-                    self.buffer.emit_fn_name(
+                    write_de!(self.buffer, "[");
+                    self.buffer.emit_vtable_prefix(
                         &self.proj.scopes,
-                        &mut self.proj.types,
-                        &func,
+                        vtable.tr.id,
                         self.flags.minify,
                     );
-                    write_de!(self.buffer, "=(");
-                    let ret = func_data
-                        .ret
-                        .with_templates(&mut self.proj.types, &func.ty_args);
-                    if ret.is_void() {
-                        write_de!(self.buffer, "void");
-                    } else {
-                        self.buffer.emit_type(
-                            &self.proj.scopes,
-                            &mut self.proj.types,
-                            ret,
-                            self.flags.minify,
-                        );
-                    }
-                    write_de!(self.buffer, "(*)(");
-                    for (i, param) in func_data.params.iter().enumerate() {
-                        let param_ty = param.ty.with_templates(&mut self.proj.types, &func.ty_args);
-                        if i > 0 {
-                            write_de!(self.buffer, ",");
-                            self.buffer.emit_type(
-                                &self.proj.scopes,
-                                &mut self.proj.types,
-                                param_ty,
-                                self.flags.minify,
-                            );
-                        } else if self.proj.types[param_ty].is_ptr() {
-                            write_de!(self.buffer, "const void*");
-                        } else {
-                            write_de!(self.buffer, "void*");
-                        }
-                    }
-                    write_de!(self.buffer, "))");
-
+                    self.buffer
+                        .emit_vtable_fn_name(&self.proj.scopes, f.id, self.flags.minify);
+                    write_de!(self.buffer, "]=(VirtualFn)");
                     let func = self.find_implementation(
                         vtable.ty,
                         &tr,
@@ -1198,30 +1188,56 @@ impl Codegen {
                 inner.ty = inner
                     .ty
                     .with_templates(&mut self.proj.types, &state.func.ty_args);
-                let vtable =
-                    if let Type::Ptr(inner) | Type::MutPtr(inner) = &self.proj.types[inner.ty] {
-                        Vtable {
-                            tr: self
-                                .proj
-                                .types
-                                .get(expr.ty)
-                                .as_dyn_pointee()
-                                .expect("ICE: DynCoerce to non dyn pointer")
-                                .clone(),
-                            ty: *inner,
-                            scope,
-                        }
-                    } else {
-                        panic!("ICE: DynCoerce from non-pointer");
-                    };
+
+                let to_tr = self
+                    .proj
+                    .types
+                    .get(expr.ty)
+                    .as_dyn_pointee()
+                    .expect("ICE: DynCoerce to non dyn pointer")
+                    .clone();
 
                 self.emit_cast(expr.ty);
-                write_de!(self.buffer, "{{.self=(void*)");
-                self.emit_expr(*inner, state);
-                write_de!(self.buffer, ",.vtable=&");
-                self.emit_vtable_name(&vtable);
-                write_de!(self.buffer, "}}");
-                self.emit_vtable(vtable);
+                if let &Type::Ptr(from) | &Type::MutPtr(from) = &self.proj.types[inner.ty] {
+                    if self.proj.types[expr.ty].is_dyn_ptr() {
+                        write_de!(self.buffer, "{{.self=(void const*)");
+                    } else {
+                        write_de!(self.buffer, "{{.self=(void*)");
+                    }
+
+                    self.emit_expr(*inner, state);
+                    write_de!(self.buffer, ",.vtable=");
+                    let vtable = Vtable {
+                        tr: to_tr,
+                        ty: from,
+                        scope,
+                    };
+
+                    self.emit_vtable_name(&vtable);
+                    self.emit_vtable(vtable);
+                    write_de!(self.buffer, "}}");
+                } else if let Type::DynPtr(tr) | Type::DynMutPtr(tr) = &self.proj.types[inner.ty] {
+                    let from_tr_id = tr.id;
+                    let recv = hoist!(self, self.emit_tmpvar(*inner, state));
+                    if from_tr_id != to_tr.id {
+                        write_de!(self.buffer, "{{.self={recv}.self,.vtable=&{recv}.vtable[");
+                        self.buffer.emit_vtable_prefix(
+                            &self.proj.scopes,
+                            from_tr_id,
+                            self.flags.minify,
+                        );
+                        self.buffer.emit_vtable_prefix(
+                            &self.proj.scopes,
+                            to_tr.id,
+                            self.flags.minify,
+                        );
+                        write_de!(self.buffer, "{VTABLE_TRAIT_START}]}}");
+                    } else {
+                        write_de!(self.buffer, "{{.self={recv}.self,.vtable={recv}.vtable}}");
+                    }
+                } else {
+                    panic!("ICE: DynCoerce from non-pointer");
+                };
             }
             ExprData::Call(callee, args) => {
                 let func = self.proj.types[callee.ty].as_fn().unwrap();
@@ -1259,15 +1275,22 @@ impl Codegen {
                     write_de!(self.buffer, "VOID(");
                 }
                 let (_, recv) = args.shift_remove_index(0).unwrap();
+                let tr = self.proj.types[recv.ty].as_dyn_pointee().unwrap().id;
                 let recv = hoist!(self, self.emit_tmpvar(recv, state));
-                write_de!(self.buffer, "{recv}.vtable->");
-                self.buffer.emit_fn_name(
+
+                write_de!(self.buffer, "((");
+                self.buffer.emit_dyn_fn_type(
                     &self.proj.scopes,
                     &mut self.proj.types,
                     &func,
                     self.flags.minify,
                 );
-                write_de!(self.buffer, "({recv}.self");
+                write_de!(self.buffer, "){recv}.vtable[");
+                self.buffer
+                    .emit_vtable_prefix(&self.proj.scopes, tr, self.flags.minify);
+                self.buffer
+                    .emit_vtable_fn_name(&self.proj.scopes, func.id, self.flags.minify);
+                write_de!(self.buffer, "])({recv}.self");
                 if args.is_empty() {
                     write_de!(self.buffer, ")");
                 } else {

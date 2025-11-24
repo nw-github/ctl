@@ -1,5 +1,5 @@
-// Output: 10
-// Output: 0
+// Error: trait recursively requires implementation of itself
+// Error: trait recursively requires implementation of itself
 
 trait Bar: Baz {
     fn bar(mut this, x: int);
@@ -25,12 +25,4 @@ struct Test {
     }
 }
 
-fn main() {
-    mut foo = Test(x: 0);
-    mut x: *dyn mut Bar = &mut foo;
-    x.bar(10);
-    println("{foo.x}");
-
-    x.baz(10);
-    println("{foo.x}");
-}
+fn main() {}

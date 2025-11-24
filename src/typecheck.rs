@@ -5984,6 +5984,17 @@ impl TypeChecker {
                 expr.ty = target;
                 Ok(expr)
             }
+            (Type::DynPtr(lhs), Type::DynPtr(rhs))
+            | (Type::DynMutPtr(lhs), Type::DynMutPtr(rhs) | Type::DynPtr(rhs)) => {
+                if lhs == rhs || self.has_direct_impl(&lhs.clone(), &rhs.clone()) {
+                    Ok(CExpr::new(
+                        target,
+                        CExprData::DynCoerce(expr.into(), self.current),
+                    ))
+                } else {
+                    Err(expr)
+                }
+            }
             (&Type::Ptr(lhs), Type::DynPtr(rhs)) => {
                 if self.implements_trait(lhs, &rhs.clone()) {
                     Ok(CExpr::new(

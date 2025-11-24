@@ -199,3 +199,14 @@ typedef struct {
   ($void) {        \
     CTL_DUMMY_INIT \
   }
+
+typedef void (*VirtualFn)(void);
+typedef struct {
+  void *self;
+  VirtualFn const *vtable;
+} DynMutPtr;
+
+typedef struct {
+  void const *self;
+  VirtualFn const *vtable;
+} DynPtr;
