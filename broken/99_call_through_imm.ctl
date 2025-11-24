@@ -9,6 +9,9 @@ struct Foo {
     fn hi(this) {
         *this.x = 1; // 'this' is immutable, this should fail
         this.y.test(); // this should also fail
+
+        let x = this.x; // however until anything stops this from happening, addressing it is pointless
+        *x = 4;
     }
 }
 
