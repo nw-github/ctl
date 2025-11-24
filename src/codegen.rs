@@ -570,7 +570,7 @@ impl Buffer {
                 self.emit_mangled_name(scopes, types, ty, min);
             }
         } else {
-            self.emit(scopes.full_name(ty.scope, &ty.name.data));
+            self.emit(full_name(scopes, ty.scope, &ty.name.data));
             if !ut.ty_args.is_empty() {
                 write_de!(self, "$");
                 for &ty in ut.ty_args.values() {
@@ -610,7 +610,7 @@ impl Buffer {
                     self.emit_mangled_name(scopes, types, ty, min);
                 }
             } else {
-                self.emit(scopes.full_name(f.scope, &f.name.data));
+                self.emit(full_name(scopes, f.scope, &f.name.data));
                 if !func.ty_args.is_empty() {
                     write_de!(self, "$");
                     for &ty in func.ty_args.values() {
@@ -631,7 +631,7 @@ impl Buffer {
             write_de!(self, "t{tr}");
         } else {
             let ty = scopes.get(tr);
-            self.emit(scopes.full_name(ty.scope, &ty.name.data));
+            self.emit(full_name(scopes, ty.scope, &ty.name.data));
         }
         write_de!(self, "_");
     }
@@ -641,7 +641,7 @@ impl Buffer {
             write_de!(self, "p{id}");
         } else {
             let f = scopes.get(id);
-            self.emit(scopes.full_name(f.scope, &f.name.data));
+            self.emit(full_name(scopes, f.scope, &f.name.data));
         }
     }
 
@@ -3162,7 +3162,7 @@ impl Codegen {
         let var = self.proj.scopes.get(id);
         if var.is_static {
             self.buffer
-                .emit(self.proj.scopes.full_name(var.scope, &var.name.data));
+                .emit(full_name(&self.proj.scopes, var.scope, &var.name.data));
         } else {
             let mut emit = || {
                 write_de!(self.buffer, "$");
@@ -3485,7 +3485,7 @@ impl Codegen {
         }) else {
             panic!(
                 "searching from scope: '{}', cannot find implementation for method '{}::{method}' for type '{}'",
-                self.proj.scopes.full_name(scope, ""),
+                full_name(&self.proj.scopes,scope, ""),
                 tr.name(&self.proj.scopes, &mut self.proj.types),
                 inst.name(&self.proj.scopes, &mut self.proj.types)
             )
@@ -3494,7 +3494,7 @@ impl Codegen {
         if !self.proj.scopes.get(mfn.func.id).has_body {
             panic!(
                 "searching from scope: '{}', get_member_fn_ex picked invalid function for implementation for method '{}::{method}' for type '{}'",
-                self.proj.scopes.full_name(scope, ""),
+                full_name(&self.proj.scopes,scope, ""),
                 tr.name(&self.proj.scopes, &mut self.proj.types),
                 inst.name(&self.proj.scopes, &mut self.proj.types)
             )
@@ -3569,6 +3569,26 @@ fn member_name(scopes: &Scopes, id: Option<UserTypeId>, name: &str) -> String {
     } else {
         format!("${name}")
     }
+}
+
+fn full_name(scopes: &Scopes, id: ScopeId, ident: &str) -> String {
+    let mut name: String = ident.chars().rev().collect();
+    for scope_name in scopes
+        .walk(id)
+        .flat_map(|(_, scope)| scope.kind.name(scopes))
+    {
+        name.reserve(scope_name.data.len() + 1);
+        name.push('_');
+        for c in scope_name.data.chars().rev() {
+            name.push(c);
+        }
+    }
+
+    if name.ends_with(|c: char| c.is_ascii_digit()) {
+        name.push_str("_$");
+    }
+
+    name.chars().rev().collect::<String>()
 }
 
 fn loop_cont_label(scope: ScopeId) -> String {

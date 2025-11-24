@@ -471,19 +471,6 @@ impl Scopes {
         }
     }
 
-    pub fn full_name(&self, id: ScopeId, ident: &str) -> String {
-        let mut name: String = ident.chars().rev().collect();
-        for scope_name in self.walk(id).flat_map(|(_, scope)| scope.kind.name(self)) {
-            name.reserve(scope_name.data.len() + 1);
-            name.push('_');
-            for c in scope_name.data.chars().rev() {
-                name.push(c);
-            }
-        }
-
-        name.chars().rev().collect::<String>()
-    }
-
     pub fn function_of(&self, scope: ScopeId) -> Option<FunctionId> {
         self.walk(scope)
             .find_map(|(_, scope)| scope.kind.as_function().copied())
