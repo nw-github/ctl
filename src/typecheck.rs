@@ -1675,9 +1675,15 @@ impl TypeChecker {
             }
             DStmt::Trait { id, fns } => {
                 self.enter_id(self.proj.scopes.get(id).body_scope, |this| {
-                    this.resolve_impls(*this.proj.scopes.get(id).kind.as_trait().unwrap().0);
                     // TODO: disable errors so this doesn't cause duplicate errors
-                    this.resolve_impls(id);
+                    this.resolve_impls(*this.proj.scopes.get(id).kind.as_trait().unwrap().0);
+                    if this.check_trait_dependencies(id) {
+                        // FIXME: this error also shows for traits that have a recursive trait in
+                        // their impls
+                        this.proj
+                            .diag
+                            .error(Error::recursive_trait(this.proj.scopes.get(id).name.span));
+                    }
                     for f in fns {
                         this.check_fn(f);
                     }
@@ -5048,6 +5054,7 @@ impl TypeChecker {
         self.proj.scopes.get_mut(id).members_resolved = true;
     }
 
+    /// Returns `true` if the specified type is recursive
     fn resolve_dependencies(&mut self, id: UserTypeId, this: TypeId, mut canonical: bool) -> bool {
         match self.proj.deps.get(&this) {
             Some(Dependencies::Resolved(_)) => return false,
@@ -5174,6 +5181,44 @@ impl TypeChecker {
         }
 
         false
+    }
+
+    fn check_trait_dependencies(&mut self, id: UserTypeId) -> bool {
+        self.resolve_impls(id);
+
+        match self.proj.trait_deps.get(&id) {
+            Some(Dependencies::Resolved(_)) => return false,
+            Some(_) => return true,
+            None => {}
+        }
+
+        self.proj.trait_deps.insert(id, Dependencies::Resolving);
+
+        let mut deps = Vec::new();
+        let mut failed = false;
+        for i in 0..self.proj.scopes.get(id).impls.iter().len() {
+            if let Some(checked) = self.proj.scopes.get(id).impls[i].as_checked() {
+                deps.push(checked.id);
+
+                let checked_id = checked.id;
+                if self.check_trait_dependencies(checked_id) {
+                    failed = true;
+                }
+                if let Some(Dependencies::Resolved(res)) = self.proj.trait_deps.get(&checked_id) {
+                    deps.extend(res.iter());
+                }
+            }
+        }
+
+        if failed {
+            self.proj.trait_deps.insert(id, Dependencies::Recursive);
+            true
+        } else {
+            self.proj
+                .trait_deps
+                .insert(id, Dependencies::Resolved(deps));
+            false
+        }
     }
 
     fn resolve_impls(&mut self, id: UserTypeId) {

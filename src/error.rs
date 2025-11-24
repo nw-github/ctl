@@ -297,6 +297,10 @@ impl Error {
         Self::new("expression overflows during constant evaluation", span)
     }
 
+    pub fn recursive_trait(span: Span) -> Self {
+        Self::new("trait recursively requires implementation of itself", span)
+    }
+
     pub fn bitfield_member(name: &str, span: Span) -> Self {
         Self::new(
             format!("member '{name}' of packed struct must have integer or enum union type (union with all empty variants)"),

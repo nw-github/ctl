@@ -1,6 +1,6 @@
 use crate::{
     dgraph::DependencyGraph,
-    sym::{FunctionId, ScopeId, Scopes, VariableId},
+    sym::{FunctionId, ScopeId, Scopes, UserTypeId, VariableId},
     typecheck::{Completions, LspItem},
     typeid::{TypeId, Types},
     Diagnostics, Span,
@@ -30,6 +30,7 @@ pub struct Project {
     pub main: Option<FunctionId>,
     pub deps: DependencyGraph<TypeId>,
     pub static_deps: DependencyGraph<VariableId>,
+    pub trait_deps: DependencyGraph<UserTypeId>,
 }
 
 impl Project {
