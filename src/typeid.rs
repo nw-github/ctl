@@ -225,7 +225,7 @@ impl GenericUserType {
                 } else if is_lang_type("vec") {
                     return format!("[{}]", self.ty_args[0].name(scopes, types));
                 } else if is_lang_type("set") {
-                    return format!("{{{}}}", self.ty_args[0].name(scopes, types));
+                    return format!("#[{}]", self.ty_args[0].name(scopes, types));
                 } else if is_lang_type("map") {
                     return format!(
                         "[{}: {}]",
