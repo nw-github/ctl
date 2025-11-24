@@ -927,6 +927,19 @@ impl Codegen {
             writeln_de!(this.buffer, "#define CTL_NOBITINT");
         }
         this.buffer.emit(include_str!("../ctl/ctl.h"));
+        if let Some(&ut) = this.proj.scopes.lang_types.get("string") {
+            let ut = GenericUserType::from_id(&this.proj.scopes, &mut this.proj.types, ut);
+            this.buffer.emit("#define STRLIT(data, n)(");
+            this.buffer.emit_type_name(
+                &this.proj.scopes,
+                &mut this.proj.types,
+                &ut,
+                this.flags.minify,
+            );
+            this.buffer
+                .emit(") {.$span = {.$ptr = (u8 *)data, .$len = (usize)n }}\n");
+        }
+
         this.tg.emit(
             &this.proj.scopes,
             &mut this.proj.types,
