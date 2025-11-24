@@ -18,7 +18,7 @@ use crate::{
         BitSizeResult, CInt, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, Type,
         TypeArgs, TypeId, Types,
     },
-    write_de, writeln_de, CodegenFlags, THIS_PARAM,
+    write_de, writeln_de, CodegenFlags,
 };
 
 #[macro_export]
@@ -107,7 +107,7 @@ impl TypeGen {
             buf.emit_vtable_prefix(scopes, id, flags.minify);
             write_de!(buf, "{VTABLE_TRAIT_START}={offset},");
 
-            for f in vtable_methods(scopes, types, scopes.get(id)) {
+            for f in vtable_methods(scopes, types, id) {
                 buf.emit_vtable_prefix(scopes, tr, flags.minify);
                 buf.emit_vtable_fn_name(scopes, f.id, flags.minify);
                 write_de!(buf, "={offset},");
@@ -966,11 +966,7 @@ impl Codegen {
                 .scopes
                 .get_trait_impls_ex(&mut self.proj.types, vtable.tr.clone())
             {
-                for f in vtable_methods(
-                    &self.proj.scopes,
-                    &self.proj.types,
-                    self.proj.scopes.get(tr.id),
-                ) {
+                for f in vtable_methods(&self.proj.scopes, &self.proj.types, tr.id) {
                     write_de!(self.buffer, "[");
                     self.buffer.emit_vtable_prefix(
                         &self.proj.scopes,
@@ -3544,21 +3540,12 @@ struct BitfieldAccess {
     bits: u32,
 }
 
-fn vtable_methods(scopes: &Scopes, types: &Types, tr: &UserType) -> Vec<Vis<FunctionId>> {
-    let (&this, _) = tr
-        .kind
-        .as_trait()
-        .expect("UserType passed to vtable_methods was not a trait");
-    tr.fns
+fn vtable_methods(scopes: &Scopes, types: &Types, tr: UserTypeId) -> Vec<Vis<FunctionId>> {
+    scopes
+        .get(tr)
+        .fns
         .iter()
-        .filter(move |f| {
-            let f = scopes.get(f.id);
-            f.type_params.is_empty()
-                && f.params.first().is_some_and(|p| p.label == THIS_PARAM)
-                && f.params
-                    .iter()
-                    .all(|p| !types[p.ty].as_user().is_some_and(|ty| ty.id == this))
-        })
+        .filter(move |f| scopes.get(f.id).is_dyn_compatible(scopes, types, tr))
         .copied()
         .collect()
 }

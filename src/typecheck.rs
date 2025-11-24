@@ -483,14 +483,19 @@ impl TypeChecker {
 
         let mut completions = vec![];
         let mut added = HashSet::new();
-        let mut add_methods = |scopes: &Scopes,
+        let mut add_methods = |proj: &Project,
                                c: &mut Vec<LspItem>,
                                fns: &[Vis<FunctionId>],
                                cap: bool,
-                               m: UserTypeId| {
+                               m: UserTypeId,
+                               dynamic: bool| {
             for func in fns {
-                let f = scopes.get(func.id);
+                let f = proj.scopes.get(func.id);
                 if added.contains(&f.name.data) {
+                    continue;
+                }
+
+                if dynamic && !f.is_dyn_compatible(&proj.scopes, &proj.types, m) {
                     continue;
                 }
 
@@ -524,21 +529,22 @@ impl TypeChecker {
             {
                 for tr in self.proj.scopes.get_trait_impls(tr.id) {
                     let data = self.proj.scopes.get(tr);
-                    add_methods(&self.proj.scopes, &mut completions, &data.fns, cap, tr);
+                    add_methods(&self.proj, &mut completions, &data.fns, cap, tr, false);
                 }
             }
 
-            add_methods(&self.proj.scopes, &mut completions, &data.fns, cap, ut_id);
+            add_methods(&self.proj, &mut completions, &data.fns, cap, ut_id, false);
         } else if let Some(tr) = self.proj.types[ty].as_dyn_pointee() {
             let tr_id = tr.id;
             self.resolve_impls_recursive(tr_id);
             for tr in self.proj.scopes.get_trait_impls(tr_id) {
                 add_methods(
-                    &self.proj.scopes,
+                    &self.proj,
                     &mut completions,
                     &self.proj.scopes.get(tr).fns,
                     true,
                     tr,
+                    true,
                 );
             }
         }
@@ -556,11 +562,12 @@ impl TypeChecker {
             {
                 for tr in self.proj.scopes.get_trait_impls(imp.id) {
                     add_methods(
-                        &self.proj.scopes,
+                        &self.proj,
                         &mut completions,
                         &self.proj.scopes.get(tr).fns,
                         true,
                         tr,
+                        false,
                     );
                 }
             }
@@ -569,11 +576,12 @@ impl TypeChecker {
         for ext in extensions.iter() {
             let data = self.proj.scopes.get(ext.id);
             add_methods(
-                &self.proj.scopes,
+                &self.proj,
                 &mut completions,
                 &data.fns,
                 self.can_access_privates(data.scope),
                 ext.id,
+                false,
             );
         }
 
@@ -4288,7 +4296,7 @@ impl TypeChecker {
                 if mfn.typ.is_dynamic() && !self.proj.scopes.get(mfn.func.id).type_params.is_empty()
                 {
                     self.error(Error::new(
-                        "cannot call generic functions through a dynamic trait pointer",
+                        "cannot call generic functions through a dynamic pointer",
                         span,
                     ))
                 }
@@ -4311,6 +4319,13 @@ impl TypeChecker {
                         span,
                     ));
                 };
+
+                if mfn.typ.is_dynamic() && !self.proj.types[this_param.ty].is_safe_ptr() {
+                    return self.error(Error::new(
+                        format!("cannot call method '{member}' which takes this by value through a dynamic pointer"),
+                        span,
+                    ));
+                }
 
                 let this_param_ty = this_param.ty;
                 if self.proj.types[this_param_ty].is_mut_ptr() {

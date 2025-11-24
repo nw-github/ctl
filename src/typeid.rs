@@ -416,6 +416,10 @@ impl Type {
         )
     }
 
+    pub fn is_safe_ptr(&self) -> bool {
+        matches!(self, Type::Ptr(_) | Type::MutPtr(_))
+    }
+
     pub fn is_integral(&self) -> bool {
         matches!(
             self,

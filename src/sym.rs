@@ -218,6 +218,26 @@ pub struct Function {
     pub body_scope: ScopeId,
 }
 
+impl Function {
+    pub fn is_dyn_compatible(&self, scopes: &Scopes, types: &Types, tr: UserTypeId) -> bool {
+        let (&this, _) = scopes
+            .get(tr)
+            .kind
+            .as_trait()
+            .expect("ICE: Attempt to get dyn compatibility of non-trait function");
+
+        self.type_params.is_empty()
+            && self
+                .params
+                .first()
+                .is_some_and(|p| p.label == crate::THIS_PARAM && types[p.ty].is_safe_ptr())
+            && self
+                .params
+                .iter()
+                .all(|p| !types[p.ty].as_user().is_some_and(|ty| ty.id == this))
+    }
+}
+
 impl FunctionId {
     pub const RESERVED: FunctionId = FunctionId(0);
 }
