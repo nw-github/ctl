@@ -1,7 +1,7 @@
-use crate::ast::parsed::{
+use crate::{ast::parsed::{
     Expr, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Stmt, StmtData, Struct, UsePath,
     UsePathTail,
-};
+}, Located};
 
 const INDENT: &str = "  ";
 
@@ -15,7 +15,7 @@ macro_rules! print_bool {
 
 pub fn print_stmt(stmt: &Stmt, indent: usize) {
     let tabs = INDENT.repeat(indent);
-    match &stmt.data {
+    match &stmt.data.data {
         StmtData::Expr(expr) => {
             eprintln!("{tabs}ExprStmt");
             print_expr(expr, indent + 1);
@@ -98,7 +98,7 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
 
             eprintln!("{tabs}Functions:");
             for f in functions {
-                print_fn(f, indent + 1);
+                print_fn(&f.data, indent + 1);
             }
         }
         StmtData::Extension {
@@ -126,10 +126,10 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
 
             eprintln!("{tabs}Functions:");
             for f in functions {
-                print_fn(f, indent + 1);
+                print_fn(&f.data, indent + 1);
             }
             for f in operators {
-                print_op_fn(f, indent + 1);
+                print_op_fn(&f.data, indent + 1);
             }
         }
         StmtData::Binding {
@@ -569,29 +569,29 @@ fn print_struct(
 
     eprintln!("{tabs}Functions:");
     for f in functions {
-        print_fn(f, indent + 1);
+        print_fn(&f.data, indent + 1);
     }
     for f in operators {
-        print_op_fn(f, indent + 1);
+        print_op_fn(&f.data, indent + 1);
     }
 }
 
-fn print_impls(indent: usize, impls: &[ImplBlock]) {
+fn print_impls(indent: usize, impls: &[Located<ImplBlock>]) {
     let tabs = INDENT.repeat(indent);
     let plus_1 = INDENT.repeat(indent + 1);
     if !impls.is_empty() {
         eprintln!("{tabs}Impls:");
         for imp in impls {
-            if !imp.type_params.is_empty() {
+            if !imp.data.type_params.is_empty() {
                 eprintln!("{tabs}Type Params:");
-                for (name, impls) in imp.type_params.iter() {
+                for (name, impls) in imp.data.type_params.iter() {
                     eprintln!("{plus_1}{name}: {impls:?}");
                 }
             }
 
-            eprintln!("{plus_1}{:?}", imp.path);
-            for f in imp.functions.iter() {
-                print_fn(f, indent + 2)
+            eprintln!("{plus_1}{:?}", imp.data.path);
+            for f in imp.data.functions.iter() {
+                print_fn(&f.data, indent + 2)
             }
         }
     }

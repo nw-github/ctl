@@ -1075,7 +1075,7 @@ impl TypeChecker {
             return DStmt::None;
         }
 
-        match stmt.data {
+        match stmt.data.data {
             PStmtData::Module {
                 public,
                 name,
@@ -1390,14 +1390,14 @@ impl TypeChecker {
         })
     }
 
-    fn declare_fns(&mut self, fns: Vec<Fn>) -> Vec<DFn> {
+    fn declare_fns(&mut self, fns: Vec<Located<Fn>>) -> Vec<DFn> {
         self.declare_fns_iter(fns).collect()
     }
 
-    fn declare_fns_iter(&mut self, fns: Vec<Fn>) -> impl Iterator<Item = DFn> + use<'_> {
+    fn declare_fns_iter(&mut self, fns: Vec<Located<Fn>>) -> impl Iterator<Item = DFn> + use<'_> {
         fns.into_iter().flat_map(|f| {
-            if !self.check_disabled(&f.attrs) {
-                Some(self.declare_fn(f))
+            if !self.check_disabled(&f.data.attrs) {
+                Some(self.declare_fn(f.data))
             } else {
                 None
             }
@@ -1406,14 +1406,16 @@ impl TypeChecker {
 
     fn declare_op_fn(
         &mut self,
-        f: OperatorFn,
+        f: Located<OperatorFn>,
         impls: &mut Vec<TraitImpl>,
         blocks: &mut Vec<DImplBlock>,
         subscripts: &mut Vec<DFn>,
     ) {
-        if self.check_disabled(&f.attrs) {
+        if self.check_disabled(&f.data.attrs) {
             return;
         }
+
+        let f = f.data;
 
         use OperatorFnType as O;
         let (tr_name, fn_name, ty_args) = match f.name.data {
@@ -1527,18 +1529,19 @@ impl TypeChecker {
 
     fn declare_impl_blocks(
         &mut self,
-        blocks: Vec<ImplBlock>,
-        operators: Vec<OperatorFn>,
+        blocks: Vec<Located<ImplBlock>>,
+        operators: Vec<Located<OperatorFn>>,
     ) -> (Vec<TraitImpl>, Vec<DImplBlock>, Vec<DFn>) {
         let mut impls = Vec::new();
         let mut declared_blocks = Vec::new();
         let mut subscripts = Vec::new();
-        for ImplBlock {
-            path,
-            functions,
-            type_params,
-        } in blocks
-        {
+        for block in blocks {
+            let ImplBlock {
+                path,
+                functions,
+                type_params,
+            } = block.data;
+
             let block = self.enter(ScopeKind::None, |this| DImplBlock {
                 type_params: this.declare_type_params(type_params),
                 span: path.final_component_span(),

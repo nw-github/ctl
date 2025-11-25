@@ -40,7 +40,7 @@ pub struct UsePath {
 
 #[derive(Debug, Clone)]
 pub struct Stmt {
-    pub data: StmtData,
+    pub data: Located<StmtData>,
     pub attrs: Attributes,
 }
 
@@ -76,16 +76,16 @@ pub enum StmtData {
         is_unsafe: bool,
         type_params: TypeParams,
         impls: Vec<Path>,
-        functions: Vec<Fn>,
+        functions: Vec<Located<Fn>>,
     },
     Extension {
         public: bool,
         name: Located<String>,
         ty: TypeHint,
         type_params: TypeParams,
-        impls: Vec<ImplBlock>,
-        functions: Vec<Fn>,
-        operators: Vec<OperatorFn>,
+        impls: Vec<Located<ImplBlock>>,
+        functions: Vec<Located<Fn>>,
+        operators: Vec<Located<OperatorFn>>,
     },
     Binding {
         public: bool,
@@ -534,16 +534,16 @@ pub struct Struct {
     pub name: Located<String>,
     pub type_params: TypeParams,
     pub members: Vec<Member>,
-    pub impls: Vec<ImplBlock>,
-    pub functions: Vec<Fn>,
-    pub operators: Vec<OperatorFn>,
+    pub impls: Vec<Located<ImplBlock>>,
+    pub functions: Vec<Located<Fn>>,
+    pub operators: Vec<Located<OperatorFn>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ImplBlock {
     pub type_params: TypeParams,
     pub path: Path,
-    pub functions: Vec<Fn>,
+    pub functions: Vec<Located<Fn>>,
 }
 
 pub type TypeParams = Vec<(Located<String>, Vec<Path>)>;

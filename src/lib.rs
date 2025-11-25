@@ -107,7 +107,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
             {
                 let path = entry?.path();
                 if let Some(stmt) = self.load_module(diag, path.canonicalize().unwrap_or(path))? {
-                    match &stmt.data {
+                    match &stmt.data.data {
                         StmtData::Module { name, .. } if name.data == "main" => {
                             main = Some(name.span);
                         }
@@ -118,12 +118,15 @@ impl<T: SourceProvider> Compiler<Source<T>> {
                 }
             }
             Ok(Some(Stmt {
-                data: ast::parsed::StmtData::Module {
-                    public: true,
-                    file: false,
-                    name: lexer::Located::new(main.unwrap_or_default(), name),
-                    body,
-                },
+                data: Located::new(
+                    Span::default(),
+                    ast::parsed::StmtData::Module {
+                        public: true,
+                        file: false,
+                        name: lexer::Located::new(main.unwrap_or_default(), name),
+                        body,
+                    },
+                ),
                 attrs: Default::default(),
             }))
         } else {

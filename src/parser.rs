@@ -7,12 +7,13 @@ use crate::{
     THIS_PARAM, THIS_TYPE,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Default, Clone, Copy)]
 struct FnConfig {
-    is_extern: bool,
-    is_public: bool,
-    is_unsafe: bool,
+    tk_extern: Option<Span>,
+    tk_public: Option<Span>,
+    tk_unsafe: Option<Span>,
     require_body: bool,
+    forced_pub: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -46,20 +47,22 @@ impl<'a, 'b> Parser<'a, 'b> {
             stmts.push(this.item());
         }
 
+        let span = Span {
+            file,
+            pos: 0,
+            len: 0,
+        };
+
         Stmt {
-            data: StmtData::Module {
-                public: true,
-                body: stmts,
-                name: Located::new(
-                    Span {
-                        file,
-                        pos: 0,
-                        len: 0,
-                    },
-                    name,
-                ),
-                file: true,
-            },
+            data: Located::new(
+                span,
+                StmtData::Module {
+                    public: true,
+                    body: stmts,
+                    name: Located::new(span, name),
+                    file: true,
+                },
+            ),
             attrs: Default::default(),
         }
     }
@@ -73,33 +76,39 @@ impl<'a, 'b> Parser<'a, 'b> {
         let is_unsafe = self.next_if(Token::Unsafe);
         let attrs = match self.try_function(
             FnConfig {
-                is_public: public.is_some(),
-                is_extern: is_extern.is_some(),
-                is_unsafe: is_unsafe.is_some(),
+                tk_public: public.as_ref().map(|t| t.span),
+                tk_extern: is_extern.as_ref().map(|t| t.span),
+                tk_unsafe: is_unsafe.as_ref().map(|t| t.span),
                 require_body: is_extern.is_none(),
+                forced_pub: false,
             },
             attrs,
         ) {
             Ok(Left(func)) => {
                 return Ok(Stmt {
                     attrs: Default::default(),
-                    data: StmtData::Fn(func),
+                    data: func.map(StmtData::Fn),
                 })
             }
             Ok(Right(func)) => {
                 self.error(Error::new(
                     "operator functions can only be defined in types and extensions",
-                    func.name.span,
+                    func.data.name.span,
                 ));
                 return Ok(Stmt {
                     attrs: Default::default(),
-                    data: StmtData::Fn(Fn::from_operator_fn(func.name.data.to_string(), func)),
+                    data: func.map(|func| {
+                        StmtData::Fn(Fn::from_operator_fn(func.name.data.to_string(), func))
+                    }),
                 });
             }
             Err(attrs) => attrs,
         };
 
-        match self.peek().data {
+        let peek = self.peek();
+        let earliest_span = peek.span;
+
+        match peek.data {
             Token::Struct | Token::Packed => {
                 let token = self.next();
                 if token.data == Token::Packed {
@@ -117,14 +126,16 @@ impl<'a, 'b> Parser<'a, 'b> {
                 // TODO: packed struct Foo: u64 {}
                 Ok(Stmt {
                     attrs,
-                    data: StmtData::Struct {
-                        base: self.structure(public.is_some(), token.span, false),
-                        packed: matches!(token.data, Token::Packed),
-                    },
+                    data: self
+                        .structure(public.is_some(), earliest_span, false)
+                        .map(|base| StmtData::Struct {
+                            base,
+                            packed: matches!(token.data, Token::Packed),
+                        }),
                 })
             }
             Token::Union => {
-                let token = self.next();
+                self.next();
                 if let Some(token) = is_extern {
                     self.error_no_sync(Error::not_valid_here(&token));
                 }
@@ -132,15 +143,15 @@ impl<'a, 'b> Parser<'a, 'b> {
                 Ok(Stmt {
                     attrs,
                     data: if is_unsafe.is_some() {
-                        StmtData::UnsafeUnion(self.structure(public.is_some(), token.span, true))
+                        self.structure(public.is_some(), earliest_span, true)
+                            .map(StmtData::UnsafeUnion)
                     } else {
-                        self.union(public.is_some(), token.span)
+                        self.union(public.is_some(), earliest_span)
                     },
                 })
             }
             Token::Trait | Token::Sealed => {
-                let token = self.next();
-                let sealed = token.data == Token::Sealed;
+                let sealed = self.next().data == Token::Sealed;
                 if sealed {
                     self.expect(Token::Trait);
                 }
@@ -151,11 +162,16 @@ impl<'a, 'b> Parser<'a, 'b> {
 
                 Ok(Stmt {
                     attrs,
-                    data: self.r#trait(public.is_some(), token.span, is_unsafe.is_some(), sealed),
+                    data: self.r#trait(
+                        public.is_some(),
+                        earliest_span,
+                        is_unsafe.is_some(),
+                        sealed,
+                    ),
                 })
             }
             Token::Extension => {
-                let token = self.next();
+                self.next();
                 if let Some(token) = is_unsafe {
                     self.error_no_sync(Error::not_valid_here(&token));
                 }
@@ -166,11 +182,11 @@ impl<'a, 'b> Parser<'a, 'b> {
 
                 Ok(Stmt {
                     attrs,
-                    data: self.extension(public.is_some(), token.span),
+                    data: self.extension(public.is_some(), earliest_span),
                 })
             }
             Token::Mod => {
-                let token = self.next();
+                self.next();
                 if let Some(token) = is_unsafe {
                     self.error_no_sync(Error::not_valid_here(&token));
                 }
@@ -182,14 +198,18 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let name = self.expect_ident("expected name");
                 let mut body = Vec::new();
                 self.expect(Token::LCurly);
-                self.next_until(Token::RCurly, token.span, |this| body.push(this.item()));
+                let span =
+                    self.next_until(Token::RCurly, earliest_span, |this| body.push(this.item()));
                 Ok(Stmt {
-                    data: StmtData::Module {
-                        public: public.is_some(),
-                        file: false,
-                        name,
-                        body,
-                    },
+                    data: Located::new(
+                        span,
+                        StmtData::Module {
+                            public: public.is_some(),
+                            file: false,
+                            name,
+                            body,
+                        },
+                    ),
                     attrs,
                 })
             }
@@ -207,14 +227,17 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let origin = if self.next_if(Token::ScopeRes).is_some() {
                     let ident = self.expect_ident("expected path component");
                     if self.next_if(Token::ScopeRes).is_none() {
-                        self.expect(Token::Semicolon);
+                        let end = self.expect(Token::Semicolon);
                         return Ok(Stmt {
-                            data: StmtData::Use(UsePath {
-                                components,
-                                origin: PathOrigin::Root,
-                                public: public.is_some(),
-                                tail: UsePathTail::Ident(ident),
-                            }),
+                            data: Located::new(
+                                earliest_span.extended_to(end.span),
+                                StmtData::Use(UsePath {
+                                    components,
+                                    origin: PathOrigin::Root,
+                                    public: public.is_some(),
+                                    tail: UsePathTail::Ident(ident),
+                                }),
+                            ),
                             attrs,
                         });
                     }
@@ -227,14 +250,17 @@ impl<'a, 'b> Parser<'a, 'b> {
                 } else {
                     let ident = self.expect_ident("expected path component");
                     if self.next_if(Token::ScopeRes).is_none() {
-                        self.expect(Token::Semicolon);
+                        let end = self.expect(Token::Semicolon);
                         return Ok(Stmt {
-                            data: StmtData::Use(UsePath {
-                                components,
-                                origin: PathOrigin::Normal,
-                                public: public.is_some(),
-                                tail: UsePathTail::Ident(ident),
-                            }),
+                            data: Located::new(
+                                earliest_span.extended_to(end.span),
+                                StmtData::Use(UsePath {
+                                    components,
+                                    origin: PathOrigin::Normal,
+                                    public: public.is_some(),
+                                    tail: UsePathTail::Ident(ident),
+                                }),
+                            ),
                             attrs,
                         });
                     }
@@ -245,28 +271,34 @@ impl<'a, 'b> Parser<'a, 'b> {
 
                 loop {
                     if self.next_if(Token::Asterisk).is_some() {
-                        self.expect(Token::Semicolon);
+                        let end = self.expect(Token::Semicolon);
                         return Ok(Stmt {
-                            data: StmtData::Use(UsePath {
-                                components,
-                                origin,
-                                public: public.is_some(),
-                                tail: UsePathTail::All,
-                            }),
+                            data: Located::new(
+                                earliest_span.extended_to(end.span),
+                                StmtData::Use(UsePath {
+                                    components,
+                                    origin,
+                                    public: public.is_some(),
+                                    tail: UsePathTail::All,
+                                }),
+                            ),
                             attrs,
                         });
                     }
 
                     let ident = self.expect_ident("expected path component or '*'");
                     if self.next_if(Token::ScopeRes).is_none() {
-                        self.expect(Token::Semicolon);
+                        let end = self.expect(Token::Semicolon);
                         return Ok(Stmt {
-                            data: StmtData::Use(UsePath {
-                                components,
-                                origin,
-                                public: public.is_some(),
-                                tail: UsePathTail::Ident(ident),
-                            }),
+                            data: Located::new(
+                                earliest_span.extended_to(end.span),
+                                StmtData::Use(UsePath {
+                                    components,
+                                    origin,
+                                    public: public.is_some(),
+                                    tail: UsePathTail::Ident(ident),
+                                }),
+                            ),
                             attrs,
                         });
                     }
@@ -289,15 +321,18 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let ty = self.type_hint();
                 self.expect(Token::Assign);
                 let value = self.expression();
-                self.expect(Token::Semicolon);
+                let end = self.expect(Token::Semicolon);
                 Ok(Stmt {
-                    data: StmtData::Binding {
-                        public: public.is_some(),
-                        constant: matches!(token.data, Token::Const),
-                        name,
-                        ty,
-                        value,
-                    },
+                    data: Located::new(
+                        earliest_span.extended_to(end.span),
+                        StmtData::Binding {
+                            public: public.is_some(),
+                            constant: matches!(token.data, Token::Const),
+                            name,
+                            ty,
+                            value,
+                        },
+                    ),
                     attrs,
                 })
             }
@@ -316,7 +351,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             let span = self.next().span;
             self.error(Error::new("expected item", span));
             Stmt {
-                data: StmtData::Error,
+                data: Located::new(span, StmtData::Error),
                 attrs,
             }
         })
@@ -335,53 +370,62 @@ impl<'a, 'b> Parser<'a, 'b> {
                     let patt = self.pattern(matches!(token.data, Token::Mut));
                     let ty = self.next_if(Token::Colon).map(|_| self.type_hint());
                     let value = self.next_if(Token::Assign).map(|_| self.expression());
-                    self.expect(Token::Semicolon);
+                    let end = self.expect(Token::Semicolon);
                     Stmt {
-                        data: StmtData::Let { ty, value, patt },
+                        data: Located::new(
+                            token.span.extended_to(end.span),
+                            StmtData::Let { ty, value, patt },
+                        ),
                         attrs,
                     }
                 }
                 Token::Defer => {
-                    self.next();
+                    let mut span = self.next().span;
 
                     let (needs_semicolon, expr) = self.block_or_normal_expr(None);
                     if needs_semicolon {
-                        self.expect(Token::Semicolon);
+                        span.extend_to(self.expect(Token::Semicolon).span);
+                    } else {
+                        span.extend_to(expr.span);
                     }
                     Stmt {
                         attrs,
-                        data: StmtData::Defer(expr),
+                        data: Located::new(span, StmtData::Defer(expr)),
                     }
                 }
                 Token::Guard => {
-                    self.next();
+                    let span = self.next().span;
                     let cond = self.expression();
                     self.expect(Token::Else);
                     let lcurly = self.expect(Token::LCurly);
                     let body = self.block_expr(lcurly.span, None);
                     Stmt {
-                        data: StmtData::Guard { cond, body },
+                        data: Located::new(
+                            span.extended_to(body.span),
+                            StmtData::Guard { cond, body },
+                        ),
                         attrs,
                     }
                 }
                 _ => {
                     let (needs_semicolon, mut expr) = self.block_or_normal_expr(None);
+                    let mut span = expr.span;
                     if self.matches(Token::RCurly) {
                         expr = Expr::new(expr.span, ExprData::Tail(expr.into()));
                     } else if needs_semicolon {
-                        self.expect(Token::Semicolon);
+                        span.extend_to(self.expect(Token::Semicolon).span);
                     }
 
                     if let Some(is_unsafe) = is_unsafe {
                         expr = Expr::new(
-                            is_unsafe.span.extended_to(expr.span),
+                            is_unsafe.span.extended_to(span),
                             ExprData::Unsafe(expr.into()),
                         );
                     }
 
                     Stmt {
                         attrs,
-                        data: StmtData::Expr(expr),
+                        data: Located::new(span, StmtData::Expr(expr)),
                     }
                 }
             },
@@ -1651,7 +1695,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         Located::new(span, stmts)
     }
 
-    fn structure(&mut self, public: bool, span: Span, union: bool) -> Struct {
+    fn structure(&mut self, public: bool, span: Span, union: bool) -> Located<Struct> {
         let name = self.expect_ident("expected name");
         let type_params = self.type_params();
 
@@ -1661,7 +1705,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut operators = Vec::new();
         let mut members = Vec::new();
         let mut impls = Vec::new();
-        self.next_until(Token::RCurly, span, |this| {
+        let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
             let public = this.next_if(Token::Pub);
             if let Some(token) = public.as_ref().filter(|_| union) {
@@ -1669,12 +1713,12 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
 
             let config = FnConfig {
-                is_public: public.is_some(),
-                is_extern: false,
-                is_unsafe: this.next_if(Token::Unsafe).is_some(),
+                tk_public: public.as_ref().map(|t| t.span),
+                tk_unsafe: this.next_if(Token::Unsafe).map(|t| t.span),
                 require_body: true,
+                ..Default::default()
             };
-            if config.is_unsafe {
+            if config.tk_unsafe.is_some() {
                 match this.expect_fn(config, attrs) {
                     Ok(Left(func)) => functions.push(func),
                     Ok(Right(func)) => operators.push(func),
@@ -1702,7 +1746,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                     this.expect(Token::Comma);
                 }
                 members.push(Member {
-                    public: config.is_public,
+                    public: config.tk_public.is_some(),
                     ty,
                     name,
                     default: value,
@@ -1710,18 +1754,21 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
         });
 
-        Struct {
-            public,
-            name,
-            type_params,
-            members,
-            impls,
-            functions,
-            operators,
-        }
+        Located::new(
+            span,
+            Struct {
+                public,
+                name,
+                type_params,
+                members,
+                impls,
+                functions,
+                operators,
+            },
+        )
     }
 
-    fn union(&mut self, public: bool, span: Span) -> StmtData {
+    fn union(&mut self, public: bool, span: Span) -> Located<StmtData> {
         let name = self.expect_ident("expected name");
         let type_params = self.type_params();
         let tag = self.next_if(Token::Colon).map(|_| self.type_path());
@@ -1732,15 +1779,15 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut variants = Vec::new();
 
         self.expect(Token::LCurly);
-        self.next_until(Token::RCurly, span, |this| {
+        let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
             let config = FnConfig {
-                is_extern: false,
-                is_public: this.next_if(Token::Pub).is_some(),
-                is_unsafe: this.next_if(Token::Unsafe).is_some(),
+                tk_public: this.next_if(Token::Pub).map(|t| t.span),
+                tk_unsafe: this.next_if(Token::Unsafe).map(|t| t.span),
                 require_body: true,
+                ..Default::default()
             };
-            if config.is_public || config.is_unsafe {
+            if config.tk_public.is_some() || config.tk_unsafe.is_some() {
                 match this.expect_fn(config, attrs) {
                     Ok(Left(func)) => functions.push(func),
                     Ok(Right(func)) => operators.push(func),
@@ -1814,60 +1861,70 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
         });
 
-        StmtData::Union {
-            tag,
-            variants,
-            base: Struct {
-                public,
-                name,
-                type_params,
-                members,
-                functions,
-                impls,
-                operators,
+        Located::new(
+            span,
+            StmtData::Union {
+                tag,
+                variants,
+                base: Struct {
+                    public,
+                    name,
+                    type_params,
+                    members,
+                    functions,
+                    impls,
+                    operators,
+                },
             },
-        }
+        )
     }
 
-    fn r#trait(&mut self, public: bool, span: Span, is_unsafe: bool, sealed: bool) -> StmtData {
+    fn r#trait(
+        &mut self,
+        public: bool,
+        span: Span,
+        is_unsafe: bool,
+        sealed: bool,
+    ) -> Located<StmtData> {
         let name = self.expect_ident("expected name");
         let type_params = self.type_params();
         let impls = self.trait_impls();
         self.expect(Token::LCurly);
 
         let mut functions = Vec::new();
-        self.next_until(Token::RCurly, span, |this| {
-            let is_unsafe = this.next_if(Token::Unsafe).is_some();
+        let span = self.next_until(Token::RCurly, span, |this| {
             let config = FnConfig {
-                require_body: false,
-                is_extern: false,
-                is_public: true,
-                is_unsafe,
+                tk_unsafe: this.next_if(Token::Unsafe).map(|t| t.span),
+                forced_pub: true,
+                ..Default::default()
             };
             match this.expect_fn(config, Default::default()) {
                 Ok(Left(func)) => functions.push(func),
                 Ok(Right(func)) => {
                     this.error(Error::new(
                         "operator functions are not allowed here",
-                        func.name.span,
+                        func.data.name.span,
                     ));
                 }
                 _ => {}
             }
         });
 
-        StmtData::Trait {
-            public,
-            sealed,
-            is_unsafe,
-            name,
-            type_params,
-            impls,
-            functions,
-        }
+        Located::new(
+            span,
+            StmtData::Trait {
+                public,
+                sealed,
+                is_unsafe,
+                name,
+                type_params,
+                impls,
+                functions,
+            },
+        )
     }
 
-    fn extension(&mut self, public: bool, span: Span) -> StmtData {
+    fn extension(&mut self, public: bool, span: Span) -> Located<StmtData> {
         let name = self.expect_ident("expected name");
         let type_params = self.type_params();
 
@@ -1878,16 +1935,16 @@ impl<'a, 'b> Parser<'a, 'b> {
         let mut functions = Vec::new();
         let mut operators = Vec::new();
         let mut impls = Vec::new();
-        self.next_until(Token::RCurly, span, |this| {
+        let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
             if let Some(token) = this.next_if(Token::Impl) {
                 impls.push(this.impl_block(token.span));
             } else {
                 let config = FnConfig {
                     require_body: true,
-                    is_extern: false,
-                    is_public: this.next_if(Token::Pub).is_some(),
-                    is_unsafe: this.next_if(Token::Unsafe).is_some(),
+                    tk_public: this.next_if(Token::Pub).map(|c| c.span),
+                    tk_unsafe: this.next_if(Token::Unsafe).map(|c| c.span),
+                    ..Default::default()
                 };
                 match this.expect_fn(config, attrs) {
                     Ok(Left(func)) => functions.push(func),
@@ -1897,65 +1954,66 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
         });
 
-        StmtData::Extension {
-            public,
-            name,
-            ty,
-            type_params,
-            impls,
-            functions,
-            operators,
-        }
+        Located::new(
+            span,
+            StmtData::Extension {
+                public,
+                name,
+                ty,
+                type_params,
+                impls,
+                functions,
+                operators,
+            },
+        )
     }
 
-    fn impl_block(&mut self, span: Span) -> ImplBlock {
+    fn impl_block(&mut self, span: Span) -> Located<ImplBlock> {
         let type_params = self.type_params();
         let path = self.type_path();
         self.expect(Token::LCurly);
 
         let mut functions = Vec::new();
-        self.next_until(Token::RCurly, span, |this| {
+        let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
             if let Some(token) = this.next_if(Token::Pub) {
                 this.error_no_sync(Error::not_valid_here(&token));
             }
 
-            let is_unsafe = this.next_if(Token::Unsafe).is_some();
             let config = FnConfig {
-                is_public: true,
-                is_extern: false,
+                tk_unsafe: this.next_if(Token::Unsafe).map(|c| c.span),
+                forced_pub: true,
                 require_body: true,
-                is_unsafe,
+                ..Default::default()
             };
             match this.expect_fn(config, attrs) {
                 Ok(Left(func)) => functions.push(func),
                 Ok(Right(func)) => {
                     this.error(Error::new(
                         "operator functions are not allowed here",
-                        func.name.span,
+                        func.data.name.span,
                     ));
                 }
                 _ => {}
             }
         });
 
-        ImplBlock {
-            type_params,
-            path,
-            functions,
-        }
+        Located::new(
+            span,
+            ImplBlock {
+                attrs,
+                type_params,
+                path,
+                functions,
+            },
+        )
     }
 
     fn try_function(
         &mut self,
-        FnConfig {
-            is_public,
-            is_unsafe,
-            is_extern,
-            require_body,
-        }: FnConfig,
+        cfg: FnConfig,
         attrs: Attributes,
-    ) -> Result<Either<Fn, OperatorFn>, Attributes> {
+    ) -> Result<Either<Located<Fn>, Located<OperatorFn>>, Attributes> {
         let (head_token, is_async) = if let Some(token) = self.next_if(Token::Fn) {
             (token, false)
         } else if let Some(token) = self.next_if(Token::Async) {
@@ -1964,6 +2022,11 @@ impl<'a, 'b> Parser<'a, 'b> {
         } else {
             return Err(attrs);
         };
+        let mut span = cfg
+            .tk_public
+            .or(cfg.tk_extern)
+            .or(cfg.tk_unsafe)
+            .unwrap_or(head_token.span);
 
         let name = self.expect_fn_name();
         let mut variadic = false;
@@ -2060,42 +2123,51 @@ impl<'a, 'b> Parser<'a, 'b> {
         };
 
         let body = if let Some(semi) = self.next_if(Token::Semicolon) {
-            if require_body {
+            if cfg.require_body {
                 self.error(Error::new("expected '{'", semi.span));
             }
+            span.extend_to(semi.span);
             None
         } else {
             let lcurly = self.expect(Token::LCurly);
-            Some(self.block_expr(lcurly.span, None))
+            let expr = self.block_expr(lcurly.span, None);
+            span.extend_to(expr.span);
+            Some(expr)
         };
 
         match name.data {
-            Left(ident) => Ok(Left(Fn {
-                name: Located::new(name.span, ident),
-                public: is_public,
-                is_extern,
-                is_async,
-                is_unsafe,
-                variadic,
-                type_params,
-                params,
-                ret,
-                body,
-                attrs,
-                assign_subscript: false,
-            })),
-            Right(op) => {
-                if is_async {
-                    self.error(Error::not_valid_here(&head_token));
-                }
-                Ok(Right(OperatorFn {
-                    name: Located::new(name.span, op),
+            Left(ident) => Ok(Left(Located::new(
+                span,
+                Fn {
+                    name: Located::new(name.span, ident),
+                    public: cfg.forced_pub || cfg.tk_public.is_some(),
+                    is_extern: cfg.tk_extern.is_some(),
+                    is_async,
+                    is_unsafe: cfg.tk_unsafe.is_some(),
+                    variadic,
                     type_params,
                     params,
                     ret,
                     body,
                     attrs,
-                }))
+                    assign_subscript: false,
+                },
+            ))),
+            Right(op) => {
+                if is_async {
+                    self.error(Error::not_valid_here(&head_token));
+                }
+                Ok(Right(Located::new(
+                    span,
+                    OperatorFn {
+                        name: Located::new(name.span, op),
+                        type_params,
+                        params,
+                        ret,
+                        body,
+                        attrs,
+                    },
+                )))
             }
         }
     }
@@ -2104,7 +2176,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         &mut self,
         params: FnConfig,
         attrs: Attributes,
-    ) -> Result<Either<Fn, OperatorFn>, ()> {
+    ) -> Result<Either<Located<Fn>, Located<OperatorFn>>, ()> {
         match self.try_function(params, attrs) {
             Ok(proto) => Ok(proto),
             Err(_) => {
