@@ -20,7 +20,7 @@ use crate::{
     dgraph::Dependencies,
     error::{Diagnostics, Error},
     lexer::{Located, Span},
-    project::{Project, SpanSemanticToken},
+    project::{Configuration, Project, SpanSemanticToken},
     sym::*,
     typeid::{
         BitSizeResult, CInt, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType,
@@ -330,12 +330,17 @@ pub struct TypeChecker {
 }
 
 impl TypeChecker {
-    pub fn check(project: Vec<PStmt>, diag: Diagnostics, lsp: LspInput) -> Project {
+    pub fn check(
+        project: Vec<PStmt>,
+        diag: Diagnostics,
+        lsp: LspInput,
+        conf: Configuration,
+    ) -> Project {
         let mut this = Self {
             safety: Safety::Safe,
             current: ScopeId::ROOT,
             lsp_input: lsp,
-            proj: Project::new(diag),
+            proj: Project::new(conf, diag),
             listening_vars: Vec::new(),
             listening_expr: 1,
             current_expr: 1,
@@ -972,7 +977,7 @@ impl TypeChecker {
                 }));
             }
             let member_cons_len = fns.len();
-            fns.extend(base.functions.into_iter().map(|f| this.declare_fn(f)));
+            fns.extend(this.declare_fns_iter(base.functions));
             let tag = if let Some(tag) = tag {
                 this.declare_type_hint(TypeHint::Regular(tag))
             } else {
@@ -1066,6 +1071,10 @@ impl TypeChecker {
     }
 
     fn declare_stmt(&mut self, autouse: &mut Vec<ScopeId>, stmt: PStmt) -> DStmt {
+        if self.check_disabled(&stmt.attrs) {
+            return DStmt::None;
+        }
+
         match stmt.data {
             PStmtData::Module {
                 public,
@@ -1382,7 +1391,17 @@ impl TypeChecker {
     }
 
     fn declare_fns(&mut self, fns: Vec<Fn>) -> Vec<DFn> {
-        fns.into_iter().map(|f| self.declare_fn(f)).collect()
+        self.declare_fns_iter(fns).collect()
+    }
+
+    fn declare_fns_iter(&mut self, fns: Vec<Fn>) -> impl Iterator<Item = DFn> + use<'_> {
+        fns.into_iter().flat_map(|f| {
+            if !self.check_disabled(&f.attrs) {
+                Some(self.declare_fn(f))
+            } else {
+                None
+            }
+        })
     }
 
     fn declare_op_fn(
@@ -1392,6 +1411,10 @@ impl TypeChecker {
         blocks: &mut Vec<DImplBlock>,
         subscripts: &mut Vec<DFn>,
     ) {
+        if self.check_disabled(&f.attrs) {
+            return;
+        }
+
         use OperatorFnType as O;
         let (tr_name, fn_name, ty_args) = match f.name.data {
             O::Plus
@@ -1520,7 +1543,7 @@ impl TypeChecker {
                 type_params: this.declare_type_params(type_params),
                 span: path.final_component_span(),
                 scope: this.current,
-                fns: functions.into_iter().map(|f| this.declare_fn(f)).collect(),
+                fns: this.declare_fns(functions),
             });
             self.proj.scopes[block.scope].kind = ScopeKind::Impl(impls.len());
             impls.push(TraitImpl::Unchecked {
@@ -1595,6 +1618,11 @@ impl TypeChecker {
             members_resolved: false,
             recursive: false,
         }
+    }
+
+    fn check_disabled(&mut self, attrs: &Attributes) -> bool {
+        // TODO: add the entire span to an LSP list of disabled regions
+        self.proj.conf.is_disabled_by_attrs(attrs)
     }
 }
 

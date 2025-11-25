@@ -49,9 +49,9 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
         return Err("no requirements specified!".into());
     }
 
-    let proj = project_from_file(path, vec![], false, false);
+    let (proj, conf) = project_from_file(path, vec![], false, false);
     let (code, diag) = Compiler::new()
-        .parse(proj)?
+        .parse(proj, conf)?
         .typecheck(Default::default())
         .build(CodegenFlags::default());
     test_diagnostics(diag, &errors)?;

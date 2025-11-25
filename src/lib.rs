@@ -24,7 +24,7 @@ use project::Project;
 pub use source::*;
 use typecheck::LspInput;
 
-use crate::{parser::Parser, typecheck::TypeChecker};
+use crate::{parser::Parser, project::Configuration, typecheck::TypeChecker};
 
 pub use lsp::LspBackend;
 
@@ -34,7 +34,7 @@ pub(crate) const THIS_TYPE: &str = "This";
 pub trait CompileState {}
 
 pub struct Source<T>(T);
-pub struct Parsed(Vec<Stmt>, Diagnostics);
+pub struct Parsed(Vec<Stmt>, Diagnostics, Configuration);
 pub struct Checked(Project);
 
 impl<T> CompileState for Source<T> {}
@@ -65,7 +65,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
         }
     }
 
-    pub fn parse(mut self, project: Vec<PathBuf>) -> Result<Compiler<Parsed>> {
+    pub fn parse(mut self, project: Vec<PathBuf>, cfg: Configuration) -> Result<Compiler<Parsed>> {
         let mut diag = Diagnostics::default();
         let project = project
             .into_iter()
@@ -77,7 +77,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
             .collect::<Result<Vec<_>>>()?;
 
         Ok(Compiler {
-            state: Parsed(project, diag),
+            state: Parsed(project, diag, cfg),
         })
     }
 
@@ -175,7 +175,12 @@ impl Compiler<Parsed> {
 
     pub fn typecheck(self, lsp: LspInput) -> Compiler<Checked> {
         Compiler {
-            state: Checked(TypeChecker::check(self.state.0, self.state.1, lsp)),
+            state: Checked(TypeChecker::check(
+                self.state.0,
+                self.state.1,
+                lsp,
+                self.state.2,
+            )),
         }
     }
 }
@@ -221,7 +226,7 @@ pub fn project_from_file(
     mut libs: Vec<PathBuf>,
     mut no_core: bool,
     mut no_std: bool,
-) -> Vec<PathBuf> {
+) -> (Vec<PathBuf>, Configuration) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let core_path = root.join("ctl/core");
     let std_path = root.join("ctl/std");
@@ -242,7 +247,7 @@ pub fn project_from_file(
     }
 
     libs.push(path);
-    libs
+    (libs, Configuration::default())
 }
 
 fn nearest_pow_of_two(bits: u32) -> usize {

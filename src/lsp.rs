@@ -78,6 +78,11 @@ pub struct LspBackend {
     config: tokio::sync::Mutex<Configuration>,
 }
 
+// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_semanticTokens
+mod token {
+    pub const ENUM_MEMBER: u32 = 0;
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for LspBackend {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
@@ -104,6 +109,7 @@ impl LanguageServer for LspBackend {
                         SemanticTokensOptions {
                             work_done_progress_options: Default::default(),
                             legend: SemanticTokensLegend {
+                                // Must be defined in the order under the 'token' module
                                 token_types: vec![SemanticTokenType::ENUM_MEMBER],
                                 token_modifiers: vec![],
                             },
@@ -488,8 +494,9 @@ impl LspBackend {
         } else {
             Path::new(uri.as_str())
         };
-        let project = project_from_file(get_file_project(path), vec![], false, false);
-        let parsed = Compiler::with_provider(LspFileProvider::new(&self.documents)).parse(project);
+        let (project, conf) = project_from_file(get_file_project(path), vec![], false, false);
+        let parsed =
+            Compiler::with_provider(LspFileProvider::new(&self.documents)).parse(project, conf);
         let parsed = match parsed {
             Ok(parsed) => parsed,
             Err(err) => {
@@ -616,7 +623,7 @@ impl LspBackend {
                     },
                     length: span.len, // TODO: use UTF-16 length
                     token_type: match token {
-                        SpanSemanticToken::Variant(_) => 0,
+                        SpanSemanticToken::Variant(_) => token::ENUM_MEMBER,
                     },
                     token_modifiers_bitset: 0,
                 });

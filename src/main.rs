@@ -259,8 +259,9 @@ fn main() -> Result<()> {
             return Ok(());
         }
     };
+    let (proj, conf) = project_from_file(input, vec![], args.no_core, args.no_std);
     let result = Compiler::new()
-        .parse(project_from_file(input, vec![], args.no_core, args.no_std))?
+        .parse(proj, conf)?
         .inspect(|ast| {
             if args.dump_ast {
                 ast.dump()
