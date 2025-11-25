@@ -349,6 +349,7 @@ impl TypeChecker {
 
         let mut autouse = vec![];
         let mut last_file_id = None;
+        let mut last_scope = ScopeId::ROOT;
         for module in project {
             last_file_id = Some(module.data.span.file);
 
@@ -377,11 +378,11 @@ impl TypeChecker {
                 }
             }
 
-            this.proj.scope = *stmt.as_module().unwrap().0;
+            last_scope = *stmt.as_module().unwrap().0;
             this.check_stmt(stmt);
         }
 
-        this.proj.main = this.proj.scopes[this.proj.scope]
+        this.proj.main = this.proj.scopes[last_scope]
             .vns
             .get("main")
             .and_then(|id| id.as_fn())
@@ -433,7 +434,7 @@ impl TypeChecker {
                 .proj
                 .scopes
                 .walk(var.scope)
-                .any(|(id, _)| id == this.proj.scope)
+                .any(|(id, _)| id == last_scope)
             {
                 this.proj.diag.warn(Error::new(
                     format!("unused variable: '{}'", var.name.data),

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::{
     ast::Attributes,
     dgraph::DependencyGraph,
-    sym::{FunctionId, ScopeId, Scopes, UserTypeId, VariableId},
+    sym::{FunctionId, Scopes, UserTypeId, VariableId},
     typecheck::{Completions, LspItem},
     typeid::{TypeId, Types},
     CodegenFlags, Diagnostics, Span,
@@ -23,7 +23,6 @@ impl SpanSemanticToken {
 
 #[derive(Default)]
 pub struct Project {
-    pub scope: ScopeId,
     pub scopes: Scopes,
     pub types: Types,
     pub diag: Diagnostics,

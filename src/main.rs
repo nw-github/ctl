@@ -23,12 +23,7 @@ struct Arguments {
     #[arg(global = true)]
     dump_ast: bool,
 
-    /// Debug only. Compile without including the core library.
-    #[clap(action, long)]
-    #[arg(global = true)]
-    no_core: bool,
-
-    /// Compile without including the std library.
+    /// Compile without including the entire standard library.
     #[clap(action, long)]
     #[arg(global = true)]
     no_std: bool,
@@ -259,7 +254,7 @@ fn main() -> Result<()> {
             return Ok(());
         }
     };
-    let (proj, mut conf) = project_from_file(input, vec![], args.no_core, args.no_std);
+    let (proj, mut conf) = project_from_file(input, vec![], args.no_std);
     conf.flags = CodegenFlags {
         leak: args.leak,
         no_bit_int: args.no_bit_int,

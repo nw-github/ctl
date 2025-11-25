@@ -221,7 +221,6 @@ pub struct CodegenFlags {
 pub fn project_from_file(
     path: &Path,
     mut libs: Vec<PathBuf>,
-    mut no_core: bool,
     mut no_std: bool,
 ) -> (Vec<PathBuf>, Configuration) {
     let std_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");

@@ -49,7 +49,7 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
         return Err("no requirements specified!".into());
     }
 
-    let (proj, mut conf) = project_from_file(path, vec![], false, false);
+    let (proj, mut conf) = project_from_file(path, vec![], false);
     conf.flags.lib = false;
     let (code, diag) = Compiler::new()
         .parse(proj, conf)?

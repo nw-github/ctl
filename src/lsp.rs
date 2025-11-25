@@ -528,7 +528,7 @@ impl LspBackend {
         } else {
             Path::new(uri.as_str())
         };
-        let (project, conf) = project_from_file(get_file_project(path), vec![], false, false);
+        let (project, conf) = project_from_file(get_file_project(path), vec![], false);
         let parsed =
             Compiler::with_provider(LspFileProvider::new(&self.documents)).parse(project, conf);
         let parsed = match parsed {
