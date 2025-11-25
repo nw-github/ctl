@@ -1,5 +1,5 @@
-use core::range::RangeBounds;
-use core::reflect::*;
+use std::range::RangeBounds;
+use std::reflect::*;
 
 @(lang(span))
 pub struct Span<T> {
@@ -15,7 +15,7 @@ pub struct Span<T> {
     }
 
     pub fn empty(): [T..] {
-        Span(ptr: core::ptr::raw_dangling(), len: 0)
+        Span(ptr: std::ptr::raw_dangling(), len: 0)
     }
 
     pub fn len(my this): uint {
@@ -99,7 +99,7 @@ pub struct SpanMut<T> {
     }
 
     pub fn empty(): [mut T..] {
-        SpanMut(ptr: core::ptr::raw_dangling(), len: 0)
+        SpanMut(ptr: std::ptr::raw_dangling(), len: 0)
     }
 
     pub fn len(my this): uint {
@@ -178,7 +178,7 @@ pub struct SpanMut<T> {
     }
 
     pub fn swap(my this, a: uint, b: uint) {
-        core::mem::swap(&mut this[a], &mut this[b]);
+        std::mem::swap(&mut this[a], &mut this[b]);
     }
 
     pub fn first(my this): ?*T {
@@ -226,7 +226,7 @@ pub struct SpanMut<T> {
         }
 
         // copy_overlapping?
-        unsafe core::mem::copy(
+        unsafe std::mem::copy(
             dst: subspan.as_raw_mut(),
             src: rhs.as_raw(),
             num: subspan.len(),
@@ -272,12 +272,12 @@ fn raw_subscript_checked<T, I: Integral>(ptr: ^mut T, len: uint, idx: I): ^mut T
 // TODO: make these member functions/impls when the syntax allows for it
 
 pub mod ext {
-    use core::ops::Eq;
-    use core::ops::Cmp;
-    use core::hash::Hash;
-    use core::hash::Hasher;
-    use core::fmt::Format;
-    use core::fmt::Formatter;
+    use std::ops::Eq;
+    use std::ops::Cmp;
+    use std::hash::Hash;
+    use std::hash::Hasher;
+    use std::fmt::Format;
+    use std::fmt::Formatter;
 
     pub extension SpanEq<T: Eq<T>> for [T..] {
         pub fn ==(this, rhs: *[T..]): bool {

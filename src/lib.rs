@@ -91,7 +91,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
                         path = PathBuf::from(root);
                     }
                     if let Some(rename) = config.name {
-                        // TODO: prevent duplicate names, naming module core/std, etc.
+                        // TODO: prevent duplicate names, naming module std, etc.
                         name = Self::safe_name(&rename);
                     }
                 }
@@ -230,23 +230,14 @@ pub fn project_from_file(
     mut no_core: bool,
     mut no_std: bool,
 ) -> (Vec<PathBuf>, Configuration) {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let core_path = root.join("ctl/core");
-    let std_path = root.join("ctl/std");
+    let std_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
     let path = path.canonicalize().unwrap_or_else(|_| path.into());
-    if path == core_path {
-        no_core = true;
-        no_std = true;
-    } else if path == std_path {
+    if path == std_path {
         no_std = true;
     }
 
     if !no_std {
-        libs.insert(0, root.join(std_path));
-    }
-
-    if !no_core {
-        libs.insert(0, root.join(core_path));
+        libs.insert(0, std_path);
     }
 
     libs.push(path);

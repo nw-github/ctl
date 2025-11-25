@@ -1,18 +1,18 @@
-use core::hash::*;
-use core::ops::*;
-use core::fmt::*;
-use core::span::*;
-use core::reflect::*;
+use std::hash::*;
+use std::ops::*;
+use std::fmt::*;
+use std::span::*;
+use std::reflect::*;
 
 static DIGITS: [u8; 36] = *b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 extension _<T> for T {
     pub fn as_byte_span(this): [u8..] {
-        unsafe Span::new((&raw *this).cast(), core::mem::size_of::<T>())
+        unsafe Span::new((&raw *this).cast(), std::mem::size_of::<T>())
     }
 
     pub fn as_byte_span_mut(mut this): [mut u8..] {
-        unsafe SpanMut::new((&raw mut *this).cast(), core::mem::size_of::<T>())
+        unsafe SpanMut::new((&raw mut *this).cast(), std::mem::size_of::<T>())
     }
 }
 
@@ -235,7 +235,7 @@ pub extension IntegralImpl<T: Integral> for T {
         this
     }
 
-    fn from_str_radix_common(chars: core::string::Chars, radix: u32): ?T {
+    fn from_str_radix_common(chars: std::string::Chars, radix: u32): ?T {
         mut value: ?T = null;
         for ch in chars {
             let digit = ch.to_digit(radix)?.try_cast::<T>()?;
@@ -251,7 +251,7 @@ pub extension IntegralImpl<T: Integral> for T {
 
 pub extension SignedImpl<T: Signed> for T {
     pub fn abs(this): T {
-        core::intrin::numeric_abs(*this)
+        std::intrin::numeric_abs(*this)
     }
 
     pub unsafe fn to_str_radix_unchecked(my this, radix: u32, buf: [mut u8..]): str {
@@ -274,7 +274,7 @@ pub extension SignedImpl<T: Signed> for T {
         fn fmt<F: Formatter>(this, f: *mut F) {
             // FIXME: fix this when there is a safer way to deal with uninitialized memory
             //        size_of should be size_of<T>
-            mut buffer: [u8; core::mem::size_of::<u128>() * 8 + 1];
+            mut buffer: [u8; std::mem::size_of::<u128>() * 8 + 1];
             unsafe this.to_str_radix_unchecked(10, buffer[..]).fmt(f);
         }
     }
@@ -310,6 +310,18 @@ pub extension SignedImpl<T: Signed> for T {
         let val = T::from_str_radix_common(chars, radix)?;
         negative then val.checked_mul((-1).cast()) else val
     }
+
+    @(feature(alloc))
+    pub fn to_str_radix(this, radix: u32): str {
+        guard radix is 2..=36 else {
+            panic("to_str_radix(): invalid radix");
+        }
+
+        mut buffer = @[b'0'; std::mem::size_of::<T>() * 8 + 1];
+        unsafe {
+            this.to_str_radix_unchecked(radix, buffer[..])
+        }
+    }
 }
 
 pub extension UnsignedImpl<T: Unsigned> for T {
@@ -326,7 +338,7 @@ pub extension UnsignedImpl<T: Unsigned> for T {
 
     impl Format {
         fn fmt<F: Formatter>(this, f: *mut F) {
-            mut buffer: [u8; core::mem::size_of::<u128>() * 8];
+            mut buffer: [u8; std::mem::size_of::<u128>() * 8];
             unsafe this.to_str_radix_unchecked(10, buffer[..]).fmt(f);
         }
     }
@@ -350,6 +362,18 @@ pub extension UnsignedImpl<T: Unsigned> for T {
         }
 
         T::from_str_radix_common(chars, radix)
+    }
+
+    @(feature(alloc))
+    pub fn to_str_radix(this, radix: u32): str {
+        guard radix is 2..=36 else {
+            panic("to_str_radix(): invalid radix");
+        }
+
+        mut buffer = @[b'0'; std::mem::size_of::<T>() * 8];
+        unsafe {
+            this.to_str_radix_unchecked(radix, buffer[..])
+        }
     }
 }
 
@@ -392,7 +416,7 @@ pub extension CharImpl for char {
     }
 
     pub unsafe fn from_u32_unchecked(v: u32): char {
-        unsafe core::mem::transmute(v)
+        unsafe std::mem::transmute(v)
     }
 
     pub fn len_utf8(my this): uint {
@@ -594,13 +618,13 @@ pub extension RawImpl<T> for ^T {
     }
 
     pub unsafe fn read_volatile(my this): T {
-        unsafe core::ptr::read_volatile(this)
+        unsafe std::ptr::read_volatile(this)
     }
 
     impl Format {
         fn fmt<F: Formatter>(this, f: *mut F) {
             // TODO: just format (this as uint) when format specifiers are added
-            mut buffer: [u8; core::mem::size_of::<uint>() * 2 + 2];
+            mut buffer: [u8; std::mem::size_of::<uint>() * 2 + 2];
             unsafe {
                 let res = (*this as uint).to_str_radix_unchecked(16, buffer[2u..]);
                 // kinda gross, but avoids multiple calls to fmt()
@@ -640,11 +664,11 @@ pub extension RawMutImpl<T> for ^mut T {
     }
 
     pub unsafe fn read_volatile(my this): T {
-        unsafe core::ptr::read_volatile(this)
+        unsafe std::ptr::read_volatile(this)
     }
 
     pub unsafe fn write_volatile(my this, val: T) {
-        unsafe core::ptr::write_volatile(this, val)
+        unsafe std::ptr::write_volatile(this, val)
     }
 
     impl Format {
@@ -675,11 +699,11 @@ mod libm {
 
 pub extension F32Impl for f32 {
     pub fn to_bits(my this): u32 {
-        unsafe core::mem::transmute(this)
+        unsafe std::mem::transmute(this)
     }
 
     pub fn from_bits(v: u32): f32 {
-        unsafe core::mem::transmute(v)
+        unsafe std::mem::transmute(v)
     }
 
     pub fn sqrt(my this): f32 {
@@ -719,11 +743,11 @@ pub extension F32Impl for f32 {
 
 pub extension F64Impl for f64 {
     pub fn to_bits(my this): u64 {
-        unsafe core::mem::transmute(this)
+        unsafe std::mem::transmute(this)
     }
 
     pub fn from_bits(v: u64): f64 {
-        unsafe core::mem::transmute(v)
+        unsafe std::mem::transmute(v)
     }
 
     pub fn sqrt(my this): f64 {
@@ -761,7 +785,7 @@ pub extension F64Impl for f64 {
     }
 }
 
-pub extension DynAnyImpl for *dyn core::any::Any {
+pub extension DynAnyImpl for *dyn std::any::Any {
     pub fn downcast<T>(my this): ?*T {
         if this.type_id() == TypeId::get::<T>() {
             unsafe this.downcast_unchecked()
@@ -774,7 +798,7 @@ pub extension DynAnyImpl for *dyn core::any::Any {
     }
 }
 
-pub extension DynMutAnyImpl for *dyn mut core::any::Any {
+pub extension DynMutAnyImpl for *dyn mut std::any::Any {
     pub fn downcast<T>(my this): ?*T {
         if this.type_id() == TypeId::get::<T>() {
             unsafe this.downcast_unchecked()
@@ -798,7 +822,7 @@ pub extension DynMutAnyImpl for *dyn mut core::any::Any {
 
 fn casting_divmod<T: Numeric, U: Numeric>(dividend: T, divisor: U): (T, T) {
     // TODO: do this at CTL compile time
-    if core::mem::size_of::<T>() >= core::mem::size_of::<U>() {
+    if std::mem::size_of::<T>() >= std::mem::size_of::<U>() {
         let divisor: T = divisor.cast();
         (dividend / divisor, dividend % divisor)
     } else {

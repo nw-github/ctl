@@ -62,7 +62,12 @@ impl Configuration {
 impl Default for Configuration {
     fn default() -> Self {
         Self {
-            features: ["alloc".to_string()].into(),
+            features: [
+                "alloc".to_string(),
+                "io".to_string(),
+                "hosted".to_string(),
+            ]
+            .into(),
         }
     }
 }

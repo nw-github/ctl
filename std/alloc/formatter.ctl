@@ -1,5 +1,6 @@
-use core::fmt::*;
+use std::fmt::*;
 
+@(feature(alloc))
 @(lang(string_formatter))
 struct StringFormatter {
     buffer: [u8] = @[],
@@ -35,7 +36,7 @@ struct StringFormatter {
         let new_len = this.buffer.len() + len;
         this.buffer.reserve(new_len);
         unsafe {
-            core::mem::copy(
+            std::mem::copy(
                 dst: this.buffer.as_raw_mut() + this.buffer.len(),
                 src: data.as_raw(),
                 num: len,

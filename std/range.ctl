@@ -1,4 +1,4 @@
-use core::reflect::*;
+use std::reflect::*;
 
 @(lang(range_bounds))
 pub trait RangeBounds<T> {

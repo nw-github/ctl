@@ -1,8 +1,8 @@
-use core::hash::*;
-use core::ops::Eq;
-use core::range::RangeBounds;
-use core::fmt::*;
-use core::reflect::*;
+use std::hash::*;
+use std::ops::Eq;
+use std::range::RangeBounds;
+use std::fmt::*;
+use std::reflect::*;
 
 @(lang(string))
 pub struct str {
@@ -21,11 +21,11 @@ pub struct str {
     }
 
     pub unsafe fn from_cstr(s: *c_char): ?str {
-        str::from_utf8(unsafe core::span::Span::new((&raw *s).cast(), core::intrin::strlen(s)))
+        str::from_utf8(unsafe std::span::Span::new((&raw *s).cast(), std::intrin::strlen(s)))
     }
 
     pub unsafe fn from_cstr_unchecked(s: *c_char): str {
-        str(span: unsafe core::span::Span::new((&raw *s).cast(), core::intrin::strlen(s)))
+        str(span: unsafe std::span::Span::new((&raw *s).cast(), std::intrin::strlen(s)))
     }
 
     pub fn len(this): uint {
@@ -96,6 +96,36 @@ pub struct str {
     pub fn []<R: RangeBounds<uint>>(this, range: R): str {
         this.substr(range).unwrap()
     }
+
+    @(feature(alloc))
+    pub fn repeat(this, n: uint): str {
+        let num = this.len();
+        mut buf: [u8] = Vec::with_capacity(num * n);
+        for i in 0u..n {
+            unsafe std::mem::copy(
+                dst: buf.as_raw_mut() + num * i,
+                src: this.as_raw(),
+                num:,
+            );
+        }
+        unsafe {
+            buf.set_len(num * n);
+            str::from_utf8_unchecked(buf[..])
+        }
+    }
+
+    @(feature(alloc))
+    pub fn +(this, rhs: str): str {
+        let llen = this.len();
+        let rlen = rhs.len();
+        mut buf: [u8] = Vec::with_capacity(llen + rlen);
+        unsafe {
+            std::mem::copy(dst: buf.as_raw_mut(), src: this.as_raw(), num: llen);
+            std::mem::copy(dst: buf.as_raw_mut().uoffset(llen), src: rhs.as_raw(), num: rlen);
+            buf.set_len(llen + rlen);
+            str::from_utf8_unchecked(buf[..])
+        }
+    }
 }
 
 pub struct Chars {
@@ -126,7 +156,7 @@ pub struct Chars {
                     cp += *this.s.get_unchecked(3) as u32 & 0x3f;
                     this.s = this.s[4u..];
                 } else {
-                    core::unreachable_unchecked();
+                    std::unreachable_unchecked();
                 }
 
                 char::from_u32_unchecked(cp)

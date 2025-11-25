@@ -2,6 +2,7 @@ use std::hash::Hash;
 use std::ops::Eq;
 use std::iter::FromIter;
 
+@(feature(alloc))
 @(lang(set))
 pub struct Set<T: Hash + Eq<T>> {
     inner: [T: void],
@@ -35,7 +36,7 @@ pub struct Set<T: Hash + Eq<T>> {
         this.inner.len()
     }
 
-    pub fn iter(this): std::map::Keys<T, void> {
+    pub fn iter(this): std::alloc::map::Keys<T, void> {
         this.inner.keys()
     }
 

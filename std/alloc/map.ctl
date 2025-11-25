@@ -7,6 +7,7 @@ union Bucket<K, V> {
     Tombstone,
 }
 
+@(feature(alloc))
 @(lang(map))
 pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     buckets: [mut Bucket<K, V>..],

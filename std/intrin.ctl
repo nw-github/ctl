@@ -1,4 +1,4 @@
-use core::reflect::*;
+use std::reflect::*;
 
 @(intrinsic)
 pub extern fn numeric_abs<T: Signed>(_: T): T;
@@ -16,7 +16,7 @@ pub extern fn panic(s: str): never;
 pub extern fn unreachable_unchecked(): never;
 
 @(intrinsic)
-pub extern fn type_id<T>(): core::intrin::TypeId;
+pub extern fn type_id<T>(): std::intrin::TypeId;
 
 @(intrinsic)
 pub extern fn type_name<T>(): str;

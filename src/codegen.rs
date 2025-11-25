@@ -926,7 +926,7 @@ impl Codegen {
         if this.flags.no_bit_int {
             writeln_de!(this.buffer, "#define CTL_NOBITINT");
         }
-        this.buffer.emit(include_str!("../ctl/ctl.h"));
+        this.buffer.emit(include_str!("../ctl.h"));
         if let Some(&ut) = this.proj.scopes.lang_types.get("string") {
             let ut = GenericUserType::from_id(&this.proj.scopes, &mut this.proj.types, ut);
             this.buffer.emit("#define STRLIT(data, n)(");

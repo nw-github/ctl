@@ -5597,7 +5597,7 @@ impl TypeChecker {
                 let mut imp = this.proj.scopes.get(impl_ut).impls[impl_i]
                     .as_checked()
                     .cloned()
-                    .unwrap();
+                    .unwrap(); // FIXME: This line is crashy while editing
                 imp.fill_templates(&mut this.proj.types, &ut.ty_args);
                 Some((impl_i, impl_ut, imp))
             } else {

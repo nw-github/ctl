@@ -1,4 +1,4 @@
-use core::span::Span;
+use std::span::Span;
 
 static NAN: str = "NaN";
 static INFINITY: str = "inf";

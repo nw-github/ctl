@@ -1,4 +1,4 @@
-use core::reflect::TypeId;
+use std::reflect::TypeId;
 
 pub trait Any {
     fn type_id(this): TypeId;

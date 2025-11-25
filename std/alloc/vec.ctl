@@ -3,6 +3,7 @@ use std::span::*;
 use std::range::RangeBounds;
 use std::reflect::*;
 
+@(feature(alloc))
 @(lang(vec))
 pub struct Vec<T> {
     ptr: ^mut T,
@@ -225,7 +226,7 @@ pub struct Vec<T> {
         }
     }
 
-    impl core::iter::FromIter<T> {
+    impl std::iter::FromIter<T> {
         fn from_iter<I: Iterator<T>>(iter: I): This {
             mut self: [T] = @[]; // TODO: size hint
             for item in iter {

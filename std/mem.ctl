@@ -1,4 +1,4 @@
-use core::intrin;
+use std::intrin;
 pub use intrin::size_of;
 pub use intrin::align_of;
 

@@ -26,7 +26,7 @@ pub union Option<T> {
     }
 
     pub fn take(mut this): This {
-        core::mem::replace(this, null)
+        std::mem::replace(this, null)
     }
 
     pub fn is_some(this): bool {
@@ -37,7 +37,7 @@ pub union Option<T> {
         this is null
     }
 
-    impl core::ops::Unwrap<T> {
+    impl std::ops::Unwrap<T> {
         fn unwrap(this): T {
             if this is ?inner {
                 *inner
@@ -49,9 +49,9 @@ pub union Option<T> {
 }
 
 pub mod ext {
-    pub extension OptionFormat<T: core::fmt::Format> for ?T {
-        impl core::fmt::Format {
-            fn fmt<F: core::fmt::Formatter>(this, f: *mut F) {
+    pub extension OptionFormat<T: std::fmt::Format> for ?T {
+        impl std::fmt::Format {
+            fn fmt<F: std::fmt::Formatter>(this, f: *mut F) {
                 if this is ?rhs {
                     "Some(".fmt(f);
                     rhs.fmt(f);
@@ -75,7 +75,7 @@ pub mod ext {
         }
     }
 
-    pub extension OptionEq<T: core::ops::Eq<T>> for ?T {
+    pub extension OptionEq<T: std::ops::Eq<T>> for ?T {
         pub fn ==(this, rhs: *?T): bool {
             match (this, rhs) {
                 (null, null) => true,
