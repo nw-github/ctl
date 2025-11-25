@@ -90,9 +90,10 @@ pub enum StmtData {
     Binding {
         public: bool,
         constant: bool,
+        is_extern: bool,
         name: Located<String>,
         ty: TypeHint,
-        value: Expr,
+        value: Option<Expr>,
     },
     Module {
         public: bool,

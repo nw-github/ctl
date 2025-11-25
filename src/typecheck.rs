@@ -1240,6 +1240,7 @@ impl TypeChecker {
                 mut name,
                 ty,
                 value,
+                is_extern,
             } => {
                 let ty = self.declare_type_hint(ty);
                 let mut unused = true;
@@ -1251,14 +1252,15 @@ impl TypeChecker {
                 DStmt::Binding {
                     id: self.insert::<VariableId>(
                         Variable {
+                            attrs: stmt.attrs,
                             public,
                             name,
                             ty,
                             unused,
+                            is_extern,
                             is_static: true,
-                            mutable: false,
-                            value: None,
                             has_hint: true,
+                            ..Default::default()
                         },
                         public,
                         true,
@@ -1835,14 +1837,30 @@ impl TypeChecker {
 
                 self.proj.static_deps.insert(id, Dependencies::Resolving);
                 let prev = self.current_static.replace((id, Vec::new()));
-                let value = self.enter(ScopeKind::Static(id), |this| this.type_check(value, ty));
+                let value = value.map(|value| {
+                    self.enter(ScopeKind::Static(id), |this| this.type_check(value, ty))
+                });
+
                 let (_, deps) = std::mem::replace(&mut self.current_static, prev).unwrap();
                 self.proj
                     .static_deps
                     .insert(id, Dependencies::Resolved(deps));
 
                 let var = self.proj.scopes.get_mut(id);
-                var.value = Some(value);
+                if value.is_none() && var.is_static && !var.is_extern {
+                    self.proj.diag.error(Error::new(
+                        "non-extern static variable must be initialized",
+                        var.name.span,
+                    ))
+                }
+
+                // if value.is_none() && constant {
+                //     self.proj
+                //         .diag
+                //         .error(Error::new("constant must be initialized", var.name.span))
+                // }
+
+                var.value = value;
             }
             DStmt::None => {}
         }
@@ -3074,6 +3092,13 @@ impl TypeChecker {
                         }
                     }
 
+                    if var.is_static && var.is_extern && self.safety != Safety::Unsafe {
+                        self.proj.diag.error(Error::new(
+                            "accessing static extern variable is unsafe",
+                            span,
+                        ));
+                    }
+
                     let ty = var.ty;
                     self.proj.scopes.get_mut(id).unused = false;
                     CExpr::new(ty, CExprData::Var(id))
@@ -3615,14 +3640,11 @@ impl TypeChecker {
                         lparams.push(ty);
                         this.insert::<VariableId>(
                             Variable {
-                                public: false,
                                 name,
                                 ty,
-                                is_static: false,
-                                mutable: false,
-                                value: None,
                                 unused: true,
                                 has_hint,
+                                ..Default::default()
                             },
                             false,
                             false,
@@ -4127,14 +4149,11 @@ impl TypeChecker {
 
             let iter_var = this.insert::<VariableId>(
                 Variable {
-                    public: false,
                     name: Located::new(Span::default(), format!("$iter{}", this.current.0)),
                     ty: iter.ty,
-                    is_static: false,
                     mutable: true,
                     value: None,
-                    unused: false,
-                    has_hint: false,
+                    ..Default::default()
                 },
                 false,
                 false,
@@ -6139,14 +6158,12 @@ impl TypeChecker {
         if name.data != "_" {
             let id = self.insert(
                 Variable {
-                    public: false,
                     name,
                     ty,
-                    is_static: false,
                     mutable,
-                    value: None,
                     unused: typ != PatternType::BodylessFn,
                     has_hint,
+                    ..Default::default()
                 },
                 false,
                 typ != PatternType::Regular,

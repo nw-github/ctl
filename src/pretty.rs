@@ -138,15 +138,19 @@ pub fn print_stmt(stmt: &Stmt, indent: usize) {
             value,
             public,
             constant,
+            is_extern,
         } => {
             eprint!("{tabs}Static[{name}]");
             print_bool!(public);
             print_bool!(constant);
+            print_bool!(is_extern);
             eprintln!();
 
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}Type: {ty:?}");
-            print_expr(value, indent + 1);
+            if let Some(value) = value {
+                print_expr(value, indent + 1);
+            }
         }
         StmtData::Module {
             name,

@@ -903,19 +903,18 @@ impl Codegen {
                         write_de!(this.buffer, ";");
                     });
 
-                    usebuf!(
-                        this,
-                        &mut static_init,
-                        hoist_point!(this, {
-                            this.emit_var_name(id, static_state);
-                            write_de!(this.buffer, "=");
-                            this.emit_expr_inner(
-                                this.proj.scopes.get(id).value.clone().unwrap(),
-                                static_state,
-                            );
-                            write_de!(this.buffer, ";");
-                        })
-                    );
+                    if let Some(v) = this.proj.scopes.get(id).value.clone() {
+                        usebuf!(
+                            this,
+                            &mut static_init,
+                            hoist_point!(this, {
+                                this.emit_var_name(id, static_state);
+                                write_de!(this.buffer, "=");
+                                this.emit_expr_inner(v, static_state);
+                                write_de!(this.buffer, ";");
+                            })
+                        );
+                    }
                 });
             }
         }
@@ -3170,8 +3169,13 @@ impl Codegen {
 
         let var = self.proj.scopes.get(id);
         if var.is_static {
-            self.buffer
-                .emit(full_name(&self.proj.scopes, var.scope, &var.name.data));
+            if var.is_extern {
+                self.buffer
+                    .emit(var.attrs.val(ATTR_LINKNAME).unwrap_or(&var.name.data))
+            } else {
+                self.buffer
+                    .emit(full_name(&self.proj.scopes, var.scope, &var.name.data));
+            }
         } else {
             let mut emit = || {
                 write_de!(self.buffer, "$");
@@ -3212,17 +3216,22 @@ impl Codegen {
         let ty = var
             .ty
             .with_templates(&mut self.proj.types, &state.func.ty_args);
-        if var.is_static {
+        let emit_const = !var.mutable && !var.is_static;
+        let has_value = var.value.is_some();
+
+        if var.is_extern && !has_value {
+            write_de!(self.buffer, "extern ");
+        } else if var.is_static && !var.is_extern {
             write_de!(self.buffer, "static ");
         }
 
-        let emit_const = !var.mutable && !var.is_static;
         self.emit_type(ty);
         if emit_const {
             write_de!(self.buffer, " const");
         }
         write_de!(self.buffer, " ");
         self.emit_var_name(id, state);
+
         ty
     }
 

@@ -33,7 +33,7 @@ pub enum Stmt {
     },
     Binding {
         id: VariableId,
-        value: Expr,
+        value: Option<Expr>,
         constant: bool,
     },
     Fn(Fn),

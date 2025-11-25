@@ -187,11 +187,14 @@ pub struct CheckedParam {
     pub default: Option<DefaultExpr>,
 }
 
+#[derive(Default)]
 pub struct Variable {
+    pub attrs: Attributes,
     pub public: bool,
     pub name: Located<String>,
     pub ty: TypeId,
     pub is_static: bool,
+    pub is_extern: bool,
     pub mutable: bool,
     pub value: Option<CheckedExpr>,
     pub unused: bool,

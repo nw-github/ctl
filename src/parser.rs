@@ -314,15 +314,16 @@ impl<'a, 'b> Parser<'a, 'b> {
                     self.error_no_sync(Error::not_valid_here(&token));
                 }
 
-                if let Some(token) = is_extern {
-                    self.error_no_sync(Error::not_valid_here(&token));
+                if let Some(ext) = &is_extern {
+                    if token.data.is_const() {
+                        self.error_no_sync(Error::not_valid_here(ext));
+                    }
                 }
 
                 let name = self.expect_ident("expected name");
                 self.expect(Token::Colon);
                 let ty = self.type_hint();
-                self.expect(Token::Assign);
-                let value = self.expression();
+                let value = self.next_if(Token::Assign).map(|_| self.expression());
                 let end = self.expect(Token::Semicolon);
                 Ok(Stmt {
                     data: Located::new(
@@ -330,6 +331,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         StmtData::Binding {
                             public: public.is_some(),
                             constant: matches!(token.data, Token::Const),
+                            is_extern: is_extern.is_some(),
                             name,
                             ty,
                             value,
