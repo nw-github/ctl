@@ -10,6 +10,10 @@ pub trait Iterator<T> {
         Take::new(this, count)
     }
 
+    fn skip(my this, count: uint): Skip<T, This> {
+        Skip::new(this, count)
+    }
+
     fn zip<U, I: Iterator<U>>(my this, rhs: I): Zip<T, U, This, I> {
         Zip::new(this, rhs)
     }
@@ -26,6 +30,14 @@ pub trait Iterator<T> {
         mut count = 0u;
         while this.next().is_some() { count++; }
         count
+    }
+
+    fn nth(mut this, n: uint): ?T {
+        for _ in 0u..n {
+            this.next();
+        }
+
+        this.next()
     }
 
     fn collect<I: FromIter<T>>(this): I {
@@ -129,6 +141,25 @@ pub struct Peekable<T, I: Iterator<T>> {
     fn prime(mut this) {
         if this.item is null {
             this.item = this.iter.next();
+        }
+    }
+}
+
+pub struct Skip<T, I: Iterator<T>> {
+    count: uint,
+    iter: I,
+
+    pub fn new(iter: I, count: uint): This {
+        Skip(iter:, count:)
+    }
+
+    impl Iterator<T> {
+        fn next(mut this): ?T {
+            while this.count != 0 and this.iter.next() is ?_ {
+                this.count -= 1;
+            }
+
+            this.iter.next()
         }
     }
 }
