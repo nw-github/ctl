@@ -541,6 +541,7 @@ pub struct Struct {
 
 #[derive(Debug, Clone)]
 pub struct ImplBlock {
+    pub attrs: Attributes,
     pub type_params: TypeParams,
     pub path: Path,
     pub functions: Vec<Located<Fn>>,

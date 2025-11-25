@@ -1724,18 +1724,18 @@ impl<'a, 'b> Parser<'a, 'b> {
                     Ok(Right(func)) => operators.push(func),
                     _ => {}
                 }
+            } else if let Some(token) = this.next_if(Token::Impl) {
+                if let Some(token) = public {
+                    this.error_no_sync(Error::not_valid_here(&token));
+                }
+
+                impls.push(this.impl_block(attrs, token.span));
             } else if let Ok(func) = this.try_function(config, attrs) {
                 // TODO: apply the attributes to the impl block or next member
                 match func {
                     Left(func) => functions.push(func),
                     Right(func) => operators.push(func),
                 }
-            } else if let Some(token) = this.next_if(Token::Impl) {
-                if let Some(token) = public {
-                    this.error_no_sync(Error::not_valid_here(&token));
-                }
-
-                impls.push(this.impl_block(token.span));
             } else {
                 let name = this.expect_ident("expected name");
                 this.expect(Token::Colon);
@@ -1793,6 +1793,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                     Ok(Right(func)) => operators.push(func),
                     _ => {}
                 }
+            } else if let Some(token) = this.next_if(Token::Impl) {
+                impls.push(this.impl_block(attrs, token.span));
             } else if let Ok(func) = this.try_function(config, attrs) {
                 // TODO: apply the attributes to the impl block or next member
                 match func {
@@ -1813,8 +1815,6 @@ impl<'a, 'b> Parser<'a, 'b> {
                     ty,
                     default: value,
                 });
-            } else if let Some(token) = this.next_if(Token::Impl) {
-                impls.push(this.impl_block(token.span));
             } else {
                 let name = this.expect_ident("expected variant name");
                 let data = match this.peek().data {
@@ -1938,7 +1938,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
             if let Some(token) = this.next_if(Token::Impl) {
-                impls.push(this.impl_block(token.span));
+                impls.push(this.impl_block(attrs, token.span));
             } else {
                 let config = FnConfig {
                     require_body: true,
@@ -1968,7 +1968,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         )
     }
 
-    fn impl_block(&mut self, span: Span) -> Located<ImplBlock> {
+    fn impl_block(&mut self, attrs: Attributes, span: Span) -> Located<ImplBlock> {
         let type_params = self.type_params();
         let path = self.type_path();
         self.expect(Token::LCurly);

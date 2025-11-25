@@ -1540,7 +1540,11 @@ impl TypeChecker {
                 path,
                 functions,
                 type_params,
+                attrs,
             } = block.data;
+            if self.check_disabled(&attrs) {
+                continue;
+            }
 
             let block = self.enter(ScopeKind::None, |this| DImplBlock {
                 type_params: this.declare_type_params(type_params),
