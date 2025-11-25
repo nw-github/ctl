@@ -29,6 +29,7 @@ pub struct Diagnostics {
     errors: Vec<Error>,
     warnings: Vec<Error>,
     paths: Vec<PathBuf>,
+    inactive: Vec<Span>,
     errors_disabled: bool,
 }
 
@@ -46,6 +47,10 @@ impl Diagnostics {
     pub fn add_file(&mut self, path: PathBuf) -> FileId {
         self.paths.push(path);
         FileId(self.paths.len() as u32 - 1)
+    }
+
+    pub fn add_inactive(&mut self, span: Span) {
+        self.inactive.push(span);
     }
 
     pub fn file_path(&self, file: FileId) -> &Path {
@@ -69,6 +74,10 @@ impl Diagnostics {
 
     pub fn warnings(&self) -> &[Error] {
         &self.warnings
+    }
+
+    pub fn inactive(&self) -> &[Span] {
+        &self.inactive
     }
 
     pub fn get_span_range(data: &str, span: Span, mode: OffsetMode) -> Range {

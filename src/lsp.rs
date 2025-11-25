@@ -483,6 +483,40 @@ impl LspBackend {
         }
     }
 
+    fn make_diagnostic(
+        &self,
+        diag: &Diagnostics,
+        cache: &mut CachingSourceProvider,
+        span: Span,
+        msg: &str,
+        severity: DiagnosticSeverity,
+        all: &mut HashMap<Url, Vec<Diagnostic>>,
+    ) {
+        let path = diag.file_path(span.file);
+        let range = if let Some(doc) = Url::from_file_path(path)
+            .ok()
+            .and_then(|uri| self.documents.get(&uri))
+        {
+            Diagnostics::get_span_range(&doc.text, span, OffsetMode::Utf16)
+        } else if let Ok(Some(range)) = cache.get_source(path, |data| {
+            Diagnostics::get_span_range(data, span, OffsetMode::Utf16)
+        }) {
+            range
+        } else {
+            return;
+        };
+
+        let entry = all.entry(Url::from_file_path(path).unwrap()).or_default();
+        entry.push(Diagnostic {
+            range,
+            severity: Some(severity),
+            source: Some("ctlsp".into()),
+            message: msg.into(),
+            tags: (severity == DiagnosticSeverity::HINT).then(|| vec![DiagnosticTag::UNNECESSARY]),
+            ..Diagnostic::default()
+        });
+    }
+
     async fn check_project(
         &self,
         uri: &Url,
@@ -538,39 +572,40 @@ impl LspBackend {
         let diag = &mut proj.diag;
         let mut all = HashMap::<Url, Vec<Diagnostic>>::new();
         let mut cache = CachingSourceProvider::new();
-        for (severity, err) in diag
-            .errors()
-            .iter()
-            .map(|err| (DiagnosticSeverity::ERROR, err))
-            .chain(
-                diag.warnings()
-                    .iter()
-                    .map(|err| (DiagnosticSeverity::WARNING, err)),
-            )
-        {
-            let path = diag.file_path(err.span.file);
-            let range = if let Some(doc) = Url::from_file_path(path)
-                .ok()
-                .and_then(|uri| self.documents.get(&uri))
-            {
-                Diagnostics::get_span_range(&doc.text, err.span, OffsetMode::Utf16)
-            } else if let Ok(Some(range)) = cache.get_source(path, |data| {
-                Diagnostics::get_span_range(data, err.span, OffsetMode::Utf16)
-            }) {
-                range
-            } else {
-                continue;
-            };
 
-            let entry = all.entry(Url::from_file_path(path).unwrap()).or_default();
-            entry.push(Diagnostic {
-                range,
-                severity: Some(severity),
-                source: Some("ctlsp".into()),
-                message: err.message.clone(),
-                ..Diagnostic::default()
-            });
+        for err in diag.errors() {
+            self.make_diagnostic(
+                diag,
+                &mut cache,
+                err.span,
+                &err.message,
+                DiagnosticSeverity::ERROR,
+                &mut all,
+            );
         }
+
+        for err in diag.warnings() {
+            self.make_diagnostic(
+                diag,
+                &mut cache,
+                err.span,
+                &err.message,
+                DiagnosticSeverity::WARNING,
+                &mut all,
+            );
+        }
+
+        for &span in diag.inactive() {
+            self.make_diagnostic(
+                diag,
+                &mut cache,
+                span,
+                "this region is disabled",
+                DiagnosticSeverity::HINT,
+                &mut all,
+            );
+        }
+
         for (_, path) in diag.paths() {
             if let Ok(uri) = Url::from_file_path(path) {
                 all.entry(uri).or_default();

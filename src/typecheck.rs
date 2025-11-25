@@ -1071,7 +1071,7 @@ impl TypeChecker {
     }
 
     fn declare_stmt(&mut self, autouse: &mut Vec<ScopeId>, stmt: PStmt) -> DStmt {
-        if self.check_disabled(&stmt.attrs) {
+        if self.check_disabled(&stmt.attrs, stmt.data.span) {
             return DStmt::None;
         }
 
@@ -1396,7 +1396,7 @@ impl TypeChecker {
 
     fn declare_fns_iter(&mut self, fns: Vec<Located<Fn>>) -> impl Iterator<Item = DFn> + use<'_> {
         fns.into_iter().flat_map(|f| {
-            if !self.check_disabled(&f.data.attrs) {
+            if !self.check_disabled(&f.data.attrs, f.span) {
                 Some(self.declare_fn(f.data))
             } else {
                 None
@@ -1411,7 +1411,7 @@ impl TypeChecker {
         blocks: &mut Vec<DImplBlock>,
         subscripts: &mut Vec<DFn>,
     ) {
-        if self.check_disabled(&f.data.attrs) {
+        if self.check_disabled(&f.data.attrs, f.span) {
             return;
         }
 
@@ -1542,7 +1542,7 @@ impl TypeChecker {
                 type_params,
                 attrs,
             } = block.data;
-            if self.check_disabled(&attrs) {
+            if self.check_disabled(&attrs, block.span) {
                 continue;
             }
 
@@ -1627,9 +1627,13 @@ impl TypeChecker {
         }
     }
 
-    fn check_disabled(&mut self, attrs: &Attributes) -> bool {
-        // TODO: add the entire span to an LSP list of disabled regions
-        self.proj.conf.is_disabled_by_attrs(attrs)
+    fn check_disabled(&mut self, attrs: &Attributes, span: Span) -> bool {
+        if self.proj.conf.is_disabled_by_attrs(attrs) {
+            self.proj.diag.add_inactive(span);
+            return true;
+        }
+
+        false
     }
 }
 
