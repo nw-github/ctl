@@ -16,23 +16,6 @@ pub fn exit(code: u32): never {
     unsafe libc::exit(code as! c_int)
 }
 
-@(feature(hosted))
-@(lang(convert_argv))
-fn convert_argv(argc: c_int, argv: **c_char): [str..] {
-    mut result: [str] = Vec::with_capacity(argc as! uint);
-    unsafe {
-        for arg in std::span::Span::new(ptr: &raw *argv, len: argc as! uint).iter() {
-            result.push(
-                str::from_utf8_unchecked(std::span::Span::new(
-                    (&raw **arg).cast(),
-                    std::intrin::strlen(*arg),
-                ))
-            );
-        }
-    }
-    result[..]
-}
-
 @(feature(hosted, io))
 @(lang(panic_handler))
 fn panic_handler(s: str): never {

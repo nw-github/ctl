@@ -920,15 +920,19 @@ impl Codegen {
         }
         let functions = std::mem::take(&mut this.buffer);
         if this.flags.leak {
-            writeln_de!(this.buffer, "#define CTL_NOGC");
+            this.buffer.emit("#define CTL_NOGC 1\n");
         }
         if this.flags.no_bit_int {
-            writeln_de!(this.buffer, "#define CTL_NOBITINT");
+            this.buffer.emit("#define CTL_NOBITINT 1\n");
         }
+        if this.proj.conf.has_feature("hosted") {
+            this.buffer.emit("#define CTL_HOSTED 1\n");
+        }
+
         this.buffer.emit(include_str!("../ctl.h"));
         if let Some(&ut) = this.proj.scopes.lang_types.get("string") {
             let ut = GenericUserType::from_id(&this.proj.scopes, &mut this.proj.types, ut);
-            this.buffer.emit("#define STRLIT(data, n)(");
+            this.buffer.emit("#define STRLIT(data,n)(");
             this.buffer.emit_type_name(
                 &this.proj.scopes,
                 &mut this.proj.types,
@@ -936,7 +940,7 @@ impl Codegen {
                 this.flags.minify,
             );
             this.buffer
-                .emit(") {.$span = {.$ptr = (u8 *)data, .$len = (usize)n }}\n");
+                .emit("){.$span={.$ptr=(u8*)data,.$len=(usize)n}}\n");
         }
 
         this.tg.emit(
@@ -950,9 +954,10 @@ impl Codegen {
         this.buffer.emit(this.vtables.finish());
         this.buffer.emit(static_defs.finish());
         this.buffer.emit(functions.finish());
-        write_de!(this.buffer, "static void $ctl_static_init(void){{");
+        this.buffer.emit("static void $ctl_static_init(void){{");
         this.buffer.emit(static_init.finish());
-        write_de!(this.buffer, "}}static void $ctl_static_deinit(void){{}}");
+        this.buffer
+            .emit("}}static void $ctl_static_deinit(void){{}}");
         if let Some(main) = main {
             this.buffer.emit(main);
         }
@@ -1013,57 +1018,23 @@ impl Codegen {
     }
 
     fn gen_c_main(&mut self, main: &mut State) -> String {
-        write_de!(self.buffer, "int main(int argc, char **argv){{");
+        self.buffer.emit("int main(int argc, char **argv){{");
         let returns = !self.proj.scopes.get(main.func.id).ret.is_void();
-        if let Some(id) = self
-            .proj
-            .scopes
-            .lang_fns
-            .get("convert_argv")
-            .cloned()
-            .filter(|_| self.proj.scopes.get(main.func.id).params.len() == 1)
-        {
-            let state =
-                State::in_body_scope(GenericFn::from_id(&self.proj.scopes, id), &self.proj.scopes);
-            if returns {
-                write_de!(self.buffer, "return ");
-            }
-            self.buffer.emit_fn_name(
-                &self.proj.scopes,
-                &mut self.proj.types,
-                &main.func,
-                self.flags.minify,
-            );
-            write_de!(self.buffer, "(");
-            self.buffer.emit_fn_name(
-                &self.proj.scopes,
-                &mut self.proj.types,
-                &state.func,
-                self.flags.minify,
-            );
-            if returns {
-                write_de!(self.buffer, "(argc,(const char **)argv));}}");
-            } else {
-                write_de!(self.buffer, "(argc,(const char **)argv));return 0;}}");
-            }
 
-            self.funcs.insert(state);
+        self.buffer.emit("CTL_ARGV=argv;CTL_ARGC=argc;");
+        if returns {
+            self.buffer.emit("return ");
+        }
+        self.buffer.emit_fn_name(
+            &self.proj.scopes,
+            &mut self.proj.types,
+            &main.func,
+            self.flags.minify,
+        );
+        if returns {
+            self.buffer.emit("();}}");
         } else {
-            write_de!(self.buffer, "(void)argc;(void)argv;");
-            if returns {
-                write_de!(self.buffer, "return ");
-            }
-            self.buffer.emit_fn_name(
-                &self.proj.scopes,
-                &mut self.proj.types,
-                &main.func,
-                self.flags.minify,
-            );
-            if returns {
-                write_de!(self.buffer, "();}}");
-            } else {
-                write_de!(self.buffer, "();return 0;}}");
-            }
+            self.buffer.emit("();return 0;}}");
         }
         std::mem::take(&mut self.buffer).finish()
     }

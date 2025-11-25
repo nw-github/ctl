@@ -206,3 +206,8 @@ typedef struct {
   void const *self;
   VirtualFn const *vtable;
 } DynPtr;
+
+#ifdef CTL_HOSTED
+char const *const *CTL_ARGV;
+int CTL_ARGC;
+#endif

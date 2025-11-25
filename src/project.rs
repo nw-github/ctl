@@ -56,11 +56,11 @@ impl Configuration {
         attrs
             .iter()
             .find(|f| f.name.data == "feature")
-            .is_some_and(|v| {
-                v.props
-                    .iter()
-                    .any(|v| !self.features.contains(&v.name.data.to_lowercase()))
-            })
+            .is_some_and(|v| v.props.iter().any(|v| !self.has_feature(&v.name.data)))
+    }
+
+    pub fn has_feature(&self, feat: &str) -> bool {
+        self.features.contains(&feat.to_lowercase())
     }
 }
 

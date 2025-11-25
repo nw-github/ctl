@@ -48,7 +48,7 @@ pub extern fn malloc(size: uint, align: uint): ?^mut u8;
 pub extern fn realloc(addr: ^mut u8, size: uint, align: uint): ?^mut u8;
 
 @(c_opaque, c_name(CTL_STRLEN))
-pub extern fn strlen(ptr: *c_char): uint;
+pub extern fn strlen(ptr: ^c_char): uint;
 
 @(safe, c_opaque, c_name(CTL_LIKELY))
 pub extern fn likely(val: bool): bool;
