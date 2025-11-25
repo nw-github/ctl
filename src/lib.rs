@@ -189,18 +189,12 @@ impl Compiler<Parsed> {
 }
 
 impl Compiler<Checked> {
-    pub fn build(mut self, flags: CodegenFlags) -> (Option<String>, Diagnostics) {
-        if !flags.lib && self.state.0.main.is_none() {
-            self.state
-                .0
-                .diag
-                .error(Error::new("no main function found", Span::default()));
-        }
+    pub fn build(self) -> (Option<String>, Diagnostics) {
         if self.state.0.diag.has_errors() {
             return (None, self.state.0.diag);
         }
 
-        let (code, diag) = Codegen::build(self.state.0, flags);
+        let (code, diag) = Codegen::build(self.state.0);
         (Some(code), diag)
     }
 
@@ -232,7 +226,9 @@ pub fn project_from_file(
 ) -> (Vec<PathBuf>, Configuration) {
     let std_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
     let path = path.canonicalize().unwrap_or_else(|_| path.into());
+    let mut conf = Configuration::default();
     if path == std_path {
+        conf.flags.lib = true;
         no_std = true;
     }
 
@@ -241,7 +237,7 @@ pub fn project_from_file(
     }
 
     libs.push(path);
-    (libs, Configuration::default())
+    (libs, conf)
 }
 
 fn nearest_pow_of_two(bits: u32) -> usize {

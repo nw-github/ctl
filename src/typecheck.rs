@@ -348,7 +348,10 @@ impl TypeChecker {
         };
 
         let mut autouse = vec![];
+        let mut last_file_id = None;
         for module in project {
+            last_file_id = Some(module.data.span.file);
+
             let stmt = this.declare_stmt(&mut autouse, module);
             for scope in autouse.drain(..) {
                 this.enter_id_and_resolve(scope, |_| {});
@@ -383,6 +386,44 @@ impl TypeChecker {
             .get("main")
             .and_then(|id| id.as_fn())
             .copied();
+        if !this.proj.conf.flags.lib {
+            if let Some(id) = this.proj.main {
+                let func = this.proj.scopes.get(id);
+                if !func.params.is_empty() {
+                    this.proj.diag.error(Error::new(
+                        "main function must have an empty parameter list",
+                        func.name.span,
+                    ));
+                }
+
+                if !matches!(
+                    this.proj.types[func.ret],
+                    Type::Void
+                        | Type::Never
+                        | Type::Int(_)
+                        | Type::Uint(_)
+                        | Type::CInt(_)
+                        | Type::CUint(_)
+                        | Type::Isize
+                        | Type::Usize
+                ) {
+                    this.proj.diag.error(Error::new(
+                        "main function must return void, never, or an integer type",
+                        func.name.span,
+                    ));
+                }
+            } else {
+                this.proj.diag.error(Error::new(
+                    "no main function found in non-library module",
+                    Span {
+                        file: last_file_id.unwrap_or_default(),
+                        pos: 0,
+                        len: 0,
+                    },
+                ));
+            }
+        }
+
         for (_, var) in
             this.proj.scopes.vars().filter(|(_, v)| {
                 v.unused && !v.name.data.starts_with('_') && v.name.data != THIS_PARAM

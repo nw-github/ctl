@@ -1,5 +1,5 @@
 use anyhow::Context;
-use ctl::{project_from_file, CodegenFlags, Compiler, Diagnostics, FileId, Lexer, Token};
+use ctl::{project_from_file, Compiler, Diagnostics, FileId, Lexer, Token};
 use std::{
     io::{Read, Write},
     path::Path,
@@ -49,11 +49,12 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
         return Err("no requirements specified!".into());
     }
 
-    let (proj, conf) = project_from_file(path, vec![], false, false);
+    let (proj, mut conf) = project_from_file(path, vec![], false, false);
+    conf.flags.lib = false;
     let (code, diag) = Compiler::new()
         .parse(proj, conf)?
         .typecheck(Default::default())
-        .build(CodegenFlags::default());
+        .build();
     test_diagnostics(diag, &errors)?;
     let Some(code) = code else {
         if !expected.is_empty() {

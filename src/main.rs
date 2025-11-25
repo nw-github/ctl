@@ -259,7 +259,13 @@ fn main() -> Result<()> {
             return Ok(());
         }
     };
-    let (proj, conf) = project_from_file(input, vec![], args.no_core, args.no_std);
+    let (proj, mut conf) = project_from_file(input, vec![], args.no_core, args.no_std);
+    conf.flags = CodegenFlags {
+        leak: args.leak,
+        no_bit_int: args.no_bit_int,
+        lib: args.shared,
+        minify: matches!(args.command, SubCommand::Print { minify: true, .. }),
+    };
     let result = Compiler::new()
         .parse(proj, conf)?
         .inspect(|ast| {
@@ -268,12 +274,7 @@ fn main() -> Result<()> {
             }
         })
         .typecheck(Default::default())
-        .build(CodegenFlags {
-            leak: args.leak,
-            no_bit_int: args.no_bit_int,
-            lib: args.shared,
-            minify: matches!(args.command, SubCommand::Print { minify: true, .. }),
-        });
+        .build();
     let result = match result {
         (Some(code), diag) => {
             if !args.quiet {

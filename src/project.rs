@@ -6,7 +6,7 @@ use crate::{
     sym::{FunctionId, ScopeId, Scopes, UserTypeId, VariableId},
     typecheck::{Completions, LspItem},
     typeid::{TypeId, Types},
-    Diagnostics, Span,
+    CodegenFlags, Diagnostics, Span,
 };
 
 pub enum SpanSemanticToken {
@@ -49,6 +49,7 @@ impl Project {
 
 pub struct Configuration {
     features: HashSet<String>,
+    pub flags: CodegenFlags,
 }
 
 impl Configuration {
@@ -68,6 +69,7 @@ impl Default for Configuration {
     fn default() -> Self {
         Self {
             features: ["alloc".to_string(), "io".to_string(), "hosted".to_string()].into(),
+            flags: Default::default(),
         }
     }
 }

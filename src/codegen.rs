@@ -841,7 +841,7 @@ pub struct Codegen {
 }
 
 impl Codegen {
-    pub fn build(proj: Project, flags: CodegenFlags) -> (String, Diagnostics) {
+    pub fn build(proj: Project) -> (String, Diagnostics) {
         let exports = proj
             .scopes
             .functions()
@@ -849,7 +849,7 @@ impl Codegen {
             .map(|(id, _)| {
                 State::in_body_scope(GenericFn::from_id(&proj.scopes, id), &proj.scopes)
             });
-        let (funcs, main) = if flags.lib {
+        let (funcs, main) = if proj.conf.flags.lib {
             (exports.collect(), None)
         } else {
             let main = State::in_body_scope(
@@ -862,9 +862,9 @@ impl Codegen {
             )
         };
         let mut this = Self {
+            flags: proj.conf.flags,
             proj,
             funcs,
-            flags,
             emitted_never_in_this_block: false,
             buffer: Default::default(),
             temporaries: Default::default(),
@@ -1019,7 +1019,7 @@ impl Codegen {
 
     fn gen_c_main(&mut self, main: &mut State) -> String {
         self.buffer.emit("int main(int argc, char **argv){{");
-        let returns = !self.proj.scopes.get(main.func.id).ret.is_void();
+        let returns = self.proj.types[self.proj.scopes.get(main.func.id).ret].is_integral();
 
         self.buffer.emit("CTL_ARGV=argv;CTL_ARGC=argc;");
         if returns {
