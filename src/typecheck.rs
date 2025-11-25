@@ -1103,9 +1103,6 @@ impl TypeChecker {
                     }
 
                     if stmt.attrs.iter().any(|attr| attr.name.data == "autouse") {
-                        let core = this.proj.scopes[ScopeId::ROOT]
-                            .find_in_tns("core")
-                            .and_then(|inner| inner.as_module().copied());
                         let std = this.proj.scopes[ScopeId::ROOT]
                             .find_in_tns("std")
                             .and_then(|inner| inner.as_module().copied());
@@ -1113,12 +1110,12 @@ impl TypeChecker {
                             .proj
                             .scopes
                             .walk(this.current)
-                            .any(|(id, _)| Some(id) == core || Some(id) == std)
+                            .any(|(id, _)| Some(id) == std)
                         {
                             autouse.push(this.current);
                         } else {
                             this.error(Error::new(
-                                "autouse modules may only be defined by 'core' and 'std'",
+                                "autouse modules may only be defined by 'std'",
                                 name.span,
                             ))
                         }
