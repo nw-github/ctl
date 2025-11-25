@@ -1,6 +1,6 @@
 # Introduction
 
-This documentation is a work in progress and may be out of date. CTL is evolving quickly, and features, functionality, and syntax may change on a dime. Features marked "UNIMPLEMENTED" are planned but not currently implemented by the compiler.
+This documentation is a work in progress and may be out of date. CTL is not stable and is evolving quickly, and features, functionality, and syntax may change without warning. Features marked "UNIMPLEMENTED" are planned but not currently implemented in the compiler.
 
 # Table of contents
 
@@ -48,7 +48,7 @@ The `as` operator can only be used for integer casts which are infallible, meani
 -   any `iX` to any `iY` where `Y >= X`
 -   any `uX` to any `iY` where `Y >= X + 1`
 
-For other casts, you will need a fallible cast operator. The `as!` operator will panic (UNIMPLEMENTED) if the conversion would overflow, and the `as?` (UNIMPLEMENTED) operator returns an optional that is `None` if the conversion failed, and `Some` with a value if it didn't. Integer casts to/from `int`, `uint`, or any of the `c_*` types require infallible casts, as their size may change from platform to platform.
+For other casts, you will need a fallible cast operator. The `as!` operator will panic (UNIMPLEMENTED) if the conversion would overflow, and the `as?` (UNIMPLEMENTED) operator returns an optional that is `null` if the conversion failed, and `?value` if it didn't. Integer casts to/from `int`, `uint`, or any of the `c_*` types always require fallible casts, as their size may change from platform to platform.
 
 There is also the standard library method `cast()`, available on all integer types, which performs a C-style cast with truncation/wrap-around.
 
@@ -108,7 +108,7 @@ foo.insert(idx: 0, 0);  // insert 0 at index 0
 println("{foo[..]}");   // prints "[0, 1, 2, 3]"
 ```
 
-`{T}` is the set type, implemented with a hash set. Sets contain only unique elements and can be created with a set literal `#[A, B, C, ...]`. Sets cannot be indexed or sliced. They support iteration, but iteration order is unspecified. Sets can only be created from types that implement the `Hash` and `Eq` trait.
+`#[T]` is the set type, implemented with a hash set. Sets contain only unique elements and can be created with a set literal `#[A, B, C, ...]`. Sets cannot be indexed or sliced. They support iteration, but iteration order is unspecified. Sets can only be created from types that implement the `Hash` and `Eq` trait.
 
 ```rs
 mut foo = #[1, 1, 2, 3, 4, 3];
@@ -140,8 +140,8 @@ There are seven pointer types in CTL. All CTL pointer types are non-nullable, an
 
 These are the standard pointer types. They must be non-null, aligned and point to a valid object.
 
--   `^T` A raw pointer to an immutable `T`. Creatable with `&raw expr`, implicitly convertible from `*T/*mut T`, and `as` castable from `*T/*mut T`
--   `^mut T` A raw pointer to a mutable `T`. Creatable with `&raw mut expr`, implicitly convertible from `*mut T`, and `as` castable from `*T/*mut T`
+-   `^T` A raw pointer to an immutable `T`. Creatable with `&raw expr`, implicitly convertible from `*T`/`*mut T`, and `as` castable to/from `*T`/`*mut T`
+-   `^mut T` A raw pointer to a mutable `T`. Creatable with `&raw mut expr`, implicitly convertible from `*mut T`, and `as` castable to/from `*T`/`*mut T`
 
 Raw pointers do not have the validity or alignment requirements of normal pointers, but they also must be non-null. Dereferencing or converting a raw pointer to a normal one requires an `unsafe` context.
 
@@ -149,7 +149,7 @@ Raw pointers do not have the validity or alignment requirements of normal pointe
 
 Function pointers are not often needed due to dynamic dispatch, but they are occasionaly useful, especially for FFI. They do not currently support parameter labels.
 
--   `*dyn Trait` A dynamic immutable pointer to a type that implements `Trait`, implicitly convertible from a `*T/*mut T` where `T` implements `Trait`
+-   `*dyn Trait` A dynamic immutable pointer to a type that implements `Trait`, implicitly convertible from a `*T`/`*mut T` where `T` implements `Trait`
 -   `*dyn mut Trait` A dynamic mutable pointer to a type that implements `Trait`, implicitly convertible from a `*mut T` where `T` implements `Trait`
 
 Dyn pointers are used for [dynamic dispatch](#traits), cannot be dereferenced, and are twice as wide as normal pointers.
@@ -164,23 +164,23 @@ The following is a table of operator availablilty on the built in types, and abi
 
 ### Binary operators
 
-|     | Integer types | `^mut T`  | `bool`    | Override Trait   |
-| --- | ------------- | --------- | --------- | ---------------- |
-| +   | Same type     | Any int   | -         | std::ops::Add    |
-| -   | Same type     | Any int   | -         | std::ops::Sub    |
-| \*  | Same type     | -         | -         | std::ops::Mul    |
-| /   | Same type     | -         | -         | std::ops::Div    |
-| %   | Same type     | -         | -         | std::ops::Rem    |
-| <<  | Any unsigned  | -         | -         | std::ops::Shl    |
-| >>  | Any unsigned  | -         | -         | std::ops::Shr    |
-| &   | Same type     | -         | Same type | std::ops::BitAnd |
-| \|  | Same type     | -         | Same type | std::ops::BitOr  |
-| ^   | Same type     | -         | Same type | std::ops::Xor    |
-| and | -             | -         | Same type | -                |
-| or  | -             | -         | Same type | -                |
-| ==  | Same type     | Same type | Same type | std::ops::Eq     |
-| !=  | Same type     | Same type | Same type | std::ops::Eq     |
-| <=> | Same type     | Same type | Same type | std::ops::Cmp\*  |
+|     | Integer types | `^(mut) T` | `bool`    | Override Trait   |
+| --- | ------------- | ---------- | --------- | ---------------- |
+| +   | Same type     | Any int    | -         | std::ops::Add    |
+| -   | Same type     | Any int    | -         | std::ops::Sub    |
+| \*  | Same type     | -          | -         | std::ops::Mul    |
+| /   | Same type     | -          | -         | std::ops::Div    |
+| %   | Same type     | -          | -         | std::ops::Rem    |
+| <<  | Any unsigned  | -          | -         | std::ops::Shl    |
+| >>  | Any unsigned  | -          | -         | std::ops::Shr    |
+| &   | Same type     | -          | Same type | std::ops::BitAnd |
+| \|  | Same type     | -          | Same type | std::ops::BitOr  |
+| ^   | Same type     | -          | Same type | std::ops::Xor    |
+| and | -             | -          | Same type | -                |
+| or  | -             | -          | Same type | -                |
+| ==  | Same type     | Same type  | Same type | std::ops::Eq     |
+| !=  | Same type     | Same type  | Same type | std::ops::Eq     |
+| <=> | Same type     | Same type  | Same type | std::ops::Cmp\*  |
 
 <sub>\* The comparison operator returns a `std::ops::Ordering` union with the variants `Less`, `Equal`, or `Greater`. This allows an implementation of one function to provide the operators `<`, `>`, `<=`, and `>=` automatically. In the future, an implementation of `Cmp` may also automatically provide an implementation of `Eq`, or at least the operators `==` and `!=`.</sub>
 
@@ -188,12 +188,12 @@ The following is a table of operator availablilty on the built in types, and abi
 
 ### Unary operators
 
-|     | `u*/uint/c_u*` | `i*/int/c_*` | `^mut T` | `bool` | Override Trait    |
-| --- | -------------- | ------------ | -------- | ------ | ----------------- |
-| !\* | Yes            | Yes          | -        | Yes    | std::ops::Not     |
-| -   | -              | Yes          | -        | -      | std::ops::Neg     |
-| ++  | Yes            | Yes          | Yes      | -      | std::ops::Inc\*\* |
-| --  | Yes            | Yes          | Yes      | -      | std::ops::Dec\*\* |
+|     | `u*`/`uint`/`c_u*` | `i*`/`int`/`c_*` | `^(mut) T` | `bool` | Override Trait    |
+| --- | ------------------ | ---------------- | ---------- | ------ | ----------------- |
+| !\* | Yes                | Yes              | -          | Yes    | std::ops::Not     |
+| -   | -                  | Yes              | -          | -      | std::ops::Neg     |
+| ++  | Yes                | Yes              | Yes        | -      | std::ops::Inc\*\* |
+| --  | Yes                | Yes              | Yes        | -      | std::ops::Dec\*\* |
 
 <sub>\* ! performs a bitwise not. `bool` is essentially a `u1`, so bitwise not and logical not are equivalent.</sub>
 
@@ -205,7 +205,7 @@ CTL supports a variety of control flow constructs, most of which are also expres
 
 ## Basic control flow
 
-If expressions execute their body if the condition evaluates to true. Unlike C, the condition expression must be of type `bool` (no integers or pointers), always require curly braces for their body, and do not require parenthesis in the condition. Any number of `else if`s may follow and zero or one `else` may terminate the expression.
+If expressions execute their body if the condition evaluates to true. Unlike C, the condition expression must be of type `bool` (no integers or pointers), curly braces are always required for the body, and parenthesis are not required for the condition. Any number of `else if`s may follow and zero or one `else` may terminate the expression.
 
 ```rs
 let x = 10;
@@ -220,6 +220,12 @@ As the name suggests, `if` can be used as an expression, meaning it can yield a 
 
 ```rs
 let foo = if a > 10 { 2 } else { 5 };
+```
+
+There also exists an actual ternary operator, ... `then` ... `else` ..., which is just syntactic sugar for and has the exact same semantics as an if expression:
+
+```rs
+let foo = a > 10 then 2 else 5; // identical to the above code
 ```
 
 If there is no `else` branch, the expression becomes optional, yielding `null` when the condition is false.
@@ -639,7 +645,7 @@ Methods must define an explicit `this` parameter, which defaults to the type `*T
 -   `mut` makes the pointer mutable. `mut this` == `this: *mut This`
 -   `my` makes the `this` parameter owned (will be copied/moved into the method). `my this` == `This`
 
-`my` and `mut` can be combined, which will make the `this` binding mutable instead of affecting the type. If a function has no this parameter, it is treated as a static method (aka associated function). These cannot be called on an instance of the type, but instead only through the namespace of the class.
+`my` and `mut` can be combined, which will make the `this` binding mutable instead of affecting the type. If a function has no this parameter, it is treated as an associated function. These cannot be called on an instance of the type, but instead only through the namespace of the struct.
 
 ```rs
 struct Foo {
