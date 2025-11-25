@@ -54,20 +54,20 @@ pub struct Configuration {
 impl Configuration {
     pub fn is_disabled_by_attrs(&self, attrs: &Attributes) -> bool {
         attrs
-            .val("feature")
-            .is_some_and(|v| !self.features.contains(&v.to_lowercase()))
+            .iter()
+            .find(|f| f.name.data == "feature")
+            .is_some_and(|v| {
+                v.props
+                    .iter()
+                    .any(|v| !self.features.contains(&v.name.data.to_lowercase()))
+            })
     }
 }
 
 impl Default for Configuration {
     fn default() -> Self {
         Self {
-            features: [
-                "alloc".to_string(),
-                "io".to_string(),
-                "hosted".to_string(),
-            ]
-            .into(),
+            features: ["alloc".to_string(), "io".to_string(), "hosted".to_string()].into(),
         }
     }
 }

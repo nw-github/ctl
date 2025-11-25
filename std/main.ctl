@@ -33,7 +33,7 @@ fn convert_argv(argc: c_int, argv: **c_char): [str..] {
     result[..]
 }
 
-@(feature(hosted))
+@(feature(hosted, io))
 @(lang(panic_handler))
 fn panic_handler(s: str): never {
     io::eprint("fatal error: ");

@@ -74,39 +74,41 @@ impl<'a, 'b> Parser<'a, 'b> {
         let public = self.next_if(Token::Pub);
         let is_extern = self.next_if(Token::Extern);
         let is_unsafe = self.next_if(Token::Unsafe);
-        let attrs = match self.try_function(
-            FnConfig {
-                tk_public: public.as_ref().map(|t| t.span),
-                tk_extern: is_extern.as_ref().map(|t| t.span),
-                tk_unsafe: is_unsafe.as_ref().map(|t| t.span),
-                require_body: is_extern.is_none(),
-                forced_pub: false,
-            },
-            attrs,
-        ) {
-            Ok(Left(func)) => {
+        let conf = FnConfig {
+            tk_public: public.as_ref().map(|t| t.span),
+            tk_extern: is_extern.as_ref().map(|t| t.span),
+            tk_unsafe: is_unsafe.as_ref().map(|t| t.span),
+            require_body: is_extern.is_none(),
+            forced_pub: false,
+        };
+        match self.try_function(conf, attrs.clone()) {
+            Some(Left(func)) => {
                 return Ok(Stmt {
-                    attrs: Default::default(),
+                    attrs,
                     data: func.map(StmtData::Fn),
                 })
             }
-            Ok(Right(func)) => {
+            Some(Right(func)) => {
                 self.error(Error::new(
                     "operator functions can only be defined in types and extensions",
                     func.data.name.span,
                 ));
                 return Ok(Stmt {
-                    attrs: Default::default(),
+                    attrs,
                     data: func.map(|func| {
                         StmtData::Fn(Fn::from_operator_fn(func.name.data.to_string(), func))
                     }),
                 });
             }
-            Err(attrs) => attrs,
+            None => {}
         };
 
         let peek = self.peek();
-        let earliest_span = peek.span;
+        let earliest_span = conf
+            .tk_public
+            .or(conf.tk_extern)
+            .or(conf.tk_unsafe)
+            .unwrap_or(peek.span);
 
         match peek.data {
             Token::Struct | Token::Packed => {
@@ -1720,8 +1722,8 @@ impl<'a, 'b> Parser<'a, 'b> {
             };
             if config.tk_unsafe.is_some() {
                 match this.expect_fn(config, attrs) {
-                    Ok(Left(func)) => functions.push(func),
-                    Ok(Right(func)) => operators.push(func),
+                    Some(Left(func)) => functions.push(func),
+                    Some(Right(func)) => operators.push(func),
                     _ => {}
                 }
             } else if let Some(token) = this.next_if(Token::Impl) {
@@ -1730,7 +1732,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 }
 
                 impls.push(this.impl_block(attrs, token.span));
-            } else if let Ok(func) = this.try_function(config, attrs) {
+            } else if let Some(func) = this.try_function(config, attrs) {
                 // TODO: apply the attributes to the impl block or next member
                 match func {
                     Left(func) => functions.push(func),
@@ -1789,13 +1791,13 @@ impl<'a, 'b> Parser<'a, 'b> {
             };
             if config.tk_public.is_some() || config.tk_unsafe.is_some() {
                 match this.expect_fn(config, attrs) {
-                    Ok(Left(func)) => functions.push(func),
-                    Ok(Right(func)) => operators.push(func),
+                    Some(Left(func)) => functions.push(func),
+                    Some(Right(func)) => operators.push(func),
                     _ => {}
                 }
             } else if let Some(token) = this.next_if(Token::Impl) {
                 impls.push(this.impl_block(attrs, token.span));
-            } else if let Ok(func) = this.try_function(config, attrs) {
+            } else if let Some(func) = this.try_function(config, attrs) {
                 // TODO: apply the attributes to the impl block or next member
                 match func {
                     Left(func) => functions.push(func),
@@ -1893,14 +1895,15 @@ impl<'a, 'b> Parser<'a, 'b> {
 
         let mut functions = Vec::new();
         let span = self.next_until(Token::RCurly, span, |this| {
+            let attrs = this.attributes();
             let config = FnConfig {
                 tk_unsafe: this.next_if(Token::Unsafe).map(|t| t.span),
                 forced_pub: true,
                 ..Default::default()
             };
-            match this.expect_fn(config, Default::default()) {
-                Ok(Left(func)) => functions.push(func),
-                Ok(Right(func)) => {
+            match this.expect_fn(config, attrs) {
+                Some(Left(func)) => functions.push(func),
+                Some(Right(func)) => {
                     this.error(Error::new(
                         "operator functions are not allowed here",
                         func.data.name.span,
@@ -1947,8 +1950,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                     ..Default::default()
                 };
                 match this.expect_fn(config, attrs) {
-                    Ok(Left(func)) => functions.push(func),
-                    Ok(Right(func)) => operators.push(func),
+                    Some(Left(func)) => functions.push(func),
+                    Some(Right(func)) => operators.push(func),
                     _ => {}
                 }
             }
@@ -1987,8 +1990,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 ..Default::default()
             };
             match this.expect_fn(config, attrs) {
-                Ok(Left(func)) => functions.push(func),
-                Ok(Right(func)) => {
+                Some(Left(func)) => functions.push(func),
+                Some(Right(func)) => {
                     this.error(Error::new(
                         "operator functions are not allowed here",
                         func.data.name.span,
@@ -2013,14 +2016,14 @@ impl<'a, 'b> Parser<'a, 'b> {
         &mut self,
         cfg: FnConfig,
         attrs: Attributes,
-    ) -> Result<Either<Located<Fn>, Located<OperatorFn>>, Attributes> {
+    ) -> Option<Either<Located<Fn>, Located<OperatorFn>>> {
         let (head_token, is_async) = if let Some(token) = self.next_if(Token::Fn) {
             (token, false)
         } else if let Some(token) = self.next_if(Token::Async) {
             self.expect(Token::Fn);
             (token, true)
         } else {
-            return Err(attrs);
+            return None;
         };
         let mut span = cfg
             .tk_public
@@ -2136,7 +2139,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         };
 
         match name.data {
-            Left(ident) => Ok(Left(Located::new(
+            Left(ident) => Some(Left(Located::new(
                 span,
                 Fn {
                     name: Located::new(name.span, ident),
@@ -2157,7 +2160,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 if is_async {
                     self.error(Error::not_valid_here(&head_token));
                 }
-                Ok(Right(Located::new(
+                Some(Right(Located::new(
                     span,
                     OperatorFn {
                         name: Located::new(name.span, op),
@@ -2176,15 +2179,13 @@ impl<'a, 'b> Parser<'a, 'b> {
         &mut self,
         params: FnConfig,
         attrs: Attributes,
-    ) -> Result<Either<Located<Fn>, Located<OperatorFn>>, ()> {
-        match self.try_function(params, attrs) {
-            Ok(proto) => Ok(proto),
-            Err(_) => {
-                let span = self.next().span;
-                self.error(Error::new("expected function", span));
-                Err(())
-            }
+    ) -> Option<Either<Located<Fn>, Located<OperatorFn>>> {
+        let res = self.try_function(params, attrs);
+        if res.is_none() {
+            let span = self.next().span;
+            self.error(Error::new("expected function", span));
         }
+        res
     }
 
     fn expect_fn_name(&mut self) -> Located<Either<String, OperatorFnType>> {
