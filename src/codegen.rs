@@ -667,7 +667,7 @@ impl Buffer {
                 write_de!(self, ",");
                 self.emit_type(scopes, types, param_ty, min);
             } else if types[param_ty].is_ptr() {
-                write_de!(self, "const void*");
+                write_de!(self, "void const*");
             } else {
                 write_de!(self, "void*");
             }
@@ -1057,12 +1057,17 @@ impl Codegen {
                 .with_templates(&mut self.proj.types, &state.func.ty_args)
                 .is_void();
             let params = func.params.clone();
-            let unused = self.emit_prototype(state, false);
+            let (unused, thisptr) = self.emit_prototype(state, false);
             write_de!(self.buffer, "{{");
             for id in unused {
                 write_de!(self.buffer, "(void)");
                 self.emit_var_name(id, state);
                 write_de!(self.buffer, ";");
+            }
+
+            if let Some((id, name)) = thisptr {
+                self.emit_var_decl(id, state);
+                write_de!(self.buffer, "={name};");
             }
 
             for param in params.iter() {
@@ -2609,7 +2614,7 @@ impl Codegen {
             "read_volatile" => {
                 write_de!(self.buffer, "*(volatile ");
                 self.emit_type(ret);
-                write_de!(self.buffer, " const *)(");
+                write_de!(self.buffer, " const*)(");
                 self.emit_expr_inline(
                     args.into_iter()
                         .next()
@@ -3044,7 +3049,11 @@ impl Codegen {
         write_de!(self.buffer, ")");
     }
 
-    fn emit_prototype(&mut self, state: &mut State, is_prototype: bool) -> Vec<VariableId> {
+    fn emit_prototype(
+        &mut self,
+        state: &mut State,
+        is_prototype: bool,
+    ) -> (Vec<VariableId>, Option<(VariableId, String)>) {
         let f = self.proj.scopes.get(state.func.id);
         let ret = f
             .ret
@@ -3062,6 +3071,8 @@ impl Codegen {
                 _ => {}
             }
         }
+
+        let trait_fn = self.proj.scopes[f.scope].kind.is_impl();
 
         if ret == TypeId::NEVER {
             // && real
@@ -3087,6 +3098,7 @@ impl Codegen {
 
         let mut unused = vec![];
         let mut nonnull = vec![];
+        let mut thisptr = None;
         for (i, param) in params.iter().enumerate() {
             let mut ty = param.ty;
             ty = ty.with_templates(&mut self.proj.types, &state.func.ty_args);
@@ -3098,20 +3110,39 @@ impl Codegen {
                 nonnull.push(format!("{}", i + 1));
             }
 
+            let override_with_voidptr =
+                trait_fn && param.label == crate::THIS_PARAM && self.proj.types[ty].is_safe_ptr();
+            if override_with_voidptr {
+                if self.proj.types[ty].is_ptr() {
+                    self.buffer.emit("void const*");
+                } else {
+                    self.buffer.emit("void*");
+                }
+            }
+
             if is_import || is_prototype {
-                self.emit_type(ty);
+                if !override_with_voidptr {
+                    self.emit_type(ty);
+                }
             } else if let ParamPattern::Checked(Pattern {
                 data: PatternData::Variable(id),
                 ..
             }) = &param.patt
             {
-                self.emit_var_decl(*id, state);
-                if self.proj.scopes.get(*id).unused {
-                    unused.push(*id);
+                if override_with_voidptr {
+                    let tmp = state.tmpvar();
+                    self.buffer.emit(&tmp);
+                    thisptr = Some((*id, tmp));
+                } else {
+                    self.emit_var_decl(*id, state);
+                    if self.proj.scopes.get(*id).unused {
+                        unused.push(*id);
+                    }
                 }
-                continue;
             } else {
-                self.emit_type(ty);
+                if !override_with_voidptr {
+                    self.emit_type(ty);
+                }
                 write_de!(self.buffer, " {}", param.label);
             }
         }
@@ -3128,7 +3159,7 @@ impl Codegen {
             write_de!(self.buffer, "CTL_NONNULL({})", nonnull.join(","));
         }
 
-        unused
+        (unused, thisptr)
     }
 
     fn emit_var_name(&mut self, id: VariableId, state: &mut State) {
