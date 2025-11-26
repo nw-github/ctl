@@ -896,6 +896,10 @@ impl Codegen {
             }
 
             for var in std::mem::take(&mut this.statics) {
+                if emitted_statics.contains(&var) {
+                    continue;
+                }
+
                 static_deps.dfs(var, &mut emitted_statics, |id| {
                     static_state.caller = this.proj.scopes.get(id).scope;
                     usebuf!(this, &mut static_defs, {
