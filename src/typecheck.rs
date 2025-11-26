@@ -5652,12 +5652,15 @@ impl TypeChecker {
                 .zip(scopes[scopes[scope].parent?].kind.as_user_type().cloned())
             {
                 resolve_impl!(this, this.proj.scopes.get_mut(impl_ut).impls[impl_i]);
-                let mut imp = this.proj.scopes.get(impl_ut).impls[impl_i]
+                if let Some(mut imp) = this.proj.scopes.get(impl_ut).impls[impl_i]
                     .as_checked()
                     .cloned()
-                    .unwrap(); // FIXME: This line is crashy while editing
-                imp.fill_templates(&mut this.proj.types, &ut.ty_args);
-                Some((impl_i, impl_ut, imp))
+                {
+                    imp.fill_templates(&mut this.proj.types, &ut.ty_args);
+                    Some((impl_i, impl_ut, imp))
+                } else {
+                    None
+                }
             } else {
                 None
             };
