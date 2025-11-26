@@ -579,7 +579,7 @@ impl Scopes {
                             )
                         })
                         .collect(),
-                    name: Located::new(Span::default(), "$tuple".into()),
+                    name: Located::new(Span::default(), format!("$tuple{}", ty_args.len())),
                     body_scope: ScopeId::ROOT,
                     type_params,
                     kind: UserTypeKind::Tuple,
