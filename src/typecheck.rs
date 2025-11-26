@@ -7155,10 +7155,6 @@ impl TypeChecker {
 /// Path resolution routines
 impl TypeChecker {
     fn find_in_tns(&self, name: &str) -> Option<Vis<TypeItem>> {
-        if let Some(item) = self.proj.scopes.autouse_tns.get(name).copied() {
-            return Some(item);
-        }
-
         for (id, scope) in self.proj.scopes.walk(self.current) {
             if let Some(item) = self.proj.scopes[id].find_in_tns(name) {
                 return Some(item);
@@ -7169,14 +7165,14 @@ impl TypeChecker {
             }
         }
 
+        if let Some(item) = self.proj.scopes.autouse_tns.get(name).copied() {
+            return Some(item);
+        }
+
         None
     }
 
     fn find_in_vns(&self, name: &str) -> Option<Vis<ValueItem>> {
-        if let Some(item) = self.proj.scopes.autouse_vns.get(name).copied() {
-            return Some(item);
-        }
-
         for (id, scope) in self.proj.scopes.walk(self.current) {
             if let Some(item) = self.proj.scopes[id].find_in_vns(name) {
                 if item.is_fn() && matches!(scope.kind, ScopeKind::UserType(_)) {
@@ -7189,6 +7185,10 @@ impl TypeChecker {
             if matches!(scope.kind, ScopeKind::Module(_)) {
                 break;
             }
+        }
+
+        if let Some(item) = self.proj.scopes.autouse_vns.get(name).copied() {
+            return Some(item);
         }
 
         None
