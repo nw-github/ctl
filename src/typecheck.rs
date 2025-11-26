@@ -7203,73 +7203,76 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_use(
-        &mut self,
-        UsePath {
-            public,
-            origin,
-            components,
-            tail,
-        }: &UsePath,
-    ) -> Result<(), Error> {
-        match origin {
-            PathOrigin::Root => self.resolve_use_in(ScopeId::ROOT, *public, components, tail),
-            PathOrigin::Super(span) => self
-                .get_super(*span)
-                .map(|id| self.resolve_use_in(id, *public, components, tail))
-                .unwrap_or(Ok(())),
-            PathOrigin::Normal => {
-                if let Some((first, rest)) = components.split_first() {
-                    match self.find_in_tns(&first.data).map(|i| i.id) {
-                        Some(TypeItem::Module(next)) => {
-                            self.check_hover(first.span, next.into());
-                            return self.resolve_use_in(next, *public, rest, tail);
-                        }
-                        Some(TypeItem::Type(id)) => {
-                            self.check_hover(first.span, id.into());
-                            if rest.is_empty() {
-                                self.resolve_use_union(*public, id, first, tail);
-                            } else {
-                                self.error(Error::new("expected module name", first.span))
-                            }
-                            return Ok(());
-                        }
-                        _ => {}
-                    }
-                }
-                self.resolve_use_in(ScopeId::ROOT, *public, components, tail)
-            }
-            PathOrigin::Infer => unreachable!("Infer origin in use path"),
+    fn resolve_use(&mut self, path: &UsePath) -> Result<(), Error> {
+        enum CheckResult {
+            NotFound,
+            BadType,
+            Next(ScopeId),
         }
-    }
 
-    fn resolve_use_in(
-        &mut self,
-        mut scope: ScopeId,
-        public: bool,
-        components: &[Located<String>],
-        tail: &UsePathTail,
-    ) -> Result<(), Error> {
-        for (i, comp) in components.iter().enumerate() {
-            match self.proj.scopes[scope].find_in_tns(&comp.data).as_deref() {
+        fn check(
+            this: &mut TypeChecker,
+            val: Option<&TypeItem>,
+            comp: &Located<String>,
+            last: bool,
+        ) -> CheckResult {
+            match val {
                 Some(&TypeItem::Module(next)) => {
-                    self.check_hover(comp.span, next.into());
-                    scope = next;
+                    this.check_hover(comp.span, next.into());
+                    CheckResult::Next(next)
                 }
                 Some(&TypeItem::Type(id)) => {
-                    self.check_hover(comp.span, id.into());
-                    if i != components.len() - 1 {
-                        self.error(Error::new("expected module name", comp.span))
+                    this.check_hover(comp.span, id.into());
+                    if !last {
+                        this.proj
+                            .diag
+                            .error(Error::new("expected module name", comp.span));
+                        CheckResult::BadType
                     } else {
-                        self.resolve_use_union(public, id, comp, tail);
+                        CheckResult::Next(this.proj.scopes.get(id).body_scope)
                     }
-                    return Ok(());
                 }
-                _ => return Err(Error::no_symbol(&comp.data, comp.span)),
+                _ => CheckResult::NotFound,
             }
         }
 
-        if let UsePathTail::Ident(tail) = tail {
+        let mut components = &path.components[..];
+        let mut scope = match path.origin {
+            PathOrigin::Root => ScopeId::ROOT,
+            PathOrigin::Super(span) => {
+                if let Some(scope) = self.get_super(span) {
+                    scope
+                } else {
+                    return Ok(());
+                }
+            }
+            PathOrigin::Normal => 'out: {
+                if let Some((first, rest)) = components.split_first() {
+                    let value = self.find_in_tns(&first.data).map(|i| i.id);
+                    match check(self, value.as_ref(), first, rest.is_empty()) {
+                        CheckResult::BadType => return Ok(()),
+                        CheckResult::NotFound => {}
+                        CheckResult::Next(next) => {
+                            components = rest;
+                            break 'out next;
+                        }
+                    }
+                }
+                ScopeId::ROOT
+            }
+            PathOrigin::Infer => unreachable!("Infer origin in use path"),
+        };
+
+        for (i, comp) in components.iter().enumerate() {
+            let val = self.proj.scopes[scope].find_in_tns(&comp.data);
+            match check(self, val.as_deref(), comp, i == components.len() - 1) {
+                CheckResult::NotFound => return Err(Error::no_symbol(&comp.data, comp.span)),
+                CheckResult::BadType => return Ok(()),
+                CheckResult::Next(next) => scope = next,
+            }
+        }
+
+        if let UsePathTail::Ident(tail) = &path.tail {
             // TODO: check privacy
             let mut found = false;
             if let Some(item) = self.proj.scopes[scope].find_in_tns(&tail.data) {
@@ -7280,7 +7283,7 @@ impl TypeChecker {
 
                 if self.proj.scopes[self.current]
                     .tns
-                    .insert(tail.data.clone(), Vis::new(*item, public))
+                    .insert(tail.data.clone(), Vis::new(*item, path.public))
                     .is_some()
                 {
                     self.error(Error::redefinition(&tail.data, tail.span))
@@ -7295,6 +7298,15 @@ impl TypeChecker {
                         _ => (*item).into(),
                     },
                 );
+
+                if item
+                    .id
+                    .as_fn()
+                    .is_some_and(|&id| self.scopes().get(id).constructor.is_some())
+                {
+                    self.proj.tokens.push(SpanSemanticToken::Variant(tail.span));
+                }
+
                 let mut skip = false;
                 if !item.public && !self.can_access_privates(scope) {
                     if !found {
@@ -7306,7 +7318,7 @@ impl TypeChecker {
                 if !skip
                     && self.proj.scopes[self.current]
                         .vns
-                        .insert(tail.data.clone(), Vis::new(*item, public))
+                        .insert(tail.data.clone(), Vis::new(*item, path.public))
                         .is_some()
                 {
                     self.error(Error::redefinition(&tail.data, tail.span))
@@ -7328,7 +7340,7 @@ impl TypeChecker {
                         current
                             .tns
                             .entry(name.clone())
-                            .or_insert(Vis::new(**item, public));
+                            .or_insert(Vis::new(**item, path.public));
                     }
                 }
 
@@ -7337,60 +7349,13 @@ impl TypeChecker {
                         current
                             .vns
                             .entry(name.clone())
-                            .or_insert(Vis::new(**item, public));
+                            .or_insert(Vis::new(**item, path.public));
                     }
                 }
             }
         }
 
         Ok(())
-    }
-
-    fn resolve_use_union(
-        &mut self,
-        public: bool,
-        id: UserTypeId,
-        comp: &Located<String>,
-        tail: &UsePathTail,
-    ) {
-        let ut = self.proj.scopes.get(id);
-        if !ut.kind.is_union() {
-            return self.error(Error::expected_found(
-                "module or union type",
-                &comp.data,
-                comp.span,
-            ));
-        }
-
-        let mut constructors = ut
-            .fns
-            .iter()
-            .filter(|&&id| self.proj.scopes.get(*id).constructor.is_some());
-        if let UsePathTail::Ident(tail) = tail {
-            let Some(&id) =
-                constructors.find(|&&id| self.proj.scopes.get(*id).name.data == tail.data)
-            else {
-                return self.error(Error::new("expected variant name", comp.span));
-            };
-            self.check_hover(tail.span, (*id).into());
-            self.proj.tokens.push(SpanSemanticToken::Variant(tail.span));
-
-            if self.proj.scopes[self.current]
-                .vns
-                .insert(tail.data.clone(), Vis::new((*id).into(), public))
-                .is_some()
-            {
-                self.error(Error::redefinition(&tail.data, tail.span))
-            }
-        } else {
-            for id in constructors.copied().collect::<Vec<_>>() {
-                let name = self.proj.scopes.get(*id).name.data.clone();
-                self.proj.scopes[self.current]
-                    .vns
-                    .entry(name)
-                    .or_insert(Vis::new((*id).into(), public));
-            }
-        }
     }
 
     fn resolve_type_path(&mut self, path: &Path) -> ResolvedType {
