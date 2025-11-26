@@ -1312,7 +1312,7 @@ impl TypeChecker {
                 }
             }
             PStmtData::Use(stmt) => {
-                if self.resolve_use(&stmt).is_err() {
+                if matches!(stmt.tail, UsePathTail::All) || self.resolve_use(&stmt, true).is_err() {
                     self.proj.scopes[self.current].use_stmts.push(stmt);
                 }
                 DStmt::None
@@ -1699,7 +1699,7 @@ impl TypeChecker {
             {
                 this.enter_id(id, |this| {
                     for stmt in std::mem::take(&mut this.proj.scopes[this.current].use_stmts) {
-                        if let Err(err) = this.resolve_use(&stmt) {
+                        if let Err(err) = this.resolve_use(&stmt, false) {
                             this.error(err)
                         }
                     }
@@ -7206,7 +7206,7 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_use(&mut self, path: &UsePath) -> Result<(), Error> {
+    fn resolve_use(&mut self, path: &UsePath, declaring: bool) -> Result<(), Error> {
         enum CheckResult {
             NotFound,
             BadType,
@@ -7267,12 +7267,20 @@ impl TypeChecker {
         };
 
         for (i, comp) in components.iter().enumerate() {
+            if !declaring {
+                self.enter_id_and_resolve(scope, |_| {});
+            }
+
             let val = self.proj.scopes[scope].find_in_tns(&comp.data);
             match check(self, val.as_deref(), comp, i == components.len() - 1) {
                 CheckResult::NotFound => return Err(Error::no_symbol(&comp.data, comp.span)),
                 CheckResult::BadType => return Ok(()),
                 CheckResult::Next(next) => scope = next,
             }
+        }
+
+        if !declaring {
+            self.enter_id_and_resolve(scope, |_| {});
         }
 
         if let UsePathTail::Ident(tail) = &path.tail {
