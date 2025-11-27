@@ -3,6 +3,7 @@ use std::fmt::Write;
 use std::path::Path;
 
 use dashmap::DashMap;
+use tokio::sync::MutexGuard;
 use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
@@ -55,11 +56,12 @@ impl Default for Configuration {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 struct Document {
     text: String,
     inlay_hints: Vec<InlayHint>,
-    tokens: Vec<SemanticToken>,
+    lsp_items: Vec<(LspItem, Span)>,
+    semantic_tokens: Vec<SemanticToken>,
 }
 
 impl Document {
@@ -71,11 +73,11 @@ impl Document {
     }
 }
 
-#[derive(Debug)]
 pub struct LspBackend {
     client: Client,
     documents: DashMap<Url, Document>,
     config: tokio::sync::Mutex<Configuration>,
+    project: tokio::sync::Mutex<Option<Project>>,
 }
 
 // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_semanticTokens
@@ -147,37 +149,46 @@ impl LanguageServer for LspBackend {
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        info!(self, "did_change_configuration").await;
+
         *self.config.lock().await = serde_json::from_value(params.settings).unwrap_or_default();
         if let Some(entry) = self.documents.iter().next() {
-            _ = self.check_project(entry.key(), None, None).await;
+            _ = self.check_project(entry.key(), None).await;
+            info!(self, " -> done check_project").await;
         }
     }
 
     async fn did_open(&self, mut params: DidOpenTextDocumentParams) {
+        info!(self, "did_open: '{}'", params.text_document.uri).await;
+
         self.documents
             .entry(params.text_document.uri.clone())
             .and_modify(|doc| doc.text = std::mem::take(&mut params.text_document.text))
             .or_insert_with(|| Document::new(std::mem::take(&mut params.text_document.text)));
-        _ = self
-            .check_project(&params.text_document.uri, None, None)
-            .await;
+        _ = self.check_project(&params.text_document.uri, None).await;
+        info!(self, " -> done check_project").await;
     }
 
     async fn did_change(&self, mut params: DidChangeTextDocumentParams) {
+        info!(self, "did_change: '{}'", params.text_document.uri).await;
+
         self.documents
             .entry(params.text_document.uri.clone())
             .and_modify(|doc| doc.text = std::mem::take(&mut params.content_changes[0].text))
             .or_insert_with(|| Document::new(std::mem::take(&mut params.content_changes[0].text)));
-        _ = self
-            .check_project(&params.text_document.uri, None, None)
-            .await;
+        _ = self.check_project(&params.text_document.uri, None).await;
+        info!(self, " -> done check_project").await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        info!(self, "did_close: '{}'", params.text_document.uri).await;
+
         self.documents.remove(&params.text_document.uri);
     }
 
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        info!(self, "inlay_hint: '{}'", params.text_document.uri).await;
+
         Ok(self
             .documents
             .get(&params.text_document.uri)
@@ -190,43 +201,44 @@ impl LanguageServer for LspBackend {
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        let mut proj = self.check_project(uri, Some(pos), None).await?;
-        let scopes = &proj.scopes;
-        let Some(span) = proj.hover.as_ref().and_then(|hover| {
-            Some(match hover {
+        info!(self, "goto_definition: '{uri}'").await;
+
+        self.find_lsp_item(uri, pos, async |hover, proj| {
+            let scopes = &proj.scopes;
+            let span = match hover {
                 &LspItem::Var(id) => scopes.get(id).name.span,
                 &LspItem::Type(id) => scopes.get(id).name.span,
                 &LspItem::Module(id) => scopes[id].kind.name(scopes).unwrap().span,
                 &LspItem::Fn(id, _) => scopes.get(id).name.span,
                 LspItem::Property(_, id, member) => {
                     let ut = scopes.get(*id);
-                    return ut.members.get(member).map(|m| m.span).or_else(|| {
+                    ut.members.get(member).map(|m| m.span).or_else(|| {
                         ut.kind
                             .as_union()
                             .and_then(|u| u.variants.get(member).map(|v| v.span))
-                    });
+                    })?
                 }
                 _ => return None,
-            })
-        }) else {
-            return Ok(None);
-        };
-
-        let diag = &mut proj.diag;
-        let path = diag.file_path(span.file);
-        let uri = Url::from_file_path(path).unwrap();
-        let range = if let Some(doc) = self.documents.get(&uri) {
-            Diagnostics::get_span_range(&doc.text, span, OffsetMode::Utf16)
-        } else {
-            let Some(file) = std::fs::read_to_string(path).ok() else {
-                return Ok(None);
             };
-            Diagnostics::get_span_range(&file, span, OffsetMode::Utf16)
-        };
 
-        Ok(Some(GotoDefinitionResponse::Scalar(Location::new(
-            uri, range,
-        ))))
+            let diag = &mut proj.diag;
+            let path = diag.file_path(span.file);
+            let uri = Url::from_file_path(path).unwrap();
+            let range = if let Some(doc) = self.documents.get(&uri) {
+                Diagnostics::get_span_range(&doc.text, span, OffsetMode::Utf16)
+            } else {
+                let file = std::fs::read_to_string(path).ok()?;
+                Diagnostics::get_span_range(&file, span, OffsetMode::Utf16)
+            };
+
+            info!(
+                self,
+                " -> (goto_definition) {uri}, ({:?}, {:?})", range.start, range.end
+            )
+            .await;
+            Some(GotoDefinitionResponse::Scalar(Location::new(uri, range)))
+        })
+        .await
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
@@ -248,7 +260,12 @@ impl LanguageServer for LspBackend {
             .await;
         }
 
-        let mut proj = self.check_project(uri, None, Some(pos)).await?;
+        let mut guard = self.check_project(uri, Some(pos)).await?;
+        info!(self, " -> done check_project").await;
+
+        let Some(proj) = guard.as_mut() else {
+            return Ok(None);
+        };
         let Some(completions) = proj.completions.as_ref() else {
             return Ok(None);
         };
@@ -409,79 +426,90 @@ impl LanguageServer for LspBackend {
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        let mut proj = self.check_project(uri, Some(pos), None).await?;
-        let Some(item) = proj.hover.as_ref() else {
-            return Ok(None);
-        };
-        let scopes = &proj.scopes;
-        let types = &mut proj.types;
-        let str = match item {
-            &LspItem::Var(id) => Some(visualize_var(id, scopes, types)),
-            &LspItem::Fn(id, _) => Some(visualize_func(id, false, scopes, types)),
-            &LspItem::Type(id) => Some(visualize_type(id, scopes, types)),
-            LspItem::Underscore(ty) => Some(ty.name(scopes, types)),
-            LspItem::Property(src_ty, id, name) => {
-                let ut = scopes.get(*id);
-                let mem = ut.members.get(name);
-                let public = ["", "pub "][mem.is_some_and(|m| m.public) as usize];
-                let ty = mem.map_or(TypeId::UNKNOWN, |m| m.ty);
-                if matches!(ut.kind, UserTypeKind::Tuple | UserTypeKind::AnonStruct) {
-                    let real = src_ty
-                        .map(|src| ty.with_ut_templates(types, src))
-                        .unwrap_or(ty);
-                    Some(format!("{public}{name}: {}", real.name(scopes, types)))
-                } else {
-                    let offs = if let UserTypeKind::PackedStruct(data) = &ut.kind {
-                        format!("// bit offset: {}\n", data.bit_offsets[name])
+        info!(self, "hover: Uri: '{}'", uri).await;
+
+        self.find_lsp_item(uri, pos, async |item, proj| {
+            let scopes = &proj.scopes;
+            let types = &mut proj.types;
+            let str = match item {
+                &LspItem::Var(id) => Some(visualize_var(id, scopes, types)),
+                &LspItem::Fn(id, _) => Some(visualize_func(id, false, scopes, types)),
+                &LspItem::Type(id) => Some(visualize_type(id, scopes, types)),
+                LspItem::Underscore(ty) => Some(ty.name(scopes, types)),
+                LspItem::Property(src_ty, id, name) => {
+                    let ut = scopes.get(*id);
+                    let mem = ut.members.get(name);
+                    let public = ["", "pub "][mem.is_some_and(|m| m.public) as usize];
+                    let ty = mem.map_or(TypeId::UNKNOWN, |m| m.ty);
+                    if matches!(ut.kind, UserTypeKind::Tuple | UserTypeKind::AnonStruct) {
+                        let real = src_ty
+                            .map(|src| ty.with_ut_templates(types, src))
+                            .unwrap_or(ty);
+                        Some(format!("{public}{name}: {}", real.name(scopes, types)))
                     } else {
-                        // TODO: normal offset
-                        "".to_string()
-                    };
+                        let offs = if let UserTypeKind::PackedStruct(data) = &ut.kind {
+                            format!("// bit offset: {}\n", data.bit_offsets[name])
+                        } else {
+                            // TODO: normal offset
+                            "".to_string()
+                        };
 
-                    Some(format!(
-                        "{}{offs}{public}{name}: {}",
-                        visualize_location(ut.body_scope, scopes),
-                        ty.name(scopes, types)
-                    ))
+                        Some(format!(
+                            "{}{offs}{public}{name}: {}",
+                            visualize_location(ut.body_scope, scopes),
+                            ty.name(scopes, types)
+                        ))
+                    }
                 }
-            }
-            &LspItem::Module(id) => {
-                let scope = &scopes[id];
-                let mut res = String::new();
-                if let Some(parent) = scope.parent.filter(|parent| *parent != ScopeId::ROOT) {
-                    res += &visualize_location(parent, scopes);
+                &LspItem::Module(id) => {
+                    let scope = &scopes[id];
+                    let mut res = String::new();
+                    if let Some(parent) = scope.parent.filter(|parent| *parent != ScopeId::ROOT) {
+                        res += &visualize_location(parent, scopes);
+                    }
+                    if scope.public {
+                        res += "pub ";
+                    }
+                    Some(format!("{res}mod {}", scope.kind.name(scopes).unwrap()))
                 }
-                if scope.public {
-                    res += "pub ";
-                }
-                Some(format!("{res}mod {}", scope.kind.name(scopes).unwrap()))
-            }
-            _ => None,
-        };
+                _ => None,
+            };
 
-        Ok(str.map(|value| Hover {
-            range: None,
-            contents: HoverContents::Scalar(MarkedString::LanguageString(LanguageString {
-                language: "ctl".into(),
-                value,
-            })),
-        }))
+            info!(self, "-> (hover) {str:?}").await;
+            str.map(|value| Hover {
+                range: None,
+                contents: HoverContents::Scalar(MarkedString::LanguageString(LanguageString {
+                    language: "ctl".into(),
+                    value,
+                })),
+            })
+        })
+        .await
     }
 
     async fn semantic_tokens_full(
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        info!(self, "Requesting semantic tokens").await;
-        Ok(self.documents.get(&params.text_document.uri).map(|c| {
-            SemanticTokensResult::Tokens(SemanticTokens {
+        info!(self, "semantic_tokens_full: '{}'", params.text_document.uri).await;
+        self.with_proj_and_doc(&params.text_document.uri, async |doc, _, _| {
+            info!(
+                self,
+                "-> (semantic_tokens) {} tokens",
+                doc.semantic_tokens.len()
+            )
+            .await;
+
+            Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
-                data: c.tokens.clone(),
-            })
-        }))
+                data: doc.semantic_tokens.clone(),
+            }))
+        })
+        .await
     }
 
     async fn shutdown(&self) -> Result<()> {
+        info!(self, "shutdown").await;
         self.documents.clear();
         Ok(())
     }
@@ -493,6 +521,7 @@ impl LspBackend {
             client,
             config: Default::default(),
             documents: Default::default(),
+            project: Default::default(),
         }
     }
 
@@ -533,14 +562,11 @@ impl LspBackend {
     async fn check_project(
         &self,
         uri: &Url,
-        hover: Option<Position>,
         completion: Option<Position>,
-    ) -> Result<Project> {
-        let path = if !uri.scheme().is_empty() {
-            Path::new(&uri.as_str()[uri.scheme().len() + 3..])
-        } else {
-            Path::new(uri.as_str())
-        };
+    ) -> Result<MutexGuard<'_, Option<Project>>> {
+        info!(self, "Checking project: Uri: '{}'", uri).await;
+
+        let path = Self::uri_to_path(uri);
         let (project, conf) = project_from_file(get_file_project(path), vec![], false);
         let parsed =
             Compiler::with_provider(LspFileProvider::new(&self.documents)).parse(project, conf);
@@ -559,16 +585,6 @@ impl LspBackend {
             .find(|p| p.1 == path)
             .map(|v| v.0);
         let checked = parsed.typecheck(LspInput {
-            hover: hover.and_then(|p| {
-                file.map(|file| {
-                    position_to_span(
-                        &self.documents.get(uri).unwrap().text,
-                        file,
-                        p.line,
-                        p.character,
-                    )
-                })
-            }),
             completion: completion.and_then(|p| {
                 file.map(|file| {
                     position_to_span(
@@ -619,17 +635,21 @@ impl LspBackend {
             );
         }
 
+        proj.lsp_items.sort_by_key(|(_, span)| span.pos);
+
         for (_, path) in diag.paths() {
-            if let Ok(uri) = Url::from_file_path(path) {
-                all.entry(uri).or_default();
-            }
-        }
+            let Ok(uri) = Url::from_file_path(path) else {
+                continue;
+            };
 
-        for (uri, diags) in all.into_iter() {
-            self.client.publish_diagnostics(uri, diags, None).await;
-        }
+            let Some(file) = diag.paths().find(|p| p.1 == path).map(|v| v.0) else {
+                continue;
+            };
 
-        if let Some((mut doc, file)) = self.documents.get_mut(uri).zip(file) {
+            let Some(mut doc) = self.documents.get_mut(&uri) else {
+                continue;
+            };
+
             doc.inlay_hints.clear();
             for (_, var) in proj.scopes.vars() {
                 if var.name.span.file != file || var.has_hint || var.name.data.starts_with('$') {
@@ -652,17 +672,23 @@ impl LspBackend {
                 });
             }
 
-            doc.tokens.clear();
+            doc.lsp_items.clear();
+            doc.semantic_tokens.clear();
+
             let [mut prev_line, mut prev_start] = [0; 2];
-            proj.tokens.sort_by_key(|v| v.span.pos);
-            for token in proj.tokens.iter().filter(|v| v.span.file == file) {
-                let span = token.span;
-                let r = Diagnostics::get_span_range(&doc.text, span, OffsetMode::Utf16);
+            proj.lsp_items.sort_by_key(|(_, span)| span.pos);
+            for (item, span) in proj.lsp_items.iter().filter(|(_, span)| span.file == file) {
+                doc.lsp_items.push((item.clone(), *span));
+                let Some(token) = item.create_semantic_token(&proj.scopes, *span) else {
+                    continue;
+                };
+
+                let r = Diagnostics::get_span_range(&doc.text, *span, OffsetMode::Utf16);
                 let line = r.start.line;
                 let start = r.start.character;
 
                 // TODO: save the other semantic tokens so they don't have to be recalculated
-                doc.tokens.push(SemanticToken {
+                doc.semantic_tokens.push(SemanticToken {
                     delta_line: line - prev_line,
                     delta_start: if line == prev_line {
                         start - prev_start
@@ -686,7 +712,74 @@ impl LspBackend {
             }
         }
 
-        Ok(proj)
+        for doc in self.documents.iter() {
+            info!(
+                self,
+                " -- DOC '{}' ({} bytes, {} items, {} tokens, {} hints)",
+                doc.key(),
+                doc.text.len(),
+                doc.lsp_items.len(),
+                doc.semantic_tokens.len(),
+                doc.inlay_hints.len()
+            )
+            .await;
+        }
+
+        for (uri, diags) in all.into_iter() {
+            self.client.publish_diagnostics(uri, diags, None).await;
+        }
+
+        let mut guard = self.project.lock().await;
+        *guard = Some(proj);
+        Ok(guard)
+    }
+
+    async fn with_proj_and_doc<T>(
+        &self,
+        uri: &Url,
+        func: impl AsyncFnOnce(&Document, FileId, &mut Project) -> Option<T>,
+    ) -> Result<Option<T>> {
+        let mut lock = self.project.lock().await;
+        let Some(proj) = lock.as_mut() else {
+            return Ok(None);
+        };
+
+        let path = Self::uri_to_path(uri);
+        let Some(file) = proj.diag.paths().find(|p| p.1 == path).map(|v| v.0) else {
+            return Ok(None);
+        };
+
+        let Some(doc) = self.documents.get(uri) else {
+            return Ok(None);
+        };
+
+        Ok(func(&doc, file, proj).await)
+    }
+
+    async fn find_lsp_item<T>(
+        &self,
+        uri: &Url,
+        pos: Position,
+        func: impl AsyncFnOnce(&LspItem, &mut Project) -> Option<T>,
+    ) -> Result<Option<T>> {
+        self.with_proj_and_doc(uri, async |doc, file, proj| {
+            let user = position_to_span(&doc.text, file, pos.line, pos.character);
+            let (item, _) = doc
+                .lsp_items
+                .iter()
+                .find(|(_, span)| LspInput::matches(Some(user), *span))?;
+            func(item, proj).await
+            // .and_then(|(item, _)| func(item, proj))
+        })
+        .await
+    }
+
+    fn uri_to_path(uri: &Url) -> &Path {
+        if !uri.scheme().is_empty() {
+            Path::new(&uri.as_str()[uri.scheme().len() + 3..])
+        } else {
+            Path::new(uri.as_str())
+        }
     }
 }
 

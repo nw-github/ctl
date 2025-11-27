@@ -100,15 +100,7 @@ macro_rules! resolve_impl {
 
 macro_rules! check_hover {
     ($self: expr, $span: expr, $item: expr) => {{
-        let item: LspItem = $item;
-        let span = $span;
-        if let Some(token) = item.create_semantic_token($self.scopes(), span) {
-            $self.proj.tokens.push(token);
-        }
-
-        if LspInput::matches($self.lsp_input.hover, span) {
-            $self.proj.hover = Some(item);
-        }
+        $self.proj.lsp_items.push(($item, $span));
     }};
 }
 
@@ -250,7 +242,6 @@ impl From<FunctionId> for LspItem {
 
 #[derive(Default)]
 pub struct LspInput {
-    pub hover: Option<Span>,
     pub completion: Option<Span>,
 }
 
