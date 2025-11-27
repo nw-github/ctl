@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::{
-    ast::Attributes,
+    ast::{Attribute, Attributes},
     dgraph::DependencyGraph,
     sym::{FunctionId, Scopes, UserTypeId, VariableId},
     typecheck::{Completions, LspItem},
@@ -55,12 +55,20 @@ impl Configuration {
     pub fn is_disabled_by_attrs(&self, attrs: &Attributes) -> bool {
         attrs
             .iter()
-            .find(|f| f.name.data == "feature")
-            .is_some_and(|v| v.props.iter().any(|v| !self.has_feature(&v.name.data)))
+            .filter(|f| f.name.data == "feature")
+            .any(|v| v.props.iter().any(|v| !self.has_attr_features(v)))
     }
 
     pub fn has_feature(&self, feat: &str) -> bool {
         self.features.contains(&feat.to_lowercase())
+    }
+
+    pub fn has_attr_features(&self, attr: &Attribute) -> bool {
+        if attr.name.data != "not" || attr.props.is_empty() {
+            self.has_feature(&attr.name.data)
+        } else {
+            !attr.props.iter().any(|v| self.has_feature(&v.name.data))
+        }
     }
 }
 
