@@ -20,7 +20,9 @@ use crate::{
     dgraph::Dependencies,
     error::{Diagnostics, Error},
     lexer::{Located, Span},
-    project::{Configuration, Project, SpanSemanticToken},
+    project::{
+        Configuration, Project, SemanticTokenModifiers, SpanSemanticToken, SpanSemanticTokenKind,
+    },
     sym::*,
     typeid::{
         BitSizeResult, CInt, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType,
@@ -98,8 +100,14 @@ macro_rules! resolve_impl {
 
 macro_rules! check_hover {
     ($self: expr, $span: expr, $item: expr) => {{
-        if LspInput::matches($self.lsp_input.hover, $span) {
-            $self.proj.hover = Some($item);
+        let item: LspItem = $item;
+        let span = $span;
+        if let Some(token) = item.create_semantic_token($self.scopes(), span) {
+            $self.proj.tokens.push(token);
+        }
+
+        if LspInput::matches($self.lsp_input.hover, span) {
+            $self.proj.hover = Some(item);
         }
     }};
 }
@@ -176,6 +184,42 @@ pub enum LspItem {
     Attribute(String),
     Property(Option<TypeId>, UserTypeId, String),
     BuiltinType(&'static str),
+}
+
+impl LspItem {
+    pub fn create_semantic_token(&self, scopes: &Scopes, span: Span) -> Option<SpanSemanticToken> {
+        type ST = SpanSemanticToken;
+        type SM = SemanticTokenModifiers;
+        type Kind = SpanSemanticTokenKind;
+
+        match self {
+            // LspItem::Module(scope_id) => todo!(),
+            // LspItem::Underscore(type_id) => todo!(),
+            LspItem::Property(_, _, _) => Some(ST::new(Kind::Var, span)),
+            &LspItem::Var(id) => {
+                let mods = if scopes.get(id).mutable {
+                    SM::Mutable
+                } else {
+                    SM::None
+                };
+                Some(ST::with_mods(Kind::Var, span, mods))
+            }
+            LspItem::Type(_) => Some(ST::new(Kind::Type, span)),
+            LspItem::BuiltinType(_) => Some(ST::new(Kind::Type, span)),
+            &LspItem::Fn(id, _) => {
+                if let Some(id) = scopes.get(id).constructor {
+                    if scopes.get(id).kind.is_union() {
+                        Some(ST::new(Kind::Variant, span))
+                    } else {
+                        Some(ST::new(Kind::Type, span))
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
 }
 
 impl From<TypeItem> for LspItem {
@@ -911,10 +955,6 @@ impl TypeChecker {
             let ret = Self::typehint_for_struct(&base.name, &base.type_params);
             let mut enum_union = true;
             for variant in variants {
-                this.proj
-                    .tokens
-                    .push(SpanSemanticToken::Variant(variant.name.span));
-
                 let mut params = params.clone();
                 match variant.data {
                     VariantData::Empty => {
@@ -1873,6 +1913,8 @@ impl TypeChecker {
                 value,
                 constant,
             } => {
+                // TODO: constants
+                let _ = constant;
                 // FIXME: detect cycles like static X: usize = X;
                 // FIXME: non-const statics should be disallowed
                 let ty = resolve_type!(self, self.proj.scopes.get_mut(id).ty);
@@ -7310,14 +7352,6 @@ impl TypeChecker {
                     },
                 );
 
-                if item
-                    .id
-                    .as_fn()
-                    .is_some_and(|&id| self.scopes().get(id).constructor.is_some())
-                {
-                    self.proj.tokens.push(SpanSemanticToken::Variant(tail.span));
-                }
-
                 let mut skip = false;
                 if !item.public && !self.can_access_privates(scope) {
                     if !found {
@@ -7532,10 +7566,6 @@ impl TypeChecker {
                             self.check_hover(name.span, id.into());
                             let mut ty_args = self.resolve_type_args(id, ty_args, false, name.span);
                             if let Some(id) = self.proj.scopes.get(id).constructor {
-                                if self.proj.scopes.get(id).kind.is_union() {
-                                    self.proj.tokens.push(SpanSemanticToken::Variant(name.span));
-                                }
-
                                 ty_args.copy_args(&TypeArgs::in_order(
                                     &self.proj.scopes,
                                     id,
@@ -7732,14 +7762,7 @@ impl TypeChecker {
             ValueItem::Fn(id) => {
                 self.resolve_proto(id);
                 self.check_hover(span, id.into());
-                if let Some(id) = self.proj.scopes.get(id).constructor {
-                    if self.proj.scopes.get(id).kind.is_union() {
-                        self.proj.tokens.push(SpanSemanticToken::Variant(span));
-                    }
-                }
-
                 ty_args.copy_args(&self.resolve_type_args(id, last_args, false, span));
-
                 ResolvedValue::Fn(GenericFn::new(id, ty_args))
             }
             ValueItem::StructConstructor(id, init) => {
@@ -7782,12 +7805,6 @@ impl TypeChecker {
         };
 
         self.check_hover(name.span, mfn.func.id.into());
-        if let Some(id) = self.proj.scopes.get(mfn.func.id).constructor {
-            if self.proj.scopes.get(id).kind.is_union() {
-                self.proj.tokens.push(SpanSemanticToken::Variant(name.span));
-            }
-        }
-
         if let Some((name, _)) = rest.first() {
             return ResolvedValue::NotFound(Error::no_symbol(&name.data, name.span));
         }

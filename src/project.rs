@@ -9,15 +9,38 @@ use crate::{
     CodegenFlags, Diagnostics, Span,
 };
 
-pub enum SpanSemanticToken {
-    Variant(Span),
+pub enum SpanSemanticTokenKind {
+    Var,
+    Variant,
+    Type,
+}
+
+pub enum SemanticTokenModifiers {
+    None,
+    Mutable,
+}
+
+pub struct SpanSemanticToken {
+    pub kind: SpanSemanticTokenKind,
+    pub span: Span,
+    pub mods: SemanticTokenModifiers,
 }
 
 impl SpanSemanticToken {
-    pub fn span(&self) -> &Span {
-        match self {
-            SpanSemanticToken::Variant(span) => span,
+    pub fn new(kind: SpanSemanticTokenKind, span: Span) -> Self {
+        Self {
+            kind,
+            span,
+            mods: SemanticTokenModifiers::None,
         }
+    }
+
+    pub fn with_mods(
+        kind: SpanSemanticTokenKind,
+        span: Span,
+        mods: SemanticTokenModifiers,
+    ) -> Self {
+        Self { kind, span, mods }
     }
 }
 

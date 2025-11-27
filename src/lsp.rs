@@ -9,7 +9,7 @@ use tower_lsp::{Client, LanguageServer};
 
 use crate::error::{Diagnostics, FileId, OffsetMode};
 use crate::lexer::Span;
-use crate::project::{Project, SpanSemanticToken};
+use crate::project::{Project, SemanticTokenModifiers, SpanSemanticTokenKind};
 use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeId, UserTypeKind, VariableId};
 use crate::typecheck::{LspInput, LspItem};
 use crate::typeid::{GenericUserType, Type, TypeId, Types};
@@ -80,7 +80,21 @@ pub struct LspBackend {
 
 // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_semanticTokens
 mod token {
+    use tower_lsp::lsp_types::{SemanticTokenModifier, SemanticTokenType};
+
+    pub const TOKEN_TYPES: [SemanticTokenType; 3] = [
+        SemanticTokenType::ENUM_MEMBER,
+        SemanticTokenType::TYPE,
+        SemanticTokenType::VARIABLE,
+    ];
+
     pub const ENUM_MEMBER: u32 = 0;
+    pub const TYPE: u32 = 1;
+    pub const VARIABLE: u32 = 2;
+
+    pub const TOKEN_MODS: [SemanticTokenModifier; 1] = [SemanticTokenModifier::new("mutable")];
+
+    pub const MUTABLE: u32 = 1 << 0;
 }
 
 #[tower_lsp::async_trait]
@@ -109,9 +123,8 @@ impl LanguageServer for LspBackend {
                         SemanticTokensOptions {
                             work_done_progress_options: Default::default(),
                             legend: SemanticTokensLegend {
-                                // Must be defined in the order under the 'token' module
-                                token_types: vec![SemanticTokenType::ENUM_MEMBER],
-                                token_modifiers: vec![],
+                                token_types: token::TOKEN_TYPES.into(),
+                                token_modifiers: token::TOKEN_MODS.into(),
                             },
                             range: None,
                             full: Some(SemanticTokensFullOptions::Bool(true)),
@@ -641,9 +654,9 @@ impl LspBackend {
 
             doc.tokens.clear();
             let [mut prev_line, mut prev_start] = [0; 2];
-            proj.tokens.sort_by_key(|v| v.span().pos);
-            for token in proj.tokens.iter().filter(|v| v.span().file == file) {
-                let span = *token.span();
+            proj.tokens.sort_by_key(|v| v.span.pos);
+            for token in proj.tokens.iter().filter(|v| v.span.file == file) {
+                let span = token.span;
                 let r = Diagnostics::get_span_range(&doc.text, span, OffsetMode::Utf16);
                 let line = r.start.line;
                 let start = r.start.character;
@@ -657,10 +670,15 @@ impl LspBackend {
                         start
                     },
                     length: span.len, // TODO: use UTF-16 length
-                    token_type: match token {
-                        SpanSemanticToken::Variant(_) => token::ENUM_MEMBER,
+                    token_type: match token.kind {
+                        SpanSemanticTokenKind::Variant => token::ENUM_MEMBER,
+                        SpanSemanticTokenKind::Type => token::TYPE,
+                        SpanSemanticTokenKind::Var => token::VARIABLE,
                     },
-                    token_modifiers_bitset: 0,
+                    token_modifiers_bitset: match token.mods {
+                        SemanticTokenModifiers::None => 0,
+                        SemanticTokenModifiers::Mutable => token::MUTABLE,
+                    },
                 });
 
                 prev_line = line;
