@@ -46,20 +46,8 @@
 
 #include <stdint.h>
 
-#if !defined(CTL_NOGC)
+#if defined(CTL_USE_BOEHM)
 #  include <gc.h>
-
-#  define CTL_MALLOC(sz, align)       GC_MALLOC(sz)
-#  define CTL_REALLOC(ptr, sz, align) GC_REALLOC(ptr, sz)
-#else
-#  include <stdlib.h>
-
-#  define CTL_MALLOC(sz, align)       malloc(sz)
-#  define CTL_REALLOC(ptr, sz, align) realloc(ptr, sz)
-#endif
-
-#if defined(CTL_NOBITINT)
-#  include <stdint.h>
 #endif
 
 #if defined(_MSC_VER)
@@ -71,19 +59,19 @@
 #  endif
 
 #  define CTL_NONNULL(...)
-#  define CTL_DUMMY_INIT    0
-#  define CTL_DUMMY_MEMBER  CTL_ZST char dummy
-#  define CTL_NORETURN      __declspec(noreturn)
-#  define CTL_FORCEINLINE   __forceinline inline
-#  define CTL_NEVERINLINE   __declspec(noinline)
-#  define CTL_INLINE        inline
-#  define CTL_MEMCPY        memcpy
-#  define CTL_MEMSET        memset
-#  define CTL_MEMMOVE       memmove
-#  define CTL_MEMCMP        memcmp
-#  define CTL_STRLEN        strlen
-#  define CTL_UNREACHABLE() __assume(0)
-#  define CTL_ASSUME(x)     __assume(!!(x))
+#  define CTL_DUMMY_INIT     0
+#  define CTL_DUMMY_MEMBER   CTL_ZST char dummy
+#  define CTL_NORETURN       __declspec(noreturn)
+#  define CTL_FORCEINLINE    __forceinline inline
+#  define CTL_NEVERINLINE    __declspec(noinline)
+#  define CTL_INLINE         inline
+#  define CTL_MEMCPY         memcpy
+#  define CTL_MEMSET         memset
+#  define CTL_MEMMOVE        memmove
+#  define CTL_MEMCMP         memcmp
+#  define CTL_STRLEN         strlen
+#  define CTL_UNREACHABLE()  __assume(0)
+#  define CTL_ASSUME(x)      __assume(!!(x))
 #  define CTL_UNLIKELY(expr) (expr)
 #  define CTL_LIKELY(expr)   (expr)
 
@@ -157,13 +145,13 @@ static void $ctl_static_deinit(void);
 CTL_DEINIT($ctl_runtime_deinit) {
   $ctl_static_deinit();
 
-#if !defined(CTL_NOGC)
+#if defined(CTL_USE_BOEHM)
   GC_deinit();
 #endif
 }
 
 CTL_INIT($ctl_runtime_init) {
-#if !defined(CTL_NOGC)
+#if defined(CTL_USE_BOEHM)
   GC_INIT();
 #endif
   $ctl_static_init();

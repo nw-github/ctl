@@ -923,14 +923,14 @@ impl Codegen {
             }
         }
         let functions = std::mem::take(&mut this.buffer);
-        if this.flags.leak {
-            this.buffer.emit("#define CTL_NOGC 1\n");
-        }
         if this.flags.no_bit_int {
             this.buffer.emit("#define CTL_NOBITINT 1\n");
         }
         if this.proj.conf.has_feature("hosted") {
             this.buffer.emit("#define CTL_HOSTED 1\n");
+        }
+        if this.proj.conf.has_feature("boehm") {
+            this.buffer.emit("#define CTL_USE_BOEHM 1\n");
         }
 
         this.buffer.emit(include_str!("../ctl.h"));

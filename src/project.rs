@@ -70,12 +70,26 @@ impl Configuration {
             !attr.props.iter().any(|v| self.has_feature(&v.name.data))
         }
     }
+
+    pub fn set_feature(&mut self, feat: String) {
+        self.features.insert(feat);
+    }
+
+    pub fn remove_feature(&mut self, feat: &str) {
+        self.features.remove(feat);
+    }
 }
 
 impl Default for Configuration {
     fn default() -> Self {
         Self {
-            features: ["alloc".to_string(), "io".to_string(), "hosted".to_string()].into(),
+            features: [
+                "alloc".to_string(),
+                "io".into(),
+                "hosted".into(),
+                "boehm".into(),
+            ]
+            .into(),
             flags: Default::default(),
         }
     }

@@ -212,7 +212,6 @@ impl<T: CompileState> Compiler<T> {
 
 #[derive(Default, Clone, Copy)]
 pub struct CodegenFlags {
-    pub leak: bool,
     pub no_bit_int: bool,
     pub lib: bool,
     pub minify: bool,
