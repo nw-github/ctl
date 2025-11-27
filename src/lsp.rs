@@ -15,7 +15,7 @@ use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeId, UserTypeKind, V
 use crate::typecheck::{LspInput, LspItem};
 use crate::typeid::{GenericUserType, Type, TypeId, Types};
 use crate::{
-    project_from_file, CachingSourceProvider, Compiler, FileSourceProvider, SourceProvider,
+    CachingSourceProvider, Compiler, FileSourceProvider, SourceProvider, UnloadedProject,
     THIS_PARAM,
 };
 
@@ -540,7 +540,7 @@ impl LspBackend {
             .and_then(|uri| self.documents.get(&uri))
         {
             Diagnostics::get_span_range(&doc.text, span, OffsetMode::Utf16)
-        } else if let Ok(Some(range)) = cache.get_source(path, |data| {
+        } else if let Ok(range) = cache.get_source(path, |data| {
             Diagnostics::get_span_range(data, span, OffsetMode::Utf16)
         }) {
             range
@@ -567,11 +567,8 @@ impl LspBackend {
         info!(self, "Checking project: Uri: '{}'", uri).await;
 
         let path = Self::uri_to_path(uri);
-        let (project, conf) = project_from_file(get_file_project(path), vec![], false);
-        let parsed =
-            Compiler::with_provider(LspFileProvider::new(&self.documents)).parse(project, conf);
-        let parsed = match parsed {
-            Ok(parsed) => parsed,
+        let proj = match UnloadedProject::new(get_file_project(path)) {
+            Ok(proj) => proj,
             Err(err) => {
                 self.client
                     .log_message(MessageType::ERROR, format!("{err}"))
@@ -579,6 +576,16 @@ impl LspBackend {
                 return Err(Error::internal_error());
             }
         };
+        let parsed =
+            match Compiler::with_provider(LspFileProvider::new(&self.documents)).parse(proj) {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    self.client
+                        .log_message(MessageType::ERROR, format!("{err}"))
+                        .await;
+                    return Err(Error::internal_error());
+                }
+            };
         let file = parsed
             .diagnostics()
             .paths()
@@ -789,16 +796,12 @@ pub struct LspFileProvider<'a> {
 }
 
 impl SourceProvider for LspFileProvider<'_> {
-    fn get_source<T>(
-        &mut self,
-        path: &Path,
-        get: impl FnOnce(&str) -> T,
-    ) -> anyhow::Result<Option<T>> {
+    fn get_source<T>(&mut self, path: &Path, get: impl FnOnce(&str) -> T) -> anyhow::Result<T> {
         if let Some(doc) = Url::from_file_path(path)
             .ok()
             .and_then(|uri| self.documents.get(&uri))
         {
-            Ok(Some(get(&doc.text)))
+            Ok(get(&doc.text))
         } else {
             FileSourceProvider.get_source(path, get)
         }

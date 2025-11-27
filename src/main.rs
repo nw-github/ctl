@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueHint};
 use ctl::{
-    project_from_file, CachingSourceProvider, CodegenFlags, Compiler, Diagnostics, Error, FileId,
-    LspBackend, OffsetMode, SourceProvider,
+    CachingSourceProvider, CodegenFlags, Compiler, Diagnostics, Error, FileId, LspBackend,
+    OffsetMode, SourceProvider, UnloadedProject,
 };
 use std::{
     ffi::OsString,
@@ -254,18 +254,18 @@ fn main() -> Result<()> {
             return Ok(());
         }
     };
-    let (proj, mut conf) = project_from_file(input, vec![], args.no_std);
+    let mut proj = UnloadedProject::new(input)?;
     if args.leak {
-        conf.remove_feature("boehm");
+        proj.conf.remove_feature("boehm");
     }
 
-    conf.flags = CodegenFlags {
+    proj.conf.flags = CodegenFlags {
         no_bit_int: args.no_bit_int,
         lib: args.shared,
         minify: matches!(args.command, SubCommand::Print { minify: true, .. }),
     };
     let result = Compiler::new()
-        .parse(proj, conf)?
+        .parse(proj)?
         .inspect(|ast| {
             if args.dump_ast {
                 ast.dump()

@@ -19,6 +19,7 @@ use anyhow::{Context, Result};
 use ast::parsed::{Stmt, StmtData};
 use codegen::Codegen;
 pub use error::*;
+use indexmap::IndexMap;
 pub use lexer::*;
 use project::Project;
 pub use source::*;
@@ -46,6 +47,10 @@ pub struct ProjectConfig {
     pub root: Option<String>,
     pub name: Option<String>,
     pub build: Option<String>,
+    #[serde(default)]
+    pub no_std: bool,
+    #[serde(default)]
+    pub lib: bool,
 }
 
 pub struct Compiler<S: CompileState> {
@@ -65,102 +70,39 @@ impl<T: SourceProvider> Compiler<Source<T>> {
         }
     }
 
-    pub fn parse(mut self, project: Vec<PathBuf>, cfg: Configuration) -> Result<Compiler<Parsed>> {
+    pub fn parse(mut self, project: UnloadedProject) -> Result<Compiler<Parsed>> {
         let mut diag = Diagnostics::default();
-        let project = project
-            .into_iter()
-            .map(|path| {
-                self.load_module(&mut diag, path).and_then(|ast| {
-                    ast.context("compile target must be directory or have extension '.ctl'")
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let mut stmts = vec![];
+        for (path, module) in project.mods {
+            stmts.push(self.load_module(&mut diag, path, module)?);
+        }
 
         Ok(Compiler {
-            state: Parsed(project, diag, cfg),
+            state: Parsed(stmts, diag, project.conf),
         })
     }
 
-    fn load_module(&mut self, diag: &mut Diagnostics, mut path: PathBuf) -> Result<Option<Stmt>> {
-        let mut name = Self::derive_module_name(&path);
-        if path.is_dir() {
-            match std::fs::read_to_string(path.join("ctl.toml")) {
-                Ok(val) => {
-                    let mut config = toml::from_str::<ProjectConfig>(&val)?;
-                    if let Some(root) = config.root.take() {
-                        path = PathBuf::from(root);
-                    }
-                    if let Some(rename) = config.name {
-                        // TODO: prevent duplicate names, naming module std, etc.
-                        name = Self::safe_name(&rename);
-                    }
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err.into()),
-            }
+    fn load_module(
+        &mut self,
+        diag: &mut Diagnostics,
+        path: PathBuf,
+        module: Module,
+    ) -> Result<Stmt> {
+        let mut parsed = self.state.0.get_source(&path, |src| {
+            let file_id = diag.add_file(path.clone());
+            Parser::parse(src, module.name.clone(), diag, file_id)
+        })?;
 
-            let mut body = Vec::new();
-            let mut main = None;
-            for entry in path
-                .read_dir()
-                .with_context(|| format!("loading path {}", path.display()))?
-            {
-                let path = entry?.path();
-                if let Some(stmt) = self.load_module(diag, path.canonicalize().unwrap_or(path))? {
-                    match &stmt.data.data {
-                        StmtData::Module { name, .. } if name.data == "main" => {
-                            main = Some(name.span);
-                        }
-                        _ => {}
-                    }
-
-                    body.push(stmt);
-                }
-            }
-            Ok(Some(Stmt {
-                data: Located::new(
-                    Span::default(),
-                    ast::parsed::StmtData::Module {
-                        public: true,
-                        file: false,
-                        name: lexer::Located::new(main.unwrap_or_default(), name),
-                        body,
-                    },
-                ),
-                attrs: Default::default(),
-            }))
-        } else {
-            self.state.0.get_source(&path, |src| {
-                let file_id = diag.add_file(path.clone());
-                Parser::parse(src, name, diag, file_id)
-            })
-        }
-    }
-
-    fn derive_module_name(path: &Path) -> String {
-        let base = if path.is_file() {
-            path.file_stem()
-        } else {
-            path.file_name()
+        let StmtData::Module { body, .. } = &mut parsed.data.data else {
+            unreachable!();
         };
 
-        Self::safe_name(base.unwrap().to_string_lossy().as_ref())
-    }
-
-    fn safe_name(s: &str) -> String {
-        let mut r = String::new();
-        for (i, ch) in s.chars().enumerate() {
-            if i == 0 && !Lexer::is_identifier_first_char(ch) {
-                r.push('_');
-            }
-
-            if Lexer::is_identifier_char(ch) {
-                r.push(ch);
-            } else {
-                r.push('_');
-            }
+        // Load first so typechecking puts a redefinition error on duplicates inside the 'main.ctl'
+        for (path, module) in module.mods {
+            body.push(self.load_module(diag, path, module)?);
         }
-        r
+
+        Ok(parsed)
     }
 }
 
@@ -215,32 +157,201 @@ impl<T: CompileState> Compiler<T> {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct CodegenFlags {
     pub no_bit_int: bool,
     pub lib: bool,
     pub minify: bool,
 }
 
-pub fn project_from_file(
-    path: &Path,
-    mut libs: Vec<PathBuf>,
-    mut no_std: bool,
-) -> (Vec<PathBuf>, Configuration) {
-    let std_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
-    let path = path.canonicalize().unwrap_or_else(|_| path.into());
-    let mut conf = Configuration::default();
-    if path == std_path {
-        conf.flags.lib = true;
-        no_std = true;
+/*
+    std/
+        alloc/
+            main.ctl
+            vec.ctl
+        span.ctl
+        main.ctl
+
+    Module {
+        name: "std",
+        path: "~/std/main.ctl",
+        files: [
+            Module {
+                name: "span",
+                path: "~/std/span.ctl",
+                mods: []
+            },
+            Module {
+                name: "alloc",
+                path: "~/std/alloc/main.ctl",
+                mods: [
+                    Module {
+                        name: "vec",
+                        path: "~/std/alloc/vec.ctl",
+                        mods: []
+                    }
+                ]
+            }
+        ]
+    }
+*/
+
+#[derive(Debug, Clone)]
+pub struct Module {
+    pub name: String,
+    pub mods: IndexMap<PathBuf, Module>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnloadedProject {
+    pub mods: IndexMap<PathBuf, Module>,
+    pub conf: Configuration,
+}
+
+impl UnloadedProject {
+    pub fn new(path: &Path) -> Result<Self> {
+        let mut mods = IndexMap::new();
+        let mut conf = Configuration::default();
+        let path = path.canonicalize()?;
+
+        let mut modpaths = vec![path];
+        let mut main = true;
+        while let Some(path) = modpaths.pop() {
+            if mods.contains_key(&path) {
+                continue;
+            }
+
+            match Self::load_module(path.clone(), Some(&mut modpaths), main.then_some(&mut conf))
+                .with_context(|| format!("Loading module '{}' failed", path.display()))?
+            {
+                Some((path, module)) => _ = mods.insert(path, module),
+                None => anyhow::bail!("Couldn't find module: '{}'", path.display()),
+            }
+            main = false;
+        }
+
+        // TODO: actual dependency ordering
+        mods.reverse();
+        Ok(Self { mods, conf })
     }
 
-    if !no_std {
-        libs.insert(0, std_path);
+    fn load_module(
+        mut path: PathBuf,
+        mods: Option<&mut Vec<PathBuf>>,
+        conf: Option<&mut Configuration>,
+    ) -> Result<Option<(PathBuf, Module)>> {
+        let mut name = Self::derive_module_name(&path);
+        if let Some(mods) = mods {
+            Self::handle_config(&mut path, &mut name, mods, conf)?;
+        }
+
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "ctl") {
+            return Ok(Some((
+                path,
+                Module {
+                    name,
+                    mods: IndexMap::new(),
+                },
+            )));
+        } else if !path.is_dir() {
+            return Ok(None);
+        }
+
+        let main = path.join("main.ctl");
+        if !main.exists() {
+            return Ok(None);
+        }
+
+        let mut mods = IndexMap::new();
+        for entry in path
+            .read_dir()
+            .with_context(|| format!("loading path {}", path.display()))?
+        {
+            let entry = entry?;
+            if entry.file_name() == "main.ctl" {
+                continue;
+            }
+
+            if let Some((path, module)) = Self::load_module(entry.path(), None, None)
+                .with_context(|| format!("loading path {}", path.display()))?
+            {
+                mods.insert(path, module);
+            }
+        }
+
+        Ok(Some((main, Module { name, mods })))
     }
 
-    libs.push(path);
-    (libs, conf)
+    fn handle_config(
+        path: &mut PathBuf,
+        name: &mut String,
+        mods: &mut Vec<PathBuf>,
+        conf: Option<&mut Configuration>,
+    ) -> Result<()> {
+        let mut needs_stdlib = true;
+        if path.is_dir() {
+            match std::fs::read_to_string(path.join("ctl.toml")) {
+                Ok(val) => {
+                    let mut config = toml::from_str::<ProjectConfig>(&val)?;
+                    if let Some(root) = config.root.take() {
+                        *path = PathBuf::from(root);
+                    }
+
+                    if let Some(rename) = config.name {
+                        // TODO: prevent duplicate names, naming module std, etc.
+                        *name = Self::safe_name(&rename);
+                    }
+
+                    if let Some(conf) = conf {
+                        if config.lib {
+                            conf.flags.lib = true;
+                        }
+                    }
+
+                    if config.no_std {
+                        needs_stdlib = false;
+                    }
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
+
+        if needs_stdlib {
+            mods.push(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("std")
+                    .canonicalize()?,
+            );
+        }
+        Ok(())
+    }
+
+    fn derive_module_name(path: &Path) -> String {
+        let base = if path.is_file() {
+            path.file_stem()
+        } else {
+            path.file_name()
+        };
+
+        Self::safe_name(base.unwrap().to_string_lossy().as_ref())
+    }
+
+    fn safe_name(s: &str) -> String {
+        let mut r = String::new();
+        for (i, ch) in s.chars().enumerate() {
+            if i == 0 && !Lexer::is_identifier_first_char(ch) {
+                r.push('_');
+            }
+
+            if Lexer::is_identifier_char(ch) {
+                r.push(ch);
+            } else {
+                r.push('_');
+            }
+        }
+        r
+    }
 }
 
 fn nearest_pow_of_two(bits: u32) -> usize {

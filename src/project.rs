@@ -68,6 +68,7 @@ impl Project {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Configuration {
     features: HashSet<String>,
     pub flags: CodegenFlags,
