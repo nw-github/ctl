@@ -14,7 +14,7 @@ fn bar<T: MakeInt>(v: int = T::make()): int {
     v
 }
 
-fn default_template() {
+fn main() {
     let x = Foo::<Test>();
     println("{x.bar}");
 
