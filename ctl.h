@@ -196,6 +196,6 @@ typedef struct {
 } DynPtr;
 
 #ifdef CTL_HOSTED
-char const *const *CTL_ARGV;
-int CTL_ARGC;
+static char **CTL_ARGV;
+static int CTL_ARGC;
 #endif

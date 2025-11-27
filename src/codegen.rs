@@ -849,6 +849,13 @@ impl Codegen {
             .map(|(id, _)| {
                 State::in_body_scope(GenericFn::from_id(&proj.scopes, id), &proj.scopes)
             });
+        let statics = proj
+            .scopes
+            .vars()
+            .filter(|(_, v)| v.is_extern && v.value.is_some())
+            .map(|(id, _)| id)
+            .collect();
+
         let (funcs, main) = if proj.conf.flags.lib {
             (exports.collect(), None)
         } else {
@@ -865,13 +872,13 @@ impl Codegen {
             flags: proj.conf.flags,
             proj,
             funcs,
+            statics,
             emitted_never_in_this_block: false,
             buffer: Default::default(),
             temporaries: Default::default(),
             cur_block: Default::default(),
             cur_loop: Default::default(),
             vtables: Default::default(),
-            statics: Default::default(),
             emitted_vtables: Default::default(),
             defers: Default::default(),
             tg: Default::default(),
@@ -958,10 +965,9 @@ impl Codegen {
         this.buffer.emit(this.vtables.finish());
         this.buffer.emit(static_defs.finish());
         this.buffer.emit(functions.finish());
-        this.buffer.emit("static void $ctl_static_init(void){{");
+        this.buffer.emit("static void $ctl_static_init(void){");
         this.buffer.emit(static_init.finish());
-        this.buffer
-            .emit("}}static void $ctl_static_deinit(void){{}}");
+        this.buffer.emit("}static void $ctl_static_deinit(void){}");
         if let Some(main) = main {
             this.buffer.emit(main);
         }
