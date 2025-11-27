@@ -148,14 +148,19 @@ impl<T: SourceProvider> Compiler<Source<T>> {
     }
 
     fn safe_name(s: &str) -> String {
-        s.chars()
-            .enumerate()
-            .map(|(i, ch)| match (i, ch) {
-                (0, ch) if Lexer::is_identifier_first_char(ch) => ch,
-                (_, ch) if Lexer::is_identifier_char(ch) => ch,
-                _ => '_',
-            })
-            .collect()
+        let mut r = String::new();
+        for (i, ch) in s.chars().enumerate() {
+            if i == 0 && !Lexer::is_identifier_first_char(ch) {
+                r.push('_');
+            }
+
+            if Lexer::is_identifier_char(ch) {
+                r.push(ch);
+            } else {
+                r.push('_');
+            }
+        }
+        r
     }
 }
 

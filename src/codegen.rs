@@ -1121,9 +1121,7 @@ impl Codegen {
 
     fn emit_stmt(&mut self, stmt: Stmt, state: &mut State) {
         match stmt {
-            Stmt::Expr(expr) => {
-                hoist_point!(self, self.emit_expr_stmt(expr, state))
-            }
+            Stmt::Expr(expr) => hoist_point!(self, self.emit_expr_stmt(expr, state)),
             Stmt::Let(patt, value) => hoist_point!(self, {
                 if let PatternData::Variable(id) = patt.data {
                     if !self.proj.scopes.get(id).unused {
@@ -3604,11 +3602,6 @@ fn full_name(scopes: &Scopes, id: ScopeId, ident: &str) -> String {
             name.push(c);
         }
     }
-
-    if name.ends_with(|c: char| c.is_ascii_digit()) {
-        name.push_str("_$");
-    }
-
     name.chars().rev().collect::<String>()
 }
 
