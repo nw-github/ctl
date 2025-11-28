@@ -34,9 +34,16 @@ macro_rules! writeln_de {
 }
 
 macro_rules! info {
-    ($self: expr, $($arg: tt)*) => {
-        $self.client.log_message(MessageType::INFO, format!($($arg)*))
-    };
+    ($self: expr, $($arg: tt)*) => {{
+        $self.client.log_message(MessageType::INFO, format!($($arg)*)).await
+    }};
+}
+
+macro_rules! debug {
+    ($self: expr, $($arg: tt)*) => {{
+        #[cfg(debug_assertions)]
+        $self.client.log_message(MessageType::LOG, format!($($arg)*)).await
+    }};
 }
 
 #[derive(serde::Deserialize, Clone, Copy, Debug)]
@@ -57,27 +64,45 @@ impl Default for Configuration {
 }
 
 #[derive(Default)]
-struct Document {
-    text: String,
-    inlay_hints: Vec<InlayHint>,
-    lsp_items: Vec<(LspItem, Span)>,
-    semantic_tokens: Vec<SemanticToken>,
+pub enum Lazy<T> {
+    Initialized(Option<T>),
+    #[default]
+    None,
 }
 
-impl Document {
-    pub fn new(text: String) -> Self {
-        Self {
-            text,
-            ..Default::default()
+impl<T> Lazy<T> {
+    pub fn get_or_try(&mut self, f: impl FnOnce() -> Option<T>) -> Option<&mut T> {
+        if let Self::None = self {
+            *self = Self::Initialized(f());
+        }
+
+        if let Self::Initialized(value) = self {
+            value.as_mut()
+        } else {
+            None
         }
     }
 }
 
+#[derive(Default)]
+struct FileInfoCache {
+    lsp_items: Vec<(LspItem, Span)>,
+    inlay_hints: Lazy<Vec<InlayHint>>,
+    semantic_tokens: Lazy<Vec<SemanticToken>>,
+}
+
+struct LastChecked {
+    data: UnloadedProject,
+    checked: Project,
+}
+
 pub struct LspBackend {
     client: Client,
-    documents: DashMap<Url, Document>,
+    /// Files that the client has ownership of
+    open_files: DashMap<Url, String>,
+    documents: DashMap<Url, FileInfoCache>,
     config: tokio::sync::Mutex<Configuration>,
-    project: tokio::sync::Mutex<Option<Project>>,
+    project: tokio::sync::Mutex<Option<LastChecked>>,
 }
 
 // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_semanticTokens
@@ -145,54 +170,53 @@ impl LanguageServer for LspBackend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        info!(self, "Server initialized!").await;
+        info!(self, "Server initialized!");
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
-        info!(self, "did_change_configuration").await;
-
+        debug!(self, "did_change_configuration");
         *self.config.lock().await = serde_json::from_value(params.settings).unwrap_or_default();
-        if let Some(entry) = self.documents.iter().next() {
-            _ = self.check_project(entry.key(), None).await;
-            info!(self, " -> done check_project").await;
-        }
+        // _ = self.check_project(None, None, false).await;
     }
 
     async fn did_open(&self, mut params: DidOpenTextDocumentParams) {
-        info!(self, "did_open: '{}'", params.text_document.uri).await;
-
-        self.documents
+        debug!(self, "did_open: '{}'", params.text_document.uri);
+        self.open_files
             .entry(params.text_document.uri.clone())
-            .and_modify(|doc| doc.text = std::mem::take(&mut params.text_document.text))
-            .or_insert_with(|| Document::new(std::mem::take(&mut params.text_document.text)));
-        _ = self.check_project(&params.text_document.uri, None).await;
-        info!(self, " -> done check_project").await;
+            .and_modify(|text| *text = std::mem::take(&mut params.text_document.text))
+            .or_insert_with(|| std::mem::take(&mut params.text_document.text));
+        _ = self
+            .check_project(&params.text_document.uri, None, false)
+            .await;
     }
 
     async fn did_change(&self, mut params: DidChangeTextDocumentParams) {
-        info!(self, "did_change: '{}'", params.text_document.uri).await;
-
-        self.documents
+        debug!(self, "did_change: '{}'", params.text_document.uri);
+        self.open_files
             .entry(params.text_document.uri.clone())
-            .and_modify(|doc| doc.text = std::mem::take(&mut params.content_changes[0].text))
-            .or_insert_with(|| Document::new(std::mem::take(&mut params.content_changes[0].text)));
-        _ = self.check_project(&params.text_document.uri, None).await;
-        info!(self, " -> done check_project").await;
+            .and_modify(|text| *text = std::mem::take(&mut params.content_changes[0].text))
+            .or_insert_with(|| std::mem::take(&mut params.content_changes[0].text));
+        _ = self
+            .check_project(&params.text_document.uri, None, true)
+            .await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        info!(self, "did_close: '{}'", params.text_document.uri).await;
-
-        self.documents.remove(&params.text_document.uri);
+        debug!(self, "did_close: '{}'", params.text_document.uri);
+        self.open_files.remove(&params.text_document.uri);
     }
 
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
-        info!(self, "inlay_hint: '{}'", params.text_document.uri).await;
-
-        Ok(self
-            .documents
-            .get(&params.text_document.uri)
-            .map(|c| c.inlay_hints.clone()))
+        self.with_proj_and_doc(&params.text_document.uri, async |doc, path, file, proj| {
+            doc.inlay_hints
+                .get_or_try(|| {
+                    self.with_source(path, &mut FileSourceProvider, |src| {
+                        get_inlay_hints(&proj.scopes, &mut proj.types, src, file)
+                    })
+                })
+                .cloned()
+        })
+        .await
     }
 
     async fn goto_definition(
@@ -201,8 +225,6 @@ impl LanguageServer for LspBackend {
     ) -> Result<Option<GotoDefinitionResponse>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        info!(self, "goto_definition: '{uri}'").await;
-
         self.find_lsp_item(uri, pos, async |hover, proj| {
             let scopes = &proj.scopes;
             let span = match hover {
@@ -224,18 +246,9 @@ impl LanguageServer for LspBackend {
             let diag = &mut proj.diag;
             let path = diag.file_path(span.file);
             let uri = Url::from_file_path(path).unwrap();
-            let range = if let Some(doc) = self.documents.get(&uri) {
-                Diagnostics::get_span_range(&doc.text, span, OffsetMode::Utf16)
-            } else {
-                let file = std::fs::read_to_string(path).ok()?;
-                Diagnostics::get_span_range(&file, span, OffsetMode::Utf16)
-            };
-
-            info!(
-                self,
-                " -> (goto_definition) {uri}, ({:?}, {:?})", range.start, range.end
-            )
-            .await;
+            let range = self.with_source(path, &mut FileSourceProvider, |src| {
+                Diagnostics::get_span_range(src, span, OffsetMode::Utf16)
+            })?;
             Some(GotoDefinitionResponse::Scalar(Location::new(uri, range)))
         })
         .await
@@ -245,27 +258,25 @@ impl LanguageServer for LspBackend {
         let uri = &params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
         if let Some(ctx) = params.context.and_then(|ctx| ctx.trigger_character) {
-            info!(
+            debug!(
                 self,
                 "looking for completion at line {}, character {} due to trigger '{ctx}'",
                 pos.line,
                 pos.character,
-            )
-            .await;
+            );
         } else {
-            info!(
+            debug!(
                 self,
                 "looking for completion at line {}, character {}", pos.line, pos.character,
-            )
-            .await;
+            );
         }
 
-        let mut guard = self.check_project(uri, Some(pos)).await?;
-        info!(self, " -> done check_project").await;
-
+        let mut guard = self.check_project(uri, Some(pos), true).await?;
         let Some(proj) = guard.as_mut() else {
             return Ok(None);
         };
+        let proj = &mut proj.checked;
+
         let Some(completions) = proj.completions.as_ref() else {
             return Ok(None);
         };
@@ -426,8 +437,6 @@ impl LanguageServer for LspBackend {
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        info!(self, "hover: Uri: '{}'", uri).await;
-
         self.find_lsp_item(uri, pos, async |item, proj| {
             let scopes = &proj.scopes;
             let types = &mut proj.types;
@@ -475,7 +484,6 @@ impl LanguageServer for LspBackend {
                 _ => None,
             };
 
-            info!(self, "-> (hover) {str:?}").await;
             str.map(|value| Hover {
                 range: None,
                 contents: HoverContents::Scalar(MarkedString::LanguageString(LanguageString {
@@ -491,25 +499,23 @@ impl LanguageServer for LspBackend {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        info!(self, "semantic_tokens_full: '{}'", params.text_document.uri).await;
-        self.with_proj_and_doc(&params.text_document.uri, async |doc, _, _| {
-            info!(
-                self,
-                "-> (semantic_tokens) {} tokens",
-                doc.semantic_tokens.len()
-            )
-            .await;
+        self.with_proj_and_doc(&params.text_document.uri, async |doc, path, file, proj| {
+            let tokens = doc.semantic_tokens.get_or_try(|| {
+                self.with_source(path, &mut FileSourceProvider, |src| {
+                    get_semantic_tokens(&proj.scopes, &doc.lsp_items, src, file)
+                })
+            });
 
             Some(SemanticTokensResult::Tokens(SemanticTokens {
                 result_id: None,
-                data: doc.semantic_tokens.clone(),
+                data: tokens.cloned().unwrap_or_default(),
             }))
         })
         .await
     }
 
     async fn shutdown(&self) -> Result<()> {
-        info!(self, "shutdown").await;
+        info!(self, "shutdown");
         self.documents.clear();
         Ok(())
     }
@@ -519,6 +525,7 @@ impl LspBackend {
     pub fn new(client: Client) -> Self {
         Self {
             client,
+            open_files: Default::default(),
             config: Default::default(),
             documents: Default::default(),
             project: Default::default(),
@@ -528,23 +535,16 @@ impl LspBackend {
     fn make_diagnostic(
         &self,
         diag: &Diagnostics,
-        cache: &mut CachingSourceProvider,
+        provider: &mut impl SourceProvider,
         span: Span,
         msg: &str,
         severity: DiagnosticSeverity,
         all: &mut HashMap<Url, Vec<Diagnostic>>,
     ) {
         let path = diag.file_path(span.file);
-        let range = if let Some(doc) = Url::from_file_path(path)
-            .ok()
-            .and_then(|uri| self.documents.get(&uri))
-        {
-            Diagnostics::get_span_range(&doc.text, span, OffsetMode::Utf16)
-        } else if let Ok(range) = cache.get_source(path, |data| {
-            Diagnostics::get_span_range(data, span, OffsetMode::Utf16)
-        }) {
-            range
-        } else {
+        let Some(range) = self.with_source(path, provider, |src| {
+            Diagnostics::get_span_range(src, span, OffsetMode::Utf16)
+        }) else {
             return;
         };
 
@@ -563,11 +563,11 @@ impl LspBackend {
         &self,
         uri: &Url,
         completion: Option<Position>,
-    ) -> Result<MutexGuard<'_, Option<Project>>> {
-        info!(self, "Checking project: Uri: '{}'", uri).await;
-
+        change: bool,
+    ) -> Result<MutexGuard<'_, Option<LastChecked>>> {
+        debug!(self, "Checking project: '{}'", uri);
         let path = Self::uri_to_path(uri);
-        let proj = match UnloadedProject::new(get_file_project(path)) {
+        let unloaded = match UnloadedProject::new(get_file_project(path)) {
             Ok(proj) => proj,
             Err(err) => {
                 self.client
@@ -576,26 +576,45 @@ impl LspBackend {
                 return Err(Error::internal_error());
             }
         };
-        let parsed =
-            match Compiler::with_provider(LspFileProvider::new(&self.documents)).parse(proj) {
-                Ok(parsed) => parsed,
-                Err(err) => {
-                    self.client
-                        .log_message(MessageType::ERROR, format!("{err}"))
-                        .await;
-                    return Err(Error::internal_error());
+
+        let mut proj_lock_guard = self.project.lock().await;
+        if !change {
+            if let Some(prev) = proj_lock_guard.as_ref() {
+                if unloaded
+                    .mods
+                    .iter()
+                    .all(|(path, module)| prev.data.mods.get(path).is_some_and(|m| m == module))
+                {
+                    // opened a submodule
+                    debug!(
+                        self,
+                        " -> Checking file in submodule of previous project, skip"
+                    );
+                    return Ok(proj_lock_guard);
                 }
-            };
-        let file = parsed
-            .diagnostics()
-            .paths()
-            .find(|p| p.1 == path)
-            .map(|v| v.0);
+            }
+
+            self.documents.clear();
+        }
+
+        let parsed = match Compiler::with_provider(LspFileProvider::new(&self.open_files))
+            .parse(unloaded.clone())
+        {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                self.client
+                    .log_message(MessageType::ERROR, format!("{err}"))
+                    .await;
+                return Err(Error::internal_error());
+            }
+        };
+
+        let file = parsed.diagnostics().get_file_id(path);
         let checked = parsed.typecheck(LspInput {
             completion: completion.and_then(|p| {
                 file.map(|file| {
                     position_to_span(
-                        &self.documents.get(uri).unwrap().text,
+                        self.open_files.get(uri).unwrap().as_ref(),
                         file,
                         p.line,
                         p.character,
@@ -605,13 +624,11 @@ impl LspBackend {
         });
 
         let mut proj = checked.project();
-        let diag = &mut proj.diag;
         let mut all = HashMap::<Url, Vec<Diagnostic>>::new();
         let mut cache = CachingSourceProvider::new();
-
-        for err in diag.errors() {
+        for err in proj.diag.errors() {
             self.make_diagnostic(
-                diag,
+                &proj.diag,
                 &mut cache,
                 err.span,
                 &err.message,
@@ -620,9 +637,9 @@ impl LspBackend {
             );
         }
 
-        for err in diag.warnings() {
+        for err in proj.diag.warnings() {
             self.make_diagnostic(
-                diag,
+                &proj.diag,
                 &mut cache,
                 err.span,
                 &err.message,
@@ -631,9 +648,9 @@ impl LspBackend {
             );
         }
 
-        for &span in diag.inactive() {
+        for &span in proj.diag.inactive() {
             self.make_diagnostic(
-                diag,
+                &proj.diag,
                 &mut cache,
                 span,
                 "this region is disabled",
@@ -642,125 +659,76 @@ impl LspBackend {
             );
         }
 
-        proj.lsp_items.sort_by_key(|(_, span)| span.pos);
-
-        for (_, path) in diag.paths() {
-            let Ok(uri) = Url::from_file_path(path) else {
-                continue;
-            };
-
-            let Some(file) = diag.paths().find(|p| p.1 == path).map(|v| v.0) else {
-                continue;
-            };
-
-            let Some(mut doc) = self.documents.get_mut(&uri) else {
-                continue;
-            };
-
-            doc.inlay_hints.clear();
-            for (_, var) in proj.scopes.vars() {
-                if var.name.span.file != file || var.has_hint || var.name.data.starts_with('$') {
-                    continue;
-                }
-
-                let r = Diagnostics::get_span_range(&doc.text, var.name.span, OffsetMode::Utf16);
-                doc.inlay_hints.push(InlayHint {
-                    position: r.end,
-                    label: InlayHintLabel::String(format!(
-                        ": {}",
-                        var.ty.name(&proj.scopes, &mut proj.types)
-                    )),
-                    kind: Some(InlayHintKind::TYPE),
-                    text_edits: Default::default(),
-                    tooltip: Default::default(),
-                    padding_left: Default::default(),
-                    padding_right: Default::default(),
-                    data: Default::default(),
-                });
-            }
-
-            doc.lsp_items.clear();
-            doc.semantic_tokens.clear();
-
-            let [mut prev_line, mut prev_start] = [0; 2];
-            proj.lsp_items.sort_by_key(|(_, span)| span.pos);
-            for (item, span) in proj.lsp_items.iter().filter(|(_, span)| span.file == file) {
-                doc.lsp_items.push((item.clone(), *span));
-                let Some(token) = item.create_semantic_token(&proj.scopes, *span) else {
-                    continue;
-                };
-
-                let r = Diagnostics::get_span_range(&doc.text, *span, OffsetMode::Utf16);
-                let line = r.start.line;
-                let start = r.start.character;
-
-                // TODO: save the other semantic tokens so they don't have to be recalculated
-                doc.semantic_tokens.push(SemanticToken {
-                    delta_line: line - prev_line,
-                    delta_start: if line == prev_line {
-                        start - prev_start
-                    } else {
-                        start
-                    },
-                    length: span.len, // TODO: use UTF-16 length
-                    token_type: match token.kind {
-                        SpanSemanticTokenKind::Variant => token::ENUM_MEMBER,
-                        SpanSemanticTokenKind::Type => token::TYPE,
-                        SpanSemanticTokenKind::Var => token::VARIABLE,
-                    },
-                    token_modifiers_bitset: match token.mods {
-                        SemanticTokenModifiers::None => 0,
-                        SemanticTokenModifiers::Mutable => token::MUTABLE,
-                    },
-                });
-
-                prev_line = line;
-                prev_start = start;
-            }
-        }
-
-        for doc in self.documents.iter() {
-            info!(
-                self,
-                " -- DOC '{}' ({} bytes, {} items, {} tokens, {} hints)",
-                doc.key(),
-                doc.text.len(),
-                doc.lsp_items.len(),
-                doc.semantic_tokens.len(),
-                doc.inlay_hints.len()
-            )
-            .await;
-        }
-
         for (uri, diags) in all.into_iter() {
             self.client.publish_diagnostics(uri, diags, None).await;
         }
 
-        let mut guard = self.project.lock().await;
-        *guard = Some(proj);
-        Ok(guard)
+        proj.lsp_items.sort_by_key(|(_, span)| span.pos);
+        for (id, path) in proj.diag.paths() {
+            let Ok(uri) = Url::from_file_path(path) else {
+                continue;
+            };
+
+            let mut doc = self.documents.entry(uri).or_default();
+            doc.lsp_items = proj
+                .lsp_items
+                .iter()
+                .filter(|(_, span)| span.file == id)
+                .cloned()
+                .collect();
+            doc.inlay_hints = Lazy::None;
+            doc.semantic_tokens = Lazy::None;
+        }
+
+        // for doc in self.documents.iter() {
+        //     debug!(
+        //         self,
+        //         " -- DOC '{}' ({} items, {} tokens, {} hints)",
+        //         doc.key(),
+        //         doc.lsp_items.len(),
+        //         doc.semantic_tokens.len(),
+        //         doc.inlay_hints.len()
+        //     )
+        //     .await;
+        // }
+
+        *proj_lock_guard = Some(LastChecked {
+            data: unloaded,
+            checked: proj,
+        });
+
+        debug!(self, " -> done check_project");
+        Ok(proj_lock_guard)
     }
 
     async fn with_proj_and_doc<T>(
         &self,
         uri: &Url,
-        func: impl AsyncFnOnce(&Document, FileId, &mut Project) -> Option<T>,
+        func: impl AsyncFnOnce(&mut FileInfoCache, &Path, FileId, &mut Project) -> Option<T>,
     ) -> Result<Option<T>> {
-        let mut lock = self.project.lock().await;
+        let mut lock = if !self.documents.contains_key(uri) {
+            let Ok(v) = self.check_project(uri, None, false).await else {
+                return Ok(None);
+            };
+            v
+        } else {
+            self.project.lock().await
+        };
+
         let Some(proj) = lock.as_mut() else {
             return Ok(None);
         };
 
         let path = Self::uri_to_path(uri);
-        let Some(file) = proj.diag.paths().find(|p| p.1 == path).map(|v| v.0) else {
+        let Some(file) = proj.checked.diag.get_file_id(path) else {
             return Ok(None);
         };
 
-        let Some(doc) = self.documents.get(uri) else {
+        let Some(mut doc) = self.documents.get_mut(uri) else {
             return Ok(None);
         };
 
-        Ok(func(&doc, file, proj).await)
+        Ok(func(&mut doc, path, file, &mut proj.checked).await)
     }
 
     async fn find_lsp_item<T>(
@@ -769,16 +737,33 @@ impl LspBackend {
         pos: Position,
         func: impl AsyncFnOnce(&LspItem, &mut Project) -> Option<T>,
     ) -> Result<Option<T>> {
-        self.with_proj_and_doc(uri, async |doc, file, proj| {
-            let user = position_to_span(&doc.text, file, pos.line, pos.character);
+        self.with_proj_and_doc(uri, async |doc, path, file, proj| {
+            let user = self.with_source(path, &mut FileSourceProvider, |src| {
+                position_to_span(src, file, pos.line, pos.character)
+            })?;
             let (item, _) = doc
                 .lsp_items
                 .iter()
                 .find(|(_, span)| LspInput::matches(Some(user), *span))?;
             func(item, proj).await
-            // .and_then(|(item, _)| func(item, proj))
         })
         .await
+    }
+
+    fn with_source<T>(
+        &self,
+        path: &Path,
+        fallback: &mut impl SourceProvider,
+        get: impl FnOnce(&str) -> T,
+    ) -> Option<T> {
+        if let Some(text) = Url::from_file_path(path)
+            .ok()
+            .and_then(|uri| self.open_files.get(&uri))
+        {
+            return Some(get(&text));
+        }
+
+        fallback.get_source(path, get).ok()
     }
 
     fn uri_to_path(uri: &Url) -> &Path {
@@ -792,19 +777,19 @@ impl LspBackend {
 
 #[derive(derive_more::Constructor)]
 pub struct LspFileProvider<'a> {
-    documents: &'a DashMap<Url, Document>,
+    open_files: &'a DashMap<Url, String>,
 }
 
 impl SourceProvider for LspFileProvider<'_> {
     fn get_source<T>(&mut self, path: &Path, get: impl FnOnce(&str) -> T) -> anyhow::Result<T> {
-        if let Some(doc) = Url::from_file_path(path)
+        if let Some(text) = Url::from_file_path(path)
             .ok()
-            .and_then(|uri| self.documents.get(&uri))
+            .and_then(|uri| self.open_files.get(&uri))
         {
-            Ok(get(&doc.text))
-        } else {
-            FileSourceProvider.get_source(path, get)
+            return Ok(get(&text));
         }
+
+        FileSourceProvider.get_source(path, get)
     }
 }
 
@@ -838,6 +823,74 @@ fn position_to_span(text: &str, file: FileId, line: u32, character: u32) -> Span
         pos += ch.len_utf8() as u32;
     }
     Span::default()
+}
+
+fn get_inlay_hints(scopes: &Scopes, types: &mut Types, src: &str, file: FileId) -> Vec<InlayHint> {
+    let mut hints = vec![];
+    for (_, var) in scopes.vars() {
+        if var.name.span.file != file || var.has_hint || var.name.data.starts_with('$') {
+            continue;
+        }
+
+        let r = Diagnostics::get_span_range(src, var.name.span, OffsetMode::Utf16);
+        hints.push(InlayHint {
+            position: r.end,
+            label: InlayHintLabel::String(format!(": {}", var.ty.name(scopes, types))),
+            kind: Some(InlayHintKind::TYPE),
+            text_edits: Default::default(),
+            tooltip: Default::default(),
+            padding_left: Default::default(),
+            padding_right: Default::default(),
+            data: Default::default(),
+        });
+    }
+    hints
+}
+
+/// Assumes items is filtered by FileId and sorted by Span position
+fn get_semantic_tokens(
+    scopes: &Scopes,
+    items: &[(LspItem, Span)],
+    src: &str,
+    file: FileId,
+) -> Vec<SemanticToken> {
+    let mut tokens = vec![];
+
+    let [mut prev_line, mut prev_start] = [0; 2];
+    for (item, span) in items.iter().filter(|(_, span)| span.file == file) {
+        let Some(token) = item.create_semantic_token(scopes, *span) else {
+            continue;
+        };
+
+        let r = Diagnostics::get_span_range(src, *span, OffsetMode::Utf16);
+        let line = r.start.line;
+        let start = r.start.character;
+
+        // TODO: save the other semantic tokens so they don't have to be recalculated
+        tokens.push(SemanticToken {
+            delta_line: line - prev_line,
+            delta_start: if line == prev_line {
+                start - prev_start
+            } else {
+                start
+            },
+            length: span.len, // TODO: use UTF-16 length
+            token_type: match token.kind {
+                SpanSemanticTokenKind::Variant => token::ENUM_MEMBER,
+                SpanSemanticTokenKind::Type => token::TYPE,
+                SpanSemanticTokenKind::Var => token::VARIABLE,
+            },
+            token_modifiers_bitset: match token.mods {
+                SemanticTokenModifiers::None => 0,
+                SemanticTokenModifiers::Mutable => token::MUTABLE,
+            },
+        });
+
+        prev_line = line;
+        prev_start = start;
+    }
+
+    tokens
 }
 
 fn visualize_location(scope: ScopeId, scopes: &Scopes) -> String {

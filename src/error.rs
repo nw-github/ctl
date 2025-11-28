@@ -68,6 +68,10 @@ impl Diagnostics {
             .map(|(i, path)| (FileId(i as u32), path))
     }
 
+    pub fn get_file_id(&self, path: &Path) -> Option<FileId> {
+        self.paths().find(|p| p.1 == path).map(|v| v.0)
+    }
+
     pub fn errors(&self) -> &[Error] {
         &self.errors
     }

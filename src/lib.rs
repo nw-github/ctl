@@ -196,7 +196,7 @@ pub struct CodegenFlags {
     }
 */
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Module {
     pub name: String,
     pub mods: IndexMap<PathBuf, Module>,
