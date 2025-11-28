@@ -173,7 +173,7 @@ pub enum LspItem {
     Var(VariableId),
     /// This variant only exists so the LSP doesn't apply the `mutable` modifier to the semantic
     /// tokens for parameter labels
-    FnParamLabel(VariableId, ()),
+    FnParamLabel(VariableId, FunctionId),
     Attribute(String),
     Property(Option<TypeId>, UserTypeId, String),
     BuiltinType(&'static str),
@@ -764,7 +764,7 @@ impl TypeChecker {
 
         if let ParamPattern::Checked(patt) = param.patt {
             if let PatternData::Variable(id) = patt.data {
-                self.check_hover(span, LspItem::FnParamLabel(id, ()));
+                self.check_hover(span, LspItem::FnParamLabel(id, func.id));
             }
         }
     }

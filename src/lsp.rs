@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::path::Path;
 
@@ -161,6 +161,8 @@ impl LanguageServer for LspBackend {
                         },
                     ),
                 ),
+                references_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Left(true)),
                 // inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
                 //     InlayHintOptions {
                 //         resolve_provider: Some(true),
@@ -525,6 +527,50 @@ impl LanguageServer for LspBackend {
         .await
     }
 
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let pos = params.text_document_position.position;
+        let uri = params.text_document_position.text_document.uri;
+        debug!(self, "references: {uri}");
+        self.find_lsp_item(&uri, pos, async |src, proj| {
+            let mut locations = vec![];
+            self.find_references(proj, src, |loc| locations.push(loc));
+            Some(locations)
+        })
+        .await
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let pos = params.text_document_position.position;
+        let uri = params.text_document_position.text_document.uri;
+        debug!(self, "rename: {uri}");
+        self.find_lsp_item(&uri, pos, async |src, proj| {
+            if matches!(src, LspItem::BuiltinType(_)) {
+                return Some(WorkspaceEdit {
+                    changes: None,
+                    document_changes: None,
+                    change_annotations: None,
+                });
+            }
+
+            let mut changes = HashMap::<Url, Vec<TextEdit>>::new();
+            self.find_references(proj, src, |loc| {
+                let map = changes.entry(loc.uri).or_default();
+                map.push(TextEdit {
+                    range: loc.range,
+                    new_text: params.new_name.clone(),
+                });
+            });
+
+            debug!(self, "  -> {changes:?}");
+            Some(WorkspaceEdit {
+                changes: Some(changes),
+                document_changes: None,
+                change_annotations: None,
+            })
+        })
+        .await
+    }
+
     async fn shutdown(&self) -> Result<()> {
         info!(self, "shutdown");
         self.documents.clear();
@@ -769,6 +815,52 @@ impl LspBackend {
             Path::new(&uri.as_str()[uri.scheme().len() + 3..])
         } else {
             Path::new(uri.as_str())
+        }
+    }
+
+    fn find_references(&self, proj: &Project, src: &LspItem, mut next_range: impl FnMut(Location)) {
+        let is_constructor_for = |lhs: FunctionId, rhs: UserTypeId| {
+            proj.scopes
+                .get(lhs)
+                .constructor
+                .is_some_and(|lhs| lhs == rhs)
+        };
+
+        let mut cache = CachingSourceProvider::new();
+        let mut spans = HashSet::new();
+        for (item, span) in proj.lsp_items.iter() {
+            match (src, item) {
+                (LspItem::Module(lhs), LspItem::Module(rhs)) if lhs == rhs => {}
+
+                (LspItem::Type(lhs), LspItem::Type(rhs)) if lhs == rhs => {}
+                (LspItem::Fn(lhs, _), LspItem::Fn(rhs, _)) if lhs == rhs => {}
+                (&LspItem::Type(lhs), &LspItem::Fn(rhs, _)) if is_constructor_for(rhs, lhs) => {}
+                (&LspItem::Fn(lhs, _), &LspItem::Type(rhs)) if is_constructor_for(lhs, rhs) => {}
+
+                (LspItem::Var(lhs), LspItem::Var(rhs)) if lhs == rhs => {}
+                (LspItem::Var(lhs), LspItem::FnParamLabel(rhs, _)) if lhs == rhs => {}
+                (LspItem::FnParamLabel(lhs, _), LspItem::Var(rhs)) if lhs == rhs => {}
+                (LspItem::FnParamLabel(lhs, _), LspItem::FnParamLabel(rhs, _)) if lhs == rhs => {}
+                // Property & FnParamLabel on constructor
+                _ => continue,
+            }
+
+            if !spans.insert((span.pos, span.len)) {
+                continue;
+            }
+
+            let path = proj.diag.file_path(span.file);
+            let Ok(uri) = Url::from_file_path(path) else {
+                continue;
+            };
+
+            let Some(range) = self.with_source(path, &mut cache, |src| {
+                Diagnostics::get_span_range(src, *span, OffsetMode::Utf16)
+            }) else {
+                continue;
+            };
+
+            next_range(Location { uri, range });
         }
     }
 }
