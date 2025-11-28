@@ -10,7 +10,7 @@ use tower_lsp::{Client, LanguageServer};
 
 use crate::error::{Diagnostics, FileId, OffsetMode};
 use crate::lexer::Span;
-use crate::project::{Project, SemanticTokenModifiers, SpanSemanticTokenKind};
+use crate::project::Project;
 use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeId, UserTypeKind, VariableId};
 use crate::typecheck::{LspInput, LspItem};
 use crate::typeid::{GenericUserType, Type, TypeId, Types};
@@ -109,18 +109,21 @@ pub struct LspBackend {
 mod token {
     use tower_lsp::lsp_types::{SemanticTokenModifier, SemanticTokenType};
 
-    pub const TOKEN_TYPES: [SemanticTokenType; 3] = [
+    pub const TOKEN_TYPES: [SemanticTokenType; 4] = [
         SemanticTokenType::ENUM_MEMBER,
         SemanticTokenType::TYPE,
         SemanticTokenType::VARIABLE,
+        SemanticTokenType::FUNCTION,
     ];
 
     pub const ENUM_MEMBER: u32 = 0;
     pub const TYPE: u32 = 1;
     pub const VARIABLE: u32 = 2;
+    pub const FUNCTION: u32 = 3;
 
     pub const TOKEN_MODS: [SemanticTokenModifier; 1] = [SemanticTokenModifier::new("mutable")];
 
+    pub const NO_MODS: u32 = 0;
     pub const MUTABLE: u32 = 1 << 0;
 }
 
@@ -855,11 +858,34 @@ fn get_semantic_tokens(
     file: FileId,
 ) -> Vec<SemanticToken> {
     let mut tokens = vec![];
-
     let [mut prev_line, mut prev_start] = [0; 2];
     for (item, span) in items.iter().filter(|(_, span)| span.file == file) {
-        let Some(token) = item.create_semantic_token(scopes, *span) else {
-            continue;
+        let (token_type, token_modifiers_bitset) = match item {
+            // LspItem::Module(scope_id) => todo!(),
+            // LspItem::Underscore(type_id) => todo!(),
+            LspItem::Property(_, _, _) => (token::VARIABLE, token::NO_MODS),
+            &LspItem::Var(id) => {
+                let mods = if scopes.get(id).mutable {
+                    token::MUTABLE
+                } else {
+                    token::NO_MODS
+                };
+                (token::VARIABLE, mods)
+            }
+            LspItem::Type(_) => (token::TYPE, token::NO_MODS),
+            LspItem::BuiltinType(_) => (token::TYPE, token::NO_MODS),
+            &LspItem::Fn(id, _) => {
+                if let Some(id) = scopes.get(id).constructor {
+                    if scopes.get(id).kind.is_union() {
+                        (token::ENUM_MEMBER, token::NO_MODS)
+                    } else {
+                        (token::TYPE, token::NO_MODS)
+                    }
+                } else {
+                    (token::FUNCTION, token::NO_MODS)
+                }
+            }
+            _ => continue,
         };
 
         let r = Diagnostics::get_span_range(src, *span, OffsetMode::Utf16);
@@ -875,15 +901,8 @@ fn get_semantic_tokens(
                 start
             },
             length: span.len, // TODO: use UTF-16 length
-            token_type: match token.kind {
-                SpanSemanticTokenKind::Variant => token::ENUM_MEMBER,
-                SpanSemanticTokenKind::Type => token::TYPE,
-                SpanSemanticTokenKind::Var => token::VARIABLE,
-            },
-            token_modifiers_bitset: match token.mods {
-                SemanticTokenModifiers::None => 0,
-                SemanticTokenModifiers::Mutable => token::MUTABLE,
-            },
+            token_type,
+            token_modifiers_bitset,
         });
 
         prev_line = line;

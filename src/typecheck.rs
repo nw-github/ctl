@@ -20,9 +20,7 @@ use crate::{
     dgraph::Dependencies,
     error::{Diagnostics, Error},
     lexer::{Located, Span},
-    project::{
-        Configuration, Project, SemanticTokenModifiers, SpanSemanticToken, SpanSemanticTokenKind,
-    },
+    project::{Configuration, Project},
     sym::*,
     typeid::{
         BitSizeResult, CInt, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType,
@@ -176,42 +174,6 @@ pub enum LspItem {
     Attribute(String),
     Property(Option<TypeId>, UserTypeId, String),
     BuiltinType(&'static str),
-}
-
-impl LspItem {
-    pub fn create_semantic_token(&self, scopes: &Scopes, span: Span) -> Option<SpanSemanticToken> {
-        type ST = SpanSemanticToken;
-        type SM = SemanticTokenModifiers;
-        type Kind = SpanSemanticTokenKind;
-
-        match self {
-            // LspItem::Module(scope_id) => todo!(),
-            // LspItem::Underscore(type_id) => todo!(),
-            LspItem::Property(_, _, _) => Some(ST::new(Kind::Var, span)),
-            &LspItem::Var(id) => {
-                let mods = if scopes.get(id).mutable {
-                    SM::Mutable
-                } else {
-                    SM::None
-                };
-                Some(ST::with_mods(Kind::Var, span, mods))
-            }
-            LspItem::Type(_) => Some(ST::new(Kind::Type, span)),
-            LspItem::BuiltinType(_) => Some(ST::new(Kind::Type, span)),
-            &LspItem::Fn(id, _) => {
-                if let Some(id) = scopes.get(id).constructor {
-                    if scopes.get(id).kind.is_union() {
-                        Some(ST::new(Kind::Variant, span))
-                    } else {
-                        Some(ST::new(Kind::Type, span))
-                    }
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
 }
 
 impl From<TypeItem> for LspItem {
