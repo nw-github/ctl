@@ -505,7 +505,7 @@ impl LanguageServer for LspBackend {
         self.with_proj_and_doc(&params.text_document.uri, async |doc, path, file, proj| {
             let tokens = doc.semantic_tokens.get_or_try(|| {
                 self.with_source(path, &mut FileSourceProvider, |src| {
-                    get_semantic_tokens(&proj.scopes, &doc.lsp_items, src, file)
+                    get_semantic_tokens(&proj.scopes, &proj.types, &doc.lsp_items, src, file)
                 })
             });
 
@@ -840,6 +840,7 @@ fn get_inlay_hints(scopes: &Scopes, types: &mut Types, src: &str, file: FileId) 
 /// Assumes items is filtered by FileId and sorted by Span position
 fn get_semantic_tokens(
     scopes: &Scopes,
+    types: &Types,
     items: &[(LspItem, Span)],
     src: &str,
     file: FileId,
@@ -852,7 +853,8 @@ fn get_semantic_tokens(
             // LspItem::Underscore(type_id) => todo!(),
             LspItem::Property(_, _, _) => (token::VARIABLE, token::NO_MODS),
             &LspItem::Var(id) => {
-                let mods = if scopes.get(id).mutable {
+                let var = scopes.get(id);
+                let mods = if var.mutable || types[var.ty].is_mut_ptr() {
                     token::MUTABLE
                 } else {
                     token::NO_MODS
