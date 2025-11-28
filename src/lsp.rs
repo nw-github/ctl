@@ -260,10 +260,10 @@ impl LanguageServer for LspBackend {
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = &params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
-        if let Some(ctx) = params.context.and_then(|ctx| ctx.trigger_character) {
+        if let Some(_ctx) = params.context.and_then(|ctx| ctx.trigger_character) {
             debug!(
                 self,
-                "looking for completion at line {}, character {} due to trigger '{ctx}'",
+                "looking for completion at line {}, character {} due to trigger '{_ctx}'",
                 pos.line,
                 pos.character,
             );
@@ -588,7 +588,6 @@ impl LspBackend {
                     .iter()
                     .all(|(path, module)| prev.data.mods.get(path).is_some_and(|m| m == module))
                 {
-                    // opened a submodule
                     debug!(
                         self,
                         " -> Checking file in submodule of previous project, skip"
@@ -662,15 +661,15 @@ impl LspBackend {
             );
         }
 
-        for (uri, diags) in all.into_iter() {
-            self.client.publish_diagnostics(uri, diags, None).await;
-        }
-
         proj.lsp_items.sort_by_key(|(_, span)| span.pos);
         for (id, path) in proj.diag.paths() {
             let Ok(uri) = Url::from_file_path(path) else {
                 continue;
             };
+
+            self.client
+                .publish_diagnostics(uri.clone(), all.remove(&uri).unwrap_or_default(), None)
+                .await;
 
             let mut doc = self.documents.entry(uri).or_default();
             doc.lsp_items = proj
@@ -682,18 +681,6 @@ impl LspBackend {
             doc.inlay_hints = Lazy::None;
             doc.semantic_tokens = Lazy::None;
         }
-
-        // for doc in self.documents.iter() {
-        //     debug!(
-        //         self,
-        //         " -- DOC '{}' ({} items, {} tokens, {} hints)",
-        //         doc.key(),
-        //         doc.lsp_items.len(),
-        //         doc.semantic_tokens.len(),
-        //         doc.inlay_hints.len()
-        //     )
-        //     .await;
-        // }
 
         *proj_lock_guard = Some(LastChecked {
             data: unloaded,
