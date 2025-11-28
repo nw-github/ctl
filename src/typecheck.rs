@@ -171,6 +171,9 @@ pub enum LspItem {
     Underscore(TypeId),
     Fn(FunctionId, Option<UserTypeId>),
     Var(VariableId),
+    /// This variant only exists so the LSP doesn't apply the `mutable` modifier to the semantic
+    /// tokens for parameter labels
+    FnParamLabel(VariableId, ()),
     Attribute(String),
     Property(Option<TypeId>, UserTypeId, String),
     BuiltinType(&'static str),
@@ -750,6 +753,20 @@ impl TypeChecker {
             items: completions,
             method: false,
         });
+    }
+
+    fn check_arg_label_hover(&mut self, span: Span, param: CheckedParam, func: &GenericFn) {
+        let f = self.proj.scopes.get(func.id);
+        if let Some(owner) = f.constructor {
+            let ty = param.ty.with_templates(&mut self.proj.types, &func.ty_args);
+            return self.check_hover(span, LspItem::Property(Some(ty), owner, param.label));
+        }
+
+        if let ParamPattern::Checked(patt) = param.patt {
+            if let PatternData::Variable(id) = patt.data {
+                self.check_hover(span, LspItem::FnParamLabel(id, ()));
+            }
+        }
     }
 }
 
@@ -3781,12 +3798,7 @@ impl TypeChecker {
             })
     }
 
-    fn check_array_subscript(
-        &mut self,
-        target: TypeId,
-        callee: CExpr,
-        args: Vec<(Option<String>, PExpr)>,
-    ) -> CExpr {
+    fn check_array_subscript(&mut self, target: TypeId, callee: CExpr, args: CallArgs) -> CExpr {
         fn maybe_span(this: &mut TypeChecker, ty: TypeId, imm: bool) -> Option<UserTypeId> {
             let id = *this.proj.scopes.lang_traits.get("range_bounds")?;
             let bound = GenericTrait::from_type_args(&this.proj.scopes, id, [TypeId::USIZE]);
@@ -3872,7 +3884,7 @@ impl TypeChecker {
         &mut self,
         callee: CExpr,
         ty: TypeId,
-        args: Vec<(Option<String>, PExpr)>,
+        args: CallArgs,
         target: Option<TypeId>,
         assign: bool,
         span: Span,
@@ -4275,7 +4287,7 @@ impl TypeChecker {
         &mut self,
         target: Option<TypeId>,
         mut ut: GenericUserType,
-        args: Vec<(Option<String>, PExpr)>,
+        args: CallArgs,
         span: Span,
     ) -> CExpr {
         self.resolve_members(ut.id);
@@ -4294,18 +4306,18 @@ impl TypeChecker {
         }
 
         let mut members = IndexMap::new();
-        if !self.proj.scopes.get(ut.id).members.is_empty() {
-            let mut args = args.into_iter();
-            let Some((name, expr)) = args.next() else {
-                return self.error(Error::new("expected 1 variant argument", span));
-            };
-
+        for (name, expr) in args {
             let Some(name) = name else {
-                return self.error(Error::new("expected 0 positional arguments", span));
+                self.proj.diag.error(Error::new(
+                    "unsafe union constructor expects 0 positional arguments",
+                    expr.span,
+                ));
+                _ = self.check_expr(expr, None);
+                continue;
             };
 
-            if args.next().is_some() {
-                self.error(Error::new("too many variant arguments", span))
+            if !members.is_empty() {
+                self.error(Error::new("too many variant arguments", expr.span))
             }
 
             let Some(ty) = self
@@ -4313,15 +4325,26 @@ impl TypeChecker {
                 .scopes
                 .get(ut.id)
                 .members
-                .get(&name)
+                .get(&name.data)
                 .map(|m| m.ty.with_templates(&mut self.proj.types, &ut.ty_args))
             else {
-                return self.error(Error::new(format!("unknown variant '{name}'"), span));
+                self.proj
+                    .diag
+                    .error(Error::new(format!("unknown variant '{name}'"), name.span));
+                _ = self.check_expr(expr, None);
+                continue;
             };
 
-            members.insert(name, self.check_arg(&mut ut, expr, ty).0);
-        } else if !args.is_empty() {
-            self.error(Error::new("expected 0 arguments", span))
+            self.check_hover(
+                name.span,
+                LspItem::Property(Some(ty), ut.id, name.data.clone()),
+            );
+
+            members.insert(name.data, self.check_arg(&mut ut, expr, ty).0);
+        }
+
+        if !self.proj.scopes.get(ut.id).members.is_empty() && members.is_empty() {
+            return self.error(Error::new("expected 1 variant argument", span));
         }
 
         for (&id, &ty) in ut.ty_args.iter() {
@@ -4353,7 +4376,7 @@ impl TypeChecker {
         &mut self,
         target: Option<TypeId>,
         callee: PExpr,
-        args: Vec<(Option<String>, PExpr)>,
+        args: CallArgs,
         span: Span,
     ) -> CExpr {
         match callee.data {
@@ -4558,7 +4581,7 @@ impl TypeChecker {
     fn check_known_fn_call(
         &mut self,
         mut func: GenericFn,
-        args: Vec<(Option<String>, PExpr)>,
+        args: CallArgs,
         target: Option<TypeId>,
         span: Span,
     ) -> CExpr {
@@ -4618,7 +4641,7 @@ impl TypeChecker {
         &mut self,
         func: &mut GenericFn,
         recv: Option<CExpr>,
-        args: Vec<(Option<String>, PExpr)>,
+        args: CallArgs,
         target: Option<TypeId>,
         span: Span,
     ) -> (IndexMap<String, CExpr>, TypeId, bool) {
@@ -4645,7 +4668,7 @@ impl TypeChecker {
         let mut failed = false;
         for (name, expr) in args {
             if let Some(name) = name {
-                match result.entry(name.clone()) {
+                match result.entry(name.data.clone()) {
                     Entry::Occupied(_) => {
                         failed = true;
                         self.error(Error::new(
@@ -4660,9 +4683,12 @@ impl TypeChecker {
                             .get(func.id)
                             .params
                             .iter()
-                            .find(|p| p.label == name)
+                            .find(|p| p.label == name.data)
                         {
-                            let (expr, f) = self.check_arg(func, expr, param.ty);
+                            let ty = param.ty;
+                            self.check_arg_label_hover(name.span, param.clone(), func);
+
+                            let (expr, f) = self.check_arg(func, expr, ty);
                             entry.insert(expr);
                             failed = failed || f;
                         } else {

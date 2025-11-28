@@ -402,7 +402,7 @@ impl LanguageServer for LspBackend {
                             ..Default::default()
                         }
                     }
-                    &LspItem::Var(id) => {
+                    &LspItem::Var(id) | &LspItem::FnParamLabel(id, _) => {
                         let var = scopes.get(id);
                         let typ = var.ty.name(scopes, types);
                         CompletionItem {
@@ -444,14 +444,22 @@ impl LanguageServer for LspBackend {
             let scopes = &proj.scopes;
             let types = &mut proj.types;
             let str = match item {
-                &LspItem::Var(id) => Some(visualize_var(id, scopes, types)),
+                &LspItem::Var(id) | &LspItem::FnParamLabel(id, _) => {
+                    Some(visualize_var(id, scopes, types))
+                }
                 &LspItem::Fn(id, _) => Some(visualize_func(id, false, scopes, types)),
                 &LspItem::Type(id) => Some(visualize_type(id, scopes, types)),
                 LspItem::Underscore(ty) => Some(ty.name(scopes, types)),
                 LspItem::Property(src_ty, id, name) => {
                     let ut = scopes.get(*id);
                     let mem = ut.members.get(name);
-                    let public = ["", "pub "][mem.is_some_and(|m| m.public) as usize];
+                    let public = if ut.kind.is_union() {
+                        "shared "
+                    } else if mem.is_some_and(|m| m.public) {
+                        "pub "
+                    } else {
+                        ""
+                    };
                     let ty = mem.map_or(TypeId::UNKNOWN, |m| m.ty);
                     if matches!(ut.kind, UserTypeKind::Tuple | UserTypeKind::AnonStruct) {
                         let real = src_ty
@@ -852,6 +860,7 @@ fn get_semantic_tokens(
             // LspItem::Module(scope_id) => todo!(),
             // LspItem::Underscore(type_id) => todo!(),
             LspItem::Property(_, _, _) => (token::VARIABLE, token::NO_MODS),
+            LspItem::FnParamLabel(_, _) => (token::VARIABLE, token::NO_MODS),
             &LspItem::Var(id) => {
                 let var = scopes.get(id);
                 let mods = if var.mutable || types[var.ty].is_mut_ptr() {

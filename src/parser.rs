@@ -935,10 +935,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                     let mut name = None;
                     if let ExprData::Path(path) = &expr.data {
                         if let Some(ident) = path
-                            .as_identifier()
+                            .as_identifier_l()
                             .filter(|_| this.next_if(Token::Colon).is_some())
                         {
-                            name = Some(ident.to_string());
+                            name = Some(ident.clone());
                             if !this.matches_pred(|t| matches!(t, Token::Comma | Token::RParen)) {
                                 expr = this.expression();
                             }

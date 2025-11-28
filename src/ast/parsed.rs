@@ -106,6 +106,8 @@ pub enum StmtData {
 
 pub type Expr = Located<ExprData>;
 
+pub type CallArgs = Vec<(Option<Located<String>>, Expr)>;
+
 #[derive(Debug, Clone)]
 pub enum ExprData {
     Binary {
@@ -128,11 +130,11 @@ pub enum ExprData {
     },
     Call {
         callee: Box<Expr>,
-        args: Vec<(Option<String>, Expr)>,
+        args: CallArgs,
     },
     Subscript {
         callee: Box<Expr>,
-        args: Vec<(Option<String>, Expr)>,
+        args: CallArgs,
     },
     Array(Vec<Expr>),
     Set(Vec<Expr>),
@@ -218,6 +220,14 @@ impl Path {
             .filter(|_| matches!(self.origin, PathOrigin::Normal) && self.components.len() == 1)
             .filter(|(_, generics)| generics.is_empty())
             .map(|(path, _)| path.data.as_str())
+    }
+
+    pub fn as_identifier_l(&self) -> Option<&Located<String>> {
+        self.components
+            .first()
+            .filter(|_| matches!(self.origin, PathOrigin::Normal) && self.components.len() == 1)
+            .filter(|(_, generics)| generics.is_empty())
+            .map(|(comp, _)| comp)
     }
 
     pub fn span(&self) -> Span {
