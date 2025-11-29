@@ -1,10 +1,10 @@
 use either::{Either, Either::*};
 
 use crate::{
-    ast::{parsed::*, Attribute, Attributes, UnaryOp},
+    THIS_PARAM, THIS_TYPE,
+    ast::{Attribute, Attributes, UnaryOp, parsed::*},
     error::{Diagnostics, Error, FileId},
     lexer::{Lexer, Located, Precedence, Span, Token},
-    THIS_PARAM, THIS_TYPE,
 };
 
 #[derive(Default, Clone, Copy)]
@@ -86,7 +86,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 return Ok(Stmt {
                     attrs,
                     data: func.map(StmtData::Fn),
-                })
+                });
             }
             Some(Right(func)) => {
                 self.error(Error::new(
@@ -314,10 +314,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                     self.error_no_sync(Error::not_valid_here(&token));
                 }
 
-                if let Some(ext) = &is_extern {
-                    if token.data.is_const() {
-                        self.error_no_sync(Error::not_valid_here(ext));
-                    }
+                if let Some(ext) = &is_extern
+                    && token.data.is_const()
+                {
+                    self.error_no_sync(Error::not_valid_here(ext));
                 }
 
                 let name = self.expect_ident("expected name");
@@ -579,12 +579,12 @@ impl<'a, 'b> Parser<'a, 'b> {
                 };
 
                 let mut expr = self.precedence(Precedence::Prefix, ctx);
-                if matches!(op, UnaryOp::Neg) {
-                    if let ExprData::Integer(patt) = &mut expr.data {
-                        expr.span = span.extended_to(expr.span);
-                        patt.negative = true;
-                        return expr;
-                    }
+                if matches!(op, UnaryOp::Neg)
+                    && let ExprData::Integer(patt) = &mut expr.data
+                {
+                    expr.span = span.extended_to(expr.span);
+                    patt.negative = true;
+                    return expr;
                 }
 
                 if double_opt {
@@ -933,15 +933,14 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let args = self.csv(Vec::new(), closing, left.span, |this| {
                     let mut expr = this.expression();
                     let mut name = None;
-                    if let ExprData::Path(path) = &expr.data {
-                        if let Some(ident) = path
+                    if let ExprData::Path(path) = &expr.data
+                        && let Some(ident) = path
                             .as_identifier_l()
                             .filter(|_| this.next_if(Token::Colon).is_some())
-                        {
-                            name = Some(ident.clone());
-                            if !this.matches_pred(|t| matches!(t, Token::Comma | Token::RParen)) {
-                                expr = this.expression();
-                            }
+                    {
+                        name = Some(ident.clone());
+                        if !this.matches_pred(|t| matches!(t, Token::Comma | Token::RParen)) {
+                            expr = this.expression();
                         }
                     }
                     (name, expr)
@@ -1474,10 +1473,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 if mut_var || self.next_if(Token::Mut).is_some() {
                     return self.expect_ident("expected name").map(Pattern::MutBinding);
                 }
-                if !mut_var {
-                    if let Some(pattern) = self.literal_pattern() {
-                        return pattern;
-                    }
+                if !mut_var && let Some(pattern) = self.literal_pattern() {
+                    return pattern;
                 }
 
                 self.type_path()

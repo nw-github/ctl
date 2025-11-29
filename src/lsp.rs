@@ -15,8 +15,8 @@ use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeId, UserTypeKind, V
 use crate::typecheck::{LspInput, LspItem};
 use crate::typeid::{GenericUserType, Type, TypeId, Types};
 use crate::{
-    CachingSourceProvider, Compiler, FileSourceProvider, SourceProvider, UnloadedProject,
-    THIS_PARAM,
+    CachingSourceProvider, Compiler, FileSourceProvider, SourceProvider, THIS_PARAM,
+    UnloadedProject,
 };
 
 #[macro_export]
@@ -636,18 +636,17 @@ impl LspBackend {
 
         let mut proj_lock_guard = self.project.lock().await;
         if !change {
-            if let Some(prev) = proj_lock_guard.as_ref() {
-                if unloaded
+            if let Some(prev) = proj_lock_guard.as_ref()
+                && unloaded
                     .mods
                     .iter()
                     .all(|(path, module)| prev.data.mods.get(path).is_some_and(|m| m == module))
-                {
-                    debug!(
-                        self,
-                        " -> Checking file in submodule of previous project, skip"
-                    );
-                    return Ok(proj_lock_guard);
-                }
+            {
+                debug!(
+                    self,
+                    " -> Checking file in submodule of previous project, skip"
+                );
+                return Ok(proj_lock_guard);
             }
 
             self.documents.clear();

@@ -1,7 +1,7 @@
 use std::{fmt::Display, ops::Index};
 
 use crate::{
-    ast::{parsed::TypeHint, BinaryOp, UnaryOp},
+    ast::{BinaryOp, UnaryOp, parsed::TypeHint},
     comptime_int::ComptimeInt,
     nearest_pow_of_two,
     project::Project,
@@ -12,7 +12,7 @@ use crate::{
 };
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
-use indexmap::{map::Entry, IndexMap, IndexSet};
+use indexmap::{IndexMap, IndexSet, map::Entry};
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Deref, DerefMut)]
 pub struct TypeArgs(pub IndexMap<UserTypeId, TypeId>);
@@ -136,12 +136,11 @@ impl<T> WithTypeArgs<T> {
                         }
 
                         entry.insert(target);
-                    } else if let Type::User(target) = target_ty {
-                        if src.id == target.id {
-                            for (&src, &target) in src.ty_args.values().zip(target.ty_args.values())
-                            {
-                                self.infer_type_args(types, src, target);
-                            }
+                    } else if let Type::User(target) = target_ty
+                        && src.id == target.id
+                    {
+                        for (&src, &target) in src.ty_args.values().zip(target.ty_args.values()) {
+                            self.infer_type_args(types, src, target);
                         }
                     }
 

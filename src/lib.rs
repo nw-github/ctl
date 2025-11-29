@@ -302,10 +302,10 @@ impl UnloadedProject {
                         *name = Self::safe_name(&rename);
                     }
 
-                    if let Some(conf) = conf {
-                        if config.lib {
-                            conf.flags.lib = true;
-                        }
+                    if config.lib
+                        && let Some(conf) = conf
+                    {
+                        conf.flags.lib = true;
                     }
 
                     if config.no_std {
