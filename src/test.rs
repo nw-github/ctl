@@ -10,7 +10,12 @@ use tempfile::NamedTempFile;
 use wait_timeout::ChildExt;
 
 fn test_diagnostics(diag: Diagnostics, expected: &[&str]) -> datatest_stable::Result<()> {
-    let mut errors: Vec<_> = diag.errors().iter().map(|e| e.message.clone()).collect();
+    let mut errors: Vec<_> = diag
+        .diagnostics()
+        .iter()
+        .filter(|e| e.severity.is_error())
+        .map(|e| e.message.clone())
+        .collect();
     for line in expected {
         if let Some(pos) = errors.iter().position(|err| err.contains(line)) {
             errors.swap_remove(pos);

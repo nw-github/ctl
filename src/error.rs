@@ -22,22 +22,17 @@ impl std::fmt::Display for FileId {
 
 #[derive(Default)]
 pub struct Diagnostics {
-    errors: Vec<Error>,
-    warnings: Vec<Error>,
+    diagnostics: Vec<Error>,
     paths: Vec<PathBuf>,
     inactive: Vec<Span>,
     errors_disabled: bool,
 }
 
 impl Diagnostics {
-    pub fn error(&mut self, err: Error) {
-        if !self.errors_disabled {
-            self.errors.push(err);
+    pub fn report(&mut self, err: Error) {
+        if !err.severity.is_error() || !self.errors_disabled {
+            self.diagnostics.push(err);
         }
-    }
-
-    pub fn warn(&mut self, err: Error) {
-        self.warnings.push(err);
     }
 
     pub fn add_file(&mut self, path: PathBuf) -> FileId {
@@ -54,7 +49,7 @@ impl Diagnostics {
     }
 
     pub fn has_errors(&self) -> bool {
-        !self.errors.is_empty()
+        self.diagnostics.iter().any(|e| e.severity.is_error())
     }
 
     pub fn paths(&self) -> impl Iterator<Item = (FileId, &PathBuf)> {
@@ -68,12 +63,8 @@ impl Diagnostics {
         self.paths().find(|p| p.1 == path).map(|v| v.0)
     }
 
-    pub fn errors(&self) -> &[Error] {
-        &self.errors
-    }
-
-    pub fn warnings(&self) -> &[Error] {
-        &self.warnings
+    pub fn diagnostics(&self) -> &[Error] {
+        &self.diagnostics
     }
 
     pub fn inactive(&self) -> &[Span] {
@@ -129,18 +120,25 @@ impl Diagnostics {
     }
 
     pub fn capture_errors(&self) -> usize {
-        self.errors.len()
+        self.diagnostics.len()
     }
 
     pub fn truncate_errors(&mut self, idx: usize) {
-        self.errors.truncate(idx);
+        self.diagnostics.truncate(idx);
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, enum_as_inner::EnumAsInner)]
+pub enum ErrorSeverity {
+    Warning,
+    Error,
 }
 
 #[derive(Debug, Clone)]
 pub struct Error {
     pub message: String,
     pub span: Span,
+    pub severity: ErrorSeverity,
 }
 
 impl Error {
@@ -148,6 +146,7 @@ impl Error {
         Self {
             message: message.into(),
             span: span.into(),
+            severity: ErrorSeverity::Error,
         }
     }
 
@@ -267,17 +266,6 @@ impl Error {
         Self::new(format!("cannot destructure value of type '{ty}'"), span)
     }
 
-    pub fn subscript_addr(span: Span) -> Self {
-        Self::new(
-            "taking address of subscript that returns a value creates a temporary",
-            span,
-        )
-    }
-
-    pub fn bitfield_addr(span: Span) -> Self {
-        Self::new("taking address of bitfield creates a temporary", span)
-    }
-
     pub fn recursive_type(member: &str, span: Span, variant: bool) -> Self {
         Self::new(
             format!(
@@ -317,8 +305,66 @@ impl Error {
     }
 }
 
-impl Error {
-    pub fn unused_variable(name: &str, span: Span) -> Self {
+pub struct Warning;
+
+impl Warning {
+    #[allow(clippy::new_ret_no_self)]
+    fn new(message: impl Into<String>, span: impl Into<Span>) -> Error {
+        Error {
+            message: message.into(),
+            span: span.into(),
+            severity: ErrorSeverity::Warning,
+        }
+    }
+
+    pub fn redundant_token(token: &Located<Token>) -> Error {
+        Self::new(format!("redundant '{}'", token.data), token.span)
+    }
+
+    pub fn redundant_unsafe(span: Span) -> Error {
+        Self::new("unsafe expression in unsafe context", span)
+    }
+
+    pub fn decimal_leading_zero(span: Span) -> Error {
+        Self::new(
+            "leading zero in decimal literal (use 0o to create an octal literal)",
+            span,
+        )
+    }
+
+    pub fn subscript_addr(span: Span) -> Error {
+        Self::new(
+            "taking address of subscript that returns a value creates a temporary",
+            span,
+        )
+    }
+
+    pub fn bitfield_addr(span: Span) -> Error {
+        Self::new("taking address of bitfield creates a temporary", span)
+    }
+
+    pub fn unused_variable(name: &str, span: Span) -> Error {
         Self::new(format!("unused variable: '{name}'"), span)
+    }
+
+    pub fn mut_function_ptr(span: Span) -> Error {
+        Self::new(
+            "&mut on function creates immutable function pointer (use &)",
+            span,
+        )
+    }
+
+    pub fn unnecessary_fallible_cast(src: &str, dst: &str, span: Span) -> Error {
+        Self::new(
+            format!("cast from type '{src}' to '{dst}' is infallible and may use an `as` cast",),
+            span,
+        )
+    }
+
+    pub fn call_mutating_on_bitfield(span: Span) -> Error {
+        Self::new(
+            "call to mutating method with bitfield receiver operates on a copy",
+            span,
+        )
     }
 }

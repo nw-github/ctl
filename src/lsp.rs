@@ -570,24 +570,16 @@ impl LspBackend {
         let mut proj = checked.project();
         let mut all = HashMap::<Url, Vec<Diagnostic>>::new();
         let mut cache = CachingSourceProvider::new();
-        for err in proj.diag.errors() {
+        for err in proj.diag.diagnostics() {
             self.make_diagnostic(
                 &proj.diag,
                 &mut cache,
                 err.span,
                 &err.message,
-                DiagnosticSeverity::ERROR,
-                &mut all,
-            ).await;
-        }
-
-        for err in proj.diag.warnings() {
-            self.make_diagnostic(
-                &proj.diag,
-                &mut cache,
-                err.span,
-                &err.message,
-                DiagnosticSeverity::WARNING,
+                match err.severity {
+                    crate::ErrorSeverity::Warning => DiagnosticSeverity::WARNING,
+                    crate::ErrorSeverity::Error => DiagnosticSeverity::ERROR,
+                },
                 &mut all,
             ).await;
         }

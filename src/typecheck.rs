@@ -4,6 +4,7 @@ use enum_as_inner::EnumAsInner;
 use indexmap::IndexMap;
 
 use crate::{
+    Warning,
     ast::{
         Attributes, BinaryOp, UnaryOp,
         checked::{
@@ -98,7 +99,7 @@ macro_rules! check_hover {
 
 macro_rules! bail {
     ($self: expr, $err: expr) => {{
-        $self.proj.diag.error($err);
+        $self.proj.diag.report($err);
         return Default::default();
     }};
 }
@@ -151,7 +152,7 @@ macro_rules! intern {
 macro_rules! report_error {
     ($self: expr, $span: expr, $($args: tt)*) => {{
         let err = Error::new(format!($($args)*), $span);
-        $self.proj.diag.error(err);
+        $self.proj.diag.report(err);
         Default::default()
     }};
 }
@@ -159,7 +160,7 @@ macro_rules! report_error {
 macro_rules! named_error {
     ($self: expr, $err: path, $key: expr, $span: expr) => {{
         let err = $err($self.proj.strings.resolve(&$key), $span);
-        $self.proj.diag.error(err);
+        $self.proj.diag.report(err);
         Default::default()
     }};
 }
@@ -437,7 +438,7 @@ impl TypeChecker {
             if let Some(id) = this.proj.main {
                 let func = this.proj.scopes.get(id);
                 if !func.params.is_empty() {
-                    this.proj.diag.error(Error::new(
+                    this.proj.diag.report(Error::new(
                         "main function must have an empty parameter list",
                         func.name.span,
                     ));
@@ -454,13 +455,13 @@ impl TypeChecker {
                         | Type::Isize
                         | Type::Usize
                 ) {
-                    this.proj.diag.error(Error::new(
+                    this.proj.diag.report(Error::new(
                         "main function must return void, never, or an integer type",
                         func.name.span,
                     ));
                 }
             } else {
-                this.proj.diag.error(Error::new(
+                this.proj.diag.report(Error::new(
                     "no main function found in non-library module",
                     Span {
                         file: last_file_id.unwrap_or_default(),
@@ -472,7 +473,7 @@ impl TypeChecker {
         }
 
         if this.proj.panic_handler.is_none() {
-            this.proj.diag.error(Error::new(
+            this.proj.diag.report(Error::new(
                 "missing panic handler function",
                 Span {
                     file: last_file_id.unwrap_or_default(),
@@ -496,7 +497,7 @@ impl TypeChecker {
             {
                 this.proj
                     .diag
-                    .warn(Error::unused_variable(data, var.name.span));
+                    .report(Warning::unused_variable(data, var.name.span));
             }
         }
 
@@ -521,7 +522,7 @@ impl TypeChecker {
     }
 
     fn error<T: Default>(&mut self, error: Error) -> T {
-        self.proj.diag.error(error);
+        self.proj.diag.report(error);
         T::default()
     }
 
@@ -1830,7 +1831,7 @@ impl TypeChecker {
                         // their impls
                         this.proj
                             .diag
-                            .error(Error::recursive_trait(this.proj.scopes.get(id).name.span));
+                            .report(Error::recursive_trait(this.proj.scopes.get(id).name.span));
                     }
                     for f in fns {
                         this.check_fn(f);
@@ -1952,7 +1953,7 @@ impl TypeChecker {
 
                 let var = self.proj.scopes.get_mut(id);
                 if value.is_none() && var.is_static && !var.is_extern {
-                    self.proj.diag.error(Error::new(
+                    self.proj.diag.report(Error::new(
                         "non-extern static variable must be initialized",
                         var.name.span,
                     ))
@@ -2110,7 +2111,7 @@ impl TypeChecker {
             }
 
             if !self.implements_trait(this, &dep) {
-                self.proj.diag.error(Error::new(
+                self.proj.diag.report(Error::new(
                     format!(
                         "trait '{}' requires implementation of trait '{}'",
                         type_name!(self, tr),
@@ -2131,7 +2132,7 @@ impl TypeChecker {
                 .iter()
                 .position(|&id| self.proj.scopes.get(*id).name.data == fn_name.data)
             else {
-                self.proj.diag.error(Error::new(
+                self.proj.diag.report(Error::new(
                     format!(
                         "no function '{}' found in trait '{}'",
                         strdata!(self, fn_name.data),
@@ -2192,7 +2193,7 @@ impl TypeChecker {
             if func.attrs.has(Strings::ATTR_PANIC_HANDLER) {
                 if let Some(_old) = this.proj.panic_handler.replace(id) {
                     // TODO: report that it was previously defined at the span of _old
-                    this.proj.diag.error(Error::new("a panic handler already exists", func.name.span));
+                    this.proj.diag.report(Error::new("a panic handler already exists", func.name.span));
                 }
 
                 let str = this.proj.scopes.lang_types.get(&Strings::LANG_STRING);
@@ -2200,7 +2201,7 @@ impl TypeChecker {
                     || func.params.len() != 1
                     || func.ret != TypeId::NEVER
                 {
-                    this.proj.diag.error(Error::new("panic handler must have signature fn(str) => never", func.name.span));
+                    this.proj.diag.report(Error::new("panic handler must have signature fn(str) => never", func.name.span));
                 }
             }
 
@@ -2265,7 +2266,7 @@ impl TypeChecker {
             self.enter_id(block.scope, |this| {
                 if let Some(gtr) = this.proj.scopes.get(id).impls[i].as_checked().cloned() {
                     if !seen.insert(gtr.clone()) {
-                        this.proj.diag.error(Error::new(
+                        this.proj.diag.report(Error::new(
                             format!(
                                 "duplicate implementation of trait {}",
                                 type_name!(this, gtr),
@@ -2465,7 +2466,7 @@ impl TypeChecker {
                         let lhs = self.check_expr(*left, target);
                         let Some(target) = lhs.ty.as_option_inner(&self.proj) else {
                             if lhs.ty != TypeId::UNKNOWN {
-                                self.proj.diag.error(Error::invalid_operator(
+                                self.proj.diag.report(Error::invalid_operator(
                                     op,
                                     &type_name!(self, lhs.ty),
                                     lhs_span,
@@ -2536,7 +2537,7 @@ impl TypeChecker {
                         {
                             CExpr::new(left.ty, CExprData::Binary(op, left.into(), right.into()))
                         } else {
-                            self.proj.diag.error(Error::type_mismatch_s(
+                            self.proj.diag.report(Error::type_mismatch_s(
                                 "{integer}",
                                 &type_name!(self, right.ty),
                                 span,
@@ -2552,7 +2553,7 @@ impl TypeChecker {
                         let right = self.check_expr(*right, Some(TypeId::USIZE));
                         let right = self.try_coerce(right, TypeId::USIZE);
                         if !self.proj.types[right.ty].is_integral() && right.ty != TypeId::UNKNOWN {
-                            self.proj.diag.error(Error::type_mismatch_s(
+                            self.proj.diag.report(Error::type_mismatch_s(
                                 "{integer}",
                                 &type_name!(self, right.ty),
                                 span,
@@ -2579,7 +2580,7 @@ impl TypeChecker {
                             .is_none_or(|v| v.signed)
                             && right.ty != TypeId::UNKNOWN
                         {
-                            self.proj.diag.error(Error::type_mismatch_s(
+                            self.proj.diag.report(Error::type_mismatch_s(
                                 "{unsigned}",
                                 &type_name!(self, right.ty),
                                 span,
@@ -2626,7 +2627,7 @@ impl TypeChecker {
                             Type::Ptr(inner) | Type::MutPtr(inner) => (inner, expr),
                             Type::RawPtr(inner) | Type::RawMutPtr(inner) => {
                                 if self.safety != Safety::Unsafe {
-                                    self.proj.diag.error(Error::is_unsafe(span));
+                                    self.proj.diag.report(Error::is_unsafe(span));
                                 }
 
                                 (inner, expr)
@@ -2650,12 +2651,12 @@ impl TypeChecker {
                                 if matches!(&inner.data, CExprData::Fn(f, _)
                                     if self.is_subscript(f.id))
                                 {
-                                    self.proj.diag.warn(Error::subscript_addr(span));
+                                    self.proj.diag.report(Warning::subscript_addr(span));
                                 }
                             }
                             CExprData::Member { source, .. } => {
                                 if source.ty.is_packed_struct(&self.proj) {
-                                    self.proj.diag.warn(Error::bitfield_addr(span));
+                                    self.proj.diag.report(Warning::bitfield_addr(span));
                                 }
                             }
                             CExprData::Fn(_, _) => {
@@ -2688,19 +2689,16 @@ impl TypeChecker {
                                 if matches!(&inner.data, CExprData::Fn(f, _)
                                     if self.is_subscript(f.id))
                                 {
-                                    self.proj.diag.warn(Error::subscript_addr(span));
+                                    self.proj.diag.report(Warning::subscript_addr(span));
                                 }
                             }
                             CExprData::Member { source, .. } => {
                                 if source.ty.is_packed_struct(&self.proj) {
-                                    self.proj.diag.warn(Error::bitfield_addr(span));
+                                    self.proj.diag.report(Warning::bitfield_addr(span));
                                 }
                             }
                             CExprData::Fn(_, _) => {
-                                self.proj.diag.warn(Error::new(
-                                    "&mut on function creates immutable function pointer (use &)",
-                                    span,
-                                ));
+                                self.proj.diag.report(Warning::mut_function_ptr(span));
 
                                 let Type::Fn(f) = &self.proj.types[expr.ty] else {
                                     unreachable!()
@@ -2725,12 +2723,12 @@ impl TypeChecker {
                                 if matches!(&inner.data, CExprData::Fn(f, _)
                                     if self.is_subscript(f.id))
                                 {
-                                    self.proj.diag.warn(Error::subscript_addr(span));
+                                    self.proj.diag.report(Warning::subscript_addr(span));
                                 }
                             }
                             CExprData::Member { source, .. } => {
                                 if source.ty.is_packed_struct(&self.proj) {
-                                    self.proj.diag.warn(Error::bitfield_addr(span));
+                                    self.proj.diag.report(Warning::bitfield_addr(span));
                                 }
                             }
                             CExprData::Fn(_, _) => self
@@ -2755,12 +2753,12 @@ impl TypeChecker {
                                 if matches!(&inner.data, CExprData::Fn(f, _)
                                     if self.is_subscript(f.id))
                                 {
-                                    self.proj.diag.warn(Error::subscript_addr(span));
+                                    self.proj.diag.report(Warning::subscript_addr(span));
                                 }
                             }
                             CExprData::Member { source, .. } => {
                                 if source.ty.is_packed_struct(&self.proj) {
-                                    self.proj.diag.warn(Error::bitfield_addr(span));
+                                    self.proj.diag.report(Warning::bitfield_addr(span));
                                 }
                             }
                             CExprData::Fn(_, _) => self
@@ -3110,7 +3108,7 @@ impl TypeChecker {
                         self.current,
                         |this, id| TypeArgs::in_order(&this.proj.scopes, id, [formatter.ty]),
                     ) else {
-                        self.proj.diag.error(Error::doesnt_implement(
+                        self.proj.diag.report(Error::doesnt_implement(
                             &type_name!(self, ty),
                             "Format",
                             span,
@@ -3162,7 +3160,7 @@ impl TypeChecker {
                     let var = self.proj.scopes.get(id);
                     if !var.is_static {
                         if self.current_function() != self.proj.scopes.function_of(var.scope) {
-                            self.proj.diag.error(Error::new(
+                            self.proj.diag.report(Error::new(
                                 "cannot reference local variable of enclosing function",
                                 span,
                             ));
@@ -3172,7 +3170,7 @@ impl TypeChecker {
                             .as_ref()
                             .is_some_and(|v| !self.is_var_accessible(v.0, var.scope))
                         {
-                            self.proj.diag.error(Error::new(
+                            self.proj.diag.report(Error::new(
                                 "cannot reference local variable from outside of static initializer",
                                 span,
                             ));
@@ -3185,7 +3183,7 @@ impl TypeChecker {
                             _ => false,
                         };
                         if recursive {
-                            self.proj.diag.error(Error::new(
+                            self.proj.diag.report(Error::new(
                                 "static initializer depends directly or indirectly on itself",
                                 span,
                             ));
@@ -3193,7 +3191,7 @@ impl TypeChecker {
                     }
 
                     if var.is_static && var.is_extern && self.safety != Safety::Unsafe {
-                        self.proj.diag.error(Error::new(
+                        self.proj.diag.report(Error::new(
                             "accessing static extern variable is unsafe",
                             span,
                         ));
@@ -3487,12 +3485,12 @@ impl TypeChecker {
                 };
 
                 if ut.kind.is_unsafe_union() && self.safety != Safety::Unsafe {
-                    self.proj.diag.error(Error::is_unsafe(name.span));
+                    self.proj.diag.report(Error::is_unsafe(name.span));
                 }
 
                 let ty = member.ty.with_ut_templates(&mut self.proj.types, id);
                 if !member.public && !self.can_access_privates(ut.scope) {
-                    self.proj.diag.error(Error::private_member(
+                    self.proj.diag.report(Error::private_member(
                         &type_name!(self, id),
                         strdata!(self, name.data),
                         name.span,
@@ -3667,7 +3665,7 @@ impl TypeChecker {
                 }
 
                 match Cast::get(&self.proj.types[from_id], &self.proj.types[to_id]) {
-                    Cast::None => self.proj.diag.error(Error::new(
+                    Cast::None => self.proj.diag.report(Error::new(
                         format!(
                             "cannot cast expression of type '{}' to '{}'",
                             type_name!(self, from_id),
@@ -3678,7 +3676,7 @@ impl TypeChecker {
                     Cast::Unsafe if self.safety != Safety::Unsafe => {
                         self.error(Error::is_unsafe(span))
                     }
-                    Cast::Fallible if !throwing => self.proj.diag.error(Error::new(
+                    Cast::Fallible if !throwing => self.proj.diag.report(Error::new(
                         format!(
                             "cast of expression of type '{}' to '{}' requires fallible cast",
                             type_name!(self, from_id),
@@ -3686,14 +3684,13 @@ impl TypeChecker {
                         ),
                         span,
                     )),
-                    Cast::Infallible if throwing => self.proj.diag.warn(Error::new(
-                        format!(
-                            "cast from type '{}' to '{}' is infallible and may use an `as` cast",
-                            type_name!(self, from_id),
-                            type_name!(self, to_id),
-                        ),
-                        span,
-                    )),
+                    Cast::Infallible if throwing => {
+                        self.proj.diag.report(Warning::unnecessary_fallible_cast(
+                            &type_name!(self, from_id),
+                            &type_name!(self, to_id),
+                            span,
+                        ))
+                    }
                     _ => {}
                 }
                 CExpr::new(to_id, CExprData::As(expr.into(), throwing))
@@ -3778,9 +3775,7 @@ impl TypeChecker {
             PExprData::Unsafe(expr) => {
                 // for unsafe specifically, span is only the keyword
                 if self.safety == Safety::Unsafe {
-                    self.proj
-                        .diag
-                        .warn(Error::new("unsafe expression in unsafe context", span))
+                    self.proj.diag.report(Warning::redundant_unsafe(span));
                 }
 
                 // consider the body of the
@@ -4113,7 +4108,7 @@ impl TypeChecker {
                 ScopeKind::Defer => {
                     self.proj
                         .diag
-                        .error(Error::new("cannot return in defer block", span));
+                        .report(Error::new("cannot return in defer block", span));
                     return self.check_expr(expr, None);
                 }
                 _ => {}
@@ -4359,7 +4354,7 @@ impl TypeChecker {
         let mut members = IndexMap::new();
         for (name, expr) in args {
             let Some(name) = name else {
-                self.proj.diag.error(Error::new(
+                self.proj.diag.report(Error::new(
                     "unsafe union constructor expects 0 positional arguments",
                     expr.span,
                 ));
@@ -4523,10 +4518,9 @@ impl TypeChecker {
 
                     if matches!(&recv.data, CExprData::Member { source, .. } if source.ty.is_packed_struct(&self.proj))
                     {
-                        self.proj.diag.warn(Error::new(
-                            "call to mutating method with bitfield receiver operates on a copy",
-                            span,
-                        ))
+                        self.proj
+                            .diag
+                            .report(Warning::call_mutating_on_bitfield(span))
                     }
                 }
 
@@ -4599,7 +4593,7 @@ impl TypeChecker {
                 for (i, (name, arg)) in args.into_iter().enumerate() {
                     if let Some(&param) = f.params.get(i) {
                         if name.is_some() {
-                            self.proj.diag.error(Error::new(
+                            self.proj.diag.report(Error::new(
                                 "keyword parameters are not allowed here",
                                 arg.span,
                             ));
@@ -4609,7 +4603,7 @@ impl TypeChecker {
                     } else {
                         self.proj
                             .diag
-                            .error(Error::new("too many positional arguments", span));
+                            .report(Error::new("too many positional arguments", span));
                         break;
                     }
                 }
@@ -4681,7 +4675,7 @@ impl TypeChecker {
             Err(expr) => {
                 self.proj
                     .diag
-                    .error(type_mismatch_err!(self, target, expr.ty, span));
+                    .report(type_mismatch_err!(self, target, expr.ty, span));
                 (Default::default(), true)
             }
         }
@@ -4879,7 +4873,7 @@ impl TypeChecker {
 
             if !self.implements_trait(ty, &bound) {
                 failed = true;
-                self.proj.diag.error(Error::doesnt_implement(
+                self.proj.diag.report(Error::doesnt_implement(
                     &type_name!(self, ty),
                     &type_name!(self, bound),
                     span,
@@ -6053,7 +6047,7 @@ impl TypeChecker {
         let stats = ty.as_integral(&self.proj.types, false).unwrap();
         if negative {
             if !stats.signed {
-                self.proj.diag.error(Error::new(
+                self.proj.diag.report(Error::new(
                     format!(
                         "cannot negate unsigned integer type '{}'",
                         type_name!(self, ty)
@@ -6461,7 +6455,7 @@ impl TypeChecker {
             .constructor
             .is_some_and(|id| self.proj.scopes.get(id).kind.is_union())
         {
-            self.proj.diag.error(Error::type_mismatch_s(
+            self.proj.diag.report(Error::type_mismatch_s(
                 &type_name!(self, scrutinee),
                 &type_name!(self, f.ret),
                 span,
@@ -6721,7 +6715,7 @@ impl TypeChecker {
         } in destructures
         {
             let Some(member) = self.proj.scopes.get(ut_id).members.get(&name.data) else {
-                self.proj.diag.error(Error::no_member(
+                self.proj.diag.report(Error::no_member(
                     &type_name!(self, scrutinee),
                     strdata!(self, name.data),
                     name.span,
@@ -6730,7 +6724,7 @@ impl TypeChecker {
             };
 
             if !member.public && !cap {
-                self.proj.diag.error(Error::private_member(
+                self.proj.diag.report(Error::private_member(
                     &type_name!(self, scrutinee),
                     strdata!(self, name.data),
                     name.span,
@@ -6790,7 +6784,7 @@ impl TypeChecker {
         };
 
         if ut.ty_args.len() != subpatterns.len() {
-            self.proj.diag.error(Error::expected_found(
+            self.proj.diag.report(Error::expected_found(
                 &type_name!(self, scrutinee),
                 &format!("({})", ["_"].repeat(subpatterns.len()).join(", ")),
                 span,
@@ -7259,7 +7253,7 @@ impl TypeChecker {
                     if !last {
                         this.proj
                             .diag
-                            .error(Error::new("expected module name", span));
+                            .report(Error::new("expected module name", span));
                         CheckResult::BadType
                     } else {
                         CheckResult::Next(this.proj.scopes.get(id).body_scope)
@@ -7659,7 +7653,7 @@ impl TypeChecker {
                     ResolvedValue::UnionConstructor(_) | ResolvedValue::Var(_) => {
                         self.proj
                             .diag
-                            .error(Error::new("infer path must be to union variant", span));
+                            .report(Error::new("infer path must be to union variant", span));
                         return res;
                     }
                 };
@@ -7921,7 +7915,7 @@ impl TypeChecker {
                         {
                             lhs.val << rhs
                         } else {
-                            self.proj.diag.error(Error::no_consteval(span)); // TODO: span of the expression that caused it
+                            self.proj.diag.report(Error::no_consteval(span)); // TODO: span of the expression that caused it
                             ComptimeInt::from(0)
                         }
                     }
@@ -7930,7 +7924,7 @@ impl TypeChecker {
                         {
                             lhs.val >> rhs
                         } else {
-                            self.proj.diag.error(Error::no_consteval(span)); // TODO: span of the expression that caused it
+                            self.proj.diag.report(Error::no_consteval(span)); // TODO: span of the expression that caused it
                             ComptimeInt::from(0)
                         }
                     }

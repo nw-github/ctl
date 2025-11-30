@@ -1,6 +1,7 @@
 use either::{Either, Either::*};
 
 use crate::{
+    Warning,
     ast::{Attribute, Attributes, UnaryOp, parsed::*},
     comptime_int::ComptimeInt,
     error::{Diagnostics, Error, FileId},
@@ -1426,10 +1427,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
         self.csv_one(Token::RCurly, span, |this| {
             let mutable = this.next_if(Token::Mut);
             if let Some(token) = mutable.clone().filter(|_| mut_var) {
-                this.diag.warn(Error::new(
-                    format!("redundant '{}'", Token::Mut),
-                    token.span,
-                ));
+                this.diag.report(Warning::redundant_token(&token));
             }
             let mutable = mutable.is_some();
             let name = this.expect_ident("expected name");
@@ -2366,14 +2364,14 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
 
     fn error(&mut self, err: Error) {
         if !self.needs_sync {
-            self.diag.error(err);
+            self.diag.report(err);
             self.needs_sync = true;
         }
     }
 
     fn error_no_sync(&mut self, err: Error) {
         if !self.needs_sync {
-            self.diag.error(err);
+            self.diag.report(err);
         }
     }
 

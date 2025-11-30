@@ -184,14 +184,14 @@ fn print_results(src: &[u8], pretty: bool, output: &mut impl Write) -> Result<()
 }
 
 fn display_diagnostics(diag: &Diagnostics) {
-    fn format<S: SourceProvider>(
+    fn format<'a, S: SourceProvider>(
         provider: &mut S,
         diag: &Diagnostics,
         id: FileId,
-        errors: &[Error],
+        errors: impl IntoIterator<Item = &'a Error>,
         mut format: impl FnMut(&str, Range),
     ) {
-        for err in errors.iter().filter(|err| err.span.file == id) {
+        for err in errors.into_iter().filter(|err| err.span.file == id) {
             // TODO: do something with the errors
             _ = provider.get_source(diag.file_path(err.span.file), |data| {
                 format(
@@ -209,14 +209,20 @@ fn display_diagnostics(diag: &Diagnostics) {
             .as_ref()
             .and_then(|cwd| path.strip_prefix(cwd).ok())
             .unwrap_or(path);
-        format(&mut provider, diag, id, diag.errors(), |msg, range| {
-            eprintln!(
-                "error: {}:{}:{}: {msg}",
-                path.display(),
-                range.start.line + 1,
-                range.start.character + 1
-            );
-        });
+        format(
+            &mut provider,
+            diag,
+            id,
+            diag.diagnostics().iter().filter(|e| e.severity.is_error()),
+            |msg, range| {
+                eprintln!(
+                    "error: {}:{}:{}: {msg}",
+                    path.display(),
+                    range.start.line + 1,
+                    range.start.character + 1
+                );
+            },
+        );
     }
 
     for (id, path) in diag.paths() {
@@ -224,14 +230,22 @@ fn display_diagnostics(diag: &Diagnostics) {
             .as_ref()
             .and_then(|cwd| path.strip_prefix(cwd).ok())
             .unwrap_or(path);
-        format(&mut provider, diag, id, diag.warnings(), |msg, range| {
-            eprintln!(
-                "warning: {}:{}:{}: {msg}",
-                path.display(),
-                range.start.line + 1,
-                range.start.character + 1
-            );
-        });
+        format(
+            &mut provider,
+            diag,
+            id,
+            diag.diagnostics()
+                .iter()
+                .filter(|e| e.severity.is_warning()),
+            |msg, range| {
+                eprintln!(
+                    "warning: {}:{}:{}: {msg}",
+                    path.display(),
+                    range.start.line + 1,
+                    range.start.character + 1
+                );
+            },
+        );
     }
 }
 

@@ -4,6 +4,7 @@ use enum_as_inner::EnumAsInner;
 use unicode_xid::UnicodeXID;
 
 use crate::{
+    Warning,
     error::{Diagnostics, Error, FileId},
     intern::{THIS_PARAM, THIS_TYPE},
 };
@@ -421,7 +422,7 @@ impl<'a> Lexer<'a> {
                                 }
                             }
                             None => {
-                                diag.error(Error::new("unterminated block comment", self.here(0)));
+                                diag.report(Error::new("unterminated block comment", self.here(0)));
                                 break;
                             }
                             _ => {}
@@ -526,7 +527,7 @@ impl<'a> Lexer<'a> {
             'b' => self.maybe_byte_string(diag, start),
             ch if Self::is_identifier_first_char(ch) => self.identifier(start),
             ch => {
-                diag.error(Error::new(
+                diag.report(Error::new(
                     format!("unexpected character '{ch}'"),
                     self.here(0),
                 ));
@@ -594,7 +595,7 @@ impl<'a> Lexer<'a> {
 
     fn expect(&mut self, diag: &mut Diagnostics, c: char) {
         if !matches!(self.peek(), Some(ch) if ch == c) {
-            diag.error(Error::new(format!("expected '{c}'"), self.here(1)));
+            diag.report(Error::new(format!("expected '{c}'"), self.here(1)));
         } else {
             self.advance();
         }
@@ -624,16 +625,16 @@ impl<'a> Lexer<'a> {
                     len: chars.len() as u32,
                 };
                 if chars.len() < 2 {
-                    diag.error(Error::new("hexadecimal literal is too short", span));
+                    diag.report(Error::new("hexadecimal literal is too short", span));
                     '\0'
                 } else if let Ok(ch) = u8::from_str_radix(chars, 16) {
                     let ch = char::from(ch);
                     if !byte && !ch.is_ascii() {
-                        diag.error(Error::non_ascii_char(span));
+                        diag.report(Error::non_ascii_char(span));
                     }
                     ch
                 } else {
-                    diag.error(Error::non_ascii_char(span));
+                    diag.report(Error::non_ascii_char(span));
                     '\0'
                 }
             }
@@ -641,7 +642,7 @@ impl<'a> Lexer<'a> {
                 self.expect(diag, '{');
                 let chars = self.advance_while(|ch| ch.is_ascii_hexdigit());
                 if chars.is_empty() {
-                    diag.error(Error::new("expected hexadecimal digits", self.here(1)));
+                    diag.report(Error::new("expected hexadecimal digits", self.here(1)));
                     '\0'
                 } else if let Some(ch) =
                     u32::from_str_radix(chars, 16).ok().and_then(char::from_u32)
@@ -649,7 +650,7 @@ impl<'a> Lexer<'a> {
                     self.expect(diag, '}');
                     ch
                 } else {
-                    diag.error(Error::new(
+                    diag.report(Error::new(
                         "invalid unicode literal",
                         Span {
                             pos: (self.pos - chars.len()) as u32,
@@ -662,7 +663,7 @@ impl<'a> Lexer<'a> {
                 }
             }
             _ => {
-                diag.error(Error::new("invalid escape sequence", self.here(1)));
+                diag.report(Error::new("invalid escape sequence", self.here(1)));
                 '\0'
             }
         }
@@ -688,7 +689,7 @@ impl<'a> Lexer<'a> {
                     Cow::Owned(str) => str.push(ch),
                 },
                 None => {
-                    diag.error(Error::new("unterminated string literal", self.here(1)));
+                    diag.report(Error::new("unterminated string literal", self.here(1)));
                     break Token::String(result);
                 }
             }
@@ -705,12 +706,12 @@ impl<'a> Lexer<'a> {
             Some('\\') => self.escape_char(diag, byte),
             Some('\'') => {
                 here.len += 1;
-                diag.error(Error::new("empty char literal", here));
+                diag.report(Error::new("empty char literal", here));
                 return '\0';
             }
             Some(any) => any,
             None => {
-                diag.error(Error::new("unterminated char literal", here));
+                diag.report(Error::new("unterminated char literal", here));
                 '\0'
             }
         };
@@ -718,7 +719,7 @@ impl<'a> Lexer<'a> {
         if !self.advance_if('\'') {
             let ch = self.advance_while(|c| c != '\'');
             self.advance();
-            diag.error(Error::new(
+            diag.report(Error::new(
                 "char literal must only contain one character",
                 Span {
                     pos: (self.pos - ch.len() - 1) as u32,
@@ -782,14 +783,11 @@ impl<'a> Lexer<'a> {
         } else {
             let value = &self.src[start..self.pos];
             if warn_leading_zero && value.len() > 1 {
-                diag.warn(Error::new(
-                    "leading zero in decimal literal (use 0o to create an octal literal)",
-                    Span {
-                        pos: start as u32,
-                        len: value.len() as u32,
-                        file: self.file,
-                    },
-                ));
+                diag.report(Warning::decimal_leading_zero(Span {
+                    pos: start as u32,
+                    len: value.len() as u32,
+                    file: self.file,
+                }));
             }
 
             Token::Int {
@@ -868,7 +866,7 @@ impl<'a> Lexer<'a> {
             match c.try_into() {
                 Ok(c) => c,
                 Err(_) => {
-                    diag.error(Error::new(
+                    diag.report(Error::new(
                         format!(
                             "invalid character '{c}' ({:#x}) in byte {name} literal",
                             c as u8
@@ -902,7 +900,7 @@ impl<'a> Lexer<'a> {
                             result.push(bchar(diag, ch, "string", prev.extended_to(self.here(0))))
                         }
                         None => {
-                            diag.error(Error::unterminated_str(self.here(1)));
+                            diag.report(Error::unterminated_str(self.here(1)));
                             break Token::ByteString(result);
                         }
                     }
