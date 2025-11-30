@@ -1480,8 +1480,6 @@ impl<'a> Codegen<'a> {
             ExprData::Int(value) => self.emit_literal(value, expr.ty),
             ExprData::Float(value) => {
                 self.emit_cast(expr.ty);
-                // TODO: move this into the parser
-                // value.retain(|c| c != '_');
                 self.buffer.emit_str(value);
             }
             ExprData::String(value) => self.emit_string_literal(strdata!(self, value)),

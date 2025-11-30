@@ -2,6 +2,7 @@ use either::{Either, Either::*};
 
 use crate::{
     ast::{Attribute, Attributes, UnaryOp, parsed::*},
+    comptime_int::ComptimeInt,
     error::{Diagnostics, Error, FileId},
     intern::{StrId, Strings},
     lexer::{Lexer, Located, Precedence, Span, Token},
@@ -478,13 +479,14 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             Token::Int { base, value, width } => Expr::new(
                 span,
                 ExprData::Integer(IntPattern {
-                    base,
-                    value: self.strings.get_or_intern(value),
+                    value: self.parse_int(base, value, span),
                     width: width.map(|w| self.strings.get_or_intern(w)),
                     negative: false,
                 }),
             ),
             Token::Float(value) => {
+                let mut value = value.to_string();
+                value.retain(|c| c != '_');
                 Expr::new(span, ExprData::Float(self.strings.get_or_intern(value)))
             }
             Token::String(value) => {
@@ -537,10 +539,10 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     Expr::new(span, ExprData::String(self.strings.get_or_intern(value))),
                     self.expression(),
                 ];
-                while let Some(part) = self.next_if_map(|strings, t| {
+                while let Some(part) = self.next_if_map(|this, t| {
                     t.data
                         .as_string_part()
-                        .map(|s| Located::new(t.span, strings.get_or_intern(s)))
+                        .map(|s| Located::new(t.span, this.strings.get_or_intern(s)))
                 }) {
                     if self.matches_pred(|t| matches!(t, Token::StringPart(_) | Token::String(_))) {
                         let span = self.peek().span;
@@ -1275,10 +1277,25 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
 
     //
 
+    fn parse_int(&mut self, base: u8, value: &str, span: Span) -> ComptimeInt {
+        let mut parsable = value.to_string();
+        parsable.retain(|c| c != '_');
+        match ComptimeInt::from_str_radix(&parsable, base as u32) {
+            Some(result) => result,
+            None => {
+                self.error(Error::new(
+                    format!("'{value}' is not a valid integer literal"),
+                    span,
+                ));
+                ComptimeInt::default()
+            }
+        }
+    }
+
     fn int_pattern(
-        strings: &mut Strings,
+        &mut self,
         negative: Option<Span>,
-        t: &Located<Token>,
+        t: Located<Token>,
     ) -> Option<Located<IntPattern>> {
         match t.data {
             Token::Int { base, value, width } => Some(Located::new(
@@ -1287,9 +1304,8 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     .unwrap_or(t.span),
                 IntPattern {
                     negative: negative.is_some(),
-                    base,
-                    value: strings.get_or_intern(value),
-                    width: width.map(|w| strings.get_or_intern(w)),
+                    value: self.parse_int(base, value, t.span),
+                    width: width.map(|w| self.strings.get_or_intern(w)),
                 },
             )),
             Token::ByteChar(value) => Some(Located::new(
@@ -1298,9 +1314,8 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     .unwrap_or(t.span),
                 IntPattern {
                     negative: negative.is_some(),
-                    base: 10,
-                    value: strings.get_or_intern(value.to_string()),
-                    width: Some(strings.get_or_intern_static("u8")),
+                    value: ComptimeInt::Small(value as i64),
+                    width: Some(self.strings.get_or_intern_static("u8")),
                 },
             )),
             _ => None,
@@ -1320,7 +1335,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
         {
             let negative = self.next_if(Token::Minus);
             let Some(end) = self.expect_map(
-                |strings, t| Self::int_pattern(strings, negative.map(|t| t.span), t),
+                |this, t| this.int_pattern(negative.map(|t| t.span), t),
                 "expected number",
             ) else {
                 return Located::new(start.span, Pattern::Error);
@@ -1348,10 +1363,10 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             return Some(token.map(|_| Pattern::Bool(false)));
         } else if let Some(token) = self.next_if(Token::Void) {
             return Some(token.map(|_| Pattern::Void));
-        } else if let Some(string) = self.next_if_map(|strings, t| {
+        } else if let Some(string) = self.next_if_map(|this, t| {
             t.data
                 .as_string()
-                .map(|value| Located::new(t.span, strings.get_or_intern(value)))
+                .map(|value| Located::new(t.span, this.strings.get_or_intern(value)))
         }) {
             return Some(string.map(Pattern::String));
         }
@@ -1359,7 +1374,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
         let range = self.next_if_pred(|t| matches!(t, Token::Range | Token::RangeInclusive));
         if let Some(token) = self.next_if(Token::Minus) {
             let Some(start) = self.expect_map(
-                |strings, t| Self::int_pattern(strings, Some(token.span), t),
+                |this, t| this.int_pattern(Some(token.span), t),
                 "expected number",
             ) else {
                 return Some(Located::new(token.span, Pattern::Error));
@@ -1368,7 +1383,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             return Some(self.maybe_range_pattern(range, start));
         }
 
-        if let Some(int) = self.next_if_map(|strings, t| Self::int_pattern(strings, None, t)) {
+        if let Some(int) = self.next_if_map(|this, t| this.int_pattern(None, t)) {
             return Some(self.maybe_range_pattern(range, int));
         }
 
@@ -1471,10 +1486,10 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                                 let ident = this.expect_ident("expected name");
                                 Some((true, ident))
                             } else {
-                                Some(false).zip(this.next_if_map(|strings, t| {
-                                    t.data
-                                        .as_ident()
-                                        .map(|&i| Located::new(t.span, strings.get_or_intern(i)))
+                                Some(false).zip(this.next_if_map(|this, t| {
+                                    t.data.as_ident().map(|&i| {
+                                        Located::new(t.span, this.strings.get_or_intern(i))
+                                    })
                                 }))
                             };
 
@@ -2389,12 +2404,10 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
 
     fn next_if_map<T>(
         &mut self,
-        f: impl FnOnce(&mut Strings, &Located<Token>) -> Option<T>,
+        f: impl FnOnce(&mut Self, Located<Token>) -> Option<T>,
     ) -> Option<T> {
-        let peek = self
-            .peek
-            .get_or_insert_with(|| self.lexer.next_skip_comments(self.diag));
-        let outer = f(self.strings, peek);
+        let peek = self.peek().clone();
+        let outer = f(self, peek);
         if outer.is_some() {
             self.next();
         }
@@ -2425,14 +2438,11 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
 
     fn expect_map<T>(
         &mut self,
-        f: impl FnOnce(&mut Strings, &Located<Token>) -> Option<T>,
+        f: impl FnOnce(&mut Self, Located<Token>) -> Option<T>,
         msg: &str,
     ) -> Option<T> {
-        // self.peek() can't be called or the borrow checker will get mad
-        let token = self
-            .peek
-            .get_or_insert_with(|| self.lexer.next_skip_comments(self.diag));
-        if let Some(res) = f(self.strings, token) {
+        let token = self.peek().clone();
+        if let Some(res) = f(self, token) {
             self.next();
             Some(res)
         } else {

@@ -1,4 +1,5 @@
 use crate::{
+    comptime_int::ComptimeInt,
     intern::StrId,
     lexer::{Located, Span},
 };
@@ -260,8 +261,7 @@ pub struct Destructure {
 #[derive(Clone)]
 pub struct IntPattern {
     pub negative: bool,
-    pub base: u8,
-    pub value: StrId,
+    pub value: ComptimeInt,
     pub width: Option<StrId>,
 }
 

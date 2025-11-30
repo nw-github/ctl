@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use enum_as_inner::EnumAsInner;
-use indexmap::{IndexMap, map::Entry};
+use indexmap::IndexMap;
 
 use crate::{
     ast::{
@@ -3155,7 +3155,7 @@ impl TypeChecker {
             PExprData::Void => CExpr::new(TypeId::VOID, CExprData::Void),
             PExprData::Bool(v) => CExpr::new(TypeId::BOOL, CExprData::Int(ComptimeInt::from(v))),
             PExprData::Integer(integer) => {
-                let (ty, value) = self.get_int_type_and_val(target, &integer, span);
+                let (ty, value) = self.get_int_type_and_val(target, integer, span);
                 CExpr::new(ty, CExprData::Int(value))
             }
             PExprData::Float(value) => CExpr::new(
@@ -4726,41 +4726,39 @@ impl TypeChecker {
         let mut failed = false;
         for (name, expr) in args {
             if let Some(name) = name {
-                match result.entry(name.data) {
-                    Entry::Occupied(_) => {
-                        failed = true;
-                        report_error!(
-                            self,
-                            name.span.extended_to(expr.span),
-                            "duplicate arguments for for parameter '{}'",
-                            strdata!(self, name.data)
-                        )
-                    }
-                    Entry::Vacant(entry) => {
-                        if let Some(param) = self
-                            .proj
-                            .scopes
-                            .get(func.id)
-                            .params
-                            .iter()
-                            .find(|p| p.label == name.data)
-                        {
-                            let ty = param.ty;
-                            self.check_arg_label_hover(name.span, param.clone(), func);
+                if result.contains_key(&name.data) {
+                    failed = true;
+                    report_error!(
+                        self,
+                        name.span,
+                        "duplicate arguments for for parameter '{}'",
+                        strdata!(self, name.data)
+                    )
+                }
 
-                            let (expr, f) = self.check_arg(func, expr, ty);
-                            entry.insert(expr);
-                            failed = failed || f;
-                        } else {
-                            failed = true;
-                            report_error!(
-                                self,
-                                name.span,
-                                "unknown parameter: '{}'",
-                                strdata!(self, name.data)
-                            )
-                        }
-                    }
+                if let Some(param) = self
+                    .proj
+                    .scopes
+                    .get(func.id)
+                    .params
+                    .iter()
+                    .find(|p| p.label == name.data)
+                {
+                    let ty = param.ty;
+                    self.check_arg_label_hover(name.span, param.clone(), func);
+
+                    let (expr, f) = self.check_arg(func, expr, ty);
+                    result.insert(name.data, expr);
+                    failed = failed || f;
+                } else {
+                    failed = true;
+                    let _: () = report_error!(
+                        self,
+                        name.span,
+                        "unknown parameter: '{}'",
+                        strdata!(self, name.data)
+                    );
+                    self.check_expr(expr, None);
                 }
             } else if let Some((i, param)) = self
                 .proj
@@ -6038,10 +6036,9 @@ impl TypeChecker {
         target: Option<TypeId>,
         IntPattern {
             negative,
-            base,
-            value,
+            mut value,
             width,
-        }: &IntPattern,
+        }: IntPattern,
         span: Span,
     ) -> (TypeId, ComptimeInt) {
         let ty = if let Some(width) = width {
@@ -6062,19 +6059,7 @@ impl TypeChecker {
         };
 
         let stats = ty.as_integral(&self.proj.types, false).unwrap();
-        let value = strdata!(self, value);
-        let mut parsable = value.to_string();
-        parsable.retain(|c| c != '_');
-        let mut result = match ComptimeInt::from_str_radix(&parsable, *base as u32) {
-            Some(result) => result,
-            None => {
-                return self.error(Error::new(
-                    format!("'{value}' is not a valid integer literal"),
-                    span,
-                ));
-            }
-        };
-        if *negative {
+        if negative {
             if !stats.signed {
                 self.proj.diag.error(Error::new(
                     format!(
@@ -6083,14 +6068,14 @@ impl TypeChecker {
                     ),
                     span,
                 ));
-                return (ty, result);
+                return (ty, value);
             }
-            result = -result;
+            value = -value;
         }
 
         let min = stats.min();
         let max = stats.max();
-        if result > max || result < min {
+        if value > max || value < min {
             bail!(
                 self,
                 Error::new(
@@ -6103,7 +6088,7 @@ impl TypeChecker {
             );
         }
 
-        (ty, result)
+        (ty, value)
     }
 
     fn loop_target(&self, target: Option<TypeId>, infinite: bool) -> Option<TypeId> {
@@ -6508,7 +6493,7 @@ impl TypeChecker {
     fn check_int_pattern(
         &mut self,
         target: TypeId,
-        patt: &IntPattern,
+        patt: IntPattern,
         span: Span,
     ) -> Option<ComptimeInt> {
         let inner = target.strip_references(&self.proj.types);
@@ -7093,7 +7078,7 @@ impl TypeChecker {
                 CPattern::refutable(PatternData::String(value))
             }
             Pattern::Int(patt) => CPattern::refutable(
-                self.check_int_pattern(scrutinee, &patt, span)
+                self.check_int_pattern(scrutinee, patt, span)
                     .map(PatternData::Int)
                     .unwrap_or_default(),
             ),
@@ -7103,7 +7088,7 @@ impl TypeChecker {
                 end,
             }) => {
                 let start = if let Some(start) = start {
-                    let Some(start) = self.check_int_pattern(scrutinee, &start, span) else {
+                    let Some(start) = self.check_int_pattern(scrutinee, start, span) else {
                         return Default::default();
                     };
                     Some(start)
@@ -7111,7 +7096,7 @@ impl TypeChecker {
                     None
                 };
 
-                let Some(end) = self.check_int_pattern(scrutinee, &end, span) else {
+                let Some(end) = self.check_int_pattern(scrutinee, end, span) else {
                     return Default::default();
                 };
 
