@@ -3,7 +3,7 @@ mod codegen;
 mod comptime_int;
 mod dgraph;
 mod error;
-mod intern;
+pub mod intern;
 mod lexer;
 mod lsp;
 mod parser;

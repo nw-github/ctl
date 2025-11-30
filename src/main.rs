@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueHint};
 use ctl::{
-    CachingSourceProvider, CodegenFlags, Compiler, Diagnostics, Error, FileId, LspBackend,
-    OffsetMode, SourceProvider, UnloadedProject,
+    intern::Strings, CachingSourceProvider, CodegenFlags, Compiler, Diagnostics, Error, FileId, LspBackend, OffsetMode, SourceProvider, UnloadedProject
 };
 use std::{
     ffi::OsString,
@@ -270,7 +269,7 @@ fn main() -> Result<()> {
     };
     let mut proj = UnloadedProject::new(input)?;
     if args.leak {
-        // proj.conf.remove_feature("boehm");
+        proj.conf.remove_feature(Strings::FEAT_BOEHM);
     }
 
     proj.conf.flags = CodegenFlags {
