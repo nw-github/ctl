@@ -11,6 +11,7 @@ derive_more = "0.99.17"
 either = "1.10.0"
 enum-as-inner = "0.6.0"
 indexmap = "2.0.0"
+lasso = "0.7.3"
 num-bigint = "0.4.3"
 num-traits = "0.2.16"
 serde = { version = "1.0.197", features = ["derive"] }

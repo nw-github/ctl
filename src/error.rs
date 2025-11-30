@@ -2,11 +2,7 @@ use std::path::{Path, PathBuf};
 
 use tower_lsp::lsp_types::{Position, Range};
 
-use crate::{
-    lexer::{Located, Span, Token},
-    sym::Scopes,
-    typeid::{TypeId, Types},
-};
+use crate::lexer::{Located, Span, Token};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum OffsetMode {
@@ -184,19 +180,9 @@ impl Error {
         Self::new(format!("'{}' is not valid here", token.data), token.span)
     }
 
-    pub fn type_mismatch(
-        expected: TypeId,
-        received: TypeId,
-        scopes: &Scopes,
-        types: &mut Types,
-        span: Span,
-    ) -> Self {
+    pub fn type_mismatch(expected: &str, received: &str, span: Span) -> Self {
         Self::new(
-            format!(
-                "type mismatch: expected type '{}', found '{}'",
-                expected.name(scopes, types),
-                received.name(scopes, types),
-            ),
+            format!("type mismatch: expected type '{expected}', found '{received}'",),
             span,
         )
     }
@@ -316,8 +302,23 @@ impl Error {
 
     pub fn bitfield_member(name: &str, span: Span) -> Self {
         Self::new(
-            format!("member '{name}' of packed struct must have integer or enum union type (union with all empty variants)"),
+            format!(
+                "member '{name}' of packed struct must have integer or enum union type (union with all empty variants)"
+            ),
             span,
         )
+    }
+
+    pub fn invalid_impl(func: &str, why: &str, span: Span) -> Self {
+        Self::new(
+            format!("invalid implementation of function '{func}': {why}"),
+            span,
+        )
+    }
+}
+
+impl Error {
+    pub fn unused_variable(name: &str, span: Span) -> Self {
+        Self::new(format!("unused variable: '{name}'"), span)
     }
 }

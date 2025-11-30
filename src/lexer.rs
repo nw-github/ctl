@@ -5,7 +5,7 @@ use unicode_xid::UnicodeXID;
 
 use crate::{
     error::{Diagnostics, Error, FileId},
-    THIS_PARAM, THIS_TYPE,
+    intern::{THIS_PARAM, THIS_TYPE},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, EnumAsInner)]
@@ -266,7 +266,7 @@ impl Span {
     }
 }
 
-#[derive(Default, Clone, derive_more::Constructor)]
+#[derive(Default, Clone, Copy, derive_more::Constructor)]
 pub struct Located<T> {
     pub span: Span,
     pub data: T,

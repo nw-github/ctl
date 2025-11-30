@@ -256,7 +256,7 @@ fn main() -> Result<()> {
     };
     let mut proj = UnloadedProject::new(input)?;
     if args.leak {
-        proj.conf.remove_feature("boehm");
+        // proj.conf.remove_feature("boehm");
     }
 
     proj.conf.flags = CodegenFlags {

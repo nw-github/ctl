@@ -3,6 +3,7 @@ use std::{fmt::Display, ops::Index};
 use crate::{
     ast::{BinaryOp, UnaryOp, parsed::TypeHint},
     comptime_int::ComptimeInt,
+    intern::Strings,
     nearest_pow_of_two,
     project::Project,
     sym::{
@@ -181,7 +182,7 @@ impl GenericFn {
 pub type GenericUserType = WithTypeArgs<UserTypeId>;
 
 impl GenericUserType {
-    pub fn name(&self, scopes: &Scopes, types: &mut Types) -> String {
+    pub fn name(&self, scopes: &Scopes, types: &mut Types, strings: &Strings) -> String {
         match &scopes.get(self.id).kind {
             crate::sym::UserTypeKind::AnonStruct => {
                 let mut result = "struct {".to_string();
@@ -195,9 +196,9 @@ impl GenericUserType {
                             .get(self.id)
                             .members
                             .get_index(i)
-                            .map(|m| &m.0[..])
+                            .map(|m| strings.resolve(m.0))
                             .unwrap_or("???"),
-                        concrete.name(scopes, types)
+                        concrete.name(scopes, types, strings)
                     ));
                 }
                 format!("{result} }}")
@@ -208,39 +209,42 @@ impl GenericUserType {
                     if i > 0 {
                         result.push_str(", ");
                     }
-                    result.push_str(&concrete.name(scopes, types));
+                    result.push_str(&concrete.name(scopes, types, strings));
                 }
                 format!("{result})")
             }
             _ => {
-                let is_lang_type =
-                    |name: &str| scopes.lang_types.get(name).is_some_and(|&id| id == self.id);
+                let is_lang_type = |name: &str| {
+                    let key = strings.get(name);
+                    key.and_then(|key| scopes.lang_types.get(&key))
+                        .is_some_and(|&id| id == self.id)
+                };
                 if is_lang_type("option") {
-                    return format!("?{}", self.ty_args[0].name(scopes, types));
+                    return format!("?{}", self.ty_args[0].name(scopes, types, strings));
                 } else if is_lang_type("span") {
-                    return format!("[{}..]", self.ty_args[0].name(scopes, types));
+                    return format!("[{}..]", self.ty_args[0].name(scopes, types, strings));
                 } else if is_lang_type("span_mut") {
-                    return format!("[mut {}..]", self.ty_args[0].name(scopes, types));
+                    return format!("[mut {}..]", self.ty_args[0].name(scopes, types, strings));
                 } else if is_lang_type("vec") {
-                    return format!("[{}]", self.ty_args[0].name(scopes, types));
+                    return format!("[{}]", self.ty_args[0].name(scopes, types, strings));
                 } else if is_lang_type("set") {
-                    return format!("#[{}]", self.ty_args[0].name(scopes, types));
+                    return format!("#[{}]", self.ty_args[0].name(scopes, types, strings));
                 } else if is_lang_type("map") {
                     return format!(
                         "[{}: {}]",
-                        self.ty_args[0].name(scopes, types),
-                        self.ty_args[1].name(scopes, types)
+                        self.ty_args[0].name(scopes, types, strings),
+                        self.ty_args[1].name(scopes, types, strings)
                     );
                 }
 
-                let mut result = scopes.get(self.id).name.data.clone();
+                let mut result = strings.resolve(&scopes.get(self.id).name.data).to_string();
                 if !self.ty_args.is_empty() {
                     result.push('<');
                     for (i, concrete) in self.ty_args.values().enumerate() {
                         if i > 0 {
                             result.push_str(", ");
                         }
-                        result.push_str(&concrete.name(scopes, types));
+                        result.push_str(&concrete.name(scopes, types, strings));
                     }
                     result.push('>');
                 }
@@ -583,7 +587,7 @@ impl TypeId {
     pub const F64: TypeId = TypeId(10);
     pub const CVOID: TypeId = TypeId(11);
 
-    pub fn name(self, scopes: &Scopes, types: &mut Types) -> String {
+    pub fn name(self, scopes: &Scopes, types: &mut Types, strings: &Strings) -> String {
         match &types[self] {
             Type::Unknown => "{unknown}".into(),
             // for debug purposes, ideally this should never be visible
@@ -596,12 +600,12 @@ impl TypeId {
             Type::F64 => "f64".into(),
             Type::Bool => "bool".into(),
             Type::Char => "char".into(),
-            &Type::Ptr(id) => format!("*{}", id.name(scopes, types)),
-            &Type::MutPtr(id) => format!("*mut {}", id.name(scopes, types)),
-            &Type::RawPtr(id) => format!("^{}", id.name(scopes, types)),
-            &Type::RawMutPtr(id) => format!("^mut {}", id.name(scopes, types)),
-            Type::DynPtr(id) => format!("*dyn {}", id.clone().name(scopes, types)),
-            Type::DynMutPtr(id) => format!("*dyn mut {}", id.clone().name(scopes, types)),
+            &Type::Ptr(id) => format!("*{}", id.name(scopes, types, strings)),
+            &Type::MutPtr(id) => format!("*mut {}", id.name(scopes, types, strings)),
+            &Type::RawPtr(id) => format!("^{}", id.name(scopes, types, strings)),
+            &Type::RawMutPtr(id) => format!("^mut {}", id.name(scopes, types, strings)),
+            Type::DynPtr(id) => format!("*dyn {}", id.clone().name(scopes, types, strings)),
+            Type::DynMutPtr(id) => format!("*dyn mut {}", id.clone().name(scopes, types, strings)),
             Type::FnPtr(f) => {
                 let f = f.clone();
                 let mut result = "fn(".to_string();
@@ -610,14 +614,14 @@ impl TypeId {
                         result.push_str(", ");
                     }
 
-                    result.push_str(&param.name(scopes, types));
+                    result.push_str(&param.name(scopes, types, strings));
                 }
-                format!("{result}) => {}", f.ret.name(scopes, types))
+                format!("{result}) => {}", f.ret.name(scopes, types, strings))
             }
             Type::Fn(func) => {
                 let ty_args = func.ty_args.clone();
                 let f = scopes.get(func.id);
-                let mut result = format!("fn {}(", f.name.data);
+                let mut result = format!("fn {}(", strings.resolve(&f.name.data));
                 let ret = f.ret.with_templates(types, &ty_args);
                 let params: Vec<_> = f
                     .params
@@ -628,12 +632,12 @@ impl TypeId {
                     if i > 0 {
                         result.push_str(", ");
                     }
-                    result.push_str(&ty.name(scopes, types));
+                    result.push_str(&ty.name(scopes, types, strings));
                 }
-                format!("{result}): {}", ret.name(scopes, types))
+                format!("{result}): {}", ret.name(scopes, types, strings))
             }
-            Type::User(ty) => ty.clone().name(scopes, types),
-            &Type::Array(ty, count) => format!("[{}; {}]", ty.name(scopes, types), count),
+            Type::User(ty) => ty.clone().name(scopes, types, strings),
+            &Type::Array(ty, count) => format!("[{}; {}]", ty.name(scopes, types, strings), count),
             Type::Isize => "int".into(),
             Type::Usize => "uint".into(),
             id @ (Type::CInt(ty) | Type::CUint(ty)) => {

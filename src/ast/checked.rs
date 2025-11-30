@@ -4,6 +4,7 @@ use indexmap::IndexMap;
 use crate::{
     ast::{BinaryOp, UnaryOp},
     comptime_int::ComptimeInt,
+    intern::{StrId, Strings},
     sym::{ScopeId, ScopeKind, Scopes, VariableId},
     typecheck::MemberFn,
     typeid::{GenericFn, Type, TypeId, Types},
@@ -41,12 +42,12 @@ pub struct ArrayPattern<T> {
 pub enum PatternData {
     Variant {
         pattern: Option<Box<Pattern>>,
-        variant: String,
+        variant: StrId,
         inner: TypeId,
         borrows: bool,
     },
     Destrucure {
-        patterns: Vec<(String, TypeId, Pattern)>,
+        patterns: Vec<(StrId, TypeId, Pattern)>,
         borrows: bool,
     },
     Array {
@@ -55,7 +56,7 @@ pub enum PatternData {
     },
     Int(ComptimeInt),
     IntRange(RangePattern<ComptimeInt>),
-    String(String),
+    String(StrId),
     Span {
         patterns: Vec<Pattern>,
         rest: Option<RestPattern>,
@@ -114,13 +115,13 @@ pub enum ExprData {
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
     AutoDeref(Box<Expr>, usize),
-    Call(Box<Expr>, IndexMap<String, Expr>),
-    CallDyn(GenericFn, IndexMap<String, Expr>),
+    Call(Box<Expr>, IndexMap<StrId, Expr>),
+    CallDyn(GenericFn, IndexMap<StrId, Expr>),
     CallFnPtr(Box<Expr>, Vec<Expr>),
     DynCoerce(Box<Expr>, ScopeId),
-    VariantInstance(String, IndexMap<String, Expr>),
+    VariantInstance(StrId, IndexMap<StrId, Expr>),
     SpanMutCoerce(Box<Expr>),
-    Instance(IndexMap<String, Expr>),
+    Instance(IndexMap<StrId, Expr>),
     Array(Vec<Expr>),
     ArrayWithInit {
         init: Box<Expr>,
@@ -134,8 +135,8 @@ pub enum ExprData {
     Set(Vec<Expr>, ScopeId),
     Map(Vec<(Expr, Expr)>, ScopeId),
     Int(ComptimeInt),
-    Float(String),
-    String(String),
+    Float(StrId),
+    String(StrId),
     StringInterp {
         formatter: Box<Expr>,
         parts: Vec<(MemberFn, Expr)>,
@@ -150,7 +151,7 @@ pub enum ExprData {
     AffixOperator {
         callee: Box<Expr>,
         mfn: MemberFn,
-        param: String,
+        param: StrId,
         scope: ScopeId,
         postfix: bool,
     },
@@ -171,7 +172,7 @@ pub enum ExprData {
     },
     Member {
         source: Box<Expr>,
-        member: String,
+        member: StrId,
     },
     Subscript {
         callee: Box<Expr>,
@@ -204,7 +205,7 @@ impl ExprData {
     pub fn member_call(
         types: &mut Types,
         mfn: MemberFn,
-        args: IndexMap<String, Expr>,
+        args: IndexMap<StrId, Expr>,
         scope: ScopeId,
     ) -> Self {
         Self::Call(
@@ -219,7 +220,7 @@ impl ExprData {
     pub fn call(
         types: &mut Types,
         func: GenericFn,
-        args: IndexMap<String, Expr>,
+        args: IndexMap<StrId, Expr>,
         scope: ScopeId,
     ) -> Self {
         Self::Call(
@@ -325,7 +326,7 @@ impl Expr {
     pub fn option_null(opt: TypeId) -> Expr {
         Expr::new(
             opt,
-            ExprData::VariantInstance("null".into(), Default::default()),
+            ExprData::VariantInstance(Strings::NULL, Default::default()),
         )
     }
 }

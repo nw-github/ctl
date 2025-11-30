@@ -1,9 +1,9 @@
 use either::{Either, Either::*};
 
 use crate::{
-    THIS_PARAM, THIS_TYPE,
     ast::{Attribute, Attributes, UnaryOp, parsed::*},
     error::{Diagnostics, Error, FileId},
+    intern::{StrId, Strings},
     lexer::{Lexer, Located, Precedence, Span, Token},
 };
 
@@ -23,25 +23,33 @@ enum EvalContext {
     Normal,
 }
 
-pub struct Parser<'a, 'b> {
+pub struct Parser<'a, 'b, 'c> {
     lexer: Lexer<'a>,
     peek: Option<Located<Token<'a>>>,
     needs_sync: bool,
     diag: &'b mut Diagnostics,
+    strings: &'c mut Strings,
 }
 
-impl<'a, 'b> Parser<'a, 'b> {
-    fn new(src: &'a str, diag: &'b mut Diagnostics, file: FileId) -> Self {
+impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
+    fn new(src: &'a str, diag: &'b mut Diagnostics, int: &'c mut Strings, file: FileId) -> Self {
         Self {
             diag,
+            strings: int,
             lexer: Lexer::new(src, file),
             peek: None,
             needs_sync: false,
         }
     }
 
-    pub fn parse(src: &'a str, name: String, diag: &'b mut Diagnostics, file: FileId) -> Stmt {
-        let mut this = Self::new(src, diag, file);
+    pub fn parse(
+        src: &'a str,
+        name: StrId,
+        diag: &'b mut Diagnostics,
+        int: &'c mut Strings,
+        file: FileId,
+    ) -> Stmt {
+        let mut this = Self::new(src, diag, int, file);
         let mut stmts = Vec::new();
         while !this.matches(Token::Eof) {
             stmts.push(this.item());
@@ -93,10 +101,13 @@ impl<'a, 'b> Parser<'a, 'b> {
                     "operator functions can only be defined in types and extensions",
                     func.data.name.span,
                 ));
+
                 return Ok(Stmt {
                     attrs,
                     data: func.map(|func| {
-                        StmtData::Fn(Fn::from_operator_fn(func.name.data.to_string(), func))
+                        // TODO: don't use to_string
+                        let name = self.strings.get_or_intern(func.name.data.to_string());
+                        StmtData::Fn(Fn::from_operator_fn(name, func))
                     }),
                 });
             }
@@ -468,26 +479,31 @@ impl<'a, 'b> Parser<'a, 'b> {
                 span,
                 ExprData::Integer(IntPattern {
                     base,
-                    value: value.into(),
-                    width: width.map(|w| w.into()),
+                    value: self.strings.get_or_intern(value),
+                    width: width.map(|w| self.strings.get_or_intern(w)),
                     negative: false,
                 }),
             ),
-            Token::Float(value) => Expr::new(span, ExprData::Float(value.into())),
-            Token::String(value) => Expr::new(span, ExprData::String(value.into())),
+            Token::Float(value) => {
+                Expr::new(span, ExprData::Float(self.strings.get_or_intern(value)))
+            }
+            Token::String(value) => {
+                Expr::new(span, ExprData::String(self.strings.get_or_intern(value)))
+            }
             Token::Char(value) => Expr::new(span, ExprData::Char(value)),
             Token::ByteString(value) => Expr::new(span, ExprData::ByteString(value)),
             Token::ByteChar(value) => Expr::new(span, ExprData::ByteChar(value)),
             Token::This => Expr::new(
                 span,
-                ExprData::Path(Located::new(span, THIS_PARAM.to_owned()).into()),
+                ExprData::Path(Located::new(span, Strings::THIS_PARAM).into()),
             ),
             Token::ThisType => Expr::new(
                 span,
-                ExprData::Path(Located::new(span, THIS_TYPE.to_owned()).into()),
+                ExprData::Path(Located::new(span, Strings::THIS_TYPE).into()),
             ),
             Token::Ident(ident) => {
-                let data = self.path_components(Some(Located::new(span, ident.into())), &mut span);
+                let ident = self.strings.get_or_intern(ident);
+                let data = self.path_components(Some(Located::new(span, ident)), &mut span);
                 Expr::new(span, ExprData::Path(Path::new(PathOrigin::Normal, data)))
             }
             Token::ScopeRes => {
@@ -499,7 +515,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                 let original = span;
                 let mut data = self.path_components(None, &mut span);
                 if data.is_empty() {
-                    data.push((Located::new(self.peek().span, "".into()), vec![]));
+                    data.push((Located::new(self.peek().span, Strings::EMPTY), vec![]));
                 }
                 Expr::new(
                     span,
@@ -518,13 +534,13 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
             Token::StringPart(value) => {
                 let mut parts = vec![
-                    Expr::new(span, ExprData::String(value.into())),
+                    Expr::new(span, ExprData::String(self.strings.get_or_intern(value))),
                     self.expression(),
                 ];
-                while let Some(part) = self.next_if_map(|t| {
+                while let Some(part) = self.next_if_map(|strings, t| {
                     t.data
                         .as_string_part()
-                        .map(|s| Located::new(t.span, s.clone().into_owned()))
+                        .map(|s| Located::new(t.span, strings.get_or_intern(s)))
                 }) {
                     if self.matches_pred(|t| matches!(t, Token::StringPart(_) | Token::String(_))) {
                         let span = self.peek().span;
@@ -545,7 +561,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                         data: Token::String(data),
                     } => {
                         span.extend_to(inner);
-                        parts.push(Expr::new(inner, ExprData::String(data.into())));
+                        parts.push(Expr::new(
+                            inner,
+                            ExprData::String(self.strings.get_or_intern(data)),
+                        ));
                     }
                     token => self.error(Error::new("expected end of string", token.span)),
                 }
@@ -890,13 +909,12 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::Dot => {
                 let token = self.peek();
                 if let Token::Int { base, value, width } = token.data {
-                    let member = Located::new(token.span, value.into());
+                    let tspan = token.span;
                     if base != 10 || width.is_some() || (value.starts_with('0') && value.len() > 1)
                     {
-                        let span = token.span;
                         self.error(Error::new(
                             "tuple member access must be an integer with no prefix or suffix",
-                            span,
+                            tspan,
                         ));
                     }
                     let span = self.next().span;
@@ -904,7 +922,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                         left.span.extended_to(span),
                         ExprData::Member {
                             source: left.into(),
-                            member,
+                            member: Located::new(tspan, self.strings.get_or_intern(value)),
                             generics: Vec::new(),
                         },
                     );
@@ -938,7 +956,7 @@ impl<'a, 'b> Parser<'a, 'b> {
                             .as_identifier_l()
                             .filter(|_| this.next_if(Token::Colon).is_some())
                     {
-                        name = Some(ident.clone());
+                        name = Some(*ident);
                         if !this.matches_pred(|t| matches!(t, Token::Comma | Token::RParen)) {
                             expr = this.expression();
                         }
@@ -982,14 +1000,14 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     //
 
-    fn label_error(&mut self, label: Located<String>) {
+    fn label_error(&mut self, span: Span) {
         self.error_no_sync(Error::new(
             "labels are only valid for loop expressions",
-            label.span,
+            span,
         ));
     }
 
-    fn block_or_normal_expr(&mut self, label: Option<Located<String>>) -> (bool, Expr) {
+    fn block_or_normal_expr(&mut self, label: Option<Located<StrId>>) -> (bool, Expr) {
         let label = label.or_else(|| {
             self.next_if(Token::At).map(|_| {
                 let label = self.expect_ident("expected label identifier");
@@ -1000,7 +1018,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         match self.peek().data {
             Token::If => {
                 if let Some(label) = label {
-                    self.label_error(label)
+                    self.label_error(label.span)
                 }
                 let token = self.next();
                 (false, self.if_expr(token.span))
@@ -1024,7 +1042,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::Match => {
                 let token = self.next();
                 if let Some(label) = label {
-                    self.label_error(label)
+                    self.label_error(label.span)
                 }
                 (false, self.match_expr(token.span))
             }
@@ -1035,7 +1053,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             Token::Unsafe => {
                 self.next();
                 if let Some(label) = label {
-                    self.label_error(label)
+                    self.label_error(label.span)
                 }
 
                 let (needs_delim, expr) = self.block_or_normal_expr(None);
@@ -1046,7 +1064,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             }
             _ => {
                 if let Some(label) = label {
-                    self.label_error(label)
+                    self.label_error(label.span)
                 }
                 (true, self.expression())
             }
@@ -1075,7 +1093,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         )
     }
 
-    fn while_expr(&mut self, token: Span, label: Option<String>) -> Expr {
+    fn while_expr(&mut self, token: Span, label: Option<StrId>) -> Expr {
         let cond = self.precedence(Precedence::Min, EvalContext::IfWhile);
         let Located { span, data: body } = self.block();
         Expr::new(
@@ -1089,7 +1107,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         )
     }
 
-    fn loop_expr(&mut self, mut token: Span, label: Option<String>) -> Expr {
+    fn loop_expr(&mut self, mut token: Span, label: Option<StrId>) -> Expr {
         let body = self.block().data;
         let (cond, do_while) = self
             .next_if(Token::While)
@@ -1111,7 +1129,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         )
     }
 
-    fn for_expr(&mut self, token: Span, label: Option<String>) -> Expr {
+    fn for_expr(&mut self, token: Span, label: Option<StrId>) -> Expr {
         let patt = self.pattern(false);
         self.expect(Token::In);
         let iter = self.precedence(Precedence::Min, EvalContext::For);
@@ -1156,7 +1174,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         )
     }
 
-    fn block_expr(&mut self, token: Span, label: Option<String>) -> Expr {
+    fn block_expr(&mut self, token: Span, label: Option<StrId>) -> Expr {
         let mut stmts = Vec::new();
         let span = self.next_until(Token::RCurly, token, |this| {
             while this.next_if(Token::Semicolon).is_some() {}
@@ -1205,7 +1223,7 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn path_components(
         &mut self,
-        first: Option<Located<String>>,
+        first: Option<Located<StrId>>,
         outspan: &mut Span,
     ) -> Vec<PathComponent> {
         let mut data = first.map(|s| vec![(s, Vec::new())]).unwrap_or_default();
@@ -1257,7 +1275,11 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     //
 
-    fn int_pattern(negative: Option<Span>, t: &Located<Token>) -> Option<Located<IntPattern>> {
+    fn int_pattern(
+        strings: &mut Strings,
+        negative: Option<Span>,
+        t: &Located<Token>,
+    ) -> Option<Located<IntPattern>> {
         match t.data {
             Token::Int { base, value, width } => Some(Located::new(
                 negative
@@ -1266,8 +1288,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 IntPattern {
                     negative: negative.is_some(),
                     base,
-                    value: value.into(),
-                    width: width.map(|w| w.into()),
+                    value: strings.get_or_intern(value),
+                    width: width.map(|w| strings.get_or_intern(w)),
                 },
             )),
             Token::ByteChar(value) => Some(Located::new(
@@ -1277,8 +1299,8 @@ impl<'a, 'b> Parser<'a, 'b> {
                 IntPattern {
                     negative: negative.is_some(),
                     base: 10,
-                    value: value.to_string(),
-                    width: Some("u8".into()),
+                    value: strings.get_or_intern(value.to_string()),
+                    width: Some(strings.get_or_intern_static("u8")),
                 },
             )),
             _ => None,
@@ -1298,7 +1320,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         {
             let negative = self.next_if(Token::Minus);
             let Some(end) = self.expect_map(
-                |t| Self::int_pattern(negative.map(|t| t.span), t),
+                |strings, t| Self::int_pattern(strings, negative.map(|t| t.span), t),
                 "expected number",
             ) else {
                 return Located::new(start.span, Pattern::Error);
@@ -1326,10 +1348,10 @@ impl<'a, 'b> Parser<'a, 'b> {
             return Some(token.map(|_| Pattern::Bool(false)));
         } else if let Some(token) = self.next_if(Token::Void) {
             return Some(token.map(|_| Pattern::Void));
-        } else if let Some(string) = self.next_if_map(|t| {
+        } else if let Some(string) = self.next_if_map(|strings, t| {
             t.data
                 .as_string()
-                .map(|value| Located::new(t.span, value.to_string()))
+                .map(|value| Located::new(t.span, strings.get_or_intern(value)))
         }) {
             return Some(string.map(Pattern::String));
         }
@@ -1337,7 +1359,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         let range = self.next_if_pred(|t| matches!(t, Token::Range | Token::RangeInclusive));
         if let Some(token) = self.next_if(Token::Minus) {
             let Some(start) = self.expect_map(
-                |t| Self::int_pattern(Some(token.span), t),
+                |strings, t| Self::int_pattern(strings, Some(token.span), t),
                 "expected number",
             ) else {
                 return Some(Located::new(token.span, Pattern::Error));
@@ -1346,12 +1368,12 @@ impl<'a, 'b> Parser<'a, 'b> {
             return Some(self.maybe_range_pattern(range, start));
         }
 
-        if let Some(int) = self.next_if_map(|t| Self::int_pattern(None, t)) {
+        if let Some(int) = self.next_if_map(|strings, t| Self::int_pattern(strings, None, t)) {
             return Some(self.maybe_range_pattern(range, int));
         }
 
         if let Some(char) =
-            self.next_if_map(|t| t.data.as_char().map(|&ch| Located::new(t.span, ch)))
+            self.next_if_map(|_, t| t.data.as_char().map(|&ch| Located::new(t.span, ch)))
         {
             let range = if let Some(range) = range {
                 range
@@ -1364,7 +1386,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             };
 
             let Some(end) = self.expect_map(
-                |t| t.data.as_char().map(|&ch| Located::new(t.span, ch)),
+                |_, t| t.data.as_char().map(|&ch| Located::new(t.span, ch)),
                 "expected char",
             ) else {
                 return Some(Located::new(char.span, Pattern::Error));
@@ -1399,7 +1421,7 @@ impl<'a, 'b> Parser<'a, 'b> {
             if mutable || this.next_if(Token::Colon).is_none() {
                 let span = name.span;
                 Destructure {
-                    name: name.clone(),
+                    name,
                     mutable: mutable || mut_var,
                     pattern: name.map(|name| Pattern::Path(Path::from(Located::new(span, name)))),
                 }
@@ -1449,12 +1471,11 @@ impl<'a, 'b> Parser<'a, 'b> {
                                 let ident = this.expect_ident("expected name");
                                 Some((true, ident))
                             } else {
-                                let ident = this.next_if_map(|t| {
+                                Some(false).zip(this.next_if_map(|strings, t| {
                                     t.data
                                         .as_ident()
-                                        .map(|&i| Located::new(t.span, i.to_string()))
-                                });
-                                Some(false).zip(ident)
+                                        .map(|&i| Located::new(t.span, strings.get_or_intern(i)))
+                                }))
                             };
 
                             Located::new(token.span, Pattern::Rest(pattern))
@@ -2056,9 +2077,9 @@ impl<'a, 'b> Parser<'a, 'b> {
                 }
 
                 let patt = if my.is_some() && mutable {
-                    Pattern::MutBinding(THIS_PARAM.into())
+                    Pattern::MutBinding(Strings::THIS_PARAM)
                 } else {
-                    Pattern::Path(Path::from(Located::new(token.span, THIS_PARAM.to_string())))
+                    Pattern::Path(Path::from(Located::new(token.span, Strings::THIS_PARAM)))
                 };
 
                 params.push(Param {
@@ -2187,7 +2208,7 @@ impl<'a, 'b> Parser<'a, 'b> {
         res
     }
 
-    fn expect_fn_name(&mut self) -> Located<Either<String, OperatorFnType>> {
+    fn expect_fn_name(&mut self) -> Located<Either<StrId, OperatorFnType>> {
         let token = self.next();
         Located::new(
             token.span,
@@ -2215,10 +2236,10 @@ impl<'a, 'b> Parser<'a, 'b> {
                         Right(OperatorFnType::Subscript)
                     }
                 }
-                Token::Ident(name) => Left(name.into()),
+                Token::Ident(name) => Left(self.strings.get_or_intern(name)),
                 _ => {
                     self.error(Error::new("expected identifier", token.span));
-                    Left(String::new())
+                    Left(Strings::EMPTY)
                 }
             },
         )
@@ -2366,12 +2387,17 @@ impl<'a, 'b> Parser<'a, 'b> {
         self.next_if_pred(|t| t == &kind)
     }
 
-    fn next_if_map<T>(&mut self, f: impl FnOnce(&Located<Token>) -> Option<T>) -> Option<T> {
-        let mut outer = None;
-        self.next_if_l(|t| {
-            outer = f(t);
-            outer.is_some()
-        });
+    fn next_if_map<T>(
+        &mut self,
+        f: impl FnOnce(&mut Strings, &Located<Token>) -> Option<T>,
+    ) -> Option<T> {
+        let peek = self
+            .peek
+            .get_or_insert_with(|| self.lexer.next_skip_comments(self.diag));
+        let outer = f(self.strings, peek);
+        if outer.is_some() {
+            self.next();
+        }
         outer
     }
 
@@ -2399,11 +2425,14 @@ impl<'a, 'b> Parser<'a, 'b> {
 
     fn expect_map<T>(
         &mut self,
-        f: impl FnOnce(&Located<Token>) -> Option<T>,
+        f: impl FnOnce(&mut Strings, &Located<Token>) -> Option<T>,
         msg: &str,
     ) -> Option<T> {
-        let token = self.peek();
-        if let Some(res) = f(token) {
+        // self.peek() can't be called or the borrow checker will get mad
+        let token = self
+            .peek
+            .get_or_insert_with(|| self.lexer.next_skip_comments(self.diag));
+        if let Some(res) = f(self.strings, token) {
             self.next();
             Some(res)
         } else {
@@ -2424,16 +2453,16 @@ impl<'a, 'b> Parser<'a, 'b> {
         }
     }
 
-    fn expect_ident(&mut self, msg: &str) -> Located<String> {
+    fn expect_ident(&mut self, msg: &str) -> Located<StrId> {
         let token = self.peek();
         if let Token::Ident(ident) = token.data {
-            let name = Located::new(token.span, ident.into());
+            let name = Located::new(token.span, self.strings.get_or_intern(ident));
             self.next();
             name
         } else {
             let span = self.next().span;
             self.error(Error::new(msg, span));
-            Located::new(span, String::new())
+            Located::new(span, Strings::EMPTY)
         }
     }
 }

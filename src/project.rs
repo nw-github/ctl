@@ -1,12 +1,13 @@
 use std::collections::HashSet;
 
 use crate::{
+    CodegenFlags, Diagnostics, Span,
     ast::{Attribute, Attributes},
     dgraph::DependencyGraph,
+    intern::{StrId, Strings},
     sym::{FunctionId, Scopes, UserTypeId, VariableId},
     typecheck::{Completions, LspItem},
     typeid::{TypeId, Types},
-    CodegenFlags, Diagnostics, Span,
 };
 
 #[derive(Default)]
@@ -21,13 +22,15 @@ pub struct Project {
     pub static_deps: DependencyGraph<VariableId>,
     pub trait_deps: DependencyGraph<UserTypeId>,
     pub conf: Configuration,
+    pub strings: Strings,
 }
 
 impl Project {
-    pub fn new(conf: Configuration, diag: Diagnostics) -> Self {
+    pub fn new(conf: Configuration, diag: Diagnostics, strings: Strings) -> Self {
         Self {
             diag,
             conf,
+            strings,
             ..Default::default()
         }
     }
@@ -35,7 +38,7 @@ impl Project {
 
 #[derive(Debug, Clone)]
 pub struct Configuration {
-    features: HashSet<String>,
+    features: HashSet<StrId>,
     pub flags: CodegenFlags,
 }
 
@@ -43,28 +46,28 @@ impl Configuration {
     pub fn is_disabled_by_attrs(&self, attrs: &Attributes) -> bool {
         attrs
             .iter()
-            .filter(|f| f.name.data == "feature")
+            .filter(|f| f.name.data == Strings::ATTR_FEATURE)
             .any(|v| v.props.iter().any(|v| !self.has_attr_features(v)))
     }
 
-    pub fn has_feature(&self, feat: &str) -> bool {
-        self.features.contains(&feat.to_lowercase())
+    pub fn has_feature(&self, feat: StrId) -> bool {
+        self.features.contains(&feat)
     }
 
     pub fn has_attr_features(&self, attr: &Attribute) -> bool {
-        if attr.name.data != "not" || attr.props.is_empty() {
-            self.has_feature(&attr.name.data)
+        if attr.name.data != Strings::ATTR_NOT || attr.props.is_empty() {
+            self.has_feature(attr.name.data)
         } else {
-            !attr.props.iter().any(|v| self.has_feature(&v.name.data))
+            !attr.props.iter().any(|v| self.has_feature(v.name.data))
         }
     }
 
-    pub fn set_feature(&mut self, feat: String) {
+    pub fn set_feature(&mut self, feat: StrId) {
         self.features.insert(feat);
     }
 
-    pub fn remove_feature(&mut self, feat: &str) {
-        self.features.remove(feat);
+    pub fn remove_feature(&mut self, feat: StrId) {
+        self.features.remove(&feat);
     }
 }
 
@@ -72,10 +75,10 @@ impl Default for Configuration {
     fn default() -> Self {
         Self {
             features: [
-                "alloc".to_string(),
-                "io".into(),
-                "hosted".into(),
-                "boehm".into(),
+                Strings::FEAT_ALLOC,
+                Strings::FEAT_IO,
+                Strings::FEAT_HOSTED,
+                Strings::FEAT_BOEHM,
             ]
             .into(),
             flags: Default::default(),

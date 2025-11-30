@@ -1,4 +1,4 @@
-use crate::lexer::{Located, Token};
+use crate::{intern::StrId, lexer::{Located, Token}};
 use derive_more::{Deref, Display};
 
 use self::parsed::OperatorFnType;
@@ -9,7 +9,7 @@ pub mod parsed;
 
 #[derive(Debug, Clone)]
 pub struct Attribute {
-    pub name: Located<String>,
+    pub name: Located<StrId>,
     pub props: Vec<Attribute>,
 }
 
@@ -23,15 +23,15 @@ impl Attributes {
         Self { attrs }
     }
 
-    pub fn val(&self, name: &str) -> Option<&str> {
+    pub fn val(&self, name: StrId) -> Option<StrId> {
         self.attrs
             .iter()
             .find(|attr| attr.name.data == name)
             .and_then(|attr| attr.props.first())
-            .map(|attr| &attr.name.data[..])
+            .map(|attr| attr.name.data)
     }
 
-    pub fn has(&self, name: &str) -> bool {
+    pub fn has(&self, name: StrId) -> bool {
         self.attrs.iter().any(|attr| attr.name.data == name)
     }
 }

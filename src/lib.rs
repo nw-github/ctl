@@ -3,6 +3,7 @@ mod codegen;
 mod comptime_int;
 mod dgraph;
 mod error;
+mod intern;
 mod lexer;
 mod lsp;
 mod parser;
@@ -15,27 +16,23 @@ mod typeid;
 
 use std::path::{Path, PathBuf};
 
+use crate::{intern::Strings, parser::Parser, project::Configuration, typecheck::TypeChecker};
 use anyhow::{Context, Result};
 use ast::parsed::{Stmt, StmtData};
 use codegen::Codegen;
-pub use error::*;
 use indexmap::IndexMap;
-pub use lexer::*;
 use project::Project;
-pub use source::*;
 use typecheck::LspInput;
 
-use crate::{parser::Parser, project::Configuration, typecheck::TypeChecker};
-
+pub use error::*;
+pub use lexer::*;
 pub use lsp::LspBackend;
-
-pub(crate) const THIS_PARAM: &str = "this";
-pub(crate) const THIS_TYPE: &str = "This";
+pub use source::*;
 
 pub trait CompileState {}
 
 pub struct Source<T>(T);
-pub struct Parsed(Vec<Stmt>, Diagnostics, Configuration);
+pub struct Parsed(Vec<Stmt>, Diagnostics, Configuration, Strings);
 pub struct Checked(Project);
 
 impl<T> CompileState for Source<T> {}
@@ -72,25 +69,28 @@ impl<T: SourceProvider> Compiler<Source<T>> {
 
     pub fn parse(mut self, project: UnloadedProject) -> Result<Compiler<Parsed>> {
         let mut diag = Diagnostics::default();
+        let mut strings = Strings::new();
         let mut stmts = vec![];
         for (path, module) in project.mods {
-            stmts.push(self.load_module(&mut diag, path, module)?);
+            stmts.push(self.load_module(&mut diag, &mut strings, path, module)?);
         }
 
         Ok(Compiler {
-            state: Parsed(stmts, diag, project.conf),
+            state: Parsed(stmts, diag, project.conf, strings),
         })
     }
 
     fn load_module(
         &mut self,
         diag: &mut Diagnostics,
+        strings: &mut Strings,
         path: PathBuf,
         module: Module,
     ) -> Result<Stmt> {
+        let name = strings.get_or_intern(module.name);
         let mut parsed = self.state.0.get_source(&path, |src| {
             let file_id = diag.add_file(path.clone());
-            Parser::parse(src, module.name.clone(), diag, file_id)
+            Parser::parse(src, name, diag, strings, file_id)
         })?;
 
         let StmtData::Module { body, .. } = &mut parsed.data.data else {
@@ -99,7 +99,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
 
         // Load first so typechecking puts a redefinition error on duplicates inside the 'main.ctl'
         for (path, module) in module.mods {
-            body.push(self.load_module(diag, path, module)?);
+            body.push(self.load_module(diag, strings, path, module)?);
         }
 
         Ok(parsed)
@@ -130,6 +130,7 @@ impl Compiler<Parsed> {
                 self.state.1,
                 lsp,
                 self.state.2,
+                self.state.3,
             )),
         }
     }

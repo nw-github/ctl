@@ -5,11 +5,12 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     ast::{
+        Attributes,
         checked::{Expr as CheckedExpr, Pattern as CheckedPattern},
         parsed::{Expr, Path, Pattern, TypeHint, UsePath},
-        Attributes,
     },
     comptime_int::ComptimeInt,
+    intern::{StrId, Strings},
     lexer::{Located, Span},
     typeid::{GenericTrait, GenericUserType, Type, TypeId, Types},
 };
@@ -53,7 +54,7 @@ macro_rules! id {
                 }
             }
 
-            fn name<'a>(&self, scopes: &'a Scopes) -> &'a Located<String> {
+            fn name<'a>(&self, scopes: &'a Scopes) -> &'a Located<StrId> {
                 &scopes.$vec[self.0].name
             }
         }
@@ -105,14 +106,14 @@ pub struct LoopScopeKind {
     pub target: Option<TypeId>,
     pub breaks: LoopBreak,
     pub infinite: bool,
-    pub label: Option<String>,
+    pub label: Option<StrId>,
 }
 
 #[derive(Debug, Clone)]
 pub struct BlockScopeKind {
     pub target: Option<TypeId>,
     pub yields: bool,
-    pub label: Option<String>,
+    pub label: Option<StrId>,
     pub branches: bool,
 }
 
@@ -124,7 +125,7 @@ pub enum ScopeKind {
     Function(FunctionId),
     UserType(UserTypeId),
     Impl(usize),
-    Module(Located<String>),
+    Module(Located<StrId>),
     Static(VariableId),
     Defer,
     #[default]
@@ -132,7 +133,7 @@ pub enum ScopeKind {
 }
 
 impl ScopeKind {
-    pub fn name<'a, 'b>(&'a self, scopes: &'b Scopes) -> Option<&'b Located<String>>
+    pub fn name<'a, 'b>(&'a self, scopes: &'b Scopes) -> Option<&'b Located<StrId>>
     where
         'a: 'b,
     {
@@ -161,7 +162,7 @@ pub enum ParamPattern {
 pub enum TraitImplData {
     Path(Path),
     Operator {
-        tr: &'static str,
+        tr: StrId,
         ty_args: Vec<TypeHint>,
         span: Span,
     },
@@ -181,7 +182,7 @@ pub enum TraitImpl {
 #[derive(Debug, Clone)]
 pub struct CheckedParam {
     pub keyword: bool,
-    pub label: String,
+    pub label: StrId,
     pub patt: ParamPattern,
     pub ty: TypeId,
     pub default: Option<DefaultExpr>,
@@ -191,7 +192,7 @@ pub struct CheckedParam {
 pub struct Variable {
     pub attrs: Attributes,
     pub public: bool,
-    pub name: Located<String>,
+    pub name: Located<StrId>,
     pub ty: TypeId,
     pub is_static: bool,
     pub is_extern: bool,
@@ -205,7 +206,7 @@ pub struct Variable {
 pub struct Function {
     pub public: bool,
     pub attrs: Attributes,
-    pub name: Located<String>,
+    pub name: Located<StrId>,
     pub is_extern: bool,
     pub is_async: bool,
     pub is_unsafe: bool,
@@ -233,7 +234,7 @@ impl Function {
             && self
                 .params
                 .first()
-                .is_some_and(|p| p.label == crate::THIS_PARAM && types[p.ty].is_safe_ptr())
+                .is_some_and(|p| p.label == Strings::THIS_PARAM && types[p.ty].is_safe_ptr())
             && self
                 .params
                 .iter()
@@ -269,20 +270,22 @@ pub struct CheckedVariant {
 
 #[derive(Debug, Clone)]
 pub struct Union {
-    pub variants: IndexMap<String, CheckedVariant>,
+    pub variants: IndexMap<StrId, CheckedVariant>,
     pub tag: TypeId,
     pub enum_union: bool,
 }
 
 impl Union {
-    pub fn discriminant(&self, name: &str) -> Option<&ComptimeInt> {
-        self.variants.get(name).and_then(|v| v.discrim.as_checked())
+    pub fn discriminant(&self, name: StrId) -> Option<&ComptimeInt> {
+        self.variants
+            .get(&name)
+            .and_then(|v| v.discrim.as_checked())
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct PackedStruct {
-    pub bit_offsets: HashMap<String, u32>,
+    pub bit_offsets: HashMap<StrId, u32>,
     pub size: usize,
     pub align: usize,
 }
@@ -313,7 +316,7 @@ impl HasTypeParams for ImplBlockData {
 pub struct UserType {
     pub attrs: Attributes,
     pub public: bool,
-    pub name: Located<String>,
+    pub name: Located<StrId>,
     pub body_scope: ScopeId,
     pub kind: UserTypeKind,
     pub impls: Vec<TraitImpl>,
@@ -321,29 +324,29 @@ pub struct UserType {
     pub type_params: Vec<UserTypeId>,
     pub fns: Vec<Vis<FunctionId>>,
     pub subscripts: Vec<FunctionId>,
-    pub members: IndexMap<String, CheckedMember>,
+    pub members: IndexMap<StrId, CheckedMember>,
     pub members_resolved: bool,
     pub recursive: bool,
 }
 
 impl UserType {
-    pub fn find_associated_fn(&self, scopes: &Scopes, name: &str) -> Option<FunctionId> {
+    pub fn find_associated_fn(&self, scopes: &Scopes, name: StrId) -> Option<FunctionId> {
         self.fns
             .iter()
             .map(|f| f.id)
             .find(|&id| scopes.get(id).name.data == name)
     }
 
-    pub fn is_empty_variant(&self, variant: &str) -> bool {
+    pub fn is_empty_variant(&self, variant: StrId) -> bool {
         self.members.is_empty()
             && self
                 .kind
                 .as_union()
-                .and_then(|u| u.variants.get(variant))
+                .and_then(|u| u.variants.get(&variant))
                 .is_some_and(|u| u.ty.is_none())
     }
 
-    pub fn template(name: Located<String>, scope: ScopeId, impls: Vec<TraitImpl>) -> Self {
+    pub fn template(name: Located<StrId>, scope: ScopeId, impls: Vec<TraitImpl>) -> Self {
         Self {
             public: false,
             name,
@@ -399,7 +402,7 @@ pub trait ItemId: Sized + Copy + Clone {
 
     fn get(self, scopes: &Scopes) -> &Scoped<Self::Value>;
     fn get_mut(self, scopes: &mut Scopes) -> &mut Scoped<Self::Value>;
-    fn name<'a>(&self, scopes: &'a Scopes) -> &'a Located<String>;
+    fn name<'a>(&self, scopes: &'a Scopes) -> &'a Located<StrId>;
 
     fn insert_in(
         scopes: &mut Scopes,
@@ -428,18 +431,18 @@ pub struct Scope {
     pub public: bool,
     pub kind: ScopeKind,
     pub parent: Option<ScopeId>,
-    pub tns: HashMap<String, Vis<TypeItem>>,
-    pub vns: HashMap<String, Vis<ValueItem>>,
+    pub tns: HashMap<StrId, Vis<TypeItem>>,
+    pub vns: HashMap<StrId, Vis<ValueItem>>,
     pub use_stmts: Vec<UsePath>,
 }
 
 impl Scope {
-    pub fn find_in_tns(&self, name: &str) -> Option<Vis<TypeItem>> {
-        self.tns.get(name).copied()
+    pub fn find_in_tns(&self, name: StrId) -> Option<Vis<TypeItem>> {
+        self.tns.get(&name).copied()
     }
 
-    pub fn find_in_vns(&self, name: &str) -> Option<Vis<ValueItem>> {
-        self.vns.get(name).copied()
+    pub fn find_in_vns(&self, name: StrId) -> Option<Vis<ValueItem>> {
+        self.vns.get(&name).copied()
     }
 }
 
@@ -449,13 +452,12 @@ pub struct Scopes {
     types: Vec<Scoped<UserType>>,
     vars: Vec<Scoped<Variable>>,
     tuples: HashMap<usize, UserTypeId>,
-    structs: HashMap<Vec<String>, UserTypeId>,
-    pub lang_types: HashMap<String, UserTypeId>,
-    pub lang_traits: HashMap<String, TraitId>,
-    pub lang_fns: HashMap<String, FunctionId>,
-    pub intrinsics: HashMap<FunctionId, String>,
-    pub autouse_tns: HashMap<String, Vis<TypeItem>>,
-    pub autouse_vns: HashMap<String, Vis<ValueItem>>,
+    structs: HashMap<Vec<StrId>, UserTypeId>,
+    pub lang_types: HashMap<StrId, UserTypeId>,
+    pub lang_fns: HashMap<StrId, FunctionId>,
+    pub intrinsics: HashMap<FunctionId, StrId>,
+    pub autouse_tns: HashMap<StrId, Vis<TypeItem>>,
+    pub autouse_vns: HashMap<StrId, Vis<ValueItem>>,
 }
 
 impl Scopes {
@@ -468,7 +470,6 @@ impl Scopes {
             tuples: HashMap::new(),
             structs: HashMap::new(),
             lang_types: HashMap::new(),
-            lang_traits: HashMap::new(),
             lang_fns: HashMap::new(),
             intrinsics: HashMap::new(),
             autouse_tns: HashMap::new(),
@@ -520,11 +521,11 @@ impl Scopes {
     }
 
     pub fn get_option_id(&self) -> Option<UserTypeId> {
-        self.lang_types.get("option").copied()
+        self.lang_types.get(&Strings::LANG_OPTION).copied()
     }
 
-    pub fn intrinsic_name(&self, id: FunctionId) -> Option<&str> {
-        self.intrinsics.get(&id).map(|s| s.as_str())
+    pub fn intrinsic_name(&self, id: FunctionId) -> Option<StrId> {
+        self.intrinsics.get(&id).copied()
     }
 
     pub fn get<T: ItemId>(&self, id: T) -> &Scoped<T::Value> {
@@ -535,7 +536,12 @@ impl Scopes {
         id.get_mut(self)
     }
 
-    pub fn get_tuple(&mut self, ty_args: Vec<TypeId>, types: &mut Types) -> TypeId {
+    pub fn get_tuple(
+        &mut self,
+        ty_args: Vec<TypeId>,
+        strings: &mut Strings,
+        types: &mut Types,
+    ) -> TypeId {
         let id = if let Some(id) = self.tuples.get(&ty_args.len()) {
             *id
         } else {
@@ -574,12 +580,15 @@ impl Scopes {
                         .map(|(i, id)| {
                             let ty = Type::User(GenericUserType::from_id(self, types, *id));
                             (
-                                format!("{i}"),
+                                strings.get_or_intern(format!("{i}")),
                                 CheckedMember::new(true, types.insert(ty), Span::default()),
                             )
                         })
                         .collect(),
-                    name: Located::new(Span::default(), format!("$tuple{}", ty_args.len())),
+                    name: Located::new(
+                        Span::default(),
+                        strings.get_or_intern(format!("$tuple{}", ty_args.len())),
+                    ),
                     body_scope: ScopeId::ROOT,
                     type_params,
                     kind: UserTypeKind::Tuple,
@@ -605,8 +614,9 @@ impl Scopes {
 
     pub fn get_anon_struct(
         &mut self,
-        names: Vec<String>,
+        names: Vec<StrId>,
         ty_args: Vec<TypeId>,
+        strings: &mut Strings,
         types: &mut Types,
     ) -> TypeId {
         let id = if let Some(id) = self.structs.get(&names) {
@@ -647,12 +657,12 @@ impl Scopes {
                         .map(|(i, id)| {
                             let ty = Type::User(GenericUserType::from_id(self, types, *id));
                             (
-                                names[i].clone(),
+                                names[i],
                                 CheckedMember::new(true, types.insert(ty), Span::default()),
                             )
                         })
                         .collect(),
-                    name: Located::new(Span::default(), "$anonstruct".into()),
+                    name: Located::new(Span::default(), strings.get_or_intern("$anonstruct")),
                     body_scope: ScopeId::ROOT,
                     kind: UserTypeKind::AnonStruct,
                     type_params,
@@ -717,18 +727,18 @@ impl Scopes {
 
     pub fn has_builtin_impl(&self, types: &Types, id: TypeId, bound: &GenericTrait) -> bool {
         let ty = &types[id];
-        if ty.is_numeric() && Some(&bound.id) == self.lang_traits.get("numeric") {
+        if ty.is_numeric() && Some(&bound.id) == self.lang_types.get(&Strings::LANG_NUMERIC) {
             return true;
         }
 
         if let Some(int) = ty.as_integral(false) {
-            if Some(&bound.id) == self.lang_traits.get("integral") {
+            if Some(&bound.id) == self.lang_types.get(&Strings::LANG_INTEGRAL) {
                 return true;
             }
-            if int.signed && Some(&bound.id) == self.lang_traits.get("signed") {
+            if int.signed && Some(&bound.id) == self.lang_types.get(&Strings::LANG_SIGNED) {
                 return true;
             }
-            if !int.signed && Some(&bound.id) == self.lang_traits.get("unsigned") {
+            if !int.signed && Some(&bound.id) == self.lang_types.get(&Strings::LANG_UNSIGNED) {
                 return true;
             }
         }
@@ -737,7 +747,10 @@ impl Scopes {
     }
 
     pub fn borrow_twice(&mut self, a: ScopeId, b: ScopeId) -> Option<(&mut Scope, &mut Scope)> {
-        self.scopes.get_disjoint_mut([a.0, b.0]).ok().map(|[a, b]| (a, b))
+        self.scopes
+            .get_disjoint_mut([a.0, b.0])
+            .ok()
+            .map(|[a, b]| (a, b))
     }
 }
 
