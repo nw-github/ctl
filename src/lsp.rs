@@ -37,6 +37,12 @@ macro_rules! info {
     }};
 }
 
+macro_rules! error {
+    ($self: expr, $($arg: tt)*) => {{
+        $self.client.log_message(MessageType::ERROR, format!($($arg)*)).await
+    }};
+}
+
 macro_rules! debug {
     ($self: expr, $($arg: tt)*) => {{
         #[cfg(debug_assertions)]
@@ -467,7 +473,7 @@ impl LspBackend {
         }
     }
 
-    fn make_diagnostic(
+    async fn make_diagnostic(
         &self,
         diag: &Diagnostics,
         provider: &mut impl SourceProvider,
@@ -483,7 +489,12 @@ impl LspBackend {
             return;
         };
 
-        let entry = all.entry(Url::from_file_path(path).unwrap()).or_default();
+        let Ok(path) = Url::from_file_path(path) else {
+            error!(self, "Couldn't turn path '{}' into a Url", path.display());
+            return;
+        };
+
+        let entry = all.entry(path).or_default();
         entry.push(Diagnostic {
             range,
             severity: Some(severity),
@@ -567,7 +578,7 @@ impl LspBackend {
                 &err.message,
                 DiagnosticSeverity::ERROR,
                 &mut all,
-            );
+            ).await;
         }
 
         for err in proj.diag.warnings() {
@@ -578,7 +589,7 @@ impl LspBackend {
                 &err.message,
                 DiagnosticSeverity::WARNING,
                 &mut all,
-            );
+            ).await;
         }
 
         for &span in proj.diag.inactive() {
@@ -589,7 +600,7 @@ impl LspBackend {
                 "this region is disabled",
                 DiagnosticSeverity::HINT,
                 &mut all,
-            );
+            ).await;
         }
 
         proj.lsp_items.sort_by_key(|(_, span)| span.pos);
@@ -855,6 +866,13 @@ fn get_semantic_token(
                 } else {
                     (token::TYPE, token::NO_MODS)
                 }
+            } else if scopes
+                .get(id)
+                .params
+                .first()
+                .is_some_and(|p| p.label == Strings::THIS_PARAM && types[p.ty].is_mut_ptr())
+            {
+                (token::FUNCTION, token::MUTABLE)
             } else {
                 (token::FUNCTION, token::NO_MODS)
             }
