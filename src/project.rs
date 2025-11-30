@@ -18,6 +18,7 @@ pub struct Project {
     pub completions: Option<Completions>,
     pub lsp_items: Vec<(LspItem, Span)>,
     pub main: Option<FunctionId>,
+    pub panic_handler: Option<FunctionId>,
     pub deps: DependencyGraph<TypeId>,
     pub static_deps: DependencyGraph<VariableId>,
     pub trait_deps: DependencyGraph<UserTypeId>,

@@ -471,6 +471,17 @@ impl TypeChecker {
             }
         }
 
+        if this.proj.panic_handler.is_none() {
+            this.proj.diag.error(Error::new(
+                "missing panic handler function",
+                Span {
+                    file: last_file_id.unwrap_or_default(),
+                    pos: 0,
+                    len: 0,
+                },
+            ));
+        }
+
         for (_, var) in this.proj.scopes.vars() {
             let data = strdata!(this, var.name.data);
             if !var.unused || var.name.data == Strings::THIS_PARAM || data.starts_with('_') {
@@ -1435,15 +1446,6 @@ impl TypeChecker {
         let mut allow_safe_extern = false;
         for attr in self.proj.scopes.get::<FunctionId>(id).attrs.clone().iter() {
             match attr.name.data {
-                Strings::ATTR_LANG => {
-                    let Some(inner) = attr.props.first() else {
-                        self.proj
-                            .diag
-                            .error(Error::new("language item must have name", attr.name.span));
-                        continue;
-                    };
-                    self.proj.scopes.lang_fns.insert(inner.name.data, id);
-                }
                 Strings::ATTR_INSTRINSIC => {
                     allow_safe_extern = true;
                     let (name, span) = if let Some(attr) = attr.props.first() {
@@ -2195,6 +2197,21 @@ impl TypeChecker {
             }
 
             let func = this.proj.scopes.get(id);
+            if func.attrs.has(Strings::ATTR_PANIC_HANDLER) {
+                if let Some(_old) = this.proj.panic_handler.replace(id) {
+                    // TODO: report that it was previously defined at the span of _old
+                    this.proj.diag.error(Error::new("a panic handler already exists", func.name.span));
+                }
+
+                let str = this.proj.scopes.lang_types.get(&Strings::LANG_STRING);
+                if str.is_none_or(|str| func.params.first().is_none_or(|p| this.proj.types[p.ty].as_user().is_none_or(|ut| ut.id != *str)))
+                    || func.params.len() != 1
+                    || func.ret != TypeId::NEVER
+                {
+                    this.proj.diag.error(Error::new("panic handler must have signature fn(str) => never", func.name.span));
+                }
+            }
+
             if let Some(ut_id) = func.constructor {
                 let args = func
                     .params

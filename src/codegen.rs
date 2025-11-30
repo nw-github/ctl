@@ -2539,10 +2539,7 @@ impl<'a> Codegen<'a> {
                     GenericFn::from_id(
                         &self.proj.scopes,
                         self.proj
-                            .scopes
-                            .lang_fns
-                            .get(&Strings::ATTR_PANIC_HANDLER)
-                            .cloned()
+                            .panic_handler
                             .expect("a panic handler should exist"),
                     ),
                     &self.proj.scopes,

@@ -17,7 +17,7 @@ pub fn exit(code: u32): never {
 }
 
 @(feature(hosted, io))
-@(lang(panic_handler))
+@(panic_handler)
 fn panic_handler(s: str): never {
     io::eprint("fatal error: ");
     io::eprintln(s);
