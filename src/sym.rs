@@ -583,8 +583,7 @@ impl Scopes {
                             )
                         })
                         .collect(),
-                    name: Located::new(
-                        Span::default(),
+                    name: Located::nowhere(
                         strings.get_or_intern(format!("$tuple{}", ty_args.len())),
                     ),
                     body_scope: ScopeId::ROOT,
@@ -660,7 +659,7 @@ impl Scopes {
                             )
                         })
                         .collect(),
-                    name: Located::new(Span::default(), strings.get_or_intern("$anonstruct")),
+                    name: Located::nowhere(strings.get_or_intern("$anonstruct")),
                     body_scope: ScopeId::ROOT,
                     kind: UserTypeKind::AnonStruct,
                     type_params,

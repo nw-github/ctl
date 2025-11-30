@@ -276,6 +276,13 @@ impl<T> Located<T> {
     pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Located<U> {
         Located::new(self.span, f(self.data))
     }
+
+    pub fn nowhere(data: T) -> Self {
+        Self {
+            span: Span::default(),
+            data,
+        }
+    }
 }
 
 impl<T: std::fmt::Debug> std::fmt::Debug for Located<T> {

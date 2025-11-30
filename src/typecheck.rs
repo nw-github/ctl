@@ -865,10 +865,8 @@ impl TypeChecker {
                         .iter()
                         .map(|member| Param {
                             keyword: true,
-                            patt: Located::new(
-                                Span::default(), // use default span so hovers ignore this
-                                Pattern::Path(Path::from(member.name)),
-                            ),
+                            // use default span so hovers ignore this
+                            patt: Located::nowhere(Pattern::Path(Path::from(member.name))),
                             ty: member.ty.clone(),
                             default: member.default.clone(),
                         })
@@ -1038,10 +1036,8 @@ impl TypeChecker {
 
                             params.push(Param {
                                 keyword: true,
-                                patt: Located::new(
-                                    Span::default(), // use default span so hovers ignore this
-                                    Pattern::Path(Path::from(member.name)),
-                                ),
+                                // use default span so hovers ignore this
+                                patt: Located::nowhere(Pattern::Path(Path::from(member.name))),
                                 ty: member.ty,
                                 default: member.default,
                             });
@@ -1066,13 +1062,9 @@ impl TypeChecker {
                         for (i, (ty, default)) in members.into_iter().enumerate() {
                             params.push(Param {
                                 keyword: false,
-                                patt: Located::new(
-                                    Span::default(),
-                                    Pattern::Path(Path::from(Located::new(
-                                        Span::default(),
-                                        intern!(this, "{i}"),
-                                    ))),
-                                ),
+                                patt: Located::nowhere(Pattern::Path(Path::from(
+                                    Located::nowhere(intern!(this, "{i}")),
+                                ))),
                                 ty,
                                 default,
                             });
@@ -4257,7 +4249,7 @@ impl TypeChecker {
             let name = intern!(this, "$iter{}", this.current.0);
             let iter_var = this.insert::<VariableId>(
                 Variable {
-                    name: Located::new(Span::default(), name),
+                    name: Located::nowhere(name),
                     ty: iter.ty,
                     mutable: true,
                     value: None,
@@ -7042,7 +7034,7 @@ impl TypeChecker {
                     return self.error(Error::no_lang_item("option", pattern.span));
                 };
                 let value = self.resolve_value_path_in(
-                    &[(Located::new(Span::default(), Strings::SOME), vec![])],
+                    &[(Located::nowhere(Strings::SOME), vec![])],
                     Default::default(),
                     self.proj.scopes.get(id).body_scope,
                     pattern.span,
