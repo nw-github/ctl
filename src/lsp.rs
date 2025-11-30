@@ -289,155 +289,7 @@ impl LanguageServer for LspBackend {
         let completions = completions
             .items
             .iter()
-            .flat_map(|completion| {
-                Some(match completion {
-                    LspItem::Property(_, id, name) => {
-                        let ut = scopes.get(*id);
-                        let member = ut.members.get(name).unwrap();
-                        let detail = member.ty.name(scopes, types, strings);
-                        CompletionItem {
-                            label: strings.resolve(name).into(),
-                            kind: Some(CompletionItemKind::FIELD),
-                            label_details: Some(CompletionItemLabelDetails {
-                                detail: None,
-                                description: Some(detail.clone()),
-                            }),
-                            detail: Some(detail),
-                            ..Default::default()
-                        }
-                    }
-                    &LspItem::Fn(id, owner) => {
-                        let f = scopes.get(id);
-                        let empty_variant =
-                            owner.is_some_and(|id| scopes.get(id).is_empty_variant(f.name.data));
-                        let name = strings.resolve(&f.name.data);
-                        let insert_text = (!empty_variant).then(|| {
-                            let mut text = format!("{name}(");
-                            for (i, param) in f
-                                .params
-                                .iter()
-                                .filter(|p| !completions.method || p.label != Strings::THIS_PARAM)
-                                .enumerate()
-                            {
-                                if i > 0 {
-                                    text += ", ";
-                                }
-                                let label = strings.resolve(&param.label);
-                                if param.keyword {
-                                    write_de!(text, "{label}: ${{{}:{label}}}", i + 1,);
-                                } else {
-                                    write_de!(text, "${{{}:{label}}}", i + 1);
-                                }
-                            }
-                            text += ")";
-                            text
-                        });
-                        let desc = visualize_func(id, true, scopes, types, strings);
-                        CompletionItem {
-                            label: name.into(),
-                            label_details: Some(CompletionItemLabelDetails {
-                                detail: owner.and_then(|owner| match &scopes.get(owner).kind {
-                                    UserTypeKind::Extension(_) => Some(format!(
-                                        " (from {})",
-                                        strings.resolve(&scopes.get(owner).name.data)
-                                    )),
-                                    UserTypeKind::Trait(_, _) => Some(format!(
-                                        " (as {})",
-                                        strings.resolve(&scopes.get(owner).name.data)
-                                    )),
-                                    _ => None,
-                                }),
-                                description: desc.clone().into(),
-                            }),
-                            kind: Some(
-                                if f.constructor
-                                    .is_some_and(|id| scopes.get(id).kind.is_union())
-                                {
-                                    CompletionItemKind::ENUM_MEMBER
-                                } else if f.constructor.is_some() {
-                                    CompletionItemKind::CONSTRUCTOR
-                                } else if f
-                                    .params
-                                    .first()
-                                    .is_some_and(|p| p.label == Strings::THIS_PARAM)
-                                {
-                                    CompletionItemKind::METHOD
-                                } else {
-                                    CompletionItemKind::FUNCTION
-                                },
-                            ),
-                            detail: desc.into(),
-                            insert_text,
-                            insert_text_format: Some(InsertTextFormat::SNIPPET),
-                            ..Default::default()
-                        }
-                    }
-                    &LspItem::Type(id) => {
-                        let ut = scopes.get(id);
-                        let name = strings.resolve(&ut.name.data).to_string();
-                        CompletionItem {
-                            label: name.clone(),
-                            kind: Some(match ut.kind {
-                                UserTypeKind::Union(_) => CompletionItemKind::ENUM,
-                                UserTypeKind::Trait(_, _) => CompletionItemKind::INTERFACE,
-                                UserTypeKind::Template => CompletionItemKind::TYPE_PARAMETER,
-                                _ => CompletionItemKind::STRUCT,
-                            }),
-                            label_details: Some(CompletionItemLabelDetails {
-                                detail: None,
-                                description: Some(name.clone()),
-                            }),
-                            detail: Some(name),
-                            ..Default::default()
-                        }
-                    }
-                    &LspItem::Module(id) => {
-                        let name = strings
-                            .resolve(&scopes[id].kind.name(scopes).unwrap().data)
-                            .to_string();
-                        CompletionItem {
-                            label: name.clone(),
-                            kind: Some(CompletionItemKind::MODULE),
-                            label_details: Some(CompletionItemLabelDetails {
-                                detail: None,
-                                description: Some(name.clone()),
-                            }),
-                            detail: Some(name),
-                            ..Default::default()
-                        }
-                    }
-                    &LspItem::Var(id) | &LspItem::FnParamLabel(id, _) => {
-                        let var = scopes.get(id);
-                        let typ = var.ty.name(scopes, types, strings);
-                        let name = strings.resolve(&var.name.data).to_string();
-                        CompletionItem {
-                            label: name.clone(),
-                            kind: Some(if var.is_static {
-                                CompletionItemKind::CONSTANT
-                            } else {
-                                CompletionItemKind::VARIABLE
-                            }),
-                            label_details: Some(CompletionItemLabelDetails {
-                                detail: None,
-                                description: Some(typ),
-                            }),
-                            detail: Some(name),
-                            ..Default::default()
-                        }
-                    }
-                    &LspItem::BuiltinType(name) => CompletionItem {
-                        label: name.into(),
-                        kind: Some(CompletionItemKind::STRUCT),
-                        label_details: Some(CompletionItemLabelDetails {
-                            detail: None,
-                            description: Some(name.into()),
-                        }),
-                        detail: Some(name.into()),
-                        ..Default::default()
-                    },
-                    _ => return None,
-                })
-            })
+            .flat_map(|item| get_completion(scopes, types, strings, item, completions.method))
             .collect();
         Ok(Some(CompletionResponse::Array(completions)))
     }
@@ -527,7 +379,21 @@ impl LanguageServer for LspBackend {
         self.with_proj_and_doc(&params.text_document.uri, async |doc, path, file, proj| {
             let tokens = doc.semantic_tokens.get_or_try(|| {
                 self.with_source(path, &mut FileSourceProvider, |src| {
-                    get_semantic_tokens(&proj.scopes, &proj.types, &doc.lsp_items, src, file)
+                    let [mut prev_line, mut prev_start] = [0; 2];
+                    doc.lsp_items
+                        .iter()
+                        .filter(|(_, span)| span.file == file)
+                        .flat_map(|item| {
+                            get_semantic_token(
+                                &proj.scopes,
+                                &proj.types,
+                                item,
+                                src,
+                                &mut prev_line,
+                                &mut prev_start,
+                            )
+                        })
+                        .collect()
                 })
             });
 
@@ -958,68 +824,220 @@ fn get_inlay_hints(
 }
 
 /// Assumes items is filtered by FileId and sorted by Span position
-fn get_semantic_tokens(
+fn get_semantic_token(
     scopes: &Scopes,
     types: &Types,
-    items: &[(LspItem, Span)],
+    (item, span): &(LspItem, Span),
     src: &str,
-    file: FileId,
-) -> Vec<SemanticToken> {
-    let mut tokens = vec![];
-    let [mut prev_line, mut prev_start] = [0; 2];
-    for (item, span) in items.iter().filter(|(_, span)| span.file == file) {
-        let (token_type, token_modifiers_bitset) = match item {
-            // LspItem::Module(scope_id) => todo!(),
-            // LspItem::Underscore(type_id) => todo!(),
-            LspItem::Property(_, _, _) => (token::VARIABLE, token::NO_MODS),
-            LspItem::FnParamLabel(_, _) => (token::VARIABLE, token::NO_MODS),
-            &LspItem::Var(id) => {
-                let var = scopes.get(id);
-                let mods = if var.mutable || types[var.ty].is_mut_ptr() {
-                    token::MUTABLE
-                } else {
-                    token::NO_MODS
-                };
-                (token::VARIABLE, mods)
-            }
-            LspItem::Type(_) => (token::TYPE, token::NO_MODS),
-            LspItem::BuiltinType(_) => (token::TYPE, token::NO_MODS),
-            &LspItem::Fn(id, _) => {
-                if let Some(id) = scopes.get(id).constructor {
-                    if scopes.get(id).kind.is_union() {
-                        (token::ENUM_MEMBER, token::NO_MODS)
-                    } else {
-                        (token::TYPE, token::NO_MODS)
-                    }
-                } else {
-                    (token::FUNCTION, token::NO_MODS)
-                }
-            }
-            _ => continue,
-        };
-
-        let r = Diagnostics::get_span_range(src, *span, OffsetMode::Utf16);
-        let line = r.start.line;
-        let start = r.start.character;
-
-        // TODO: save the other semantic tokens so they don't have to be recalculated
-        tokens.push(SemanticToken {
-            delta_line: line - prev_line,
-            delta_start: if line == prev_line {
-                start - prev_start
+    prev_line: &mut u32,
+    prev_start: &mut u32,
+) -> Option<SemanticToken> {
+    let (token_type, token_modifiers_bitset) = match item {
+        // LspItem::Module(scope_id) => todo!(),
+        // LspItem::Underscore(type_id) => todo!(),
+        LspItem::Property(_, _, _) => (token::VARIABLE, token::NO_MODS),
+        LspItem::FnParamLabel(_, _) => (token::VARIABLE, token::NO_MODS),
+        &LspItem::Var(id) => {
+            let var = scopes.get(id);
+            let mods = if var.mutable || types[var.ty].is_mut_ptr() {
+                token::MUTABLE
             } else {
-                start
-            },
-            length: span.len, // TODO: use UTF-16 length
-            token_type,
-            token_modifiers_bitset,
-        });
+                token::NO_MODS
+            };
+            (token::VARIABLE, mods)
+        }
+        LspItem::Type(_) => (token::TYPE, token::NO_MODS),
+        LspItem::BuiltinType(_) => (token::TYPE, token::NO_MODS),
+        &LspItem::Fn(id, _) => {
+            if let Some(id) = scopes.get(id).constructor {
+                if scopes.get(id).kind.is_union() {
+                    (token::ENUM_MEMBER, token::NO_MODS)
+                } else {
+                    (token::TYPE, token::NO_MODS)
+                }
+            } else {
+                (token::FUNCTION, token::NO_MODS)
+            }
+        }
+        _ => return None,
+    };
 
-        prev_line = line;
-        prev_start = start;
-    }
+    let r = Diagnostics::get_span_range(src, *span, OffsetMode::Utf16);
+    let line = r.start.line;
+    let start = r.start.character;
 
-    tokens
+    // TODO: save the other semantic tokens so they don't have to be recalculated
+    let token = SemanticToken {
+        delta_line: line - *prev_line,
+        delta_start: if line == *prev_line {
+            start - *prev_start
+        } else {
+            start
+        },
+        length: span.len, // TODO: use UTF-16 length
+        token_type,
+        token_modifiers_bitset,
+    };
+
+    *prev_line = line;
+    *prev_start = start;
+    Some(token)
+}
+
+fn get_completion(
+    scopes: &Scopes,
+    types: &mut Types,
+    strings: &Strings,
+    completion: &LspItem,
+    method: bool,
+) -> Option<CompletionItem> {
+    Some(match completion {
+        LspItem::Property(_, id, name) => {
+            let ut = scopes.get(*id);
+            let member = ut.members.get(name).unwrap();
+            let detail = member.ty.name(scopes, types, strings);
+            CompletionItem {
+                label: strings.resolve(name).into(),
+                kind: Some(CompletionItemKind::FIELD),
+                label_details: Some(CompletionItemLabelDetails {
+                    detail: None,
+                    description: Some(detail.clone()),
+                }),
+                detail: Some(detail),
+                ..Default::default()
+            }
+        }
+        &LspItem::Fn(id, owner) => {
+            let f = scopes.get(id);
+            let empty_variant =
+                owner.is_some_and(|id| scopes.get(id).is_empty_variant(f.name.data));
+            let name = strings.resolve(&f.name.data);
+            let insert_text = (!empty_variant).then(|| {
+                let mut text = format!("{name}(");
+                for (i, param) in f
+                    .params
+                    .iter()
+                    .filter(|p| !method || p.label != Strings::THIS_PARAM)
+                    .enumerate()
+                {
+                    if i > 0 {
+                        text += ", ";
+                    }
+                    let label = strings.resolve(&param.label);
+                    if param.keyword {
+                        write_de!(text, "{label}: ${{{}:{label}}}", i + 1,);
+                    } else {
+                        write_de!(text, "${{{}:{label}}}", i + 1);
+                    }
+                }
+                text += ")";
+                text
+            });
+            let desc = visualize_func(id, true, scopes, types, strings);
+            CompletionItem {
+                label: name.into(),
+                label_details: Some(CompletionItemLabelDetails {
+                    detail: owner.and_then(|owner| match &scopes.get(owner).kind {
+                        UserTypeKind::Extension(_) => Some(format!(
+                            " (from {})",
+                            strings.resolve(&scopes.get(owner).name.data)
+                        )),
+                        UserTypeKind::Trait(_, _) => Some(format!(
+                            " (as {})",
+                            strings.resolve(&scopes.get(owner).name.data)
+                        )),
+                        _ => None,
+                    }),
+                    description: desc.clone().into(),
+                }),
+                kind: Some(
+                    if f.constructor
+                        .is_some_and(|id| scopes.get(id).kind.is_union())
+                    {
+                        CompletionItemKind::ENUM_MEMBER
+                    } else if f.constructor.is_some() {
+                        CompletionItemKind::CONSTRUCTOR
+                    } else if f
+                        .params
+                        .first()
+                        .is_some_and(|p| p.label == Strings::THIS_PARAM)
+                    {
+                        CompletionItemKind::METHOD
+                    } else {
+                        CompletionItemKind::FUNCTION
+                    },
+                ),
+                detail: desc.into(),
+                insert_text,
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                ..Default::default()
+            }
+        }
+        &LspItem::Type(id) => {
+            let ut = scopes.get(id);
+            let name = strings.resolve(&ut.name.data).to_string();
+            CompletionItem {
+                label: name.clone(),
+                kind: Some(match ut.kind {
+                    UserTypeKind::Union(_) => CompletionItemKind::ENUM,
+                    UserTypeKind::Trait(_, _) => CompletionItemKind::INTERFACE,
+                    UserTypeKind::Template => CompletionItemKind::TYPE_PARAMETER,
+                    _ => CompletionItemKind::STRUCT,
+                }),
+                label_details: Some(CompletionItemLabelDetails {
+                    detail: None,
+                    description: Some(name.clone()),
+                }),
+                detail: Some(name),
+                ..Default::default()
+            }
+        }
+        &LspItem::Module(id) => {
+            let name = strings
+                .resolve(&scopes[id].kind.name(scopes).unwrap().data)
+                .to_string();
+            CompletionItem {
+                label: name.clone(),
+                kind: Some(CompletionItemKind::MODULE),
+                label_details: Some(CompletionItemLabelDetails {
+                    detail: None,
+                    description: Some(name.clone()),
+                }),
+                detail: Some(name),
+                ..Default::default()
+            }
+        }
+        &LspItem::Var(id) | &LspItem::FnParamLabel(id, _) => {
+            let var = scopes.get(id);
+            let typ = var.ty.name(scopes, types, strings);
+            let name = strings.resolve(&var.name.data).to_string();
+            CompletionItem {
+                label: name.clone(),
+                kind: Some(if var.is_static {
+                    CompletionItemKind::CONSTANT
+                } else {
+                    CompletionItemKind::VARIABLE
+                }),
+                label_details: Some(CompletionItemLabelDetails {
+                    detail: None,
+                    description: Some(typ),
+                }),
+                detail: Some(name),
+                ..Default::default()
+            }
+        }
+        &LspItem::BuiltinType(name) => CompletionItem {
+            label: name.into(),
+            kind: Some(CompletionItemKind::STRUCT),
+            label_details: Some(CompletionItemLabelDetails {
+                detail: None,
+                description: Some(name.into()),
+            }),
+            detail: Some(name.into()),
+            ..Default::default()
+        },
+        _ => return None,
+    })
 }
 
 fn visualize_location(scope: ScopeId, scopes: &Scopes, strings: &Strings) -> String {
