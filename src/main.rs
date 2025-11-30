@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
-use tower_lsp::{lsp_types::Range, LspService, Server};
+use tower_lsp::{LspService, Server, lsp_types::Range};
 
 #[derive(Parser)]
 struct Arguments {

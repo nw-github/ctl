@@ -1,4 +1,7 @@
-use crate::{intern::StrId, lexer::{Located, Token}};
+use crate::{
+    intern::StrId,
+    lexer::{Located, Token},
+};
 use derive_more::{Deref, Display};
 
 use self::parsed::OperatorFnType;

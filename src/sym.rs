@@ -253,7 +253,7 @@ pub struct CheckedMember {
     pub span: Span,
 }
 
-#[derive(Default,  Clone, EnumAsInner)]
+#[derive(Default, Clone, EnumAsInner)]
 pub enum Discriminant {
     Unchecked(Expr),
     #[default]
@@ -268,7 +268,7 @@ pub struct CheckedVariant {
     pub discrim: Discriminant,
 }
 
-#[derive( Clone)]
+#[derive(Clone)]
 pub struct Union {
     pub variants: IndexMap<StrId, CheckedVariant>,
     pub tag: TypeId,
