@@ -322,7 +322,7 @@ pub enum TypeHint {
     Tuple(Vec<TypeHint>),
     AnonStruct(Vec<(StrId, TypeHint)>),
     Set(Box<TypeHint>),
-    Map(Box<TypeHint>, Box<TypeHint>),
+    Map(Box<[TypeHint; 2]>),
     Option(Box<TypeHint>),
     Ptr(Box<TypeHint>),
     MutPtr(Box<TypeHint>),

@@ -1644,7 +1644,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     } else if self.next_if(Token::Colon).is_some() {
                         let value = self.type_hint();
                         self.expect(Token::RBrace);
-                        TypeHint::Map(inner.into(), value.into())
+                        TypeHint::Map([inner, value].into())
                     } else {
                         let span = self.next().span;
                         self.error(Error::new("expected ']', ';', or ':'", span));

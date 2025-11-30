@@ -5096,9 +5096,7 @@ impl TypeChecker {
             }
             TypeHint::Option(ty) => self.resolve_lang_type("option", std::slice::from_ref(ty)),
             TypeHint::Vec(ty) => self.resolve_lang_type("vec", std::slice::from_ref(ty)),
-            TypeHint::Map(key, val) => {
-                self.resolve_lang_type("map", &[(**key).clone(), (**val).clone()])
-            }
+            TypeHint::Map(kv) => self.resolve_lang_type("map", &kv[..]),
             TypeHint::Set(ty) => self.resolve_lang_type("set", std::slice::from_ref(ty)),
             TypeHint::Slice(ty) => self.resolve_lang_type("span", std::slice::from_ref(ty)),
             TypeHint::SliceMut(ty) => self.resolve_lang_type("span_mut", std::slice::from_ref(ty)),
