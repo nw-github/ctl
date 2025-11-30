@@ -146,19 +146,19 @@ impl ScopeKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum DefaultExpr {
     Unchecked(ScopeId, Expr),
     Checked(CheckedExpr),
 }
 
-#[derive(Debug, Clone, EnumAsInner)]
+#[derive(Clone, EnumAsInner)]
 pub enum ParamPattern {
     Unchecked(Located<Pattern>),
     Checked(CheckedPattern),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum TraitImplData {
     Path(Path),
     Operator {
@@ -168,7 +168,7 @@ pub enum TraitImplData {
     },
 }
 
-#[derive(Debug, Clone, EnumAsInner, Default)]
+#[derive(Clone, EnumAsInner, Default)]
 pub enum TraitImpl {
     Unchecked {
         scope: ScopeId,
@@ -179,7 +179,7 @@ pub enum TraitImpl {
     None,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CheckedParam {
     pub keyword: bool,
     pub label: StrId,
@@ -246,14 +246,14 @@ impl FunctionId {
     pub const RESERVED: FunctionId = FunctionId(0);
 }
 
-#[derive(Debug, Constructor)]
+#[derive(Constructor)]
 pub struct CheckedMember {
     pub public: bool,
     pub ty: TypeId,
     pub span: Span,
 }
 
-#[derive(Default, Debug, Clone, EnumAsInner)]
+#[derive(Default,  Clone, EnumAsInner)]
 pub enum Discriminant {
     Unchecked(Expr),
     #[default]
@@ -261,14 +261,14 @@ pub enum Discriminant {
     Checked(ComptimeInt),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CheckedVariant {
     pub ty: Option<TypeId>,
     pub span: Span,
     pub discrim: Discriminant,
 }
 
-#[derive(Debug, Clone)]
+#[derive( Clone)]
 pub struct Union {
     pub variants: IndexMap<StrId, CheckedVariant>,
     pub tag: TypeId,
@@ -290,7 +290,7 @@ pub struct PackedStruct {
     pub align: usize,
 }
 
-#[derive(Debug, EnumAsInner)]
+#[derive(EnumAsInner)]
 pub enum UserTypeKind {
     Struct,
     PackedStruct(PackedStruct),

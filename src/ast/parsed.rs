@@ -1,11 +1,11 @@
 use crate::{
-    intern::{StrId, THIS_TYPE},
+    intern::StrId,
     lexer::{Located, Span},
 };
 
 use super::{Attributes, BinaryOp, UnaryOp};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub enum PathOrigin {
     Root,
     Super(Span),
@@ -24,13 +24,13 @@ impl std::fmt::Display for PathOrigin {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum UsePathTail {
     All,
     Ident(Located<StrId>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct UsePath {
     pub public: bool,
     pub origin: PathOrigin,
@@ -38,13 +38,13 @@ pub struct UsePath {
     pub tail: UsePathTail,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Stmt {
     pub data: Located<StmtData>,
     pub attrs: Attributes,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum StmtData {
     Expr(Expr),
     Defer(Expr),
@@ -108,7 +108,7 @@ pub type Expr = Located<ExprData>;
 
 pub type CallArgs = Vec<(Option<Located<StrId>>, Expr)>;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum ExprData {
     Binary {
         op: BinaryOp,
@@ -244,47 +244,20 @@ impl Path {
     }
 }
 
-impl std::fmt::Debug for Path {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.origin)?;
-        for (i, (zero, one)) in self.components.iter().enumerate() {
-            if i > 0 {
-                write!(f, "::")?;
-            }
-
-            write!(f, "{:?}", zero.data)?;
-            if one.is_empty() {
-                return Ok(());
-            }
-
-            write!(f, "::<")?;
-            for (i, generic) in one.iter().enumerate() {
-                if i > 0 {
-                    write!(f, ", ")?;
-                }
-                write!(f, "{generic:?}")?;
-            }
-            write!(f, ">")?;
-        }
-
-        Ok(())
-    }
-}
-
 impl From<Located<StrId>> for Path {
     fn from(value: Located<StrId>) -> Self {
         Self::new(PathOrigin::Normal, vec![(value, Vec::new())])
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Destructure {
     pub name: Located<StrId>,
     pub mutable: bool,
     pub pattern: Located<Pattern>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct IntPattern {
     pub negative: bool,
     pub base: u8,
@@ -292,14 +265,14 @@ pub struct IntPattern {
     pub width: Option<StrId>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RangePattern<T> {
     pub inclusive: bool,
     pub start: Option<T>,
     pub end: T,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Pattern {
     // x is ::core::opt::Option::Some(mut y)
     TupleLike {
@@ -333,7 +306,7 @@ pub enum Pattern {
     Error,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FullPattern {
     pub data: Pattern,
     pub if_expr: Option<Box<Expr>>,
@@ -368,65 +341,7 @@ pub enum TypeHint {
     Error,
 }
 
-impl std::fmt::Debug for TypeHint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TypeHint::Regular(path) => write!(f, "{path:?}"),
-            TypeHint::Array(inner, _) => write!(f, "[{inner:?}; <expr>]"),
-            TypeHint::Vec(inner) => write!(f, "[{inner:?}]"),
-            TypeHint::Slice(inner) => write!(f, "[{inner:?}..]"),
-            TypeHint::SliceMut(inner) => write!(f, "[mut {inner:?}..]"),
-            TypeHint::Tuple(vals) => {
-                write!(f, "(")?;
-                for (i, inner) in vals.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{inner:?}")?;
-                }
-                write!(f, ")")
-            }
-            TypeHint::AnonStruct(vals) => {
-                write!(f, "struct {{")?;
-                for (i, (name, hint)) in vals.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{name:?}: {hint:?}")?;
-                }
-                write!(f, "}}")
-            }
-            TypeHint::Set(inner) => write!(f, "{{{inner:?}}}"),
-            TypeHint::Map(key, val) => write!(f, "[{key:?}: {val:?}]"),
-            TypeHint::Option(inner) => write!(f, "?{inner:?}"),
-            TypeHint::Ptr(inner) => write!(f, "*{inner:?}"),
-            TypeHint::MutPtr(inner) => write!(f, "*mut {inner:?}"),
-            TypeHint::RawPtr(inner) => write!(f, "^{inner:?}"),
-            TypeHint::RawMutPtr(inner) => write!(f, "^mut {inner:?}"),
-            TypeHint::DynPtr(inner) => write!(f, "*dyn {inner:?}"),
-            TypeHint::DynMutPtr(inner) => write!(f, "*dyn mut {inner:?}"),
-            TypeHint::Fn {
-                is_extern,
-                params,
-                ret,
-            } => {
-                write!(f, "{}fn (", if *is_extern { "extern " } else { "" })?;
-                for (i, inner) in params.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{inner:?}")?;
-                }
-                write!(f, ") {ret:?}")
-            }
-            TypeHint::Void => write!(f, "void"),
-            TypeHint::This(_) => write!(f, "{THIS_TYPE}"),
-            TypeHint::Error => write!(f, "Error"),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Param {
     pub keyword: bool,
     pub patt: Located<Pattern>,
@@ -434,7 +349,7 @@ pub struct Param {
     pub default: Option<Expr>,
 }
 
-#[derive(Debug, Clone, Copy, derive_more::Display)]
+#[derive(Clone, Copy, derive_more::Display)]
 pub enum OperatorFnType {
     #[display(fmt = "+")]
     Plus,
@@ -472,7 +387,7 @@ pub enum OperatorFnType {
     SubscriptAssign,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Fn {
     pub attrs: Attributes,
     pub public: bool,
@@ -507,7 +422,7 @@ impl Fn {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OperatorFn {
     pub attrs: Attributes,
     pub name: Located<OperatorFnType>,
@@ -517,7 +432,7 @@ pub struct OperatorFn {
     pub body: Option<Expr>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Member {
     pub public: bool,
     pub name: Located<StrId>,
@@ -525,21 +440,21 @@ pub struct Member {
     pub default: Option<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum VariantData {
     Empty,
     StructLike(Vec<Member>),
     TupleLike(Vec<(TypeHint, Option<Expr>)>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Variant {
     pub name: Located<StrId>,
     pub data: VariantData,
     pub tag: Option<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Struct {
     pub public: bool,
     pub name: Located<StrId>,
@@ -550,7 +465,7 @@ pub struct Struct {
     pub operators: Vec<Located<OperatorFn>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ImplBlock {
     pub attrs: Attributes,
     pub type_params: TypeParams,

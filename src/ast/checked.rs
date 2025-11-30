@@ -12,7 +12,7 @@ use crate::{
 
 use super::parsed::RangePattern;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Block {
     pub body: Vec<Stmt>,
     pub scope: ScopeId,
@@ -24,13 +24,13 @@ impl Block {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct RestPattern {
     pub id: Option<VariableId>,
     pub pos: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ArrayPattern<T> {
     pub patterns: Vec<T>,
     pub rest: Option<RestPattern>,
@@ -38,7 +38,7 @@ pub struct ArrayPattern<T> {
     pub inner: TypeId,
 }
 
-#[derive(Debug, Clone, Default, EnumAsInner)]
+#[derive(Clone, Default, EnumAsInner)]
 pub enum PatternData {
     Variant {
         pattern: Option<Box<Pattern>>,
@@ -69,7 +69,7 @@ pub enum PatternData {
     Error,
 }
 
-#[derive(Debug, Clone, derive_more::Constructor)]
+#[derive(Clone, derive_more::Constructor)]
 pub struct Pattern {
     pub irrefutable: bool,
     pub data: PatternData,
@@ -97,7 +97,7 @@ impl Default for Pattern {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub enum Stmt {
     Expr(Expr),
     Let(Pattern, Option<Expr>),
@@ -110,7 +110,7 @@ pub enum Stmt {
     None,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Clone)]
 pub enum ExprData {
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
@@ -230,7 +230,7 @@ impl ExprData {
     }
 }
 
-#[derive(Debug, Default, Clone, derive_more::Constructor)]
+#[derive(Default, Clone, derive_more::Constructor)]
 pub struct Expr {
     pub ty: TypeId,
     pub data: ExprData,

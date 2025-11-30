@@ -3338,7 +3338,10 @@ impl TypeChecker {
                             .as_option_inner(&self.proj)
                             .is_some_and(|v| v == out_type)
                         {
-                            if_branch = self.coerce(if_branch, source.ty).unwrap();
+                            let Ok(expr) = self.coerce(if_branch, source.ty) else {
+                                unreachable!()
+                            };
+                            if_branch = expr;
                             out_type = source.ty;
                             Some(source)
                         } else {
