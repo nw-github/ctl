@@ -7464,6 +7464,7 @@ impl TypeChecker {
         total_span: Span,
     ) -> ResolvedType {
         for (i, (name, args)) in data.iter().enumerate() {
+            self.enter_id_and_resolve(scope, |_| {});
             let done = i + 1 == data.len();
             if done {
                 self.check_module_completions(total_span, true, scope);
@@ -7701,6 +7702,7 @@ impl TypeChecker {
             return ResolvedValue::Error;
         };
         for (i, (name, args)) in rest.iter().enumerate() {
+            self.enter_id_and_resolve(scope, |_| {});
             let Some(item) = self.proj.scopes[scope].find_in_tns(name.data) else {
                 return ResolvedValue::NotFound(*name);
             };
@@ -7738,6 +7740,7 @@ impl TypeChecker {
             }
         }
 
+        self.enter_id_and_resolve(scope, |_| {});
         self.check_module_completions(total_span, false, scope);
         let Some(item) = self.proj.scopes[scope].find_in_vns(last_name.data) else {
             return ResolvedValue::NotFound(*last_name);
