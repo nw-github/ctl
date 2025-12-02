@@ -5656,16 +5656,19 @@ impl TypeChecker {
             })
         }
 
-        let exts: Vec<_> = self
-            .proj
-            .scopes
-            .walk(scope)
-            .flat_map(|(_, scope)| get_tns_extensions(&self.proj.scopes, &scope.tns))
-            .chain(get_tns_extensions(
-                &self.proj.scopes,
-                &self.proj.scopes.autouse_tns,
-            ))
-            .collect();
+        let mut exts = vec![];
+        for (_, scope) in self.proj.scopes.walk(scope) {
+            exts.extend(get_tns_extensions(&self.proj.scopes, &scope.tns));
+            if matches!(scope.kind, ScopeKind::Module(_)) {
+                break;
+            }
+        }
+
+        exts.extend(get_tns_extensions(
+            &self.proj.scopes,
+            &self.proj.scopes.autouse_tns,
+        ));
+
         let mut cache = vec![HashMap::new(); exts.len()];
         for (i, &id) in exts.iter().enumerate() {
             // FIXME: by unconditionally calling applies_to we are duplicating work, since we may
