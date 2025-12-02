@@ -313,7 +313,6 @@ impl LanguageServer for LspBackend {
                 }
                 &LspItem::Fn(id, _) => Some(visualize_func(id, false, scopes, types, strings)),
                 &LspItem::Type(id) => Some(visualize_type(id, scopes, types, strings)),
-                LspItem::Underscore(ty) => Some(ty.name(scopes, types, strings)),
                 LspItem::Property(src_ty, id, name) => {
                     let ut = scopes.get(*id);
                     let mem = ut.members.get(name);
@@ -581,7 +580,8 @@ impl LspBackend {
                     crate::ErrorSeverity::Error => DiagnosticSeverity::ERROR,
                 },
                 &mut all,
-            ).await;
+            )
+            .await;
         }
 
         for &span in proj.diag.inactive() {
@@ -592,7 +592,8 @@ impl LspBackend {
                 "this region is disabled",
                 DiagnosticSeverity::HINT,
                 &mut all,
-            ).await;
+            )
+            .await;
         }
 
         proj.lsp_items.sort_by_key(|(_, span)| span.pos);
@@ -898,10 +899,10 @@ fn get_completion(
     scopes: &Scopes,
     types: &mut Types,
     strings: &Strings,
-    completion: &LspItem,
+    item: &LspItem,
     method: bool,
 ) -> Option<CompletionItem> {
-    Some(match completion {
+    Some(match item {
         LspItem::Property(_, id, name) => {
             let ut = scopes.get(*id);
             let member = ut.members.get(name).unwrap();
@@ -1206,12 +1207,12 @@ fn visualize_var(id: VariableId, scopes: &Scopes, types: &mut Types, strings: &S
         (false, true) => "mut",
         (false, false) => "let",
     };
-    write_de!(
-        res,
-        " {}: {}",
-        strings.resolve(&var.name.data),
-        var.ty.name(scopes, types, strings)
-    );
+    let name = if var.name.data == Strings::EMPTY {
+        "_"
+    } else {
+        strings.resolve(&var.name.data)
+    };
+    write_de!(res, " {name}: {}", var.ty.name(scopes, types, strings));
     res
 }
 

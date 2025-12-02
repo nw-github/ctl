@@ -212,7 +212,6 @@ pub enum LspItem {
     Type(UserTypeId),
     Module(ScopeId),
     Literal(CExpr),
-    Underscore(TypeId),
     Fn(FunctionId, Option<UserTypeId>),
     Var(VariableId),
     /// This variant only exists so the LSP doesn't apply the `mutable` modifier to the semantic
@@ -485,7 +484,10 @@ impl TypeChecker {
 
         for (_, var) in this.proj.scopes.vars() {
             let data = strdata!(this, var.name.data);
-            if !var.unused || var.name.data == Strings::THIS_PARAM || data.starts_with('_') {
+            if !var.unused
+                || matches!(var.name.data, Strings::THIS_PARAM | Strings::EMPTY)
+                || data.starts_with('_')
+            {
                 continue;
             }
 
@@ -6244,33 +6246,31 @@ impl TypeChecker {
     fn insert_pattern_var(
         &mut self,
         typ: PatternType,
-        name: Located<StrId>,
+        mut name: Located<StrId>,
         ty: TypeId,
         mutable: bool,
         has_hint: bool,
     ) -> Option<VariableId> {
-        if name.data != Strings::UNDERSCORE {
-            let id = self.insert(
-                Variable {
-                    name,
-                    ty,
-                    mutable,
-                    unused: typ != PatternType::BodylessFn,
-                    has_hint,
-                    ..Default::default()
-                },
-                false,
-                typ != PatternType::Regular,
-            );
-            if self.current_expr == self.listening_expr {
-                self.listening_vars.push(id);
-            }
-            Some(id)
-        } else {
-            self.check_hover(name.span, LspItem::Underscore(ty));
-            // TODO: hover
-            None
+        if name.data == Strings::UNDERSCORE {
+            name.data = Strings::EMPTY;
         }
+
+        let id = self.insert(
+            Variable {
+                name,
+                ty,
+                mutable,
+                unused: typ != PatternType::BodylessFn,
+                has_hint,
+                ..Default::default()
+            },
+            false,
+            typ != PatternType::Regular,
+        );
+        if self.current_expr == self.listening_expr {
+            self.listening_vars.push(id);
+        }
+        Some(id)
     }
 
     fn check_match_coverage<'a>(
