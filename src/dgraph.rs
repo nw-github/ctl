@@ -1,7 +1,5 @@
-use std::{
-    collections::{HashMap, HashSet},
-    hash::Hash,
-};
+use crate::hash::{HashMap, HashSet};
+use std::hash::Hash;
 
 pub enum Dependencies<T> {
     Resolving,

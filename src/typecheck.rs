@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use enum_as_inner::EnumAsInner;
 use indexmap::IndexMap;
 
@@ -19,6 +17,7 @@ use crate::{
     comptime_int::ComptimeInt,
     dgraph::Dependencies,
     error::{Diagnostics, Error},
+    hash::{HashMap, HashSet},
     intern::{StrId, Strings, THIS_TYPE},
     lexer::{Located, Span},
     project::{Configuration, Project},

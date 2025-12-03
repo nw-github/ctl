@@ -1,7 +1,6 @@
 use derive_more::{Constructor, Deref, DerefMut, From};
 use enum_as_inner::EnumAsInner;
 use indexmap::IndexMap;
-use std::collections::{HashMap, HashSet};
 
 use crate::{
     ast::{
@@ -9,6 +8,7 @@ use crate::{
         checked::{Expr as CheckedExpr, Pattern as CheckedPattern},
         parsed::{Expr, Path, Pattern, TypeHint, UsePath},
     },
+    hash::{HashMap, HashSet},
     comptime_int::ComptimeInt,
     intern::{StrId, Strings},
     lexer::{Located, Span},
@@ -42,7 +42,7 @@ macro_rules! id {
                 let index = scopes.$vec.len();
                 scopes.$vec.push(Scoped::new(value, scope));
                 let id = $name(index);
-                let name = (scopes.$vec[id.0].name.data).clone();
+                let name = scopes.$vec[id.0].name.data;
                 let kind = id.into();
                 let prev = scopes[scope]
                     .$namespace

@@ -20,6 +20,7 @@ tokio = { version = "1.36.0", features = ["full"] }
 toml = "0.8.19"
 tower-lsp = "0.20.0"
 unicode-xid = "0.2.4"
+zwohash = "0.1.2"
 
 [dev-dependencies]
 datatest-stable = "0.2.3"

@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Write,
-};
+use std::fmt::Write;
 
 use indexmap::IndexMap;
 
@@ -11,6 +8,7 @@ use crate::{
     comptime_int::ComptimeInt,
     dgraph::{Dependencies, DependencyGraph},
     error::Diagnostics,
+    hash::{HashMap, HashSet},
     intern::{StrId, Strings},
     nearest_pow_of_two,
     project::Project,
