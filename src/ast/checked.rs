@@ -1,9 +1,9 @@
 use enum_as_inner::EnumAsInner;
-use indexmap::IndexMap;
 
 use crate::{
     ast::{BinaryOp, UnaryOp},
     comptime_int::ComptimeInt,
+    hash::IndexMap,
     intern::{StrId, Strings},
     sym::{ScopeId, ScopeKind, Scopes, VariableId},
     typecheck::MemberFn,

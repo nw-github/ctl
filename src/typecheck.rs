@@ -1,5 +1,4 @@
 use enum_as_inner::EnumAsInner;
-use indexmap::IndexMap;
 
 use crate::{
     Warning,
@@ -17,7 +16,7 @@ use crate::{
     comptime_int::ComptimeInt,
     dgraph::Dependencies,
     error::{Diagnostics, Error},
-    hash::{HashMap, HashSet},
+    hash::{HashMap, HashSet, IndexMap},
     intern::{StrId, Strings, THIS_TYPE},
     lexer::{Located, Span},
     project::{Configuration, Project},

@@ -1,14 +1,12 @@
 use std::fmt::Write;
 
-use indexmap::IndexMap;
-
 use crate::{
     CodegenFlags,
     ast::{BinaryOp, UnaryOp, checked::*, parsed::RangePattern},
     comptime_int::ComptimeInt,
     dgraph::{Dependencies, DependencyGraph},
     error::Diagnostics,
-    hash::{HashMap, HashSet},
+    hash::{HashMap, HashSet, IndexMap},
     intern::{StrId, Strings},
     nearest_pow_of_two,
     project::Project,

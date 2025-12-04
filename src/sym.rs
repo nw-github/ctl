@@ -1,6 +1,5 @@
 use derive_more::{Constructor, Deref, DerefMut, From};
 use enum_as_inner::EnumAsInner;
-use indexmap::IndexMap;
 
 use crate::{
     ast::{
@@ -8,8 +7,8 @@ use crate::{
         checked::{Expr as CheckedExpr, Pattern as CheckedPattern},
         parsed::{Expr, Path, Pattern, TypeHint, UsePath},
     },
-    hash::{HashMap, HashSet},
     comptime_int::ComptimeInt,
+    hash::{HashMap, HashSet, IndexMap},
     intern::{StrId, Strings},
     lexer::{Located, Span},
     typeid::{GenericTrait, GenericUserType, Type, TypeId, Types},

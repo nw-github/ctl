@@ -6,6 +6,7 @@ use crate::{
     intern::Strings,
     nearest_pow_of_two,
     project::Project,
+    hash::{IndexMap},
     sym::{
         ExtensionId, FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, TraitId, UserTypeId,
         UserTypeKind,
@@ -13,7 +14,7 @@ use crate::{
 };
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
-use indexmap::{IndexMap, IndexSet, map::Entry};
+use indexmap::{IndexSet, map::Entry};
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Deref, DerefMut)]
 pub struct TypeArgs(pub IndexMap<UserTypeId, TypeId>);
