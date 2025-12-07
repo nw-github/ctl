@@ -296,7 +296,7 @@ impl UnloadedProject {
                 Ok(val) => {
                     let mut config = toml::from_str::<ProjectConfig>(&val)?;
                     if let Some(root) = config.root.take() {
-                        *path = PathBuf::from(root);
+                        *path = Path::new(&root).canonicalize()?;
                     }
 
                     if let Some(rename) = config.name {
