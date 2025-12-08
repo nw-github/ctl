@@ -10,11 +10,9 @@
 #    define ctl_atomic_exchange_explicit(a, b, c) \
       atomic_exchange_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
 #    define ctl_atomic_compare_exchange_strong_explicit(a, b, c, d, e) \
-      atomic_compare_exchange_strong_explicit(                         \
-          (_Atomic __typeof__(*(a)) *)a, (_Atomic __typeof__(*(b)) *)b, c, d, e)
+      atomic_compare_exchange_strong_explicit((_Atomic __typeof__(*(a)) *)a, b, c, d, e)
 #    define ctl_atomic_compare_exchange_weak_explicit(a, b) \
-      atomic_compare_exchange_weak_explicit(                \
-          (_Atomic __typeof__(*(a)) *)a, (_Atomic __typeof__(*(b)) *)b, c, d, e)
+      atomic_compare_exchange_weak_explicit((_Atomic __typeof__(*(a)) *)a, b, c, d, e)
 #    define ctl_atomic_fetch_add_explicit(a, b, c) \
       atomic_fetch_add_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
 #    define ctl_atomic_fetch_sub_explicit(a, b, c) \
