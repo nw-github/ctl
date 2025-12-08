@@ -125,10 +125,18 @@ mod token {
     pub const VARIABLE: u32 = 2;
     pub const FUNCTION: u32 = 3;
 
-    pub const TOKEN_MODS: [SemanticTokenModifier; 1] = [SemanticTokenModifier::new("mutable")];
+    pub const TOKEN_MODS: [SemanticTokenModifier; 3] = [
+        SemanticTokenModifier::new("mutable"),
+        SemanticTokenModifier::READONLY,
+        SemanticTokenModifier::STATIC,
+    ];
 
-    pub const NO_MODS: u32 = 0;
-    pub const MUTABLE: u32 = 1 << 0;
+    pub mod mods {
+        pub const NONE: u32 = 0;
+        pub const MUTABLE: u32 = 1 << 0;
+        pub const READONLY: u32 = 1 << 1;
+        pub const STATIC: u32 = 1 << 2;
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -836,28 +844,34 @@ fn get_semantic_token(
     prev_line: &mut u32,
     prev_start: &mut u32,
 ) -> Option<SemanticToken> {
-    let (token_type, token_modifiers_bitset) = match item {
+    let mut mods = token::mods::NONE;
+    let token_type = match item {
         // LspItem::Module(scope_id) => todo!(),
         // LspItem::Underscore(type_id) => todo!(),
-        LspItem::Property(_, _, _) => (token::VARIABLE, token::NO_MODS),
-        LspItem::FnParamLabel(_, _) => (token::VARIABLE, token::NO_MODS),
+        LspItem::Property(_, _, _) => token::VARIABLE,
+        LspItem::FnParamLabel(_, _) => token::VARIABLE,
         &LspItem::Var(id) => {
             let var = scopes.get(id);
-            let mods = if var.mutable || types[var.ty].is_mut_ptr() {
-                token::MUTABLE
-            } else {
-                token::NO_MODS
-            };
-            (token::VARIABLE, mods)
+            if var.mutable || types[var.ty].is_mut_ptr() {
+                mods |= token::mods::MUTABLE;
+            } else if var.is_static {
+                mods |= token::mods::READONLY;
+            }
+
+            if var.is_static {
+                mods |= token::mods::STATIC;
+            }
+
+            token::VARIABLE
         }
-        LspItem::Type(_) => (token::TYPE, token::NO_MODS),
-        LspItem::BuiltinType(_) => (token::TYPE, token::NO_MODS),
+        LspItem::Type(_) => token::TYPE,
+        LspItem::BuiltinType(_) => token::TYPE,
         &LspItem::Fn(id, _) => {
             if let Some(id) = scopes.get(id).constructor {
                 if scopes.get(id).kind.is_union() {
-                    (token::ENUM_MEMBER, token::NO_MODS)
+                    token::ENUM_MEMBER
                 } else {
-                    (token::TYPE, token::NO_MODS)
+                    token::TYPE
                 }
             } else if scopes
                 .get(id)
@@ -865,9 +879,10 @@ fn get_semantic_token(
                 .first()
                 .is_some_and(|p| p.label == Strings::THIS_PARAM && types[p.ty].is_mut_ptr())
             {
-                (token::FUNCTION, token::MUTABLE)
+                mods |= token::mods::MUTABLE;
+                token::FUNCTION
             } else {
-                (token::FUNCTION, token::NO_MODS)
+                token::FUNCTION
             }
         }
         _ => return None,
@@ -887,7 +902,7 @@ fn get_semantic_token(
         },
         length: span.len, // TODO: use UTF-16 length
         token_type,
-        token_modifiers_bitset,
+        token_modifiers_bitset: mods,
     };
 
     *prev_line = line;
