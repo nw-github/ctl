@@ -54,8 +54,20 @@ pub extension F32Impl for f32 {
         unsafe libm::ceilf(this)
     }
 
-    pub fn pi(): f32 {
-        3.14159265358979323846
+    // TODO: make these constants when that is supported
+    pub fn pi(): f32 { 3.14159265358979323846 }
+    pub fn nan(): f32 { 0.0 / 0.0 }
+    pub fn inf(): f32 { 1.0 / 0.0 }
+    pub fn neg_inf(): f64 { -f64::inf() }
+
+    pub fn copysign(my this, y: f32): f32 {
+        let x = this.to_bits() & !(1 << 31);
+        let y = y.to_bits() & (1 << 31);
+        f32::from_bits(x | y)
+    }
+
+    pub fn abs(my this): f32 {
+        f32::from_bits(this.to_bits() & !(1 << 31))
     }
 
     impl Format {
@@ -98,8 +110,19 @@ pub extension F64Impl for f64 {
         unsafe libm::ceil(this)
     }
 
-    pub fn pi(): f64 {
-        3.14159265358979323846
+    pub fn pi(): f64 { 3.14159265358979323846 }
+    pub fn nan(): f64 { 0.0 / 0.0 }
+    pub fn inf(): f64 { 1.0 / 0.0 }
+    pub fn neg_inf(): f64 { -f64::inf() }
+
+    pub fn copysign(my this, y: f64): f64 {
+        let x = this.to_bits() & !(1 << 63);
+        let y = y.to_bits() & (1 << 63);
+        f64::from_bits(x | y)
+    }
+
+    pub fn abs(my this): f64 {
+        f64::from_bits(this.to_bits() & !(1 << 63))
     }
 
     impl Format {

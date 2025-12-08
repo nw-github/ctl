@@ -67,6 +67,22 @@ pub extension RawMutImpl<T> for ^mut T {
         unsafe *this = val;
     }
 
+    pub unsafe fn replace(my this, val: T): T {
+        unsafe {
+            let old = *this;
+            *this = val;
+            old
+        }
+    }
+
+    pub unsafe fn swap(my this, val: ^mut T) {
+        unsafe {
+            let tmp = *this;
+            *this = *val;
+            *val = tmp;
+        }
+    }
+
     pub unsafe fn read_volatile(my this): T {
         unsafe std::ptr::read_volatile(this)
     }
