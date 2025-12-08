@@ -1,3 +1,6 @@
 -std=c11
--Wall 
+-Wall
 -Wextra
+-Wno-unused-label
+-Wno-parentheses-equality
+-Wno-unused-variable

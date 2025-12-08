@@ -3,6 +3,7 @@ mod codegen;
 mod comptime_int;
 mod dgraph;
 mod error;
+mod hash;
 pub mod intern;
 mod lexer;
 mod lsp;
@@ -13,11 +14,12 @@ mod source;
 mod sym;
 mod typecheck;
 mod typeid;
-mod hash;
 
 use std::path::{Path, PathBuf};
 
-use crate::{intern::Strings, parser::Parser, project::Configuration, typecheck::TypeChecker};
+pub use project::Configuration;
+
+use crate::{intern::Strings, parser::Parser, typecheck::TypeChecker};
 use anyhow::{Context, Result};
 use ast::parsed::{Stmt, StmtData};
 use codegen::Codegen;
@@ -44,7 +46,9 @@ impl CompileState for Checked {}
 pub struct ProjectConfig {
     pub root: Option<String>,
     pub name: Option<String>,
-    pub build: Option<String>,
+    pub build: Option<PathBuf>,
+    pub libs: Option<Vec<String>>,
+
     #[serde(default)]
     pub no_std: bool,
     #[serde(default)]
@@ -138,13 +142,13 @@ impl Compiler<Parsed> {
 }
 
 impl Compiler<Checked> {
-    pub fn build(self) -> (Option<String>, Diagnostics) {
+    pub fn build(self) -> (Option<String>, Configuration, Diagnostics) {
         if self.state.0.diag.has_errors() {
-            return (None, self.state.0.diag);
+            return (None, self.state.0.conf, self.state.0.diag);
         }
 
-        let (code, diag) = Codegen::build(self.state.0);
-        (Some(code), diag)
+        let (code, proj) = Codegen::build(self.state.0);
+        (Some(code), proj.conf, proj.diag)
     }
 
     pub fn project(self) -> Project {
@@ -304,14 +308,17 @@ impl UnloadedProject {
                         *name = Self::safe_name(&rename);
                     }
 
-                    if config.lib
-                        && let Some(conf) = conf
-                    {
-                        conf.flags.lib = true;
-                    }
-
                     if config.no_std {
                         needs_stdlib = false;
+                    }
+
+                    if let Some(conf) = conf {
+                        conf.libs = config.libs;
+                        conf.build = config.build;
+                        conf.name = Some(name.clone());
+                        if config.lib {
+                            conf.flags.lib = true;
+                        }
                     }
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}

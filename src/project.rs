@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, path::PathBuf};
 
 use crate::{
     CodegenFlags, Diagnostics, Span,
@@ -41,6 +41,9 @@ impl Project {
 pub struct Configuration {
     features: HashSet<StrId>,
     pub flags: CodegenFlags,
+    pub build: Option<PathBuf>,
+    pub libs: Option<Vec<String>>,
+    pub name: Option<String>,
 }
 
 impl Configuration {
@@ -83,6 +86,9 @@ impl Default for Configuration {
             ]
             .into(),
             flags: Default::default(),
+            build: None,
+            libs: None,
+            name: None,
         }
     }
 }

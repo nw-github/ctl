@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueHint};
 use ctl::{
-    intern::Strings, CachingSourceProvider, CodegenFlags, Compiler, Diagnostics, Error, FileId, LspBackend, OffsetMode, SourceProvider, UnloadedProject
+    CachingSourceProvider, Compiler, Configuration, Diagnostics, Error, FileId, LspBackend,
+    OffsetMode, SourceProvider, UnloadedProject, intern::Strings,
 };
 use std::{
     ffi::OsString,
@@ -42,7 +43,7 @@ struct Arguments {
     /// Compile as a library
     #[clap(action, short, long)]
     #[arg(global = true)]
-    shared: bool,
+    shared: Option<bool>,
 
     /// Silence unnecessary messages from the compiler
     #[clap(action, short, long)]
@@ -53,7 +54,7 @@ struct Arguments {
 #[derive(Args)]
 struct BuildOrRun {
     /// The path to the file or project folder
-    input: PathBuf,
+    input: Option<PathBuf>,
 
     /// The C compiler used to generate the binary. Only clang and gcc are officially supported, but
     /// this argument can be used to point to a specific version.
@@ -71,6 +72,10 @@ struct BuildOrRun {
     #[clap(action, short, long)]
     optimized: bool,
 
+    /// The output path for the compiled binary.
+    #[clap(long)]
+    out_dir: Option<PathBuf>,
+
     #[clap(short, long)]
     libs: Vec<String>,
 }
@@ -80,10 +85,11 @@ enum SubCommand {
     #[clap(alias = "p")]
     Print {
         /// The path to the file or project folder
-        input: PathBuf,
+        input: Option<PathBuf>,
 
         /// The output path for the compilation result. If omitted, the output will be written to
         /// stdout.
+        #[clap(short, long)]
         output: Option<PathBuf>,
 
         /// Run clang-format on the resulting C code
@@ -98,10 +104,6 @@ enum SubCommand {
     Build {
         #[clap(flatten)]
         build: BuildOrRun,
-
-        /// The output path for the compiled binary.
-        #[clap(default_value = "./a.out")]
-        output: PathBuf,
     },
     #[clap(alias = "r")]
     Run {
@@ -112,46 +114,66 @@ enum SubCommand {
         #[arg(trailing_var_arg = true, value_hint = ValueHint::CommandWithArguments)]
         targs: Vec<OsString>,
     },
-    #[clap(alias = "l")]
     Lsp,
 }
 
-fn compile_results(src: &str, leak: bool, output: &Path, build: BuildOrRun) -> Result<()> {
-    let warnings = ["-Wall", "-Wextra"];
+fn compile_results(code: &str, build: BuildOrRun, conf: Configuration) -> Result<PathBuf> {
+    let warnings = [
+        "-Wall",
+        "-Wextra",
+        "-Wno-unused-label",
+        "-Wno-unused-variable",
+        "-Wno-parentheses-equality",
+    ];
+    let leak = !conf.has_feature(Strings::FEAT_BOEHM);
+    let [stdout, stderr] = if build.verbose {
+        std::array::from_fn(|_| Stdio::inherit())
+    } else {
+        std::array::from_fn(|_| Stdio::piped())
+    };
+    let output = build
+        .out_dir
+        .or(conf.build)
+        .unwrap_or_else(|| PathBuf::from("."));
+    std::fs::create_dir_all(&output)?;
+
+    let output = output.join(conf.name.as_deref().unwrap_or("a.out"));
     let mut cc = Command::new(build.cc)
         .args(["-fwrapv", "-std=c11", "-x", "c", "-", "-o"])
-        .arg(output)
+        .arg(&output)
         .args(if !leak { &["-lgc"][..] } else { &[] })
         .args(if build.optimized { &["-O2"][..] } else { &[] })
         .args(if build.verbose { &warnings[..] } else { &[] })
         .args(build.ccargs.unwrap_or_default().split(' '))
-        .args(build.libs.iter().map(|lib| format!("-l{lib}")))
+        .args(
+            build
+                .libs
+                .iter()
+                .chain(conf.libs.unwrap_or_default().iter())
+                .map(|lib| format!("-l{lib}")),
+        )
         .stdin(Stdio::piped())
-        .stdout(if build.verbose {
-            Stdio::inherit()
-        } else {
-            Stdio::null()
-        })
-        .stderr(if build.verbose {
-            Stdio::inherit()
-        } else {
-            Stdio::null()
-        })
+        .stdout(stdout)
+        .stderr(stderr)
         .spawn()
         .context("Couldn't invoke the compiler")?;
     cc.stdin
         .as_mut()
         .context("The C compiler closed stdin")?
-        .write_all(src.as_bytes())?;
+        .write_all(code.as_bytes())?;
     let status = cc.wait()?;
     if !status.success() {
+        if let Some(mut stderr) = cc.stderr {
+            _ = std::io::copy(&mut stderr, &mut std::io::stderr().lock());
+        }
+
         anyhow::bail!(
             "The C compiler returned non-zero exit code {:?}",
             status.code().unwrap_or_default()
         );
     }
 
-    Ok(())
+    Ok(output)
 }
 
 fn print_results(src: &[u8], pretty: bool, output: &mut impl Write) -> Result<()> {
@@ -267,16 +289,14 @@ fn main() -> Result<()> {
             return Ok(());
         }
     };
-    let mut proj = UnloadedProject::new(input)?;
+    let mut proj = UnloadedProject::new(input.as_deref().unwrap_or(Path::new(".")))?;
     if args.leak {
         proj.conf.remove_feature(Strings::FEAT_BOEHM);
     }
 
-    proj.conf.flags = CodegenFlags {
-        no_bit_int: args.no_bit_int,
-        lib: args.shared,
-        minify: matches!(args.command, SubCommand::Print { minify: true, .. }),
-    };
+    proj.conf.flags.no_bit_int = args.no_bit_int;
+    proj.conf.flags.lib = args.shared.unwrap_or(proj.conf.flags.lib);
+    proj.conf.flags.minify = matches!(args.command, SubCommand::Print { minify: true, .. });
     let result = Compiler::new()
         .parse(proj)?
         .inspect(|ast| {
@@ -286,14 +306,14 @@ fn main() -> Result<()> {
         })
         .typecheck(Default::default())
         .build();
-    let result = match result {
-        (Some(code), diag) => {
+    let (conf, result) = match result {
+        (Some(code), conf, diag) => {
             if !args.quiet {
                 display_diagnostics(&diag);
             }
-            code
+            (conf, code)
         }
-        (None, diag) => {
+        (None, _conf, diag) => {
             eprintln!("Compilation failed: ");
             display_diagnostics(&diag);
             std::process::exit(1);
@@ -308,22 +328,18 @@ fn main() -> Result<()> {
                 print_results(result.as_bytes(), pretty, &mut std::io::stdout().lock())?;
             }
         }
-        SubCommand::Build { build, output } => {
-            compile_results(&result, args.leak, &output, build)?;
-        }
+        SubCommand::Build { build } => _ = compile_results(&result, build, conf)?,
         SubCommand::Run { build, targs } => {
-            // TODO: safe?
-            let output = Path::new("./a.out");
-            compile_results(&result, args.leak, output, build)?;
+            let binary = compile_results(&result, build, conf)?;
             #[cfg(unix)]
             {
                 use std::os::unix::process::CommandExt;
-                return Err(Command::new(output).args(targs).exec().into());
+                return Err(Command::new(binary).args(targs).exec().into());
             }
 
             #[cfg(not(unix))]
             {
-                let status = Command::new(output)
+                let status = Command::new(executable)
                     .args(targs)
                     .spawn()
                     .context("Couldn't invoke the generated program")?

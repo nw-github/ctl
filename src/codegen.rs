@@ -5,7 +5,6 @@ use crate::{
     ast::{BinaryOp, UnaryOp, checked::*, parsed::RangePattern},
     comptime_int::ComptimeInt,
     dgraph::{Dependencies, DependencyGraph},
-    error::Diagnostics,
     hash::{HashMap, HashSet, IndexMap},
     intern::{StrId, Strings},
     nearest_pow_of_two,
@@ -858,7 +857,7 @@ pub struct Codegen<'a> {
 }
 
 impl Codegen<'_> {
-    pub fn build(mut proj: Project) -> (String, Diagnostics) {
+    pub fn build(mut proj: Project) -> (String, Project) {
         let exports = proj
             .scopes
             .functions()
@@ -993,7 +992,7 @@ impl Codegen<'_> {
             this.buffer.emit(main);
         }
 
-        (this.buffer.finish(), this.proj.diag)
+        (this.buffer.finish(), this.proj)
     }
 }
 

@@ -54,7 +54,7 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
         return Err("no requirements specified!".into());
     }
 
-    let (code, diag) = Compiler::new()
+    let (code, _, diag) = Compiler::new()
         .parse(UnloadedProject::new(path)?)?
         .typecheck(Default::default())
         .build();
