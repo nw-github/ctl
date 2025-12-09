@@ -959,6 +959,15 @@ impl Codegen<'_> {
             this.buffer.emit("#define CTL_USE_BOEHM 1\n");
         }
 
+        this.buffer.emit("#ifdef __clang__\n");
+        let warnings = include_str!("../compile_flags.txt");
+        for warning in warnings.split("\n").flat_map(|s| s.strip_prefix("-Wno-")) {
+            writeln_de!(
+                this.buffer,
+                "#pragma clang diagnostic ignored \"-W{warning}\""
+            );
+        }
+        this.buffer.emit("#endif\n");
         this.buffer.emit(include_str!("../ctl.h"));
         if let Some(&ut) = this.proj.scopes.lang_types.get(&Strings::LANG_STRING) {
             let ut = GenericUserType::from_id(&this.proj.scopes, &mut this.proj.types, ut);

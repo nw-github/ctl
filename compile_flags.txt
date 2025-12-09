@@ -1,6 +1,9 @@
 -std=c11
+-fwrapv
 -Wall
 -Wextra
+-Wno-undefined-internal
+-Wno-unused-function
 -Wno-unused-label
 -Wno-parentheses-equality
 -Wno-unused-variable

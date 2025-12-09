@@ -118,19 +118,12 @@ enum SubCommand {
 }
 
 fn compile_results(code: &str, build: BuildOrRun, conf: Configuration) -> Result<PathBuf> {
-    let warnings = [
-        "-Wall",
-        "-Wextra",
-        "-Wno-unused-label",
-        "-Wno-unused-variable",
-        "-Wno-parentheses-equality",
-    ];
-    let leak = !conf.has_feature(Strings::FEAT_BOEHM);
     let [stdout, stderr] = if build.verbose {
         std::array::from_fn(|_| Stdio::inherit())
     } else {
         std::array::from_fn(|_| Stdio::piped())
     };
+    let has_boehm = conf.has_feature(Strings::FEAT_BOEHM);
     let output = build
         .out_dir
         .or(conf.build)
@@ -139,12 +132,10 @@ fn compile_results(code: &str, build: BuildOrRun, conf: Configuration) -> Result
 
     let output = output.join(conf.name.as_deref().unwrap_or("a.out"));
     let mut cc = Command::new(build.cc)
-        .args(["-fwrapv", "-std=c11", "-x", "c", "-", "-o"])
-        .arg(&output)
-        .args(if !leak { &["-lgc"][..] } else { &[] })
-        .args(if build.optimized { &["-O2"][..] } else { &[] })
-        .args(if build.verbose { &warnings[..] } else { &[] })
+        .args(include_str!("../compile_flags.txt").split("\n"))
         .args(build.ccargs.unwrap_or_default().split(' '))
+        .args(build.optimized.then_some("-O2"))
+        .args(has_boehm.then_some("-lgc"))
         .args(
             build
                 .libs
@@ -152,6 +143,8 @@ fn compile_results(code: &str, build: BuildOrRun, conf: Configuration) -> Result
                 .chain(conf.libs.unwrap_or_default().iter())
                 .map(|lib| format!("-l{lib}")),
         )
+        .args(["-x", "c", "-", "-o"])
+        .arg(&output)
         .stdin(Stdio::piped())
         .stdout(stdout)
         .stderr(stderr)

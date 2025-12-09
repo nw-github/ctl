@@ -132,11 +132,6 @@
 #define COERCE(ty, expr) (expr, *(ty *)(NULL))
 #define VOID(expr)       (expr, CTL_VOID)
 
-#if defined(__clang__)
-#  pragma clang diagnostic ignored "-Wundefined-internal"
-#  pragma clang diagnostic ignored "-Wunused-function"
-#endif
-
 static void $ctl_static_init(void);
 static void $ctl_static_deinit(void);
 
