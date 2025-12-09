@@ -6252,8 +6252,12 @@ impl TypeChecker {
         mutable: bool,
         has_hint: bool,
     ) -> Option<VariableId> {
+        let mut good = true;
+        let mut no_redef = typ != PatternType::Regular;
         if name.data == Strings::UNDERSCORE {
             name.data = Strings::EMPTY;
+            good = false;
+            no_redef = false;
         }
 
         let id = self.insert(
@@ -6266,12 +6270,12 @@ impl TypeChecker {
                 ..Default::default()
             },
             false,
-            typ != PatternType::Regular,
+            no_redef,
         );
         if self.current_expr == self.listening_expr {
             self.listening_vars.push(id);
         }
-        Some(id)
+        good.then_some(id)
     }
 
     fn check_match_coverage<'a>(
@@ -6908,6 +6912,7 @@ impl TypeChecker {
             if i == 0 {
                 prev_vars = vars
                     .into_iter()
+                    .filter(|&v| self.proj.scopes.get(v).name.data != Strings::EMPTY)
                     .map(|v| (self.proj.scopes.get(v).name.data, v))
                     .collect();
                 continue;
@@ -6916,6 +6921,10 @@ impl TypeChecker {
             let mut prev_vars = prev_vars.clone();
             for &id in vars.iter() {
                 let var = self.proj.scopes.get(id);
+                if var.name.data == Strings::EMPTY {
+                    continue;
+                }
+
                 if let Some(old_ty) = prev_vars
                     .remove(&var.name.data)
                     .map(|v| self.proj.scopes.get(v).ty)
