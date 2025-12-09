@@ -113,22 +113,25 @@ pub struct LspBackend {
 mod token {
     use tower_lsp::lsp_types::{SemanticTokenModifier, SemanticTokenType};
 
-    pub const TOKEN_TYPES: [SemanticTokenType; 4] = [
+    pub const TOKEN_TYPES: [SemanticTokenType; 5] = [
         SemanticTokenType::ENUM_MEMBER,
         SemanticTokenType::TYPE,
         SemanticTokenType::VARIABLE,
         SemanticTokenType::FUNCTION,
+        SemanticTokenType::NAMESPACE,
     ];
 
     pub const ENUM_MEMBER: u32 = 0;
     pub const TYPE: u32 = 1;
     pub const VARIABLE: u32 = 2;
     pub const FUNCTION: u32 = 3;
+    pub const NAMESPACE: u32 = 4;
 
-    pub const TOKEN_MODS: [SemanticTokenModifier; 3] = [
+    pub const TOKEN_MODS: [SemanticTokenModifier; 4] = [
         SemanticTokenModifier::new("mutable"),
         SemanticTokenModifier::READONLY,
         SemanticTokenModifier::STATIC,
+        SemanticTokenModifier::new("constant"),
     ];
 
     pub mod mods {
@@ -136,6 +139,7 @@ mod token {
         pub const MUTABLE: u32 = 1 << 0;
         pub const READONLY: u32 = 1 << 1;
         pub const STATIC: u32 = 1 << 2;
+        pub const CONSTANT: u32 = 1 << 3;
     }
 }
 
@@ -709,10 +713,12 @@ impl LspBackend {
 
     fn find_references(&self, proj: &Project, src: &LspItem, mut next_range: impl FnMut(Location)) {
         let is_constructor_for = |lhs: FunctionId, rhs: UserTypeId| {
-            proj.scopes
-                .get(lhs)
-                .constructor
-                .is_some_and(|lhs| lhs == rhs)
+            !proj.scopes.get(rhs).kind.is_union()
+                && proj
+                    .scopes
+                    .get(lhs)
+                    .constructor
+                    .is_some_and(|lhs| lhs == rhs)
         };
 
         let mut cache = CachingSourceProvider::new();
@@ -730,7 +736,11 @@ impl LspBackend {
                 (LspItem::Var(lhs), LspItem::FnParamLabel(rhs, _)) if lhs == rhs => {}
                 (LspItem::FnParamLabel(lhs, _), LspItem::Var(rhs)) if lhs == rhs => {}
                 (LspItem::FnParamLabel(lhs, _), LspItem::FnParamLabel(rhs, _)) if lhs == rhs => {}
-                // Property & FnParamLabel on constructor
+                (
+                    LspItem::Property(_, lhs_ut, lhs_name),
+                    LspItem::Property(_, rhs_ut, rhs_name),
+                ) if lhs_ut == rhs_ut && lhs_name == rhs_name => {}
+                // TODO: variant properties & FnParamLabel on constructor
                 _ => continue,
             }
 
@@ -846,8 +856,7 @@ fn get_semantic_token(
 ) -> Option<SemanticToken> {
     let mut mods = token::mods::NONE;
     let token_type = match item {
-        // LspItem::Module(scope_id) => todo!(),
-        // LspItem::Underscore(type_id) => todo!(),
+        LspItem::Module(_) => token::NAMESPACE,
         LspItem::Property(_, _, _) => token::VARIABLE,
         LspItem::FnParamLabel(_, _) => token::VARIABLE,
         &LspItem::Var(id) => {
@@ -855,7 +864,7 @@ fn get_semantic_token(
             if var.mutable || types[var.ty].is_mut_ptr() {
                 mods |= token::mods::MUTABLE;
             } else if var.is_static {
-                mods |= token::mods::READONLY;
+                mods |= token::mods::READONLY | token::mods::CONSTANT;
             }
 
             if var.is_static {
