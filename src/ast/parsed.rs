@@ -92,6 +92,7 @@ pub enum StmtData {
         public: bool,
         constant: bool,
         is_extern: bool,
+        mutable: bool,
         name: Located<StrId>,
         ty: TypeHint,
         value: Option<Expr>,

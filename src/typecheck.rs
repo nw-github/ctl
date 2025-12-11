@@ -1363,6 +1363,7 @@ impl TypeChecker {
                 public,
                 constant,
                 mut name,
+                mutable,
                 ty,
                 value,
                 is_extern,
@@ -1385,6 +1386,7 @@ impl TypeChecker {
                             is_extern,
                             is_static: true,
                             has_hint: true,
+                            mutable: mutable && !constant,
                             ..Default::default()
                         },
                         public,
@@ -3201,6 +3203,11 @@ impl TypeChecker {
                         check_unsafe!(
                             self,
                             Error::new("accessing static extern variable is unsafe", span)
+                        );
+                    } else if var.is_static && var.mutable {
+                        check_unsafe!(
+                            self,
+                            Error::new("accessing static mutable variable is unsafe", span)
                         );
                     }
 

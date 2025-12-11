@@ -342,6 +342,11 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     self.error_no_sync(Error::not_valid_here(ext));
                 }
 
+                let mutable = self.next_if(Token::Mut);
+                if let Some(mutable) = &mutable && token.data == Token::Const {
+                    self.error_no_sync(Error::not_valid_here(mutable));
+                }
+
                 let name = self.expect_ident("expected name");
                 self.expect(Token::Colon);
                 let ty = self.type_hint();
@@ -354,6 +359,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                             public: public.is_some(),
                             constant: matches!(token.data, Token::Const),
                             is_extern: is_extern.is_some(),
+                            mutable: mutable.is_some(),
                             name,
                             ty,
                             value,
