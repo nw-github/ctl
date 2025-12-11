@@ -1063,7 +1063,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 (false, self.block_expr(token.span, label.map(|l| l.data)))
             }
             Token::Unsafe => {
-                self.next();
+                let begin = self.next();
                 if let Some(label) = label {
                     self.label_error(label.span)
                 }
@@ -1071,7 +1071,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 let (needs_delim, expr) = self.block_or_normal_expr(None);
                 (
                     needs_delim,
-                    Expr::new(expr.span, ExprData::Unsafe(expr.into())),
+                    Expr::new(begin.span.extended_to(expr.span), ExprData::Unsafe(expr.into())),
                 )
             }
             _ => {

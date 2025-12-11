@@ -37,7 +37,7 @@ mod inner {
     }
 
     pub fn args_raw(): RawArgsIter { unsafe RawArgsIter(argc: CTL_ARGC, argv: CTL_ARGV) }
-    pub fn args(): ArgsIter { unsafe ArgsIter(iter: args_raw()) }
+    pub fn args(): ArgsIter { ArgsIter(iter: args_raw()) }
 }
 
 @(feature(hosted))

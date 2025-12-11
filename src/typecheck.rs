@@ -163,6 +163,16 @@ macro_rules! named_error {
     }};
 }
 
+macro_rules! check_unsafe {
+    ($self: expr, $err: expr) => {{
+        if let Safety::Unsafe(v) = &mut $self.safety {
+            *v = true;
+        } else {
+            $self.proj.diag.report($err);
+        }
+    }};
+}
+
 #[derive(Debug, Clone, EnumAsInner)]
 pub enum MemberFnType {
     Normal,
@@ -202,7 +212,7 @@ pub enum ResolvedValue {
 pub enum Safety {
     #[default]
     Safe,
-    Unsafe,
+    Unsafe(bool),
 }
 
 #[derive(Clone, derive_more::From)]
@@ -2626,10 +2636,7 @@ impl TypeChecker {
                         match self.proj.types[expr.ty] {
                             Type::Ptr(inner) | Type::MutPtr(inner) => (inner, expr),
                             Type::RawPtr(inner) | Type::RawMutPtr(inner) => {
-                                if self.safety != Safety::Unsafe {
-                                    self.proj.diag.report(Error::is_unsafe(span));
-                                }
-
+                                check_unsafe!(self, Error::is_unsafe(span));
                                 (inner, expr)
                             }
                             Type::Unknown => return Default::default(),
@@ -3190,11 +3197,11 @@ impl TypeChecker {
                         }
                     }
 
-                    if var.is_static && var.is_extern && self.safety != Safety::Unsafe {
-                        self.proj.diag.report(Error::new(
-                            "accessing static extern variable is unsafe",
-                            span,
-                        ));
+                    if var.is_static && var.is_extern {
+                        check_unsafe!(
+                            self,
+                            Error::new("accessing static extern variable is unsafe", span)
+                        );
                     }
 
                     let ty = var.ty;
@@ -3484,8 +3491,8 @@ impl TypeChecker {
                     );
                 };
 
-                if ut.kind.is_unsafe_union() && self.safety != Safety::Unsafe {
-                    self.proj.diag.report(Error::is_unsafe(name.span));
+                if ut.kind.is_unsafe_union() {
+                    check_unsafe!(self, Error::is_unsafe(name.span));
                 }
 
                 let ty = member.ty.with_ut_templates(&mut self.proj.types, id);
@@ -3673,8 +3680,8 @@ impl TypeChecker {
                         ),
                         span,
                     )),
-                    Cast::Unsafe if self.safety != Safety::Unsafe => {
-                        self.error(Error::is_unsafe(span))
+                    Cast::Unsafe => {
+                        check_unsafe!(self, Error::is_unsafe(span));
                     }
                     Cast::Fallible if !throwing => self.proj.diag.report(Error::new(
                         format!(
@@ -3773,16 +3780,22 @@ impl TypeChecker {
                 CExpr::new(self.proj.types.insert(fnptr), CExprData::Lambda(body))
             }
             PExprData::Unsafe(expr) => {
-                // for unsafe specifically, span is only the keyword
-                if self.safety == Safety::Unsafe {
+                let mut span = span;
+                span.len = "unsafe".len() as u32;
+                let was_unsafe = matches!(self.safety, Safety::Unsafe(_));
+                if was_unsafe {
                     self.proj.diag.report(Warning::redundant_unsafe(span));
                 }
 
                 // consider the body of the
                 self.current_expr -= 1;
-                let old_safety = std::mem::replace(&mut self.safety, Safety::Unsafe);
+                let old_safety = std::mem::replace(&mut self.safety, Safety::Unsafe(false));
                 let expr = self.check_expr(*expr, target);
-                self.safety = old_safety;
+                let old_safety = std::mem::replace(&mut self.safety, old_safety);
+                if !was_unsafe && matches!(old_safety, Safety::Unsafe(false)) {
+                    self.proj.diag.report(Warning::useless_unsafe(span));
+                }
+
                 expr
             }
         }
@@ -4002,8 +4015,8 @@ impl TypeChecker {
                 }
                 // unsafe doesnt cause check_fn_args to fail, but we mute errors, so check again
                 // here
-                if self.proj.scopes.get(func.id).is_unsafe && self.safety != Safety::Unsafe {
-                    self.error(Error::is_unsafe(span))
+                if self.proj.scopes.get(func.id).is_unsafe {
+                    check_unsafe!(self, Error::is_unsafe(span));
                 }
 
                 if !assign && let Type::Ptr(inner) | Type::MutPtr(inner) = &self.proj.types[ret] {
@@ -4815,8 +4828,8 @@ impl TypeChecker {
 
         let f = self.check_bounds_filtered(func, &unknowns, span);
         failed = failed || f;
-        if self.proj.scopes.get(func.id).is_unsafe && self.safety != Safety::Unsafe {
-            self.error(Error::is_unsafe(span))
+        if self.proj.scopes.get(func.id).is_unsafe {
+            check_unsafe!(self, Error::is_unsafe(span));
         }
 
         (

@@ -325,6 +325,10 @@ impl Warning {
         Self::new("unsafe expression in unsafe context", span)
     }
 
+    pub fn useless_unsafe(span: Span) -> Error {
+        Self::new("unsafe expression contains no unsafe operations", span)
+    }
+
     pub fn decimal_leading_zero(span: Span) -> Error {
         Self::new(
             "leading zero in decimal literal (use 0o to create an octal literal)",
