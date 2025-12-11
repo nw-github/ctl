@@ -181,6 +181,7 @@ impl std::fmt::Display for Token<'_> {
             Token::Struct => write!(f, "struct"),
             Token::Packed => write!(f, "packed"),
             Token::Else => write!(f, "else"),
+            Token::For => write!(f, "for"),
             _ => write!(f, "FIXME: {self:?}"),
         }
     }
