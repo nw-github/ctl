@@ -16,7 +16,6 @@ struct FnConfig {
     tk_unsafe: Option<Span>,
     require_body: bool,
     forced_pub: bool,
-    terminator: Terminator,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -24,13 +23,6 @@ enum EvalContext {
     For,
     IfWhile,
     Normal,
-}
-
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
-enum Terminator {
-    #[default]
-    Semicolon,
-    Comma,
 }
 
 pub struct Parser<'a, 'b, 'c> {
@@ -98,7 +90,6 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             tk_unsafe: is_unsafe.as_ref().map(|t| t.span),
             require_body: is_extern.is_none(),
             forced_pub: false,
-            terminator: Terminator::Semicolon,
         };
         match self.try_function(conf, attrs.clone()) {
             Some(Left(func)) => {
@@ -1766,7 +1757,6 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 tk_public: public.as_ref().map(|t| t.span),
                 tk_unsafe: this.next_if(Token::Unsafe).map(|t| t.span),
                 require_body: true,
-                terminator: Terminator::Comma,
                 ..Default::default()
             };
             if config.tk_unsafe.is_some() {
@@ -2182,11 +2172,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             None
         } else if self.next_if(Token::FatArrow).is_some() {
             let expr = self.expression();
-            let token = self.expect(if cfg.terminator == Terminator::Comma {
-                Token::Comma
-            } else {
-                Token::Semicolon
-            });
+            let token = self.expect(Token::Semicolon);
             span.extend_to(token.span);
             Some(expr)
         } else {
