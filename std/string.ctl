@@ -20,11 +20,11 @@ pub struct str {
         str(span:)
     }
 
-    pub unsafe fn from_cstr(s: *c_char): ?str {
+    pub unsafe fn from_cstr(s: ^c_char): ?str {
         str::from_utf8(unsafe std::span::Span::new((&raw *s).cast(), std::intrin::strlen(s)))
     }
 
-    pub unsafe fn from_cstr_unchecked(s: *c_char): str {
+    pub unsafe fn from_cstr_unchecked(s: ^c_char): str {
         str(span: unsafe std::span::Span::new((&raw *s).cast(), std::intrin::strlen(s)))
     }
 
