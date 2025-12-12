@@ -2,6 +2,7 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::parsed::{Expr, Pattern, TypeHint},
+    intern::StrId,
     lexer::{Located, Span},
     sym::{ExtensionId, FunctionId, ScopeId, TraitId, UserTypeId, VariableId},
 };
@@ -31,5 +32,6 @@ pub enum Stmt {
     Trait { id: TraitId, fns: Vec<Fn> },
     Extension { id: ExtensionId, impls: Vec<ImplBlock>, fns: Vec<Fn> },
     Module { id: ScopeId, body: Vec<Stmt> },
+    ModuleOOL { name: Located<StrId> },
     None,
 }

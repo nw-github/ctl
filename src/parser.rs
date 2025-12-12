@@ -25,6 +25,17 @@ enum EvalContext {
     Normal,
 }
 
+pub struct ModuleAttributes {
+    pub attrs: Attributes,
+    pub public: bool,
+}
+
+impl Default for ModuleAttributes {
+    fn default() -> Self {
+        Self { attrs: Default::default(), public: true }
+    }
+}
+
 pub struct Parser<'a, 'b, 'c> {
     lexer: Lexer<'a>,
     peek: Option<Located<Token<'a>>>,
@@ -44,6 +55,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
         diag: &'b mut Diagnostics,
         int: &'c mut Strings,
         file: FileId,
+        attrs: ModuleAttributes,
     ) -> Stmt {
         let mut this = Self::new(src, diag, int, file);
         let mut stmts = Vec::new();
@@ -51,19 +63,17 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             stmts.push(this.item());
         }
 
-        let span = Span { file, pos: 0, len: 0 };
-
         Stmt {
             data: Located::new(
-                span,
+                Span { file, pos: 0, len: src.len() as u32 },
                 StmtData::Module {
-                    public: true,
+                    public: attrs.public,
                     body: stmts,
-                    name: Located::new(span, name),
+                    name: Located::new(Span { file, pos: 0, len: 0 }, name),
                     file: true,
                 },
             ),
-            attrs: Default::default(),
+            attrs: attrs.attrs,
         }
     }
 
@@ -189,17 +199,27 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 }
 
                 let name = self.expect_ident("expected name");
-                let mut body = Vec::new();
-                self.expect(Token::LCurly);
-                let span =
-                    self.next_until(Token::RCurly, earliest_span, |this| body.push(this.item()));
-                Ok(Stmt {
-                    data: Located::new(
-                        span,
-                        StmtData::Module { public: public.is_some(), file: false, name, body },
-                    ),
-                    attrs,
-                })
+                if self.next_if(Token::LCurly).is_some() {
+                    let mut body = Vec::new();
+                    let span = self
+                        .next_until(Token::RCurly, earliest_span, |this| body.push(this.item()));
+                    Ok(Stmt {
+                        data: Located::new(
+                            earliest_span.extended_to(span),
+                            StmtData::Module { public: public.is_some(), file: false, name, body },
+                        ),
+                        attrs,
+                    })
+                } else {
+                    let end = self.expect(Token::Semicolon);
+                    Ok(Stmt {
+                        data: Located::new(
+                            earliest_span.extended_to(end.span),
+                            StmtData::ModuleOOL { public: public.is_some(), name, resolved: false },
+                        ),
+                        attrs,
+                    })
+                }
             }
             Token::Use => {
                 self.next();

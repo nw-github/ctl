@@ -1112,16 +1112,7 @@ impl TypeChecker {
         }
 
         match stmt.data.data {
-            PStmtData::Module { public, name, body, file } => {
-                if file && name.data == Strings::MAIN {
-                    return DStmt::Module {
-                        id: self.current,
-                        body: body
-                            .into_iter()
-                            .map(|stmt| self.declare_stmt(autouse, stmt))
-                            .collect(),
-                    };
-                }
+            PStmtData::Module { public, name, body, .. } => {
                 let parent = self.current;
                 self.enter(ScopeKind::Module(name), |this| {
                     this.check_hover(name.span, this.current.into());
@@ -1158,6 +1149,21 @@ impl TypeChecker {
                             .collect(),
                     }
                 })
+            }
+            PStmtData::ModuleOOL { name, resolved, .. } => {
+                // TODO: report an error if this is not at the top level of a main.ctl/equivalent
+                if !resolved {
+                    self.proj.diag.report(Error::new(
+                        format!(
+                            "couldn't find module '{0}' (couldn't read {0}.ctl or {0}/main.ctl)",
+                            strdata!(self, name.data),
+                        ),
+                        name.span,
+                    ));
+                    DStmt::None
+                } else {
+                    DStmt::ModuleOOL { name }
+                }
             }
             PStmtData::Struct { base, packed } => self.declare_struct(base, stmt.attrs, packed),
             PStmtData::Union { tag, base, variants } => {
@@ -1630,6 +1636,12 @@ impl TypeChecker {
                         this.check_stmt(stmt);
                     }
                 });
+            }
+            DStmt::ModuleOOL { name } => {
+                let item = self.scopes()[self.current].find_in_tns(name.data);
+                if let Some(scope) = item.and_then(|item| item.id.into_module().ok()) {
+                    self.check_hover(name.span, LspItem::Module(scope));
+                }
             }
             DStmt::Struct { init, id, impls, fns } => {
                 self.enter_id(self.proj.scopes.get(id).body_scope, |this| {

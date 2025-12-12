@@ -24,6 +24,17 @@ fn panic_handler(s: str): never {
     unsafe libc::abort();
 }
 
+mod ryu;
+
+@(feature(io))
+pub mod io;
+
+@(feature(hosted))
+pub mod env;
+
+@(feature(alloc))
+pub mod alloc;
+
 @(autouse)
 mod prelude {
     pub use super::panic;
@@ -41,7 +52,6 @@ mod prelude {
     pub use super::alloc::collections::*;
     @(feature(alloc))
     pub use super::alloc::ext::*;
-
     @(feature(io))
     pub use super::io::*;
 }

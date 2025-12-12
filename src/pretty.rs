@@ -159,6 +159,13 @@ pub fn print_stmt(stmt: &Stmt, strings: &Strings, indent: usize) {
             print_header(&tabs, "Stmt::Module", &[str!(name, strings, LOCATED), bool!(public)]);
             print_stmts(body, strings, indent + 1);
         }
+        StmtData::ModuleOOL { public, name, resolved } => {
+            print_header(
+                &tabs,
+                "Stmt::ModuleOOL",
+                &[str!(name, strings, LOCATED), bool!(public), bool!(resolved)],
+            );
+        }
         StmtData::Use(UsePath { public, origin, components, tail }) => {
             print_header(
                 &tabs,

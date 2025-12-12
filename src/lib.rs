@@ -19,7 +19,11 @@ use std::path::{Path, PathBuf};
 
 pub use project::Configuration;
 
-use crate::{intern::Strings, parser::Parser, typecheck::TypeChecker};
+use crate::{
+    intern::Strings,
+    parser::{ModuleAttributes, Parser},
+    typecheck::TypeChecker,
+};
 use anyhow::{Context, Result};
 use ast::parsed::{Stmt, StmtData};
 use codegen::Codegen;
@@ -75,7 +79,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
         let mut strings = Strings::new();
         let mut stmts = vec![];
         for (path, module) in project.mods {
-            stmts.push(self.load_module(&mut diag, &mut strings, path, module)?);
+            stmts.push(self.load_module(&mut diag, &mut strings, path, module, None)?);
         }
 
         Ok(Compiler { state: Parsed(stmts, diag, project.conf, strings) })
@@ -87,20 +91,32 @@ impl<T: SourceProvider> Compiler<Source<T>> {
         strings: &mut Strings,
         path: PathBuf,
         module: Module,
+        attrs: Option<ModuleAttributes>,
     ) -> Result<Stmt> {
         let name = strings.get_or_intern(module.name);
         let mut parsed = self.state.0.get_source(&path, |src| {
             let file_id = diag.add_file(path.clone());
-            Parser::parse(src, name, diag, strings, file_id)
+            Parser::parse(src, name, diag, strings, file_id, attrs.unwrap_or_default())
         })?;
 
         let StmtData::Module { body, .. } = &mut parsed.data.data else {
             unreachable!();
         };
 
-        // Load first so typechecking puts a redefinition error on duplicates inside the 'main.ctl'
         for (path, module) in module.mods {
-            body.push(self.load_module(diag, strings, path, module)?);
+            let mod_name = strings.get_or_intern(&module.name);
+            let attrs = body.iter_mut().find_map(|stmt| {
+                if let StmtData::ModuleOOL { public, name, resolved } = &mut stmt.data.data
+                    && name.data == mod_name
+                {
+                    *resolved = true;
+                    Some(ModuleAttributes { attrs: stmt.attrs.clone(), public: *public })
+                } else {
+                    None
+                }
+            });
+
+            body.push(self.load_module(diag, strings, path, module, attrs)?);
         }
 
         Ok(parsed)

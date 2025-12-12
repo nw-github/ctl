@@ -103,6 +103,11 @@ pub enum StmtData {
         name: Located<StrId>,
         body: Vec<Stmt>,
     },
+    ModuleOOL {
+        public: bool,
+        name: Located<StrId>,
+        resolved: bool,
+    },
     Error,
 }
 
