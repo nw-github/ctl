@@ -273,7 +273,10 @@ impl Expr {
             ExprData::Member { source, .. } => {
                 matches!(types[source.ty], Type::MutPtr(_)) || source.can_addrmut(scopes, types)
             }
-            ExprData::Subscript { callee, .. } => callee.can_addrmut(scopes, types),
+            ExprData::Subscript { callee, .. } => {
+                matches!(types[callee.ty], Type::MutPtr(_) | Type::RawPtr(_))
+                    || callee.can_addrmut(scopes, types)
+            }
             _ => true,
         }
     }

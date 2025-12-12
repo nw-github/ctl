@@ -120,7 +120,7 @@ impl Default for Compiler<Source<FileSourceProvider>> {
 impl Compiler<Parsed> {
     pub fn dump(&self) {
         if let Some(ast) = self.state.0.last() {
-            pretty::print_stmt(ast, 0);
+            pretty::print_stmt(ast, &self.state.3, 0);
         }
     }
 

@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueHint};
+use colored::Colorize;
 use ctl::{
     CachingSourceProvider, Compiler, Configuration, Diagnostics, Error, FileId, LspBackend,
     OffsetMode, SourceProvider, UnloadedProject, intern::Strings,
@@ -230,7 +231,8 @@ fn display_diagnostics(diag: &Diagnostics) {
             diag.diagnostics().iter().filter(|e| e.severity.is_error()),
             |msg, range| {
                 eprintln!(
-                    "error: {}:{}:{}: {msg}",
+                    "{}: {}:{}:{}: {msg}",
+                    "error".red(),
                     path.display(),
                     range.start.line + 1,
                     range.start.character + 1
@@ -253,7 +255,8 @@ fn display_diagnostics(diag: &Diagnostics) {
                 .filter(|e| e.severity.is_warning()),
             |msg, range| {
                 eprintln!(
-                    "warning: {}:{}:{}: {msg}",
+                    "{}: {}:{}:{}: {msg}",
+                    "warning".yellow(),
                     path.display(),
                     range.start.line + 1,
                     range.start.character + 1
