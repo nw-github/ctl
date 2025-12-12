@@ -22,44 +22,14 @@ pub struct ImplBlock {
 pub enum Stmt {
     Expr(Expr),
     Defer(Expr),
-    Guard {
-        cond: Expr,
-        body: Expr,
-    },
-    Let {
-        patt: Located<Pattern>,
-        ty: Option<TypeHint>,
-        value: Option<Expr>,
-    },
-    Binding {
-        id: VariableId,
-        value: Option<Expr>,
-        constant: bool,
-    },
+    Guard { cond: Expr, body: Expr },
+    Let { patt: Located<Pattern>, ty: Option<TypeHint>, value: Option<Expr> },
+    Binding { id: VariableId, value: Option<Expr>, constant: bool },
     Fn(Fn),
-    Struct {
-        id: UserTypeId,
-        impls: Vec<ImplBlock>,
-        fns: Vec<Fn>,
-        init: Fn,
-    },
-    Union {
-        id: UserTypeId,
-        impls: Vec<ImplBlock>,
-        fns: Vec<Fn>,
-    },
-    Trait {
-        id: TraitId,
-        fns: Vec<Fn>,
-    },
-    Extension {
-        id: ExtensionId,
-        impls: Vec<ImplBlock>,
-        fns: Vec<Fn>,
-    },
-    Module {
-        id: ScopeId,
-        body: Vec<Stmt>,
-    },
+    Struct { id: UserTypeId, impls: Vec<ImplBlock>, fns: Vec<Fn>, init: Fn },
+    Union { id: UserTypeId, impls: Vec<ImplBlock>, fns: Vec<Fn> },
+    Trait { id: TraitId, fns: Vec<Fn> },
+    Extension { id: ExtensionId, impls: Vec<ImplBlock>, fns: Vec<Fn> },
+    Module { id: ScopeId, body: Vec<Stmt> },
     None,
 }

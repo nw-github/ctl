@@ -125,10 +125,7 @@ fn compile_results(code: &str, build: BuildOrRun, conf: Configuration) -> Result
         std::array::from_fn(|_| Stdio::piped())
     };
     let has_boehm = conf.has_feature(Strings::FEAT_BOEHM);
-    let output = build
-        .out_dir
-        .or(conf.build)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let output = build.out_dir.or(conf.build).unwrap_or_else(|| PathBuf::from("."));
     std::fs::create_dir_all(&output)?;
 
     let output = output.join(conf.name.as_deref().unwrap_or("a.out"));
@@ -151,10 +148,7 @@ fn compile_results(code: &str, build: BuildOrRun, conf: Configuration) -> Result
         .stderr(stderr)
         .spawn()
         .context("Couldn't invoke the compiler")?;
-    cc.stdin
-        .as_mut()
-        .context("The C compiler closed stdin")?
-        .write_all(code.as_bytes())?;
+    cc.stdin.as_mut().context("The C compiler closed stdin")?.write_all(code.as_bytes())?;
     let status = cc.wait()?;
     if !status.success() {
         if let Some(mut stderr) = cc.stderr {
@@ -178,10 +172,7 @@ fn print_results(src: &[u8], pretty: bool, output: &mut impl Write) -> Result<()
             .stderr(Stdio::null())
             .spawn()
             .context("Couldn't invoke clang-format")?;
-        cc.stdin
-            .as_mut()
-            .context("clang-format closed stdin")?
-            .write_all(src)?;
+        cc.stdin.as_mut().context("clang-format closed stdin")?.write_all(src)?;
         let result = cc.wait_with_output()?;
         if !result.status.success() {
             anyhow::bail!(
@@ -220,10 +211,7 @@ fn display_diagnostics(diag: &Diagnostics) {
     let cwd = std::env::current_dir().ok();
     let mut provider = CachingSourceProvider::new();
     for (id, path) in diag.paths() {
-        let path = cwd
-            .as_ref()
-            .and_then(|cwd| path.strip_prefix(cwd).ok())
-            .unwrap_or(path);
+        let path = cwd.as_ref().and_then(|cwd| path.strip_prefix(cwd).ok()).unwrap_or(path);
         format(
             &mut provider,
             diag,
@@ -242,17 +230,12 @@ fn display_diagnostics(diag: &Diagnostics) {
     }
 
     for (id, path) in diag.paths() {
-        let path = cwd
-            .as_ref()
-            .and_then(|cwd| path.strip_prefix(cwd).ok())
-            .unwrap_or(path);
+        let path = cwd.as_ref().and_then(|cwd| path.strip_prefix(cwd).ok()).unwrap_or(path);
         format(
             &mut provider,
             diag,
             id,
-            diag.diagnostics()
-                .iter()
-                .filter(|e| e.severity.is_warning()),
+            diag.diagnostics().iter().filter(|e| e.severity.is_warning()),
             |msg, range| {
                 eprintln!(
                     "{}: {}:{}:{}: {msg}",
@@ -273,15 +256,12 @@ fn main() -> Result<()> {
         SubCommand::Build { build, .. } => &build.input,
         SubCommand::Run { build, .. } => &build.input,
         SubCommand::Lsp => {
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()?
-                .block_on(async {
-                    let stdin = tokio::io::stdin();
-                    let stdout = tokio::io::stdout();
-                    let (service, socket) = LspService::new(LspBackend::new);
-                    Server::new(stdin, stdout, socket).serve(service).await
-                });
+            tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(async {
+                let stdin = tokio::io::stdin();
+                let stdout = tokio::io::stdout();
+                let (service, socket) = LspService::new(LspBackend::new);
+                Server::new(stdin, stdout, socket).serve(service).await
+            });
             return Ok(());
         }
     };

@@ -28,12 +28,7 @@ pub struct Project {
 
 impl Project {
     pub fn new(conf: Configuration, diag: Diagnostics, strings: Strings) -> Self {
-        Self {
-            diag,
-            conf,
-            strings,
-            ..Default::default()
-        }
+        Self { diag, conf, strings, ..Default::default() }
     }
 }
 

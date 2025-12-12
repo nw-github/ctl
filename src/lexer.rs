@@ -128,11 +128,7 @@ pub enum Token<'a> {
     Or,
 
     Ident(&'a str),
-    Int {
-        base: u8,
-        value: &'a str,
-        width: Option<&'a str>,
-    },
+    Int { base: u8, value: &'a str, width: Option<&'a str> },
     Float(&'a str),
     String(Cow<'a, str>),
     StringPart(Cow<'a, str>),
@@ -255,10 +251,7 @@ impl Span {
     pub fn extended_to(self, b: impl Into<Span>) -> Self {
         let b: Span = b.into();
         debug_assert!(b.pos >= self.pos);
-        Self {
-            len: b.pos - self.pos + b.len,
-            ..self
-        }
+        Self { len: b.pos - self.pos + b.len, ..self }
     }
 
     pub fn includes(&self, pos: u32) -> bool {
@@ -280,10 +273,7 @@ impl<T> Located<T> {
     }
 
     pub fn nowhere(data: T) -> Self {
-        Self {
-            span: Span::default(),
-            data,
-        }
+        Self { span: Span::default(), data }
     }
 }
 
@@ -308,12 +298,7 @@ pub struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a str, file: FileId) -> Self {
-        Self {
-            src,
-            file,
-            pos: 0,
-            interpolating: false,
-        }
+        Self { src, file, pos: 0, interpolating: false }
     }
 
     pub fn is_identifier_char(ch: char) -> bool {
@@ -487,28 +472,16 @@ impl<'a> Lexer<'a> {
                 if self.advance_if('=') {
                     Token::GtEqual
                 } else if self.advance_if('>') {
-                    if self.advance_if('=') {
-                        Token::ShrAssign
-                    } else {
-                        Token::Shr
-                    }
+                    if self.advance_if('=') { Token::ShrAssign } else { Token::Shr }
                 } else {
                     Token::RAngle
                 }
             }
             '<' => {
                 if self.advance_if('=') {
-                    if self.advance_if('>') {
-                        Token::Spaceship
-                    } else {
-                        Token::LtEqual
-                    }
+                    if self.advance_if('>') { Token::Spaceship } else { Token::LtEqual }
                 } else if self.advance_if('<') {
-                    if self.advance_if('=') {
-                        Token::ShlAssign
-                    } else {
-                        Token::Shl
-                    }
+                    if self.advance_if('=') { Token::ShlAssign } else { Token::Shl }
                 } else {
                     Token::LAngle
                 }
@@ -528,20 +501,13 @@ impl<'a> Lexer<'a> {
             'b' => self.maybe_byte_string(diag, start),
             ch if Self::is_identifier_first_char(ch) => self.identifier(start),
             ch => {
-                diag.report(Error::new(
-                    format!("unexpected character '{ch}'"),
-                    self.here(0),
-                ));
+                diag.report(Error::new(format!("unexpected character '{ch}'"), self.here(0)));
                 return self.next(diag);
             }
         };
 
         Located::new(
-            Span {
-                pos: start as u32,
-                len: (self.pos - start) as u32,
-                file: self.file,
-            },
+            Span { pos: start as u32, len: (self.pos - start) as u32, file: self.file },
             token,
         )
     }
@@ -566,11 +532,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn here(&self, len: usize) -> Span {
-        Span {
-            pos: self.pos as u32,
-            file: self.file,
-            len: len as u32,
-        }
+        Span { pos: self.pos as u32, file: self.file, len: len as u32 }
     }
 
     fn advance(&mut self) -> Option<char> {
@@ -698,11 +660,8 @@ impl<'a> Lexer<'a> {
     }
 
     fn char_literal(&mut self, diag: &mut Diagnostics, byte: bool) -> char {
-        let mut here = Span {
-            pos: self.pos as u32 - 1 - byte as u32,
-            len: 1 + byte as u32,
-            file: self.file,
-        };
+        let mut here =
+            Span { pos: self.pos as u32 - 1 - byte as u32, len: 1 + byte as u32, file: self.file };
         let ch = match self.advance() {
             Some('\\') => self.escape_char(diag, byte),
             Some('\'') => {
@@ -734,11 +693,7 @@ impl<'a> Lexer<'a> {
 
     fn numeric_suffix(&mut self) -> Option<&'a str> {
         let suffix = self.advance_while(|s| s.is_ascii_alphanumeric());
-        if !suffix.is_empty() {
-            Some(suffix)
-        } else {
-            None
-        }
+        if !suffix.is_empty() { Some(suffix) } else { None }
     }
 
     fn numeric_literal(&mut self, diag: &mut Diagnostics, ch: char, start: usize) -> Token<'a> {
@@ -791,11 +746,7 @@ impl<'a> Lexer<'a> {
                 }));
             }
 
-            Token::Int {
-                value,
-                base: 10,
-                width: self.numeric_suffix(),
-            }
+            Token::Int { value, base: 10, width: self.numeric_suffix() }
         }
     }
 
@@ -868,10 +819,7 @@ impl<'a> Lexer<'a> {
                 Ok(c) => c,
                 Err(_) => {
                     diag.report(Error::new(
-                        format!(
-                            "invalid character '{c}' ({:#x}) in byte {name} literal",
-                            c as u8
-                        ),
+                        format!("invalid character '{c}' ({:#x}) in byte {name} literal", c as u8),
                         span,
                     ));
                     0

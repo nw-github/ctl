@@ -545,11 +545,7 @@ mod tests {
     #[test]
     pub fn bigint_limits() {
         for bits in 0..256 {
-            let mut int = Integer {
-                bits,
-                signed: false,
-                char: false,
-            };
+            let mut int = Integer { bits, signed: false, char: false };
             let umin = int.min();
             let umax = int.max();
             int.signed = true;

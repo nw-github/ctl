@@ -43,14 +43,8 @@ macro_rules! id {
                 let id = $name(index);
                 let name = scopes.$vec[id.0].name.data;
                 let kind = id.into();
-                let prev = scopes[scope]
-                    .$namespace
-                    .insert(name, Vis { id: kind, public });
-                InsertionResult {
-                    id,
-                    existed: prev.is_some(),
-                    item: kind.into(),
-                }
+                let prev = scopes[scope].$namespace.insert(name, Vis { id: kind, public });
+                InsertionResult { id, existed: prev.is_some(), item: kind.into() }
             }
 
             fn name<'a>(&self, scopes: &'a Scopes) -> &'a Located<StrId> {
@@ -160,11 +154,7 @@ pub enum ParamPattern {
 #[derive(Clone)]
 pub enum TraitImplData {
     Path(Path),
-    Operator {
-        tr: StrId,
-        ty_args: Vec<TypeHint>,
-        span: Span,
-    },
+    Operator { tr: StrId, ty_args: Vec<TypeHint>, span: Span },
 }
 
 #[derive(Clone, EnumAsInner, Default)]
@@ -234,10 +224,7 @@ impl Function {
                 .params
                 .first()
                 .is_some_and(|p| p.label == Strings::THIS_PARAM && types[p.ty].is_safe_ptr())
-            && self
-                .params
-                .iter()
-                .all(|p| !types[p.ty].as_user().is_some_and(|ty| ty.id == this))
+            && self.params.iter().all(|p| !types[p.ty].as_user().is_some_and(|ty| ty.id == this))
     }
 }
 
@@ -276,9 +263,7 @@ pub struct Union {
 
 impl Union {
     pub fn discriminant(&self, name: StrId) -> Option<&ComptimeInt> {
-        self.variants
-            .get(&name)
-            .and_then(|v| v.discrim.as_checked())
+        self.variants.get(&name).and_then(|v| v.discrim.as_checked())
     }
 }
 
@@ -330,10 +315,7 @@ pub struct UserType {
 
 impl UserType {
     pub fn find_associated_fn(&self, scopes: &Scopes, name: StrId) -> Option<FunctionId> {
-        self.fns
-            .iter()
-            .map(|f| f.id)
-            .find(|&id| scopes.get(id).name.data == name)
+        self.fns.iter().map(|f| f.id).find(|&id| scopes.get(id).name.data == name)
     }
 
     pub fn is_empty_variant(&self, variant: StrId) -> bool {
@@ -476,45 +458,28 @@ impl Scopes {
 
     pub fn create_scope(&mut self, parent: ScopeId, kind: ScopeKind, public: bool) -> ScopeId {
         let id = ScopeId(self.scopes.len());
-        self.scopes.push(Scope {
-            parent: Some(parent),
-            kind,
-            public,
-            ..Default::default()
-        });
+        self.scopes.push(Scope { parent: Some(parent), kind, public, ..Default::default() });
         id
     }
 
     pub fn walk(&self, id: ScopeId) -> ScopeIter<'_> {
-        ScopeIter {
-            scopes: self,
-            next: Some(id),
-        }
+        ScopeIter { scopes: self, next: Some(id) }
     }
 
     pub fn function_of(&self, scope: ScopeId) -> Option<FunctionId> {
-        self.walk(scope)
-            .find_map(|(_, scope)| scope.kind.as_function().copied())
+        self.walk(scope).find_map(|(_, scope)| scope.kind.as_function().copied())
     }
 
     pub fn module_of(&self, id: ScopeId) -> Option<ScopeId> {
-        self.walk(id)
-            .find(|(_, current)| current.kind.is_module())
-            .map(|(id, _)| id)
+        self.walk(id).find(|(_, current)| current.kind.is_module()).map(|(id, _)| id)
     }
 
     pub fn vars(&self) -> impl Iterator<Item = (VariableId, &Scoped<Variable>)> {
-        self.vars
-            .iter()
-            .enumerate()
-            .map(|(i, var)| (VariableId(i), var))
+        self.vars.iter().enumerate().map(|(i, var)| (VariableId(i), var))
     }
 
     pub fn functions(&self) -> impl Iterator<Item = (FunctionId, &Scoped<Function>)> {
-        self.fns
-            .iter()
-            .enumerate()
-            .map(|(i, var)| (FunctionId(i), var))
+        self.fns.iter().enumerate().map(|(i, var)| (FunctionId(i), var))
     }
 
     pub fn get_option_id(&self) -> Option<UserTypeId> {
@@ -603,9 +568,7 @@ impl Scopes {
             self.tuples.insert(ty_args.len(), res.id);
             res.id
         };
-        types.insert(Type::User(GenericUserType::from_type_args(
-            self, id, ty_args,
-        )))
+        types.insert(Type::User(GenericUserType::from_type_args(self, id, ty_args)))
     }
 
     pub fn get_anon_struct(
@@ -652,10 +615,7 @@ impl Scopes {
                         .enumerate()
                         .map(|(i, id)| {
                             let ty = Type::User(GenericUserType::from_id(self, types, *id));
-                            (
-                                names[i],
-                                CheckedMember::new(true, types.insert(ty), Span::default()),
-                            )
+                            (names[i], CheckedMember::new(true, types.insert(ty), Span::default()))
                         })
                         .collect(),
                     name: Located::nowhere(strings.get_or_intern("$anonstruct")),
@@ -677,9 +637,7 @@ impl Scopes {
             self.structs.insert(names, res.id);
             res.id
         };
-        types.insert(Type::User(GenericUserType::from_type_args(
-            self, id, ty_args,
-        )))
+        types.insert(Type::User(GenericUserType::from_type_args(self, id, ty_args)))
     }
 
     pub fn get_trait_impls(&self, tr: TraitId) -> HashSet<TraitId> {
@@ -743,10 +701,7 @@ impl Scopes {
     }
 
     pub fn borrow_twice(&mut self, a: ScopeId, b: ScopeId) -> Option<(&mut Scope, &mut Scope)> {
-        self.scopes
-            .get_disjoint_mut([a.0, b.0])
-            .ok()
-            .map(|[a, b]| (a, b))
+        self.scopes.get_disjoint_mut([a.0, b.0]).ok().map(|[a, b]| (a, b))
     }
 }
 

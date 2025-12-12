@@ -276,14 +276,8 @@ pub struct RangePattern<T> {
 #[derive(Clone)]
 pub enum Pattern {
     // x is ::core::opt::Option::Some(mut y)
-    TupleLike {
-        path: Path,
-        subpatterns: Vec<Located<Pattern>>,
-    },
-    StructLike {
-        path: Path,
-        subpatterns: Vec<Destructure>,
-    },
+    TupleLike { path: Path, subpatterns: Vec<Located<Pattern>> },
+    StructLike { path: Path, subpatterns: Vec<Destructure> },
     // x is ::core::opt::Option::None
     // x is y
     Path(Path),

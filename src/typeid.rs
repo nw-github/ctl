@@ -3,10 +3,10 @@ use std::{fmt::Display, ops::Index};
 use crate::{
     ast::{BinaryOp, UnaryOp, parsed::TypeHint},
     comptime_int::ComptimeInt,
+    hash::IndexMap,
     intern::Strings,
     nearest_pow_of_two,
     project::Project,
-    hash::{IndexMap},
     sym::{
         ExtensionId, FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, TraitId, UserTypeId,
         UserTypeKind,
@@ -44,24 +44,11 @@ impl TypeArgs {
     where
         T::Value: HasTypeParams,
     {
-        TypeArgs(
-            scopes
-                .get(id)
-                .get_type_params()
-                .iter()
-                .copied()
-                .zip(types)
-                .collect(),
-        )
+        TypeArgs(scopes.get(id).get_type_params().iter().copied().zip(types).collect())
     }
 
     pub fn unknown(v: &impl HasTypeParams) -> Self {
-        TypeArgs(
-            v.get_type_params()
-                .iter()
-                .map(|&t| (t, TypeId::UNKNOWN))
-                .collect(),
-        )
+        TypeArgs(v.get_type_params().iter().map(|&t| (t, TypeId::UNKNOWN)).collect())
     }
 }
 
@@ -88,10 +75,7 @@ where
                     .get_type_params()
                     .iter()
                     .map(|&id| {
-                        (
-                            id,
-                            types.insert(Type::User(GenericUserType::new(id, Default::default()))),
-                        )
+                        (id, types.insert(Type::User(GenericUserType::new(id, Default::default()))))
                     })
                     .collect(),
             ),
@@ -170,11 +154,7 @@ impl GenericFn {
     pub fn as_fn_ptr(&self, scopes: &Scopes, types: &mut Types) -> FnPtr {
         let f = scopes.get(self.id);
         FnPtr {
-            params: f
-                .params
-                .iter()
-                .map(|p| p.ty.with_templates(types, &self.ty_args))
-                .collect(),
+            params: f.params.iter().map(|p| p.ty.with_templates(types, &self.ty_args)).collect(),
             ret: f.ret.with_templates(types, &self.ty_args),
         }
     }
@@ -217,8 +197,7 @@ impl GenericUserType {
             _ => {
                 let is_lang_type = |name: &str| {
                     let key = strings.get(name);
-                    key.and_then(|key| scopes.lang_types.get(&key))
-                        .is_some_and(|&id| id == self.id)
+                    key.and_then(|key| scopes.lang_types.get(&key)).is_some_and(|&id| id == self.id)
                 };
                 if is_lang_type("option") {
                     return format!("?{}", self.ty_args[0].name(scopes, types, strings));
@@ -260,10 +239,7 @@ impl GenericUserType {
     }
 
     pub fn as_option_inner(&self, scopes: &Scopes) -> Option<TypeId> {
-        scopes
-            .get_option_id()
-            .filter(|opt| self.id == *opt)
-            .and_then(|_| self.first_type_arg())
+        scopes.get_option_id().filter(|opt| self.id == *opt).and_then(|_| self.first_type_arg())
     }
 
     pub fn can_omit_tag(&self, scopes: &Scopes, types: &Types) -> Option<TypeId> {
@@ -346,11 +322,7 @@ impl Integer {
     }
 
     pub const fn from_cint(cint: CInt, signed: bool) -> Self {
-        Self {
-            bits: cint.size() as u32 * 8,
-            signed,
-            char: false,
-        }
+        Self { bits: cint.size() as u32 * 8, signed, char: false }
     }
 }
 
@@ -392,11 +364,7 @@ pub enum Type {
 
 impl Type {
     pub fn as_dyn_pointee(&self) -> Option<&GenericTrait> {
-        if let Type::DynMutPtr(tr) | Type::DynPtr(tr) = self {
-            Some(tr)
-        } else {
-            None
-        }
+        if let Type::DynMutPtr(tr) | Type::DynPtr(tr) = self { Some(tr) } else { None }
     }
 
     pub fn is_numeric(&self) -> bool {
@@ -414,10 +382,7 @@ impl Type {
     }
 
     pub fn is_any_ptr(&self) -> bool {
-        matches!(
-            self,
-            Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_) | Type::RawMutPtr(_)
-        )
+        matches!(self, Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_) | Type::RawMutPtr(_))
     }
 
     pub fn is_safe_ptr(&self) -> bool {
@@ -624,11 +589,8 @@ impl TypeId {
                 let f = scopes.get(func.id);
                 let mut result = format!("fn {}(", strings.resolve(&f.name.data));
                 let ret = f.ret.with_templates(types, &ty_args);
-                let params: Vec<_> = f
-                    .params
-                    .iter()
-                    .map(|p| p.ty.with_templates(types, &ty_args))
-                    .collect();
+                let params: Vec<_> =
+                    f.params.iter().map(|p| p.ty.with_templates(types, &ty_args)).collect();
                 for (i, ty) in params.into_iter().enumerate() {
                     if i > 0 {
                         result.push_str(", ");
@@ -642,10 +604,7 @@ impl TypeId {
             Type::Isize => "int".into(),
             Type::Usize => "uint".into(),
             id @ (Type::CInt(ty) | Type::CUint(ty)) => {
-                format!(
-                    "c_{}{ty:#}",
-                    ["", "u"][matches!(id, Type::CUint(_)) as usize]
-                )
+                format!("c_{}{ty:#}", ["", "u"][matches!(id, Type::CUint(_)) as usize])
             }
             Type::CVoid => "c_void".into(),
         }
@@ -881,10 +840,7 @@ impl TypeId {
     }
 
     pub fn can_omit_tag(self, scopes: &Scopes, types: &Types) -> Option<TypeId> {
-        types
-            .get(self)
-            .as_user()
-            .and_then(|s| s.can_omit_tag(scopes, types))
+        types.get(self).as_user().and_then(|s| s.can_omit_tag(scopes, types))
     }
 
     pub fn with_templates(self, types: &mut Types, map: &TypeArgs) -> TypeId {
@@ -932,11 +888,7 @@ impl TypeId {
             Type::FnPtr(f) => {
                 let f = f.clone();
                 let fnptr = Type::FnPtr(FnPtr {
-                    params: f
-                        .params
-                        .iter()
-                        .map(|p| p.with_templates(types, map))
-                        .collect(),
+                    params: f.params.iter().map(|p| p.with_templates(types, map)).collect(),
                     ret: f.ret.with_templates(types, map),
                 });
                 types.insert(fnptr)

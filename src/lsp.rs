@@ -60,10 +60,7 @@ struct Configuration {
 
 impl Default for Configuration {
     fn default() -> Self {
-        Self {
-            _debounce_ms: 250,
-            _max_problems: 100,
-        }
+        Self { _debounce_ms: 250, _max_problems: 100 }
     }
 }
 
@@ -80,11 +77,7 @@ impl<T> Lazy<T> {
             *self = Self::Initialized(f());
         }
 
-        if let Self::Initialized(value) = self {
-            value.as_mut()
-        } else {
-            None
-        }
+        if let Self::Initialized(value) = self { value.as_mut() } else { None }
     }
 }
 
@@ -206,9 +199,7 @@ impl LanguageServer for LspBackend {
             .entry(params.text_document.uri.clone())
             .and_modify(|text| *text = std::mem::take(&mut params.text_document.text))
             .or_insert_with(|| std::mem::take(&mut params.text_document.text));
-        _ = self
-            .check_project(&params.text_document.uri, None, false)
-            .await;
+        _ = self.check_project(&params.text_document.uri, None, false).await;
     }
 
     async fn did_change(&self, mut params: DidChangeTextDocumentParams) {
@@ -217,9 +208,7 @@ impl LanguageServer for LspBackend {
             .entry(params.text_document.uri.clone())
             .and_modify(|text| *text = std::mem::take(&mut params.content_changes[0].text))
             .or_insert_with(|| std::mem::take(&mut params.content_changes[0].text));
-        _ = self
-            .check_project(&params.text_document.uri, None, true)
-            .await;
+        _ = self.check_project(&params.text_document.uri, None, true).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -256,9 +245,7 @@ impl LanguageServer for LspBackend {
                 LspItem::Property(_, id, member) => {
                     let ut = scopes.get(*id);
                     ut.members.get(member).map(|m| m.span).or_else(|| {
-                        ut.kind
-                            .as_union()
-                            .and_then(|u| u.variants.get(member).map(|v| v.span))
+                        ut.kind.as_union().and_then(|u| u.variants.get(member).map(|v| v.span))
                     })?
                 }
                 _ => return None,
@@ -337,9 +324,7 @@ impl LanguageServer for LspBackend {
                     };
                     let ty = mem.map_or(TypeId::UNKNOWN, |m| m.ty);
                     if matches!(ut.kind, UserTypeKind::Tuple | UserTypeKind::AnonStruct) {
-                        let real = src_ty
-                            .map(|src| ty.with_ut_templates(types, src))
-                            .unwrap_or(ty);
+                        let real = src_ty.map(|src| ty.with_ut_templates(types, src)).unwrap_or(ty);
                         Some(format!(
                             "{public}{}: {}",
                             strings.resolve(name),
@@ -450,10 +435,7 @@ impl LanguageServer for LspBackend {
             let mut changes = HashMap::<Url, Vec<TextEdit>>::new();
             self.find_references(proj, src, |loc| {
                 let map = changes.entry(loc.uri).or_default();
-                map.push(TextEdit {
-                    range: loc.range,
-                    new_text: params.new_name.clone(),
-                });
+                map.push(TextEdit { range: loc.range, new_text: params.new_name.clone() });
             });
 
             debug!(self, "  -> {changes:?}");
@@ -527,9 +509,7 @@ impl LspBackend {
         let unloaded = match UnloadedProject::new(get_file_project(path)) {
             Ok(proj) => proj,
             Err(err) => {
-                self.client
-                    .log_message(MessageType::ERROR, format!("{err}"))
-                    .await;
+                self.client.log_message(MessageType::ERROR, format!("{err}")).await;
                 return Err(Error::internal_error());
             }
         };
@@ -542,10 +522,7 @@ impl LspBackend {
                     .iter()
                     .all(|(path, module)| prev.data.mods.get(path).is_some_and(|m| m == module))
             {
-                debug!(
-                    self,
-                    " -> Checking file in submodule of previous project, skip"
-                );
+                debug!(self, " -> Checking file in submodule of previous project, skip");
                 return Ok(proj_lock_guard);
             }
 
@@ -557,9 +534,7 @@ impl LspBackend {
         {
             Ok(parsed) => parsed,
             Err(err) => {
-                self.client
-                    .log_message(MessageType::ERROR, format!("{err}"))
-                    .await;
+                self.client.log_message(MessageType::ERROR, format!("{err}")).await;
                 return Err(Error::internal_error());
             }
         };
@@ -619,20 +594,13 @@ impl LspBackend {
                 .await;
 
             let mut doc = self.documents.entry(uri).or_default();
-            doc.lsp_items = proj
-                .lsp_items
-                .iter()
-                .filter(|(_, span)| span.file == id)
-                .cloned()
-                .collect();
+            doc.lsp_items =
+                proj.lsp_items.iter().filter(|(_, span)| span.file == id).cloned().collect();
             doc.inlay_hints = Lazy::None;
             doc.semantic_tokens = Lazy::None;
         }
 
-        *proj_lock_guard = Some(LastChecked {
-            data: unloaded,
-            checked: proj,
-        });
+        *proj_lock_guard = Some(LastChecked { data: unloaded, checked: proj });
 
         debug!(self, " -> done check_project");
         Ok(proj_lock_guard)
@@ -678,10 +646,8 @@ impl LspBackend {
             let user = self.with_source(path, &mut FileSourceProvider, |src| {
                 position_to_span(src, file, pos.line, pos.character)
             })?;
-            let (item, _) = doc
-                .lsp_items
-                .iter()
-                .find(|(_, span)| LspInput::matches(Some(user), *span))?;
+            let (item, _) =
+                doc.lsp_items.iter().find(|(_, span)| LspInput::matches(Some(user), *span))?;
             func(item, proj).await
         })
         .await
@@ -693,9 +659,7 @@ impl LspBackend {
         fallback: &mut impl SourceProvider,
         get: impl FnOnce(&str) -> T,
     ) -> Option<T> {
-        if let Some(text) = Url::from_file_path(path)
-            .ok()
-            .and_then(|uri| self.open_files.get(&uri))
+        if let Some(text) = Url::from_file_path(path).ok().and_then(|uri| self.open_files.get(&uri))
         {
             return Some(get(&text));
         }
@@ -714,11 +678,7 @@ impl LspBackend {
     fn find_references(&self, proj: &Project, src: &LspItem, mut next_range: impl FnMut(Location)) {
         let is_constructor_for = |lhs: FunctionId, rhs: UserTypeId| {
             !proj.scopes.get(rhs).kind.is_union()
-                && proj
-                    .scopes
-                    .get(lhs)
-                    .constructor
-                    .is_some_and(|lhs| lhs == rhs)
+                && proj.scopes.get(lhs).constructor.is_some_and(|lhs| lhs == rhs)
         };
 
         let mut cache = CachingSourceProvider::new();
@@ -771,9 +731,7 @@ pub struct LspFileProvider<'a> {
 
 impl SourceProvider for LspFileProvider<'_> {
     fn get_source<T>(&mut self, path: &Path, get: impl FnOnce(&str) -> T) -> anyhow::Result<T> {
-        if let Some(text) = Url::from_file_path(path)
-            .ok()
-            .and_then(|uri| self.open_files.get(&uri))
+        if let Some(text) = Url::from_file_path(path).ok().and_then(|uri| self.open_files.get(&uri))
         {
             return Ok(get(&text));
         }
@@ -877,11 +835,7 @@ fn get_semantic_token(
         LspItem::BuiltinType(_) => token::TYPE,
         &LspItem::Fn(id, _) => {
             if let Some(id) = scopes.get(id).constructor {
-                if scopes.get(id).kind.is_union() {
-                    token::ENUM_MEMBER
-                } else {
-                    token::TYPE
-                }
+                if scopes.get(id).kind.is_union() { token::ENUM_MEMBER } else { token::TYPE }
             } else if scopes
                 .get(id)
                 .params
@@ -904,11 +858,7 @@ fn get_semantic_token(
     // TODO: save the other semantic tokens so they don't have to be recalculated
     let token = SemanticToken {
         delta_line: line - *prev_line,
-        delta_start: if line == *prev_line {
-            start - *prev_start
-        } else {
-            start
-        },
+        delta_start: if line == *prev_line { start - *prev_start } else { start },
         length: span.len, // TODO: use UTF-16 length
         token_type,
         token_modifiers_bitset: mods,
@@ -977,31 +927,22 @@ fn get_completion(
                             " (from {})",
                             strings.resolve(&scopes.get(owner).name.data)
                         )),
-                        UserTypeKind::Trait(_, _) => Some(format!(
-                            " (as {})",
-                            strings.resolve(&scopes.get(owner).name.data)
-                        )),
+                        UserTypeKind::Trait(_, _) => {
+                            Some(format!(" (as {})", strings.resolve(&scopes.get(owner).name.data)))
+                        }
                         _ => None,
                     }),
                     description: desc.clone().into(),
                 }),
-                kind: Some(
-                    if f.constructor
-                        .is_some_and(|id| scopes.get(id).kind.is_union())
-                    {
-                        CompletionItemKind::ENUM_MEMBER
-                    } else if f.constructor.is_some() {
-                        CompletionItemKind::CONSTRUCTOR
-                    } else if f
-                        .params
-                        .first()
-                        .is_some_and(|p| p.label == Strings::THIS_PARAM)
-                    {
-                        CompletionItemKind::METHOD
-                    } else {
-                        CompletionItemKind::FUNCTION
-                    },
-                ),
+                kind: Some(if f.constructor.is_some_and(|id| scopes.get(id).kind.is_union()) {
+                    CompletionItemKind::ENUM_MEMBER
+                } else if f.constructor.is_some() {
+                    CompletionItemKind::CONSTRUCTOR
+                } else if f.params.first().is_some_and(|p| p.label == Strings::THIS_PARAM) {
+                    CompletionItemKind::METHOD
+                } else {
+                    CompletionItemKind::FUNCTION
+                }),
                 detail: desc.into(),
                 insert_text,
                 insert_text_format: Some(InsertTextFormat::SNIPPET),
@@ -1028,9 +969,7 @@ fn get_completion(
             }
         }
         &LspItem::Module(id) => {
-            let name = strings
-                .resolve(&scopes[id].kind.name(scopes).unwrap().data)
-                .to_string();
+            let name = strings.resolve(&scopes[id].kind.name(scopes).unwrap().data).to_string();
             CompletionItem {
                 label: name.clone(),
                 kind: Some(CompletionItemKind::MODULE),
@@ -1115,9 +1054,8 @@ fn visualize_func(
     strings: &Strings,
 ) -> String {
     let func = scopes.get(id);
-    if let Some((union, id)) = func
-        .constructor
-        .and_then(|id| scopes.get(id).kind.as_union().zip(Some(id)))
+    if let Some((union, id)) =
+        func.constructor.and_then(|id| scopes.get(id).kind.as_union().zip(Some(id)))
     {
         let mut res = if small {
             String::new()
@@ -1138,11 +1076,8 @@ fn visualize_func(
         return res;
     }
 
-    let mut res = if small {
-        String::new()
-    } else {
-        visualize_location(func.scope, scopes, strings)
-    };
+    let mut res =
+        if small { String::new() } else { visualize_location(func.scope, scopes, strings) };
 
     if !small {
         if func.public {
@@ -1231,11 +1166,7 @@ fn visualize_var(id: VariableId, scopes: &Scopes, types: &mut Types, strings: &S
         (false, true) => "mut",
         (false, false) => "let",
     };
-    let name = if var.name.data == Strings::EMPTY {
-        "_"
-    } else {
-        strings.resolve(&var.name.data)
-    };
+    let name = if var.name.data == Strings::EMPTY { "_" } else { strings.resolve(&var.name.data) };
     write_de!(res, " {name}: {}", var.ty.name(scopes, types, strings));
     res
 }

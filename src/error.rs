@@ -53,10 +53,7 @@ impl Diagnostics {
     }
 
     pub fn paths(&self) -> impl Iterator<Item = (FileId, &PathBuf)> {
-        self.paths
-            .iter()
-            .enumerate()
-            .map(|(i, path)| (FileId(i as u32), path))
+        self.paths.iter().enumerate().map(|(i, path)| (FileId(i as u32), path))
     }
 
     pub fn get_file_id(&self, path: &Path) -> Option<FileId> {
@@ -143,18 +140,11 @@ pub struct Error {
 
 impl Error {
     pub fn new(message: impl Into<String>, span: impl Into<Span>) -> Self {
-        Self {
-            message: message.into(),
-            span: span.into(),
-            severity: ErrorSeverity::Error,
-        }
+        Self { message: message.into(), span: span.into(), severity: ErrorSeverity::Error }
     }
 
     pub fn invalid_operator(op: impl std::fmt::Display, ty: &str, span: Span) -> Self {
-        Self::new(
-            format!("operator '{op}' is invalid for a value of type '{ty}'"),
-            span,
-        )
+        Self::new(format!("operator '{op}' is invalid for a value of type '{ty}'"), span)
     }
 
     pub fn shared_member(name: &str, span: Span) -> Self {
@@ -169,10 +159,7 @@ impl Error {
     }
 
     pub fn non_ascii_char(span: Span) -> Self {
-        Self::new(
-            "invalid char escape (must be within the range 0..=0x7f)",
-            span,
-        )
+        Self::new("invalid char escape (must be within the range 0..=0x7f)", span)
     }
 
     pub fn not_valid_here(token: &Located<Token>) -> Self {
@@ -180,17 +167,11 @@ impl Error {
     }
 
     pub fn type_mismatch(expected: &str, received: &str, span: Span) -> Self {
-        Self::new(
-            format!("type mismatch: expected type '{expected}', found '{received}'",),
-            span,
-        )
+        Self::new(format!("type mismatch: expected type '{expected}', found '{received}'",), span)
     }
 
     pub fn type_mismatch_s(expected: &str, received: &str, span: Span) -> Self {
-        Self::new(
-            format!("type mismatch: expected type '{expected}', found '{received}'"),
-            span,
-        )
+        Self::new(format!("type mismatch: expected type '{expected}', found '{received}'"), span)
     }
 
     pub fn private(item: &str, span: Span) -> Self {
@@ -198,10 +179,7 @@ impl Error {
     }
 
     pub fn private_member(ty: &str, member: &str, span: Span) -> Self {
-        Self::new(
-            format!("cannot access private member '{member}' of type '{ty}'"),
-            span,
-        )
+        Self::new(format!("cannot access private member '{member}' of type '{ty}'"), span)
     }
 
     pub fn no_member(ty: &str, member: &str, span: Span) -> Self {
@@ -221,10 +199,7 @@ impl Error {
     }
 
     pub fn doesnt_implement(ty: &str, trait_name: &str, span: Span) -> Self {
-        Self::new(
-            format!("type '{ty}' does not implement '{trait_name}'"),
-            span,
-        )
+        Self::new(format!("type '{ty}' does not implement '{trait_name}'"), span)
     }
 
     pub fn wildcard_import(span: Span) -> Self {
@@ -252,10 +227,7 @@ impl Error {
     }
 
     pub fn match_statement(why: &str, span: Span) -> Self {
-        Self::new(
-            format!("match statement does not cover all cases {why}"),
-            span,
-        )
+        Self::new(format!("match statement does not cover all cases {why}"), span)
     }
 
     pub fn cyclic(a: &str, b: &str, span: Span) -> Self {
@@ -298,10 +270,7 @@ impl Error {
     }
 
     pub fn invalid_impl(func: &str, why: &str, span: Span) -> Self {
-        Self::new(
-            format!("invalid implementation of function '{func}': {why}"),
-            span,
-        )
+        Self::new(format!("invalid implementation of function '{func}': {why}"), span)
     }
 }
 
@@ -310,11 +279,7 @@ pub struct Warning;
 impl Warning {
     #[allow(clippy::new_ret_no_self)]
     fn new(message: impl Into<String>, span: impl Into<Span>) -> Error {
-        Error {
-            message: message.into(),
-            span: span.into(),
-            severity: ErrorSeverity::Warning,
-        }
+        Error { message: message.into(), span: span.into(), severity: ErrorSeverity::Warning }
     }
 
     pub fn redundant_token(token: &Located<Token>) -> Error {
@@ -330,17 +295,11 @@ impl Warning {
     }
 
     pub fn decimal_leading_zero(span: Span) -> Error {
-        Self::new(
-            "leading zero in decimal literal (use 0o to create an octal literal)",
-            span,
-        )
+        Self::new("leading zero in decimal literal (use 0o to create an octal literal)", span)
     }
 
     pub fn subscript_addr(span: Span) -> Error {
-        Self::new(
-            "taking address of subscript that returns a value creates a temporary",
-            span,
-        )
+        Self::new("taking address of subscript that returns a value creates a temporary", span)
     }
 
     pub fn bitfield_addr(span: Span) -> Error {
@@ -352,10 +311,7 @@ impl Warning {
     }
 
     pub fn mut_function_ptr(span: Span) -> Error {
-        Self::new(
-            "&mut on function creates immutable function pointer (use &)",
-            span,
-        )
+        Self::new("&mut on function creates immutable function pointer (use &)", span)
     }
 
     pub fn unnecessary_fallible_cast(src: &str, dst: &str, span: Span) -> Error {
@@ -366,9 +322,6 @@ impl Warning {
     }
 
     pub fn call_mutating_on_bitfield(span: Span) -> Error {
-        Self::new(
-            "call to mutating method with bitfield receiver operates on a copy",
-            span,
-        )
+        Self::new("call to mutating method with bitfield receiver operates on a copy", span)
     }
 }

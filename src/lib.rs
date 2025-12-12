@@ -67,9 +67,7 @@ impl Compiler<Source<FileSourceProvider>> {
 
 impl<T: SourceProvider> Compiler<Source<T>> {
     pub fn with_provider(provider: T) -> Self {
-        Self {
-            state: Source(provider),
-        }
+        Self { state: Source(provider) }
     }
 
     pub fn parse(mut self, project: UnloadedProject) -> Result<Compiler<Parsed>> {
@@ -80,9 +78,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
             stmts.push(self.load_module(&mut diag, &mut strings, path, module)?);
         }
 
-        Ok(Compiler {
-            state: Parsed(stmts, diag, project.conf, strings),
-        })
+        Ok(Compiler { state: Parsed(stmts, diag, project.conf, strings) })
     }
 
     fn load_module(
@@ -252,13 +248,7 @@ impl UnloadedProject {
         }
 
         if path.is_file() && path.extension().is_some_and(|ext| ext == "ctl") {
-            return Ok(Some((
-                path,
-                Module {
-                    name,
-                    mods: IndexMap::new(),
-                },
-            )));
+            return Ok(Some((path, Module { name, mods: IndexMap::new() })));
         } else if !path.is_dir() {
             return Ok(None);
         }
@@ -269,10 +259,7 @@ impl UnloadedProject {
         }
 
         let mut mods = IndexMap::new();
-        for entry in path
-            .read_dir()
-            .with_context(|| format!("loading path {}", path.display()))?
-        {
+        for entry in path.read_dir().with_context(|| format!("loading path {}", path.display()))? {
             let entry = entry?;
             if entry.file_name() == "main.ctl" {
                 continue;
@@ -327,21 +314,13 @@ impl UnloadedProject {
         }
 
         if needs_stdlib {
-            mods.push(
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("std")
-                    .canonicalize()?,
-            );
+            mods.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("std").canonicalize()?);
         }
         Ok(())
     }
 
     fn derive_module_name(path: &Path) -> String {
-        let base = if path.is_file() {
-            path.file_stem()
-        } else {
-            path.file_name()
-        };
+        let base = if path.is_file() { path.file_stem() } else { path.file_name() };
 
         Self::safe_name(base.unwrap().to_string_lossy().as_ref())
     }

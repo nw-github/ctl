@@ -13,11 +13,7 @@ const INDENT: &str = "  ";
 
 macro_rules! bool {
     ($id: expr) => {
-        if *$id {
-            HeaderVar::Unnamed(stringify!($id))
-        } else {
-            HeaderVar::None
-        }
+        if *$id { HeaderVar::Unnamed(stringify!($id)) } else { HeaderVar::None }
     };
 }
 
@@ -62,11 +58,7 @@ pub fn print_stmt(stmt: &Stmt, strings: &Strings, indent: usize) {
             print_header(&tabs, "Stmt::Let", &[]);
 
             let tabs = INDENT.repeat(indent + 1);
-            eprintln!(
-                "{tabs}{}: {}",
-                "Pattern".yellow(),
-                FmtPatt::new(&patt.data, strings)
-            );
+            eprintln!("{tabs}{}: {}", "Pattern".yellow(), FmtPatt::new(&patt.data, strings));
 
             if let Some(ty) = ty {
                 eprintln!("{tabs}{}: {}", "Type".yellow(), FmtType::new(ty, strings));
@@ -86,26 +78,14 @@ pub fn print_stmt(stmt: &Stmt, strings: &Strings, indent: usize) {
             print_expr(body, strings, indent + 2);
         }
         StmtData::Fn(f) => print_fn(f, strings, indent),
-        StmtData::Struct { base, packed } => print_struct(
-            "Stmt::Struct",
-            vec![bool!(packed)],
-            base,
-            None,
-            strings,
-            indent,
-        ),
-        StmtData::Union {
-            tag,
-            base,
-            variants,
-        } => {
+        StmtData::Struct { base, packed } => {
+            print_struct("Stmt::Struct", vec![bool!(packed)], base, None, strings, indent)
+        }
+        StmtData::Union { tag, base, variants } => {
             if let Some(tag) = tag {
                 print_struct(
                     "Stmt::Union",
-                    vec![HeaderVar::Named(
-                        "tag",
-                        FmtPath::new(tag, strings).to_string(),
-                    )],
+                    vec![HeaderVar::Named("tag", FmtPath::new(tag, strings).to_string())],
                     base,
                     Some(variants),
                     strings,
@@ -118,24 +98,11 @@ pub fn print_stmt(stmt: &Stmt, strings: &Strings, indent: usize) {
         StmtData::UnsafeUnion(base) => {
             print_struct("StmtData::UnsafeUnion", vec![], base, None, strings, indent)
         }
-        StmtData::Trait {
-            public,
-            name,
-            type_params,
-            impls,
-            functions,
-            is_unsafe,
-            sealed,
-        } => {
+        StmtData::Trait { public, name, type_params, impls, functions, is_unsafe, sealed } => {
             print_header(
                 &tabs,
                 "Stmt::Trait",
-                &[
-                    str!(name, strings, LOCATED),
-                    bool!(public),
-                    bool!(sealed),
-                    bool!(is_unsafe),
-                ],
+                &[str!(name, strings, LOCATED), bool!(public), bool!(sealed), bool!(is_unsafe)],
             );
 
             print_type_params(type_params, strings, indent + 1);
@@ -154,20 +121,8 @@ pub fn print_stmt(stmt: &Stmt, strings: &Strings, indent: usize) {
                 print_fn(&f.data, strings, indent + 2);
             }
         }
-        StmtData::Extension {
-            public,
-            name,
-            ty,
-            type_params,
-            impls,
-            functions,
-            operators,
-        } => {
-            print_header(
-                &tabs,
-                "Stmt::Extension",
-                &[str!(name, strings, LOCATED), bool!(public)],
-            );
+        StmtData::Extension { public, name, ty, type_params, impls, functions, operators } => {
+            print_header(&tabs, "Stmt::Extension", &[str!(name, strings, LOCATED), bool!(public)]);
 
             print_type_params(type_params, strings, indent + 1);
 
@@ -182,15 +137,7 @@ pub fn print_stmt(stmt: &Stmt, strings: &Strings, indent: usize) {
             }
             print_impls(indent, impls, strings);
         }
-        StmtData::Binding {
-            name,
-            ty,
-            value,
-            public,
-            constant,
-            is_extern,
-            mutable,
-        } => {
+        StmtData::Binding { name, ty, value, public, constant, is_extern, mutable } => {
             print_header(
                 &tabs,
                 "Stmt::Binding",
@@ -208,25 +155,11 @@ pub fn print_stmt(stmt: &Stmt, strings: &Strings, indent: usize) {
                 print_expr(value, strings, indent + 1);
             }
         }
-        StmtData::Module {
-            name,
-            body,
-            public,
-            file: _,
-        } => {
-            print_header(
-                &tabs,
-                "Stmt::Module",
-                &[str!(name, strings, LOCATED), bool!(public)],
-            );
+        StmtData::Module { name, body, public, file: _ } => {
+            print_header(&tabs, "Stmt::Module", &[str!(name, strings, LOCATED), bool!(public)]);
             print_stmts(body, strings, indent + 1);
         }
-        StmtData::Use(UsePath {
-            public,
-            origin,
-            components,
-            tail,
-        }) => {
+        StmtData::Use(UsePath { public, origin, components, tail }) => {
             print_header(
                 &tabs,
                 "Stmt::Use",
@@ -259,19 +192,11 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
     let tabs = INDENT.repeat(indent);
     match &expr.data {
         ExprData::Binary { op, left, right } => {
-            print_header(
-                &tabs,
-                "Expr::Binary",
-                &[HeaderVar::Named("op", format!("{op:?}"))],
-            );
+            print_header(&tabs, "Expr::Binary", &[HeaderVar::Named("op", format!("{op:?}"))]);
             print_expr(left, strings, indent + 1);
             print_expr(right, strings, indent + 1);
         }
-        ExprData::Range {
-            start,
-            end,
-            inclusive,
-        } => {
+        ExprData::Range { start, end, inclusive } => {
             print_header(&tabs, "Expr::Range", &[bool!(inclusive)]);
             let tabs = INDENT.repeat(indent + 1);
             if let Some(start) = start {
@@ -284,11 +209,7 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
             }
         }
         ExprData::Unary { op, expr } => {
-            print_header(
-                &tabs,
-                "Expr::Unary",
-                &[HeaderVar::Named("op", format!("{op:?}"))],
-            );
+            print_header(&tabs, "Expr::Unary", &[HeaderVar::Named("op", format!("{op:?}"))]);
             print_expr(expr, strings, indent + 1);
         }
         ExprData::Call { callee, args } | ExprData::Subscript { callee, args } => {
@@ -328,11 +249,7 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
         }
         ExprData::ArrayWithInit { init, count } | ExprData::VecWithInit { init, count } => {
             let arr = matches!(expr.data, ExprData::ArrayWithInit { .. });
-            print_header(
-                &tabs,
-                ["Expr::VecWithInit", "Expr::ArrayWithInit"][arr as usize],
-                &[],
-            );
+            print_header(&tabs, ["Expr::VecWithInit", "Expr::ArrayWithInit"][arr as usize], &[]);
 
             let tabs = INDENT.repeat(indent + 1);
             eprintln!("{tabs}{}: ", "Init".yellow());
@@ -356,11 +273,7 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
                 print_expr(value, strings, indent + 2);
             }
         }
-        ExprData::Integer(IntPattern {
-            negative,
-            value,
-            width,
-        }) => {
+        ExprData::Integer(IntPattern { negative, value, width }) => {
             print_header(
                 &tabs,
                 "Expr::Integer",
@@ -380,44 +293,29 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
             "Expr::String",
             &[HeaderVar::Named("value", strings.resolve(v).into())],
         ),
-        ExprData::Char(v) => print_header(
-            &tabs,
-            "Expr::Char",
-            &[HeaderVar::Named("value", format!("{v}"))],
-        ),
-        ExprData::ByteString(v) => print_header(
-            &tabs,
-            "Expr::ByteString",
-            &[HeaderVar::Named("value", format!("{v:?}"))],
-        ),
-        ExprData::ByteChar(v) => print_header(
-            &tabs,
-            "Expr::ByteChar",
-            &[HeaderVar::Named("value", format!("{v:#x}"))],
-        ),
-        ExprData::Bool(v) => print_header(
-            &tabs,
-            "Expr::Bool",
-            &[HeaderVar::Named("value", format!("{v}"))],
-        ),
+        ExprData::Char(v) => {
+            print_header(&tabs, "Expr::Char", &[HeaderVar::Named("value", format!("{v}"))])
+        }
+        ExprData::ByteString(v) => {
+            print_header(&tabs, "Expr::ByteString", &[HeaderVar::Named("value", format!("{v:?}"))])
+        }
+        ExprData::ByteChar(v) => {
+            print_header(&tabs, "Expr::ByteChar", &[HeaderVar::Named("value", format!("{v:#x}"))])
+        }
+        ExprData::Bool(v) => {
+            print_header(&tabs, "Expr::Bool", &[HeaderVar::Named("value", format!("{v}"))])
+        }
         ExprData::Void => print_header(&tabs, "Expr::Void", &[]),
         ExprData::Path(path) => print_header(
             &tabs,
             "Expr::Path",
-            &[HeaderVar::Named(
-                "value",
-                FmtPath::new(path, strings).to_string(),
-            )],
+            &[HeaderVar::Named("value", FmtPath::new(path, strings).to_string())],
         ),
         ExprData::Block(expr, label) => {
             print_header(&tabs, "Expr::Block", &[optstr!(label, strings)]);
             print_stmts(expr, strings, indent + 1);
         }
-        ExprData::If {
-            cond,
-            if_branch,
-            else_branch,
-        } => {
+        ExprData::If { cond, if_branch, else_branch } => {
             print_header(&tabs, "Expr::If", &[]);
 
             let tabs = INDENT.repeat(indent + 1);
@@ -432,17 +330,8 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
                 print_expr(else_branch, strings, indent + 2);
             }
         }
-        ExprData::Loop {
-            cond,
-            body,
-            do_while,
-            label,
-        } => {
-            print_header(
-                &tabs,
-                "Expr::Loop",
-                &[bool!(do_while), optstr!(label, strings)],
-            );
+        ExprData::Loop { cond, body, do_while, label } => {
+            print_header(&tabs, "Expr::Loop", &[bool!(do_while), optstr!(label, strings)]);
 
             let tabs = INDENT.repeat(indent + 1);
             if let Some(cond) = cond {
@@ -452,11 +341,7 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
 
             print_stmts(body, strings, indent + 1);
         }
-        ExprData::Member {
-            source,
-            member,
-            generics,
-        } => {
+        ExprData::Member { source, member, generics } => {
             print_header(&tabs, "Expr::Member", &[str!(member, strings, LOCATED)]);
             if !generics.is_empty() {
                 eprintln!("{tabs}{}:", "Type Arguments".yellow());
@@ -484,19 +369,10 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
         ExprData::Continue(label) => {
             print_header(&tabs, "Expr::Continue", &[optstr!(label, strings, LOCATED)]);
         }
-        ExprData::For {
-            patt,
-            iter,
-            body,
-            label,
-        } => {
+        ExprData::For { patt, iter, body, label } => {
             print_header(&tabs, "Expr::For", &[optstr!(label, strings)]);
             let tabs = INDENT.repeat(indent + 1);
-            eprintln!(
-                "{tabs}{}: {}",
-                "Pattern".yellow(),
-                FmtPatt::new(&patt.data, strings)
-            );
+            eprintln!("{tabs}{}: {}", "Pattern".yellow(), FmtPatt::new(&patt.data, strings));
             eprintln!("{tabs}{}", "In:".yellow());
             print_expr(iter, strings, indent + 2);
             eprintln!("{tabs}{}", "Body:".yellow());
@@ -505,11 +381,7 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
         ExprData::Is { expr, pattern } => {
             print_header(&tabs, "Expr::Is", &[]);
             let tabs = INDENT.repeat(indent + 1);
-            eprintln!(
-                "{tabs}{}: {}",
-                "Pattern".yellow(),
-                FmtPatt::new(&pattern.data, strings)
-            );
+            eprintln!("{tabs}{}: {}", "Pattern".yellow(), FmtPatt::new(&pattern.data, strings));
             print_expr(expr, strings, indent + 1);
         }
         ExprData::As { expr, ty, throwing } => {
@@ -533,20 +405,11 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
             }
         }
         ExprData::Error => {}
-        ExprData::Lambda {
-            params,
-            ret,
-            body,
-            moves,
-        } => {
+        ExprData::Lambda { params, ret, body, moves } => {
             print_header(&tabs, "Expr::Lambda", &[bool!(moves)]);
             let tabs = INDENT.repeat(indent + 1);
             if let Some(ret) = ret {
-                eprintln!(
-                    "{tabs}{}: {}",
-                    "Return".yellow(),
-                    FmtType::new(ret, strings)
-                );
+                eprintln!("{tabs}{}: {}", "Return".yellow(), FmtType::new(ret, strings));
             }
             if !params.is_empty() {
                 eprintln!("{tabs}{}:", "Params".yellow());
@@ -631,11 +494,7 @@ fn print_type_params(
         for (name, impls) in type_params {
             eprint!("{plus_2}{}", strings.resolve(&name.data));
             for (i, path) in impls.iter().enumerate() {
-                eprintln!(
-                    "{}{}",
-                    [" + ", ": "][(i == 0) as usize],
-                    FmtPath::new(path, strings)
-                );
+                eprintln!("{}{}", [" + ", ": "][(i == 0) as usize], FmtPath::new(path, strings));
             }
 
             if impls.is_empty() {
@@ -712,14 +571,7 @@ fn print_fn(
 }
 
 fn print_op_fn(
-    OperatorFn {
-        name,
-        type_params,
-        params,
-        ret,
-        body,
-        attrs: _,
-    }: &OperatorFn,
+    OperatorFn { name, type_params, params, ret, body, attrs: _ }: &OperatorFn,
     strings: &Strings,
     indent: usize,
 ) {
@@ -735,15 +587,7 @@ fn print_op_fn(
 fn print_struct(
     type_name: &str,
     mut headers: Vec<HeaderVar>,
-    Struct {
-        name,
-        type_params,
-        members,
-        impls,
-        functions,
-        public,
-        operators,
-    }: &Struct,
+    Struct { name, type_params, members, impls, functions, public, operators }: &Struct,
     variants: Option<&[Variant]>,
     strings: &Strings,
     indent: usize,
@@ -763,10 +607,7 @@ fn print_struct(
     {
         eprintln!("{plus_1}{}: ", "Variants".yellow());
         for member in variants {
-            eprintln!(
-                "{plus_2}{}: <TODO: Variant>",
-                strings.resolve(&member.name.data),
-            );
+            eprintln!("{plus_2}{}: <TODO: Variant>", strings.resolve(&member.name.data),);
             if let Some(default) = &member.tag {
                 print_expr(default, strings, indent + 3);
             }
@@ -805,11 +646,7 @@ fn print_impls(indent: usize, impls: &[Located<ImplBlock>], strings: &Strings) {
     if !impls.is_empty() {
         eprintln!("{tabs}{}:", "Impls".yellow());
         for imp in impls {
-            eprintln!(
-                "{plus_1}{}: {}",
-                "Path".yellow(),
-                FmtPath::new(&imp.data.path, strings)
-            );
+            eprintln!("{plus_1}{}: {}", "Path".yellow(), FmtPath::new(&imp.data.path, strings));
 
             print_type_params(&imp.data.type_params, strings, indent + 1);
 
@@ -873,11 +710,7 @@ impl std::fmt::Display for FmtType<'_> {
             TypeHint::RawMutPtr(ty) => write!(f, "^mut {}", FmtType::new(ty, self.strings)),
             TypeHint::DynPtr(ty) => write!(f, "*dyn {}", FmtPath::new(ty, self.strings)),
             TypeHint::DynMutPtr(ty) => write!(f, "*dyn mut {}", FmtPath::new(ty, self.strings)),
-            TypeHint::Fn {
-                is_extern,
-                params,
-                ret,
-            } => {
+            TypeHint::Fn { is_extern, params, ret } => {
                 write!(f, "{}fn (", if *is_extern { "extern " } else { "" })?;
                 for (i, ty) in params.iter().enumerate() {
                     if i > 0 {
@@ -927,11 +760,7 @@ impl std::fmt::Display for FmtPath<'_> {
             write!(tmp, ">")?;
         }
 
-        if tmp.is_empty() {
-            write!(f, "<empty>")
-        } else {
-            write!(f, "{tmp}")
-        }
+        if tmp.is_empty() { write!(f, "<empty>") } else { write!(f, "{tmp}") }
     }
 }
 

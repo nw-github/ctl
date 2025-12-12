@@ -61,8 +61,6 @@ impl<T: Hash + Eq> DependencyGraph<T> {
 
 impl<T> Default for DependencyGraph<T> {
     fn default() -> Self {
-        Self {
-            graph: Default::default(),
-        }
+        Self { graph: Default::default() }
     }
 }

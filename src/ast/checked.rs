@@ -77,17 +77,11 @@ pub struct Pattern {
 
 impl Pattern {
     pub fn irrefutable(data: PatternData) -> Self {
-        Self {
-            irrefutable: true,
-            data,
-        }
+        Self { irrefutable: true, data }
     }
 
     pub fn refutable(data: PatternData) -> Self {
-        Self {
-            irrefutable: false,
-            data,
-        }
+        Self { irrefutable: false, data }
     }
 }
 
@@ -209,10 +203,7 @@ impl ExprData {
         scope: ScopeId,
     ) -> Self {
         Self::Call(
-            Box::new(Expr::new(
-                types.insert(Type::Fn(mfn.func.clone())),
-                Self::MemFn(mfn, scope),
-            )),
+            Box::new(Expr::new(types.insert(Type::Fn(mfn.func.clone())), Self::MemFn(mfn, scope))),
             args,
         )
     }
@@ -327,9 +318,6 @@ impl Expr {
     }
 
     pub fn option_null(opt: TypeId) -> Expr {
-        Expr::new(
-            opt,
-            ExprData::VariantInstance(Strings::NULL, Default::default()),
-        )
+        Expr::new(opt, ExprData::VariantInstance(Strings::NULL, Default::default()))
     }
 }

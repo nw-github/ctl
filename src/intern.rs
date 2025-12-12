@@ -62,10 +62,7 @@ impl Strings {
         assert_eq!(Self::NULL, rodeo.get_or_intern_static("null"));
         assert_eq!(Self::NEW, rodeo.get_or_intern_static("new"));
         assert_eq!(Self::ATTR_LANG, rodeo.get_or_intern_static("lang"));
-        assert_eq!(
-            Self::ATTR_INSTRINSIC,
-            rodeo.get_or_intern_static("intrinsic")
-        );
+        assert_eq!(Self::ATTR_INSTRINSIC, rodeo.get_or_intern_static("intrinsic"));
         assert_eq!(Self::ATTR_SAFE, rodeo.get_or_intern_static("safe"));
         assert_eq!(Self::LANG_SPAN, rodeo.get_or_intern_static("span"));
         assert_eq!(Self::LANG_SPAN_MUT, rodeo.get_or_intern_static("span_mut"));
@@ -81,25 +78,16 @@ impl Strings {
         assert_eq!(Self::LANG_UNSIGNED, rodeo.get_or_intern_static("unsigned"));
         assert_eq!(Self::ATTR_NOGEN, rodeo.get_or_intern_static("c_opaque"));
         assert_eq!(Self::ATTR_LINKNAME, rodeo.get_or_intern_static("c_name"));
-        assert_eq!(
-            Self::LANG_FORMATTER,
-            rodeo.get_or_intern_static("formatter")
-        );
+        assert_eq!(Self::LANG_FORMATTER, rodeo.get_or_intern_static("formatter"));
         assert_eq!(Self::FN_WRITTEN, rodeo.get_or_intern_static("written"));
         assert_eq!(Self::FN_INSERT, rodeo.get_or_intern_static("insert"));
         assert_eq!(Self::FN_SUBSPAN, rodeo.get_or_intern_static("subspan"));
         assert_eq!(Self::VAR_LESS, rodeo.get_or_intern_static("Less"));
         assert_eq!(Self::VAR_GREATER, rodeo.get_or_intern_static("Greater"));
         assert_eq!(Self::VAR_EQUAL, rodeo.get_or_intern_static("Equal"));
-        assert_eq!(
-            Self::ATTR_PANIC_HANDLER,
-            rodeo.get_or_intern_static("panic_handler")
-        );
+        assert_eq!(Self::ATTR_PANIC_HANDLER, rodeo.get_or_intern_static("panic_handler"));
         assert_eq!(Self::ATTR_INLINE, rodeo.get_or_intern_static("inline"));
-        assert_eq!(
-            Self::FN_WITH_CAPACITY,
-            rodeo.get_or_intern_static("with_capacity")
-        );
+        assert_eq!(Self::FN_WITH_CAPACITY, rodeo.get_or_intern_static("with_capacity"));
         assert_eq!(Self::ATTR_FEATURE, rodeo.get_or_intern_static("feature"));
         assert_eq!(Self::ATTR_NOT, rodeo.get_or_intern_static("not"));
         assert_eq!(Self::FEAT_ALLOC, rodeo.get_or_intern_static("alloc"));

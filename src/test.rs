@@ -54,10 +54,8 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
         return Err("no requirements specified!".into());
     }
 
-    let (code, _, diag) = Compiler::new()
-        .parse(UnloadedProject::new(path)?)?
-        .typecheck(Default::default())
-        .build();
+    let (code, _, diag) =
+        Compiler::new().parse(UnloadedProject::new(path)?)?.typecheck(Default::default()).build();
     test_diagnostics(diag, &errors)?;
     let Some(code) = code else {
         if !expected.is_empty() {
@@ -77,10 +75,7 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
             .stderr(Stdio::piped())
             .spawn()
             .context("Couldn't invoke the compiler")?;
-        cc.stdin
-            .as_mut()
-            .context("The C compiler closed stdin")?
-            .write_all(code.as_bytes())?;
+        cc.stdin.as_mut().context("The C compiler closed stdin")?.write_all(code.as_bytes())?;
         let output = cc.wait_with_output()?;
         if !output.status.success() {
             if let Ok(err) = String::from_utf8(output.stderr) {
@@ -97,9 +92,7 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
         }
         let mut child = Command::new(&tmpfile).stdout(Stdio::piped()).spawn()?;
         let mut stdout = child.stdout.take().unwrap();
-        let status = child
-            .wait_timeout(Duration::from_secs(5))?
-            .ok_or("Test took too long!")?;
+        let status = child.wait_timeout(Duration::from_secs(5))?.ok_or("Test took too long!")?;
         if !status.success() {
             Err(format!("binary returned exit code {:?}", status.code()))?;
         }
@@ -110,11 +103,7 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
     };
     let output: Vec<_> = stdout.trim().split('\n').map(|s| s.trim()).collect();
     if output != expected {
-        Err(format!(
-            "expected '{}', got '{}'",
-            expected.join("\n"),
-            output.join("\n"),
-        ))?;
+        Err(format!("expected '{}', got '{}'", expected.join("\n"), output.join("\n"),))?;
     }
     Ok(())
 }
