@@ -219,8 +219,7 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
                 print_header(&tabs, "Expr::Subscript", &[]);
             }
             let tabs = INDENT.repeat(indent + 1);
-            eprintln!("{tabs}{}: ", "Callee".yellow());
-            print_expr(callee, strings, indent + 2);
+            print_expr(callee, strings, indent + 1);
 
             if !args.is_empty() {
                 eprintln!("{tabs}{}: ", "Args".yellow());

@@ -115,6 +115,14 @@ enum SubCommand {
         #[arg(trailing_var_arg = true, value_hint = ValueHint::CommandWithArguments)]
         targs: Vec<OsString>,
     },
+    #[clap(alias = "d")]
+    Dump {
+        /// The path to the file or project folder
+        input: Option<PathBuf>,
+
+        /// The modules to dump. If empty, the module corresponding to the input project will be dumped.
+        modules: Vec<String>,
+    },
     Lsp,
 }
 
@@ -249,10 +257,17 @@ fn display_diagnostics(diag: &Diagnostics) {
     }
 }
 
+fn dump(proj: UnloadedProject, mods: &[String]) -> Result<()> {
+    let result = Compiler::new().parse(proj)?;
+    result.dump(mods);
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args = Arguments::parse();
     let input = match &args.command {
         SubCommand::Print { input, .. } => input,
+        SubCommand::Dump { input, .. } => input,
         SubCommand::Build { build, .. } => &build.input,
         SubCommand::Run { build, .. } => &build.input,
         SubCommand::Lsp => {
@@ -273,15 +288,11 @@ fn main() -> Result<()> {
     proj.conf.flags.no_bit_int = args.no_bit_int;
     proj.conf.flags.lib = args.shared.unwrap_or(proj.conf.flags.lib);
     proj.conf.flags.minify = matches!(args.command, SubCommand::Print { minify: true, .. });
-    let result = Compiler::new()
-        .parse(proj)?
-        .inspect(|ast| {
-            if args.dump_ast {
-                ast.dump()
-            }
-        })
-        .typecheck(Default::default())
-        .build();
+    if let SubCommand::Dump { modules, .. } = &args.command {
+        return dump(proj, modules);
+    }
+
+    let result = Compiler::new().parse(proj)?.typecheck(Default::default()).build();
     let (conf, result) = match result {
         (Some(code), conf, diag) => {
             if !args.quiet {
@@ -323,7 +334,7 @@ fn main() -> Result<()> {
                 std::process::exit(status.code().unwrap_or_default());
             }
         }
-        SubCommand::Lsp => {}
+        _ => {}
     }
 
     Ok(())

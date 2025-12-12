@@ -114,10 +114,41 @@ impl Default for Compiler<Source<FileSourceProvider>> {
 }
 
 impl Compiler<Parsed> {
-    pub fn dump(&self) {
-        if let Some(ast) = self.state.0.last() {
+    pub fn dump(&self, mods: &[String]) {
+        if mods.is_empty()
+            && let Some(ast) = self.state.0.last()
+        {
             pretty::print_stmt(ast, &self.state.3, 0);
         }
+
+        for module in mods {
+            if let Some(stmt) = self.find_module(module) {
+                eprintln!("Module {module}:");
+                pretty::print_stmt(stmt, &self.state.3, 0);
+            } else {
+                eprintln!("Couldn't find module: '{module}'");
+            }
+        }
+    }
+
+    pub fn find_module(&self, module: &str) -> Option<&Stmt> {
+        // std::alloc::vec
+        let (mut stmt, mut body) = (None, &self.state.0);
+        for submod in module.split("::") {
+            let res = body.iter().find_map(|stmt| {
+                if let StmtData::Module { name, body, .. } = &stmt.data.data
+                    && self.state.3.resolve(&name.data) == submod
+                {
+                    Some((stmt, body))
+                } else {
+                    None
+                }
+            })?;
+            stmt = Some(res.0);
+            body = res.1;
+        }
+
+        stmt
     }
 
     pub fn diagnostics(&self) -> &Diagnostics {
@@ -149,13 +180,6 @@ impl Compiler<Checked> {
 
     pub fn project(self) -> Project {
         self.state.0
-    }
-}
-
-impl<T: CompileState> Compiler<T> {
-    pub fn inspect(self, f: impl FnOnce(&Self)) -> Self {
-        f(&self);
-        self
     }
 }
 
