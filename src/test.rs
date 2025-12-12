@@ -108,4 +108,4 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-datatest_stable::harness!(compile_test, "tests", r".*/**/*.ctl");
+datatest_stable::harness!(compile_test, "tests", r"^.*/*.ctl");
