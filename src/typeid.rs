@@ -1,7 +1,7 @@
 use std::{fmt::Display, ops::Index};
 
 use crate::{
-    ast::{BinaryOp, UnaryOp, parsed::TypeHint},
+    ast::{parsed::TypeHint, BinaryOp, UnaryOp},
     comptime_int::ComptimeInt,
     hash::IndexMap,
     intern::Strings,
@@ -10,7 +10,7 @@ use crate::{
     sym::{
         ExtensionId, FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, TraitId, UserTypeId,
         UserTypeKind,
-    },
+    }, Located,
 };
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
@@ -458,7 +458,7 @@ impl Type {
 
 pub struct Types {
     types: IndexSet<Type>,
-    unresolved_types: Vec<(TypeHint, ScopeId)>,
+    unresolved_types: Vec<(Located<TypeHint>, ScopeId)>,
 }
 
 impl Types {
@@ -491,13 +491,13 @@ impl Types {
         &self.types[id.0]
     }
 
-    pub fn add_unresolved(&mut self, hint: TypeHint, scope: ScopeId) -> TypeId {
+    pub fn add_unresolved(&mut self, hint: Located<TypeHint>, scope: ScopeId) -> TypeId {
         let id = UnresolvedTypeId(self.unresolved_types.len());
         self.unresolved_types.push((hint, scope));
         self.insert(Type::Unresolved(id))
     }
 
-    pub fn take_unresolved(&mut self, id: UnresolvedTypeId) -> (TypeHint, ScopeId) {
+    pub fn take_unresolved(&mut self, id: UnresolvedTypeId) -> (Located<TypeHint>, ScopeId) {
         std::mem::take(&mut self.unresolved_types[id.0])
     }
 }

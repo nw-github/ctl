@@ -24,7 +24,7 @@ pub enum Stmt {
     Expr(Expr),
     Defer(Expr),
     Guard { cond: Expr, body: Expr },
-    Let { patt: Located<Pattern>, ty: Option<TypeHint>, value: Option<Expr> },
+    Let { patt: Located<Pattern>, ty: Option<Located<TypeHint>>, value: Option<Expr> },
     Binding { id: VariableId, value: Option<Expr>, constant: bool },
     Fn(Fn),
     Struct { id: UserTypeId, impls: Vec<ImplBlock>, fns: Vec<Fn>, init: Fn },

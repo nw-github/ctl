@@ -154,7 +154,7 @@ pub enum ParamPattern {
 #[derive(Clone)]
 pub enum TraitImplData {
     Path(Path),
-    Operator { tr: StrId, ty_args: Vec<TypeHint>, span: Span },
+    Operator { tr: StrId, ty_args: Vec<Located<TypeHint>>, span: Span },
 }
 
 #[derive(Clone, EnumAsInner, Default)]

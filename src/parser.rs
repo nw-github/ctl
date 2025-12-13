@@ -1461,109 +1461,132 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
         impls
     }
 
-    fn type_hint(&mut self) -> TypeHint {
+    fn type_hint(&mut self) -> Located<TypeHint> {
         match self.peek().data {
             Token::Asterisk => {
-                self.next();
-                if self.next_if(Token::Mut).is_some() {
-                    TypeHint::MutPtr(self.type_hint().into())
-                } else if self.next_if(Token::Dyn).is_some() {
-                    if self.next_if(Token::Mut).is_some() {
-                        TypeHint::DynMutPtr(self.type_path())
+                let begin = self.next().span;
+                if self.next_if(Token::Dyn).is_some() {
+                    let mutable = self.next_if(Token::Mut).is_some();
+                    let path = self.type_path();
+                    let span = begin.extended_to(path.span());
+                    if mutable {
+                        Located::new(span, TypeHint::DynMutPtr(path))
                     } else {
-                        TypeHint::DynPtr(self.type_path())
+                        Located::new(span, TypeHint::DynPtr(path))
                     }
                 } else {
-                    TypeHint::Ptr(self.type_hint().into())
+                    let mutable = self.next_if(Token::Mut).is_some();
+                    let inner = self.type_hint();
+                    let span = begin.extended_to(inner.span);
+                    if mutable {
+                        Located::new(span, TypeHint::MutPtr(inner.into()))
+                    } else {
+                        Located::new(span, TypeHint::Ptr(inner.into()))
+                    }
                 }
             }
             Token::Caret => {
-                self.next();
-                if self.next_if(Token::Mut).is_some() {
-                    TypeHint::RawMutPtr(self.type_hint().into())
+                let begin = self.next().span;
+                let mutable = self.next_if(Token::Mut).is_some();
+                let inner = self.type_hint();
+                let span = begin.extended_to(inner.span);
+                if mutable {
+                    Located::new(span, TypeHint::RawMutPtr(inner.into()))
                 } else {
-                    TypeHint::RawPtr(self.type_hint().into())
+                    Located::new(span, TypeHint::RawPtr(inner.into()))
                 }
             }
             Token::Question => {
-                self.next();
-                TypeHint::Option(self.type_hint().into())
+                let begin = self.next().span;
+                let inner = self.type_hint();
+                Located::new(begin.extended_to(inner.span), TypeHint::Option(inner.into()))
             }
             Token::NoneCoalesce => {
-                self.next();
-                TypeHint::Option(TypeHint::Option(self.type_hint().into()).into())
+                let begin = self.next().span;
+                let inner = self.type_hint();
+                let total = begin.extended_to(inner.span);
+                let inner_span = Span { pos: total.pos, file: total.file, len: total.len - 1 };
+                Located::new(
+                    total,
+                    TypeHint::Option(
+                        Located::new(inner_span, TypeHint::Option(inner.into())).into(),
+                    ),
+                )
             }
             Token::LBrace => {
-                self.next();
+                let mut span = self.next().span;
                 if self.next_if(Token::Mut).is_some() {
                     let inner = self.type_hint();
                     self.expect(Token::Range);
-                    self.expect(Token::RBrace);
-                    TypeHint::SliceMut(inner.into())
+                    span.extend_to(self.expect(Token::RBrace).span);
+                    Located::new(span, TypeHint::SliceMut(inner.into()))
                 } else {
                     let inner = self.type_hint();
-                    if self.next_if(Token::RBrace).is_some() {
-                        TypeHint::Vec(inner.into())
+                    if let Some(end) = self.next_if(Token::RBrace) {
+                        Located::new(span.extended_to(end.span), TypeHint::Vec(inner.into()))
                     } else if self.next_if(Token::Range).is_some() {
-                        self.expect(Token::RBrace);
-                        TypeHint::Slice(inner.into())
+                        span.extend_to(self.expect(Token::RBrace).span);
+                        Located::new(span, TypeHint::Slice(inner.into()))
                     } else if self.next_if(Token::Semicolon).is_some() {
                         let count = self.expression();
-                        self.expect(Token::RBrace);
-                        TypeHint::Array(inner.into(), count.into())
+                        span.extend_to(self.expect(Token::RBrace).span);
+                        Located::new(span, TypeHint::Array(inner.into(), count.into()))
                     } else if self.next_if(Token::Colon).is_some() {
                         let value = self.type_hint();
-                        self.expect(Token::RBrace);
-                        TypeHint::Map([inner, value].into())
+                        span.extend_to(self.expect(Token::RBrace).span);
+                        Located::new(span, TypeHint::Map([inner, value].into()))
                     } else {
-                        let span = self.next().span;
-                        self.error(Error::new("expected ']', ';', or ':'", span));
-                        TypeHint::Error
+                        let end = self.next().span;
+                        self.error(Error::new("expected ']', ';', or ':'", end));
+                        Located::new(span.extended_to(end), TypeHint::Error)
                     }
                 }
             }
             Token::Hash => {
-                self.next();
+                let begin = self.next().span;
                 self.expect(Token::LBrace);
                 let inner = self.type_hint().into();
-                self.expect(Token::RBrace);
-                TypeHint::Set(inner)
+                let end = self.expect(Token::RBrace).span;
+                Located::new(begin.extended_to(end), TypeHint::Set(inner))
             }
             Token::LParen => {
                 let left = self.next();
-                TypeHint::Tuple(self.csv_one(Token::RParen, left.span, Self::type_hint).data)
+                self.csv_one(Token::RParen, left.span, Self::type_hint).map(TypeHint::Tuple)
             }
-            Token::Void => {
-                self.next();
-                TypeHint::Void
-            }
-            Token::ThisType => TypeHint::This(self.next().span),
+            Token::Void => self.next().map(|_| TypeHint::Void),
+            Token::ThisType => self.next().map(|_| TypeHint::This),
             Token::Fn => {
-                self.next();
-                let left = self.expect(Token::LParen);
-                let params = self.csv(Vec::new(), Token::RParen, left.span, Self::type_hint).data;
+                let start = self.next();
+                self.expect(Token::LParen);
+                let mut params = self.csv(Vec::new(), Token::RParen, start.span, Self::type_hint);
                 let ret = if self.next_if(Token::FatArrow).is_some() {
-                    self.type_hint()
+                    let hint = self.type_hint();
+                    params.span.extend_to(hint.span);
+                    Some(hint.into())
                 } else {
-                    TypeHint::Void
+                    None
                 };
 
-                TypeHint::Fn { is_extern: false, params, ret: ret.into() }
+                Located::new(
+                    params.span,
+                    TypeHint::Fn { is_extern: false, params: params.data, ret },
+                )
             }
             Token::Struct => {
                 let span = self.next().span;
                 self.expect(Token::LCurly);
-                TypeHint::AnonStruct(
-                    self.csv(Vec::new(), Token::RCurly, span, |this| {
-                        let name = this.expect_ident("expected member name");
-                        this.expect(Token::Colon);
-                        let ty = this.type_hint();
-                        (name.data, ty)
-                    })
-                    .data,
-                )
+                self.csv(Vec::new(), Token::RCurly, span, |this| {
+                    let name = this.expect_ident("expected member name");
+                    this.expect(Token::Colon);
+                    let ty = this.type_hint();
+                    (name.data, ty)
+                })
+                .map(TypeHint::AnonStruct)
             }
-            _ => TypeHint::Regular(self.type_path()),
+            _ => {
+                let path = self.type_path();
+                Located::new(path.span(), TypeHint::Regular(path))
+            }
         }
     }
 
@@ -1894,15 +1917,16 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     Pattern::Path(Path::from(Located::new(token.span, Strings::THIS_PARAM)))
                 };
 
+                let this_ty = Located::new(token.span, TypeHint::This);
                 params.push(Param {
                     keyword,
                     patt: Located::new(token.span, patt),
                     ty: if my.is_some() {
-                        TypeHint::This(token.span)
+                        this_ty
                     } else if mutable {
-                        TypeHint::MutPtr(TypeHint::This(token.span).into())
+                        Located::new(token.span, TypeHint::MutPtr(this_ty.into()))
                     } else {
-                        TypeHint::Ptr(TypeHint::This(token.span).into())
+                        Located::new(token.span, TypeHint::Ptr(this_ty.into()))
                     },
                     default: None,
                 });
@@ -1946,9 +1970,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             count += 1;
         }
 
-        let ret =
-            if self.next_if(Token::Colon).is_some() { self.type_hint() } else { TypeHint::Void };
-
+        let ret = self.next_if(Token::Colon).map(|_| self.type_hint());
         let body = if let Some(semi) = self.next_if(Token::Semicolon) {
             if cfg.require_body {
                 self.error(Error::new("expected '{'", semi.span));

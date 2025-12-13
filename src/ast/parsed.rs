@@ -56,7 +56,7 @@ pub enum StmtData {
     Use(UsePath),
     Let {
         patt: Located<Pattern>,
-        ty: Option<TypeHint>,
+        ty: Option<Located<TypeHint>>,
         value: Option<Expr>,
     },
     Fn(Fn),
@@ -82,7 +82,7 @@ pub enum StmtData {
     Extension {
         public: bool,
         name: Located<StrId>,
-        ty: TypeHint,
+        ty: Located<TypeHint>,
         type_params: TypeParams,
         impls: Vec<Located<ImplBlock>>,
         functions: Vec<Located<Fn>>,
@@ -94,7 +94,7 @@ pub enum StmtData {
         is_extern: bool,
         mutable: bool,
         name: Located<StrId>,
-        ty: TypeHint,
+        ty: Located<TypeHint>,
         value: Option<Expr>,
     },
     Module {
@@ -128,7 +128,7 @@ pub enum ExprData {
     },
     As {
         expr: Box<Expr>,
-        ty: TypeHint,
+        ty: Located<TypeHint>,
         throwing: bool,
     },
     Unary {
@@ -189,7 +189,7 @@ pub enum ExprData {
     },
     Member {
         source: Box<Expr>,
-        generics: Vec<TypeHint>,
+        generics: Vec<Located<TypeHint>>,
         member: Located<StrId>,
     },
     Return(Box<Expr>),
@@ -203,8 +203,8 @@ pub enum ExprData {
     },
     Continue(Option<Located<StrId>>),
     Lambda {
-        params: Vec<(Located<StrId>, Option<TypeHint>)>,
-        ret: Option<TypeHint>,
+        params: Vec<(Located<StrId>, Option<Located<TypeHint>>)>,
+        ret: Option<Located<TypeHint>>,
         body: Box<Expr>,
         moves: bool,
     },
@@ -212,7 +212,7 @@ pub enum ExprData {
     Error,
 }
 
-pub type PathComponent = (Located<StrId>, Vec<TypeHint>);
+pub type PathComponent = (Located<StrId>, Vec<Located<TypeHint>>);
 
 #[derive(Clone, derive_more::Constructor)]
 pub struct Path {
@@ -315,28 +315,28 @@ pub struct FullPattern {
 #[derive(Default, Clone)]
 pub enum TypeHint {
     Regular(Path),
-    Array(Box<TypeHint>, Box<Expr>),
-    Vec(Box<TypeHint>),
-    Slice(Box<TypeHint>),
-    SliceMut(Box<TypeHint>),
-    Tuple(Vec<TypeHint>),
-    AnonStruct(Vec<(StrId, TypeHint)>),
-    Set(Box<TypeHint>),
-    Map(Box<[TypeHint; 2]>),
-    Option(Box<TypeHint>),
-    Ptr(Box<TypeHint>),
-    MutPtr(Box<TypeHint>),
-    RawPtr(Box<TypeHint>),
-    RawMutPtr(Box<TypeHint>),
+    Array(Box<Located<TypeHint>>, Box<Expr>),
+    Vec(Box<Located<TypeHint>>),
+    Slice(Box<Located<TypeHint>>),
+    SliceMut(Box<Located<TypeHint>>),
+    Tuple(Vec<Located<TypeHint>>),
+    AnonStruct(Vec<(StrId, Located<TypeHint>)>),
+    Set(Box<Located<TypeHint>>),
+    Map(Box<[Located<TypeHint>; 2]>),
+    Option(Box<Located<TypeHint>>),
+    Ptr(Box<Located<TypeHint>>),
+    MutPtr(Box<Located<TypeHint>>),
+    RawPtr(Box<Located<TypeHint>>),
+    RawMutPtr(Box<Located<TypeHint>>),
     DynPtr(Path),
     DynMutPtr(Path),
     Fn {
         is_extern: bool,
-        params: Vec<TypeHint>,
-        ret: Box<TypeHint>,
+        params: Vec<Located<TypeHint>>,
+        ret: Option<Box<Located<TypeHint>>>,
     },
     Void,
-    This(Span),
+    This,
     #[default]
     Error,
 }
@@ -345,7 +345,7 @@ pub enum TypeHint {
 pub struct Param {
     pub keyword: bool,
     pub patt: Located<Pattern>,
-    pub ty: TypeHint,
+    pub ty: Located<TypeHint>,
     pub default: Option<Expr>,
 }
 
@@ -399,7 +399,7 @@ pub struct Fn {
     pub assign_subscript: bool,
     pub type_params: TypeParams,
     pub params: Vec<Param>,
-    pub ret: TypeHint,
+    pub ret: Option<Located<TypeHint>>,
     pub body: Option<Expr>,
 }
 
@@ -428,7 +428,7 @@ pub struct OperatorFn {
     pub name: Located<OperatorFnType>,
     pub type_params: TypeParams,
     pub params: Vec<Param>,
-    pub ret: TypeHint,
+    pub ret: Option<Located<TypeHint>>,
     pub body: Option<Expr>,
 }
 
@@ -436,7 +436,7 @@ pub struct OperatorFn {
 pub struct Member {
     pub public: bool,
     pub name: Located<StrId>,
-    pub ty: TypeHint,
+    pub ty: Located<TypeHint>,
     pub default: Option<Expr>,
 }
 
@@ -444,7 +444,7 @@ pub struct Member {
 pub enum VariantData {
     Empty,
     StructLike(Vec<Member>),
-    TupleLike(Vec<(TypeHint, Option<Expr>)>),
+    TupleLike(Vec<(Located<TypeHint>, Option<Expr>)>),
 }
 
 #[derive(Clone)]

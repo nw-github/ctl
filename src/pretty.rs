@@ -61,7 +61,7 @@ pub fn print_stmt(stmt: &Stmt, strings: &Strings, indent: usize) {
             eprintln!("{tabs}{}: {}", "Pattern".yellow(), FmtPatt::new(&patt.data, strings));
 
             if let Some(ty) = ty {
-                eprintln!("{tabs}{}: {}", "Type".yellow(), FmtType::new(ty, strings));
+                eprintln!("{tabs}{}: {}", "Type".yellow(), FmtType::new(&ty.data, strings));
             }
             if let Some(value) = value {
                 print_expr(value, strings, indent + 1);
@@ -127,7 +127,7 @@ pub fn print_stmt(stmt: &Stmt, strings: &Strings, indent: usize) {
             print_type_params(type_params, strings, indent + 1);
 
             let plus_1 = INDENT.repeat(indent + 1);
-            eprintln!("{plus_1}{}: {}", "For".yellow(), FmtType::new(ty, strings));
+            eprintln!("{plus_1}{}: {}", "For".yellow(), FmtType::new(&ty.data, strings));
             eprintln!("{plus_1}{}: ", "Functions".yellow());
             for f in functions {
                 print_fn(&f.data, strings, indent + 2);
@@ -150,7 +150,7 @@ pub fn print_stmt(stmt: &Stmt, strings: &Strings, indent: usize) {
                 ],
             );
             let tabs = INDENT.repeat(indent + 1);
-            eprintln!("{tabs}{}: {}", "Type".yellow(), FmtType::new(ty, strings));
+            eprintln!("{tabs}{}: {}", "Type".yellow(), FmtType::new(&ty.data, strings));
             if let Some(value) = value {
                 print_expr(value, strings, indent + 1);
             }
@@ -353,7 +353,7 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
                 eprintln!("{tabs}{}:", "Type Arguments".yellow());
                 let tabs = INDENT.repeat(indent + 1);
                 for ty in generics.iter() {
-                    eprintln!("{tabs}{}", FmtType::new(ty, strings))
+                    eprintln!("{tabs}{}", FmtType::new(&ty.data, strings))
                 }
             }
             print_expr(source, strings, indent + 1);
@@ -393,7 +393,7 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
         ExprData::As { expr, ty, throwing } => {
             print_header(&tabs, "Expr::As", &[bool!(throwing)]);
             let tabs = INDENT.repeat(indent + 1);
-            eprintln!("{tabs}{}: {}", "Type".yellow(), FmtType::new(ty, strings));
+            eprintln!("{tabs}{}: {}", "Type".yellow(), FmtType::new(&ty.data, strings));
             print_expr(expr, strings, indent + 1);
         }
         ExprData::Match { expr, body } => {
@@ -415,7 +415,7 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
             print_header(&tabs, "Expr::Lambda", &[bool!(moves)]);
             let tabs = INDENT.repeat(indent + 1);
             if let Some(ret) = ret {
-                eprintln!("{tabs}{}: {}", "Return".yellow(), FmtType::new(ret, strings));
+                eprintln!("{tabs}{}: {}", "Return".yellow(), FmtType::new(&ret.data, strings));
             }
             if !params.is_empty() {
                 eprintln!("{tabs}{}:", "Params".yellow());
@@ -425,7 +425,7 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
                         eprintln!(
                             "{tabs}{}: {}",
                             strings.resolve(&name.data),
-                            FmtType::new(ty, strings)
+                            FmtType::new(&ty.data, strings)
                         );
                     } else {
                         eprintln!("{tabs}{}", strings.resolve(&name.data));
@@ -529,7 +529,7 @@ fn do_print_fn(
                 "{plus_2}{}{}: {}",
                 if param.keyword { "kw " } else { "" },
                 FmtPatt::new(&param.patt.data, strings),
-                FmtType::new(&param.ty, strings)
+                FmtType::new(&param.ty.data, strings)
             );
             if let Some(default) = &param.default {
                 print_expr(default, strings, indent + 3);
@@ -571,7 +571,9 @@ fn print_fn(
             bool!(variadic),
             bool!(public),
         ],
-        &format!(" {} {}", "->".cyan(), FmtType::new(ret, strings)),
+        &ret.as_ref()
+            .map(|ret| format!(" {} {}", "->".cyan(), FmtType::new(&ret.data, strings)))
+            .unwrap_or_default(),
     );
     do_print_fn(type_params, params, body.as_ref(), strings, indent);
 }
@@ -585,7 +587,9 @@ fn print_op_fn(
         &INDENT.repeat(indent),
         "Stmt::OperatorFn",
         &[HeaderVar::Named("name", name.data.to_string())],
-        &format!(" {} {}", "->".cyan(), FmtType::new(ret, strings)),
+        &ret.as_ref()
+            .map(|ret| format!(" {} {}", "->".cyan(), FmtType::new(&ret.data, strings)))
+            .unwrap_or_default(),
     );
     do_print_fn(type_params, params, body.as_ref(), strings, indent);
 }
@@ -627,7 +631,7 @@ fn print_struct(
                 "{plus_2}{}{}: {}",
                 if member.public { "pub " } else { "" },
                 strings.resolve(&member.name.data),
-                FmtType::new(&member.ty, strings)
+                FmtType::new(&member.ty.data, strings)
             );
             if let Some(default) = &member.default {
                 print_expr(default, strings, indent + 3);
@@ -673,17 +677,19 @@ impl std::fmt::Display for FmtType<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.ty {
             TypeHint::Regular(path) => write!(f, "{}", FmtPath::new(path, self.strings)),
-            TypeHint::Array(ty, _) => write!(f, "[{}; <expr>]", FmtType::new(ty, self.strings)),
-            TypeHint::Vec(ty) => write!(f, "[{}]", FmtType::new(ty, self.strings)),
-            TypeHint::Slice(ty) => write!(f, "[{}..]", FmtType::new(ty, self.strings)),
-            TypeHint::SliceMut(ty) => write!(f, "[mut {}..]", FmtType::new(ty, self.strings)),
+            TypeHint::Array(ty, _) => {
+                write!(f, "[{}; <expr>]", FmtType::new(&ty.data, self.strings))
+            }
+            TypeHint::Vec(ty) => write!(f, "[{}]", FmtType::new(&ty.data, self.strings)),
+            TypeHint::Slice(ty) => write!(f, "[{}..]", FmtType::new(&ty.data, self.strings)),
+            TypeHint::SliceMut(ty) => write!(f, "[mut {}..]", FmtType::new(&ty.data, self.strings)),
             TypeHint::Tuple(vals) => {
                 write!(f, "(")?;
                 for (i, ty) in vals.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", FmtType::new(ty, self.strings))?;
+                    write!(f, "{}", FmtType::new(&ty.data, self.strings))?;
                 }
                 write!(f, ")")
             }
@@ -697,23 +703,23 @@ impl std::fmt::Display for FmtType<'_> {
                         f,
                         "{}: {}",
                         self.strings.resolve(name),
-                        FmtType::new(ty, self.strings)
+                        FmtType::new(&ty.data, self.strings)
                     )?;
                 }
                 write!(f, "}}")
             }
-            TypeHint::Set(ty) => write!(f, "#[{}]", FmtType::new(ty, self.strings)),
+            TypeHint::Set(ty) => write!(f, "#[{}]", FmtType::new(&ty.data, self.strings)),
             TypeHint::Map(kv) => write!(
                 f,
                 "[{}: {}]",
-                FmtType::new(&kv[0], self.strings),
-                FmtType::new(&kv[1], self.strings),
+                FmtType::new(&kv[0].data, self.strings),
+                FmtType::new(&kv[1].data, self.strings),
             ),
-            TypeHint::Option(ty) => write!(f, "?{}", FmtType::new(ty, self.strings)),
-            TypeHint::Ptr(ty) => write!(f, "*{}", FmtType::new(ty, self.strings)),
-            TypeHint::MutPtr(ty) => write!(f, "*mut {}", FmtType::new(ty, self.strings)),
-            TypeHint::RawPtr(ty) => write!(f, "^{}", FmtType::new(ty, self.strings)),
-            TypeHint::RawMutPtr(ty) => write!(f, "^mut {}", FmtType::new(ty, self.strings)),
+            TypeHint::Option(ty) => write!(f, "?{}", FmtType::new(&ty.data, self.strings)),
+            TypeHint::Ptr(ty) => write!(f, "*{}", FmtType::new(&ty.data, self.strings)),
+            TypeHint::MutPtr(ty) => write!(f, "*mut {}", FmtType::new(&ty.data, self.strings)),
+            TypeHint::RawPtr(ty) => write!(f, "^{}", FmtType::new(&ty.data, self.strings)),
+            TypeHint::RawMutPtr(ty) => write!(f, "^mut {}", FmtType::new(&ty.data, self.strings)),
             TypeHint::DynPtr(ty) => write!(f, "*dyn {}", FmtPath::new(ty, self.strings)),
             TypeHint::DynMutPtr(ty) => write!(f, "*dyn mut {}", FmtPath::new(ty, self.strings)),
             TypeHint::Fn { is_extern, params, ret } => {
@@ -722,12 +728,16 @@ impl std::fmt::Display for FmtType<'_> {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", FmtType::new(ty, self.strings))?;
+                    write!(f, "{}", FmtType::new(&ty.data, self.strings))?;
                 }
-                write!(f, "): {}", FmtType::new(ret, self.strings))
+                if let Some(ret) = ret {
+                    write!(f, "): {}", FmtType::new(&ret.data, self.strings))
+                } else {
+                    write!(f, ")")
+                }
             }
             TypeHint::Void => write!(f, "void"),
-            TypeHint::This(_) => write!(f, "{THIS_TYPE}"),
+            TypeHint::This => write!(f, "{THIS_TYPE}"),
             TypeHint::Error => write!(f, "Error"),
         }
     }
@@ -761,7 +771,7 @@ impl std::fmt::Display for FmtPath<'_> {
                 if i > 0 {
                     write!(tmp, ", ")?;
                 }
-                write!(tmp, "{}", FmtType::new(generic, self.strings))?;
+                write!(tmp, "{}", FmtType::new(&generic.data, self.strings))?;
             }
             write!(tmp, ">")?;
         }

@@ -819,7 +819,7 @@ impl TypeChecker {
                             default: member.default.clone(),
                         })
                         .collect(),
-                    ret: Self::typehint_for_struct(&base.name, &base.type_params),
+                    ret: Some(Self::typehint_for_struct(&base.name, &base.type_params)),
                     body: None,
                     attrs: Default::default(),
                     assign_subscript: false,
@@ -948,9 +948,14 @@ impl TypeChecker {
                         rvariants.insert(
                             variant.name.data,
                             CheckedVariant {
-                                ty: Some(this.declare_type_hint(TypeHint::AnonStruct(
-                                    smembers.iter().map(|m| (m.name.data, m.ty.clone())).collect(),
-                                ))),
+                                ty: Some(
+                                    this.declare_type_hint(Located::nowhere(TypeHint::AnonStruct(
+                                        smembers
+                                            .iter()
+                                            .map(|m| (m.name.data, m.ty.clone()))
+                                            .collect(),
+                                    ))),
+                                ),
                                 span: variant.name.span,
                                 discrim: variant
                                     .tag
@@ -982,8 +987,10 @@ impl TypeChecker {
                         rvariants.insert(
                             variant.name.data,
                             CheckedVariant {
-                                ty: Some(this.declare_type_hint(TypeHint::Tuple(
-                                    members.iter().map(|(ty, _)| ty.clone()).collect(),
+                                ty: Some(this.declare_type_hint(Located::nowhere(
+                                    TypeHint::Tuple(
+                                        members.iter().map(|(ty, _)| ty.clone()).collect(),
+                                    ),
                                 ))),
                                 span: variant.name.span,
                                 discrim: variant
@@ -1015,7 +1022,7 @@ impl TypeChecker {
                     is_unsafe: false,
                     type_params: vec![],
                     params,
-                    ret: ret.clone(),
+                    ret: Some(ret.clone()),
                     body: None,
                     attrs: Default::default(),
                     assign_subscript: false,
@@ -1024,7 +1031,7 @@ impl TypeChecker {
             let member_cons_len = fns.len();
             fns.extend(this.declare_fns_iter(base.functions));
             let tag = if let Some(tag) = tag {
-                this.declare_type_hint(TypeHint::Regular(tag))
+                this.declare_type_hint(Located::new(tag.span(), TypeHint::Regular(tag)))
             } else {
                 TypeId::UNKNOWN
             };
@@ -1372,7 +1379,8 @@ impl TypeChecker {
                     default: param.default.map(|expr| DefaultExpr::Unchecked(this.current, expr)),
                 })
                 .collect();
-            this.proj.scopes.get_mut(id).ret = this.declare_type_hint(f.ret);
+            this.proj.scopes.get_mut(id).ret =
+                f.ret.map(|ret| this.declare_type_hint(ret)).unwrap_or(TypeId::VOID);
 
             DFn { id, body: f.body }
         })
@@ -1423,7 +1431,7 @@ impl TypeChecker {
                 if let Some(p) =
                     f.params.get(1).filter(|_| matches!(f.name.data, O::Cmp | O::Eq)).cloned()
                 {
-                    if let TypeHint::Ptr(inner) = p.ty {
+                    if let TypeHint::Ptr(inner) = p.ty.data {
                         (tr_name, fn_name, vec![*inner])
                     } else {
                         // impl check will take care of issuing an error for this case
@@ -1435,7 +1443,7 @@ impl TypeChecker {
                         fn_name,
                         vec![
                             f.params.get(1).map(|p| p.ty.clone()).unwrap_or_default(),
-                            f.ret.clone(),
+                            f.ret.clone().unwrap_or_else(|| Located::nowhere(TypeHint::Void)),
                         ],
                     )
                 }
@@ -1446,13 +1454,20 @@ impl TypeChecker {
                 (
                     tr_name,
                     fn_name,
-                    vec![f.params.get(1).map(|p| p.ty.clone()).unwrap_or_default(), f.ret.clone()],
+                    vec![
+                        f.params.get(1).map(|p| p.ty.clone()).unwrap_or_default(),
+                        f.ret.clone().unwrap_or_else(|| Located::nowhere(TypeHint::Void)),
+                    ],
                 )
             }
             O::Minus | O::Bang => {
                 let op = UnaryOp::try_from_postfix_fn(f.name.data).unwrap();
                 let (tr_name, fn_name) = self.tables.unary_op_traits.get(&op).copied().unwrap();
-                (tr_name, fn_name, vec![f.ret.clone()])
+                (
+                    tr_name,
+                    fn_name,
+                    vec![f.ret.clone().unwrap_or_else(|| Located::nowhere(TypeHint::Void))],
+                )
             }
             O::Increment | O::Decrement => {
                 let op = UnaryOp::try_from_postfix_fn(f.name.data).unwrap();
@@ -1537,21 +1552,27 @@ impl TypeChecker {
         (impls, declared_blocks, subscripts)
     }
 
-    fn declare_type_hint(&mut self, hint: TypeHint) -> TypeId {
+    fn declare_type_hint(&mut self, hint: Located<TypeHint>) -> TypeId {
         self.proj.types.add_unresolved(hint, self.current)
     }
 
     fn typehint_for_struct(
         name: &Located<StrId>,
         type_params: &[(Located<StrId>, Vec<Path>)],
-    ) -> TypeHint {
-        TypeHint::Regular(Path::new(
-            PathOrigin::Normal,
-            vec![(
-                *name,
-                type_params.iter().map(|(n, _)| TypeHint::Regular(Path::from(*n))).collect(),
-            )],
-        ))
+    ) -> Located<TypeHint> {
+        Located::new(
+            name.span,
+            TypeHint::Regular(Path::new(
+                PathOrigin::Normal,
+                vec![(
+                    *name,
+                    type_params
+                        .iter()
+                        .map(|(n, _)| Located::new(n.span, TypeHint::Regular(Path::from(*n))))
+                        .collect(),
+                )],
+            )),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4568,8 +4589,12 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_lang_type(&mut self, name: &'static str, args: &[TypeHint]) -> TypeId {
-        let span = Span::default(); // FIXME: be at least somewhat related to the cause
+    fn resolve_lang_type(
+        &mut self,
+        name: &'static str,
+        args: &[Located<TypeHint>],
+        span: Span,
+    ) -> TypeId {
         let name_id = self.proj.strings.get_or_intern_static(name);
         if let Some(id) = self.proj.scopes.lang_types.get(&name_id).copied() {
             let ty_args = self.resolve_type_args(id, args, true, span);
@@ -4648,13 +4673,14 @@ impl TypeChecker {
         }
     }
 
-    fn resolve_typehint(&mut self, hint: &TypeHint) -> TypeId {
-        let mut create_ptr = |init: fn(TypeId) -> Type, hint: &TypeHint| {
+    fn resolve_typehint(&mut self, hint: &Located<TypeHint>) -> TypeId {
+        let mut create_ptr = |init: fn(TypeId) -> Type, hint| {
             let ty = self.resolve_typehint(hint);
             self.proj.types.insert(init(ty))
         };
 
-        match hint {
+        let span = hint.span;
+        match &hint.data {
             TypeHint::Regular(path) => match self.resolve_type_path(path) {
                 ResolvedType::Builtin(ty) => ty,
                 ResolvedType::UserType(ut) => {
@@ -4686,7 +4712,7 @@ impl TypeChecker {
                 .resolve_dyn_ptr(path)
                 .map(|tr| self.proj.types.insert(Type::DynMutPtr(tr)))
                 .unwrap_or_default(),
-            &TypeHint::This(span) => {
+            TypeHint::This => {
                 let current = self.current_function();
                 for (_, scope) in self.proj.scopes.walk(self.current) {
                     match scope.kind {
@@ -4716,7 +4742,7 @@ impl TypeChecker {
                         _ => {}
                     }
                 }
-                self.error(Error::new(format!("'{THIS_TYPE}' outside of type"), span))
+                self.error(Error::new(format!("'{THIS_TYPE}' outside of type"), hint.span))
             }
             TypeHint::Array(ty, count) => {
                 let id = self.resolve_typehint(ty);
@@ -4725,12 +4751,16 @@ impl TypeChecker {
                 };
                 self.proj.types.insert(Type::Array(id, n.val.try_into().unwrap()))
             }
-            TypeHint::Option(ty) => self.resolve_lang_type("option", std::slice::from_ref(ty)),
-            TypeHint::Vec(ty) => self.resolve_lang_type("vec", std::slice::from_ref(ty)),
-            TypeHint::Map(kv) => self.resolve_lang_type("map", &kv[..]),
-            TypeHint::Set(ty) => self.resolve_lang_type("set", std::slice::from_ref(ty)),
-            TypeHint::Slice(ty) => self.resolve_lang_type("span", std::slice::from_ref(ty)),
-            TypeHint::SliceMut(ty) => self.resolve_lang_type("span_mut", std::slice::from_ref(ty)),
+            TypeHint::Option(ty) => {
+                self.resolve_lang_type("option", std::slice::from_ref(ty), span)
+            }
+            TypeHint::Vec(ty) => self.resolve_lang_type("vec", std::slice::from_ref(ty), span),
+            TypeHint::Map(kv) => self.resolve_lang_type("map", &kv[..], span),
+            TypeHint::Set(ty) => self.resolve_lang_type("set", std::slice::from_ref(ty), span),
+            TypeHint::Slice(ty) => self.resolve_lang_type("span", std::slice::from_ref(ty), span),
+            TypeHint::SliceMut(ty) => {
+                self.resolve_lang_type("span_mut", std::slice::from_ref(ty), span)
+            }
             TypeHint::Tuple(params) => {
                 let params = params.iter().map(|p| self.resolve_typehint(p)).collect();
                 self.proj.scopes.get_tuple(params, &mut self.proj.strings, &mut self.proj.types)
@@ -4752,7 +4782,7 @@ impl TypeChecker {
             TypeHint::Fn { is_extern: _, params, ret } => {
                 let fnptr = FnPtr {
                     params: params.iter().map(|p| self.resolve_typehint(p)).collect(),
-                    ret: self.resolve_typehint(ret),
+                    ret: ret.as_ref().map(|ret| self.resolve_typehint(ret)).unwrap_or(TypeId::VOID),
                 };
                 self.proj.types.insert(Type::FnPtr(fnptr))
             }
@@ -5451,7 +5481,7 @@ impl TypeChecker {
         &mut self,
         ty: TypeId,
         method: StrId,
-        generics: &[TypeHint],
+        generics: &[Located<TypeHint>],
         span: Span,
         scope: ScopeId,
     ) -> Option<MemberFn> {
@@ -7256,7 +7286,7 @@ impl TypeChecker {
     fn resolve_type_args<T: ItemId>(
         &mut self,
         id: T,
-        args: &[TypeHint],
+        args: &[Located<TypeHint>],
         typehint: bool,
         span: Span,
     ) -> TypeArgs
