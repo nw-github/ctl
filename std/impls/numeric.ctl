@@ -104,6 +104,7 @@ pub extension NumericImpl<T: Numeric> for T {
 
 mod gcc_intrin {
     use super::Integral;
+    use super::Unsigned;
 
     // TODO: compiler independent fallback for these functions
     @(c_opaque)
@@ -114,6 +115,15 @@ mod gcc_intrin {
 
     @(c_opaque)
     pub extern fn __builtin_mul_overflow<T: Integral>(x: T, y: T, res: ^mut T): bool;
+
+    @(c_opaque)
+    pub extern fn __builtin_popcountg<T: Unsigned>(u: T): c_int;
+
+    @(c_opaque)
+    pub extern fn __builtin_clzg<T: Unsigned>(u: T): c_int;
+
+    @(c_opaque)
+    pub extern fn __builtin_ctzg<T: Unsigned>(u: T): c_int;
 }
 
 pub extension IntegralImpl<T: Integral> for T {
@@ -364,6 +374,36 @@ pub extension UnsignedImpl<T: Unsigned> for T {
         unsafe {
             this.to_str_radix_unchecked(radix, buffer[..])
         }
+    }
+
+    pub fn count_ones(this): u32 {
+        // TODO: popcountg only works for unsigned types and is only supported on later versions
+        //       of clang & gcc
+        //
+        //       to implement this generically for signed types, we need a way to convert from
+        //       iN to uN generically
+        //
+        //       it also doesn't work for unsigned _BitInt(N) where N > 128
+        //
+        // If we allowed traits to carry consts + associated types
+        //
+        //       trait Signed { type UI: Unsigned; }
+        //
+        //       // SignedExt
+        //       pub fn count_ones(this) { (this as! T::UI).count_ones() }
+        unsafe gcc_intrin::__builtin_popcountg(*this) as! u32
+    }
+
+    pub fn count_zeros(this): u32 {
+        unsafe gcc_intrin::__builtin_popcountg(!*this) as! u32
+    }
+
+    pub fn leading_zeros(this): u32 {
+        unsafe gcc_intrin::__builtin_clzg(*this) as! u32
+    }
+
+    pub fn trailing_zeros(this): u32 {
+        unsafe gcc_intrin::__builtin_ctzg(*this) as! u32
     }
 }
 

@@ -70,6 +70,8 @@ pub extension F32Impl for f32 {
         f32::from_bits(this.to_bits() & !(1 << 31))
     }
 
+    pub fn parse(s: str): ?f32 => s2f::s2f(s.as_bytes()) is :Ok(v) then v;
+
     impl Format {
         fn fmt<F: Formatter>(this, f: *mut F) {
             Buffer::new().format(*this).fmt(f);
@@ -124,6 +126,8 @@ pub extension F64Impl for f64 {
     pub fn abs(my this): f64 {
         f64::from_bits(this.to_bits() & !(1 << 63))
     }
+
+    pub fn parse(s: str): ?f64 => s2d::s2d(s.as_bytes()) is :Ok(v) then v;
 
     impl Format {
         fn fmt<F: Formatter>(this, f: *mut F) {

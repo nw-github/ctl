@@ -29,22 +29,22 @@ pub struct Buffer {
     }
 }
 
-trait Float {
-    fn is_nonfinite(this): bool;
-    fn format_nonfinite(this): str;
-    unsafe fn write_to_ryu_buffer(this, result: ^mut u8): uint;
+sealed trait Float {
+    fn is_nonfinite(my this): bool;
+    fn format_nonfinite(my this): str;
+    unsafe fn write_to_ryu_buffer(my this, result: ^mut u8): uint;
 }
 
 pub extension Float32Ext for f32 {
     impl Float {
-        fn is_nonfinite(this): bool {
+        fn is_nonfinite(my this): bool {
             const EXP_MASK: u32 = 0x7f800000;
             let bits = this.to_bits();
             bits & EXP_MASK == EXP_MASK
         }
 
         @(cold)
-        fn format_nonfinite(this): str {
+        fn format_nonfinite(my this): str {
             let bits = this.to_bits();
             if bits & 0x007fffff != 0 {
                 NAN
@@ -55,22 +55,22 @@ pub extension Float32Ext for f32 {
             }
         }
 
-        unsafe fn write_to_ryu_buffer(this, result: ^mut u8): uint {
-            unsafe pretty::format32(*this, result)
+        unsafe fn write_to_ryu_buffer(my this, result: ^mut u8): uint {
+            unsafe pretty::format32(this, result)
         }
     }
 }
 
 pub extension Float64Ext for f64 {
     impl Float {
-        fn is_nonfinite(this): bool {
+        fn is_nonfinite(my this): bool {
             const EXP_MASK: u64 = 0x7ff0000000000000;
             let bits = this.to_bits();
             bits & EXP_MASK == EXP_MASK
         }
 
         @(cold)
-        fn format_nonfinite(this): str {
+        fn format_nonfinite(my this): str {
             let bits = this.to_bits();
             if bits & 0x000fffffffffffff != 0 {
                 NAN
@@ -81,8 +81,8 @@ pub extension Float64Ext for f64 {
             }
         }
 
-        unsafe fn write_to_ryu_buffer(this, result: ^mut u8): uint {
-            unsafe pretty::format64(*this, result)
+        unsafe fn write_to_ryu_buffer(my this, result: ^mut u8): uint {
+            unsafe pretty::format64(this, result)
         }
     }
 }
