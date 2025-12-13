@@ -1513,15 +1513,10 @@ impl<'a> Codegen<'a> {
                         self.emit_expr_inline(*if_branch, state);
                     });
                     write_de!(self.buffer, ";}}else{{");
-                    if let Some(else_branch) = else_branch {
-                        hoist_point!(self, {
-                            write_de!(self.buffer, "{name}=");
-                            self.emit_expr_inline(*else_branch, state);
-                        });
-                    } else {
-                        write_de!(self.buffer, "{name}={VOID_INSTANCE}");
-                    }
-
+                    hoist_point!(self, {
+                        write_de!(self.buffer, "{name}=");
+                        self.emit_expr_inline(*else_branch, state);
+                    });
                     write_de!(self.buffer, ";}}");
                 })
             }

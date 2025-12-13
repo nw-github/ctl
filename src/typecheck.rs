@@ -3134,7 +3134,7 @@ impl TypeChecker {
                         let expr = self.check_expr_inner(*expr, None);
                         out_type = expr.ty;
                         if_branch = self.try_coerce(if_branch, expr.ty);
-                        Some(expr)
+                        expr
                     } else {
                         let span = expr.span;
                         let source = self.check_expr_inner(*expr, target.or(Some(out_type)));
@@ -3144,25 +3144,29 @@ impl TypeChecker {
                             };
                             if_branch = expr;
                             out_type = source.ty;
-                            Some(source)
+                            source
                         } else {
-                            Some(self.type_check_checked(source, out_type, span))
+                            self.type_check_checked(source, out_type, span)
                         }
                     }
-                } else if if_branch.data.is_yielding_block(&self.proj.scopes).unwrap_or(true) {
-                    if out_type == TypeId::NEVER
-                        || out_type == TypeId::VOID
-                        || out_type == TypeId::UNKNOWN
+                } else {
+                    // This ensures
+                    //                  if false { unreachable() }
+                    //                  if false { {} }
+                    //                  if false { unreachable(); }
+                    // All resolve to type `void` instead of ?never/?void while
+                    //                  if false { 10 }
+                    // Has type ?int
+                    if if_branch.data.is_yielding_block(&self.proj.scopes).unwrap_or(true)
+                        && !matches!(out_type, TypeId::NEVER | TypeId::VOID | TypeId::UNKNOWN)
                     {
-                        out_type = TypeId::VOID;
-                        Some(CExpr::new(TypeId::VOID, CExprData::Void))
-                    } else {
                         out_type = self.make_lang_type_by_name("option", [out_type], span);
                         if_branch = self.try_coerce(if_branch, out_type);
-                        Some(CExpr::option_null(out_type))
+                        CExpr::option_null(out_type)
+                    } else {
+                        out_type = TypeId::VOID;
+                        CExpr::new(out_type, CExprData::Void)
                     }
-                } else {
-                    None
                 };
 
                 CExpr::new(
@@ -3170,7 +3174,7 @@ impl TypeChecker {
                     CExprData::If {
                         cond: cond.into(),
                         if_branch: if_branch.into(),
-                        else_branch: else_branch.map(|e| e.into()),
+                        else_branch: else_branch.into(),
                     },
                 )
             }

@@ -152,7 +152,7 @@ pub enum ExprData {
     If {
         cond: Box<Expr>,
         if_branch: Box<Expr>,
-        else_branch: Option<Box<Expr>>,
+        else_branch: Box<Expr>,
     },
     Loop {
         cond: Option<Box<Expr>>,
