@@ -2062,26 +2062,28 @@ impl TypeChecker {
             };
 
             let old_safety = std::mem::take(&mut this.safety);
-            let target = this.proj.scopes.get_mut(id).ret;
-            let body = this.check_expr(body, Some(target));
-            let body = if body.ty == TypeId::VOID {
-                Err(body)
-            } else {
-                this.coerce(body, target)
-            };
-            this.proj.scopes.get_mut(id).body = Some(match body {
+            let ret = this.proj.scopes.get_mut(id).ret;
+            let body_span = body.span;
+            let body = this.check_expr(body, Some(ret));
+            this.proj.scopes.get_mut(id).body = Some(match this.coerce(body, ret) {
                 Ok(body) => body,
                 Err(body) => {
-                    if !body.data.is_yielding_block(&this.proj.scopes) && !matches!(target, TypeId::VOID | TypeId::UNKNOWN) {
-                        let func = this.proj.scopes.get(id);
-                        let err = Error::new(
-                            format!("function '{}' must return a value of type '{}' from all code paths",
-                                strdata!(this, func.name.data),
-                                type_name!(this, func.ret),
-                            ),
-                            func.name.span,
-                        );
-                        this.error(err)
+                    match body.data.is_yielding_block(&this.proj.scopes) {
+                        // Yielding blocks already perform a type_check
+                        Some(true) => {}
+                        Some(false) => {
+                            let func = this.proj.scopes.get(id);
+                            this.proj.diag.report(Error::new(
+                                format!("function '{}' must return a value of type '{}' from all code paths",
+                                    strdata!(this, func.name.data),
+                                    type_name!(this, func.ret),
+                                ),
+                                func.name.span,
+                            ));
+                        }
+                        None => {
+                            this.proj.diag.report(type_mismatch_err!(this, ret, body.ty, body_span));
+                        }
                     }
                     body
                 }
@@ -3126,7 +3128,7 @@ impl TypeChecker {
                             Some(self.type_check_checked(source, out_type, span))
                         }
                     }
-                } else if if_branch.data.is_yielding_block(&self.proj.scopes) {
+                } else if if_branch.data.is_yielding_block(&self.proj.scopes).unwrap_or(true) {
                     if out_type == TypeId::NEVER
                         || out_type == TypeId::VOID
                         || out_type == TypeId::UNKNOWN

@@ -214,27 +214,23 @@ pub struct CodegenFlags {
         span.ctl
         main.ctl
 
-    Module {
+    "~/std/main.ctl": Module {
         name: "std",
-        path: "~/std/main.ctl",
-        files: [
-            Module {
+        mods: {
+            "~/std/span.ctl": Module {
                 name: "span",
-                path: "~/std/span.ctl",
-                mods: []
+                mods: {}
             },
-            Module {
+            "~/std/alloc/main.ctl": Module {
                 name: "alloc",
-                path: "~/std/alloc/main.ctl",
-                mods: [
-                    Module {
+                mods: {
+                    "~/std/alloc/vec.ctl": Module {
                         name: "vec",
-                        path: "~/std/alloc/vec.ctl",
                         mods: []
                     }
-                ]
+                }
             }
-        ]
+        }
     }
 */
 

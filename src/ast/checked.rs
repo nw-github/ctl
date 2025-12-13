@@ -189,10 +189,10 @@ pub enum ExprData {
 }
 
 impl ExprData {
-    pub fn is_yielding_block(&self, scopes: &Scopes) -> bool {
+    pub fn is_yielding_block(&self, scopes: &Scopes) -> Option<bool> {
         match self {
-            ExprData::Block(block) => block.is_yielding(scopes),
-            _ => true,
+            ExprData::Block(block) => Some(block.is_yielding(scopes)),
+            _ => None,
         }
     }
 
