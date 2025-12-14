@@ -6,7 +6,6 @@ use unicode_xid::UnicodeXID;
 use crate::{
     Warning,
     error::{Diagnostics, Error, FileId},
-    intern::{THIS_PARAM, THIS_TYPE},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, EnumAsInner)]
@@ -834,8 +833,8 @@ impl<'a> Lexer<'a> {
             "void" => Token::Void,
             "while" => Token::While,
             "yield" => Token::Yield,
-            x if x == THIS_PARAM => Token::This,
-            x if x == THIS_TYPE => Token::ThisType,
+            crate::intern::THIS_PARAM => Token::This,
+            crate::intern::THIS_TYPE => Token::ThisType,
             id => Token::Ident(id),
         }
     }
