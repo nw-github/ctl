@@ -2803,7 +2803,7 @@ impl TypeChecker {
                     .and_then(|target| self.proj.types[target].as_user())
                     .filter(|ut| ut.id == map)
                 {
-                    let mut args = ut.ty_args.values().cloned();
+                    let mut args = ut.ty_args.values().copied();
                     (args.next().unwrap(), args.next().unwrap())
                 } else if let Some((key, val)) = elements.next() {
                     let key = self.check_expr(key, None);
@@ -3181,39 +3181,22 @@ impl TypeChecker {
             PExprData::Loop { cond, body, do_while, label } => {
                 let infinite = cond.is_none();
                 let target = self.loop_target(target, infinite);
+                let kind = LoopScopeKind { target, breaks: LoopBreak::None, infinite, label };
                 let (cond, body) = if let Some(cond) = cond {
                     let (cond, vars) = self.type_check_with_listen(*cond);
-                    let body = self.create_block_with_init(
-                        body,
-                        ScopeKind::Loop(LoopScopeKind {
-                            target,
-                            breaks: LoopBreak::None,
-                            infinite,
-                            label,
-                        }),
-                        |this| {
-                            if !do_while {
-                                this.define(&vars);
-                            }
-                        },
-                    );
+                    let body = self.create_block_with_init(body, ScopeKind::Loop(kind), |this| {
+                        if !do_while {
+                            this.define(&vars);
+                        }
+                    });
                     (Some(cond.into()), body)
                 } else {
-                    (
-                        None,
-                        self.create_block(
-                            body,
-                            ScopeKind::Loop(LoopScopeKind {
-                                target,
-                                breaks: LoopBreak::None,
-                                infinite,
-                                label,
-                            }),
-                        ),
-                    )
+                    (None, self.create_block(body, ScopeKind::Loop(kind)))
                 };
-                let (out_type, optional) =
-                    self.loop_out_type(&self.proj.scopes[body.scope].kind.clone(), span);
+                let (out_type, optional) = self.loop_out_type(
+                    self.proj.scopes[body.scope].kind.as_loop().copied().unwrap(),
+                    span,
+                );
                 CExpr::new(out_type, CExprData::Loop { cond, body, do_while, optional })
             }
             PExprData::For { patt, iter, body, label } => {
@@ -3294,9 +3277,7 @@ impl TypeChecker {
             PExprData::Tail(expr) => match &self.proj.scopes[self.current].kind {
                 ScopeKind::Function(_) | ScopeKind::Lambda(_, _) => self.check_return(*expr, span),
                 ScopeKind::Loop { .. } => self.type_check(*expr, TypeId::VOID),
-                ScopeKind::Block(data) => {
-                    self.check_yield(Some(expr), data.clone(), self.current, span)
-                }
+                ScopeKind::Block(data) => self.check_yield(Some(expr), *data, self.current, span),
                 _ => self.error(Error::new("yield outside of block", expr.span)),
             },
             PExprData::Break(expr, label) => {
@@ -3309,10 +3290,10 @@ impl TypeChecker {
 
                         match &scope.kind {
                             ScopeKind::Loop(data) if data.label.as_ref() == label_data => {
-                                return self.check_break(expr, data.clone(), id, span);
+                                return self.check_break(expr, *data, id, span);
                             }
                             ScopeKind::Block(data) if data.label.as_ref() == label_data => {
-                                return self.check_yield(expr, data.clone(), id, span);
+                                return self.check_yield(expr, *data, id, span);
                             }
                             _ => {}
                         }
@@ -3336,7 +3317,7 @@ impl TypeChecker {
                     return self.error(Error::new("break outside of loop", span));
                 };
 
-                self.check_break(expr, loop_data.clone(), id, span)
+                self.check_break(expr, *loop_data, id, span)
             }
             PExprData::Continue(label) => {
                 let Some((_, id)) = self.current_loop(&label) else {
@@ -3489,7 +3470,7 @@ impl TypeChecker {
                                     .and_then(|&ty| this.proj.types[ty].as_fn_ptr())
                                     .and_then(|f| f.params.get(i))
                                     .filter(|&&ty| ty_is_generic(this, ty))
-                                    .cloned()
+                                    .copied()
                             })
                             .unwrap_or_else(|| {
                                 let data = strdata!(this, name.data);
@@ -3852,30 +3833,33 @@ impl TypeChecker {
         let expr = if let Some(expr) = expr {
             let span = expr.span;
             let expr = if let Some(target) = data.target {
-                self.type_check(*expr, target)
+                let expr = self.type_check(*expr, target);
+                data = *self.proj.scopes[id].kind.as_loop().unwrap();
+                expr
             } else {
                 let expr = self.check_expr(*expr, data.target);
-                data.target = Some(expr.ty);
-                expr
+                // expr could contain a nested expr that sets the target, ex. `break break 10`
+                data = *self.proj.scopes[id].kind.as_loop().unwrap();
+                if let Some(target) = data.target {
+                    self.type_check_checked(expr, target, span)
+                } else {
+                    data.target = Some(expr.ty);
+                    expr
+                }
             };
             data.breaks = LoopBreak::WithValue;
-            self.proj.scopes[id].kind = ScopeKind::Loop(data);
 
-            let (target, opt) = self.loop_out_type(&self.proj.scopes[id].kind.clone(), span);
+            let (target, opt) = self.loop_out_type(data, span);
             if opt { self.try_coerce(expr, target) } else { expr }
+        } else if let Some(target) = data.target {
+            self.type_check_checked(CExpr::void(), target, span)
         } else {
-            let expr = if let Some(target) = data.target {
-                self.type_check_checked(CExpr::void(), target, span)
-            } else {
-                data.target = Some(TypeId::VOID);
-                data.breaks = LoopBreak::WithNothing;
-                CExpr::void()
-            };
-
-            self.proj.scopes[id].kind = ScopeKind::Loop(data);
-            expr
+            data.target = Some(TypeId::VOID);
+            data.breaks = LoopBreak::WithNothing;
+            CExpr::void()
         };
 
+        self.proj.scopes[id].kind = ScopeKind::Loop(data);
         CExpr::new(TypeId::NEVER, CExprData::Break(expr.into(), id))
     }
 
@@ -3890,10 +3874,17 @@ impl TypeChecker {
             expr.map(|expr| self.type_check(*expr, target))
                 .unwrap_or_else(|| self.type_check_checked(CExpr::void(), target, span))
         } else {
+            let span = expr.as_ref().map(|e| e.span).unwrap_or(span);
             let expr =
                 expr.map(|expr| self.check_expr(*expr, data.target)).unwrap_or_else(CExpr::void);
-            data.target = Some(expr.ty);
-            expr
+            // expr could contain a nested expr that sets the target, ex. `@outer: { { break @outer 10 } }`
+            data = *self.proj.scopes[id].kind.as_block().unwrap();
+            if let Some(target) = data.target {
+                self.type_check_checked(expr, target, span)
+            } else {
+                data.target = Some(expr.ty);
+                expr
+            }
         };
 
         data.yields = true;
@@ -3961,8 +3952,8 @@ impl TypeChecker {
                     label,
                 }),
             );
-            let (out, optional) =
-                this.loop_out_type(&this.proj.scopes[body.scope].kind.clone(), span);
+            let (out, optional) = this
+                .loop_out_type(this.proj.scopes[body.scope].kind.as_loop().copied().unwrap(), span);
 
             let name = intern!(this, "$iter{}", this.current.0);
             let iter_var = this.insert::<VariableId>(
@@ -5683,20 +5674,16 @@ impl TypeChecker {
         }
     }
 
-    fn loop_out_type(&mut self, kind: &ScopeKind, span: Span) -> (TypeId, bool) {
-        let ScopeKind::Loop(LoopScopeKind { target, breaks, infinite, label: _ }) = kind else {
-            panic!("ICE: target of loop changed from loop to something else");
-        };
-
-        if *infinite {
-            match breaks {
+    fn loop_out_type(&mut self, kind: LoopScopeKind, span: Span) -> (TypeId, bool) {
+        if kind.infinite {
+            match kind.breaks {
                 LoopBreak::None => (TypeId::NEVER, false),
-                _ => (target.unwrap(), false),
+                _ => (kind.target.unwrap(), false),
             }
         } else {
-            match breaks {
+            match kind.breaks {
                 LoopBreak::WithValue => {
-                    (self.make_lang_type_by_name("option", [(*target).unwrap()], span), true)
+                    (self.make_lang_type_by_name("option", [(kind.target).unwrap()], span), true)
                 }
                 _ => (TypeId::VOID, false),
             }
@@ -7317,7 +7304,7 @@ impl TypeChecker {
         let ty_args = TypeArgs(
             params
                 .iter()
-                .cloned()
+                .copied()
                 .zip(args.iter().map(|ty| self.resolve_typehint(ty)).take(params.len()).chain(
                     std::iter::repeat_n(
                         TypeId::UNKNOWN,

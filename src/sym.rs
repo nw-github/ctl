@@ -94,7 +94,7 @@ pub enum LoopBreak {
     WithNothing,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct LoopScopeKind {
     pub target: Option<TypeId>,
     pub breaks: LoopBreak,
@@ -102,7 +102,7 @@ pub struct LoopScopeKind {
     pub label: Option<StrId>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct BlockScopeKind {
     pub target: Option<TypeId>,
     pub yields: bool,
@@ -110,7 +110,7 @@ pub struct BlockScopeKind {
     pub branches: bool,
 }
 
-#[derive(Default, Debug, Clone, EnumAsInner)]
+#[derive(Default, Debug, Clone, Copy, EnumAsInner)]
 pub enum ScopeKind {
     Block(BlockScopeKind),
     Loop(LoopScopeKind),
