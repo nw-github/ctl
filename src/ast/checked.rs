@@ -179,8 +179,8 @@ pub enum ExprData {
     As(Box<Expr>, bool),
     Is(Box<Expr>, Pattern),
     Return(Box<Expr>),
-    Yield(Option<Box<Expr>>, ScopeId),
-    Break(Option<Box<Expr>>, ScopeId),
+    Yield(Box<Expr>, ScopeId),
+    Break(Box<Expr>, ScopeId),
     Lambda(Vec<Stmt>),
     NeverCoerce(Box<Expr>),
     Continue(ScopeId),
@@ -319,5 +319,9 @@ impl Expr {
 
     pub fn option_null(opt: TypeId) -> Expr {
         Expr::new(opt, ExprData::VariantInstance(Strings::NULL, Default::default()))
+    }
+
+    pub fn void() -> Expr {
+        Expr::new(TypeId::VOID, ExprData::Void)
     }
 }

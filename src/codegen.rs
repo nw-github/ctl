@@ -1638,11 +1638,7 @@ impl<'a> Codegen<'a> {
             }),
             ExprData::Yield(expr, scope) => never_expr!(self, {
                 write_de!(self.buffer, "{}=", scope_var_or_label(scope));
-                if let Some(expr) = expr {
-                    self.emit_expr_inline(*expr, state);
-                } else {
-                    self.buffer.emit(VOID_INSTANCE);
-                }
+                self.emit_expr_inline(*expr, state);
                 write_de!(self.buffer, ";");
 
                 // if scope != self.cur_block {
@@ -1651,11 +1647,7 @@ impl<'a> Codegen<'a> {
             }),
             ExprData::Break(expr, scope) => never_expr!(self, {
                 write_de!(self.buffer, "{}=", scope_var_or_label(scope));
-                if let Some(expr) = expr {
-                    self.emit_expr_inline(*expr, state);
-                } else {
-                    self.buffer.emit(VOID_INSTANCE);
-                }
+                self.emit_expr_inline(*expr, state);
                 write_de!(self.buffer, ";");
                 if self.cur_loop == scope {
                     self.leave_scope(state, "break", scope);

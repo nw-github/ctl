@@ -2939,7 +2939,7 @@ impl TypeChecker {
                 CExpr::new(TypeId::CHAR, CExprData::Int(ComptimeInt::from(s as u32)))
             }
             PExprData::ByteChar(c) => CExpr::new(TypeId::U8, CExprData::Int(ComptimeInt::from(c))),
-            PExprData::Void => CExpr::new(TypeId::VOID, CExprData::Void),
+            PExprData::Void => CExpr::void(),
             PExprData::Bool(v) => CExpr::new(TypeId::BOOL, CExprData::Int(ComptimeInt::from(v))),
             PExprData::Integer(integer) => {
                 let (ty, value) = self.get_int_type_and_val(target, integer, span);
@@ -3165,7 +3165,7 @@ impl TypeChecker {
                         CExpr::option_null(out_type)
                     } else {
                         out_type = TypeId::VOID;
-                        CExpr::new(out_type, CExprData::Void)
+                        CExpr::void()
                     }
                 };
 
@@ -3294,7 +3294,9 @@ impl TypeChecker {
             PExprData::Tail(expr) => match &self.proj.scopes[self.current].kind {
                 ScopeKind::Function(_) | ScopeKind::Lambda(_, _) => self.check_return(*expr, span),
                 ScopeKind::Loop { .. } => self.type_check(*expr, TypeId::VOID),
-                ScopeKind::Block(data) => self.check_yield(Some(expr), data.clone(), self.current),
+                ScopeKind::Block(data) => {
+                    self.check_yield(Some(expr), data.clone(), self.current, span)
+                }
                 _ => self.error(Error::new("yield outside of block", expr.span)),
             },
             PExprData::Break(expr, label) => {
@@ -3307,10 +3309,10 @@ impl TypeChecker {
 
                         match &scope.kind {
                             ScopeKind::Loop(data) if data.label.as_ref() == label_data => {
-                                return self.check_break(expr, data.clone(), id);
+                                return self.check_break(expr, data.clone(), id, span);
                             }
                             ScopeKind::Block(data) if data.label.as_ref() == label_data => {
-                                return self.check_yield(expr, data.clone(), id);
+                                return self.check_yield(expr, data.clone(), id, span);
                             }
                             _ => {}
                         }
@@ -3334,7 +3336,7 @@ impl TypeChecker {
                     return self.error(Error::new("break outside of loop", span));
                 };
 
-                self.check_break(expr, loop_data.clone(), id)
+                self.check_break(expr, loop_data.clone(), id, span)
             }
             PExprData::Continue(label) => {
                 let Some((_, id)) = self.current_loop(&label) else {
@@ -3845,6 +3847,7 @@ impl TypeChecker {
         expr: Option<Box<PExpr>>,
         mut data: LoopScopeKind,
         id: ScopeId,
+        span: Span,
     ) -> CExpr {
         let expr = if let Some(expr) = expr {
             let span = expr.span;
@@ -3859,15 +3862,21 @@ impl TypeChecker {
             self.proj.scopes[id].kind = ScopeKind::Loop(data);
 
             let (target, opt) = self.loop_out_type(&self.proj.scopes[id].kind.clone(), span);
-            if opt { Some(self.try_coerce(expr, target).into()) } else { Some(expr.into()) }
+            if opt { self.try_coerce(expr, target) } else { expr }
         } else {
-            data.target = Some(TypeId::VOID);
-            data.breaks = LoopBreak::WithNothing;
+            let expr = if let Some(target) = data.target {
+                self.type_check_checked(CExpr::void(), target, span)
+            } else {
+                data.target = Some(TypeId::VOID);
+                data.breaks = LoopBreak::WithNothing;
+                CExpr::void()
+            };
+
             self.proj.scopes[id].kind = ScopeKind::Loop(data);
-            None
+            expr
         };
 
-        CExpr::new(TypeId::NEVER, CExprData::Break(expr, id))
+        CExpr::new(TypeId::NEVER, CExprData::Break(expr.into(), id))
     }
 
     fn check_yield(
@@ -3875,22 +3884,22 @@ impl TypeChecker {
         expr: Option<Box<PExpr>>,
         mut data: BlockScopeKind,
         id: ScopeId,
+        span: Span,
     ) -> CExpr {
-        let expr = if let Some(expr) = expr {
-            if let Some(target) = data.target {
-                Some(self.type_check(*expr, target).into())
-            } else {
-                let expr = self.check_expr(*expr, data.target);
-                data.target = Some(expr.ty);
-                Some(expr.into())
-            }
+        let expr = if let Some(target) = data.target {
+            expr.map(|expr| self.type_check(*expr, target))
+                .unwrap_or_else(|| self.type_check_checked(CExpr::void(), target, span))
         } else {
-            None
+            let expr =
+                expr.map(|expr| self.check_expr(*expr, data.target)).unwrap_or_else(CExpr::void);
+            data.target = Some(expr.ty);
+            expr
         };
+
         data.yields = true;
         self.proj.scopes[id].kind = ScopeKind::Block(data);
 
-        CExpr::new(TypeId::NEVER, CExprData::Yield(expr, id))
+        CExpr::new(TypeId::NEVER, CExprData::Yield(expr.into(), id))
     }
 
     fn check_for_expr(
@@ -4025,7 +4034,7 @@ impl TypeChecker {
                         ),
                         CStmt::Expr(CExpr::new(
                             out,
-                            CExprData::Yield(Some(while_loop.into()), this.current),
+                            CExprData::Yield(while_loop.into(), this.current),
                         )),
                     ],
                     scope: this.current,

@@ -1,5 +1,4 @@
-
-fn deref_never(): i32 {
+fn main() {
     let x = &raw {} as ^never;
     let y = unsafe *x;
     // should not get to this print in debug mode, although this whole thing is UB

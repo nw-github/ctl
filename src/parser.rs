@@ -917,7 +917,10 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
     //
 
     fn label_error(&mut self, span: Span) {
-        self.error_no_sync(Error::new("labels are only valid for loop expressions", span));
+        self.error_no_sync(Error::new(
+            "labels are only valid for loop and block expressions",
+            span,
+        ));
     }
 
     fn block_or_normal_expr(&mut self, label: Option<Located<StrId>>) -> (bool, Expr) {
