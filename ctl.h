@@ -192,3 +192,23 @@ typedef struct {
 static char **CTL_ARGV;
 static int CTL_ARGC;
 #endif
+
+#ifdef __clang__
+// These work at compile time, the type punning versions do not
+// GCC has this function but only defines it in C++ for some reason
+#  define CTL_IEEE_F64(v) __builtin_bit_cast(f64, (uint64_t)v)
+#  define CTL_IEEE_F32(v) __builtin_bit_cast(f32, (uint32_t)v)
+#else
+typedef union {
+  uint64_t in;
+  f64 fp;
+} $U64TOF64;
+
+typedef union {
+  uint32_t in;
+  f32 fp;
+} $U32TOF32;
+
+#  define CTL_IEEE_F64(v) (($U64TOF64){.in = (uint64_t)v}).fp
+#  define CTL_IEEE_F32(v) (($U32TOF32){.in = (uint32_t)v}).fp
+#endif

@@ -129,7 +129,7 @@ pub enum ExprData {
     Set(Vec<Expr>, ScopeId),
     Map(Vec<(Expr, Expr)>, ScopeId),
     Int(ComptimeInt),
-    Float(StrId),
+    Float(f64),
     String(StrId),
     StringInterp {
         formatter: Box<Expr>,

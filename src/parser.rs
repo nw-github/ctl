@@ -477,10 +477,23 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     negative: false,
                 }),
             ),
-            Token::Float(value) => {
+            Token::Float { value, suffix } => {
                 let mut value = value.to_string();
                 value.retain(|c| c != '_');
-                Expr::new(span, ExprData::Float(self.strings.get_or_intern(value)))
+                Expr::new(
+                    span,
+                    ExprData::Float(FloatPattern {
+                        negative: false,
+                        value: value.parse::<f64>().unwrap_or_else(|_| {
+                            self.error_no_sync(Error::new(
+                                format!("'{value}' is not a valid float literal"),
+                                span,
+                            ));
+                            0.0
+                        }),
+                        suffix: suffix.map(|suffix| self.strings.get_or_intern(suffix)),
+                    }),
+                )
             }
             Token::String(value) => {
                 Expr::new(span, ExprData::String(self.strings.get_or_intern(value)))
@@ -1159,7 +1172,10 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
         match ComptimeInt::from_str_radix(&parsable, base as u32) {
             Some(result) => result,
             None => {
-                self.error(Error::new(format!("'{value}' is not a valid integer literal"), span));
+                self.error_no_sync(Error::new(
+                    format!("'{value}' is not a valid integer literal"),
+                    span,
+                ));
                 ComptimeInt::default()
             }
         }

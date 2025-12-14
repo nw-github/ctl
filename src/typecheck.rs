@@ -91,7 +91,9 @@ macro_rules! resolve_impl {
 
 macro_rules! check_hover {
     ($self: expr, $span: expr, $item: expr) => {{
-        if $span.len > 0 && let Some(items) = &mut $self.proj.lsp_items {
+        if $span.len > 0
+            && let Some(items) = &mut $self.proj.lsp_items
+        {
             items.push(($item, $span));
         }
     }};
@@ -2947,13 +2949,26 @@ impl TypeChecker {
                 let (ty, value) = self.get_int_type_and_val(target, integer, span);
                 CExpr::new(ty, CExprData::Int(value))
             }
-            PExprData::Float(value) => CExpr::new(
-                target
-                    .map(|target| target.strip_options(&self.proj))
-                    .filter(|&t| t == TypeId::F32 || t == TypeId::F64)
-                    .unwrap_or(TypeId::F64),
-                CExprData::Float(value),
-            ),
+            PExprData::Float(float) => {
+                let typ = if let Some(suffix) = float.suffix {
+                    match strdata!(self, suffix) {
+                        "f32" => Some(TypeId::F32),
+                        "f64" => Some(TypeId::F64),
+                        data => self
+                            .error(Error::new(format!("invalid float literal type: {data}"), span)),
+                    }
+                } else {
+                    None
+                };
+
+                CExpr::new(
+                    typ.or(target
+                        .map(|target| target.strip_options(&self.proj))
+                        .filter(|&t| t == TypeId::F32 || t == TypeId::F64))
+                        .unwrap_or(TypeId::F64),
+                    CExprData::Float(float.value),
+                )
+            }
             PExprData::Path(path) => match self.resolve_value_path(&path, target) {
                 ResolvedValue::Var(id) => {
                     let var = self.proj.scopes.get(id);

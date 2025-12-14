@@ -1434,8 +1434,17 @@ impl<'a> Codegen<'a> {
             }
             ExprData::Int(value) => self.emit_literal(value, expr.ty),
             ExprData::Float(value) => {
-                self.emit_cast(expr.ty);
-                self.buffer.emit_str(value);
+                if expr.ty == TypeId::F32 {
+                    let value = value as f32;
+                    write_de!(self.buffer, "CTL_IEEE_F32({:#x}u)", value.to_bits());
+                } else if expr.ty == TypeId::F64 {
+                    write_de!(self.buffer, "CTL_IEEE_F64({:#x}ull)", value.to_bits());
+                } else {
+                    panic!(
+                        "ICE: attempt to generate float of type {}",
+                        expr.ty.name(&self.proj.scopes, &mut self.proj.types, &self.proj.strings)
+                    )
+                }
             }
             ExprData::String(value) => self.emit_string_literal(strdata!(self, value)),
             ExprData::ByteString(value) => {

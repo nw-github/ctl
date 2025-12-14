@@ -129,7 +129,7 @@ pub enum Token<'a> {
 
     Ident(&'a str),
     Int { base: u8, value: &'a str, width: Option<&'a str> },
-    Float(&'a str),
+    Float { value: &'a str, suffix: Option<&'a str> },
     String(Cow<'a, str>),
     StringPart(Cow<'a, str>),
 
@@ -548,6 +548,17 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn advance_if_pred(&mut self, pred: impl FnOnce(char) -> bool) -> bool {
+        if let Some(next) = self.peek()
+            && pred(next)
+        {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
     fn advance_while(&mut self, mut f: impl FnMut(char) -> bool) -> &'a str {
         let start = self.pos;
         while self.peek().is_some_and(&mut f) {
@@ -732,22 +743,38 @@ impl<'a> Lexer<'a> {
         }
 
         self.advance_while(|ch| ch.is_ascii_digit() || ch == '_');
-        if self.peek() == Some('.') && self.peek_next().is_some_and(|f| f.is_ascii_digit()) {
+
+        let mut float = false;
+        if self.peek() == Some('.')
+            && self.peek_next().is_some_and(|f| {
+                f.is_ascii_digit() || (f != '.' && !Self::is_identifier_first_char(f))
+            })
+        {
             self.advance();
             self.advance_while(|ch| ch.is_ascii_digit() || ch == '_');
-            Token::Float(&self.src[start..self.pos])
-        } else {
-            let value = &self.src[start..self.pos];
-            if warn_leading_zero && value.len() > 1 {
-                diag.report(Warning::decimal_leading_zero(Span {
-                    pos: start as u32,
-                    len: value.len() as u32,
-                    file: self.file,
-                }));
-            }
-
-            Token::Int { value, base: 10, width: self.numeric_suffix() }
+            float = true;
         }
+
+        if self.advance_if_pred(|ch| matches!(ch, 'e' | 'E')) {
+            self.advance_if_pred(|ch| matches!(ch, '+' | '-'));
+            self.advance_while(|ch| ch.is_ascii_digit() || ch == '_');
+            float = true;
+        }
+
+        let value = &self.src[start..self.pos];
+        if float {
+            return Token::Float { value, suffix: self.numeric_suffix() };
+        }
+
+        if warn_leading_zero && value.len() > 1 {
+            diag.report(Warning::decimal_leading_zero(Span {
+                pos: start as u32,
+                len: value.len() as u32,
+                file: self.file,
+            }));
+        }
+
+        Token::Int { value, base: 10, width: self.numeric_suffix() }
     }
 
     fn identifier(&mut self, start: usize) -> Token<'a> {

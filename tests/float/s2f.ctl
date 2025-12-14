@@ -18,7 +18,7 @@ fn test_basic() {
 }
 
 fn test_min_max() {
-    // assert_eq(1e-45, f32::parse("1e-45").unwrap());
+    assert_eq(1e-45, f32::parse("1e-45").unwrap());
     // assert_eq(f32::MIN_POSITIVE, f32::parse("1.1754944e-38").unwrap());
     // assert_eq(f32::MAX, f32::parse("3.4028235e+38").unwrap());
 }
@@ -26,12 +26,12 @@ fn test_min_max() {
 fn test_mantissa_rounding_overflow() {
     assert_eq(1.0, f32::parse("0.999999999").unwrap());
     assert_eq(f32::inf(), f32::parse("3.4028236e+38").unwrap());
-    // assert_eq(1.1754944e-38, f32::parse("1.17549430e-38").unwrap()); // FLT_MIN
-    // assert_eq(1.1754944e-38, f32::parse("1.17549431e-38").unwrap());
-    // assert_eq(1.1754944e-38, f32::parse("1.17549432e-38").unwrap());
-    // assert_eq(1.1754944e-38, f32::parse("1.17549433e-38").unwrap());
-    // assert_eq(1.1754944e-38, f32::parse("1.17549434e-38").unwrap());
-    // assert_eq(1.1754944e-38, f32::parse("1.17549435e-38").unwrap());
+    assert_eq(1.1754944e-38, f32::parse("1.17549430e-38").unwrap()); // FLT_MIN
+    assert_eq(1.1754944e-38, f32::parse("1.17549431e-38").unwrap());
+    assert_eq(1.1754944e-38, f32::parse("1.17549432e-38").unwrap());
+    assert_eq(1.1754944e-38, f32::parse("1.17549433e-38").unwrap());
+    assert_eq(1.1754944e-38, f32::parse("1.17549434e-38").unwrap());
+    assert_eq(1.1754944e-38, f32::parse("1.17549435e-38").unwrap());
 }
 
 fn test_trailing_zeros() {

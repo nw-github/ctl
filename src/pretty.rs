@@ -292,7 +292,13 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
         ExprData::Float(v) => print_header(
             &tabs,
             "Expr::Float",
-            &[HeaderVar::Named("value", strings.resolve(v).into())],
+            &[
+                bool!(&v.negative),
+                HeaderVar::Named("value", v.value.to_string()),
+                v.suffix
+                    .map(|s| HeaderVar::Named("suffix", strings.resolve(&s).into()))
+                    .unwrap_or_default(),
+            ],
         ),
         ExprData::String(v) => print_header(
             &tabs,
@@ -453,9 +459,11 @@ fn print_stmts(stmts: &[Stmt], strings: &Strings, indent: usize) {
     }
 }
 
+#[derive(Default)]
 enum HeaderVar {
     Named(&'static str, String),
     Unnamed(&'static str),
+    #[default]
     None,
 }
 

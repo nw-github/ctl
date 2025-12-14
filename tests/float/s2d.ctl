@@ -39,8 +39,8 @@ fn test_basic() {
 }
 
 fn test_min_max() {
-    // assert_eq!(1.7976931348623157e308, f64::parse("1.7976931348623157e308").unwrap());
-    // assert_eq!(5E-324, f64::parse("5E-324").unwrap());
+    assert_eq(1.7976931348623157e308, f64::parse("1.7976931348623157e308").unwrap());
+    assert_eq(5E-324, f64::parse("5E-324").unwrap());
 }
 
 fn test_mantissa_rounding_overflow() {
@@ -60,7 +60,7 @@ fn test_underflow() {
     // These are just about halfway between 0 and the smallest float.
     // The first is just below the halfway point, the second just above.
     assert_eq(0.0, f64::parse("2.4703282292062327e-324").unwrap());
-    // assert_eq(5e-324, f64::parse("2.4703282292062328e-324").unwrap());
+    assert_eq(5e-324, f64::parse("2.4703282292062328e-324").unwrap());
 }
 
 fn test_overflow() {
@@ -69,18 +69,18 @@ fn test_overflow() {
 }
 
 fn test_table_size_denormal() {
-    // assert_eq(5e-324, f64::parse("4.9406564584124654e-324").unwrap());
+    assert_eq(5e-324, f64::parse("4.9406564584124654e-324").unwrap());
 }
 
 fn test_issue157() {
-    // assert_eq(1.2999999999999999E+154, f64::parse("1.2999999999999999E+154").unwrap());
+    assert_eq(1.2999999999999999E+154, f64::parse("1.2999999999999999E+154").unwrap());
 }
 
 fn test_issue173() {
     // Denormal boundary
-    // assert_eq(2.2250738585072012e-308, f64::parse("2.2250738585072012e-308").unwrap());
-    // assert_eq(2.2250738585072013e-308, f64::parse("2.2250738585072013e-308").unwrap());
-    // assert_eq(2.2250738585072014e-308, f64::parse("2.2250738585072014e-308").unwrap());
+    assert_eq(2.2250738585072012e-308, f64::parse("2.2250738585072012e-308").unwrap());
+    assert_eq(2.2250738585072013e-308, f64::parse("2.2250738585072013e-308").unwrap());
+    assert_eq(2.2250738585072014e-308, f64::parse("2.2250738585072014e-308").unwrap());
 }
 
 fn main() {

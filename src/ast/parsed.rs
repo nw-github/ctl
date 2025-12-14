@@ -158,7 +158,7 @@ pub enum ExprData {
     Map(Vec<(Expr, Expr)>),
     Bool(bool),
     Integer(IntPattern),
-    Float(StrId),
+    Float(FloatPattern),
     String(StrId),
     Char(char),
     ByteString(Vec<u8>),
@@ -269,6 +269,13 @@ pub struct IntPattern {
     pub negative: bool,
     pub value: ComptimeInt,
     pub width: Option<StrId>,
+}
+
+#[derive(Clone, Copy)]
+pub struct FloatPattern {
+    pub negative: bool,
+    pub value: f64,
+    pub suffix: Option<StrId>,
 }
 
 #[derive(Clone)]
