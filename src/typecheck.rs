@@ -91,7 +91,9 @@ macro_rules! resolve_impl {
 
 macro_rules! check_hover {
     ($self: expr, $span: expr, $item: expr) => {{
-        $self.proj.lsp_items.push(($item, $span));
+        if $span.len > 0 && let Some(items) = &mut $self.proj.lsp_items {
+            items.push(($item, $span));
+        }
     }};
 }
 
@@ -379,7 +381,7 @@ impl TypeChecker {
     pub fn check(
         project: Vec<PStmt>,
         diag: Diagnostics,
-        lsp: LspInput,
+        lsp: Option<LspInput>,
         conf: Configuration,
         mut strings: Strings,
     ) -> Project {
@@ -387,8 +389,8 @@ impl TypeChecker {
             tables: Tables::new(&mut strings),
             safety: Safety::Safe,
             current: ScopeId::ROOT,
-            lsp_input: lsp,
-            proj: Project::new(conf, diag, strings),
+            proj: Project::new(conf, diag, strings, lsp.is_some()),
+            lsp_input: lsp.unwrap_or_default(),
             listening_vars: Vec::new(),
             listening_expr: 1,
             current_expr: 1,

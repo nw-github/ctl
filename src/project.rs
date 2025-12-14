@@ -16,7 +16,7 @@ pub struct Project {
     pub types: Types,
     pub diag: Diagnostics,
     pub completions: Option<Completions>,
-    pub lsp_items: Vec<(LspItem, Span)>,
+    pub lsp_items: Option<Vec<(LspItem, Span)>>,
     pub main: Option<FunctionId>,
     pub panic_handler: Option<FunctionId>,
     pub deps: DependencyGraph<TypeId>,
@@ -27,8 +27,8 @@ pub struct Project {
 }
 
 impl Project {
-    pub fn new(conf: Configuration, diag: Diagnostics, strings: Strings) -> Self {
-        Self { diag, conf, strings, ..Default::default() }
+    pub fn new(conf: Configuration, diag: Diagnostics, strings: Strings, lsp: bool) -> Self {
+        Self { diag, conf, strings, lsp_items: lsp.then(Vec::new), ..Default::default() }
     }
 }
 

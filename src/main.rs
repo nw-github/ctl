@@ -292,7 +292,7 @@ fn main() -> Result<()> {
         return dump(proj, modules);
     }
 
-    let result = Compiler::new().parse(proj)?.typecheck(Default::default()).build();
+    let result = Compiler::new().parse(proj)?.typecheck(None).build();
     let (conf, result) = match result {
         (Some(code), conf, diag) => {
             if !args.quiet {

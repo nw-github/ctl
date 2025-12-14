@@ -171,7 +171,7 @@ impl Compiler<Parsed> {
         &self.state.1
     }
 
-    pub fn typecheck(self, lsp: LspInput) -> Compiler<Checked> {
+    pub fn typecheck(self, lsp: Option<LspInput>) -> Compiler<Checked> {
         Compiler {
             state: Checked(TypeChecker::check(
                 self.state.0,

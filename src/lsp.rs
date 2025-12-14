@@ -540,7 +540,7 @@ impl LspBackend {
         };
 
         let file = parsed.diagnostics().get_file_id(path);
-        let checked = parsed.typecheck(LspInput {
+        let checked = parsed.typecheck(Some(LspInput {
             completion: completion.and_then(|p| {
                 file.map(|file| {
                     position_to_span(
@@ -551,7 +551,7 @@ impl LspBackend {
                     )
                 })
             }),
-        });
+        }));
 
         let mut proj = checked.project();
         let mut all = HashMap::<Url, Vec<Diagnostic>>::new();
@@ -583,7 +583,17 @@ impl LspBackend {
             .await;
         }
 
-        proj.lsp_items.sort_by_key(|(_, span)| span.pos);
+        if let Some(items) = &mut proj.lsp_items {
+            items.sort_by_key(|(_, span)| span.pos);
+            // Reverse to make sure the LAST duplicate is preserved.
+            // Duplicates are occasionally produced when checking patterns, but the last is the most
+            // relevant one.
+            // Can't just reverse sort because we only care that the equal elements are reversed,
+            // which sort_by_key will not do.
+            items.reverse();
+            items.dedup_by_key(|(_, span)| (span.file, span.pos));
+            items.reverse();
+        }
         for (id, path) in proj.diag.paths() {
             let Ok(uri) = Url::from_file_path(path) else {
                 continue;
@@ -594,8 +604,11 @@ impl LspBackend {
                 .await;
 
             let mut doc = self.documents.entry(uri).or_default();
-            doc.lsp_items =
-                proj.lsp_items.iter().filter(|(_, span)| span.file == id).cloned().collect();
+            doc.lsp_items = proj
+                .lsp_items
+                .as_ref()
+                .map(|items| items.iter().filter(|(_, span)| span.file == id).cloned().collect())
+                .unwrap_or_default();
             doc.inlay_hints = Lazy::None;
             doc.semantic_tokens = Lazy::None;
         }
@@ -683,7 +696,11 @@ impl LspBackend {
 
         let mut cache = CachingSourceProvider::new();
         let mut spans = HashSet::new();
-        for (item, span) in proj.lsp_items.iter() {
+        let Some(lsp_items) = &proj.lsp_items else {
+            return;
+        };
+
+        for (item, span) in lsp_items.iter() {
             match (src, item) {
                 (LspItem::Module(lhs), LspItem::Module(rhs)) if lhs == rhs => {}
 

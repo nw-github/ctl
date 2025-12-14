@@ -55,7 +55,7 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
     }
 
     let (code, _, diag) =
-        Compiler::new().parse(UnloadedProject::new(path)?)?.typecheck(Default::default()).build();
+        Compiler::new().parse(UnloadedProject::new(path)?)?.typecheck(None).build();
     test_diagnostics(diag, &errors)?;
     let Some(code) = code else {
         if !expected.is_empty() {
