@@ -834,11 +834,8 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             Token::As => {
                 let bang = self.next_if(Token::Exclamation);
                 let ty = self.type_hint();
-                // FIXME: type_hint should just be located
-                let mut next = self.peek().span;
-                next.len = 0;
                 Expr::new(
-                    left.span.extended_to(next),
+                    left.span.extended_to(ty.span),
                     ExprData::As { expr: left.into(), ty, throwing: bang.is_some() },
                 )
             }
@@ -1920,16 +1917,16 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     Pattern::Path(Path::from(Located::new(token.span, Strings::THIS_PARAM)))
                 };
 
-                let this_ty = Located::new(token.span, TypeHint::This);
+                let this_ty = Located::new(Span { len: 0, ..token.span }, TypeHint::This);
                 params.push(Param {
                     keyword,
                     patt: Located::new(token.span, patt),
                     ty: if my.is_some() {
                         this_ty
                     } else if mutable {
-                        Located::new(token.span, TypeHint::MutPtr(this_ty.into()))
+                        Located::new(this_ty.span, TypeHint::MutPtr(this_ty.into()))
                     } else {
-                        Located::new(token.span, TypeHint::Ptr(this_ty.into()))
+                        Located::new(this_ty.span, TypeHint::Ptr(this_ty.into()))
                     },
                     default: None,
                 });
