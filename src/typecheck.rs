@@ -2952,22 +2952,37 @@ impl TypeChecker {
             PExprData::Float(float) => {
                 let typ = if let Some(suffix) = float.suffix {
                     match strdata!(self, suffix) {
-                        "f32" => Some(TypeId::F32),
-                        "f64" => Some(TypeId::F64),
-                        data => self
-                            .error(Error::new(format!("invalid float literal type: {data}"), span)),
+                        "f32" => TypeId::F32,
+                        "f64" => TypeId::F64,
+                        data => {
+                            return self.error(Error::new(
+                                format!("invalid float literal type: {data}"),
+                                span,
+                            ));
+                        }
                     }
                 } else {
-                    None
+                    target
+                        .map(|target| target.strip_options(&self.proj))
+                        .filter(|&t| t == TypeId::F32 || t == TypeId::F64)
+                        .unwrap_or(TypeId::F64)
                 };
 
-                CExpr::new(
-                    typ.or(target
-                        .map(|target| target.strip_options(&self.proj))
-                        .filter(|&t| t == TypeId::F32 || t == TypeId::F64))
-                        .unwrap_or(TypeId::F64),
-                    CExprData::Float(float.value),
-                )
+                if float.value.is_infinite()
+                    || (typ == TypeId::F32 && (float.value as f32).is_infinite())
+                {
+                    self.proj.diag.report(Error::new(
+                        format!(
+                            "literal is out of range for type '{0}' (use {0}::inf() if infinity is desired)",
+                            type_name!(self, TypeId::F32)
+                        ),
+                        span,
+                    ));
+                }
+
+                // TODO: warn for lossy conversion from literal
+
+                CExpr::new(typ, CExprData::Float(float.value))
             }
             PExprData::Path(path) => match self.resolve_value_path(&path, target) {
                 ResolvedValue::Var(id) => {
