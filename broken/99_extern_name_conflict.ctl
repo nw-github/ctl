@@ -1,7 +1,12 @@
-extern fn exit(code: c_int): never;
-
-// crash at src/typecheck.rs:5473:22
+extern fn test(): int {
+    5
+}
 
 // should give an error
-@(c_name(exit))
-extern fn exit2(code: c_int): void;
+@(c_name(test))
+extern fn other() {}
+
+fn main() {
+    let _ = test();
+    other();
+}
