@@ -132,7 +132,7 @@ repository:
       -
         comment: decimal integers and floats
         name: constant.numeric.decimal.ctl
-        match: \b\d[\d_]*(\.?)[\d_]*(?:(E)([+-])([\d_]+))?(f32|f64|u\d+|i\d+|u\w*|i\w*)?\b
+        match: \b\d[\d_]*(?:(\.)\d[\d_]*)?(?:([eE])([+-])?([\d_]+))?([uif][\d\w]*)?\b
         captures:
           1:
             name: punctuation.separator.dot.decimal.ctl
