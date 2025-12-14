@@ -3201,7 +3201,7 @@ impl<'a> Codegen<'a> {
     ) {
         let bf = self.proj.scopes.get(id).kind.as_packed_struct().unwrap();
         let word_size_bits = (bf.align * 8) as u32;
-        let (bits, enum_tag) = match ty.bit_size(&self.proj) {
+        let (bits, enum_tag) = match ty.bit_size(&self.proj.scopes, &self.proj.types) {
             BitSizeResult::Size(n) => (n, None),
             BitSizeResult::Tag(tag, n) => (n, Some(tag)),
             _ => unreachable!(),

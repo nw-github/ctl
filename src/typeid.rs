@@ -799,16 +799,16 @@ impl TypeId {
         (sz, sz.clamp(1, MAX_ALIGN))
     }
 
-    pub fn bit_size(self, proj: &Project) -> BitSizeResult {
-        if let Some(int) = self.as_integral(&proj.types, true) {
+    pub fn bit_size(self, scopes: &Scopes, types: &Types) -> BitSizeResult {
+        if let Some(int) = self.as_integral(types, true) {
             BitSizeResult::Size(int.bits)
         } else {
-            match &proj.types[self] {
+            match &types[self] {
                 Type::Unknown | Type::Unresolved(_) => BitSizeResult::Size(0),
                 Type::User(ut) => {
-                    let ut = proj.scopes.get(ut.id);
+                    let ut = scopes.get(ut.id);
                     if let Some(u) = ut.kind.as_union().filter(|u| u.enum_union) {
-                        match u.tag.bit_size(proj) {
+                        match u.tag.bit_size(scopes, types) {
                             BitSizeResult::NonEnum | BitSizeResult::Bad => BitSizeResult::Size(0),
                             BitSizeResult::Size(n) => BitSizeResult::Tag(u.tag, n),
                             res => res,

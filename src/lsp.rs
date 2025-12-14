@@ -14,7 +14,7 @@ use crate::lexer::Span;
 use crate::project::Project;
 use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeId, UserTypeKind, VariableId};
 use crate::typecheck::{LspInput, LspItem};
-use crate::typeid::{GenericUserType, Type, TypeId, Types};
+use crate::typeid::{BitSizeResult, GenericUserType, Type, TypeId, Types};
 use crate::{CachingSourceProvider, Compiler, FileSourceProvider, SourceProvider, UnloadedProject};
 
 #[macro_export]
@@ -334,7 +334,15 @@ impl LanguageServer for LspBackend {
                         ))
                     } else {
                         let offs = if let UserTypeKind::PackedStruct(data) = &ut.kind {
-                            format!("// bit offset: {}\n", data.bit_offsets[name])
+                            let size = match ty.bit_size(scopes, types) {
+                                BitSizeResult::Size(n) => n,
+                                BitSizeResult::Tag(_, n) => n,
+                                _ => unreachable!(),
+                            };
+                            format!(
+                                "// bit size: {size}, bit offset: {}\n",
+                                data.bit_offsets[name],
+                            )
                         } else {
                             // TODO: normal offset
                             "".to_string()
@@ -848,11 +856,7 @@ fn get_semantic_token(
                 mods |= token::mods::STATIC;
             }
 
-            if var.name.data == Strings::THIS_PARAM {
-                token::KEYWORD
-            } else {
-                token::VARIABLE
-            }
+            if var.name.data == Strings::THIS_PARAM { token::KEYWORD } else { token::VARIABLE }
         }
         LspItem::Type(_) => token::TYPE,
         LspItem::BuiltinType(_) => token::TYPE,

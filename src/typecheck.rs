@@ -4977,7 +4977,7 @@ impl TypeChecker {
                 // TODO:
                 // - allow ^mut
                 // - nested packed structs
-                match mem.ty.bit_size(&self.proj) {
+                match mem.ty.bit_size(&self.proj.scopes, &self.proj.types) {
                     BitSizeResult::Tag(_, n) | BitSizeResult::Size(n) => bits += n,
                     BitSizeResult::NonEnum => {
                         named_error!(self, Error::bitfield_member, name, mem.span)
