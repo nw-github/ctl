@@ -31,7 +31,7 @@ pub extension BoolImpl for bool {
     pub fn ^(this, rhs: This): This { this ^ rhs }
 
     impl Format {
-        fn fmt<F: Formatter>(this, f: *mut F) {
+        fn fmt(this, f: *mut Formatter) {
             *this then "true".fmt(f) else "false".fmt(f)
         }
     }

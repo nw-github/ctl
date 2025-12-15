@@ -3,10 +3,7 @@ use std::borrow::Cow;
 use enum_as_inner::EnumAsInner;
 use unicode_xid::UnicodeXID;
 
-use crate::{
-    Warning,
-    error::{Diagnostics, Error, FileId},
-};
+use crate::error::{Diagnostics, Error, FileId};
 
 #[derive(Debug, Clone, PartialEq, Eq, EnumAsInner)]
 pub enum Token<'a> {
@@ -36,6 +33,7 @@ pub enum Token<'a> {
     AtLParen,
     At,
     Move,
+    Dollar,
 
     Plus,
     AddAssign,
@@ -149,6 +147,7 @@ impl std::fmt::Display for Token<'_> {
             Token::RParen => write!(f, ")"),
             Token::LAngle => write!(f, "<"),
             Token::RAngle => write!(f, ">"),
+            Token::Dollar => write!(f, "$"),
             Token::Dot => write!(f, "."),
             Token::Range => write!(f, ".."),
             Token::RangeInclusive => write!(f, "..="),
@@ -331,6 +330,7 @@ impl<'a> Lexer<'a> {
             ',' => Token::Comma,
             ';' => Token::Semicolon,
             '#' => Token::Hash,
+            '$' => Token::Dollar,
             '@' => {
                 if self.advance_if('(') {
                     Token::AtLParen
@@ -496,7 +496,7 @@ impl<'a> Lexer<'a> {
             }
             '"' => self.string_literal(diag, start),
             '\'' => Token::Char(self.char_literal(diag, false)),
-            ch @ '0'..='9' => self.numeric_literal(diag, ch, start),
+            ch @ '0'..='9' => self.numeric_literal(ch, start),
             'b' => self.maybe_byte_string(diag, start),
             ch if Self::is_identifier_first_char(ch) => self.identifier(start),
             ch => {
@@ -520,12 +520,18 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline]
+    pub fn create_format_lexer(&self) -> FormatLexer<'a> {
+        FormatLexer::new(self.src, self.pos, self.file)
+    }
+
+    pub fn advance_to(&mut self, pos: Option<u32>) {
+        self.pos = pos.map(|p| p as usize).unwrap_or(self.src.len());
+    }
+
     fn peek(&self) -> Option<char> {
         self.src[self.pos..].chars().next()
     }
 
-    #[inline]
     fn peek_next(&self) -> Option<char> {
         self.src[self.pos..].chars().nth(1)
     }
@@ -706,8 +712,7 @@ impl<'a> Lexer<'a> {
         if !suffix.is_empty() { Some(suffix) } else { None }
     }
 
-    fn numeric_literal(&mut self, diag: &mut Diagnostics, ch: char, start: usize) -> Token<'a> {
-        let mut warn_leading_zero = false;
+    fn numeric_literal(&mut self, ch: char, start: usize) -> Token<'a> {
         if ch == '0' {
             match self.peek() {
                 Some('x') => {
@@ -733,9 +738,6 @@ impl<'a> Lexer<'a> {
                         value: self.advance_while(|ch| ch.is_digit(2) || ch == '_'),
                         width: self.numeric_suffix(),
                     };
-                }
-                Some(_) => {
-                    warn_leading_zero = true;
                 }
                 _ => {}
             }
@@ -763,14 +765,6 @@ impl<'a> Lexer<'a> {
         let value = &self.src[start..self.pos];
         if float {
             return Token::Float { value, suffix: self.numeric_suffix() };
-        }
-
-        if warn_leading_zero && value.len() > 1 {
-            diag.report(Warning::decimal_leading_zero(Span {
-                pos: start as u32,
-                len: value.len() as u32,
-                file: self.file,
-            }));
         }
 
         Token::Int { value, base: 10, width: self.numeric_suffix() }
@@ -883,5 +877,93 @@ impl<'a> Lexer<'a> {
             }
             _ => self.identifier(start),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormatToken<'a> {
+    Space,
+    Dollar,
+    Dot,
+    LAngle,
+    RAngle,
+    Caret,
+    Plus,
+    Minus,
+    Hash,
+    Question,
+    LeadingZero,
+    Number(&'a str),
+    Ident(&'a str),
+    Char(char),
+}
+
+#[derive(Clone)]
+pub struct FormatLexer<'a> {
+    src: &'a str,
+    pos: usize,
+    file: FileId,
+}
+
+impl<'a> FormatLexer<'a> {
+    fn new(src: &'a str, pos: usize, file: FileId) -> Self {
+        Self { src, file, pos }
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.src[self.pos..].chars().next()
+    }
+
+    pub fn peek_next(&self) -> Option<char> {
+        self.src[self.pos..].chars().nth(1)
+    }
+
+    pub fn advance(&mut self) -> Option<char> {
+        self.peek().inspect(|ch| self.pos += ch.len_utf8())
+    }
+
+    fn advance_while(&mut self, mut f: impl FnMut(char) -> bool) -> &'a str {
+        let start = self.pos;
+        while self.peek().is_some_and(&mut f) {
+            self.advance();
+        }
+        &self.src[start..self.pos]
+    }
+}
+
+impl<'a> Iterator for FormatLexer<'a> {
+    type Item = Located<FormatToken<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let start = self.pos;
+        let token = match self.advance()? {
+            ' ' => FormatToken::Space,
+            '$' => FormatToken::Dollar,
+            '.' => FormatToken::Dot,
+            '<' => FormatToken::LAngle,
+            '>' => FormatToken::RAngle,
+            '^' => FormatToken::Caret,
+            '+' => FormatToken::Plus,
+            '-' => FormatToken::Minus,
+            '#' => FormatToken::Hash,
+            '?' => FormatToken::Question,
+            '0' => FormatToken::LeadingZero,
+            ch if ch.is_ascii_digit() => {
+                self.advance_while(|ch| ch.is_ascii_digit());
+                let value = &self.src[start..self.pos];
+                FormatToken::Number(value)
+            }
+            ch if Lexer::is_identifier_first_char(ch) => {
+                self.advance_while(Lexer::is_identifier_char);
+                let value = &self.src[start..self.pos];
+                FormatToken::Ident(value)
+            }
+            ch => FormatToken::Char(ch),
+        };
+
+        Some(Located::new(
+            Span { pos: start as u32, len: (self.pos - start) as u32, file: self.file },
+            token,
+        ))
     }
 }

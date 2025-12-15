@@ -5,7 +5,7 @@ pub union Ordering: i8 {
     Equal = 1,
 
     impl std::fmt::Format {
-        fn fmt<F: std::fmt::Formatter>(this, f: *mut F) {
+        fn fmt(this, f: *mut std::fmt::Formatter) {
             match this {
                 :Less => "Less".fmt(f),
                 :Greater => "Greater".fmt(f),

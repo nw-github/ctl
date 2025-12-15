@@ -17,7 +17,7 @@ pub extension VoidImpl for void {
     }
 
     impl Format {
-        fn fmt<F: Formatter>(this, f: *mut F) {
+        fn fmt(this, f: *mut Formatter) {
             "void".fmt(f);
         }
     }

@@ -84,7 +84,7 @@ pub struct str {
     }
 
     impl Format {
-        fn fmt<F: Formatter>(this, f: *mut F) {
+        fn fmt(this, f: *mut Formatter) {
             f.write_str(*this);
         }
     }

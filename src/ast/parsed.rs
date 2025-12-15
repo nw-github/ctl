@@ -208,7 +208,10 @@ pub enum ExprData {
         body: Box<Expr>,
         moves: bool,
     },
-    StringInterpolation(Vec<Expr>),
+    StringInterpolation {
+        strings: Vec<StrId>,
+        args: Vec<(Expr, Option<FormatOpts>)>,
+    },
     Error,
 }
 
@@ -481,3 +484,34 @@ pub struct ImplBlock {
 }
 
 pub type TypeParams = Vec<(Located<StrId>, Vec<Path>)>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum Alignment {
+    Left,
+    Right,
+    Center,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sign {
+    Positive,
+    Negative,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FormatType {
+    Debug,
+    Custom(StrId),
+}
+
+#[derive(Clone)]
+pub struct FormatOpts {
+    pub width: Option<Expr>,
+    pub prec: Option<Expr>,
+    pub fill: Option<char>,
+    pub align: Option<Alignment>,
+    pub sign: Option<Sign>,
+    pub alt: bool,
+    pub zero: bool,
+    pub typ: Option<FormatType>,
+}

@@ -36,7 +36,7 @@ pub extension CharImpl for char {
     }
 
     impl Format {
-        fn fmt<F: Formatter>(this, f: *mut F) {
+        fn fmt(this, f: *mut Formatter) {
             unsafe this.encode_utf8_unchecked(this.len_utf8(), [0u8; 4][..]).fmt(f);
         }
     }

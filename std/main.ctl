@@ -47,6 +47,7 @@ mod prelude {
     pub use super::opt::ext::*;
     pub use super::range::ext::*;
     pub use super::any::ext::*;
+    pub use super::fmt::FormatStrExt;
 
     @(feature(alloc))
     pub use super::alloc::collections::*;

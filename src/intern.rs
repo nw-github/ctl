@@ -37,7 +37,7 @@ impl Strings {
     pub const LANG_UNSIGNED: StrId = invent_str_id(20);
     pub const ATTR_NOGEN: StrId = invent_str_id(21);
     pub const ATTR_LINKNAME: StrId = invent_str_id(22);
-    pub const LANG_FORMATTER: StrId = invent_str_id(23);
+    pub const LANG_FMT_ARG: StrId = invent_str_id(23);
     pub const FN_WRITTEN: StrId = invent_str_id(24);
     pub const FN_INSERT: StrId = invent_str_id(25);
     pub const FN_SUBSPAN: StrId = invent_str_id(26);
@@ -78,7 +78,7 @@ impl Strings {
         assert_eq!(Self::LANG_UNSIGNED, rodeo.get_or_intern_static("unsigned"));
         assert_eq!(Self::ATTR_NOGEN, rodeo.get_or_intern_static("c_opaque"));
         assert_eq!(Self::ATTR_LINKNAME, rodeo.get_or_intern_static("c_name"));
-        assert_eq!(Self::LANG_FORMATTER, rodeo.get_or_intern_static("formatter"));
+        assert_eq!(Self::LANG_FMT_ARG, rodeo.get_or_intern_static("fmt_arg"));
         assert_eq!(Self::FN_WRITTEN, rodeo.get_or_intern_static("written"));
         assert_eq!(Self::FN_INSERT, rodeo.get_or_intern_static("insert"));
         assert_eq!(Self::FN_SUBSPAN, rodeo.get_or_intern_static("subspan"));

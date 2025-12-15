@@ -444,10 +444,78 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
             print_header(&tabs, "Expr::Unsafe", &[]);
             print_expr(expr, strings, indent + 1);
         }
-        ExprData::StringInterpolation(parts) => {
+        ExprData::StringInterpolation { strings: parts, args } => {
             print_header(&tabs, "Expr::StringInterpolation", &[]);
-            for part in parts {
-                print_expr(part, strings, indent + 1);
+            let plus_1 = INDENT.repeat(indent + 1);
+            let plus_2 = INDENT.repeat(indent + 2);
+            let plus_3 = INDENT.repeat(indent + 3);
+
+            eprintln!("{plus_1}{}:", "Strings".yellow());
+            for string in parts.iter() {
+                eprintln!("{plus_2}\"{}\"", strings.resolve(string));
+            }
+
+            eprintln!("{plus_1}{}:", "Args".yellow());
+            for (expr, opts) in args {
+                if let Some(opts) = opts {
+                    let alt = &opts.alt;
+                    let zero = &opts.zero;
+                    let vars = [
+                        opts.fill
+                            .map(|a| HeaderVar::Named("fill", a.to_string()))
+                            .unwrap_or_default(),
+                        opts.align
+                            .map(|a| {
+                                HeaderVar::Named(
+                                    "align",
+                                    match a {
+                                        crate::ast::parsed::Alignment::Left => "left".into(),
+                                        crate::ast::parsed::Alignment::Right => "right".into(),
+                                        crate::ast::parsed::Alignment::Center => "center".into(),
+                                    },
+                                )
+                            })
+                            .unwrap_or_default(),
+                        opts.sign
+                            .map(|a| {
+                                HeaderVar::Named(
+                                    "sign",
+                                    match a {
+                                        crate::ast::parsed::Sign::Positive => "+".into(),
+                                        crate::ast::parsed::Sign::Negative => "-".into(),
+                                    },
+                                )
+                            })
+                            .unwrap_or_default(),
+                        bool!(alt),
+                        bool!(zero),
+                        opts.typ
+                            .map(|a| {
+                                HeaderVar::Named(
+                                    "type",
+                                    match a {
+                                        crate::ast::parsed::FormatType::Debug => "debug".into(),
+                                        crate::ast::parsed::FormatType::Custom(spur) => {
+                                            strings.resolve(&spur).into()
+                                        }
+                                    },
+                                )
+                            })
+                            .unwrap_or_default(),
+                    ];
+
+                    eprintln!("{plus_2}{} [{}]", "Opts".yellow(), format_header_vars(&vars));
+                    if let Some(width) = &opts.width {
+                        eprint!("{plus_3}{}: ", "Width".yellow());
+                        print_expr(width, strings, 0);
+                    }
+                    if let Some(prec) = &opts.prec {
+                        eprint!("{plus_3}{}: ", "Prec".yellow());
+                        print_expr(prec, strings, 0);
+                    }
+                }
+
+                print_expr(expr, strings, indent + 2);
             }
         }
     }
@@ -472,6 +540,16 @@ fn print_header(tabs: &str, name: &str, vars: &[HeaderVar]) {
 }
 
 fn print_header_ex(tabs: &str, name: &str, vars: &[HeaderVar], trailing: &str) {
+    let res = format_header_vars(vars);
+    match (name.starts_with("Expr"), res.is_empty()) {
+        (false, true) => eprintln!("{tabs}{}{trailing}", name.cyan()),
+        (false, false) => eprintln!("{tabs}{} [{res}]{trailing}", name.cyan()),
+        (true, true) => eprintln!("{tabs}{}{trailing}", name.green()),
+        (true, false) => eprintln!("{tabs}{} [{res}]{trailing}", name.green()),
+    }
+}
+
+fn format_header_vars(vars: &[HeaderVar]) -> String {
     let mut res = String::new();
     for var in vars {
         let val = match var {
@@ -486,13 +564,7 @@ fn print_header_ex(tabs: &str, name: &str, vars: &[HeaderVar], trailing: &str) {
 
         res += &val;
     }
-
-    match (name.starts_with("Expr"), res.is_empty()) {
-        (false, true) => eprintln!("{tabs}{}{trailing}", name.cyan()),
-        (false, false) => eprintln!("{tabs}{} [{res}]{trailing}", name.cyan()),
-        (true, true) => eprintln!("{tabs}{}{trailing}", name.green()),
-        (true, false) => eprintln!("{tabs}{} [{res}]{trailing}", name.green()),
-    }
+    res
 }
 
 fn print_type_params(
@@ -501,12 +573,12 @@ fn print_type_params(
     indent: usize,
 ) {
     if !type_params.is_empty() {
-        let plus_1 = INDENT.repeat(indent);
-        let plus_2 = INDENT.repeat(indent + 1);
+        let tabs = INDENT.repeat(indent);
+        let plus_1 = INDENT.repeat(indent + 1);
 
-        eprintln!("{plus_1}{}:", "Type Params".yellow());
+        eprintln!("{tabs}{}:", "Type Params".yellow());
         for (name, impls) in type_params {
-            eprint!("{plus_2}{}", strings.resolve(&name.data));
+            eprint!("{plus_1}{}", strings.resolve(&name.data));
             for (i, path) in impls.iter().enumerate() {
                 eprintln!("{}{}", [" + ", ": "][(i == 0) as usize], FmtPath::new(path, strings));
             }

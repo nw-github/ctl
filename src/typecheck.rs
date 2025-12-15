@@ -5,8 +5,8 @@ use crate::{
     ast::{
         Attributes, BinaryOp, UnaryOp,
         checked::{
-            ArrayPattern, Block, Expr as CExpr, ExprData as CExprData, Pattern as CPattern,
-            PatternData, RestPattern, Stmt as CStmt,
+            ArrayPattern, Block, Expr as CExpr, ExprData as CExprData, FormatOpts as CFormatSpec,
+            Pattern as CPattern, PatternData, RestPattern, Stmt as CStmt,
         },
         declared::{Fn as DFn, ImplBlock as DImplBlock, Stmt as DStmt},
         parsed::{
@@ -2865,38 +2865,17 @@ impl TypeChecker {
             PExprData::String(s) => {
                 CExpr::new(self.make_lang_type_by_name("string", [], span), CExprData::String(s))
             }
-            PExprData::StringInterpolation(parts) => {
-                let Some(fmt_id) = self.get_lang_type_or_err("format", span) else {
+            PExprData::StringInterpolation { strings, args } => {
+                let Some(fmt_id) = self.get_lang_type_or_err("fmt_format", span) else {
                     return Default::default();
                 };
-                let fmtr_id = self.proj.strings.get_or_intern_static("string_formatter");
-                let formatter = self
-                    .proj
-                    .scopes
-                    .lang_types
-                    .get(&fmtr_id)
-                    .and_then(|&id| {
-                        self.proj.scopes[self.proj.scopes.get(id).body_scope]
-                            .find_in_vns(Strings::NEW)
-                            .and_then(|f| f.into_fn().ok())
-                            .map(|f| {
-                                CExpr::new(
-                                    self.proj.types.insert(Type::User(GenericUserType::new(
-                                        id,
-                                        Default::default(),
-                                    ))),
-                                    CExprData::call(
-                                        &mut self.proj.types,
-                                        GenericFn::new(f, Default::default()),
-                                        Default::default(),
-                                        self.current,
-                                    ),
-                                )
-                            })
-                    })
-                    .unwrap_or_else(|| self.error(Error::no_lang_item("String Formatter", span)));
-                let mut out_parts = Vec::with_capacity(parts.len());
-                for expr in parts {
+
+                let Some(dbg_id) = self.get_lang_type_or_err("fmt_debug", span) else {
+                    return Default::default();
+                };
+
+                let mut out = Vec::with_capacity(args.len());
+                for (expr, opts) in args {
                     let span = expr.span;
                     let expr = self.check_expr(expr, None);
                     let ty = expr.ty.strip_references(&self.proj.types);
@@ -2904,35 +2883,89 @@ impl TypeChecker {
                         continue;
                     }
 
-                    let fmt = self.proj.strings.get_or_intern_static("fmt");
+                    let mut target_tr = fmt_id;
+                    let mut target_fn = "fmt";
+                    let mut upper = false;
+                    match opts.as_ref().and_then(|opts| opts.typ) {
+                        Some(FormatType::Custom(id)) => {
+                            let typ = strdata!(self, id);
+                            target_fn = match typ {
+                                "x" | "X" => "hex",
+                                "o" | "O" => "oct",
+                                "b" | "B" => "bin",
+                                "e" | "E" => "exp",
+                                "p" | "P" => "ptr",
+                                typ => {
+                                    // TODO: add a span to FormatType
+                                    self.proj.diag.report(Error::new(
+                                        format!("invalid format type '{typ}'"),
+                                        span,
+                                    ));
+                                    "fmt"
+                                }
+                            };
+                            upper = typ.chars().next().is_some_and(|ch| ch.is_ascii_uppercase());
+                        }
+                        Some(FormatType::Debug) => {
+                            target_tr = dbg_id;
+                            target_fn = "dbg";
+                        }
+                        None => {}
+                    }
+
+                    let fmt = self.proj.strings.get_or_intern_static(target_fn);
                     let Some(mfn) = self.get_member_fn_ex(
                         ty,
-                        Some(&GenericTrait::from_type_args(&self.proj.scopes, fmt_id, [])),
+                        Some(&GenericTrait::from_type_args(&self.proj.scopes, target_tr, [])),
                         fmt,
                         self.current,
-                        |this, id| TypeArgs::in_order(&this.proj.scopes, id, [formatter.ty]),
+                        |this, id| TypeArgs::in_order(&this.proj.scopes, id, []),
                     ) else {
                         self.proj.diag.report(Error::doesnt_implement(
                             &type_name!(self, ty),
-                            "Format",
+                            strdata!(self, target_tr.name(&self.proj.scopes).data),
                             span,
                         ));
                         continue;
                     };
 
-                    let ptr_to_unk = self.proj.types.insert(Type::Ptr(TypeId::UNKNOWN));
-                    if !matches!(&expr.data, CExprData::String(s) if *s == Strings::EMPTY) {
-                        out_parts.push((mfn, expr.auto_deref(&mut self.proj.types, ptr_to_unk)));
+                    let mut res = CFormatSpec {
+                        width: CExpr::new(TypeId::U16, CExprData::Int(ComptimeInt::Small(0))),
+                        prec: CExpr::new(TypeId::U16, CExprData::Int(ComptimeInt::Small(0))),
+                        fill: ' ',
+                        align: None,
+                        sign: false,
+                        alt: false,
+                        zero: false,
+                        upper,
+                        func: mfn,
+                    };
+                    if let Some(opts) = opts {
+                        if let Some(width) = opts.width {
+                            res.width = self.type_check(width, TypeId::U16);
+                        }
+                        if let Some(prec) = opts.prec {
+                            res.prec = self.type_check(prec, TypeId::U16);
+                        }
+                        if let Some(fill) = opts.fill {
+                            res.fill = fill;
+                        }
+                        if let Some(sign) = opts.sign {
+                            res.sign = sign == Sign::Positive;
+                        }
+                        res.align = opts.align;
+                        res.alt = opts.alt;
+                        res.zero = opts.zero;
                     }
+
+                    let ptr_to_unk = self.proj.types.insert(Type::Ptr(TypeId::UNKNOWN));
+                    let expr = expr.auto_deref(&mut self.proj.types, ptr_to_unk);
+                    out.push((expr, res));
                 }
 
                 CExpr::new(
-                    self.make_lang_type_by_name("string", [], span),
-                    CExprData::StringInterp {
-                        parts: out_parts,
-                        formatter: formatter.into(),
-                        scope: self.current,
-                    },
+                    self.make_lang_type_by_name("fmt_args", [], span),
+                    CExprData::StringInterp { strings, args: out, scope: self.current },
                 )
             }
             PExprData::ByteString(s) => {
@@ -2944,7 +2977,7 @@ impl TypeChecker {
             }
             PExprData::ByteChar(c) => CExpr::new(TypeId::U8, CExprData::Int(ComptimeInt::from(c))),
             PExprData::Void => CExpr::void(),
-            PExprData::Bool(v) => CExpr::new(TypeId::BOOL, CExprData::Int(ComptimeInt::from(v))),
+            PExprData::Bool(v) => CExpr::from(v),
             PExprData::Integer(integer) => {
                 let (ty, value) = self.get_int_type_and_val(target, integer, span);
                 CExpr::new(ty, CExprData::Int(value))

@@ -1,7 +1,7 @@
 use either::{Either, Either::*};
 
 use crate::{
-    Warning,
+    FormatLexer, FormatToken, Warning,
     ast::{Attribute, Attributes, UnaryOp, parsed::*},
     comptime_int::ComptimeInt,
     error::{Diagnostics, Error, FileId},
@@ -495,12 +495,10 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     }),
                 )
             }
-            Token::String(value) => {
-                Expr::new(span, ExprData::String(self.strings.get_or_intern(value)))
-            }
-            Token::Char(value) => Expr::new(span, ExprData::Char(value)),
-            Token::ByteString(value) => Expr::new(span, ExprData::ByteString(value)),
-            Token::ByteChar(value) => Expr::new(span, ExprData::ByteChar(value)),
+            Token::String(v) => Expr::new(span, ExprData::String(self.strings.get_or_intern(v))),
+            Token::Char(v) => Expr::new(span, ExprData::Char(v)),
+            Token::ByteString(v) => Expr::new(span, ExprData::ByteString(v)),
+            Token::ByteChar(v) => Expr::new(span, ExprData::ByteChar(v)),
             Token::This => {
                 Expr::new(span, ExprData::Path(Located::new(span, Strings::THIS_PARAM).into()))
             }
@@ -533,40 +531,51 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 )
             }
             Token::StringPart(value) => {
-                let mut parts = vec![
-                    Expr::new(span, ExprData::String(self.strings.get_or_intern(value))),
-                    self.expression(),
-                ];
-                while let Some(part) = self.next_if_map(|this, t| {
-                    t.data
-                        .as_string_part()
-                        .map(|s| Located::new(t.span, this.strings.get_or_intern(s)))
-                }) {
-                    if self.matches_pred(|t| matches!(t, Token::StringPart(_) | Token::String(_))) {
-                        let span = self.peek().span;
-                        self.error(Error::new("expected expression", span));
-                        parts.push(part.map(ExprData::String));
-                    } else {
-                        let expr = self.expression();
-                        span.extend_to(expr.span);
-                        parts.push(part.map(ExprData::String));
-                        parts.push(expr);
-                        // TODO: ':' format options
+                let mut strings = vec![self.strings.get_or_intern(value)];
+                let mut args = vec![];
+                'outer: loop {
+                    let expr = self.expression();
+                    let specifier = self.next_if(Token::Colon).map(|_| self.format_opts());
+                    args.push((expr, specifier));
+
+                    let mut begin = None::<Span>;
+                    loop {
+                        let peek = self.peek().clone();
+                        match &peek.data {
+                            Token::String(s) | Token::StringPart(s) => {
+                                span.extend_to(peek.span);
+                                self.next();
+                                if let Some(begin) = begin {
+                                    self.error(Error::new("expected format specifiers", begin));
+                                }
+
+                                strings.push(self.strings.get_or_intern(s));
+                                if peek.data.is_string() {
+                                    break 'outer;
+                                } else {
+                                    break;
+                                }
+                            }
+                            Token::Eof => {
+                                self.error_no_sync(Error::new(
+                                    "unterminated string interpolation",
+                                    peek.span,
+                                ));
+                                break 'outer;
+                            }
+                            _ => {
+                                self.next();
+                                if let Some(begin) = &mut begin {
+                                    begin.extend_to(peek.span);
+                                } else {
+                                    begin = Some(peek.span);
+                                }
+                            }
+                        }
                     }
                 }
 
-                match self.next() {
-                    Located { span: inner, data: Token::String(data) } => {
-                        span.extend_to(inner);
-                        parts.push(Expr::new(
-                            inner,
-                            ExprData::String(self.strings.get_or_intern(data)),
-                        ));
-                    }
-                    token => self.error(Error::new("expected end of string", token.span)),
-                }
-
-                Expr::new(span, ExprData::StringInterpolation(parts))
+                Expr::new(span, ExprData::StringInterpolation { strings, args })
             }
             // prefix operators
             Token::Plus
@@ -1167,6 +1176,10 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
     //
 
     fn parse_int(&mut self, base: u8, value: &str, span: Span) -> ComptimeInt {
+        if base == 10 && value.starts_with("0") && value.len() > 1 {
+            self.diag.report(Warning::decimal_leading_zero(span));
+        }
+
         let mut parsable = value.to_string();
         parsable.retain(|c| c != '_');
         match ComptimeInt::from_str_radix(&parsable, base as u32) {
@@ -2090,6 +2103,94 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 }
             },
         )
+    }
+
+    fn format_opts(&mut self) -> FormatOpts {
+        fn next_if_map<T>(
+            this: &mut Parser,
+            lexer: &mut std::iter::Peekable<FormatLexer>,
+            cb: impl FnOnce(&mut Parser, Located<FormatToken>) -> Option<T>,
+        ) -> Option<T> {
+            if let Some(token) = lexer.peek().copied() {
+                let res = cb(this, token);
+                if res.is_some() {
+                    lexer.next();
+                }
+                res
+            } else {
+                None
+            }
+        }
+
+        fn number_or_ident<'a>(
+            this: &mut Parser<'a, '_, '_>,
+            lexer: &mut std::iter::Peekable<FormatLexer<'a>>,
+        ) -> Option<Expr> {
+            let mut was_ident = false;
+            let before = lexer.clone();
+            let res = next_if_map(this, lexer, |this, t| match t.data {
+                FormatToken::Number(v) => Some(Expr::new(
+                    t.span,
+                    ExprData::Integer(IntPattern {
+                        negative: false,
+                        value: this.parse_int(10, v, t.span),
+                        width: None,
+                    }),
+                )),
+                FormatToken::Ident(v) => {
+                    was_ident = true;
+                    Some(Expr::new(
+                        t.span,
+                        ExprData::Path(Path::new(
+                            PathOrigin::Normal,
+                            vec![(Located::new(t.span, this.strings.get_or_intern(v)), vec![])],
+                        )),
+                    ))
+                }
+                _ => None,
+            });
+            if was_ident && lexer.next_if(|t| t.data == FormatToken::Dollar).is_none() {
+                *lexer = before;
+                None
+            } else {
+                res
+            }
+        }
+
+        // [[fill]align][sign][alt][zero][width]['.'prec][type]
+
+        // Safe because we just consumed the ':' token, so the Parser peek should be empty
+        let mut lexer = self.lexer.create_format_lexer();
+        let fill =
+            if matches!(lexer.peek_next(), Some('<' | '>' | '^')) { lexer.advance() } else { None };
+
+        let mut lexer = lexer.peekable();
+        let align = next_if_map(self, &mut lexer, |_, t| match t.data {
+            FormatToken::LAngle => Some(Alignment::Left),
+            FormatToken::RAngle => Some(Alignment::Right),
+            FormatToken::Caret => Some(Alignment::Center),
+            _ => None,
+        });
+        let sign = next_if_map(self, &mut lexer, |_, t| match t.data {
+            FormatToken::Plus => Some(Sign::Positive),
+            FormatToken::Minus => Some(Sign::Negative),
+            _ => None,
+        });
+        let alt = lexer.next_if(|t| t.data == FormatToken::Hash).is_some();
+        let zero = lexer.next_if(|t| t.data == FormatToken::LeadingZero).is_some();
+        let width = number_or_ident(self, &mut lexer);
+        // TODO: because of the LeadingZero token, prec will fail if it starts with a zero
+        let prec = lexer
+            .next_if(|t| t.data == FormatToken::Dot)
+            .and_then(|_| number_or_ident(self, &mut lexer));
+        let typ = next_if_map(self, &mut lexer, |this, t| match t.data {
+            FormatToken::Question => Some(FormatType::Debug),
+            FormatToken::Ident(v) => Some(FormatType::Custom(this.strings.get_or_intern(v))),
+            _ => None,
+        });
+
+        self.lexer.advance_to(lexer.peek().map(|t| t.span.pos));
+        FormatOpts { fill, width, prec, align, alt, sign, zero, typ }
     }
 
     //

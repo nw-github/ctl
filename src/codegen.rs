@@ -2,7 +2,11 @@ use std::fmt::Write;
 
 use crate::{
     CodegenFlags,
-    ast::{BinaryOp, UnaryOp, checked::*, parsed::RangePattern},
+    ast::{
+        BinaryOp, UnaryOp,
+        checked::*,
+        parsed::{Alignment, RangePattern},
+    },
     comptime_int::ComptimeInt,
     dgraph::{Dependencies, DependencyGraph},
     hash::{HashMap, HashSet, IndexMap},
@@ -838,6 +842,7 @@ pub struct Codegen<'a> {
     emitted_vtables: HashSet<Vtable>,
     defers: Vec<(ScopeId, Vec<Expr>)>,
     tg: TypeGen,
+    str_interp: StrInterp,
 }
 
 impl Codegen<'_> {
@@ -864,6 +869,7 @@ impl Codegen<'_> {
 
         let strings = std::mem::take(&mut proj.strings);
         let mut this = Codegen {
+            str_interp: StrInterp::new(&mut proj, &strings),
             flags: proj.conf.flags,
             proj,
             strings: &strings,
@@ -943,13 +949,12 @@ impl Codegen<'_> {
         }
         this.buffer.emit("#endif\n");
         this.buffer.emit(include_str!("../ctl.h"));
-        if let Some(&ut) = this.proj.scopes.lang_types.get(&Strings::LANG_STRING) {
-            let ut = GenericUserType::from_id(&this.proj.scopes, &mut this.proj.types, ut);
+        if let Some(ut) = &this.str_interp.string {
             this.buffer.emit("#define STRLIT(data,n)(");
             this.buffer.emit_type_name(
                 &this.proj.scopes,
                 &mut this.proj.types,
-                &ut,
+                ut,
                 this.flags.minify,
             );
             this.buffer.emit("){.$span={.$ptr=(u8*)data,.$len=(usize)n}}\n");
@@ -1736,46 +1741,8 @@ impl<'a> Codegen<'a> {
                 self.emit_cast(expr.ty);
                 write_de!(self.buffer, "{{.$ptr={tmp}.$ptr,.$len={tmp}.$len}}");
             }
-            ExprData::StringInterp { mut formatter, parts, scope } => {
-                formatter.ty =
-                    formatter.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
-                let formatter_ty = formatter.ty;
-                let formatter = hoist!(self, {
-                    let formatter = self.emit_tmpvar(*formatter, state);
-                    for (mfn, mut expr) in parts {
-                        hoist_point!(self, {
-                            expr.ty =
-                                expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
-                            self.emit_member_fn(state, mfn, scope);
-                            write_de!(self.buffer, "(");
-                            self.emit_expr_inline(expr, state);
-                            write_de!(self.buffer, ",&{formatter});");
-                        });
-                    }
-                    formatter
-                });
-                let formatter_id =
-                    self.proj.scopes.lang_types.get(&Strings::LANG_FORMATTER).copied().unwrap();
-                let finish_state = State::with_inst(
-                    self.find_implementation(
-                        formatter_ty,
-                        &GenericTrait::from_type_args(&self.proj.scopes, formatter_id, []),
-                        Strings::FN_WRITTEN,
-                        scope,
-                        |_, _| Default::default(),
-                    ),
-                    &self.proj.types,
-                    formatter_ty,
-                    scope,
-                );
-                self.buffer.emit_fn_name(
-                    &self.proj.scopes,
-                    &mut self.proj.types,
-                    &finish_state.func,
-                    self.flags.minify,
-                );
-                write_de!(self.buffer, "(&{formatter})");
-                self.funcs.insert(finish_state);
+            ExprData::StringInterp { strings, args, scope } => {
+                self.emit_string_interp(expr.ty, state, strings, args, scope)
             }
             ExprData::AffixOperator { callee, mfn, param, scope, postfix } => {
                 let deref = "*".repeat(Self::indirection(&self.proj.types, callee.ty));
@@ -2905,7 +2872,11 @@ impl<'a> Codegen<'a> {
             }
         }
 
-        let trait_fn = self.proj.scopes[f.scope].kind.is_impl();
+        let trait_fn = match self.proj.scopes[f.scope].kind {
+            ScopeKind::Impl(_) => true,
+            ScopeKind::UserType(id) => self.proj.scopes.get(id).kind.is_trait(),
+            _ => false,
+        };
 
         if ret == TypeId::NEVER {
             // && real
@@ -3285,6 +3256,100 @@ impl<'a> Codegen<'a> {
         write_de!(self.buffer, "\",{})", value.len());
     }
 
+    fn emit_string_interp(
+        &mut self,
+        ty: TypeId,
+        state: &mut State,
+        strings: Vec<StrId>,
+        args: Vec<(Expr, FormatOpts)>,
+        scope: ScopeId,
+    ) {
+        self.emit_cast(ty);
+        write_de!(self.buffer, "{{.$parts={{.$len={},.$ptr=", strings.len());
+        tmpbuf_emit!(self, state, |tmp| {
+            let Some(string_ut) = &self.str_interp.string else {
+                panic!("ICE: StringInterp: Cannot find language type 'string'");
+            };
+
+            self.buffer.emit_type_name(
+                &self.proj.scopes,
+                &mut self.proj.types,
+                string_ut,
+                self.flags.minify,
+            );
+            write_de!(self.buffer, " {tmp}[{}]={{", strings.len());
+            for part in strings.iter() {
+                self.emit_string_literal(strdata!(self, part));
+                write_de!(self.buffer, ",");
+            }
+            write_de!(self.buffer, "}};");
+        });
+        write_de!(self.buffer, "}},.$args={{.$len={},.$ptr=", args.len());
+        tmpbuf_emit!(self, state, |tmp| {
+            let Some(fmt_arg_ut) = &self.str_interp.fmt_arg else {
+                panic!("ICE: StringInterp: Cannot find language type 'fmt_arg'");
+            };
+
+            let spec_ty =
+                self.proj.scopes.get(fmt_arg_ut.id).members.get(&self.str_interp.opts).unwrap().ty;
+
+            let spec_ut = self.proj.types.get(spec_ty).as_user().unwrap();
+            let typeid_align =
+                self.proj.scopes.get(spec_ut.id).members.get(&self.str_interp.align).unwrap().ty;
+
+            self.buffer.emit_type_name(
+                &self.proj.scopes,
+                &mut self.proj.types,
+                fmt_arg_ut,
+                self.flags.minify,
+            );
+            write_de!(self.buffer, " {tmp}[{}]={{", args.len());
+            for (mut expr, opts) in args {
+                expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                write_de!(self.buffer, "{{.$value=(void const*)");
+                self.emit_tmpvar_ident(expr, state);
+                write_de!(self.buffer, ",.$format=");
+                self.emit_member_fn(state, opts.func, scope);
+                write_de!(self.buffer, ",.$opts=");
+                let align = Expr::new(
+                    typeid_align,
+                    ExprData::VariantInstance(
+                        match opts.align {
+                            None => self.str_interp.align_none,
+                            Some(Alignment::Left) => self.str_interp.align_left,
+                            Some(Alignment::Right) => self.str_interp.align_right,
+                            Some(Alignment::Center) => self.str_interp.align_center,
+                        },
+                        [].into(),
+                    ),
+                );
+
+                self.emit_expr_inline(
+                    Expr::new(
+                        spec_ty,
+                        ExprData::Instance(
+                            [
+                                (self.str_interp.width, opts.width),
+                                (self.str_interp.prec, opts.prec),
+                                (self.str_interp.fill, Expr::from(opts.fill)),
+                                (self.str_interp.align, align),
+                                (self.str_interp.upper, Expr::from(opts.upper)),
+                                (self.str_interp.alt, Expr::from(opts.alt)),
+                                (self.str_interp.sign, Expr::from(opts.sign)),
+                                (self.str_interp.zero, Expr::from(opts.zero)),
+                            ]
+                            .into(),
+                        ),
+                    ),
+                    state,
+                );
+                write_de!(self.buffer, "}},");
+            }
+            write_de!(self.buffer, "}};");
+        });
+        write_de!(self.buffer, "}}}}");
+    }
+
     fn has_side_effects(expr: &Expr) -> bool {
         match &expr.data {
             ExprData::Unary(
@@ -3421,4 +3486,53 @@ fn bit_mask(bits: u32) -> u64 {
 
 fn null_variant(typ: TypeId) -> PatternData {
     PatternData::Variant { pattern: None, variant: Strings::NULL, inner: typ, borrows: false }
+}
+
+struct StrInterp {
+    opts: StrId,
+    string: Option<GenericUserType>,
+    fmt_arg: Option<GenericUserType>,
+    width: StrId,
+    prec: StrId,
+    fill: StrId,
+    align: StrId,
+    upper: StrId,
+    alt: StrId,
+    sign: StrId,
+    zero: StrId,
+
+    align_none: StrId,
+    align_left: StrId,
+    align_right: StrId,
+    align_center: StrId,
+}
+
+impl StrInterp {
+    pub fn new(proj: &mut Project, strings: &Strings) -> Self {
+        Self {
+            fmt_arg: proj
+                .scopes
+                .lang_types
+                .get(&Strings::LANG_FMT_ARG)
+                .map(|&ut| GenericUserType::from_id(&proj.scopes, &mut proj.types, ut)),
+            string: proj
+                .scopes
+                .lang_types
+                .get(&Strings::LANG_STRING)
+                .map(|&ut| GenericUserType::from_id(&proj.scopes, &mut proj.types, ut)),
+            opts: strings.get("opts").unwrap(),
+            width: strings.get("width").unwrap(),
+            prec: strings.get("prec").unwrap(),
+            fill: strings.get("fill").unwrap(),
+            align: strings.get("align").unwrap(),
+            upper: strings.get("upper").unwrap(),
+            alt: strings.get("alt").unwrap(),
+            sign: strings.get("sign").unwrap(),
+            zero: strings.get("zero").unwrap(),
+            align_none: strings.get("None").unwrap(),
+            align_left: strings.get("Left").unwrap(),
+            align_right: strings.get("Right").unwrap(),
+            align_center: strings.get("Center").unwrap(),
+        }
+    }
 }

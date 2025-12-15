@@ -1,7 +1,7 @@
 use enum_as_inner::EnumAsInner;
 
 use crate::{
-    ast::{BinaryOp, UnaryOp},
+    ast::{BinaryOp, UnaryOp, parsed::Alignment},
     comptime_int::ComptimeInt,
     hash::IndexMap,
     intern::{StrId, Strings},
@@ -132,8 +132,8 @@ pub enum ExprData {
     Float(f64),
     String(StrId),
     StringInterp {
-        formatter: Box<Expr>,
-        parts: Vec<(MemberFn, Expr)>,
+        strings: Vec<StrId>,
+        args: Vec<(Expr, FormatOpts)>,
         scope: ScopeId,
     },
     ByteString(Vec<u8>),
@@ -324,4 +324,29 @@ impl Expr {
     pub fn void() -> Expr {
         Expr::new(TypeId::VOID, ExprData::Void)
     }
+}
+
+impl From<char> for Expr {
+    fn from(value: char) -> Self {
+        Expr::new(TypeId::CHAR, ExprData::Int(ComptimeInt::from(value as u32)))
+    }
+}
+
+impl From<bool> for Expr {
+    fn from(value: bool) -> Self {
+        Expr::new(TypeId::BOOL, ExprData::Int(ComptimeInt::from(value)))
+    }
+}
+
+#[derive(Clone)]
+pub struct FormatOpts {
+    pub width: Expr,
+    pub prec: Expr,
+    pub fill: char,
+    pub align: Option<Alignment>,
+    pub sign: bool,
+    pub alt: bool,
+    pub zero: bool,
+    pub upper: bool,
+    pub func: MemberFn,
 }

@@ -345,7 +345,7 @@ pub mod ext {
 
     pub extension SpanFormat<T: Format> for [T..] {
         impl Format {
-            fn fmt<F: Formatter>(this, f: *mut F) {
+            fn fmt(this, f: *mut Formatter) {
                 "[".fmt(f);
                 for (i, item) in this.iter().enumerate() {
                     if i > 0 {
@@ -360,7 +360,7 @@ pub mod ext {
 
     pub extension SpanMutFormat<T: Format> for [mut T..] {
         impl Format {
-            fn fmt<F: Formatter>(this, f: *mut F) {
+            fn fmt(this, f: *mut Formatter) {
                 this.as_span().fmt(f)
             }
         }

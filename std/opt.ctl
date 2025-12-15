@@ -51,11 +51,9 @@ pub union Option<T> {
 pub mod ext {
     pub extension OptionFormat<T: std::fmt::Format> for ?T {
         impl std::fmt::Format {
-            fn fmt<F: std::fmt::Formatter>(this, f: *mut F) {
+            fn fmt(this, f: *mut std::fmt::Formatter) {
                 if this is ?rhs {
-                    "Some(".fmt(f);
-                    rhs.fmt(f);
-                    ")".fmt(f);
+                    "Some({rhs})".fmt(f);
                 } else {
                     "null".fmt(f);
                 }

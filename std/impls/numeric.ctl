@@ -271,7 +271,7 @@ pub extension SignedImpl<T: Signed> for T {
     }
 
     impl Format {
-        fn fmt<F: Formatter>(this, f: *mut F) {
+        fn fmt(this, f: *mut Formatter) {
             // FIXME: fix this when there is a safer way to deal with uninitialized memory
             //        size_of should be size_of<T>
             mut buffer: [u8; std::mem::size_of::<u128>() * 8 + 1];
@@ -337,7 +337,7 @@ pub extension UnsignedImpl<T: Unsigned> for T {
     }
 
     impl Format {
-        fn fmt<F: Formatter>(this, f: *mut F) {
+        fn fmt(this, f: *mut Formatter) {
             mut buffer: [u8; std::mem::size_of::<u128>() * 8];
             unsafe this.to_str_radix_unchecked(10, buffer[..]).fmt(f);
         }

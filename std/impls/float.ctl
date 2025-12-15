@@ -51,7 +51,7 @@ pub extension F32Impl for f32 {
     pub fn parse(s: str): ?f32 => s2f::s2f(s.as_bytes()) is :Ok(v) then v;
 
     impl Format {
-        fn fmt<F: Formatter>(this, f: *mut F) {
+        fn fmt(this, f: *mut Formatter) {
             Buffer::new().format(*this).fmt(f);
         }
     }
@@ -87,7 +87,7 @@ pub extension F64Impl for f64 {
     pub fn parse(s: str): ?f64 => s2d::s2d(s.as_bytes()) is :Ok(v) then v;
 
     impl Format {
-        fn fmt<F: Formatter>(this, f: *mut F) {
+        fn fmt(this, f: *mut Formatter) {
             Buffer::new().format(*this).fmt(f);
         }
     }

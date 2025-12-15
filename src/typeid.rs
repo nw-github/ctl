@@ -478,6 +478,7 @@ impl Types {
                 Type::F32,
                 Type::F64,
                 Type::CVoid,
+                Type::Uint(16),
             ]
             .into(),
         }
@@ -552,6 +553,7 @@ impl TypeId {
     pub const F32: TypeId = TypeId(9);
     pub const F64: TypeId = TypeId(10);
     pub const CVOID: TypeId = TypeId(11);
+    pub const U16: TypeId = TypeId(12);
 
     pub fn name(self, scopes: &Scopes, types: &mut Types, strings: &Strings) -> String {
         match &types[self] {

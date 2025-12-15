@@ -27,7 +27,7 @@ pub extension RawImpl<T> for ^T {
     }
 
     impl Format {
-        fn fmt<F: Formatter>(this, f: *mut F) {
+        fn fmt(this, f: *mut Formatter) {
             // TODO: just format (this as uint) when format specifiers are added
             mut buffer: [u8; std::mem::size_of::<uint>() * 2 + 2];
             unsafe {
@@ -92,7 +92,7 @@ pub extension RawMutImpl<T> for ^mut T {
     }
 
     impl Format {
-        fn fmt<F: Formatter>(this, f: *mut F) {
+        fn fmt(this, f: *mut Formatter) {
             (this as ^T).fmt(f);
         }
     }
