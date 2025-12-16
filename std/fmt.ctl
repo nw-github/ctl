@@ -94,13 +94,12 @@ pub struct Arguments {
     impl Format {
         fn fmt(this, f: *mut Formatter) {
             for (part, arg) in this.parts.iter().zip::<*Argument, std::span::Iter<Argument>>(this.args.iter()) {
-                part.fmt(f);
-                f.opts = arg.opts;
-                ({arg.format}(arg.value, f));
+                f.write_str(*part);
+                ({arg.format}(arg.value, &mut f.with_options(arg.opts)));
             }
 
             if this.parts.len() > this.args.len() {
-                this.parts.last()!.fmt(f);
+                f.write_str(*this.parts.last()!);
             }
         }
     }

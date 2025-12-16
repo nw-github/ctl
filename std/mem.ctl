@@ -2,13 +2,8 @@ use std::intrin;
 pub use intrin::size_of;
 pub use intrin::align_of;
 
-pub fn size_of_val<T>(_: *T): uint {
-    size_of::<T>()
-}
-
-pub fn align_of_val<T>(_: *T): uint {
-    align_of::<T>()
-}
+pub fn size_of_val<T>(_: *T): uint => size_of::<T>();
+pub fn align_of_val<T>(_: *T): uint => align_of::<T>();
 
 /// Copies `num` T's from `src` to `dst` without destroying the contents in `dst`.
 pub unsafe fn copy<T>(kw dst: ^mut T, kw src: ^T, kw num: uint) {
@@ -31,21 +26,10 @@ pub unsafe fn zeroed<T>(): T {
     t
 }
 
-pub fn swap<T>(lhs: *mut T, rhs: *mut T) {
-    let tmp = *lhs;
-    *lhs = *rhs;
-    *rhs = tmp;
-}
-
-pub fn replace<T>(ptr: *mut T, val: T): T {
-    let old = *ptr;
-    *ptr = val;
-    old
-}
+pub fn swap<T>(lhs: *mut T, rhs: *mut T) => unsafe (lhs as ^mut T).swap(rhs);
+pub fn replace<T>(ptr: *mut T, val: T): T => unsafe (ptr as ^mut T).replace(val);
 
 pub unsafe fn transmute<In, Out>(from: In): Out {
-    // TODO: this is fine since we transpile to c, but whenever a spec gets written this usage of
-    // unions in CTL code should be considered UB
     unsafe union Transmuter<T, U> {
         from: T,
         to: U,
