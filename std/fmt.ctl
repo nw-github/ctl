@@ -10,8 +10,30 @@ pub struct Formatter {
     write: *dyn mut Write,
     opts: Options,
 
-    pub fn new(write: *dyn mut Write): This {
-        Formatter(write:, opts: Options())
+    pub fn new(write: *dyn mut Write): This => Formatter(write:, opts: Options());
+
+    pub fn with_options(this, opts: Options): Formatter => Formatter(write: this.write, opts:);
+
+    pub fn options(this): *Options => &this.opts;
+
+    pub fn pad(mut this, value: str) {
+        // TODO: actually pad
+        this.write.write_str(value);
+    }
+
+    pub fn pad_integral(mut this, kw negative: bool, kw prefix: ?str, kw value: str) {
+        // TODO: actually pad
+        if negative {
+            this.write.write_char('-');
+        } else if this.opts.sign is :Plus {
+            this.write.write_char('+');
+        }
+
+        if this.opts.alt and prefix is ?prefix {
+            this.write.write_str(prefix);
+        }
+
+        this.write.write_str(value);
     }
 
     impl Write {

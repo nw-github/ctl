@@ -4,8 +4,6 @@ use std::fmt::*;
 use std::reflect::*;
 use super::ByteSpanExt;
 
-static DIGITS: [u8; 36] = *b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-
 pub extension U8Impl for u8 {
     pub fn is_ascii(my this): bool {
         this < 0b1000_0000
@@ -229,6 +227,24 @@ pub extension IntegralImpl<T: Integral> for T {
         this
     }
 
+    @(feature(alloc))
+    pub fn to_str_radix(this, radix: u32): str {
+        guard radix is 2..=36 else {
+            panic("to_str_radix(): invalid radix");
+        }
+
+        let neg = this < 0u.cast();
+        mut buf = @[b'0'; std::mem::size_of::<T>() * 8 + 2 + neg as uint][..];
+        unsafe {
+            mut pos = this.write_digits(buf, radix, upper: false);
+            if neg {
+                *buf.get_mut_unchecked(--pos) = b'-';
+            }
+
+            str::from_utf8_unchecked(buf[pos..])
+        }
+    }
+
     fn from_str_radix_common(chars: std::string::Chars, radix: u32): ?T {
         mut value: ?T = null;
         for ch in chars {
@@ -241,37 +257,71 @@ pub extension IntegralImpl<T: Integral> for T {
         }
         value
     }
-}
 
-pub extension SignedImpl<T: Signed> for T {
-    pub fn abs(this): T {
-        std::intrin::numeric_abs(*this)
-    }
-
-    pub unsafe fn to_str_radix_unchecked(my this, radix: u32, buf: [mut u8..]): str {
-        mut pos = buf.len();
-        mut val = this < 0u.cast() then this else -this;
-        loop {
-            let (v, digit) = casting_divmod(val, radix as! i32);
-            unsafe *buf.get_mut_unchecked(--pos) = DIGITS[-digit.cast::<int>()];
-            val = v;
-        } while val != 0u.cast();
-
-        if this < 0u.cast() {
-            unsafe *buf.get_mut_unchecked(--pos) = b'-';
+    /// Formats the digits of `this` into `buf` according to `radix`. Does not add a sign or prefix.
+    ///
+    /// `radix` must be between 2 and 36 inclusive
+    /// `buf`   must have a length of at least size_of::<T> * 8
+    ///
+    /// Returns the position of the start of the digits within `buf`
+    pub unsafe fn write_digits(my mut this, buf: [mut u8..], radix: u32, upper: bool): uint {
+        fn casting_divmod<T: Numeric, U: Numeric>(dividend: T, divisor: U): (T, T) {
+            // TODO: do this at CTL compile time
+            if std::mem::size_of::<T>() >= std::mem::size_of::<U>() {
+                let divisor: T = divisor.cast();
+                (dividend / divisor, dividend % divisor)
+            } else {
+                let dividend: U = dividend.cast();
+                ((dividend / divisor).cast(), (dividend % divisor).cast())
+            }
         }
 
-        unsafe str::from_utf8_unchecked(buf[pos..])
+        static UPPER_DIGITS: [u8; 36] = *b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        static LOWER_DIGITS: [u8; 36] = *b"0123456789abcdefghijklmnopqrstuvwxyz";
+
+        let digits = upper then &UPPER_DIGITS else &LOWER_DIGITS;
+        mut pos = buf.len();
+        loop {
+            let (v, digit) = casting_divmod(this, radix as! i32);
+            // Only relevant for signed but should get optimized away for unsigned
+            let digit = this < 0.cast() then -digit.cast::<int>() else digit.cast();
+            unsafe *buf.as_raw_mut().uoffset(--pos) = digits[digit];
+            this = v;
+        } while this != 0.cast();
+
+        pos
+    }
+
+    impl Debug {
+        fn dbg(this, f: *mut Formatter) => this.format_into(f, 10);
     }
 
     impl Format {
-        fn fmt(this, f: *mut Formatter) {
-            // FIXME: fix this when there is a safer way to deal with uninitialized memory
-            //        size_of should be size_of<T>
-            mut buffer: [u8; std::mem::size_of::<u128>() * 8 + 1];
-            unsafe this.to_str_radix_unchecked(10, buffer[..]).fmt(f);
+        fn fmt(this, f: *mut Formatter) => this.format_into(f, 10);
+        fn bin(this, f: *mut Formatter) => this.format_into(f, 2);
+        fn hex(this, f: *mut Formatter) => this.format_into(f, 16);
+        fn oct(this, f: *mut Formatter) => this.format_into(f, 8);
+    }
+
+    fn format_into(my mut this, f: *mut Formatter, radix: u32) {
+        if std::mem::size_of::<T>() <= std::mem::size_of::<u128>() {
+            mut buf: [u8; std::mem::size_of::<u128>() * 8];
+            let pos = unsafe this.write_digits(buf[..], radix, f.options().upper);
+            let buf = unsafe str::from_utf8_unchecked(buf[pos..]);
+            f.pad_integral(negative: this < 0.cast(), value: buf, prefix: match radix {
+                 2 => ?"0b",
+                 8 => ?"0o",
+                16 => ?"0x",
+                 _ => null,
+            });
+        } else {
+            "<TODO: format int >128 bits>".fmt(f);
         }
     }
+}
+
+pub extension SignedImpl<T: Signed> for T {
+    pub fn abs(this): T => std::intrin::numeric_abs(*this);
 
     @(intrinsic(unary_op))
     pub fn -(this): T => -this;
@@ -302,40 +352,10 @@ pub extension SignedImpl<T: Signed> for T {
         let val = T::from_str_radix_common(chars, radix)?;
         negative then val.checked_mul((-1).cast()) else val
     }
-
-    @(feature(alloc))
-    pub fn to_str_radix(this, radix: u32): str {
-        guard radix is 2..=36 else {
-            panic("to_str_radix(): invalid radix");
-        }
-
-        mut buffer = @[b'0'; std::mem::size_of::<T>() * 8 + 1];
-        unsafe {
-            this.to_str_radix_unchecked(radix, buffer[..])
-        }
-    }
 }
 
 pub extension UnsignedImpl<T: Unsigned> for T {
-    pub unsafe fn to_str_radix_unchecked(my mut this, radix: u32, buf: [mut u8..]): str {
-        mut pos = buf.len();
-        loop {
-            let (v, digit) = casting_divmod(this, radix);
-            unsafe *buf.get_mut_unchecked(--pos) = DIGITS[digit.cast()];
-            this = v;
-        } while this != 0u.cast();
-
-        unsafe str::from_utf8_unchecked(buf[pos..])
-    }
-
-    impl Format {
-        fn fmt(this, f: *mut Formatter) {
-            mut buffer: [u8; std::mem::size_of::<u128>() * 8];
-            unsafe this.to_str_radix_unchecked(10, buffer[..]).fmt(f);
-        }
-    }
-
-    /// This exists for parity with SignedExt::overflowing_div. Unsigned division cannot overflow,
+    /// This exists for parity with SignedImpl::overflowing_div. Unsigned division cannot overflow,
     /// and as such this function always returns false.
     @(inline)
     pub fn overflowing_div(this, rhs: T): (T, bool) => (this / rhs, false);
@@ -350,18 +370,6 @@ pub extension UnsignedImpl<T: Unsigned> for T {
         }
 
         T::from_str_radix_common(chars, radix)
-    }
-
-    @(feature(alloc))
-    pub fn to_str_radix(this, radix: u32): str {
-        guard radix is 2..=36 else {
-            panic("to_str_radix(): invalid radix");
-        }
-
-        mut buffer = @[b'0'; std::mem::size_of::<T>() * 8];
-        unsafe {
-            this.to_str_radix_unchecked(radix, buffer[..])
-        }
     }
 
     // TODO: popcountg and friends only work for unsigned integers/BitInts under 128 bits, and are
@@ -381,15 +389,4 @@ pub extension UnsignedImpl<T: Unsigned> for T {
     pub fn count_zeros(this): u32 => unsafe gcc_intrin::__builtin_popcountg(!*this) as! u32;
     pub fn leading_zeros(this): u32 => unsafe gcc_intrin::__builtin_clzg(*this) as! u32;
     pub fn trailing_zeros(this): u32 => unsafe gcc_intrin::__builtin_ctzg(*this) as! u32;
-}
-
-fn casting_divmod<T: Numeric, U: Numeric>(dividend: T, divisor: U): (T, T) {
-    // TODO: do this at CTL compile time
-    if std::mem::size_of::<T>() >= std::mem::size_of::<U>() {
-        let divisor: T = divisor.cast();
-        (dividend / divisor, dividend % divisor)
-    } else {
-        let dividend: U = dividend.cast();
-        ((dividend / divisor).cast(), (dividend % divisor).cast())
-    }
 }

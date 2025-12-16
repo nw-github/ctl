@@ -35,13 +35,13 @@ pub union Option<T> {
 }
 
 pub mod ext {
-    pub extension OptionFormat<T: std::fmt::Format> for ?T {
-        impl std::fmt::Format {
-            fn fmt(this, f: *mut std::fmt::Formatter) {
+    pub extension OptionDebug<T: std::fmt::Debug> for ?T {
+        impl std::fmt::Debug {
+            fn dbg(this, f: *mut std::fmt::Formatter) {
                 if this is ?rhs {
-                    "Some({rhs})".fmt(f);
+                    write(f, "Some({rhs:?})");
                 } else {
-                    "null".fmt(f);
+                    write(f, "null");
                 }
             }
         }

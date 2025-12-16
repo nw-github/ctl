@@ -35,9 +35,13 @@ pub extension CharImpl for char {
         fn lt(this, rhs: *This): bool { this < rhs }
     }
 
+    impl Debug {
+        fn dbg(this, f: *mut Formatter) => write(f, "'{this}'");
+    }
+
     impl Format {
         fn fmt(this, f: *mut Formatter) {
-            unsafe this.encode_utf8_unchecked(this.len_utf8(), [0u8; 4][..]).fmt(f);
+            f.pad(unsafe this.encode_utf8_unchecked(this.len_utf8(), [0u8; 4][..]))
         }
     }
 
@@ -83,11 +87,11 @@ pub extension CharImpl for char {
     }
 
     pub fn to_ascii_upper(my this): char {
-        unsafe char::from_u32_unchecked(this as u32 ^ (0b10_0000 * this.is_ascii_upper() as u32))
+        unsafe char::from_u32_unchecked(this as u32 ^ (0b10_0000 * this.is_ascii_lower() as u32))
     }
 
     pub fn to_ascii_lower(my this): char {
-        unsafe char::from_u32_unchecked(this as u32 ^ (0b10_0000 * this.is_ascii_lower() as u32))
+        unsafe char::from_u32_unchecked(this as u32 ^ (0b10_0000 * this.is_ascii_upper() as u32))
     }
 
     pub fn to_digit(my this, radix: u32): ?u32 {
@@ -113,7 +117,7 @@ pub extension CharImpl for char {
     pub fn min_value(): char => '\0';
     pub fn max_value(): char => '\u{10ffff}';
 
-    unsafe fn encode_utf8_unchecked(my this, len_utf8: uint, buf: [mut u8..]): str {
+    pub unsafe fn encode_utf8_unchecked(my this, len_utf8: uint, buf: [mut u8..]): str {
         unsafe {
             let cp = this as u32;
             mut ptr = buf.as_raw_mut();

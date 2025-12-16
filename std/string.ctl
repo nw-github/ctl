@@ -83,10 +83,12 @@ pub struct str {
         }
     }
 
+    impl Debug {
+        fn dbg(this, f: *mut Formatter) => write(f, "\"{this}\"");
+    }
+
     impl Format {
-        fn fmt(this, f: *mut Formatter) {
-            f.write_str(*this);
-        }
+        fn fmt(this, f: *mut Formatter) => f.pad(*this);
     }
 
     pub fn []<I: Integral>(this, idx: I): *u8 {
