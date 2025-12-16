@@ -5,45 +5,18 @@ use std::reflect::*;
 use super::ByteSpanExt;
 
 pub extension U8Impl for u8 {
-    pub fn is_ascii(my this): bool {
-        this < 0b1000_0000
-    }
+    pub fn is_ascii(my this): bool => this < 0b1000_0000;
+    pub fn is_ascii_whitespace(my this): bool => this is b'\t' | b'\n' | b'\x0C' | b'\r' | b' ';
+    pub fn is_ascii_upper(my this): bool => this is b'A'..=b'Z';
+    pub fn is_ascii_lower(my this): bool => this is b'a'..=b'z';
+    pub fn is_ascii_digit(my this): bool => this is b'0'..=b'9';
+    pub fn is_ascii_hexdigit(my this): bool => this is b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F';
 
-    pub fn is_ascii_whitespace(my this): bool {
-        this is b'\t' | b'\n' | b'\x0C' | b'\r' | b' '
-    }
+    pub fn make_ascii_upper(mut this) => *this = this.to_ascii_upper();
+    pub fn make_ascii_lower(mut this) => *this = this.to_ascii_upper();
 
-    pub fn is_ascii_upper(my this): bool {
-        this is b'A'..=b'Z'
-    }
-
-    pub fn is_ascii_lower(my this): bool {
-        this is b'a'..=b'z'
-    }
-
-    pub fn is_ascii_digit(my this): bool {
-        this is b'0'..=b'9'
-    }
-
-    pub fn is_ascii_hexdigit(my this): bool {
-        this is b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'
-    }
-
-    pub fn make_ascii_upper(mut this) {
-        *this = this.to_ascii_upper();
-    }
-
-    pub fn make_ascii_lower(mut this) {
-        *this = this.to_ascii_upper();
-    }
-
-    pub fn to_ascii_upper(my this): u8 {
-        this ^ (0b100000 * this.is_ascii_upper() as u8)
-    }
-
-    pub fn to_ascii_lower(my this): u8 {
-        this ^ (0b100000 * this.is_ascii_lower() as u8)
-    }
+    pub fn to_ascii_upper(my this): u8 => this ^ (0b100000 * this.is_ascii_upper() as u8);
+    pub fn to_ascii_lower(my this): u8 => this ^ (0b100000 * this.is_ascii_lower() as u8);
 }
 
 pub extension NumericImpl<T: Numeric> for T {
