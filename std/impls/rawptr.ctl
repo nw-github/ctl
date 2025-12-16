@@ -28,9 +28,13 @@ pub extension RawImpl<T> for ^T {
 
     impl Debug {
         fn dbg(this, f: *mut Formatter) {
-            mut opts = *f.options();
-            opts.alt = true;
-            (this as uint).hex(&mut f.with_options(opts));
+            let opts = f.options();
+            (this as uint).hex(&mut f.with_options(Options(
+                alt: true,
+                sign: opts.sign,
+                width: opts.width,
+                upper: opts.upper,
+            )));
         }
     }
 }
