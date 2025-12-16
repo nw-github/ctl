@@ -2,6 +2,6 @@
 
 fn main() {
     mut x = @[1, 2, 3];
-    print("{x.len()} {x.pop()} {x.pop()} {x.pop()} {x.pop()}");
+    print("{x.len()} {x.pop():?} {x.pop():?} {x.pop():?} {x.pop():?}");
 }
 

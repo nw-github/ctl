@@ -13,11 +13,11 @@ trait Foo {
 
 struct Bar {
     impl Foo {
-        fn hi(this) { println("hi: {this as ^Bar}") }
+        fn hi(this) { println("hi: {this as ^Bar:?}") }
         fn assoc(a: int) { println("assoc: {a}"); }
-        fn this_by_val(my this) { println("this by val: {&this as ^Bar}"); }
-        fn generic<T>(this, v: *T) { println("generic: {v as ^T}") }
-        fn uses_this(this, v: Bar) { println("uses this: {&v as ^Bar}") }
+        fn this_by_val(my this) { println("this by val: {&this as ^Bar:?}"); }
+        fn generic<T>(this, v: *T) { println("generic: {v as ^T:?}") }
+        fn uses_this(this, v: Bar) { println("uses this: {&v as ^Bar:?}") }
     }
 }
 

@@ -35,7 +35,7 @@ fn opt_else(a: bool, b: bool): i64 {
     }
 }
 
-fn _print(v: ?i64) { println("{v}"); }
+fn _print(v: ?i64) { println("{v:?}"); }
 
 fn main() {
     _print(opt_one_branch(false));

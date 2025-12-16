@@ -5,5 +5,5 @@ fn main() {
     let x = a.checked_div(b);
     let y = a.wrapping_div(b);
     let z = a.overflowing_div(b);
-    println("{x} {y} ({z.0}, {z.1})");
+    println("{x:?} {y} ({z.0}, {z.1})");
 }

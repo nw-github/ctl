@@ -1,4 +1,4 @@
-// Output: 1FFFFFFFFFFFFFFFF
+// Output: 1ffffffffffffffff
 // Output: 20000000000000013
 
 packed struct Foo {
@@ -8,7 +8,7 @@ packed struct Foo {
 
 fn main() {
     mut foo = Foo(a: 0, x: 0x1ffffffffffffffff);
-    println("{foo.x.to_str_radix(16)}");
+    println("{foo.x:x}");
     foo.x += 20;
-    println("{foo.x.to_str_radix(16)}");
+    println("{foo.x:x}");
 }

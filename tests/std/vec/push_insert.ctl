@@ -9,5 +9,5 @@ fn main() {
     println("{x.len()}");
 
     x.insert(idx: 1, 4);
-    println("{x.len()} {x.pop()} {x.pop()} {x.pop()} {x.pop()} {x.pop()}");
+    println("{x.len()} {x.pop():?} {x.pop():?} {x.pop():?} {x.pop():?} {x.pop():?}");
 }
