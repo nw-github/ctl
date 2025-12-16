@@ -25,7 +25,6 @@
       atomic_fetch_xor_explicit((_Atomic __typeof__(*(a)) *)a, b, c)
 #    define ctl_atomic_is_lock_free(a) atomic_is_lock_free((_Atomic __typeof__(*(a)) *)a)
 #  else
-
 #    define ctl_atomic_store_explicit                   atomic_store_explicit
 #    define ctl_atomic_load_explicit                    atomic_load_explicit
 #    define ctl_atomic_exchange_explicit                atomic_exchange_explicit
@@ -37,9 +36,7 @@
 #    define ctl_atomic_fetch_or_explicit                atomic_fetch_or_explicit
 #    define ctl_atomic_fetch_xor_explicit               atomic_fetch_xor_explicit
 #    define ctl_atomic_is_lock_free                     atomic_is_lock_free
-
 #  endif
-
 #endif
 
 #include <stdint.h>
@@ -129,7 +126,7 @@
 
 #endif
 
-#define COERCE(ty, expr) (expr, *(ty *)(NULL))
+#define COERCE(ty, expr) (expr, *(ty *)0)
 #define VOID(expr)       (expr, CTL_VOID)
 
 static void $ctl_static_init(void);
