@@ -1027,7 +1027,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
 
     fn while_expr(&mut self, token: Span, label: Option<StrId>) -> Expr {
         let cond = self.precedence(Precedence::Min, EvalContext::IfWhile);
-        let Located { span, data: body } = self.block();
+        let Located { span, data: body } = self.block(None);
         Expr::new(
             token.extended_to(span),
             ExprData::Loop { cond: Some(cond.into()), body, do_while: false, label },
@@ -1035,7 +1035,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
     }
 
     fn loop_expr(&mut self, mut token: Span, label: Option<StrId>) -> Expr {
-        let body = self.block().data;
+        let body = self.block(None).data;
         let (cond, do_while) = self
             .next_if(Token::While)
             .map(|_| {
@@ -1052,7 +1052,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
         let patt = self.pattern(false);
         self.expect(Token::In);
         let iter = self.precedence(Precedence::Min, EvalContext::For);
-        let Located { span, data: body } = self.block();
+        let Located { span, data: body } = self.block(None);
         Expr::new(token.extended_to(span), ExprData::For { patt, iter: iter.into(), body, label })
     }
 
@@ -1068,7 +1068,9 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             this.expect(Token::FatArrow);
             let (needs_comma, expr) = this.block_or_normal_expr(None);
             if needs_comma {
-                this.expect(Token::Comma);
+                if !this.matches(Token::RCurly) {
+                    this.expect(Token::Comma);
+                }
             } else {
                 this.next_if(Token::Comma);
             }
@@ -1080,16 +1082,8 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
     }
 
     fn block_expr(&mut self, token: Span, label: Option<StrId>) -> Expr {
-        let mut stmts = Vec::new();
-        let span = self.next_until(Token::RCurly, token, |this| {
-            while this.next_if(Token::Semicolon).is_some() {}
-            if this.peek().data.is_r_curly() {
-                return;
-            }
-
-            stmts.push(this.statement());
-        });
-        Expr::new(span, ExprData::Block(stmts, label))
+        let block = self.block(Some(token));
+        Expr::new(block.span, ExprData::Block(block.data, label))
     }
 
     fn lambda_expr(&mut self, head: Located<Token>, moves: bool) -> Expr {
@@ -1420,7 +1414,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
 
     fn pattern_ex(&mut self, mut_var: bool, ctx: EvalContext) -> Located<Pattern> {
         let patt = self.pattern_impl(mut_var, ctx);
-        if self.peek().data == Token::BitOr {
+        if self.matches(Token::BitOr) {
             let mut span = patt.span;
             let mut patterns = vec![patt];
             while self.next_if(Token::BitOr).is_some() {
@@ -1619,12 +1613,12 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
         }
     }
 
-    fn block(&mut self) -> Located<Vec<Stmt>> {
+    fn block(&mut self, lcurly: Option<Span>) -> Located<Vec<Stmt>> {
         let mut stmts = Vec::new();
-        let lcurly = self.expect(Token::LCurly);
-        let span = self.next_until(Token::RCurly, lcurly.span, |this| {
+        let lcurly = lcurly.unwrap_or_else(|| self.expect(Token::LCurly).span);
+        let span = self.next_until(Token::RCurly, lcurly, |this| {
             while this.next_if(Token::Semicolon).is_some() {}
-            if this.peek().data.is_r_curly() {
+            if this.matches(Token::RCurly) {
                 return;
             }
 
