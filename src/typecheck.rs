@@ -2888,7 +2888,7 @@ impl TypeChecker {
                     let mut upper = false;
                     match opts.as_ref().and_then(|opts| opts.typ) {
                         Some(FormatType::Custom(id)) => {
-                            let typ = strdata!(self, id);
+                            let typ = strdata!(self, id.data);
                             target_fn = match typ {
                                 "x" | "X" => "hex",
                                 "o" | "O" => "oct",
@@ -2896,10 +2896,9 @@ impl TypeChecker {
                                 "e" | "E" => "exp",
                                 "p" | "P" => "ptr",
                                 typ => {
-                                    // TODO: add a span to FormatType
                                     self.proj.diag.report(Error::new(
                                         format!("invalid format type '{typ}'"),
-                                        span,
+                                        id.span,
                                     ));
                                     "fmt"
                                 }

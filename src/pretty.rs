@@ -495,8 +495,8 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
                                     "type",
                                     match a {
                                         crate::ast::parsed::FormatType::Debug => "debug".into(),
-                                        crate::ast::parsed::FormatType::Custom(spur) => {
-                                            strings.resolve(&spur).into()
+                                        crate::ast::parsed::FormatType::Custom(id) => {
+                                            strings.resolve(&id.data).into()
                                         }
                                     },
                                 )

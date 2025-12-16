@@ -501,7 +501,7 @@ pub enum Sign {
 #[derive(Debug, Clone, Copy)]
 pub enum FormatType {
     Debug,
-    Custom(StrId),
+    Custom(Located<StrId>),
 }
 
 #[derive(Clone)]

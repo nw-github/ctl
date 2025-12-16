@@ -2185,7 +2185,9 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             .and_then(|_| number_or_ident(self, &mut lexer));
         let typ = next_if_map(self, &mut lexer, |this, t| match t.data {
             FormatToken::Question => Some(FormatType::Debug),
-            FormatToken::Ident(v) => Some(FormatType::Custom(this.strings.get_or_intern(v))),
+            FormatToken::Ident(v) => {
+                Some(FormatType::Custom(Located::new(t.span, this.strings.get_or_intern(v))))
+            }
             _ => None,
         });
 
