@@ -106,13 +106,14 @@ pub struct LspBackend {
 mod token {
     use tower_lsp::lsp_types::{SemanticTokenModifier, SemanticTokenType};
 
-    pub const TOKEN_TYPES: [SemanticTokenType; 6] = [
+    pub const TOKEN_TYPES: [SemanticTokenType; 7] = [
         SemanticTokenType::ENUM_MEMBER,
         SemanticTokenType::TYPE,
         SemanticTokenType::VARIABLE,
         SemanticTokenType::FUNCTION,
         SemanticTokenType::NAMESPACE,
         SemanticTokenType::KEYWORD,
+        SemanticTokenType::PARAMETER,
     ];
 
     pub const ENUM_MEMBER: u32 = 0;
@@ -121,6 +122,7 @@ mod token {
     pub const FUNCTION: u32 = 3;
     pub const NAMESPACE: u32 = 4;
     pub const KEYWORD: u32 = 5;
+    pub const PARAMETER: u32 = 6;
 
     pub const TOKEN_MODS: [SemanticTokenModifier; 4] = [
         SemanticTokenModifier::new("mutable"),
@@ -856,7 +858,13 @@ fn get_semantic_token(
                 mods |= token::mods::STATIC;
             }
 
-            if var.name.data == Strings::THIS_PARAM { token::KEYWORD } else { token::VARIABLE }
+            if var.name.data == Strings::THIS_PARAM {
+                token::KEYWORD
+            } else if var.param {
+                token::PARAMETER
+            } else {
+                token::VARIABLE
+            }
         }
         LspItem::Type(_) => token::TYPE,
         LspItem::BuiltinType(_) => token::TYPE,

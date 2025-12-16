@@ -5895,6 +5895,7 @@ impl TypeChecker {
                 ty,
                 mutable,
                 unused: typ != PatternType::BodylessFn,
+                param: typ != PatternType::Regular,
                 has_hint,
                 ..Default::default()
             },
