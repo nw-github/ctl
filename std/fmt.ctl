@@ -1,8 +1,8 @@
 pub trait Write {
-    fn write(mut this, data: [u8..]): ?uint;
+    fn write_str(mut this, data: str): ?uint;
 
-    fn write_str(mut this, data: str): ?uint {
-        this.write(data.as_bytes())
+    fn write_char(mut this, data: char): ?uint {
+        this.write_str(unsafe data.encode_utf8_unchecked(data.len_utf8(), [0u8; 4][..]))
     }
 }
 
@@ -15,9 +15,8 @@ pub struct Formatter {
     }
 
     impl Write {
-        fn write(mut this, data: [u8..]): ?uint {
-            this.write.write(data)
-        }
+        fn write_str(mut this, data: str): ?uint => this.write.write_str(data);
+        fn write_char(mut this, data: char): ?uint => this.write.write_char(data);
     }
 }
 
@@ -64,12 +63,16 @@ pub struct Arguments {
     parts: [str..],
     args:  [Argument..],
 
+    pub fn empty(): This {
+        Arguments(parts: std::span::Span::empty(), args: std::span::Span::empty())
+    }
+
     impl Format {
         fn fmt(this, f: *mut Formatter) {
             for (part, arg) in this.parts.iter().zip::<*Argument, std::span::Iter<Argument>>(this.args.iter()) {
                 part.fmt(f);
                 f.opts = arg.opts;
-                ({arg.format}(arg.value, f)); // TODO: this shouldn't be necessary
+                ({arg.format}(arg.value, f));
             }
 
             if this.parts.len() > this.args.len() {
@@ -80,47 +83,52 @@ pub struct Arguments {
 }
 
 @(feature(alloc))
-pub extension FormatStrExt<T: Format> for T {
-    pub fn to_str(this): str {
-        mut formatter = StringFormatter();
-        this.fmt(&mut Formatter::new(&mut formatter));
-        unsafe str::from_utf8_unchecked(formatter.buffer[..])
-    }
-}
-
-@(feature(alloc))
-@(lang(string_formatter))
-struct StringFormatter {
+pub struct StringBuilder {
     buffer: [u8] = @[],
 
-    impl Write {
-        fn write(mut this, data: [u8..]): ?uint {
-            this.write_str(str::from_utf8(data)?)
-        }
+    pub fn new(): This => StringBuilder();
 
+    impl Write {
         fn write_str(mut this, data: str): ?uint {
-            if data.is_empty() {
+            let len = data.len();
+            guard len != 0 else {
                 return 0;
             }
 
+            let new_len = this.buffer.len() + len;
+            this.buffer.reserve(new_len);
             unsafe {
-                this.write_unchecked(data.as_bytes())
+                std::mem::copy(
+                    dst: this.buffer.as_raw_mut() + this.buffer.len(),
+                    src: data.as_raw(),
+                    num: len,
+                );
+                this.buffer.set_len(new_len);
+                len
             }
         }
     }
 
-    unsafe fn write_unchecked(mut this, data: [u8..]): uint {
-        let len = data.len();
-        let new_len = this.buffer.len() + len;
-        this.buffer.reserve(new_len);
-        unsafe {
-            std::mem::copy(
-                dst: this.buffer.as_raw_mut() + this.buffer.len(),
-                src: data.as_raw(),
-                num: len,
-            );
-            this.buffer.set_len(new_len);
-            len
+    pub fn into_str(my this): str => unsafe str::from_utf8_unchecked(this.buffer[..]);
+}
+
+pub fn write<T: Write, U: Format>(write: *mut T, args: U) {
+    args.fmt(&mut Formatter::new(write))
+}
+
+pub fn writeln<T: Write, U: Format>(write: *mut T, args: U) {
+    "{args}\n".fmt(&mut Formatter::new(write))
+}
+
+pub mod ext {
+    use super::*;
+
+    @(feature(alloc))
+    pub extension FormatToStrExt<T: Format> for T {
+        pub fn to_str(this): str {
+            mut builder = StringBuilder::new();
+            this.fmt(&mut Formatter::new(&mut builder));
+            builder.into_str()
         }
     }
 }

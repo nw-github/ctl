@@ -1846,8 +1846,7 @@ impl TypeChecker {
 
     fn check_signature_match(
         &mut self,
-        tr: TraitId,
-        this: TypeId,
+        tr: Option<(TraitId, TypeId)>,
         has: FunctionId,
         wants: FunctionId,
         ty_args: &TypeArgs,
@@ -1874,7 +1873,10 @@ impl TypeChecker {
                 ty_args.insert(id, TypeId::UNKNOWN);
             }
         }
-        ty_args.insert(*self.proj.scopes.get(tr).kind.as_trait().unwrap().0, this);
+
+        if let Some((tr, this)) = tr {
+            ty_args.insert(*self.proj.scopes.get(tr).kind.as_trait().unwrap().0, this);
+        }
 
         let mut compare_types = |has: TypeId, wants: TypeId| {
             let wants = wants.with_templates(&mut self.proj.types, &ty_args);
@@ -2000,7 +2002,8 @@ impl TypeChecker {
 
             let rhs = *required.swap_remove(pos);
             self.resolve_proto(rhs);
-            if let Err(why) = self.check_signature_match(tr.id, this, lhs, rhs, &tr.ty_args) {
+            let this = Some((tr.id, this));
+            if let Err(why) = self.check_signature_match(this, lhs, rhs, &tr.ty_args) {
                 let data = strdata!(self, fn_name.data);
                 self.error(Error::invalid_impl(data, &why, fn_name.span))
             }
@@ -2046,20 +2049,26 @@ impl TypeChecker {
 
             let func = this.proj.scopes.get(id);
             if func.attrs.has(Strings::ATTR_PANIC_HANDLER) {
+                if body.is_none() {
+                    this.proj.diag.report(Error::new("panic handler must have a definition", func.name.span));
+                }
+
                 if let Some(_old) = this.proj.panic_handler.replace(id) {
                     // TODO: report that it was previously defined at the span of _old
                     this.proj.diag.report(Error::new("a panic handler already exists", func.name.span));
                 }
 
-                let str = this.proj.scopes.lang_types.get(&Strings::LANG_STRING);
-                if str.is_none_or(|str| func.params.first().is_none_or(|p| this.proj.types[p.ty].as_user().is_none_or(|ut| ut.id != *str)))
-                    || func.params.len() != 1
-                    || func.ret != TypeId::NEVER
-                {
-                    this.proj.diag.report(Error::new("panic handler must have signature fn(str) => never", func.name.span));
+                if let Some((&panic, _)) = this.scopes().intrinsics.iter().find(|(_, v)| strdata!(this, v) == "panic") {
+                    let fn_name = func.name;
+                    this.resolve_proto(panic);
+                    if let Err(why) = this.check_signature_match(None, id, panic, &TypeArgs::default()) {
+                        let data = strdata!(this, fn_name.data);
+                        this.proj.diag.report(Error::invalid_impl(data, &why, fn_name.span))
+                    }
                 }
             }
 
+            let func = this.proj.scopes.get(id);
             if let Some(ut_id) = func.constructor {
                 let args = func
                     .params

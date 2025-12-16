@@ -222,7 +222,7 @@ pub struct Vec<T> {
             this.cap = cap;
         } else {
             let bytes = cap * std::mem::size_of::<T>();
-            panic("TODO: vec panic"); // "Vec::_reserve(): out of memory trying to allocate {bytes} bytes!"
+            panic("Vec::_reserve(): out of memory trying to allocate {bytes} bytes!");
         }
     }
 

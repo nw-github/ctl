@@ -1,19 +1,39 @@
-extern fn write(fd: c_int, buf: *c_void, count: uint): int;
+use std::fmt;
 
-pub fn println(s: str = "") {
-    print(s);
-    print("\n");
+extern fn write(fd: c_int, buf: ^c_void, count: uint): int;
+
+struct Stdio {
+    impl fmt::Write {
+        fn write_str(mut this, s: str): ?uint {
+            if !s.is_empty() {
+                unsafe write(1, s.as_raw().cast(), s.len()) as! uint
+            }
+        }
+    }
 }
 
-pub fn print(s: str) {
-    unsafe write(1, s.as_raw() as *c_void, s.len());
+struct Stderr {
+    impl fmt::Write {
+        fn write_str(mut this, s: str): ?uint {
+            if !s.is_empty() {
+                unsafe write(2, s.as_raw().cast(), s.len()) as! uint
+            }
+        }
+    }
 }
 
-pub fn eprintln(s: str = "") {
-    eprint(s);
-    eprint("\n");
+pub fn println<T: fmt::Format>(args: T) {
+    fmt::writeln(&mut Stdio(), args);
 }
 
-pub fn eprint(s: str) {
-    unsafe write(2, s.as_raw() as *c_void, s.len());
+pub fn print<T: fmt::Format>(args: T) {
+    fmt::write(&mut Stdio(), args);
+}
+
+pub fn eprintln<T: fmt::Format>(args: T) {
+    fmt::writeln(&mut Stderr(), args);
+}
+
+pub fn eprint<T: fmt::Format>(args: T) {
+    fmt::write(&mut Stderr(), args);
 }

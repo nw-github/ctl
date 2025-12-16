@@ -1,8 +1,11 @@
-pub use intrin::panic;
 pub use intrin::unreachable_unchecked;
 
 pub fn unreachable(): never {
     panic("entered unreachable code");
+}
+
+pub fn panic<T: fmt::Format>(args: T): never {
+    intrin::panic("{args}")
 }
 
 @(feature(hosted))
@@ -18,9 +21,8 @@ pub fn exit(code: u32): never {
 
 @(feature(hosted, io))
 @(panic_handler)
-fn panic_handler(s: str): never {
-    io::eprint("fatal error: ");
-    io::eprintln(s);
+fn panic_handler(args: fmt::Arguments): never {
+    io::eprintln("fatal error: {args}");
     unsafe libc::abort();
 }
 
@@ -47,7 +49,9 @@ mod prelude {
     pub use super::opt::ext::*;
     pub use super::range::ext::*;
     pub use super::any::ext::*;
-    pub use super::fmt::FormatStrExt;
+    pub use super::fmt::ext::*;
+    pub use super::fmt::write;
+    pub use super::fmt::writeln;
 
     @(feature(alloc))
     pub use super::alloc::collections::*;
