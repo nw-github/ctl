@@ -140,11 +140,9 @@ impl TypeGen {
         }
 
         let ut_data = scopes.get(ut.id);
-        if ut_data.kind.is_unsafe_union() {
-            write_de!(decls, "typedef union ");
-        } else {
-            write_de!(decls, "typedef struct ");
-        }
+        let decltype = if ut_data.kind.is_unsafe_union() { "union" } else { "struct" };
+
+        write_de!(decls, "typedef {decltype} ");
         decls.emit_type_name(scopes, types, ut, flags.minify);
         write_de!(decls, " ");
         decls.emit_type_name(scopes, types, ut, flags.minify);
@@ -153,11 +151,7 @@ impl TypeGen {
             return;
         }
 
-        if ut_data.kind.is_unsafe_union() {
-            write_de!(defs, "union ");
-        } else {
-            write_de!(defs, "struct ");
-        }
+        write_de!(defs, "{decltype} ");
         defs.emit_type_name(scopes, types, ut, flags.minify);
         write_de!(defs, "{{");
 
@@ -173,19 +167,17 @@ impl TypeGen {
                     emit_member(scopes, types, ut, name, member.ty, defs, flags.minify);
                 }
 
-                write_de!(defs, "union{{");
-                for (&name, variant) in union.variants.iter() {
-                    if let Some(ty) = variant.ty {
-                        emit_member(scopes, types, ut, name, ty, defs, flags.minify);
+                if union.variants.iter().any(|v| v.1.ty.is_some()) {
+                    write_de!(defs, "union{{");
+                    for (&name, variant) in union.variants.iter() {
+                        if let Some(ty) = variant.ty {
+                            emit_member(scopes, types, ut, name, ty, defs, flags.minify);
+                        }
                     }
+                    write_de!(defs, "}};");
                 }
-                write_de!(defs, "}};");
             }
             UserTypeKind::PackedStruct(data) => {
-                if members.is_empty() {
-                    write_de!(defs, "CTL_DUMMY_MEMBER;");
-                }
-
                 write_de!(
                     defs,
                     "u{} {ARRAY_DATA_NAME}[{}];",
