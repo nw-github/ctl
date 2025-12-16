@@ -67,25 +67,12 @@ pub extension CharImpl for char {
         unsafe this.encode_utf8_unchecked(len, buf)
     }
 
-    pub fn is_ascii(my this): bool {
-        (this as u32) < 0b1000_0000
-    }
-
-    pub fn is_ascii_upper(my this): bool {
-        this is 'A'..='Z'
-    }
-
-    pub fn is_ascii_lower(my this): bool {
-        this is 'a'..='z'
-    }
-
-    pub fn is_ascii_digit(my this): bool {
-        this is '0'..='9'
-    }
-
-    pub fn is_ascii_hexdigit(my this): bool {
-        this is '0'..='9' | 'a'..='f' | 'A'..='F'
-    }
+    pub fn is_ascii(my this): bool => (this as u32) < 0b1000_0000;
+    pub fn is_ascii_upper(my this): bool => this is 'A'..='Z';
+    pub fn is_ascii_lower(my this): bool => this is 'a'..='z';
+    pub fn is_ascii_digit(my this): bool => this is '0'..='9';
+    pub fn is_ascii_hexdigit(my this): bool => this is '0'..='9' | 'a'..='f' | 'A'..='F';
+    pub fn is_ascii_whitespace(my this): bool => this is '\t' | '\n' | '\x0C' | '\r' | ' ';
 
     pub fn make_ascii_upper(mut this) {
         *this = this.to_ascii_upper();
@@ -123,17 +110,8 @@ pub extension CharImpl for char {
         (digit < radix).then_some(digit)
     }
 
-    pub fn min_value(): char {
-        '\0'
-    }
-
-    pub fn max_value(): char {
-        '\u{10ffff}'
-    }
-
-    pub fn is_ascii_whitespace(my this): bool {
-        this is '\t' | '\n' | '\x0C' | '\r' | ' '
-    }
+    pub fn min_value(): char => '\0';
+    pub fn max_value(): char => '\u{10ffff}';
 
     unsafe fn encode_utf8_unchecked(my this, len_utf8: uint, buf: [mut u8..]): str {
         unsafe {

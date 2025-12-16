@@ -3,17 +3,10 @@ pub union Option<T> {
     Some(T),
     null,
 
-    pub fn unwrap_or(my this, rhs: T): T {
-        this is ?val then val else rhs
-    }
+    pub fn unwrap_or(my this, rhs: T): T  => this is ?val then val else rhs;
 
-    pub fn as_ptr(this): ?*T {
-        this is ?val then val
-    }
-
-    pub fn as_mut(mut this): ?*mut T {
-        this is ?val then val
-    }
+    pub fn as_ptr(this): ?*T => this is ?val then val;
+    pub fn as_mut(mut this): ?*mut T => this is ?val then val;
 
     pub fn get_or_insert(mut this, rhs: T): *mut T {
         this is ?val then val else this.insert(rhs)
@@ -25,17 +18,10 @@ pub union Option<T> {
         this.as_mut()!
     }
 
-    pub fn take(mut this): This {
-        std::mem::replace(this, null)
-    }
+    pub fn take(mut this): This => std::mem::replace(this, null);
 
-    pub fn is_some(this): bool {
-        this is ?_
-    }
-
-    pub fn is_null(this): bool {
-        this is null
-    }
+    pub fn is_some(this): bool => this is ?_;
+    pub fn is_null(this): bool => this is null;
 
     impl std::ops::Unwrap<T> {
         fn unwrap(this): T {

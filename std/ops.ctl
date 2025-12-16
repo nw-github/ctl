@@ -19,31 +19,15 @@ pub union Ordering: i8 {
 pub trait Cmp<T> {
     fn cmp(this, rhs: *T): Ordering;
 
-    fn ge(this, rhs: *T): bool {
-        this.cmp(rhs) is Ordering::Greater | Ordering::Equal
-    }
-
-    fn gt(this, rhs: *T): bool {
-        this.cmp(rhs) is Ordering::Greater
-    }
-
-    fn le(this, rhs: *T): bool {
-        this.cmp(rhs) is Ordering::Less | Ordering::Equal
-    }
-
-    fn lt(this, rhs: *T): bool {
-        this.cmp(rhs) is Ordering::Less
-    }
+    fn ge(this, rhs: *T): bool => this.cmp(rhs) is Ordering::Greater | Ordering::Equal;
+    fn gt(this, rhs: *T): bool => this.cmp(rhs) is Ordering::Greater;
+    fn le(this, rhs: *T): bool => this.cmp(rhs) is Ordering::Less | Ordering::Equal;
+    fn lt(this, rhs: *T): bool => this.cmp(rhs) is Ordering::Less;
 }
 
 pub trait TotalCmp: Cmp<This> {
-    fn max(my this, rhs: This): This {
-        this > rhs then this else rhs
-    }
-
-    fn min(my this, rhs: This): This {
-        this > rhs then rhs else this
-    }
+    fn max(my this, rhs: This): This => this > rhs then this else rhs;
+    fn min(my this, rhs: This): This => this > rhs then rhs else this;
 
     fn clamp(my this, low: This, hi: This): This {
         if this < low {
@@ -60,9 +44,7 @@ pub trait TotalCmp: Cmp<This> {
 pub trait Eq<T> {
     fn eq(this, rhs: *T): bool;
 
-    fn ne(this, rhs: *T): bool {
-        !this.eq(rhs)
-    }
+    fn ne(this, rhs: *T): bool => !this.eq(rhs);
 }
 
 @(lang(op_add))

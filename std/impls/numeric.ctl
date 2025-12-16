@@ -185,19 +185,13 @@ pub extension IntegralImpl<T: Integral> for T {
     }
 
     @(inline)
-    pub fn checked_add(this, rhs: T): ?T {
-        this.overflowing_add(rhs) is (out, false) then out
-    }
+    pub fn checked_add(this, rhs: T): ?T => this.overflowing_add(rhs) is (out, false) then out;
 
     @(inline)
-    pub fn checked_sub(this, rhs: T): ?T {
-        this.overflowing_sub(rhs) is (out, false) then out
-    }
+    pub fn checked_sub(this, rhs: T): ?T => this.overflowing_sub(rhs) is (out, false) then out;
 
     @(inline)
-    pub fn checked_mul(this, rhs: T): ?T {
-        this.overflowing_mul(rhs) is (out, false) then out
-    }
+    pub fn checked_mul(this, rhs: T): ?T => this.overflowing_mul(rhs) is (out, false) then out;
 
     @(inline)
     pub fn saturating_add(this, rhs: T): T {
@@ -211,10 +205,10 @@ pub extension IntegralImpl<T: Integral> for T {
     }
 
     @(intrinsic)
-    pub fn max_value(): T { T::max_value() }
+    pub fn max_value(): T => T::max_value();
 
     @(intrinsic)
-    pub fn min_value(): T { T::min_value() }
+    pub fn min_value(): T => T::min_value();
 
     /// Cast `this` to type `U` if the value of this is exactly representable in U
     @(inline)
@@ -224,7 +218,7 @@ pub extension IntegralImpl<T: Integral> for T {
     }
 
     @(inline)
-    pub fn bswap(my mut this): T {
+    pub fn swap_bytes(my mut this): T {
         // TODO: make calls to compiler intrinsics when possible
         //  GCC & clang are smart enough to optimize this as-is to a bswap instruction
         //  when possible, other compilers (cough cough MSVC) may not.
@@ -280,7 +274,7 @@ pub extension SignedImpl<T: Signed> for T {
     }
 
     @(intrinsic(unary_op))
-    pub fn -(this): T { -this }
+    pub fn -(this): T => -this;
 
     @(inline)
     pub fn overflowing_div(this, rhs: T): (T, bool) {
@@ -292,9 +286,7 @@ pub extension SignedImpl<T: Signed> for T {
     }
 
     @(inline)
-    pub fn checked_div(this, rhs: T): ?T {
-        this.overflowing_div(rhs) is (out, false) then out
-    }
+    pub fn checked_div(this, rhs: T): ?T => this.overflowing_div(rhs) is (out, false) then out;
 
     pub fn from_str_radix(s: str, radix: u32): ?T {
         mut chars = s.chars();
@@ -346,14 +338,10 @@ pub extension UnsignedImpl<T: Unsigned> for T {
     /// This exists for parity with SignedExt::overflowing_div. Unsigned division cannot overflow,
     /// and as such this function always returns false.
     @(inline)
-    pub fn overflowing_div(this, rhs: T): (T, bool) {
-        (this / rhs, false)
-    }
+    pub fn overflowing_div(this, rhs: T): (T, bool) => (this / rhs, false);
 
     @(inline)
-    pub fn checked_div(this, rhs: T): ?T {
-        this / rhs
-    }
+    pub fn checked_div(this, rhs: T): ?T => this / rhs;
 
     pub fn from_str_radix(s: str, radix: u32): ?T {
         mut chars = s.chars();
@@ -376,35 +364,23 @@ pub extension UnsignedImpl<T: Unsigned> for T {
         }
     }
 
-    pub fn count_ones(this): u32 {
-        // TODO: popcountg only works for unsigned types and is only supported on later versions
-        //       of clang & gcc
-        //
-        //       to implement this generically for signed types, we need a way to convert from
-        //       iN to uN generically
-        //
-        //       it also doesn't work for unsigned _BitInt(N) where N > 128
-        //
-        // If we allowed traits to carry consts + associated types
-        //
-        //       trait Signed { type UI: Unsigned; }
-        //
-        //       // SignedExt
-        //       pub fn count_ones(this) { (this as! T::UI).count_ones() }
-        unsafe gcc_intrin::__builtin_popcountg(*this) as! u32
-    }
+    // TODO: popcountg and friends only work for unsigned integers/BitInts under 128 bits, and are
+    // only supported on later versions of clang & gcc. Generate a fallback for other types.
+    //
+    // to implement this generically for signed types, we need a way to convert from iN to uN
+    // generically.
+    //
+    // If we allowed traits to carry associated types:
+    //       trait Signed { type UI: Unsigned; }
+    //
+    //       // SignedImpl
+    //       pub fn count_ones(this) => (this as! T::UI).count_ones();
+    // In the meantime, an intrinsic might be the way to go
 
-    pub fn count_zeros(this): u32 {
-        unsafe gcc_intrin::__builtin_popcountg(!*this) as! u32
-    }
-
-    pub fn leading_zeros(this): u32 {
-        unsafe gcc_intrin::__builtin_clzg(*this) as! u32
-    }
-
-    pub fn trailing_zeros(this): u32 {
-        unsafe gcc_intrin::__builtin_ctzg(*this) as! u32
-    }
+    pub fn count_ones(this): u32 => unsafe gcc_intrin::__builtin_popcountg(*this) as! u32;
+    pub fn count_zeros(this): u32 => unsafe gcc_intrin::__builtin_popcountg(!*this) as! u32;
+    pub fn leading_zeros(this): u32 => unsafe gcc_intrin::__builtin_clzg(*this) as! u32;
+    pub fn trailing_zeros(this): u32 => unsafe gcc_intrin::__builtin_ctzg(*this) as! u32;
 }
 
 fn casting_divmod<T: Numeric, U: Numeric>(dividend: T, divisor: U): (T, T) {
