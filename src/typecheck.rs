@@ -2942,7 +2942,7 @@ impl TypeChecker {
                         prec: CExpr::new(TypeId::U16, CExprData::Int(ComptimeInt::Small(0))),
                         fill: ' ',
                         align: None,
-                        sign: false,
+                        sign: None,
                         alt: false,
                         zero: false,
                         upper,
@@ -2958,9 +2958,7 @@ impl TypeChecker {
                         if let Some(fill) = opts.fill {
                             res.fill = fill;
                         }
-                        if let Some(sign) = opts.sign {
-                            res.sign = sign == Sign::Positive;
-                        }
+                        res.sign = opts.sign;
                         res.align = opts.align;
                         res.alt = opts.alt;
                         res.zero = opts.zero;

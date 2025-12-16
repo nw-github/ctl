@@ -1,7 +1,5 @@
 use crate::{
-    comptime_int::ComptimeInt,
-    intern::StrId,
-    lexer::{Located, Span},
+    ast::{Alignment, Sign}, comptime_int::ComptimeInt, intern::StrId, lexer::{Located, Span}
 };
 
 use super::{Attributes, BinaryOp, UnaryOp};
@@ -484,19 +482,6 @@ pub struct ImplBlock {
 }
 
 pub type TypeParams = Vec<(Located<StrId>, Vec<Path>)>;
-
-#[derive(Debug, Clone, Copy)]
-pub enum Alignment {
-    Left,
-    Right,
-    Center,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Sign {
-    Positive,
-    Negative,
-}
 
 #[derive(Debug, Clone, Copy)]
 pub enum FormatType {

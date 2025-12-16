@@ -2,11 +2,7 @@ use std::fmt::Write;
 
 use crate::{
     CodegenFlags,
-    ast::{
-        BinaryOp, UnaryOp,
-        checked::*,
-        parsed::{Alignment, RangePattern},
-    },
+    ast::{Alignment, BinaryOp, Sign, UnaryOp, checked::*, parsed::RangePattern},
     comptime_int::ComptimeInt,
     dgraph::{Dependencies, DependencyGraph},
     hash::{HashMap, HashSet, IndexMap},
@@ -3290,12 +3286,11 @@ impl<'a> Codegen<'a> {
                 panic!("ICE: StringInterp: Cannot find language type 'fmt_arg'");
             };
 
-            let spec_ty =
+            let opts_ty =
                 self.proj.scopes.get(fmt_arg_ut.id).members.get(&self.str_interp.opts).unwrap().ty;
-
-            let spec_ut = self.proj.types.get(spec_ty).as_user().unwrap();
-            let typeid_align =
-                self.proj.scopes.get(spec_ut.id).members.get(&self.str_interp.align).unwrap().ty;
+            let opts_ut = self.proj.scopes.get(self.proj.types.get(opts_ty).as_user().unwrap().id);
+            let typeid_align = opts_ut.members.get(&self.str_interp.align).unwrap().ty;
+            let typeid_sign = opts_ut.members.get(&self.str_interp.sign).unwrap().ty;
 
             self.buffer.emit_type_name(
                 &self.proj.scopes,
@@ -3323,10 +3318,21 @@ impl<'a> Codegen<'a> {
                         [].into(),
                     ),
                 );
+                let sign = Expr::new(
+                    typeid_sign,
+                    ExprData::VariantInstance(
+                        match opts.sign {
+                            Some(Sign::Positive) => self.str_interp.sign_pos,
+                            Some(Sign::Negative) => self.str_interp.sign_neg,
+                            None => self.str_interp.sign_none,
+                        },
+                        [].into(),
+                    ),
+                );
 
                 self.emit_expr_inline(
                     Expr::new(
-                        spec_ty,
+                        opts_ty,
                         ExprData::Instance(
                             [
                                 (self.str_interp.width, opts.width),
@@ -3335,7 +3341,7 @@ impl<'a> Codegen<'a> {
                                 (self.str_interp.align, align),
                                 (self.str_interp.upper, Expr::from(opts.upper)),
                                 (self.str_interp.alt, Expr::from(opts.alt)),
-                                (self.str_interp.sign, Expr::from(opts.sign)),
+                                (self.str_interp.sign, sign),
                                 (self.str_interp.zero, Expr::from(opts.zero)),
                             ]
                             .into(),
@@ -3505,6 +3511,10 @@ struct StrInterp {
     align_left: StrId,
     align_right: StrId,
     align_center: StrId,
+
+    sign_none: StrId,
+    sign_pos: StrId,
+    sign_neg: StrId,
 }
 
 impl StrInterp {
@@ -3533,6 +3543,9 @@ impl StrInterp {
             align_left: strings.get("Left").unwrap(),
             align_right: strings.get("Right").unwrap(),
             align_center: strings.get("Center").unwrap(),
+            sign_none: strings.get("None").unwrap(),
+            sign_pos: strings.get("Plus").unwrap(),
+            sign_neg: strings.get("Minus").unwrap(),
         }
     }
 }

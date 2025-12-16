@@ -1,7 +1,7 @@
 use enum_as_inner::EnumAsInner;
 
 use crate::{
-    ast::{BinaryOp, UnaryOp, parsed::Alignment},
+    ast::{Alignment, BinaryOp, Sign, UnaryOp},
     comptime_int::ComptimeInt,
     hash::IndexMap,
     intern::{StrId, Strings},
@@ -344,7 +344,7 @@ pub struct FormatOpts {
     pub prec: Expr,
     pub fill: char,
     pub align: Option<Alignment>,
-    pub sign: bool,
+    pub sign: Option<Sign>,
     pub alt: bool,
     pub zero: bool,
     pub upper: bool,

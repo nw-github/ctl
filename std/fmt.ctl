@@ -22,6 +22,8 @@ pub struct Formatter {
 
 // codegen.rs depends on the names of the member variables/functions of the below structures/traits
 
+pub union Sign { None, Plus, Minus }
+
 pub union Align { None, Left, Right, Center }
 
 pub packed struct Options {
@@ -31,7 +33,7 @@ pub packed struct Options {
     pub align: Align = :None, // {val:>5}     align    = :Right
     pub upper: bool  = false, // {val:X}      upper    = true
     pub alt:   bool  = false, // {val:#x}     alt      = true
-    pub sign:  bool  = false, // {val:+}      sign     = true
+    pub sign:  Sign  = :None, // {val:+}      sign     = :Plus
     pub zero:  bool  = false, // {val:05}     zero     = true
 }
 

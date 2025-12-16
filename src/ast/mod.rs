@@ -265,3 +265,16 @@ impl UnaryOp {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum Alignment {
+    Left,
+    Right,
+    Center,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sign {
+    Positive,
+    Negative,
+}

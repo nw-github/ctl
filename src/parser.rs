@@ -2,7 +2,7 @@ use either::{Either, Either::*};
 
 use crate::{
     FormatLexer, FormatToken, Warning,
-    ast::{Attribute, Attributes, UnaryOp, parsed::*},
+    ast::{Alignment, Attribute, Attributes, Sign, UnaryOp, parsed::*},
     comptime_int::ComptimeInt,
     error::{Diagnostics, Error, FileId},
     intern::{StrId, Strings},

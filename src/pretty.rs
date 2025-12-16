@@ -469,9 +469,9 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
                                 HeaderVar::Named(
                                     "align",
                                     match a {
-                                        crate::ast::parsed::Alignment::Left => "left".into(),
-                                        crate::ast::parsed::Alignment::Right => "right".into(),
-                                        crate::ast::parsed::Alignment::Center => "center".into(),
+                                        crate::ast::Alignment::Left => "left".into(),
+                                        crate::ast::Alignment::Right => "right".into(),
+                                        crate::ast::Alignment::Center => "center".into(),
                                     },
                                 )
                             })
@@ -481,8 +481,8 @@ pub fn print_expr(expr: &Expr, strings: &Strings, indent: usize) {
                                 HeaderVar::Named(
                                     "sign",
                                     match a {
-                                        crate::ast::parsed::Sign::Positive => "+".into(),
-                                        crate::ast::parsed::Sign::Negative => "-".into(),
+                                        crate::ast::Sign::Positive => "+".into(),
+                                        crate::ast::Sign::Negative => "-".into(),
                                     },
                                 )
                             })
