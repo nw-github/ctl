@@ -4386,7 +4386,7 @@ impl TypeChecker {
                     }
                 }
                 ResolvedValue::NotFound(err) => {
-                    named_error!(self, Error::no_symbol, err.data, err.span)
+                    return named_error!(self, Error::no_symbol, err.data, err.span);
                 }
                 ResolvedValue::Error => return Default::default(),
                 _ => {}
