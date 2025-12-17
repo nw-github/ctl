@@ -669,39 +669,38 @@ impl TypeChecker {
 
         let mut completions = vec![];
         let mut emitted_vars = HashSet::new();
-        for (_, scope) in self.proj.scopes.walk(self.current) {
-            if !ty {
-                for (_, item) in scope.vns.iter() {
-                    match item.id {
-                        ValueItem::Fn(id) => {
-                            if matches!(scope.kind, ScopeKind::UserType(_)) {
-                                continue;
-                            }
-                            completions.push(LspItem::Fn(id, None))
+        let current_func = self.current_function();
+        let mut add_from_vns = |completions: &mut Vec<LspItem>,
+                                vns: &HashMap<StrId, Vis<ValueItem>>,
+                                utscope: bool| {
+            for (_, item) in vns.iter() {
+                match item.id {
+                    ValueItem::Fn(id) => {
+                        if utscope {
+                            return;
                         }
-                        ValueItem::Var(id) => {
-                            let var = self.proj.scopes.get(id);
-                            if !var.is_static
-                                && self.current_function()
-                                    != self.proj.scopes.function_of(var.scope)
-                            {
-                                continue;
-                            }
-                            if emitted_vars.contains(&var.name.data) {
-                                continue;
-                            }
-                            completions.push(LspItem::Var(id));
-                            emitted_vars.insert(var.name.data);
-                        }
-                        ValueItem::StructConstructor(_, id) => {
-                            completions.push(LspItem::Fn(id, None))
-                        }
-                        ValueItem::UnionConstructor(_) => {}
+                        completions.push(LspItem::Fn(id, None))
                     }
+                    ValueItem::Var(id) => {
+                        let var = self.proj.scopes.get(id);
+                        if !var.is_static && current_func != self.proj.scopes.function_of(var.scope)
+                        {
+                            return;
+                        }
+                        if emitted_vars.contains(&var.name.data) {
+                            return;
+                        }
+                        completions.push(LspItem::Var(id));
+                        emitted_vars.insert(var.name.data);
+                    }
+                    ValueItem::StructConstructor(_, id) => completions.push(LspItem::Fn(id, None)),
+                    ValueItem::UnionConstructor(_) => {}
                 }
             }
+        };
 
-            for (_, item) in scope.tns.iter() {
+        let add_from_tns = |completions: &mut Vec<LspItem>, tns: &HashMap<StrId, Vis<TypeItem>>| {
+            for (_, item) in tns.iter() {
                 if item.as_type().is_some_and(|&id| {
                     strdata!(self, self.proj.scopes.get(id).name.data).starts_with('$')
                 }) {
@@ -710,10 +709,39 @@ impl TypeChecker {
 
                 completions.push(item.id.into());
             }
+        };
+
+        let mut saw_root = false;
+        for (id, scope) in self.proj.scopes.walk(self.current) {
+            if !ty {
+                add_from_vns(
+                    &mut completions,
+                    &scope.vns,
+                    matches!(scope.kind, ScopeKind::UserType(_)),
+                );
+            }
+
+            add_from_tns(&mut completions, &scope.tns);
+            if id == ScopeId::ROOT {
+                saw_root = true;
+            }
 
             if scope.kind.is_module() {
                 break;
             }
+        }
+
+        if !ty {
+            add_from_vns(&mut completions, &self.proj.scopes.autouse_vns, false);
+
+            if !saw_root {
+                add_from_vns(&mut completions, &self.proj.scopes[ScopeId::ROOT].vns, false);
+            }
+        }
+
+        add_from_tns(&mut completions, &self.proj.scopes.autouse_tns);
+        if !saw_root {
+            add_from_tns(&mut completions, &self.proj.scopes[ScopeId::ROOT].tns);
         }
 
         #[rustfmt::skip]
