@@ -1941,7 +1941,9 @@ impl<'a> Codegen<'a> {
                     self.emit_pattern_if_stmt(state, &null_variant(ret), &left, opt_type);
                     hoist_point!(self, {
                         write_de!(self.buffer, "{left}{tag}=");
+                        let prev = self.emitted_never_in_this_block;
                         self.emit_expr_inline(rhs, state);
+                        self.emitted_never_in_this_block = prev;
                         if opt_type.can_omit_tag(&self.proj.scopes, &self.proj.types).is_none() {
                             write_de!(self.buffer, ";");
                             let tag = self
@@ -1970,10 +1972,13 @@ impl<'a> Codegen<'a> {
                     let opt_type = lhs.ty;
                     let name = hoist!(self, self.emit_tmpvar(lhs, state));
                     self.emit_pattern_if_stmt(state, &null_variant(ret), &name, opt_type);
+
+                    let prev = self.emitted_never_in_this_block;
                     hoist_point!(self, {
                         write_de!(self.buffer, "{tmp}=");
                         self.emit_expr_inline(rhs, state);
                     });
+                    self.emitted_never_in_this_block = prev;
                     let tag =
                         if opt_type.can_omit_tag(&self.proj.scopes, &self.proj.types).is_some() {
                             ""
