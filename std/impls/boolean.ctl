@@ -30,10 +30,12 @@ pub extension BoolImpl for bool {
     @(intrinsic(binary_op))
     pub fn ^(this, rhs: This): This { this ^ rhs }
 
+    impl Debug {
+        fn dbg(this, f: *mut Formatter) { f.write_str(*this then "true" else "false"); }
+    }
+
     impl Format {
-        fn fmt(this, f: *mut Formatter) {
-            *this then "true".fmt(f) else "false".fmt(f)
-        }
+        fn fmt(this, f: *mut Formatter) => f.pad(*this then "true" else "false");
     }
 
     pub fn then_some<T>(my this, t: T): ?T {
