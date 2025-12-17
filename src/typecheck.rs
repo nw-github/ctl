@@ -4683,7 +4683,10 @@ impl TypeChecker {
         // TODO: do this in forward decl pass
         let declared: Vec<_> =
             body.into_iter().map(|stmt| self.declare_stmt(&mut vec![], stmt)).collect();
-        declared.into_iter().map(|stmt| self.check_stmt(stmt)).collect()
+
+        self.enter_id_and_resolve(self.current, |this| {
+            declared.into_iter().map(|stmt| this.check_stmt(stmt)).collect()
+        })
     }
 
     fn create_block(&mut self, body: Vec<PStmt>, kind: ScopeKind) -> Block {
