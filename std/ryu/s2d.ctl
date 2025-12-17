@@ -1,6 +1,5 @@
 use super::common::*;
 use super::d2s;
-use super::debug_assert;
 use super::d2s_intrinsics::*;
 use super::d2s_full_table::*;
 

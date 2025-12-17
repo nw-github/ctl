@@ -26,6 +26,49 @@ pub fn panic<T: Format>(args: T, loc: SourceLocation = SourceLocation::here()): 
     std::intrin::panic("{args}", loc)
 }
 
+// TODO: this should take <T: Format>, but there is currently no way to default that
+pub fn assert(cond: bool, msg: ?Arguments = null, loc: SourceLocation = SourceLocation::here()) {
+    if !cond {
+        if msg is ?msg {
+            panic("assertion failed: {msg}", loc:);
+        } else {
+            panic("assertion failed", loc:);
+        }
+    }
+}
+
+pub fn assert_eq<Lhs: Debug + std::ops::Eq<Rhs>, Rhs: Debug>(
+    lhs: Lhs,
+    rhs: Rhs,
+    loc: SourceLocation = SourceLocation::here(),
+) {
+    if lhs != rhs {
+        panic("assertion failed: '{lhs:?}' != '{rhs:?}'", loc:);
+    }
+}
+
+pub fn assert_ne<Lhs: Debug + std::ops::Eq<Rhs>, Rhs: Debug>(
+    lhs: Lhs,
+    rhs: Rhs,
+    loc: SourceLocation = SourceLocation::here(),
+) {
+    if lhs == rhs {
+        panic("assertion failed: '{lhs:?}' == '{rhs:?}'", loc:);
+    }
+}
+
+// TODO: this should take <T: Format>, but there is currently no way to default that
+pub fn debug_assert(cond: bool, msg: ?Arguments = null, loc: SourceLocation = SourceLocation::here()) {
+    @(feature(not(optimized)))
+    if !cond {
+        if msg is ?msg {
+            panic("debug assertion failed: {msg}", loc:);
+        } else {
+            panic("debug assertion failed", loc:);
+        }
+    }
+}
+
 @(feature(hosted, io))
 @(panic_handler)
 fn panic_handler(args: Arguments, loc: SourceLocation): never {

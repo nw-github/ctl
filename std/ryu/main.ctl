@@ -86,9 +86,3 @@ pub extension Float64Ext for f64 {
         }
     }
 }
-
-pub fn debug_assert(b: bool) {
-    if !b {
-        panic("debug assertion failed!");
-    }
-}

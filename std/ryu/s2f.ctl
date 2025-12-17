@@ -1,6 +1,5 @@
 use super::common::*;
 use super::f2s;
-use super::debug_assert;
 use super::f2s_intrinsics::*;
 
 const FLOAT_EXPONENT_BIAS: uint = 127;

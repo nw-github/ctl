@@ -2,12 +2,6 @@
 
 // https://github.com/dtolnay/ryu/blob/master/tests/s2d_test.rs
 
-fn assert_eq<T: std::ops::Eq<T> + std::fmt::Format>(a: T, b: T) {
-    if a != b {
-        panic("assertion failed: {a} != {b}");
-    }
-}
-
 fn test_bad_input() {
     // assert_eq(Error::MalformedInput, f64::parse("x").unwrap_err());
     // assert_eq(Error::MalformedInput, f64::parse("1..1").unwrap_err());

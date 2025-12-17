@@ -1,4 +1,3 @@
-use super::debug_assert;
 use super::d2s;
 use super::d2s_full_table::*;
 

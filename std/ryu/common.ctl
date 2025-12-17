@@ -1,5 +1,3 @@
-use super::debug_assert;
-
 pub union Result<T, E> {
     Ok(T),
     Err(E),

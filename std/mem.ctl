@@ -34,6 +34,6 @@ pub unsafe fn transmute<In, Out>(from: In): Out {
         from: T,
         to: U,
     }
-    // static_assert(size_of::<In>() == size_of::<Out>());
+    debug_assert(size_of::<In>() == size_of::<Out>());
     unsafe Transmuter::<In, Out>(from:).to
 }
