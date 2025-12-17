@@ -71,7 +71,15 @@ impl TypeGen {
                 write_de!(buffer, ",");
             }
 
-            buffer.emit_type(scopes, types, param, flags.minify);
+            if i == 0 && !f.is_extern && types[param].is_safe_ptr() {
+                if types[param].is_ptr() {
+                    buffer.emit("void const*");
+                } else {
+                    buffer.emit("void*");
+                }
+            } else {
+                buffer.emit_type(scopes, types, param, flags.minify);
+            }
         }
         write_de!(buffer, ");");
     }
@@ -2893,8 +2901,8 @@ impl<'a> Codegen<'a> {
     ) -> (Vec<VariableId>, Option<(VariableId, String)>) {
         let f = self.proj.scopes.get(state.func.id);
         let ret = f.ret.with_templates(&mut self.proj.types, &state.func.ty_args);
-
-        if f.is_extern {
+        let is_extern = f.is_extern;
+        if is_extern {
             write_de!(self.buffer, "extern ");
         } else {
             write_de!(self.buffer, "static ");
@@ -2906,12 +2914,6 @@ impl<'a> Codegen<'a> {
                 _ => {}
             }
         }
-
-        let trait_fn = match self.proj.scopes[f.scope].kind {
-            ScopeKind::Impl(_) => true,
-            ScopeKind::UserType(id) => self.proj.scopes.get(id).kind.is_trait(),
-            _ => false,
-        };
 
         if ret == TypeId::NEVER {
             // && real
@@ -2949,8 +2951,7 @@ impl<'a> Codegen<'a> {
                 nonnull.push(format!("{}", i + 1));
             }
 
-            let override_with_voidptr =
-                trait_fn && param.label == Strings::THIS_PARAM && self.proj.types[ty].is_safe_ptr();
+            let override_with_voidptr = i == 0 && !is_extern && self.proj.types[ty].is_safe_ptr();
             if override_with_voidptr {
                 if self.proj.types[ty].is_ptr() {
                     self.buffer.emit("void const*");

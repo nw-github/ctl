@@ -154,6 +154,7 @@ impl GenericFn {
     pub fn as_fn_ptr(&self, scopes: &Scopes, types: &mut Types) -> FnPtr {
         let f = scopes.get(self.id);
         FnPtr {
+            is_extern: f.is_extern,
             params: f.params.iter().map(|p| p.ty.with_templates(types, &self.ty_args)).collect(),
             ret: f.ret.with_templates(types, &self.ty_args),
         }
@@ -328,6 +329,7 @@ impl Integer {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FnPtr {
+    pub is_extern: bool,
     pub params: Vec<TypeId>,
     pub ret: TypeId,
 }
@@ -576,7 +578,12 @@ impl TypeId {
             Type::DynMutPtr(id) => format!("*dyn mut {}", id.clone().name(scopes, types, strings)),
             Type::FnPtr(f) => {
                 let f = f.clone();
-                let mut result = "fn(".to_string();
+                let mut result = String::new();
+                if f.is_extern {
+                    result.push_str("extern ");
+                }
+
+                result.push_str("fn(");
                 for (i, &param) in f.params.iter().enumerate() {
                     if i > 0 {
                         result.push_str(", ");
@@ -890,6 +897,7 @@ impl TypeId {
             Type::FnPtr(f) => {
                 let f = f.clone();
                 let fnptr = Type::FnPtr(FnPtr {
+                    is_extern: f.is_extern,
                     params: f.params.iter().map(|p| p.with_templates(types, map)).collect(),
                     ret: f.ret.with_templates(types, map),
                 });

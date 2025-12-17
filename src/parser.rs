@@ -1578,8 +1578,13 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             }
             Token::Void => self.next().map(|_| TypeHint::Void),
             Token::ThisType => self.next().map(|_| TypeHint::This),
-            Token::Fn => {
+            Token::Extern | Token::Fn => {
                 let start = self.next();
+                let is_extern = start.data == Token::Extern;
+                if is_extern {
+                    self.expect(Token::Fn);
+                }
+
                 self.expect(Token::LParen);
                 let mut params = self.csv(Vec::new(), Token::RParen, start.span, Self::type_hint);
                 let ret = if self.next_if(Token::FatArrow).is_some() {
@@ -1592,7 +1597,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
 
                 Located::new(
                     params.span,
-                    TypeHint::Fn { is_extern: false, params: params.data, ret },
+                    TypeHint::Fn { is_extern, params: params.data, ret },
                 )
             }
             Token::Struct => {

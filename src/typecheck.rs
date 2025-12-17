@@ -2538,7 +2538,7 @@ impl TypeChecker {
                                     self.proj.diag.report(Warning::bitfield_addr(span));
                                 }
                             }
-                            CExprData::Fn(_, _) => {
+                            CExprData::Fn(_, _) | CExprData::MemFn(_, _) => {
                                 let Type::Fn(f) = &self.proj.types[expr.ty] else { unreachable!() };
                                 let f = f.clone();
                                 let fptr = Type::FnPtr(
@@ -2574,7 +2574,7 @@ impl TypeChecker {
                                     self.proj.diag.report(Warning::bitfield_addr(span));
                                 }
                             }
-                            CExprData::Fn(_, _) => {
+                            CExprData::Fn(_, _) | CExprData::MemFn(_, _) => {
                                 self.proj.diag.report(Warning::mut_function_ptr(span));
 
                                 let Type::Fn(f) = &self.proj.types[expr.ty] else { unreachable!() };
@@ -2606,7 +2606,7 @@ impl TypeChecker {
                                     self.proj.diag.report(Warning::bitfield_addr(span));
                                 }
                             }
-                            CExprData::Fn(_, _) => self
+                            CExprData::Fn(_, _) | CExprData::MemFn(_, _) => self
                                 .error(Error::new("cannot create raw pointer to function", span)),
                             _ => {}
                         }
@@ -2636,7 +2636,7 @@ impl TypeChecker {
                                     self.proj.diag.report(Warning::bitfield_addr(span));
                                 }
                             }
-                            CExprData::Fn(_, _) => self
+                            CExprData::Fn(_, _) | CExprData::MemFn(_, _) => self
                                 .error(Error::new("cannot create raw pointer to function", span)),
                             _ => {}
                         }
@@ -3608,6 +3608,7 @@ impl TypeChecker {
                 });
                 let (target, yields) = self.proj.scopes[id].kind.as_lambda().unwrap();
                 let fnptr = Type::FnPtr(FnPtr {
+                    is_extern: false,
                     params: lparams,
                     ret: yields.then(|| *target).flatten().unwrap_or(TypeId::VOID),
                 });
@@ -4909,8 +4910,9 @@ impl TypeChecker {
                     &mut self.proj.types,
                 )
             }
-            TypeHint::Fn { is_extern: _, params, ret } => {
+            TypeHint::Fn { is_extern, params, ret } => {
                 let fnptr = FnPtr {
+                    is_extern: *is_extern,
                     params: params.iter().map(|p| self.resolve_typehint(p)).collect(),
                     ret: ret.as_ref().map(|ret| self.resolve_typehint(ret)).unwrap_or(TypeId::VOID),
                 };
