@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
 use crate::{
-    CodegenFlags,
+    CachingSourceProvider, CodegenFlags, Diagnostics, OffsetMode, SourceProvider, Span,
     ast::{Alignment, BinaryOp, Sign, UnaryOp, checked::*, parsed::RangePattern},
     comptime_int::ComptimeInt,
     dgraph::{Dependencies, DependencyGraph},
@@ -831,6 +831,7 @@ pub struct Codegen<'a> {
     defers: Vec<(ScopeId, Vec<Expr>)>,
     tg: TypeGen,
     str_interp: StrInterp,
+    source: CachingSourceProvider,
 }
 
 impl Codegen<'_> {
@@ -872,6 +873,7 @@ impl Codegen<'_> {
             emitted_vtables: Default::default(),
             defers: Default::default(),
             tg: Default::default(),
+            source: CachingSourceProvider::new(),
         };
         let main = main.map(|mut main| this.gen_c_main(&mut main));
         let mut static_defs = Buffer::new(&strings);
@@ -1208,12 +1210,12 @@ impl<'a> Codegen<'a> {
                     panic!("ICE: DynCoerce from non-pointer");
                 };
             }
-            ExprData::Call(callee, args) => {
+            ExprData::Call { callee, args, scope, span } => {
                 let func = self.proj.types[callee.ty].as_fn().unwrap();
                 if let Some(name) = self.proj.scopes.intrinsic_name(func.id) {
                     let mut func = func.clone();
                     func.fill_templates(&mut self.proj.types, &state.func.ty_args);
-                    return self.emit_intrinsic(name, expr.ty, &func, args, state);
+                    return self.emit_intrinsic(name, expr.ty, &func, args, state, (scope, span));
                 } else if let Some(id) = self.proj.scopes.get(func.id).constructor {
                     if self.proj.scopes.get(id).kind.is_union() {
                         return self.emit_variant_instance(
@@ -1440,6 +1442,7 @@ impl<'a> Codegen<'a> {
                 }
             }
             ExprData::String(value) => self.emit_string_literal(strdata!(self, value)),
+            ExprData::GeneratedString(value) => self.emit_string_literal(&value),
             ExprData::ByteString(value) => {
                 self.emit_cast(expr.ty);
                 write_de!(self.buffer, "\"");
@@ -1732,7 +1735,7 @@ impl<'a> Codegen<'a> {
             ExprData::StringInterp { strings, args, scope } => {
                 self.emit_string_interp(expr.ty, state, strings, args, scope)
             }
-            ExprData::AffixOperator { callee, mfn, param, scope, postfix } => {
+            ExprData::AffixOperator { callee, mfn, param, scope, postfix, span } => {
                 let deref = "*".repeat(Self::indirection(&self.proj.types, callee.ty));
                 if !postfix {
                     hoist!(self, {
@@ -1747,6 +1750,7 @@ impl<'a> Codegen<'a> {
                                 mfn,
                                 [(param, (*callee).clone())].into(),
                                 scope,
+                                span,
                             ),
                         );
                         self.emit_expr_stmt(expr, state);
@@ -1772,6 +1776,7 @@ impl<'a> Codegen<'a> {
                                 mfn,
                                 [(param, *callee)].into(),
                                 scope,
+                                span,
                             ),
                         );
                         self.emit_expr_stmt(expr, state);
@@ -2296,6 +2301,7 @@ impl<'a> Codegen<'a> {
         func: &GenericFn,
         mut args: IndexMap<StrId, Expr>,
         state: &mut State,
+        (scope, span): (ScopeId, Span),
     ) {
         match strdata!(self, name) {
             "numeric_abs" => {
@@ -2464,6 +2470,47 @@ impl<'a> Codegen<'a> {
                 write_de!(self.buffer, ") = ");
                 self.emit_expr_inline(args.next().expect(COMPLAINT).1, state);
                 write_de!(self.buffer, ")");
+            }
+            "source_location" => {
+                let func =
+                    self.proj.scopes.walk(scope).find_map(|s| s.1.kind.as_function().copied());
+                let sl_typ = self.proj.types[ret].as_user().unwrap().id;
+                let func_strid = self.strings.get("func").unwrap();
+                let zero_strid = self.strings.get("0").unwrap();
+                let option_typ = self.proj.scopes.get(sl_typ).members.get(&func_strid).unwrap().ty;
+
+                self.buffer.emit("(");
+                self.emit_cast(ret);
+
+                let range = self
+                    .source
+                    .get_source(self.proj.diag.file_path(span.file), |data| {
+                        Diagnostics::get_span_range(data, span, OffsetMode::Utf32)
+                    })
+                    .ok();
+
+                write_de!(
+                    self.buffer,
+                    "{{.$line={},.$col={},.$func=",
+                    range.map(|s| s.start.line).unwrap_or_default() + 1,
+                    range.map(|s| s.start.character).unwrap_or_default() + 1,
+                );
+                if let Some(func) = func {
+                    let str = self.function_name(func, state);
+                    let expr = Expr::new(
+                        option_typ,
+                        ExprData::VariantInstance(Strings::SOME, [(zero_strid, str)].into()),
+                    );
+                    self.emit_expr_inline(expr, state);
+                } else {
+                    self.emit_expr_inline(Expr::option_null(option_typ), state);
+                }
+
+                // TODO: Compiler options like --remap-path-prefix & flag to omit source information
+                let path = self.proj.diag.file_path(span.file).to_string_lossy().to_string();
+                write_de!(self.buffer, ",.$file=");
+                self.emit_string_literal(&path);
+                self.buffer.emit("})");
             }
             _ => unreachable!(),
         }
@@ -3417,6 +3464,45 @@ impl<'a> Codegen<'a> {
         }
         count
     }
+
+    fn function_name(&mut self, id: FunctionId, state: &State) -> Expr {
+        let mut print_type_params = |result: &mut String, params: &[UserTypeId]| {
+            if !params.is_empty() {
+                result.push('<');
+                for (i, &id) in params.iter().enumerate() {
+                    if i != 0 {
+                        result.push_str(", ");
+                    }
+
+                    if let Some(real) = state.func.ty_args.get(&id) {
+                        result.push_str(&real.name(
+                            &self.proj.scopes,
+                            &mut self.proj.types,
+                            self.strings,
+                        ));
+                    } else {
+                        result.push_str(strdata!(self, self.proj.scopes.get(id).name.data));
+                    }
+                }
+                result.push('>');
+            }
+        };
+
+        let func = self.proj.scopes.get(id);
+        let parent = self.proj.scopes.walk(func.scope).find_map(|s| s.1.kind.as_user_type());
+        let mut result = String::new();
+        if let Some(parent) = parent {
+            let parent = self.proj.scopes.get(*parent);
+            result += strdata!(self, parent.name.data);
+            print_type_params(&mut result, &parent.type_params);
+            result += "::";
+        }
+
+        result += strdata!(self, func.name.data);
+        print_type_params(&mut result, &func.type_params);
+
+        Expr::new(self.str_interp.string_ty.unwrap(), ExprData::GeneratedString(result))
+    }
 }
 
 #[derive(Debug)]
@@ -3489,6 +3575,7 @@ fn null_variant(typ: TypeId) -> PatternData {
 struct StrInterp {
     opts: StrId,
     string: Option<GenericUserType>,
+    string_ty: Option<TypeId>,
     fmt_arg: Option<GenericUserType>,
     width: StrId,
     prec: StrId,
@@ -3511,17 +3598,19 @@ struct StrInterp {
 
 impl StrInterp {
     pub fn new(proj: &mut Project, strings: &Strings) -> Self {
+        let string = proj
+            .scopes
+            .lang_types
+            .get(&Strings::LANG_STRING)
+            .map(|&ut| GenericUserType::from_id(&proj.scopes, &mut proj.types, ut));
         Self {
             fmt_arg: proj
                 .scopes
                 .lang_types
                 .get(&Strings::LANG_FMT_ARG)
                 .map(|&ut| GenericUserType::from_id(&proj.scopes, &mut proj.types, ut)),
-            string: proj
-                .scopes
-                .lang_types
-                .get(&Strings::LANG_STRING)
-                .map(|&ut| GenericUserType::from_id(&proj.scopes, &mut proj.types, ut)),
+            string_ty: string.as_ref().map(|s| proj.types.insert(Type::User(s.clone()))),
+            string,
             opts: strings.get("opts").unwrap(),
             width: strings.get("width").unwrap(),
             prec: strings.get("prec").unwrap(),

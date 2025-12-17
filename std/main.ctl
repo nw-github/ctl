@@ -1,13 +1,3 @@
-pub use intrin::unreachable_unchecked;
-
-pub fn unreachable(): never {
-    panic("entered unreachable code");
-}
-
-pub fn panic<T: fmt::Format>(args: T): never {
-    intrin::panic("{args}")
-}
-
 @(feature(hosted))
 mod libc {
     pub extern fn abort(): never;
@@ -17,13 +7,6 @@ mod libc {
 @(feature(hosted))
 pub fn exit(code: u32): never {
     unsafe libc::exit(code as! c_int)
-}
-
-@(feature(hosted, io))
-@(panic_handler)
-fn panic_handler(args: fmt::Arguments): never {
-    io::eprintln("fatal error: {args}");
-    unsafe libc::abort();
 }
 
 mod ryu;
@@ -39,8 +22,8 @@ pub mod alloc;
 
 @(autouse)
 mod prelude {
-    pub use super::panic;
-    pub use super::unreachable;
+    pub use super::panic::panic;
+    pub use super::panic::unreachable;
     pub use super::string::str;
     pub use super::opt::Option::*;
     pub use super::iter::Iterator;

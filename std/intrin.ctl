@@ -10,13 +10,13 @@ pub extern fn size_of<T>(): uint;
 pub extern fn align_of<T>(): uint;
 
 @(intrinsic)
-pub extern fn panic(args: std::fmt::Arguments): never;
+pub extern fn panic(args: std::fmt::Arguments, loc: std::panic::SourceLocation): never;
 
 @(intrinsic)
 pub extern fn unreachable_unchecked(): never;
 
 @(intrinsic)
-pub extern fn type_id<T>(): std::intrin::TypeId;
+pub extern fn type_id<T>(): TypeId;
 
 @(intrinsic)
 pub extern fn type_name<T>(): str;

@@ -1,6 +1,7 @@
 use enum_as_inner::EnumAsInner;
 
 use crate::{
+    Span,
     ast::{Alignment, BinaryOp, Sign, UnaryOp},
     comptime_int::ComptimeInt,
     hash::IndexMap,
@@ -109,7 +110,13 @@ pub enum ExprData {
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
     AutoDeref(Box<Expr>, usize),
-    Call(Box<Expr>, IndexMap<StrId, Expr>),
+    Call {
+        callee: Box<Expr>,
+        args: IndexMap<StrId, Expr>,
+        /// This is ONLY used for the SourceLocation intrinsic, not trait resolution
+        scope: ScopeId,
+        span: Span,
+    },
     CallDyn(GenericFn, IndexMap<StrId, Expr>),
     CallFnPtr(Box<Expr>, Vec<Expr>),
     DynCoerce(Box<Expr>, ScopeId),
@@ -131,6 +138,7 @@ pub enum ExprData {
     Int(ComptimeInt),
     Float(f64),
     String(StrId),
+    GeneratedString(String),
     StringInterp {
         strings: Vec<StrId>,
         args: Vec<(Expr, FormatOpts)>,
@@ -148,6 +156,7 @@ pub enum ExprData {
         param: StrId,
         scope: ScopeId,
         postfix: bool,
+        span: Span,
     },
     If {
         cond: Box<Expr>,
@@ -201,11 +210,17 @@ impl ExprData {
         mfn: MemberFn,
         args: IndexMap<StrId, Expr>,
         scope: ScopeId,
+        span: Span,
     ) -> Self {
-        Self::Call(
-            Box::new(Expr::new(types.insert(Type::Fn(mfn.func.clone())), Self::MemFn(mfn, scope))),
+        Self::Call {
+            callee: Box::new(Expr::new(
+                types.insert(Type::Fn(mfn.func.clone())),
+                Self::MemFn(mfn, scope),
+            )),
             args,
-        )
+            scope,
+            span,
+        }
     }
 
     pub fn call(
@@ -213,11 +228,14 @@ impl ExprData {
         func: GenericFn,
         args: IndexMap<StrId, Expr>,
         scope: ScopeId,
+        span: Span,
     ) -> Self {
-        Self::Call(
-            Expr::new(types.insert(Type::Fn(func.clone())), Self::Fn(func, scope)).into(),
+        Self::Call {
+            callee: Expr::new(types.insert(Type::Fn(func.clone())), Self::Fn(func, scope)).into(),
             args,
-        )
+            scope,
+            span,
+        }
     }
 }
 
@@ -323,6 +341,16 @@ impl Expr {
 
     pub fn void() -> Expr {
         Expr::new(TypeId::VOID, ExprData::Void)
+    }
+
+    pub fn clone_at(&self, new_scope: ScopeId, new_span: Span) -> Expr {
+        let mut expr = self.clone();
+        // TODO: do this recursively
+        if let ExprData::Call { scope, span, .. } = &mut expr.data {
+            *scope = new_scope;
+            *span = new_span;
+        }
+        expr
     }
 }
 

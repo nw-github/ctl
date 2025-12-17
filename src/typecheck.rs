@@ -2193,7 +2193,13 @@ impl TypeChecker {
 
         CExpr::new(
             ret,
-            CExprData::member_call(&mut self.proj.types, mfn, [arg0, arg0val].into(), self.current),
+            CExprData::member_call(
+                &mut self.proj.types,
+                mfn,
+                [arg0, arg0val].into(),
+                self.current,
+                span,
+            ),
         )
     }
 
@@ -2237,6 +2243,7 @@ impl TypeChecker {
                     param: p0.label,
                     scope: self.current,
                     postfix: matches!(op, UnaryOp::PostDecrement | UnaryOp::PostIncrement),
+                    span, // TODO: use the span of the operator itself
                 },
             )
         } else {
@@ -2248,6 +2255,7 @@ impl TypeChecker {
                     mfn,
                     [(p0.label, arg0)].into(),
                     self.current,
+                    span,
                 ),
             )
         }
@@ -2489,7 +2497,7 @@ impl TypeChecker {
                             target.and_then(|id| id.as_pointee(&self.proj.types)),
                         );
                         match &expr.data {
-                            CExprData::Call(inner, _) => {
+                            CExprData::Call { callee: inner, .. } => {
                                 if matches!(&inner.data, CExprData::Fn(f, _)
                                     if self.is_subscript(f.id))
                                 {
@@ -2525,7 +2533,7 @@ impl TypeChecker {
                             ))
                         }
                         match &expr.data {
-                            CExprData::Call(inner, _) => {
+                            CExprData::Call { callee: inner, .. } => {
                                 if matches!(&inner.data, CExprData::Fn(f, _)
                                     if self.is_subscript(f.id))
                                 {
@@ -2557,7 +2565,7 @@ impl TypeChecker {
                             target.and_then(|id| id.as_pointee(&self.proj.types)),
                         );
                         match &expr.data {
-                            CExprData::Call(inner, _) => {
+                            CExprData::Call { callee: inner, .. } => {
                                 if matches!(&inner.data, CExprData::Fn(f, _)
                                     if self.is_subscript(f.id))
                                 {
@@ -2587,7 +2595,7 @@ impl TypeChecker {
                             ))
                         }
                         match &expr.data {
-                            CExprData::Call(inner, _) => {
+                            CExprData::Call { callee: inner, .. } => {
                                 if matches!(&inner.data, CExprData::Fn(f, _)
                                     if self.is_subscript(f.id))
                                 {
@@ -3792,7 +3800,13 @@ impl TypeChecker {
                         CExprData::AutoDeref(
                             CExpr::new(
                                 ret,
-                                CExprData::call(&mut self.proj.types, func, args, self.current),
+                                CExprData::call(
+                                    &mut self.proj.types,
+                                    func,
+                                    args,
+                                    self.current,
+                                    span,
+                                ),
                             )
                             .into(),
                             1,
@@ -3802,7 +3816,7 @@ impl TypeChecker {
 
                 return CExpr::new(
                     ret,
-                    CExprData::call(&mut self.proj.types, func, args, self.current),
+                    CExprData::call(&mut self.proj.types, func, args, self.current, span),
                 );
             }
         }
@@ -3972,9 +3986,9 @@ impl TypeChecker {
         body: Vec<PStmt>,
         label: Option<StrId>,
     ) -> CExpr {
-        let span = iter.span;
+        let iter_span = iter.span;
         let iter = self.check_expr(iter, None);
-        let Some(iter_tr_id) = self.get_lang_type_or_err("iter", span) else {
+        let Some(iter_tr_id) = self.get_lang_type_or_err("iter", iter_span) else {
             return Default::default();
         };
 
@@ -3990,7 +4004,7 @@ impl TypeChecker {
             else {
                 this.check_block(body);
                 let name = type_name!(this, iter.ty);
-                return this.error(Error::doesnt_implement(&name, "Iterator", span));
+                return this.error(Error::doesnt_implement(&name, "Iterator", iter_span));
             };
 
             let next_ty = this
@@ -4023,8 +4037,10 @@ impl TypeChecker {
                     label,
                 }),
             );
-            let (out, optional) = this
-                .loop_out_type(this.proj.scopes[body.scope].kind.as_loop().copied().unwrap(), span);
+            let (out, optional) = this.loop_out_type(
+                this.proj.scopes[body.scope].kind.as_loop().copied().unwrap(),
+                iter_span,
+            );
 
             let name = intern!(this, "$iter{}", this.current.0);
             let iter_var = this.insert::<VariableId>(
@@ -4059,6 +4075,7 @@ impl TypeChecker {
                         mfn,
                         [(p0, arg0)].into(),
                         this.current,
+                        iter_span,
                     ),
                 )
             };
@@ -4293,7 +4310,7 @@ impl TypeChecker {
                 } else {
                     return CExpr::new(
                         ret,
-                        CExprData::member_call(&mut self.proj.types, mfn, args, self.current),
+                        CExprData::member_call(&mut self.proj.types, mfn, args, self.current, span),
                     );
                 }
             }
@@ -4330,7 +4347,13 @@ impl TypeChecker {
                     } else {
                         return CExpr::new(
                             ret,
-                            CExprData::member_call(&mut self.proj.types, mfn, args, self.current),
+                            CExprData::member_call(
+                                &mut self.proj.types,
+                                mfn,
+                                args,
+                                self.current,
+                                span,
+                            ),
                         );
                     }
                 }
@@ -4409,7 +4432,7 @@ impl TypeChecker {
         }
 
         let (args, ret, _) = self.check_fn_args(&mut func, None, args, target, span);
-        CExpr::new(ret, CExprData::call(&mut self.proj.types, func, args, self.current))
+        CExpr::new(ret, CExprData::call(&mut self.proj.types, func, args, self.current, span))
     }
 
     fn check_arg<T>(
@@ -4530,7 +4553,7 @@ impl TypeChecker {
             .collect::<Vec<_>>()
         {
             if let Some(DefaultExpr::Checked(expr)) = &param.default {
-                result.insert(param.label, expr.clone());
+                result.insert(param.label, expr.clone_at(self.current, span));
             }
         }
 
@@ -7473,7 +7496,7 @@ impl TypeChecker {
 
                 Some(lhs)
             }
-            CExprData::Call(callee, _) => {
+            CExprData::Call { callee, .. } => {
                 let CExprData::Fn(func, _) = &callee.data else {
                     return self.error(Error::no_consteval(span));
                 };
@@ -7544,6 +7567,7 @@ impl Tables {
                 strings.get_or_intern_static("type_name"),
                 strings.get_or_intern_static("read_volatile"),
                 strings.get_or_intern_static("write_volatile"),
+                strings.get_or_intern_static("source_location"),
             ]
             .into(),
             binary_op_traits: [
