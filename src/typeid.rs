@@ -1,7 +1,8 @@
 use std::{fmt::Display, ops::Index};
 
 use crate::{
-    ast::{parsed::TypeHint, BinaryOp, UnaryOp},
+    Located,
+    ast::{BinaryOp, UnaryOp, parsed::TypeHint},
     comptime_int::ComptimeInt,
     hash::IndexMap,
     intern::Strings,
@@ -10,7 +11,7 @@ use crate::{
     sym::{
         ExtensionId, FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, TraitId, UserTypeId,
         UserTypeKind,
-    }, Located,
+    },
 };
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
@@ -345,7 +346,6 @@ pub enum Type {
     Uint(u32),
     CInt(CInt),
     CUint(CInt),
-    CVoid,
     Isize,
     Usize,
     F32,
@@ -479,7 +479,6 @@ impl Types {
                 Type::Char,
                 Type::F32,
                 Type::F64,
-                Type::CVoid,
                 Type::Uint(16),
             ]
             .into(),
@@ -554,8 +553,7 @@ impl TypeId {
     pub const CHAR: TypeId = TypeId(8);
     pub const F32: TypeId = TypeId(9);
     pub const F64: TypeId = TypeId(10);
-    pub const CVOID: TypeId = TypeId(11);
-    pub const U16: TypeId = TypeId(12);
+    pub const U16: TypeId = TypeId(11);
 
     pub fn name(self, scopes: &Scopes, types: &mut Types, strings: &Strings) -> String {
         match &types[self] {
@@ -615,7 +613,6 @@ impl TypeId {
             id @ (Type::CInt(ty) | Type::CUint(ty)) => {
                 format!("c_{}{ty:#}", ["", "u"][matches!(id, Type::CUint(_)) as usize])
             }
-            Type::CVoid => "c_void".into(),
         }
     }
 
@@ -926,7 +923,7 @@ impl TypeId {
     }
 
     pub fn is_void(self) -> bool {
-        matches!(self, TypeId::NEVER | TypeId::VOID | TypeId::CVOID)
+        matches!(self, TypeId::NEVER | TypeId::VOID)
     }
 
     pub fn is_packed_struct(self, proj: &Project) -> bool {

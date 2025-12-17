@@ -2,17 +2,17 @@ use std::mem::*;
 
 @(feature(not(boehm)))
 mod lib {
-    pub extern fn malloc(size: uint): ?^mut c_void;
-    pub extern fn realloc(addr: ^mut c_void, size: uint): ?^mut c_void;
+    pub extern fn malloc(size: uint): ?^mut void;
+    pub extern fn realloc(addr: ^mut void, size: uint): ?^mut void;
 }
 
 @(feature(boehm))
 mod lib {
     @(c_opaque, c_name(GC_MALLOC))
-    pub extern fn malloc(size: uint): ?^mut c_void;
+    pub extern fn malloc(size: uint): ?^mut void;
 
     @(c_opaque, c_name(GC_REALLOC))
-    pub extern fn realloc(addr: ^mut c_void, size: uint): ?^mut c_void;
+    pub extern fn realloc(addr: ^mut void, size: uint): ?^mut void;
 }
 
 pub fn alloc<T>(count: uint): ?^mut T {

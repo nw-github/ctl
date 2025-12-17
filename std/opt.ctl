@@ -3,7 +3,7 @@ pub union Option<T> {
     Some(T),
     null,
 
-    pub fn unwrap_or(my this, rhs: T): T  => this is ?val then val else rhs;
+    pub fn unwrap_or(my this, rhs: T): T => this is ?val then val else rhs;
 
     pub fn as_ptr(this): ?*T => this is ?val then val;
     pub fn as_mut(mut this): ?*mut T => this is ?val then val;
@@ -48,15 +48,11 @@ pub mod ext {
     }
 
     pub extension OptionCopied<T /*: Copy */> for ?*T {
-        pub fn copied(my this): ?T {
-            this is ?val then *val
-        }
+        pub fn copied(my this): ?T => this is ?val then *val;
     }
 
     pub extension OptionMutCopied<T /*: Copy */> for ?*mut T {
-        pub fn copied(my this): ?T {
-            this is ?val then *val
-        }
+        pub fn copied(my this): ?T => this is ?val then *val;
     }
 
     pub extension OptionEq<T: std::ops::Eq<T>> for ?T {
@@ -74,8 +70,6 @@ pub mod ext {
     }
 
     pub extension OptionFlatten<T> for ??T {
-        pub fn flatten(my this): ?T {
-            this is ??val then val
-        }
+        pub fn flatten(my this): ?T => this is ??val then val;
     }
 }

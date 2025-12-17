@@ -747,7 +747,7 @@ impl TypeChecker {
 
         #[rustfmt::skip]
         let builtins = [
-            "void", "never", "f32", "f64", "bool", "char", "c_void", "c_char",
+            "void", "never", "f32", "f64", "bool", "char", "c_char",
             "c_short", "c_int", "c_long", "c_longlong", "c_uchar", "c_ushort", "c_uint",
             "c_ulong", "c_ulonglong", "int", "uint", "u8", "i8", "u16", "i16", "u32", "i32", "u64",
             "i64", "u128", "i128",
@@ -7457,7 +7457,6 @@ impl TypeChecker {
             "f64" => Some(Type::F64),
             "bool" => Some(Type::Bool),
             "char" => Some(Type::Char),
-            "c_void" => Some(Type::CVoid),
             "c_char" => Some(Type::CInt(CInt::Char)),
             "c_short" => Some(Type::CInt(CInt::Short)),
             "c_int" => Some(Type::CInt(CInt::Int)),

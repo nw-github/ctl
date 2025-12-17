@@ -77,8 +77,8 @@ pub trait Format {
 
 @(lang(fmt_arg))
 struct Argument {
-    value:  ^c_void,
-    format: fn(^c_void, *mut Formatter),
+    value:  ^void,
+    format: fn(^void, *mut Formatter),
     opts:   Options,
 }
 

@@ -1,6 +1,6 @@
 use std::fmt;
 
-extern fn write(fd: c_int, buf: ^c_void, count: uint): int;
+extern fn write(fd: c_int, buf: ^void, count: uint): int;
 
 struct Stdio {
     impl fmt::Write {

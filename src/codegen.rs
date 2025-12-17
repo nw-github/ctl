@@ -421,7 +421,6 @@ impl<'a> Buffer<'a> {
     fn emit_mangled_name(&mut self, scopes: &Scopes, types: &mut Types, id: TypeId, min: bool) {
         match &types[id] {
             Type::Void => write_de!(self, "void"),
-            Type::CVoid => write_de!(self, "c_void"),
             Type::Never => write_de!(self, "never"),
             Type::Int(bits) => write_de!(self, "i{bits}"),
             Type::Uint(bits) => write_de!(self, "u{bits}"),
@@ -483,7 +482,7 @@ impl<'a> Buffer<'a> {
 
     fn emit_type(&mut self, scopes: &Scopes, types: &mut Types, id: TypeId, min: bool) {
         match &types[id] {
-            Type::Void | Type::Never | Type::CVoid => write_de!(self, "$void"),
+            Type::Void | Type::Never => write_de!(self, "$void"),
             Type::Int(bits) => write_de!(self, "s{bits}"),
             Type::Uint(bits) => write_de!(self, "u{bits}"),
             Type::CInt(inner) => write_de!(self, "{inner}"),
@@ -503,7 +502,7 @@ impl<'a> Buffer<'a> {
                         self.emit_type(scopes, types, i, min);
                         write_de!(self, "*/");
                     }
-                } else if types[i].is_c_void() {
+                } else if matches!(types[i], Type::Void) {
                     write_de!(self, "void");
                 } else {
                     self.emit_type(scopes, types, i, min);
@@ -1724,7 +1723,7 @@ impl<'a> Codegen<'a> {
             }
             ExprData::Lambda(_) => todo!(),
             ExprData::NeverCoerce(inner) => {
-                if matches!(expr.ty, TypeId::VOID | TypeId::CVOID) {
+                if matches!(expr.ty, TypeId::VOID) {
                     self.emit_expr_inline(*inner, state);
                 } else {
                     write_de!(self.buffer, "COERCE(");
@@ -2043,6 +2042,15 @@ impl<'a> Codegen<'a> {
                     self.emit_cast(ret);
                 }
                 if op.is_assignment() {
+                    if lhs.ty.is_void() {
+                        hoist!(self, {
+                            self.emit_expr(lhs, state);
+                            write_de!(self.buffer, ";");
+                        });
+                        self.emit_expr(rhs, state);
+                        return;
+                    }
+
                     if matches!(&lhs.data, ExprData::Member { source, .. }
                         if source.ty.is_packed_struct(&self.proj))
                     {
@@ -2099,8 +2107,8 @@ impl<'a> Codegen<'a> {
                     self.emit_expr(lhs, state);
                 }
             }
-            UnaryOp::Deref => {
-                if let &Type::Array(inner, len) = &self.proj.types[ret] {
+            UnaryOp::Deref => match &self.proj.types[ret] {
+                &Type::Array(inner, len) => {
                     let (sz, _) = inner.size_and_align(&self.proj.scopes, &mut self.proj.types);
                     tmpbuf_emit!(self, state, |tmp| {
                         self.emit_type(ret);
@@ -2108,24 +2116,34 @@ impl<'a> Codegen<'a> {
                         self.emit_expr(lhs, state);
                         write_de!(self.buffer, ",{len}*{sz});");
                     });
-                } else {
+                }
+                Type::Void => {
+                    write_de!(self.buffer, "VOID(");
+                    self.emit_expr(lhs, state);
+                    write_de!(self.buffer, ")");
+                }
+                _ => {
                     write_de!(self.buffer, "(*");
                     self.emit_expr(lhs, state);
                     write_de!(self.buffer, ")");
                 }
-            }
+            },
             UnaryOp::Addr | UnaryOp::AddrMut | UnaryOp::AddrRaw | UnaryOp::AddrRawMut => {
                 lhs.ty = lhs.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                if matches!(lhs.data, ExprData::Unary(UnaryOp::Deref, _)) {
+                    let ExprData::Unary(_, inner) = lhs.data else { unreachable!() };
+                    self.emit_expr_inner(*inner, state);
+                    return;
+                }
 
                 let array = self.proj.types[lhs.ty].is_array();
                 if !array {
                     write_de!(self.buffer, "&");
                 }
                 let is_lvalue = match &lhs.data {
-                    ExprData::Unary(UnaryOp::Deref, _)
-                    | ExprData::AutoDeref { .. }
-                    | ExprData::Var(_)
-                    | ExprData::Subscript { .. } => true,
+                    ExprData::AutoDeref { .. } | ExprData::Var(_) | ExprData::Subscript { .. } => {
+                        true
+                    }
                     ExprData::Member { source, .. } => !source.ty.is_packed_struct(&self.proj),
                     _ => false,
                 };
