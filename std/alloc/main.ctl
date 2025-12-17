@@ -37,7 +37,7 @@ pub fn new<T>(val: T): *mut T {
             &mut *ptr
         }
     } else {
-        panic("new(): out of memory!");
+        panic("out of memory attempting to allocate {std::mem::size_of::<T>()} byte object");
     }
 }
 

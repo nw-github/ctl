@@ -203,7 +203,7 @@ pub extension IntegralImpl<T: Integral> for T {
     @(feature(alloc))
     pub fn to_str_radix(this, radix: u32): str {
         guard radix is 2..=36 else {
-            panic("to_str_radix(): invalid radix");
+            panic("invalid radix {radix}: must be in range 2..=36");
         }
 
         let neg = this < 0u.cast();

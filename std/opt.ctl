@@ -28,7 +28,7 @@ pub union Option<T> {
             if this is ?inner {
                 *inner
             } else {
-                panic("Option::unwrap(): value is null!");
+                panic("attempt to unwrap null Option");
             }
         }
     }

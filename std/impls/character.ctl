@@ -65,7 +65,7 @@ pub extension CharImpl for char {
     pub fn encode_utf8(my this, buf: [mut u8..]): str {
         let len = this.len_utf8();
         if buf.len() < len {
-            panic("char::encode_utf8(): buffer size is insufficient");
+            panic("insufficient buffer size (has {buf.len()}, needs {len})");
         }
 
         unsafe this.encode_utf8_unchecked(len, buf)
@@ -102,7 +102,7 @@ pub extension CharImpl for char {
         mut digit = (this as u32).wrapping_sub('0' as u32);
         if radix > 10 {
             guard radix <= 36 else {
-                panic("to_digit: radix is too high (maximum 36)");
+                panic("invalid radix {radix}: must be <= 36");
             }
 
             if digit < 10 {

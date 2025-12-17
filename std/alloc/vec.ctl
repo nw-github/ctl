@@ -110,7 +110,7 @@ pub struct Vec<T> {
 
     pub fn insert(mut this, kw idx: uint, val: T) {
         if idx > this.len {
-            panic("Vec::insert(): index > len!");
+            panic("index {idx} is greater than length {this.len}");
         }
 
         if !this.can_insert(1) {
@@ -128,7 +128,7 @@ pub struct Vec<T> {
 
     pub fn remove(mut this, idx: uint): T {
         if idx >= this.len {
-            panic("Vec::remove(): index out of bounds!");
+            panic("index {idx} is out of bounds for vector of length {this.len}");
         }
 
         unsafe {
@@ -145,7 +145,7 @@ pub struct Vec<T> {
 
     pub fn swap_remove(mut this, idx: uint): T {
         if idx >= this.len {
-            panic("Vec::swap_remove(): index out of bounds!");
+            panic("index {idx} is out of bounds for vector of length {this.len}");
         }
 
         this.len--;
@@ -222,7 +222,7 @@ pub struct Vec<T> {
             this.cap = cap;
         } else {
             let bytes = cap * std::mem::size_of::<T>();
-            panic("Vec::_reserve(): out of memory trying to allocate {bytes} bytes!");
+            panic("out of memory trying to allocate {bytes} bytes");
         }
     }
 

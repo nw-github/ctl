@@ -151,7 +151,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         if this.get(key) is ?item {
             item
         } else {
-            panic("Map::[]: attempt to retrieve invalid key");
+            panic("attempt to retrieve invalid key");
         }
     }
 
@@ -159,7 +159,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         if this.get_mut(key) is ?item {
             item
         } else {
-            panic("Map::[]: attempt to retrieve invalid key");
+            panic("attempt to retrieve invalid key");
         }
     }
 

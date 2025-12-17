@@ -58,7 +58,7 @@ pub struct Span<T> {
         };
 
         if end < start or start > this.len or end > this.len {
-            panic("Span::subspan(): invalid range!");
+            panic("invalid range {start}..{end} in span of len {this.len}");
         }
 
         unsafe Span::new(this.ptr + start, end - start)
@@ -164,7 +164,7 @@ pub struct SpanMut<T> {
         };
 
         if end < start or start > this.len or end > this.len {
-            panic("SpanMut::subspan(): invalid range!");
+            panic("invalid range {start}..{end} in span of len {this.len}");
         }
 
         unsafe SpanMut::new(this.ptr + start, end - start)
@@ -222,7 +222,7 @@ pub struct SpanMut<T> {
     pub fn []=<R: RangeBounds<uint>>(my this, range: R, rhs: [T..]) {
         let subspan = this.subspan(range);
         if subspan.len() != rhs.len() {
-            panic("Span assignment requires that both sides are the same length");
+            panic("span assignment requires that both sides are the same length");
         }
 
         // copy_overlapping?
@@ -265,7 +265,7 @@ fn raw_subscript_checked<T, I: Integral>(ptr: ^mut T, len: uint, idx: I): ^mut T
     if idx.try_cast::<uint>() is ?idx and (0u..len).contains(&idx) {
         ptr + idx
     } else {
-        panic("Span::[]: index out of bounds");
+        panic("index {idx} is out of bounds for span of length {len}");
     }
 }
 
