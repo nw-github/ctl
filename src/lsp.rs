@@ -937,7 +937,7 @@ fn get_completion(
                 for (i, param) in f
                     .params
                     .iter()
-                    .filter(|p| !method || p.label != Strings::THIS_PARAM)
+                    .filter(|p| (!method || p.label != Strings::THIS_PARAM) && p.default.is_none())
                     .enumerate()
                 {
                     if i > 0 {
