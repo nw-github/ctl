@@ -702,7 +702,8 @@ impl TypeChecker {
         let add_from_tns = |completions: &mut Vec<LspItem>, tns: &HashMap<StrId, Vis<TypeItem>>| {
             for (_, item) in tns.iter() {
                 if item.as_type().is_some_and(|&id| {
-                    strdata!(self, self.proj.scopes.get(id).name.data).starts_with('$')
+                    strdata!(self, self.proj.scopes.get(id).name.data).starts_with('$') ||
+                        self.proj.scopes.get(id).kind.is_extension()
                 }) {
                     continue;
                 }
