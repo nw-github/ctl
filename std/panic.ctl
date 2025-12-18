@@ -16,8 +16,6 @@ pub struct SourceLocation {
     }
 }
 
-pub use std::intrin::unreachable_unchecked;
-
 pub fn unreachable(loc: SourceLocation = SourceLocation::here()): never {
     panic("entered unreachable code", loc:);
 }

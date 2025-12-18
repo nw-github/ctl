@@ -136,7 +136,7 @@ pub struct Chars {
                     cp += *this.s.get_unchecked(3) as u32 & 0x3f;
                     this.s = this.s[4u..];
                 } else {
-                    std::panic::unreachable_unchecked();
+                    std::hint::unreachable_unchecked();
                 }
 
                 char::from_u32_unchecked(cp)
