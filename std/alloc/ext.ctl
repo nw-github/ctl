@@ -1,40 +1,38 @@
-use std::fmt::Format;
+use std::fmt::Debug;
 use std::fmt::Formatter;
 
-pub extension VecFormat<T: Format> for [T] {
-    impl Format {
-        fn fmt(this, f: *mut Formatter) {
-            this[..].fmt(f);
-        }
+pub extension VecDebug<T: Debug> for [T] {
+    impl Debug {
+        fn dbg(this, f: *mut Formatter) => this[..].dbg(f);
     }
 }
 
-pub extension MapFormat<K: Format, V: Format> for [K: V] {
-    impl Format {
-        fn fmt(this, f: *mut Formatter) {
-            "[".fmt(f);
+pub extension MapFormat<K: Debug, V: Debug> for [K: V] {
+    impl Debug {
+        fn dbg(this, f: *mut Formatter) {
+            f.write_str("[");
             for (i, (key, value)) in this.iter().enumerate() {
                 if i > 0 {
-                    ", ".fmt(f);
+                    f.write_str(", ");
                 }
-                "{key}: {value}".fmt(f);
+                write(f, "{key:?}: {value:?}");
             }
-            "]".fmt(f);
+            f.write_str("]");
         }
     }
 }
 
-pub extension SetFormat<T: Format> for #[T] {
-    impl Format {
-        fn fmt(this, f: *mut Formatter) {
-            "\{".fmt(f);
+pub extension SetDebug<T: Debug> for #[T] {
+    impl Debug {
+        fn dbg(this, f: *mut Formatter) {
+            f.write_str("\{");
             for (i, item) in this.iter().enumerate() {
                 if i > 0 {
-                    ", ".fmt(f);
+                    f.write_str(", ");
                 }
-                item.fmt(f);
+                write(f, "{item:?}");
             }
-            "\}".fmt(f);
+            f.write_str("\}");
         }
     }
 }

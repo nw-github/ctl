@@ -16,9 +16,7 @@ pub struct str {
         }
     }
 
-    pub unsafe fn from_utf8_unchecked(span: [u8..]): str {
-        str(span:)
-    }
+    pub unsafe fn from_utf8_unchecked(span: [u8..]): str => str(span:);
 
     pub unsafe fn from_cstr(s: ^c_char): ?str {
         str::from_utf8(unsafe std::span::Span::new((&raw *s).cast(), std::intrin::strlen(s)))
@@ -28,29 +26,13 @@ pub struct str {
         str(span: unsafe std::span::Span::new((&raw *s).cast(), std::intrin::strlen(s)))
     }
 
-    pub fn len(this): uint {
-        this.span.len()
-    }
+    pub fn len(this): uint => this.span.len();
+    pub fn is_empty(this): bool => this.span.is_empty();
+    pub fn as_raw(this): ^u8 => this.span.as_raw();
+    pub fn as_bytes(this): [u8..] => this.span;
 
-    pub fn is_empty(this): bool {
-        this.span.is_empty()
-    }
-
-    pub fn as_raw(this): ^u8 {
-        this.span.as_raw()
-    }
-
-    pub fn as_bytes(this): [u8..] {
-        this.span
-    }
-
-    pub fn chars(this): Chars {
-        Chars(s: this.as_bytes())
-    }
-
-    pub fn char_indices(this): CharIndices {
-        CharIndices(chars: this.chars(), len: this.len())
-    }
+    pub fn chars(this): Chars  => Chars(s: this.as_bytes());
+    pub fn char_indices(this): CharIndices  => CharIndices(chars: this.chars(), len: this.len());
 
     pub fn substr<R: RangeBounds<uint>>(this, range: R): ?str {
         let span = this.span[range];
@@ -72,15 +54,11 @@ pub struct str {
     }
 
     impl Hash {
-        fn hash<H: Hasher>(this, h: *mut H) {
-            h.hash(this.span);
-        }
+        fn hash<H: Hasher>(this, h: *mut H) => h.hash(this.span);
     }
 
     impl Eq<str> {
-        fn eq(this, rhs: *str): bool {
-            this.as_bytes() == rhs.as_bytes()
-        }
+        fn eq(this, rhs: *str): bool => this.as_bytes() == rhs.as_bytes();
     }
 
     impl Debug {
@@ -91,13 +69,8 @@ pub struct str {
         fn fmt(this, f: *mut Formatter) => f.pad(*this);
     }
 
-    pub fn []<I: Integral>(this, idx: I): *u8 {
-        &this.span[idx]
-    }
-
-    pub fn []<R: RangeBounds<uint>>(this, range: R): str {
-        this.substr(range).unwrap()
-    }
+    pub fn []<I: Integral>(this, idx: I): *u8 => &this.span[idx];
+    pub fn []<R: RangeBounds<uint>>(this, range: R): str => this.substr(range).unwrap();
 
     @(feature(alloc))
     pub fn repeat(this, n: uint): str {
@@ -177,7 +150,6 @@ pub struct CharIndices {
         }
     }
 }
-
 
 fn is_char_boundary(b: u8): bool {
     // From the Rust standard library:

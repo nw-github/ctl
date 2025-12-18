@@ -6,25 +6,12 @@ pub struct Span<T> {
     ptr: ^T,
     len: uint,
 
-    pub unsafe fn new(ptr: ^T, len: uint): [T..] {
-        Span(ptr:, len:)
-    }
+    pub unsafe fn new(ptr: ^T, len: uint): This => Span(ptr:, len:);
+    pub fn from_ptr(ptr: *T): This => unsafe Span::new(ptr, 1);
+    pub fn empty(): This => Span(ptr: std::ptr::raw_dangling(), len: 0);
 
-    pub fn from_ptr(ptr: *T): [T..] {
-        unsafe Span::new(&raw *ptr, 1)
-    }
-
-    pub fn empty(): [T..] {
-        Span(ptr: std::ptr::raw_dangling(), len: 0)
-    }
-
-    pub fn len(my this): uint {
-        this.len
-    }
-
-    pub fn is_empty(my this): bool {
-        this.len == 0
-    }
+    pub fn len(my this): uint => this.len;
+    pub fn is_empty(my this): bool => this.len == 0;
 
     pub fn get(my this, idx: uint): ?*T {
         if idx < this.len {
@@ -34,9 +21,7 @@ pub struct Span<T> {
 
     pub unsafe fn get_unchecked(my this, idx: uint): *T => unsafe &*this.ptr.add(idx);
 
-    pub fn as_raw(my this): ^T {
-        this.ptr
-    }
+    pub fn as_raw(my this): ^T => this.ptr;
 
     pub fn iter(my this): Iter<T> => Iter(ptr: this.ptr, end: this.ptr.add(this.len));
 
@@ -60,9 +45,7 @@ pub struct Span<T> {
         unsafe Span::new(this.ptr.add(start), end - start)
     }
 
-    pub fn first(my this): ?*T {
-        this.get(0)
-    }
+    pub fn first(my this): ?*T => this.get(0);
 
     pub fn last(my this): ?*T {
         if !this.is_empty() {
@@ -76,9 +59,7 @@ pub struct Span<T> {
     }
 
     @(inline(always))
-    pub fn []<R: RangeBounds<uint>>(my this, range: R): [T..] {
-        this.subspan(range)
-    }
+    pub fn []<R: RangeBounds<uint>>(my this, range: R): [T..] => this.subspan(range);
 }
 
 @(lang(span_mut))
@@ -86,25 +67,12 @@ pub struct SpanMut<T> {
     ptr: ^mut T,
     len: uint,
 
-    pub unsafe fn new(ptr: ^mut T, len: uint): [mut T..] {
-        SpanMut(ptr:, len:)
-    }
+    pub unsafe fn new(ptr: ^mut T, len: uint): This => SpanMut(ptr:, len:);
+    pub fn from_ptr(ptr: *mut T): This => unsafe SpanMut::new(ptr, 1);
+    pub fn empty(): This => SpanMut(ptr: std::ptr::raw_dangling(), len: 0);
 
-    pub fn from_ptr(ptr: *mut T): [mut T..] {
-        unsafe SpanMut::new(&raw mut *ptr, 1)
-    }
-
-    pub fn empty(): [mut T..] {
-        SpanMut(ptr: std::ptr::raw_dangling(), len: 0)
-    }
-
-    pub fn len(my this): uint {
-        this.len
-    }
-
-    pub fn is_empty(my this): bool {
-        this.len == 0
-    }
+    pub fn len(my this): uint => this.len;
+    pub fn is_empty(my this): bool => this.len == 0;
 
     pub fn get(my this, idx: uint): ?*T {
         if idx < this.len {
@@ -121,17 +89,9 @@ pub struct SpanMut<T> {
     pub unsafe fn get_unchecked(my this, idx: uint): *T => unsafe &*this.ptr.add(idx);
     pub unsafe fn get_mut_unchecked(my this, idx: uint): *mut T => unsafe &mut *this.ptr.add(idx);
 
-    pub fn as_span(my this): [T..] {
-        this
-    }
-
-    pub fn as_raw(my this): ^T {
-        this.ptr
-    }
-
-    pub fn as_raw_mut(my this): ^mut T {
-        this.ptr
-    }
+    pub fn as_span(my this): [T..] => this;
+    pub fn as_raw(my this): ^T => this.ptr;
+    pub fn as_raw_mut(my this): ^mut T => this.ptr;
 
     pub fn iter(this): Iter<T> => Iter(ptr: this.ptr, end: this.ptr.add(this.len));
     pub fn iter_mut(my this): IterMut<T> => IterMut(ptr: this.ptr, end: this.ptr.add(this.len));
@@ -163,17 +123,10 @@ pub struct SpanMut<T> {
         }
     }
 
-    pub fn swap(my this, a: uint, b: uint) {
-        std::mem::swap(&mut this[a], &mut this[b]);
-    }
+    pub fn swap(my this, a: uint, b: uint) => std::mem::swap(&mut this[a], &mut this[b]);
 
-    pub fn first(my this): ?*T {
-        this.get(0)
-    }
-
-    pub fn first_mut(my this): ?*mut T {
-        this.get_mut(0)
-    }
+    pub fn first(my this): ?*T => this.get(0);
+    pub fn first_mut(my this): ?*mut T => this.get_mut(0);
 
     pub fn last(my this): ?*T {
         if !this.is_empty() {
@@ -189,7 +142,7 @@ pub struct SpanMut<T> {
 
     @(inline)
     pub fn []<I: Integral>(my this, idx: I): *mut T {
-        unsafe raw_subscript_checked(this.ptr, this.len, idx) as *mut T
+        unsafe &mut *raw_subscript_checked(this.ptr, this.len, idx)
     }
 
     @(inline)
@@ -200,9 +153,7 @@ pub struct SpanMut<T> {
     }
 
     @(inline(always))
-    pub fn []<R: RangeBounds<uint>>(my this, range: R): [mut T..] {
-        this.subspan(range)
-    }
+    pub fn []<R: RangeBounds<uint>>(my this, range: R): [mut T..] => this.subspan(range);
 
     @(inline(always))
     pub fn []=<R: RangeBounds<uint>>(my this, range: R, rhs: [T..]) {
@@ -262,7 +213,7 @@ pub mod ext {
     use std::ops::Cmp;
     use std::hash::Hash;
     use std::hash::Hasher;
-    use std::fmt::Format;
+    use std::fmt::Debug;
     use std::fmt::Formatter;
 
     pub extension SpanEq<T: Eq<T>> for [T..] {
@@ -293,18 +244,12 @@ pub mod ext {
 
     pub extension SpanMutHash<T: Hash> for [mut T..] {
         impl Hash {
-            fn hash<H: Hasher>(this, hasher: *mut H) {
-                for v in this.iter() {
-                    v.hash(hasher);
-                }
-            }
+            fn hash<H: Hasher>(this, hasher: *mut H) => this.as_span().hash(hasher);
         }
     }
 
     pub extension SpanMutEq<T: Eq<T>> for [mut T..] {
-        pub fn ==(this, rhs: *[T..]): bool {
-            this.as_span() == rhs
-        }
+        pub fn ==(this, rhs: *[T..]): bool => this.as_span() == rhs;
     }
 
     pub extension SpanMutSort<T: Cmp<T>> for [mut T..] {
@@ -329,25 +274,25 @@ pub mod ext {
         }
     }
 
-    pub extension SpanFormat<T: Format> for [T..] {
-        impl Format {
-            fn fmt(this, f: *mut Formatter) {
-                "[".fmt(f);
+    pub extension SpanDebug<T: Debug> for [T..] {
+        impl Debug {
+            fn dbg(this, f: *mut Formatter) {
+                f.write_char('[');
                 for (i, item) in this.iter().enumerate() {
                     if i > 0 {
-                        ", ".fmt(f);
+                        f.write_str(", ");
                     }
-                    item.fmt(f);
+                    write(f, "{item:?}");
                 }
-                "]".fmt(f);
+                f.write_char(']');
             }
         }
     }
 
-    pub extension SpanMutFormat<T: Format> for [mut T..] {
-        impl Format {
-            fn fmt(this, f: *mut Formatter) {
-                this.as_span().fmt(f)
+    pub extension SpanMutDebug<T: Debug> for [mut T..] {
+        impl Debug {
+            fn dbg(this, f: *mut Formatter) {
+                this.as_span().dbg(f)
             }
         }
     }

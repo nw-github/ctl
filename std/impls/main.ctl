@@ -5,21 +5,16 @@ use std::span::*;
 
 pub extension VoidImpl for void {
     impl Hash {
-        fn hash<H: Hasher>(this, h: *mut H) {
-            h.hash([0u8][..]);
-        }
+        fn hash<H: Hasher>(this, _: *mut H) {}
     }
 
     impl Eq<This> {
-        fn eq(this, _rhs: *This): bool { true }
-
-        fn ne(this, _rhs: *This): bool { false }
+        fn eq(this, _: *This): bool => true;
+        fn ne(this, _: *This): bool => false;
     }
 
-    impl Format {
-        fn fmt(this, f: *mut Formatter) {
-            "void".fmt(f);
-        }
+    impl Debug {
+        fn dbg(this, f: *mut Formatter) => write(f, "void");
     }
 }
 

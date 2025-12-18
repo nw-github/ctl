@@ -10,9 +10,7 @@ pub struct Vec<T> {
     len: uint,
     cap: uint,
 
-    pub fn new(): This {
-        Vec(ptr: std::ptr::raw_dangling(), len: 0, cap: 0)
-    }
+    pub fn new(): This => Vec(ptr: std::ptr::raw_dangling(), len: 0, cap: 0);
 
     pub fn with_capacity(cap: uint): This {
         mut self: This = Vec::new();
@@ -33,33 +31,15 @@ pub struct Vec<T> {
         self
     }
 
-    pub fn len(this): uint {
-        this.len
-    }
-
-    pub fn is_empty(this): bool {
-        this.len == 0
-    }
-
-    pub fn capacity(this): uint {
-        this.cap
-    }
-
-    pub fn as_span(this): [T..] {
-        unsafe Span::new(this.ptr, this.len)
-    }
-
-    pub fn as_span_mut(mut this): [mut T..] {
-        unsafe SpanMut::new(this.ptr, this.len)
-    }
-
-    pub fn iter(this): Iter<T> {
-        this[..].iter()
-    }
-
-    pub fn iter_mut(mut this): IterMut<T> {
-        this[..].iter_mut()
-    }
+    pub fn len(this): uint => this.len;
+    pub fn is_empty(this): bool => this.len == 0;
+    pub fn capacity(this): uint => this.cap;
+    pub fn as_span(this): [T..] => unsafe Span::new(this.ptr, this.len);
+    pub fn as_span_mut(mut this): [mut T..] => unsafe SpanMut::new(this.ptr, this.len);
+    pub fn as_raw(this): ^T => this.ptr;
+    pub fn as_raw_mut(this): ^mut T => this.ptr;
+    pub fn iter(this): Iter<T> => this[..].iter();
+    pub fn iter_mut(mut this): IterMut<T> => this[..].iter_mut();
 
     pub fn push(mut this, val: T) {
         if !this.can_insert(1) {
@@ -164,9 +144,7 @@ pub struct Vec<T> {
         }
     }
 
-    pub fn reserve(mut this, add: uint) {
-        this._reserve(this.len + add);
-    }
+    pub fn reserve(mut this, add: uint) => this.do_reserve(this.len + add);
 
     pub fn get(this, idx: uint): ?*T {
         if idx < this.len {
@@ -180,27 +158,13 @@ pub struct Vec<T> {
         }
     }
 
-    pub fn as_raw(this): ^T {
-        this.ptr
-    }
+    pub unsafe fn set_len(mut this, len: uint) => this.len = len;
 
-    pub fn as_raw_mut(this): ^mut T {
-        this.ptr
-    }
+    fn grow(mut this) => this.do_reserve(this.cap * 2);
 
-    pub unsafe fn set_len(mut this, len: uint) {
-        this.len = len;
-    }
+    fn can_insert(this, count: uint): bool => this.len + count <= this.cap;
 
-    fn grow(mut this) {
-        this._reserve(this.cap * 2);
-    }
-
-    fn can_insert(this, count: uint): bool {
-        this.len + count <= this.cap
-    }
-
-    fn _reserve(mut this, cap: uint) {
+    fn do_reserve(mut this, cap: uint) {
         let cap = cap.max(1);
         if cap <= this.cap {
             return;
@@ -237,32 +201,20 @@ pub struct Vec<T> {
     }
 
     @(inline(always))
-    pub fn []<I: Integral>(this, idx: I): *T {
-        &this[..][idx]
-    }
+    pub fn []<I: Integral>(this, idx: I): *T => &this[..][idx];
 
     @(inline(always))
-    pub fn []<I: Integral>(mut this, idx: I): *mut T {
-        &mut this[..][idx]
-    }
+    pub fn []<I: Integral>(mut this, idx: I): *mut T => &mut this[..][idx];
 
     @(inline(always))
-    pub fn []=<I: Integral>(mut this, idx: I, val: T) {
-        this[..][idx] = val;
-    }
+    pub fn []=<I: Integral>(mut this, idx: I, val: T) => this[..][idx] = val;
 
     @(inline(always))
-    pub fn []<R: RangeBounds<uint>>(this, range: R): [T..] {
-        this.as_span()[range]
-    }
+    pub fn []<R: RangeBounds<uint>>(this, range: R): [T..] => this.as_span()[range];
 
     @(inline(always))
-    pub fn []<R: RangeBounds<uint>>(mut this, range: R): [mut T..] {
-        this.as_span_mut()[range]
-    }
+    pub fn []<R: RangeBounds<uint>>(mut this, range: R): [mut T..] => this.as_span_mut()[range];
 
     @(inline(always))
-    pub fn []=<R: RangeBounds<uint>>(mut this, range: R, rhs: [T..]) {
-        this[range] = rhs;
-    }
+    pub fn []=<R: RangeBounds<uint>>(mut this, range: R, rhs: [T..]) => this[range] = rhs;
 }
