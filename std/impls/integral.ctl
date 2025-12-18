@@ -44,6 +44,8 @@ mod gcc_intrin {
 }
 
 pub extension IntegralImpl<T: Integral> for T {
+    impl TotallyOrdered { }
+
     @(intrinsic(binary_op))
     pub fn &(this, rhs: T): T => this & rhs;
 

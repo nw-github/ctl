@@ -25,7 +25,7 @@ pub trait Cmp<T> {
     fn lt(this, rhs: *T): bool => this.cmp(rhs) is Ordering::Less;
 }
 
-pub trait TotalCmp: Cmp<This> {
+pub trait TotallyOrdered: Cmp<This> {
     fn max(my this, rhs: This): This => this > rhs then this else rhs;
     fn min(my this, rhs: This): This => this > rhs then rhs else this;
 

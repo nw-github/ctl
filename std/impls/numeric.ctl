@@ -33,8 +33,6 @@ pub extension NumericImpl<T: Numeric> for T {
         fn ne(this, rhs: *T): bool => this != rhs;
     }
 
-    impl TotalCmp { }
-
     @(intrinsic(binary_op))
     pub fn +(this, rhs: T): T => this + rhs;
 

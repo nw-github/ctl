@@ -18,6 +18,8 @@ mod libm {
 }
 
 pub extension F32Impl for f32 {
+    pub fn parse(s: str): ?f32 => s2f::s2f(s.as_bytes()) is :Ok(v) then v;
+
     pub fn to_bits(my this): u32 => unsafe std::mem::transmute(this);
     pub fn from_bits(v: u32): f32 => unsafe std::mem::transmute(v);
 
@@ -45,20 +47,62 @@ pub extension F32Impl for f32 {
     }
 
     pub fn abs(my this): f32 => f32::from_bits(this.to_bits() & !(1 << 31));
-    pub fn parse(s: str): ?f32 => s2f::s2f(s.as_bytes()) is :Ok(v) then v;
+    pub fn is_sign_positive(my this): bool => !this.is_sign_negative();
+    pub fn is_sign_negative(my this): bool => this.to_bits() & (1 << 31) != 0;
+
+    pub fn min(my this, rhs: This): This {
+        if this < rhs {
+            this
+        } else if rhs < this {
+            rhs
+        } else if this == rhs {
+            // prefer -0.0
+            this.is_sign_negative() and rhs.is_sign_positive() then this else rhs
+        } else {
+            // At least one input is NaN. Use `+` to perform NaN propagation and quieting.
+            this + rhs
+        }
+    }
+
+    pub fn max(my this, y: This): This {
+        if this > y {
+            this
+        } else if y > this {
+            y
+        } else if this == y {
+            this.is_sign_positive() and y.is_sign_negative() then this else y
+        } else {
+            this + y
+        }
+    }
+
+    pub fn clamp(my mut this, min: This, max: This): This {
+        debug_assert(min <= max, "min > max, or either was NaN. min = {min:?}, max = {max:?}");
+        if this < min {
+            this = min;
+        }
+        if this > max {
+            this = max;
+        }
+        this
+    }
 
     impl Debug {
-        fn dbg(this, f: *mut Formatter) => this.fmt(f);
+        fn dbg(this, f: *mut Formatter) {
+            f.write_str(Buffer::new().format(*this));
+        }
     }
 
     impl Format {
         fn fmt(this, f: *mut Formatter) {
-            Buffer::new().format(*this).fmt(f);
+            f.pad(Buffer::new().format(*this));
         }
     }
 }
 
 pub extension F64Impl for f64 {
+    pub fn parse(s: str): ?f64 => s2d::s2d(s.as_bytes()) is :Ok(v) then v;
+
     pub fn to_bits(my this): u64 => unsafe std::mem::transmute(this);
     pub fn from_bits(v: u64): f64 => unsafe std::mem::transmute(v);
 
@@ -85,15 +129,54 @@ pub extension F64Impl for f64 {
     }
 
     pub fn abs(my this): f64 => f64::from_bits(this.to_bits() & !(1 << 63));
-    pub fn parse(s: str): ?f64 => s2d::s2d(s.as_bytes()) is :Ok(v) then v;
+    pub fn is_sign_positive(my this): bool => !this.is_sign_negative();
+    pub fn is_sign_negative(my this): bool => this.to_bits() & (1 << 63) != 0;
+
+    pub fn min(my this, rhs: This): This {
+        if this < rhs {
+            this
+        } else if rhs < this {
+            rhs
+        } else if this == rhs {
+            this.is_sign_negative() and rhs.is_sign_positive() then this else rhs
+        } else {
+            // At least one input is NaN. Use `+` to perform NaN propagation and quieting.
+            this + rhs
+        }
+    }
+
+    pub fn max(my this, y: This): This {
+        if this > y {
+            this
+        } else if y > this {
+            y
+        } else if this == y {
+            this.is_sign_positive() and y.is_sign_negative() then this else y
+        } else {
+            this + y
+        }
+    }
+
+    pub fn clamp(my mut this, min: This, max: This): This {
+        debug_assert(min <= max, "min > max, or either was NaN. min = {min:?}, max = {max:?}");
+        if this < min {
+            this = min;
+        }
+        if this > max {
+            this = max;
+        }
+        this
+    }
 
     impl Debug {
-        fn dbg(this, f: *mut Formatter) => this.fmt(f);
+        fn dbg(this, f: *mut Formatter) {
+            f.write_str(Buffer::new().format(*this));
+        }
     }
 
     impl Format {
         fn fmt(this, f: *mut Formatter) {
-            Buffer::new().format(*this).fmt(f);
+            f.pad(Buffer::new().format(*this));
         }
     }
 }
