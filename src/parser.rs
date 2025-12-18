@@ -1805,8 +1805,17 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
         self.expect(Token::LCurly);
 
         let mut functions = Vec::new();
+        let mut assoc_types = Vec::new();
         let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
+            if this.next_if(Token::Type).is_some() {
+                let ident = this.expect_ident("expected type name");
+                let impls = this.trait_impls();
+                this.expect(Token::Semicolon);
+                assoc_types.push((ident, impls));
+                return;
+            }
+
             let config = FnConfig {
                 tk_unsafe: this.next_if(Token::Unsafe).map(|t| t.span),
                 forced_pub: true,
@@ -1826,7 +1835,16 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
 
         Located::new(
             span,
-            StmtData::Trait { public, sealed, is_unsafe, name, type_params, impls, functions },
+            StmtData::Trait {
+                public,
+                sealed,
+                is_unsafe,
+                name,
+                type_params,
+                impls,
+                functions,
+                assoc_types,
+            },
         )
     }
 
@@ -1872,10 +1890,20 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
         self.expect(Token::LCurly);
 
         let mut functions = Vec::new();
+        let mut assoc_types = Vec::new();
         let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
             if let Some(token) = this.next_if(Token::Pub) {
                 this.error_no_sync(Error::not_valid_here(&token));
+            }
+
+            if this.next_if(Token::Type).is_some() {
+                let name = this.expect_ident("expected type name");
+                this.expect(Token::Assign);
+                let hint = this.type_hint();
+                this.expect(Token::Semicolon);
+                assoc_types.push((name, hint));
+                return;
             }
 
             let config = FnConfig {
@@ -1896,7 +1924,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             }
         });
 
-        Located::new(span, ImplBlock { attrs, type_params, path, functions })
+        Located::new(span, ImplBlock { attrs, type_params, path, functions, assoc_types })
     }
 
     fn try_function(

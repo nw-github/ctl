@@ -79,6 +79,7 @@ pub enum StmtData {
         type_params: TypeParams,
         impls: Vec<Path>,
         functions: Vec<Located<Fn>>,
+        assoc_types: TypeParams,
     },
     Extension {
         public: bool,
@@ -501,6 +502,7 @@ pub struct ImplBlock {
     pub attrs: Attributes,
     pub type_params: TypeParams,
     pub path: Path,
+    pub assoc_types: Vec<(Located<StrId>, Located<TypeHint>)>,
     pub functions: Vec<Located<Fn>>,
 }
 

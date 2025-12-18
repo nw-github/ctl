@@ -1218,6 +1218,7 @@ impl TypeChecker {
                 functions,
                 sealed,
                 is_unsafe: _,
+                assoc_types: _,
             } => {
                 let lang_item = stmt.attrs.val(Strings::ATTR_LANG);
                 let (tr, fns, this_id) = self.enter(ScopeKind::None, |this| {
@@ -1550,7 +1551,7 @@ impl TypeChecker {
         let mut declared_blocks = Vec::new();
         let mut subscripts = Vec::new();
         for block in blocks {
-            let ImplBlock { path, functions, type_params, attrs } = block.data;
+            let ImplBlock { path, functions, type_params, attrs, assoc_types: _ } = block.data;
             if self.check_disabled(&attrs, block.span) {
                 continue;
             }
