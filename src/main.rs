@@ -138,8 +138,8 @@ fn compile_results(code: &str, build: BuildOrRun, conf: Configuration) -> Result
 
     let output = output.join(conf.name.as_deref().unwrap_or("a.out"));
     let mut cc = Command::new(build.cc)
-        .args(include_str!("../compile_flags.txt").split("\n"))
-        .args(build.ccargs.unwrap_or_default().split(' '))
+        .args(include_str!("../compile_flags.txt").split("\n").filter(|f| !f.is_empty()))
+        .args(build.ccargs.unwrap_or_default().split(' ').filter(|f| !f.is_empty()))
         .args(build.optimized.then_some("-O2"))
         .args(has_boehm.then_some("-lgc"))
         .args(
