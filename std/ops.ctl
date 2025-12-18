@@ -121,3 +121,53 @@ pub trait Inc {
 pub trait Dec {
     fn dec(mut this);
 }
+
+@(lang(op_add_assign))
+pub trait AddAssign<T> {
+    fn add_assign(mut this, rhs: T);
+}
+
+@(lang(op_sub_assign))
+pub trait SubAssign<T> {
+    fn sub_assign(mut this, rhs: T);
+}
+
+@(lang(op_mul_assign))
+pub trait MulAssign<T> {
+    fn mul_assign(mut this, rhs: T);
+}
+
+@(lang(op_div_assign))
+pub trait DivAssign<T> {
+    fn div_assign(mut this, rhs: T);
+}
+
+@(lang(op_rem_assign))
+pub trait RemAssign<T> {
+    fn rem_assign(mut this, rhs: T);
+}
+
+@(lang(op_and_assign))
+pub trait BitAndAssign<T> {
+    fn and_assign(mut this, rhs: T);
+}
+
+@(lang(op_or_assign))
+pub trait BitOrAssign<T> {
+    fn or_assign(mut this, rhs: T);
+}
+
+@(lang(op_xor_assign))
+pub trait XorAssign<T> {
+    fn xor_assign(mut this, rhs: T);
+}
+
+@(lang(op_shl_assign))
+pub trait ShlAssign<T> {
+    fn shl_assign(mut this, rhs: T);
+}
+
+@(lang(op_shr_assign))
+pub trait ShrAssign<T> {
+    fn shr_assign(mut this, rhs: T);
+}

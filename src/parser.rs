@@ -2083,6 +2083,16 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             Token::Increment => Right(OperatorFnType::Increment),
             Token::Decrement => Right(OperatorFnType::Decrement),
             Token::Exclamation => Right(OperatorFnType::Bang),
+            Token::AddAssign => Right(OperatorFnType::AddAssign),
+            Token::SubAssign => Right(OperatorFnType::SubAssign),
+            Token::MulAssign => Right(OperatorFnType::MulAssign),
+            Token::DivAssign => Right(OperatorFnType::DivAssign),
+            Token::RemAssign => Right(OperatorFnType::RemAssign),
+            Token::BitAndAssign => Right(OperatorFnType::BitAndAssign),
+            Token::BitOrAssign => Right(OperatorFnType::BitOrAssign),
+            Token::XorAssign => Right(OperatorFnType::XorAssign),
+            Token::ShlAssign => Right(OperatorFnType::ShlAssign),
+            Token::ShrAssign => Right(OperatorFnType::ShrAssign),
             Token::LBrace => {
                 let tk = self.expect(Token::RBrace);
                 if let Some(tk) = self.next_if(Token::Assign) {

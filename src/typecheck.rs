@@ -702,8 +702,8 @@ impl TypeChecker {
         let add_from_tns = |completions: &mut Vec<LspItem>, tns: &HashMap<StrId, Vis<TypeItem>>| {
             for (_, item) in tns.iter() {
                 if item.as_type().is_some_and(|&id| {
-                    strdata!(self, self.proj.scopes.get(id).name.data).starts_with('$') ||
-                        self.proj.scopes.get(id).kind.is_extension()
+                    strdata!(self, self.proj.scopes.get(id).name.data).starts_with('$')
+                        || self.proj.scopes.get(id).kind.is_extension()
                 }) {
                     continue;
                 }
@@ -1448,39 +1448,6 @@ impl TypeChecker {
 
         use OperatorFnType as O;
         let (tr_name, fn_name, ty_args) = match f.name.data {
-            O::Plus
-            | O::Mul
-            | O::Div
-            | O::Rem
-            | O::BitAnd
-            | O::BitOr
-            | O::Xor
-            | O::Shl
-            | O::Shr
-            | O::Cmp
-            | O::Eq => {
-                let op = BinaryOp::try_from(f.name.data).unwrap();
-                let (tr_name, fn_name) = self.tables.binary_op_traits.get(&op).copied().unwrap();
-                if let Some(p) =
-                    f.params.get(1).filter(|_| matches!(f.name.data, O::Cmp | O::Eq)).cloned()
-                {
-                    if let TypeHint::Ptr(inner) = p.ty.data {
-                        (tr_name, fn_name, vec![*inner])
-                    } else {
-                        // impl check will take care of issuing an error for this case
-                        (tr_name, fn_name, vec![p.ty])
-                    }
-                } else {
-                    (
-                        tr_name,
-                        fn_name,
-                        vec![
-                            f.params.get(1).map(|p| p.ty.clone()).unwrap_or_default(),
-                            f.ret.clone().unwrap_or_else(|| Located::nowhere(TypeHint::Void)),
-                        ],
-                    )
-                }
-            }
             O::Minus if f.params.len() > 1 => {
                 let op = BinaryOp::try_from(f.name.data).unwrap();
                 let (tr_name, fn_name) = self.tables.binary_op_traits.get(&op).copied().unwrap();
@@ -1511,6 +1478,28 @@ impl TypeChecker {
                 let name = intern!(self, "$sub{}", subscripts.len());
                 subscripts.push(self.declare_fn(Fn::from_operator_fn(name, f)));
                 return;
+            }
+            _ => {
+                let op = BinaryOp::try_from(f.name.data).unwrap();
+                let (tr_name, fn_name) = self.tables.binary_op_traits.get(&op).copied().unwrap();
+                if let Some(p) =
+                    f.params.get(1).filter(|_| matches!(f.name.data, O::Cmp | O::Eq)).cloned()
+                {
+                    if let TypeHint::Ptr(inner) = p.ty.data {
+                        (tr_name, fn_name, vec![*inner])
+                    } else {
+                        // impl check will take care of issuing an error for this case
+                        (tr_name, fn_name, vec![p.ty])
+                    }
+                } else {
+                    let mut args = vec![f.params.get(1).map(|p| p.ty.clone()).unwrap_or_default()];
+                    if !op.is_assignment() {
+                        args.push(
+                            f.ret.clone().unwrap_or_else(|| Located::nowhere(TypeHint::Void)),
+                        );
+                    }
+                    (tr_name, fn_name, args)
+                }
             }
         };
 
@@ -7585,6 +7574,16 @@ impl Tables {
                 (BinaryOp::Xor, (strings.get_or_intern_static("op_xor"), strings.get_or_intern_static("xor"))),
                 (BinaryOp::Shl, (strings.get_or_intern_static("op_shl"), strings.get_or_intern_static("shl"))),
                 (BinaryOp::Shr, (strings.get_or_intern_static("op_shr"), strings.get_or_intern_static("shr"))),
+                (BinaryOp::AddAssign, (strings.get_or_intern_static("op_add_assign"), strings.get_or_intern_static("add_assign"))),
+                (BinaryOp::SubAssign, (strings.get_or_intern_static("op_sub_assign"), strings.get_or_intern_static("sub_assign"))),
+                (BinaryOp::MulAssign, (strings.get_or_intern_static("op_mul_assign"), strings.get_or_intern_static("mul_assign"))),
+                (BinaryOp::DivAssign, (strings.get_or_intern_static("op_div_assign"), strings.get_or_intern_static("div_assign"))),
+                (BinaryOp::RemAssign, (strings.get_or_intern_static("op_rem_assign"), strings.get_or_intern_static("rem_assign"))),
+                (BinaryOp::BitAndAssign, (strings.get_or_intern_static("op_and_assign"), strings.get_or_intern_static("and_assign"))),
+                (BinaryOp::BitOrAssign, (strings.get_or_intern_static("op_or_assign"), strings.get_or_intern_static("or_assign"))),
+                (BinaryOp::XorAssign, (strings.get_or_intern_static("op_xor_assign"), strings.get_or_intern_static("xor_assign"))),
+                (BinaryOp::ShlAssign, (strings.get_or_intern_static("op_shl_assign"), strings.get_or_intern_static("shl_assign"))),
+                (BinaryOp::ShrAssign, (strings.get_or_intern_static("op_shr_assign"), strings.get_or_intern_static("shr_assign"))),
             ]
             .into(),
             unary_op_traits: [

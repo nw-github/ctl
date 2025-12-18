@@ -1,5 +1,8 @@
 use crate::{
-    ast::{Alignment, Sign}, comptime_int::ComptimeInt, intern::StrId, lexer::{Located, Span}
+    ast::{Alignment, Sign},
+    comptime_int::ComptimeInt,
+    intern::StrId,
+    lexer::{Located, Span},
 };
 
 use super::{Attributes, BinaryOp, UnaryOp};
@@ -393,6 +396,26 @@ pub enum OperatorFnType {
     Subscript,
     #[display(fmt = "[]=")]
     SubscriptAssign,
+    #[display(fmt = "+=")]
+    AddAssign,
+    #[display(fmt = "-=")]
+    SubAssign,
+    #[display(fmt = "*=")]
+    MulAssign,
+    #[display(fmt = "/=")]
+    DivAssign,
+    #[display(fmt = "%=")]
+    RemAssign,
+    #[display(fmt = "&=")]
+    BitAndAssign,
+    #[display(fmt = "|=")]
+    BitOrAssign,
+    #[display(fmt = "^=")]
+    XorAssign,
+    #[display(fmt = "<<=")]
+    ShlAssign,
+    #[display(fmt = ">>=")]
+    ShrAssign,
 }
 
 #[derive(Clone)]
