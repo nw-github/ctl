@@ -120,6 +120,9 @@ enum SubCommand {
         /// The path to the file or project folder
         input: Option<PathBuf>,
 
+        #[clap(action, short, long)]
+        tokens: bool,
+
         /// The modules to dump. If empty, the module corresponding to the input project will be dumped.
         modules: Vec<String>,
     },
@@ -263,11 +266,31 @@ fn dump(proj: UnloadedProject, mods: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn dump_tokens(input: Option<&Path>) -> Result<()> {
+    let source = std::fs::read_to_string(input.context("missing input file")?)?;
+    let mut lexer = ctl::Lexer::new(&source, Default::default());
+    let mut diag = ctl::Diagnostics::default();
+    loop  {
+        let token = lexer.next(&mut diag);
+        if token.data == ctl::Token::Eof {
+            break Ok(());
+        }
+
+        println!("{token:?}");
+    }
+}
+
 fn main() -> Result<()> {
     let args = Arguments::parse();
     let input = match &args.command {
         SubCommand::Print { input, .. } => input,
-        SubCommand::Dump { input, .. } => input,
+        SubCommand::Dump { input, tokens, .. } => {
+            if *tokens {
+                return dump_tokens(input.as_deref());
+            }
+
+            input
+        },
         SubCommand::Build { build, .. } => &build.input,
         SubCommand::Run { build, .. } => &build.input,
         SubCommand::Lsp => {
