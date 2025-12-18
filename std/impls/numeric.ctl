@@ -258,7 +258,7 @@ pub extension IntegralImpl<T: Integral> for T {
             let (v, digit) = casting_divmod(this, radix as! i32);
             // Only relevant for signed but should get optimized away for unsigned
             let digit = this < 0.cast() then -digit.cast::<int>() else digit.cast();
-            unsafe *buf.as_raw_mut().uoffset(--pos) = digits[digit];
+            unsafe *buf.as_raw_mut().add(--pos) = digits[digit];
             this = v;
         } while this != 0.cast();
 

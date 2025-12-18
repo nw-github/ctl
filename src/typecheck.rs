@@ -2407,47 +2407,6 @@ impl TypeChecker {
                 }
 
                 match (&self.proj.types[left.ty], op) {
-                    (Type::RawPtr(_) | Type::RawMutPtr(_), BinaryOp::Sub) => {
-                        let span = right.span;
-                        let right = self.check_expr(*right, Some(TypeId::ISIZE));
-                        let right = self.try_coerce(right, TypeId::ISIZE);
-                        if right.ty == left.ty {
-                            CExpr::new(
-                                TypeId::ISIZE,
-                                CExprData::Binary(op, left.into(), right.into()),
-                            )
-                        } else if self.proj.types[right.ty].is_integral()
-                            || right.ty == TypeId::UNKNOWN
-                        {
-                            CExpr::new(left.ty, CExprData::Binary(op, left.into(), right.into()))
-                        } else {
-                            self.proj.diag.report(Error::type_mismatch_s(
-                                "{integer}",
-                                &type_name!(self, right.ty),
-                                span,
-                            ));
-                            Default::default()
-                        }
-                    }
-                    (
-                        Type::RawPtr(_) | Type::RawMutPtr(_),
-                        BinaryOp::Add | BinaryOp::AddAssign | BinaryOp::SubAssign,
-                    ) => {
-                        let span = right.span;
-                        let right = self.check_expr(*right, Some(TypeId::USIZE));
-                        let right = self.try_coerce(right, TypeId::USIZE);
-                        if !self.proj.types[right.ty].is_integral() && right.ty != TypeId::UNKNOWN {
-                            self.proj.diag.report(Error::type_mismatch_s(
-                                "{integer}",
-                                &type_name!(self, right.ty),
-                                span,
-                            ));
-                        }
-                        CExpr::new(
-                            if assignment { TypeId::VOID } else { left.ty },
-                            CExprData::Binary(op, left.into(), right.into()),
-                        )
-                    }
                     (
                         Type::Int(_)
                         | Type::Uint(_)
@@ -7601,6 +7560,11 @@ impl Tables {
                 strings.get_or_intern_static("read_volatile"),
                 strings.get_or_intern_static("write_volatile"),
                 strings.get_or_intern_static("source_location"),
+                strings.get_or_intern_static("ptr_add_signed"),
+                strings.get_or_intern_static("ptr_add_unsigned"),
+                strings.get_or_intern_static("ptr_sub_signed"),
+                strings.get_or_intern_static("ptr_sub_unsigned"),
+                strings.get_or_intern_static("ptr_diff"),
             ]
             .into(),
             binary_op_traits: [

@@ -32,17 +32,13 @@ pub struct Span<T> {
         }
     }
 
-    pub unsafe fn get_unchecked(my this, idx: uint): *T {
-        unsafe (this.ptr + idx) as *T
-    }
+    pub unsafe fn get_unchecked(my this, idx: uint): *T => unsafe &*this.ptr.add(idx);
 
     pub fn as_raw(my this): ^T {
         this.ptr
     }
 
-    pub fn iter(my this): Iter<T> {
-        Iter(ptr: this.ptr, end: this.ptr + this.len)
-    }
+    pub fn iter(my this): Iter<T> => Iter(ptr: this.ptr, end: this.ptr.add(this.len));
 
     pub fn subspan<R: RangeBounds<uint>>(my this, range: R): [T..] {
         let start = match range.begin() {
@@ -61,7 +57,7 @@ pub struct Span<T> {
             panic("invalid range {start}..{end} in span of len {this.len}");
         }
 
-        unsafe Span::new(this.ptr + start, end - start)
+        unsafe Span::new(this.ptr.add(start), end - start)
     }
 
     pub fn first(my this): ?*T {
@@ -122,13 +118,8 @@ pub struct SpanMut<T> {
         }
     }
 
-    pub unsafe fn get_unchecked(my this, idx: uint): *T {
-        unsafe (this.ptr + idx) as *T
-    }
-
-    pub unsafe fn get_mut_unchecked(my this, idx: uint): *mut T {
-        unsafe (this.ptr + idx) as *mut T
-    }
+    pub unsafe fn get_unchecked(my this, idx: uint): *T => unsafe &*this.ptr.add(idx);
+    pub unsafe fn get_mut_unchecked(my this, idx: uint): *mut T => unsafe &mut *this.ptr.add(idx);
 
     pub fn as_span(my this): [T..] {
         this
@@ -142,13 +133,8 @@ pub struct SpanMut<T> {
         this.ptr
     }
 
-    pub fn iter(this): Iter<T> {
-        Iter(ptr: this.ptr, end: this.ptr + this.len)
-    }
-
-    pub fn iter_mut(my this): IterMut<T> {
-        IterMut(ptr: this.ptr, end: this.ptr + this.len)
-    }
+    pub fn iter(this): Iter<T> => Iter(ptr: this.ptr, end: this.ptr.add(this.len));
+    pub fn iter_mut(my this): IterMut<T> => IterMut(ptr: this.ptr, end: this.ptr.add(this.len));
 
     pub fn subspan<R: RangeBounds<uint>>(my this, range: R): [mut T..] {
         let start = match range.begin() {
@@ -167,7 +153,7 @@ pub struct SpanMut<T> {
             panic("invalid range {start}..{end} in span of len {this.len}");
         }
 
-        unsafe SpanMut::new(this.ptr + start, end - start)
+        unsafe SpanMut::new(this.ptr.add(start), end - start)
     }
 
     pub fn fill(my this, t: T) {
@@ -263,7 +249,7 @@ pub struct IterMut<T> {
 @(inline(always))
 fn raw_subscript_checked<T, I: Integral>(ptr: ^mut T, len: uint, idx: I): ^mut T {
     if idx.try_cast::<uint>() is ?idx and (0u..len).contains(&idx) {
-        ptr + idx
+        ptr.add(idx)
     } else {
         panic("index {idx} is out of bounds for span of length {len}");
     }

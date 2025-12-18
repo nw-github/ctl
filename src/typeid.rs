@@ -645,15 +645,13 @@ impl TypeId {
         let this = &types[self];
         match op {
             Assign => true,
-            Add | AddAssign | Sub | SubAssign => {
-                this.is_numeric() || this.is_raw_ptr() || this.is_raw_mut_ptr()
-            }
-            Mul | Div | Rem | MulAssign | DivAssign | RemAssign => this.is_numeric(),
+            Add | Sub | Mul | Div | Rem | AddAssign | SubAssign | MulAssign | DivAssign
+            | RemAssign => this.is_numeric(),
             BitAnd | Xor | BitOr | BitAndAssign | XorAssign | BitOrAssign => {
                 this.is_integral() || this.is_bool()
             }
             Shl | Shr | ShlAssign | ShrAssign => this.is_integral(),
-            Gt | GtEqual | Lt | LtEqual | Cmp => {
+            Gt | GtEqual | Lt | LtEqual | Cmp | Equal | NotEqual => {
                 matches!(
                     this,
                     Type::Int(_)
@@ -668,23 +666,6 @@ impl TypeId {
                         | Type::RawPtr(_)
                         | Type::RawMutPtr(_)
                         | Type::Bool,
-                )
-            }
-            Equal | NotEqual => {
-                matches!(
-                    this,
-                    Type::Int(_)
-                        | Type::Isize
-                        | Type::Uint(_)
-                        | Type::Usize
-                        | Type::F32
-                        | Type::F64
-                        | Type::Bool // FIXME: option<T> should be comparable with T without coercion
-                        | Type::CInt(_)
-                        | Type::CUint(_)
-                        | Type::Char
-                        | Type::RawPtr(_)
-                        | Type::RawMutPtr(_)
                 )
             }
             LogicalOr | LogicalAnd => this.is_bool(),

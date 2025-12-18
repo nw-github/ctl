@@ -122,7 +122,7 @@ pub struct StringBuilder {
             this.buffer.reserve(new_len);
             unsafe {
                 std::mem::copy(
-                    dst: this.buffer.as_raw_mut() + this.buffer.len(),
+                    dst: this.buffer.as_raw_mut().add(this.buffer.len()),
                     src: data.as_raw(),
                     num: len,
                 );

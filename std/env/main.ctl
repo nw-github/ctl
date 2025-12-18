@@ -12,7 +12,7 @@ pub struct RawArgsIter {
                 let length = unsafe std::intrin::strlen(arg);
 
                 this.argc--;
-                this.argv = argv.offset(1);
+                this.argv = argv.add(1);
                 unsafe std::span::Span::new(arg.cast::<u8>(), length)
             }
         }

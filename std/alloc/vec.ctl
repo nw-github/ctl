@@ -66,12 +66,12 @@ pub struct Vec<T> {
             this.grow();
         }
 
-        unsafe this.ptr.uoffset(this.len++).write(val);
+        unsafe this.ptr.add(this.len++).write(val);
     }
 
     pub fn push_within_capacity(mut this, val: T): ?T {
         if this.can_insert(1) {
-            unsafe this.ptr.uoffset(this.len++).write(val);
+            unsafe this.ptr.add(this.len++).write(val);
             null
         } else {
             val
@@ -80,7 +80,7 @@ pub struct Vec<T> {
 
     pub fn pop(mut this): ?T {
         if this.len > 0 {
-            unsafe this.ptr.uoffset(--this.len).read()
+            unsafe this.ptr.add(--this.len).read()
         }
     }
 
@@ -90,7 +90,7 @@ pub struct Vec<T> {
         }
 
         unsafe mem::copy(
-            dst: this.ptr.uoffset(this.len),
+            dst: this.ptr.add(this.len),
             src: rhs.ptr,
             num: rhs.len,
         );
@@ -117,9 +117,9 @@ pub struct Vec<T> {
             this.grow();
         }
 
-        let src = this.ptr.uoffset(idx);
+        let src = this.ptr.add(idx);
         if idx < this.len {
-            unsafe mem::copy_overlapping(dst: src.offset(1), src:, num: this.len - idx);
+            unsafe mem::copy_overlapping(dst: src.add(1), src:, num: this.len - idx);
         }
 
         unsafe src.write(val);
@@ -132,10 +132,10 @@ pub struct Vec<T> {
         }
 
         unsafe {
-            let dst = this.ptr.uoffset(idx);
+            let dst = this.ptr.add(idx);
             let res = dst.read();
             if idx + 1 < this.len {
-                mem::copy_overlapping(dst:, src: dst.offset(1), num: this.len - idx);
+                mem::copy_overlapping(dst:, src: dst.add(1), num: this.len - idx);
             }
 
             this.len--;
@@ -150,9 +150,9 @@ pub struct Vec<T> {
 
         this.len--;
 
-        let ptr = this.ptr.uoffset(idx);
+        let ptr = this.ptr.add(idx);
         if idx < this.len {
-            unsafe mem::replace(&mut *ptr, this.ptr.uoffset(this.len).read())
+            unsafe mem::replace(&mut *ptr, this.ptr.add(this.len).read())
         } else {
             unsafe ptr.read()
         }
@@ -170,13 +170,13 @@ pub struct Vec<T> {
 
     pub fn get(this, idx: uint): ?*T {
         if idx < this.len {
-            unsafe &*this.ptr.uoffset(idx)
+            unsafe &*this.ptr.add(idx)
         }
     }
 
     pub fn get_mut(mut this, idx: uint): ?*mut T {
         if idx < this.len {
-            unsafe &mut *this.ptr.uoffset(idx)
+            unsafe &mut *this.ptr.add(idx)
         }
     }
 

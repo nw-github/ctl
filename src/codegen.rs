@@ -2543,6 +2543,34 @@ impl<'a> Codegen<'a> {
                 self.emit_string_literal(&path);
                 self.buffer.emit("})");
             }
+            "ptr_add_signed" | "ptr_add_unsigned" | "ptr_sub_signed" | "ptr_sub_unsigned"
+            | "ptr_diff" => {
+                let mut args = args.into_iter();
+                let lhs = args
+                    .next()
+                    .expect("ICE: ptr intrinsic should receive two arguments")
+                    .1
+                    .auto_deref(&mut self.proj.types, TypeId::UNKNOWN);
+                let rhs = args
+                    .next()
+                    .expect("ICE: ptr intrinsic should receive two arguments")
+                    .1
+                    .auto_deref(&mut self.proj.types, TypeId::UNKNOWN);
+
+                self.emit_cast(ret);
+                write_de!(self.buffer, "(");
+                self.emit_expr(lhs, state);
+                write_de!(
+                    self.buffer,
+                    "{}",
+                    match strdata!(self, name) {
+                        "ptr_add_signed" | "ptr_add_unsigned" => "+",
+                        _ => "-",
+                    }
+                );
+                self.emit_expr(rhs, state);
+                write_de!(self.buffer, ")");
+            }
             _ => unreachable!(),
         }
     }

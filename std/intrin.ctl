@@ -27,6 +27,21 @@ pub extern unsafe fn read_volatile<T>(p: ^T): T;
 @(intrinsic)
 pub extern unsafe fn write_volatile<T>(p: ^mut T, val: T);
 
+@(intrinsic)
+pub extern fn ptr_add_signed<T>(p: ^T, offs: int): ^T;
+
+@(intrinsic)
+pub extern fn ptr_sub_signed<T>(p: ^T, offs: int): ^T;
+
+@(intrinsic)
+pub extern fn ptr_add_unsigned<T>(p: ^T, offs: uint): ^T;
+
+@(intrinsic)
+pub extern fn ptr_sub_unsigned<T>(p: ^T, offs: uint): ^T;
+
+@(intrinsic)
+pub extern fn ptr_diff<T>(a: ^T, b: ^T): int;
+
 
 
 @(c_opaque, c_name(CTL_MEMSET))
