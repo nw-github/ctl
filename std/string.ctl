@@ -101,6 +101,11 @@ pub struct str {
             str::from_utf8_unchecked(buf[..])
         }
     }
+
+    @(feature(alloc))
+    pub fn +=(mut this, rhs: str) {
+        *this = this + rhs;
+    }
 }
 
 pub struct Chars {

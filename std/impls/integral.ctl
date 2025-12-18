@@ -59,6 +59,21 @@ pub extension IntegralImpl<T: Integral> for T {
     @(intrinsic(binary_op))
     pub fn >>(this, rhs: u32): T => this >> rhs;
 
+    @(intrinsic(binary_op))
+    pub fn &=(mut this, rhs: T) => *this &= rhs;
+
+    @(intrinsic(binary_op))
+    pub fn |=(mut this, rhs: T) => *this |= rhs;
+
+    @(intrinsic(binary_op))
+    pub fn ^=(mut this, rhs: T) => *this ^= rhs;
+
+    @(intrinsic(binary_op))
+    pub fn <<=(mut this, rhs: u32) => *this <<= rhs;
+
+    @(intrinsic(binary_op))
+    pub fn >>=(mut this, rhs: u32) => *this >>= rhs;
+
     @(intrinsic(unary_op))
     pub fn !(this): T => !this;
 

@@ -49,4 +49,19 @@ pub extension NumericImpl<T: Numeric> for T {
 
     @(intrinsic(binary_op))
     pub fn %(this, rhs: T): T => this % rhs;
+
+    @(intrinsic(binary_op))
+    pub fn +=(mut this, rhs: T) => *this += rhs;
+
+    @(intrinsic(binary_op))
+    pub fn -=(mut this, rhs: T) => *this -= rhs;
+
+    @(intrinsic(binary_op))
+    pub fn *=(mut this, rhs: T) => *this *= rhs;
+
+    @(intrinsic(binary_op))
+    pub fn /=(mut this, rhs: T) => *this /= rhs;
+
+    @(intrinsic(binary_op))
+    pub fn %=(mut this, rhs: T) => *this %= rhs;
 }
