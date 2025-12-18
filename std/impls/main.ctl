@@ -38,4 +38,5 @@ pub use character::*;
 pub use dynany::*;
 pub use float::*;
 pub use numeric::*;
+pub use integral::*;
 pub use rawptr::*;
