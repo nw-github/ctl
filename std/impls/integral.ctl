@@ -203,28 +203,25 @@ pub extension IntegralImpl<T: Integral> for T {
     ///
     /// Returns the position of the start of the digits within `buf`
     pub unsafe fn write_digits(my mut this, buf: [mut u8..], radix: u32, upper: bool): uint {
-        fn casting_divmod<T: Integral, U: Integral>(dividend: T, divisor: U): (T, T) {
-            // TODO: do this at CTL compile time
-            if std::mem::size_of::<T>() >= std::mem::size_of::<U>() {
-                let divisor: T = divisor.cast();
-                (dividend / divisor, dividend % divisor)
-            } else {
-                let dividend: U = dividend.cast();
-                ((dividend / divisor).cast(), (dividend % divisor).cast())
-            }
-        }
-
         static UPPER_DIGITS: [u8; 36] = *b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         static LOWER_DIGITS: [u8; 36] = *b"0123456789abcdefghijklmnopqrstuvwxyz";
 
         let digits = upper then &UPPER_DIGITS else &LOWER_DIGITS;
+        let radix = radix as! int;
         mut pos = buf.len();
         loop {
-            let (v, digit) = casting_divmod(this, radix as! i32);
-            // Only relevant for signed but should get optimized away for unsigned
-            let digit = this < 0.cast() then -digit.cast::<int>() else digit.cast();
-            unsafe *buf.as_raw_mut().add(--pos) = digits[digit];
-            this = v;
+            // TODO: do this at CTL compile time
+            let digit = if std::mem::size_of::<T>() >= std::mem::size_of::<int>() {
+                let radix: T = radix.cast();
+                let digit: int = (this % radix).cast();
+                this /= radix;
+                digit
+            } else {
+                let dividend: int = this.cast();
+                this = (dividend / radix).cast();
+                (dividend % radix).cast()
+            };
+            unsafe *buf.as_raw_mut().add(--pos) = digits[digit < 0 then -digit else digit];
         } while this != 0.cast();
 
         pos

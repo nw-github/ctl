@@ -3657,7 +3657,7 @@ impl TypeChecker {
         }
 
         let arg_span = expr.span;
-        let arg = self.check_expr(expr, Some(TypeId::USIZE));
+        let arg = self.check_expr(expr, None);
         if let Some((_, arg)) = args.next() {
             let last = args.last().map(|(_, arg)| arg.span).unwrap_or(arg.span);
             self.error(Error::new(
@@ -3678,7 +3678,7 @@ impl TypeChecker {
                     bail!(
                         self,
                         Error::expected_found(
-                            "array index",
+                            "integral type",
                             &format!("type '{}'", type_name!(self, expr.ty)),
                             arg_span,
                         )
