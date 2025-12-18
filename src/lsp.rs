@@ -8,14 +8,18 @@ use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use crate::error::{Diagnostics, FileId, OffsetMode};
-use crate::intern::{StrId, Strings};
-use crate::lexer::Span;
-use crate::project::Project;
-use crate::sym::{FunctionId, ScopeId, Scopes, Union, UserTypeId, UserTypeKind, VariableId};
-use crate::typecheck::{LspInput, LspItem};
-use crate::typeid::{BitSizeResult, GenericUserType, Type, TypeId, Types};
-use crate::{CachingSourceProvider, Compiler, FileSourceProvider, SourceProvider, UnloadedProject};
+use crate::{
+    CachingSourceProvider, Compiler, FileSourceProvider, Located, SourceProvider, UnloadedProject,
+    error::{Diagnostics, FileId, OffsetMode},
+    intern::{StrId, Strings},
+    lexer::Span,
+    project::Project,
+    sym::{
+        Function, FunctionId, ScopeId, Scoped, Scopes, Union, UserTypeId, UserTypeKind, VariableId,
+    },
+    typecheck::{LspInput, LspItem},
+    typeid::{BitSizeResult, GenericUserType, Type, TypeId, Types},
+};
 
 #[macro_export]
 macro_rules! write_de {
@@ -923,7 +927,11 @@ fn get_document_symbols(
     src: &str,
     file: FileId,
 ) -> Vec<DocumentSymbol> {
-    use crate::sym::{Function, Scoped};
+    let valid_name = |name: Located<StrId>| {
+        name.span.file == file
+            && name.data != Strings::EMPTY
+            && !strings.resolve(&name.data).starts_with('$')
+    };
 
     let func_symbol = |func: &Scoped<Function>| {
         let mut kind = SymbolKind::FUNCTION;
@@ -949,7 +957,7 @@ fn get_document_symbols(
 
     let mut result = vec![];
     for (_, ut) in scopes.types() {
-        if ut.name.span.file != file {
+        if !valid_name(ut.name) {
             continue;
         }
 
@@ -962,10 +970,18 @@ fn get_document_symbols(
 
         let mut children = vec![];
         for id in ut.fns.iter() {
+            if !valid_name(scopes.get(**id).name) {
+                continue;
+            }
+
             children.push(func_symbol(scopes.get(**id)));
         }
 
         for (name, member) in ut.members.iter() {
+            if !valid_name(Located::new(member.span, *name)) {
+                continue;
+            }
+
             let range = Diagnostics::get_span_range(src, member.span, OffsetMode::Utf16);
             children.push(DocumentSymbol {
                 name: strings.resolve(name).into(),
@@ -995,7 +1011,7 @@ fn get_document_symbols(
     }
 
     for (_, func) in scopes.functions() {
-        if func.name.span.file != file
+        if !valid_name(func.name)
             || scopes[func.scope].kind.is_user_type()
             || scopes[func.scope].kind.is_impl()
             || func.constructor.is_some()
@@ -1007,7 +1023,7 @@ fn get_document_symbols(
     }
 
     for (_, var) in scopes.vars() {
-        if var.name.span.file != file || !var.is_static {
+        if !var.is_static || !valid_name(var.name) {
             continue;
         }
 
