@@ -23,7 +23,7 @@ pub extension RawImpl<T> for ^T {
     impl Debug {
         fn dbg(this, f: *mut Formatter) {
             let opts = f.options();
-            (this as uint).hex(&mut f.with_options(Options(
+            (*this as uint).hex(&mut f.with_options(Options(
                 alt: true,
                 sign: opts.sign,
                 width: opts.width,
@@ -71,7 +71,7 @@ pub extension RawMutImpl<T> for ^mut T {
     pub fn --(mut this) { (*this)--; }
 
     impl Debug {
-        fn dbg(this, f: *mut Formatter) => (this as ^T).dbg(f);
+        fn dbg(this, f: *mut Formatter) => (*this as ^T).dbg(f);
     }
 }
 
