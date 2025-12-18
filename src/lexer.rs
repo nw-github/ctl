@@ -291,12 +291,12 @@ pub struct Lexer<'a> {
     src: &'a str,
     pos: usize,
     file: FileId,
-    interpolating: bool,
+    interpolating: usize,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a str, file: FileId) -> Self {
-        Self { src, file, pos: 0, interpolating: false }
+        Self { src, file, pos: 0, interpolating: 0 }
     }
 
     pub fn is_identifier_char(ch: char) -> bool {
@@ -317,8 +317,8 @@ impl<'a> Lexer<'a> {
         let token = match next {
             '{' => Token::LCurly,
             '}' => {
-                if self.interpolating {
-                    self.string_literal(diag, start)
+                if self.interpolating > 0 {
+                    self.string_literal(diag, start, true)
                 } else {
                     Token::RCurly
                 }
@@ -494,7 +494,7 @@ impl<'a> Lexer<'a> {
                     Token::Assign
                 }
             }
-            '"' => self.string_literal(diag, start),
+            '"' => self.string_literal(diag, start, false),
             '\'' => Token::Char(self.char_literal(diag, false)),
             ch @ '0'..='9' => self.numeric_literal(ch, start),
             'b' => self.maybe_byte_string(diag, start),
@@ -648,19 +648,23 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn string_literal(&mut self, diag: &mut Diagnostics, start: usize) -> Token<'a> {
+    fn string_literal(&mut self, diag: &mut Diagnostics, start: usize, interp: bool) -> Token<'a> {
         let mut result = Cow::from("");
         loop {
             match self.advance() {
                 Some('"') => {
-                    self.interpolating = false;
+                    if interp {
+                        self.interpolating -= 1;
+                    }
                     break Token::String(result);
                 }
                 Some('\\') => {
                     result.to_mut().push(self.escape_char(diag, false));
                 }
                 Some('{') => {
-                    self.interpolating = true;
+                    if !interp {
+                        self.interpolating += 1;
+                    }
                     break Token::StringPart(result);
                 }
                 Some(ch) => match &mut result {
