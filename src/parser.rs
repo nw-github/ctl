@@ -1595,10 +1595,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     None
                 };
 
-                Located::new(
-                    params.span,
-                    TypeHint::Fn { is_extern, params: params.data, ret },
-                )
+                Located::new(params.span, TypeHint::Fn { is_extern, params: params.data, ret })
             }
             Token::Struct => {
                 let span = self.next().span;
@@ -2069,39 +2066,40 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
 
     fn expect_fn_name(&mut self) -> Located<Either<StrId, OperatorFnType>> {
         let token = self.next();
-        Located::new(
-            token.span,
-            match token.data {
-                Token::Plus => Right(OperatorFnType::Plus),
-                Token::Minus => Right(OperatorFnType::Minus), // unary or binary -
-                Token::Asterisk => Right(OperatorFnType::Mul), // binary *
-                Token::Div => Right(OperatorFnType::Div),
-                Token::Rem => Right(OperatorFnType::Rem),
-                Token::Ampersand => Right(OperatorFnType::BitAnd), // bitwise &
-                Token::BitOr => Right(OperatorFnType::BitOr),
-                Token::Caret => Right(OperatorFnType::Xor),
-                Token::Shl => Right(OperatorFnType::Shl),
-                Token::Shr => Right(OperatorFnType::Shr),
-                Token::Equal => Right(OperatorFnType::Eq),
-                Token::Spaceship => Right(OperatorFnType::Cmp),
-                Token::Increment => Right(OperatorFnType::Increment),
-                Token::Decrement => Right(OperatorFnType::Decrement),
-                Token::Exclamation => Right(OperatorFnType::Bang),
-                Token::LBrace => {
-                    self.expect(Token::RBrace);
-                    if self.next_if(Token::Assign).is_some() {
-                        Right(OperatorFnType::SubscriptAssign)
-                    } else {
-                        Right(OperatorFnType::Subscript)
-                    }
+        let mut span = token.span;
+        let data = match token.data {
+            Token::Plus => Right(OperatorFnType::Plus),
+            Token::Minus => Right(OperatorFnType::Minus), // unary or binary -
+            Token::Asterisk => Right(OperatorFnType::Mul), // binary *
+            Token::Div => Right(OperatorFnType::Div),
+            Token::Rem => Right(OperatorFnType::Rem),
+            Token::Ampersand => Right(OperatorFnType::BitAnd), // bitwise &
+            Token::BitOr => Right(OperatorFnType::BitOr),
+            Token::Caret => Right(OperatorFnType::Xor),
+            Token::Shl => Right(OperatorFnType::Shl),
+            Token::Shr => Right(OperatorFnType::Shr),
+            Token::Equal => Right(OperatorFnType::Eq),
+            Token::Spaceship => Right(OperatorFnType::Cmp),
+            Token::Increment => Right(OperatorFnType::Increment),
+            Token::Decrement => Right(OperatorFnType::Decrement),
+            Token::Exclamation => Right(OperatorFnType::Bang),
+            Token::LBrace => {
+                let tk = self.expect(Token::RBrace);
+                if let Some(tk) = self.next_if(Token::Assign) {
+                    span.extend_to(tk.span);
+                    Right(OperatorFnType::SubscriptAssign)
+                } else {
+                    span.extend_to(tk.span);
+                    Right(OperatorFnType::Subscript)
                 }
-                Token::Ident(name) => Left(self.strings.get_or_intern(name)),
-                _ => {
-                    self.error(Error::new("expected identifier", token.span));
-                    Left(Strings::EMPTY)
-                }
-            },
-        )
+            }
+            Token::Ident(name) => Left(self.strings.get_or_intern(name)),
+            _ => {
+                self.error(Error::new("expected identifier", token.span));
+                Left(Strings::EMPTY)
+            }
+        };
+        Located::new(span, data)
     }
 
     fn format_opts(&mut self) -> FormatOpts {
