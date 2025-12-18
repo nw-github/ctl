@@ -36,8 +36,8 @@ fn main() {
 
     let d = [ 10., 20. ];
 
-    println("{a[..]}");
-    println("{b[..]}");
-    println("{c[..]}");
-    println("{d[..]}");
+    println("{a[..]:?}");
+    println("{b[..]:?}");
+    println("{c[..]:?}");
+    println("{d[..]:?}");
 }

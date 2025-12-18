@@ -11,5 +11,5 @@ fn main() {
     println("{vec.len()}");
     println("{vec.remove(3)}");
     println("{vec.len()}");
-    println("{vec[..]}");
+    println("{vec[..]:?}");
 }
