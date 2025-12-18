@@ -86,6 +86,7 @@ struct FileInfoCache {
     lsp_items: Vec<(LspItem, Span)>,
     inlay_hints: Lazy<Vec<InlayHint>>,
     semantic_tokens: Lazy<Vec<SemanticToken>>,
+    document_symbols: Lazy<Vec<DocumentSymbol>>,
 }
 
 struct LastChecked {
@@ -176,12 +177,7 @@ impl LanguageServer for LspBackend {
                 ),
                 references_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Left(true)),
-                // inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
-                //     InlayHintOptions {
-                //         resolve_provider: Some(true),
-                //         work_done_progress_options: Default::default(),
-                //     },
-                // ))),
+                document_symbol_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
         })
@@ -194,7 +190,6 @@ impl LanguageServer for LspBackend {
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         debug!(self, "did_change_configuration");
         *self.config.lock().await = serde_json::from_value(params.settings).unwrap_or_default();
-        // _ = self.check_project(None, None, false).await;
     }
 
     async fn did_open(&self, mut params: DidOpenTextDocumentParams) {
@@ -390,13 +385,12 @@ impl LanguageServer for LspBackend {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        self.with_proj_and_doc(&params.text_document.uri, async |doc, path, file, proj| {
+        self.with_proj_and_doc(&params.text_document.uri, async |doc, path, _, proj| {
             let tokens = doc.semantic_tokens.get_or_try(|| {
                 self.with_source(path, &mut FileSourceProvider, |src| {
                     let [mut prev_line, mut prev_start] = [0; 2];
                     doc.lsp_items
                         .iter()
-                        .filter(|(_, span)| span.file == file)
                         .flat_map(|item| {
                             get_semantic_token(
                                 &proj.scopes,
@@ -456,6 +450,23 @@ impl LanguageServer for LspBackend {
                 document_changes: None,
                 change_annotations: None,
             })
+        })
+        .await
+    }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> Result<Option<DocumentSymbolResponse>> {
+        debug!(self, "document_symbol: {}", params.text_document.uri);
+        self.with_proj_and_doc(&params.text_document.uri, async |doc, path, file, proj| {
+            let symbols = doc.document_symbols.get_or_try(|| {
+                self.with_source(path, &mut FileSourceProvider, |src| {
+                    get_document_symbols(&proj.scopes, &proj.types, &proj.strings, src, file)
+                })
+            });
+
+            Some(DocumentSymbolResponse::Nested(symbols?.clone()))
         })
         .await
     }
@@ -623,6 +634,7 @@ impl LspBackend {
                 .unwrap_or_default();
             doc.inlay_hints = Lazy::None;
             doc.semantic_tokens = Lazy::None;
+            doc.document_symbols = Lazy::None;
         }
 
         *proj_lock_guard = Some(LastChecked { data: unloaded, checked: proj });
@@ -902,6 +914,118 @@ fn get_semantic_token(
     *prev_line = line;
     *prev_start = start;
     Some(token)
+}
+
+fn get_document_symbols(
+    scopes: &Scopes,
+    _types: &Types,
+    strings: &Strings,
+    src: &str,
+    file: FileId,
+) -> Vec<DocumentSymbol> {
+    use crate::sym::{Function, Scoped};
+
+    let func_symbol = |func: &Scoped<Function>| {
+        let mut kind = SymbolKind::FUNCTION;
+        if let Some(ut) = func.constructor
+            && scopes.get(ut).kind.is_union()
+        {
+            kind = SymbolKind::ENUM_MEMBER;
+        }
+
+        let range = Diagnostics::get_span_range(src, func.name.span, OffsetMode::Utf16);
+        DocumentSymbol {
+            name: strings.resolve(&func.name.data).into(),
+            kind,
+            range,
+            selection_range: range,
+            children: None,
+            detail: None,
+            tags: None,
+            #[allow(deprecated)]
+            deprecated: None,
+        }
+    };
+
+    let mut result = vec![];
+    for (_, ut) in scopes.types() {
+        if ut.name.span.file != file {
+            continue;
+        }
+
+        let kind = match &ut.kind {
+            UserTypeKind::Template => continue,
+            UserTypeKind::Union(_) => SymbolKind::ENUM,
+            UserTypeKind::Trait(_, _) => SymbolKind::INTERFACE,
+            _ => SymbolKind::STRUCT,
+        };
+
+        let mut children = vec![];
+        for id in ut.fns.iter() {
+            children.push(func_symbol(scopes.get(**id)));
+        }
+
+        for (name, member) in ut.members.iter() {
+            let range = Diagnostics::get_span_range(src, member.span, OffsetMode::Utf16);
+            children.push(DocumentSymbol {
+                name: strings.resolve(name).into(),
+                kind: SymbolKind::FIELD,
+                range,
+                selection_range: range,
+                children: None,
+                detail: None,
+                tags: None,
+                #[allow(deprecated)]
+                deprecated: None,
+            });
+        }
+
+        let range = Diagnostics::get_span_range(src, ut.name.span, OffsetMode::Utf16);
+        result.push(DocumentSymbol {
+            name: strings.resolve(&ut.name.data).into(),
+            kind,
+            range,
+            selection_range: range,
+            children: (!children.is_empty()).then_some(children),
+            detail: None,
+            tags: None,
+            #[allow(deprecated)]
+            deprecated: None,
+        });
+    }
+
+    for (_, func) in scopes.functions() {
+        if func.name.span.file != file
+            || scopes[func.scope].kind.is_user_type()
+            || scopes[func.scope].kind.is_impl()
+            || func.constructor.is_some()
+        {
+            continue;
+        }
+
+        result.push(func_symbol(func));
+    }
+
+    for (_, var) in scopes.vars() {
+        if var.name.span.file != file || !var.is_static {
+            continue;
+        }
+
+        let range = Diagnostics::get_span_range(src, var.name.span, OffsetMode::Utf16);
+        result.push(DocumentSymbol {
+            name: strings.resolve(&var.name.data).into(),
+            kind: if var.mutable { SymbolKind::VARIABLE } else { SymbolKind::CONSTANT },
+            range,
+            selection_range: range,
+            children: None,
+            detail: None,
+            tags: None,
+            #[allow(deprecated)]
+            deprecated: None,
+        });
+    }
+
+    result
 }
 
 fn get_completion(

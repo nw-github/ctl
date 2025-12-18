@@ -480,7 +480,11 @@ impl Scopes {
     }
 
     pub fn functions(&self) -> impl Iterator<Item = (FunctionId, &Scoped<Function>)> {
-        self.fns.iter().enumerate().map(|(i, var)| (FunctionId(i), var))
+        self.fns.iter().enumerate().map(|(i, func)| (FunctionId(i), func))
+    }
+
+    pub fn types(&self) -> impl Iterator<Item = (UserTypeId, &Scoped<UserType>)> {
+        self.types.iter().enumerate().map(|(i, ut)| (UserTypeId(i), ut))
     }
 
     pub fn get_option_id(&self) -> Option<UserTypeId> {
