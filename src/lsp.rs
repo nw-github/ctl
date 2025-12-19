@@ -1432,7 +1432,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types, strings: &
         }
         UserTypeKind::Template => {
             res += strings.resolve(&ut.name.data);
-            for (i, tr) in ut.impls.iter().flat_map(|imp| imp.as_checked()).enumerate() {
+            for (i, tr) in ut.impls.iter_checked().enumerate() {
                 if i > 0 {
                     res += " + ";
                 } else {

@@ -41,54 +41,6 @@ macro_rules! resolve_type {
     }};
 }
 
-macro_rules! resolve_impl {
-    ($self: expr, $tr: expr) => {{
-        $tr = match std::mem::take(&mut $tr) {
-            TraitImpl::Unchecked { scope, data } => {
-                $self.enter_id_and_resolve(scope, |this| match data {
-                    TraitImplData::Path(path) => match this.resolve_type_path(&path) {
-                        ResolvedType::UserType(ut) => {
-                            if this.proj.scopes.get(ut.id).kind.is_trait() {
-                                TraitImpl::Checked(ut)
-                            } else {
-                                let name = format!("type '{}'", type_name!(this, ut));
-                                this.error(Error::expected_found(
-                                    "trait",
-                                    &name,
-                                    path.final_component_span(),
-                                ))
-                            }
-                        }
-                        ResolvedType::Builtin(ty) => {
-                            let name = format!("type '{}'", type_name!(this, ty));
-                            this.error(Error::expected_found(
-                                "trait",
-                                &name,
-                                path.final_component_span(),
-                            ))
-                        }
-                        ResolvedType::Error => Default::default(),
-                    },
-                    TraitImplData::Operator { tr, ty_args, span } => {
-                        let Some(tr_id) = this.proj.scopes.lang_types.get(&tr).copied() else {
-                            let data = strdata!(this, tr);
-                            return this.error(Error::no_lang_item(data, span));
-                        };
-
-                        this.enter_id_and_resolve(scope, |this| {
-                            TraitImpl::Checked(GenericTrait::new(
-                                tr_id,
-                                this.resolve_type_args(tr_id, &ty_args, true, span),
-                            ))
-                        })
-                    }
-                })
-            }
-            other => other,
-        };
-    }};
-}
-
 macro_rules! check_hover {
     ($self: expr, $span: expr, $item: expr) => {{
         if $span.len > 0
@@ -597,7 +549,7 @@ impl TypeChecker {
         };
 
         if let Some(ut_id) = self.proj.types[ty].as_user().map(|ut| ut.id) {
-            self.resolve_impls_recursive(ut_id);
+            self.resolve_impls(ut_id);
 
             let data = self.proj.scopes.get(ut_id);
             let cap = self.can_access_privates(data.scope);
@@ -607,7 +559,7 @@ impl TypeChecker {
                 }
             }
 
-            for tr in self.proj.scopes.get(ut_id).impls.iter().flat_map(|ut| ut.as_checked()) {
+            for tr in self.proj.scopes.get(ut_id).impls.iter_checked() {
                 for tr in self.proj.scopes.get_trait_impls(tr.id) {
                     let data = self.proj.scopes.get(tr);
                     add_methods(&self.proj, &mut completions, &data.fns, cap, tr, false);
@@ -617,7 +569,7 @@ impl TypeChecker {
             add_methods(&self.proj, &mut completions, &data.fns, cap, ut_id, false);
         } else if let Some(tr) = self.proj.types[ty].as_dyn_pointee() {
             let tr_id = tr.id;
-            self.resolve_impls_recursive(tr_id);
+            self.resolve_impls(tr_id);
             for tr in self.proj.scopes.get_trait_impls(tr_id) {
                 add_methods(
                     &self.proj,
@@ -632,8 +584,8 @@ impl TypeChecker {
 
         let extensions = self.extensions_in_scope_for(ty, self.current);
         for ext in extensions.iter() {
-            self.resolve_impls_recursive(ext.id);
-            for imp in self.proj.scopes.get(ext.id).impls.iter().flat_map(|imp| imp.as_checked()) {
+            self.resolve_impls(ext.id);
+            for imp in self.proj.scopes.get(ext.id).impls.iter_checked() {
                 for tr in self.proj.scopes.get_trait_impls(imp.id) {
                     add_methods(
                         &self.proj,
@@ -1222,13 +1174,12 @@ impl TypeChecker {
             } => {
                 let lang_item = stmt.attrs.val(Strings::ATTR_LANG);
                 let (tr, fns, this_id) = self.enter(ScopeKind::None, |this| {
-                    let impls: Vec<_> = impls
-                        .into_iter()
-                        .map(|path| TraitImpl::Unchecked {
-                            scope: this.current,
-                            data: TraitImplData::Path(path),
-                        })
-                        .collect();
+                    let impls = TraitImpls::Unchecked(
+                        impls
+                            .into_iter()
+                            .map(|path| TraitImplData::Path(this.current, path))
+                            .collect(),
+                    );
                     let this_id = this.insert(
                         UserType::template(
                             Located::new(name.span, Strings::THIS_TYPE),
@@ -1261,7 +1212,8 @@ impl TypeChecker {
                 }
                 let imp =
                     GenericTrait::from_type_params(&self.proj.scopes, &mut self.proj.types, id);
-                self.proj.scopes.get_mut(this_id).impls.push(TraitImpl::Checked(imp));
+                let impls = self.proj.scopes.get_mut(this_id).impls.as_unchecked_mut().unwrap();
+                impls.push(TraitImplData::Checked(imp));
                 self.proj.scopes[scope].kind = ScopeKind::UserType(id);
                 DStmt::Trait { id, fns }
             }
@@ -1437,7 +1389,7 @@ impl TypeChecker {
     fn declare_op_fn(
         &mut self,
         f: Located<OperatorFn>,
-        impls: &mut Vec<TraitImpl>,
+        impls: &mut Vec<TraitImplData>,
         blocks: &mut Vec<DImplBlock>,
         subscripts: &mut Vec<DFn>,
     ) {
@@ -1506,17 +1458,13 @@ impl TypeChecker {
 
         let span = f.name.span;
         let mut f = Fn::from_operator_fn(fn_name, f);
-        let block = self.enter(ScopeKind::None, |this| DImplBlock {
+        let block = self.enter(ScopeKind::Impl(impls.len()), |this| DImplBlock {
             type_params: this.declare_type_params(std::mem::take(&mut f.type_params)),
             span: f.name.span,
             scope: this.current,
             fns: vec![this.declare_fn(f)],
         });
-        self.proj.scopes[block.scope].kind = ScopeKind::Impl(impls.len());
-        impls.push(TraitImpl::Unchecked {
-            scope: block.scope,
-            data: TraitImplData::Operator { tr: tr_name, ty_args, span },
-        });
+        impls.push(TraitImplData::Operator { tr: tr_name, ty_args, span, scope: block.scope });
         blocks.push(block);
     }
 
@@ -1527,13 +1475,12 @@ impl TypeChecker {
                     UserType::template(
                         name,
                         self.current,
-                        impls
-                            .into_iter()
-                            .map(|path| TraitImpl::Unchecked {
-                                scope: self.current,
-                                data: TraitImplData::Path(path),
-                            })
-                            .collect(),
+                        TraitImpls::Unchecked(
+                            impls
+                                .into_iter()
+                                .map(|path| TraitImplData::Path(self.current, path))
+                                .collect(),
+                        ),
                     ),
                     false,
                     false,
@@ -1546,7 +1493,7 @@ impl TypeChecker {
         &mut self,
         blocks: Vec<Located<ImplBlock>>,
         operators: Vec<Located<OperatorFn>>,
-    ) -> (Vec<TraitImpl>, Vec<DImplBlock>, Vec<DFn>) {
+    ) -> (TraitImpls, Vec<DImplBlock>, Vec<DFn>) {
         let mut impls = Vec::new();
         let mut declared_blocks = Vec::new();
         let mut subscripts = Vec::new();
@@ -1556,15 +1503,13 @@ impl TypeChecker {
                 continue;
             }
 
-            let block = self.enter(ScopeKind::None, |this| DImplBlock {
+            let block = self.enter(ScopeKind::Impl(impls.len()), |this| DImplBlock {
                 type_params: this.declare_type_params(type_params),
                 span: path.final_component_span(),
                 scope: this.current,
                 fns: this.declare_fns(functions),
             });
-            self.proj.scopes[block.scope].kind = ScopeKind::Impl(impls.len());
-            impls
-                .push(TraitImpl::Unchecked { scope: block.scope, data: TraitImplData::Path(path) });
+            impls.push(TraitImplData::Path(block.scope, path));
             declared_blocks.push(block);
         }
 
@@ -1572,7 +1517,7 @@ impl TypeChecker {
             self.declare_op_fn(func, &mut impls, &mut declared_blocks, &mut subscripts);
         }
 
-        (impls, declared_blocks, subscripts)
+        (TraitImpls::Unchecked(impls), declared_blocks, subscripts)
     }
 
     fn declare_type_hint(&mut self, hint: Located<TypeHint>) -> TypeId {
@@ -1608,7 +1553,7 @@ impl TypeChecker {
         kind: UserTypeKind,
         type_params: TypeParams,
         fns: &[DFn],
-        impls: Vec<TraitImpl>,
+        impls: TraitImpls,
         impl_blocks: &[DImplBlock],
         subscripts: &[DFn],
     ) -> UserType {
@@ -1926,12 +1871,7 @@ impl TypeChecker {
             let t = self.proj.scopes.get(t);
             let name = t.name.data;
             // TODO: dont enfore impl order
-            for (s, t) in s
-                .impls
-                .iter()
-                .flat_map(|tr| tr.as_checked())
-                .zip(t.impls.iter().flat_map(|tr| tr.as_checked()))
-            {
+            for (s, t) in s.impls.iter_checked().zip(t.impls.iter_checked()) {
                 for (&s, &t) in s.ty_args.values().zip(t.ty_args.values()) {
                     if let Err(err) = compare_types(s, t) {
                         let data = strdata!(self, name);
@@ -1940,7 +1880,11 @@ impl TypeChecker {
                 }
             }
 
-            if s.impls.len() != t.impls.len() {
+            if s.impls
+                .as_checked()
+                .zip(t.impls.as_checked())
+                .is_some_and(|(l, r)| l.len() != r.len())
+            {
                 return Err(format!("type parameter '{}' is incorrect", strdata!(self, name)));
             }
         }
@@ -1978,9 +1922,8 @@ impl TypeChecker {
             ))
         }
 
-        for mut dep in
-            self.proj.scopes.get(tr.id).impls.clone().into_iter().flat_map(|tr| tr.into_checked())
-        {
+        self.resolve_impls(tr.id);
+        for mut dep in self.proj.scopes.get(tr.id).impls.clone().into_iter_checked() {
             for ty_arg in dep.ty_args.values_mut() {
                 if self.proj.types[*ty_arg].as_user().is_some_and(|ut| ut.id == this_id) {
                     *ty_arg = this;
@@ -2149,10 +2092,10 @@ impl TypeChecker {
         let mut seen = HashSet::new();
         for (i, block) in impls.into_iter().enumerate() {
             self.enter_id(block.scope, |this| {
-                if let Some(gtr) = this.proj.scopes.get(id).impls[i].as_checked().cloned() {
+                if let Some(gtr) = this.proj.scopes.get(id).impls.get_checked(i).cloned() {
                     if !seen.insert(gtr.clone()) {
                         this.proj.diag.report(Error::new(
-                            format!("duplicate implementation of trait {}", type_name!(this, gtr),),
+                            format!("duplicate implementation of trait {}", type_name!(this, gtr)),
                             block.span,
                         ))
                     }
@@ -4173,7 +4116,7 @@ impl TypeChecker {
                     strdata!(self, self.proj.scopes.get(id).name.data),
                 )
             } else {
-                self.check_bounds(&ut.ty_args, ty, self.proj.scopes.get(id).impls.clone(), span);
+                self.check_bounds(&ut.ty_args, ty, id, span);
             }
         }
 
@@ -4594,28 +4537,18 @@ impl TypeChecker {
                     strdata!(self, self.proj.scopes.get(id).name.data)
                 )
             } else {
-                let f = self.check_bounds(
-                    &func.ty_args,
-                    ty,
-                    self.proj.scopes.get(id).impls.clone(),
-                    span,
-                );
+                let f = self.check_bounds(&func.ty_args, ty, id, span);
                 failed = failed || f;
             }
         }
         failed
     }
 
-    fn check_bounds(
-        &mut self,
-        ty_args: &TypeArgs,
-        ty: TypeId,
-        bounds: Vec<TraitImpl>,
-        span: Span,
-    ) -> bool {
+    fn check_bounds(&mut self, ty_args: &TypeArgs, ty: TypeId, id: UserTypeId, span: Span) -> bool {
         let mut failed = false;
-        for mut bound in bounds.into_iter().flat_map(|bound| bound.into_checked()) {
-            self.resolve_impls(bound.id);
+        self.resolve_impls(id);
+        for mut bound in self.proj.scopes.get(id).impls.clone().into_iter_checked() {
+            // self.resolve_impls(bound.id);
             bound.fill_templates(&mut self.proj.types, ty_args);
 
             if !self.implements_trait(ty, &bound) {
@@ -4692,8 +4625,7 @@ impl TypeChecker {
     ) -> TypeId {
         let ty = GenericUserType::from_type_args(&self.proj.scopes, id, args);
         for (&id, &param) in ty.ty_args.iter() {
-            self.resolve_impls(id);
-            self.check_bounds(&ty.ty_args, param, self.proj.scopes.get(id).impls.clone(), span);
+            self.check_bounds(&ty.ty_args, param, id, span);
         }
         self.proj.types.insert(Type::User(ty))
     }
@@ -5097,17 +5029,14 @@ impl TypeChecker {
 
         let mut deps = Vec::new();
         let mut failed = false;
-        for i in 0..self.proj.scopes.get(id).impls.iter().len() {
-            if let Some(checked) = self.proj.scopes.get(id).impls[i].as_checked() {
-                deps.push(checked.id);
-
-                let checked_id = checked.id;
-                if self.check_trait_dependencies(checked_id) {
-                    failed = true;
-                }
-                if let Some(Dependencies::Resolved(res)) = self.proj.trait_deps.get(&checked_id) {
-                    deps.extend(res.iter());
-                }
+        let ids: Vec<_> = self.proj.scopes.get(id).impls.iter_checked().map(|i| i.id).collect();
+        for id in ids {
+            deps.push(id);
+            if self.check_trait_dependencies(id) {
+                failed = true;
+            }
+            if let Some(Dependencies::Resolved(res)) = self.proj.trait_deps.get(&id) {
+                deps.extend(res.iter());
             }
         }
 
@@ -5121,22 +5050,70 @@ impl TypeChecker {
     }
 
     fn resolve_impls(&mut self, id: UserTypeId) {
-        for i in 0..self.proj.scopes.get(id).type_params.len() {
-            self.resolve_impls(self.proj.scopes.get(id).type_params[i]);
-        }
+        fn resolve_impl(this: &mut TypeChecker, data: TraitImplData) -> Option<GenericTrait> {
+            match data {
+                TraitImplData::Path(scope, path) => {
+                    this.enter_id_and_resolve(scope, |this| match this.resolve_type_path(&path) {
+                        ResolvedType::UserType(ut) => {
+                            if this.proj.scopes.get(ut.id).kind.is_trait() {
+                                Some(ut)
+                            } else {
+                                let name = format!("type '{}'", type_name!(this, ut));
+                                this.error(Error::expected_found(
+                                    "trait",
+                                    &name,
+                                    path.final_component_span(),
+                                ))
+                            }
+                        }
+                        ResolvedType::Builtin(ty) => {
+                            let name = format!("type '{}'", type_name!(this, ty));
+                            this.error(Error::expected_found(
+                                "trait",
+                                &name,
+                                path.final_component_span(),
+                            ))
+                        }
+                        ResolvedType::Error => Default::default(),
+                    })
+                }
+                TraitImplData::Operator { tr, ty_args, span, scope } => {
+                    this.enter_id_and_resolve(scope, |this| {
+                        let Some(tr_id) = this.proj.scopes.lang_types.get(&tr).copied() else {
+                            let data = strdata!(this, tr);
+                            return this.error(Error::no_lang_item(data, span));
+                        };
 
-        for i in 0..self.proj.scopes.get(id).impls.len() {
-            resolve_impl!(self, self.proj.scopes.get_mut(id).impls[i]);
-        }
-    }
-
-    fn resolve_impls_recursive(&mut self, id: UserTypeId) {
-        for i in 0..self.proj.scopes.get(id).impls.len() {
-            resolve_impl!(self, self.proj.scopes.get_mut(id).impls[i]);
-            if let Some(id) = self.proj.scopes.get_mut(id).impls[i].as_checked().map(|tr| tr.id) {
-                self.resolve_impls(id);
+                        Some(GenericTrait::new(
+                            tr_id,
+                            this.resolve_type_args(tr_id, &ty_args, true, span),
+                        ))
+                    })
+                }
+                TraitImplData::Checked(ut) => Some(ut),
             }
         }
+
+        let impls = match std::mem::take(&mut self.proj.scopes.get_mut(id).impls) {
+            TraitImpls::Unchecked(impls) => {
+                for i in 0..self.proj.scopes.get(id).type_params.len() {
+                    self.resolve_impls(self.proj.scopes.get(id).type_params[i]);
+                }
+
+                let mut result = Vec::with_capacity(impls.len());
+                for data in impls {
+                    let res = resolve_impl(self, data);
+                    if let Some(res) = &res {
+                        self.resolve_impls(res.id);
+                    }
+                    result.push(res);
+                }
+                TraitImpls::Checked(result)
+            }
+            other => other,
+        };
+
+        self.proj.scopes.get_mut(id).impls = impls;
     }
 
     fn resolve_proto(&mut self, id: FunctionId) {
@@ -5202,8 +5179,7 @@ impl TypeChecker {
                         continue;
                     }
 
-                    let bounds = self.proj.scopes.get(arg).impls.clone();
-                    if self.check_bounds(&ty_args, val, bounds, Span::default()) {
+                    if self.check_bounds(&ty_args, val, arg, Span::default()) {
                         good = false;
                         break;
                     }
@@ -5217,12 +5193,8 @@ impl TypeChecker {
     }
 
     fn has_direct_impl(&mut self, ut: &GenericUserType, bound: &GenericTrait) -> bool {
-        self.resolve_impls_recursive(ut.id);
-        for i in 0..self.proj.scopes.get(ut.id).impls.len() {
-            let Some(mut tr) = self.proj.scopes.get(ut.id).impls[i].as_checked().cloned() else {
-                continue;
-            };
-
+        self.resolve_impls(ut.id);
+        for (i, mut tr) in self.proj.scopes.get(ut.id).impls.clone().into_iter_checked_enumerate() {
             if self.is_impl_usable(ut.id, i, &mut tr, bound).is_none() {
                 continue;
             }
@@ -5330,7 +5302,7 @@ impl TypeChecker {
                     return None;
                 }
                 let bounds = this.proj.scopes.get(id).impls.clone();
-                for mut bound in bounds.into_iter().flat_map(TraitImpl::into_checked) {
+                for mut bound in bounds.into_iter_checked() {
                     bound.fill_templates(&mut this.proj.types, &ext.ty_args);
                     if !implements_trait(this, arg, &bound, &ignore, exts, cache) {
                         return None;
@@ -5410,9 +5382,9 @@ impl TypeChecker {
                 .cloned()
                 .zip(scopes[scopes[scope].parent?].kind.as_user_type().cloned())
             {
-                resolve_impl!(this, this.proj.scopes.get_mut(impl_ut).impls[impl_i]);
+                this.resolve_impls(impl_ut);
                 if let Some(mut imp) =
-                    this.proj.scopes.get(impl_ut).impls[impl_i].as_checked().cloned()
+                    this.proj.scopes.get(impl_ut).impls.get_checked(impl_i).cloned()
                 {
                     imp.fill_templates(&mut this.proj.types, &ut.ty_args);
                     Some((impl_i, impl_ut, imp))
@@ -5461,15 +5433,7 @@ impl TypeChecker {
             finish: impl FnOnce(&mut TypeChecker, FunctionId) -> TypeArgs + Clone,
         ) -> Option<MemberFn> {
             let src_scope = this.proj.scopes.get(ut.id).scope;
-            for tr in this
-                .proj
-                .scopes
-                .get(ut.id)
-                .impls
-                .clone()
-                .into_iter()
-                .flat_map(|ut| ut.into_checked())
-            {
+            for tr in this.proj.scopes.get(ut.id).impls.clone().into_iter_checked() {
                 for imp in this.proj.scopes.get_trait_impls_ex(&mut this.proj.types, tr) {
                     if wanted_tr.is_some_and(|id| id != &imp) {
                         continue;
@@ -5514,7 +5478,7 @@ impl TypeChecker {
         } else if let Some(tr) = self.proj.types[inst].as_dyn_pointee() {
             // TODO: wanted_tr
             let tr = tr.clone();
-            self.resolve_impls_recursive(tr.id);
+            self.resolve_impls(tr.id);
             let data = self.proj.scopes.get(tr.id);
             for imp in self.proj.scopes.get_trait_impls(tr.id) {
                 if let Some(f) = Self::search(&self.proj.scopes, imp, method) {
@@ -5545,7 +5509,7 @@ impl TypeChecker {
 
         // look through trait impls AFTER exhausting all concrete functions
         if let Some(ut) = ut {
-            self.resolve_impls_recursive(ut.id);
+            self.resolve_impls(ut.id);
             if let Some(f) =
                 search_impls::<false>(self, inst, wanted_tr, method, &ut, finish.clone())
             {
@@ -5592,9 +5556,10 @@ impl TypeChecker {
             let scope = scopes.get(f.id).scope;
             let &impl_i = scopes[scope].kind.as_impl()?;
             let &impl_ut = scopes[scopes[scope].parent?].kind.as_user_type()?;
-            resolve_impl!(this, this.proj.scopes.get_mut(impl_ut).impls[impl_i]);
-            let imp = &this.proj.scopes.get_mut(impl_ut).impls[impl_i];
-            if !matches!(imp, TraitImpl::Checked(tr) if tr.id == wanted_tr) {
+            this.resolve_impls(impl_ut);
+
+            let imp = this.proj.scopes.get_mut(impl_ut).impls.get_checked(impl_i)?;
+            if imp.id != wanted_tr {
                 return None;
             }
 
@@ -5619,7 +5584,7 @@ impl TypeChecker {
             ut: &GenericUserType,
         ) -> Option<MemberFn> {
             let src_scope = this.proj.scopes.get(ut.id).scope;
-            for tr in this.proj.scopes.get(ut.id).impls.iter().flat_map(|ut| ut.as_checked()) {
+            for tr in this.proj.scopes.get(ut.id).impls.iter_checked() {
                 for imp in this.proj.scopes.get_trait_impls(tr.id) {
                     if wanted_tr != imp {
                         continue;
@@ -5679,7 +5644,7 @@ impl TypeChecker {
 
         // look through trait impls AFTER exhausting all concrete functions
         if let Some(ut) = ut {
-            self.resolve_impls_recursive(ut.id);
+            self.resolve_impls(ut.id);
             if let Some(f) = search_impls::<false>(self, inst, wanted_tr, method, &ut) {
                 self.resolve_proto(f.func.id);
                 return Some(f);
@@ -7392,7 +7357,7 @@ impl TypeChecker {
                 .collect(),
         );
         for (&id, &ty) in ty_args.iter() {
-            self.check_bounds(&ty_args, ty, self.proj.scopes.get(id).impls.clone(), span);
+            self.check_bounds(&ty_args, ty, id, span);
         }
 
         ty_args
