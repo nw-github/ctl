@@ -7,7 +7,7 @@ pub type StrId = lasso::Spur;
 pub(crate) const THIS_PARAM: &str = "this";
 pub(crate) const THIS_TYPE: &str = "This";
 
-#[derive(derive_more::Deref, derive_more::DerefMut)]
+#[derive(Clone, derive_more::Deref, derive_more::DerefMut)]
 pub struct Strings {
     #[deref]
     #[deref_mut]

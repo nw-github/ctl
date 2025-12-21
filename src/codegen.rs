@@ -863,9 +863,9 @@ impl Codegen<'_> {
             (exports.chain(std::iter::once(main.clone())).collect(), Some(main))
         };
 
-        let strings = std::mem::take(&mut proj.strings);
+        let strings = proj.strings.clone();
         let mut this = Codegen {
-            str_interp: StrInterp::new(&mut proj, &strings),
+            str_interp: StrInterp::new(&mut proj),
             flags: proj.conf.flags,
             proj,
             strings: &strings,
@@ -3659,7 +3659,7 @@ struct StrInterp {
 }
 
 impl StrInterp {
-    pub fn new(proj: &mut Project, strings: &Strings) -> Self {
+    pub fn new(proj: &mut Project) -> Self {
         let string = proj
             .scopes
             .lang_types
@@ -3673,22 +3673,22 @@ impl StrInterp {
                 .map(|&ut| GenericUserType::from_id(&proj.scopes, &mut proj.types, ut)),
             string_ty: string.as_ref().map(|s| proj.types.insert(Type::User(s.clone()))),
             string,
-            opts: strings.get("opts").unwrap(),
-            width: strings.get("width").unwrap(),
-            prec: strings.get("prec").unwrap(),
-            fill: strings.get("fill").unwrap(),
-            align: strings.get("align").unwrap(),
-            upper: strings.get("upper").unwrap(),
-            alt: strings.get("alt").unwrap(),
-            sign: strings.get("sign").unwrap(),
-            zero: strings.get("zero").unwrap(),
-            align_none: strings.get("None").unwrap(),
-            align_left: strings.get("Left").unwrap(),
-            align_right: strings.get("Right").unwrap(),
-            align_center: strings.get("Center").unwrap(),
-            sign_none: strings.get("None").unwrap(),
-            sign_pos: strings.get("Plus").unwrap(),
-            sign_neg: strings.get("Minus").unwrap(),
+            opts: proj.strings.get("opts").unwrap(),
+            width: proj.strings.get("width").unwrap(),
+            prec: proj.strings.get("prec").unwrap(),
+            fill: proj.strings.get("fill").unwrap(),
+            align: proj.strings.get("align").unwrap(),
+            upper: proj.strings.get("upper").unwrap(),
+            alt: proj.strings.get("alt").unwrap(),
+            sign: proj.strings.get("sign").unwrap(),
+            zero: proj.strings.get("zero").unwrap(),
+            align_none: proj.strings.get("None").unwrap(),
+            align_left: proj.strings.get("Left").unwrap(),
+            align_right: proj.strings.get("Right").unwrap(),
+            align_center: proj.strings.get("Center").unwrap(),
+            sign_none: proj.strings.get("None").unwrap(),
+            sign_pos: proj.strings.get("Plus").unwrap(),
+            sign_neg: proj.strings.get("Minus").unwrap(),
         }
     }
 }

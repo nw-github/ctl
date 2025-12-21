@@ -3744,96 +3744,85 @@ impl TypeChecker {
         span: Span,
     ) -> CExpr {
         let imm_receiver = self.immutable_receiver(&callee);
-        if let Some(ut) = self.proj.types[ty].as_user().cloned() {
-            let mut candidates: Vec<_> = self
-                .proj
-                .scopes
-                .get(ut.id)
-                .subscripts
-                .iter()
-                .cloned()
-                .filter(|&f| assign == self.proj.scopes.get(f).assign_subscript)
-                .filter(|&f| self.proj.scopes.get(f).params.len() == args.len() + 1)
-                .collect();
-            candidates.iter().for_each(|&f| self.resolve_proto(f));
-            candidates.sort_unstable_by(|&a, &b| {
-                let left = self
-                    .proj
-                    .scopes
-                    .get(a)
-                    .params
-                    .first()
-                    .is_some_and(|p| self.proj.types[p.ty].is_mut_ptr());
-                let right = self
-                    .proj
-                    .scopes
-                    .get(b)
-                    .params
-                    .first()
-                    .is_some_and(|p| self.proj.types[p.ty].is_mut_ptr());
-                right.cmp(&left)
-            });
-
-            for f in candidates {
-                if imm_receiver
-                    && self
-                        .proj
-                        .scopes
-                        .get(f)
-                        .params
-                        .first()
-                        .is_some_and(|p| self.proj.types[p.ty].is_mut_ptr())
+        let mut candidates = vec![];
+        for ut in self.proj.types[ty]
+            .as_user()
+            .cloned()
+            .into_iter()
+            .chain(self.extensions_in_scope_for(ty, self.current))
+        {
+            for &f in self.proj.scopes.get(ut.id).subscripts.iter() {
+                let data = self.proj.scopes.get(f);
+                if assign != data.assign_subscript
+                    || data.params.len() != args.len() + 1
+                    || (imm_receiver
+                        && data.params.first().is_some_and(|p| self.proj.types[p.ty].is_mut_ptr()))
                 {
                     continue;
                 }
 
                 let mut func = GenericFn::from_id(&self.proj.scopes, f);
                 func.ty_args.copy_args(&ut.ty_args);
+                candidates.push(func);
+            }
+        }
 
-                let args = args.clone();
-                let recv = callee
-                    .clone()
-                    .auto_deref(&mut self.proj.types, self.proj.scopes.get(f).params[0].ty);
-                let err_idx = self.proj.diag.capture_errors();
-                let (args, ret, failed) =
-                    self.check_fn_args(&mut func, Some(recv), args, target, span);
-                // TODO: if the arguments have non overload related errors, just stop overload
-                // resolution
-                if failed || args.iter().any(|arg| matches!(arg.1.data, CExprData::Error)) {
-                    self.proj.diag.truncate_errors(err_idx);
-                    continue;
-                }
-                // unsafe doesnt cause check_fn_args to fail, but we mute errors, so check again
-                // here
-                if self.proj.scopes.get(func.id).is_unsafe {
-                    check_unsafe!(self, Error::is_unsafe(span));
-                }
+        candidates.iter().for_each(|f| self.resolve_proto(f.id));
+        candidates.sort_unstable_by(|a, b| {
+            let left = self
+                .proj
+                .scopes
+                .get(a.id)
+                .params
+                .first()
+                .is_some_and(|p| self.proj.types[p.ty].is_mut_ptr());
+            let right = self
+                .proj
+                .scopes
+                .get(b.id)
+                .params
+                .first()
+                .is_some_and(|p| self.proj.types[p.ty].is_mut_ptr());
+            right.cmp(&left)
+        });
 
-                if !assign && let Type::Ptr(inner) | Type::MutPtr(inner) = &self.proj.types[ret] {
-                    return CExpr::new(
-                        *inner,
-                        CExprData::AutoDeref(
-                            CExpr::new(
-                                ret,
-                                CExprData::call(
-                                    &mut self.proj.types,
-                                    func,
-                                    args,
-                                    self.current,
-                                    span,
-                                ),
-                            )
-                            .into(),
-                            1,
-                        ),
-                    );
-                }
+        for mut func in candidates {
+            let args = args.clone();
+            let recv = callee
+                .clone()
+                .auto_deref(&mut self.proj.types, self.proj.scopes.get(func.id).params[0].ty);
+            let err_idx = self.proj.diag.capture_errors();
+            let (args, ret, failed) = self.check_fn_args(&mut func, Some(recv), args, target, span);
+            // TODO: if the arguments have non overload related errors, just stop overload
+            // resolution
+            if failed || args.iter().any(|arg| matches!(arg.1.data, CExprData::Error)) {
+                self.proj.diag.truncate_errors(err_idx);
+                continue;
+            }
+            // unsafe doesnt cause check_fn_args to fail, but we mute errors, so check again
+            // here
+            if self.proj.scopes.get(func.id).is_unsafe {
+                check_unsafe!(self, Error::is_unsafe(span));
+            }
 
+            if !assign && let Type::Ptr(inner) | Type::MutPtr(inner) = &self.proj.types[ret] {
                 return CExpr::new(
-                    ret,
-                    CExprData::call(&mut self.proj.types, func, args, self.current, span),
+                    *inner,
+                    CExprData::AutoDeref(
+                        CExpr::new(
+                            ret,
+                            CExprData::call(&mut self.proj.types, func, args, self.current, span),
+                        )
+                        .into(),
+                        1,
+                    ),
                 );
             }
+
+            return CExpr::new(
+                ret,
+                CExprData::call(&mut self.proj.types, func, args, self.current, span),
+            );
         }
 
         let args: Vec<_> = args.into_iter().map(|(_, expr)| self.check_expr(expr, None)).collect();
@@ -7448,9 +7437,7 @@ impl TypeChecker {
         }) {
             println!(
                 "Hello extensions: {:?}",
-                res.iter()
-                    .map(|ut| type_name!(self, ut))
-                    .collect::<Vec<_>>()
+                res.iter().map(|ut| type_name!(self, ut)).collect::<Vec<_>>()
             )
         }
 
