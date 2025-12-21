@@ -964,7 +964,7 @@ fn get_document_symbols(
         let kind = match &ut.kind {
             UserTypeKind::Template => continue,
             UserTypeKind::Union(_) => SymbolKind::ENUM,
-            UserTypeKind::Trait(_, _) => SymbolKind::INTERFACE,
+            UserTypeKind::Trait { .. } => SymbolKind::INTERFACE,
             _ => SymbolKind::STRUCT,
         };
 
@@ -1102,7 +1102,7 @@ fn get_completion(
                             " (from {})",
                             strings.resolve(&scopes.get(owner).name.data)
                         )),
-                        UserTypeKind::Trait(_, _) => {
+                        UserTypeKind::Trait { .. } => {
                             Some(format!(" (as {})", strings.resolve(&scopes.get(owner).name.data)))
                         }
                         _ => None,
@@ -1131,7 +1131,7 @@ fn get_completion(
                 label: name.clone(),
                 kind: Some(match ut.kind {
                     UserTypeKind::Union(_) => CompletionItemKind::ENUM,
-                    UserTypeKind::Trait(_, _) => CompletionItemKind::INTERFACE,
+                    UserTypeKind::Trait { .. } => CompletionItemKind::INTERFACE,
                     UserTypeKind::Template => CompletionItemKind::TYPE_PARAMETER,
                     _ => CompletionItemKind::STRUCT,
                 }),
@@ -1453,7 +1453,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types, strings: &
                 }
             }
         }
-        UserTypeKind::Trait(_, _) => {
+        UserTypeKind::Trait { .. } => {
             write_de!(res, "trait {}", strings.resolve(&ut.name.data));
             visualize_type_params(&mut res, &ut.type_params, scopes, types, strings);
         }

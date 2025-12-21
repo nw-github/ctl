@@ -1,5 +1,3 @@
-use enum_as_inner::EnumAsInner;
-
 use crate::{
     ast::parsed::{Expr, Pattern, TypeHint},
     intern::StrId,
@@ -16,10 +14,8 @@ pub struct ImplBlock {
     pub span: Span,
     pub scope: ScopeId,
     pub fns: Vec<Fn>,
-    pub type_params: Vec<UserTypeId>,
 }
 
-#[derive(EnumAsInner)]
 pub enum Stmt {
     Expr(Expr),
     Defer(Expr),

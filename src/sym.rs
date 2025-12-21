@@ -243,7 +243,7 @@ pub struct Function {
 
 impl Function {
     pub fn is_dyn_compatible(&self, scopes: &Scopes, types: &Types, tr: UserTypeId) -> bool {
-        let (&this, _) = scopes
+        let (&this, _, _) = scopes
             .get(tr)
             .kind
             .as_trait()
@@ -313,12 +313,14 @@ pub enum UserTypeKind {
     Template,
     AnonStruct,
     Tuple,
-    Trait(UserTypeId, bool),
+    Trait { this: UserTypeId, sealed: bool, assoc_types: HashMap<StrId, UserTypeId> },
     Extension(TypeId),
 }
 
+#[derive(Clone)]
 pub struct ImplBlockData {
     pub type_params: Vec<UserTypeId>,
+    pub assoc_types: HashMap<StrId, Located<TypeId>>,
 }
 
 impl HasTypeParams for ImplBlockData {
