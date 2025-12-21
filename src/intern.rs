@@ -40,7 +40,7 @@ impl Strings {
     pub const LANG_FMT_ARG: StrId = invent_str_id(23);
     pub const FN_WRITTEN: StrId = invent_str_id(24);
     pub const FN_INSERT: StrId = invent_str_id(25);
-    pub const FN_SUBSPAN: StrId = invent_str_id(26);
+    pub const LANG_ARRAY: StrId = invent_str_id(26);
     pub const VAR_LESS: StrId = invent_str_id(27);
     pub const VAR_GREATER: StrId = invent_str_id(28);
     pub const VAR_EQUAL: StrId = invent_str_id(29);
@@ -53,7 +53,6 @@ impl Strings {
     pub const FEAT_IO: StrId = invent_str_id(36);
     pub const FEAT_HOSTED: StrId = invent_str_id(37);
     pub const FEAT_BOEHM: StrId = invent_str_id(38);
-    pub const LANG_ARRAY: StrId = invent_str_id(39);
 
     pub fn new() -> Self {
         let mut rodeo = Rodeo::default();
@@ -82,7 +81,7 @@ impl Strings {
         assert_eq!(Self::LANG_FMT_ARG, rodeo.get_or_intern_static("fmt_arg"));
         assert_eq!(Self::FN_WRITTEN, rodeo.get_or_intern_static("written"));
         assert_eq!(Self::FN_INSERT, rodeo.get_or_intern_static("insert"));
-        assert_eq!(Self::FN_SUBSPAN, rodeo.get_or_intern_static("subspan"));
+        assert_eq!(Self::LANG_ARRAY, rodeo.get_or_intern_static("array"));
         assert_eq!(Self::VAR_LESS, rodeo.get_or_intern_static("Less"));
         assert_eq!(Self::VAR_GREATER, rodeo.get_or_intern_static("Greater"));
         assert_eq!(Self::VAR_EQUAL, rodeo.get_or_intern_static("Equal"));
@@ -95,7 +94,6 @@ impl Strings {
         assert_eq!(Self::FEAT_IO, rodeo.get_or_intern_static("io"));
         assert_eq!(Self::FEAT_HOSTED, rodeo.get_or_intern_static("hosted"));
         assert_eq!(Self::FEAT_BOEHM, rodeo.get_or_intern_static("boehm"));
-        assert_eq!(Self::LANG_ARRAY, rodeo.get_or_intern_static("array"));
         Self { rodeo }
     }
 }

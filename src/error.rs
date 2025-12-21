@@ -252,6 +252,10 @@ impl Error {
         Self::new("expression is not compile time evaluatable", span)
     }
 
+    pub fn not_assignable(span: Span) -> Self {
+        Self::new("expression is not assignable", span)
+    }
+
     pub fn consteval_overflow(span: Span) -> Self {
         Self::new("expression overflows during constant evaluation", span)
     }

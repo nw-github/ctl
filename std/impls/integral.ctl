@@ -223,7 +223,8 @@ pub extension IntegralImpl<T: Integral> for T {
                 this = (dividend / radix).cast();
                 (dividend % radix).cast()
             };
-            unsafe *buf.as_raw_mut().add(--pos) = digits[digit < 0 then -digit else digit];
+            let digit = digit < 0 then -digit else digit;
+            unsafe *buf.as_raw_mut().add(--pos) = digits[digit];
         } while this != 0.cast();
 
         pos

@@ -1569,73 +1569,6 @@ impl<'a> Codegen<'a> {
                     }
                 });
             }
-            ExprData::Subscript { callee, arg } => {
-                // TODO: bounds check
-                if self.proj.types[callee.ty].is_array() {
-                    match callee.data {
-                        ExprData::Unary(UnaryOp::Deref, expr) => {
-                            // we compile pointers to arrays as T *, not Array_T_N *, so in the case
-                            // there will be no data member
-                            self.emit_expr(*expr, state);
-                        }
-                        _ => {
-                            self.emit_expr(*callee, state);
-                            write_de!(self.buffer, ".{ARRAY_DATA_NAME}");
-                        }
-                    }
-                } else {
-                    write_de!(
-                        self.buffer,
-                        "({}",
-                        "*".repeat(Self::indirection(&self.proj.types, callee.ty) - 1)
-                    );
-                    self.emit_expr(*callee, state);
-                    write_de!(self.buffer, ")");
-                }
-
-                write_de!(self.buffer, "[");
-                self.emit_expr(*arg, state);
-                write_de!(self.buffer, "]");
-            }
-            ExprData::SliceArray { callee, arg } => {
-                let indirection = Self::indirection(&self.proj.types, callee.ty);
-                let src = tmpbuf!(self, state, |tmp| {
-                    let len = *callee.ty.strip_references_r(&self.proj.types).as_array().unwrap().1;
-                    self.emit_type(expr.ty);
-                    write_de!(self.buffer, " {tmp}={{.$ptr=");
-                    if indirection != 0 {
-                        self.buffer.emit("*".repeat(indirection - 1));
-                        self.emit_expr_inline(*callee, state);
-                    } else {
-                        self.emit_expr_inline(*callee, state);
-                        write_de!(self.buffer, ".{ARRAY_DATA_NAME}");
-                    }
-                    write_de!(self.buffer, ",.$len={len}}};");
-                    tmp
-                });
-                let ut = self.proj.types[expr.ty].as_user().unwrap().clone();
-                let mut func = GenericFn::from_type_args(
-                    &self.proj.scopes,
-                    self.proj
-                        .scopes
-                        .get(ut.id)
-                        .find_associated_fn(&self.proj.scopes, Strings::FN_SUBSPAN)
-                        .unwrap(),
-                    [arg.ty.with_templates(&mut self.proj.types, &state.func.ty_args)],
-                );
-                func.ty_args.copy_args(&ut.ty_args);
-                let new_state = State::in_body_scope(func, &self.proj.scopes);
-                self.buffer.emit_fn_name(
-                    &self.proj.scopes,
-                    &mut self.proj.types,
-                    &new_state.func,
-                    self.flags.minify,
-                );
-                write_de!(self.buffer, "({src}, ");
-                self.emit_expr_inline(*arg, state);
-                write_de!(self.buffer, ")");
-                self.funcs.insert(new_state);
-            }
             ExprData::Return(mut expr) => never_expr!(self, {
                 expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
                 let void = expr.ty.is_void();
@@ -2141,9 +2074,7 @@ impl<'a> Codegen<'a> {
                     write_de!(self.buffer, "&");
                 }
                 let is_lvalue = match &lhs.data {
-                    ExprData::AutoDeref { .. } | ExprData::Var(_) | ExprData::Subscript { .. } => {
-                        true
-                    }
+                    ExprData::AutoDeref { .. } | ExprData::Var(_) => true,
                     ExprData::Member { source, .. } => !source.ty.is_packed_struct(&self.proj),
                     _ => false,
                 };

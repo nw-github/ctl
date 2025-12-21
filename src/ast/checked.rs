@@ -177,14 +177,6 @@ pub enum ExprData {
         source: Box<Expr>,
         member: StrId,
     },
-    Subscript {
-        callee: Box<Expr>,
-        arg: Box<Expr>,
-    },
-    SliceArray {
-        callee: Box<Expr>,
-        arg: Box<Expr>,
-    },
     As(Box<Expr>, bool),
     Is(Box<Expr>, Pattern),
     Return(Box<Expr>),
@@ -257,14 +249,6 @@ impl Expr {
             }
             ExprData::Var(id) => scopes.get(*id).mutable,
             ExprData::Member { source, .. } => source.is_assignable(scopes, types),
-            ExprData::Subscript { callee, .. } => match &callee.data {
-                ExprData::Var(id) => {
-                    matches!(types[callee.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
-                        || scopes.get(*id).mutable
-                }
-                ExprData::Member { source, .. } => source.is_assignable(scopes, types),
-                _ => true,
-            },
             _ => false,
         }
     }
@@ -281,10 +265,6 @@ impl Expr {
             ExprData::Var(id) => scopes.get(*id).mutable,
             ExprData::Member { source, .. } => {
                 matches!(types[source.ty], Type::MutPtr(_)) || source.can_addrmut(scopes, types)
-            }
-            ExprData::Subscript { callee, .. } => {
-                matches!(types[callee.ty], Type::MutPtr(_) | Type::RawPtr(_))
-                    || callee.can_addrmut(scopes, types)
             }
             _ => true,
         }

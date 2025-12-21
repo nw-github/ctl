@@ -120,10 +120,10 @@ pub fn s2d(buffer: [u8..]): Result<f64, ParseError> {
             .wrapping_sub(ceil_log2_pow5(e10))
             .wrapping_add(d2s::DOUBLE_POW5_BITCOUNT);
         debug_assert(j >= 0);
-        debug_assert(e10 < DOUBLE_POW5_SPLIT[..].len() as! i32);
+        debug_assert(e10 < DOUBLE_POW5_SPLIT.len() as! i32);
         let m2 = mul_shift_64(
             m10,
-            unsafe DOUBLE_POW5_SPLIT[..].get_unchecked(e10 as! uint),
+            unsafe DOUBLE_POW5_SPLIT.get_unchecked(e10 as! uint),
             j as! u32,
         );
 
@@ -146,10 +146,10 @@ pub fn s2d(buffer: [u8..]): Result<f64, ParseError> {
             .wrapping_add(ceil_log2_pow5(-e10))
             .wrapping_sub(1)
             .wrapping_add(d2s::DOUBLE_POW5_INV_BITCOUNT);
-        debug_assert(-e10 < DOUBLE_POW5_INV_SPLIT[..].len() as! i32);
+        debug_assert(-e10 < DOUBLE_POW5_INV_SPLIT.len() as! i32);
         let m2 = mul_shift_64(
             m10,
-            unsafe DOUBLE_POW5_INV_SPLIT[..].get_unchecked(-e10 as! uint),
+            unsafe DOUBLE_POW5_INV_SPLIT.get_unchecked(-e10 as! uint),
             j as! u32,
         );
         let trailing_zeros = multiple_of_power_of_5(m10, -e10 as! u32);

@@ -2326,38 +2326,9 @@ impl TypeChecker {
                 let assignment = op.is_assignment();
                 match op {
                     BinaryOp::Assign => {
-                        if let PExprData::Subscript { callee, mut args } = left.data {
-                            if args.is_empty() {
-                                return self.error(Error::new(
-                                    "subscript requires at least one argument",
-                                    span,
-                                ));
-                            }
-
-                            let callee = self.check_expr(*callee, None);
-                            let stripped = callee.ty.strip_references(&self.proj.types);
-                            if let &Type::Array(inner, _) = &self.proj.types[stripped] {
-                                let left = self.check_array_subscript(inner, callee, args);
-                                if op.is_assignment()
-                                    && !left.is_assignable(&self.proj.scopes, &self.proj.types)
-                                {
-                                    // TODO: report a better error here
-                                    self.error(Error::new(
-                                        "expression is not assignable",
-                                        left_span,
-                                    ))
-                                }
-
-                                let right = self.type_check(*right, left.ty);
-                                return CExpr::new(
-                                    TypeId::VOID,
-                                    CExprData::Binary(BinaryOp::Assign, left.into(), right.into()),
-                                );
-                            } else {
-                                args.push((None, *right));
-                                return self
-                                    .check_subscript(callee, stripped, args, target, true, span);
-                            }
+                        if let PExprData::Subscript { callee, args } = left.data {
+                            let span = left.span;
+                            return self.check_subscript(*callee, args, target, Some(*right), span);
                         }
                     }
                     BinaryOp::NoneCoalesce | BinaryOp::NoneCoalesceAssign => {
@@ -2386,7 +2357,7 @@ impl TypeChecker {
                         };
                         if assignment && !lhs.is_assignable(&self.proj.scopes, &self.proj.types) {
                             // TODO: report a better error here
-                            self.error(Error::new("expression is not assignable", lhs_span))
+                            self.error(Error::not_assignable(lhs_span))
                         }
 
                         let span = right.span;
@@ -2425,7 +2396,7 @@ impl TypeChecker {
 
                 if assignment && !left.is_assignable(&self.proj.scopes, &self.proj.types) {
                     // TODO: report a better error here
-                    self.error(Error::new("expression is not assignable", left_span))
+                    self.error(Error::not_assignable(left_span))
                 }
 
                 if op != BinaryOp::Assign && !left.ty.supports_binary(&self.proj.types, op) {
@@ -2676,7 +2647,7 @@ impl TypeChecker {
                                 | UnaryOp::PreDecrement
                         ) && !expr.is_assignable(&self.proj.scopes, &self.proj.types)
                         {
-                            self.error(Error::new("expression is not assignable", span))
+                            self.error(Error::not_assignable(span))
                         }
 
                         (expr.ty, expr)
@@ -3347,18 +3318,7 @@ impl TypeChecker {
                 )
             }
             PExprData::Subscript { callee, args } => {
-                if args.is_empty() {
-                    return self
-                        .error(Error::new("subscript requires at least one argument", span));
-                }
-
-                let callee = self.check_expr(*callee, None);
-                let stripped = callee.ty.strip_references(&self.proj.types);
-                if let &Type::Array(target, _) = &self.proj.types[stripped] {
-                    self.check_array_subscript(target, callee, args)
-                } else {
-                    self.check_subscript(callee, stripped, args, target, false, span)
-                }
+                self.check_subscript(*callee, args, target, None, span)
             }
             PExprData::Return(expr) => self.check_return(*expr, span),
             PExprData::Tail(expr) => match &self.proj.scopes[self.current].kind {
@@ -3664,80 +3624,34 @@ impl TypeChecker {
             })
     }
 
-    fn check_array_subscript(&mut self, target: TypeId, callee: CExpr, args: CallArgs) -> CExpr {
-        fn maybe_span(this: &mut TypeChecker, ty: TypeId, imm: bool) -> Option<UserTypeId> {
-            let key = this.proj.strings.get_or_intern_static("range_bounds");
-            let id = *this.proj.scopes.lang_types.get(&key)?;
-            let bound = GenericTrait::from_type_args(&this.proj.scopes, id, [TypeId::USIZE]);
-            if this.implements_trait(ty, &bound) {
-                let span_ty = if imm {
-                    *this.proj.scopes.lang_types.get(&Strings::LANG_SPAN)?
-                } else {
-                    *this.proj.scopes.lang_types.get(&Strings::LANG_SPAN_MUT)?
-                };
-                Some(span_ty)
-            } else {
-                None
-            }
-        }
-
-        let mut args = args.into_iter();
-        let (name, expr) = args.next().unwrap();
-        if let Some(name) = name {
-            report_error!(self, expr.span, "unknown parameter: '{}'", strdata!(self, name.data))
-        }
-
-        let arg_span = expr.span;
-        let arg = self.check_expr(expr, None);
-        if let Some((_, arg)) = args.next() {
-            let last = args.last().map(|(_, arg)| arg.span).unwrap_or(arg.span);
-            self.error(Error::new(
-                "multidimensional array subscript is not supported",
-                arg.span.extended_to(last),
-            ))
-        }
-
-        match self.coerce(arg, TypeId::USIZE) {
-            Ok(expr) => {
-                CExpr::new(target, CExprData::Subscript { callee: callee.into(), arg: expr.into() })
-            }
-            Err(expr) if self.proj.types[expr.ty].is_integral() => {
-                CExpr::new(target, CExprData::Subscript { callee: callee.into(), arg: expr.into() })
-            }
-            Err(expr) => {
-                let Some(id) = maybe_span(self, expr.ty, self.immutable_receiver(&callee)) else {
-                    bail!(
-                        self,
-                        Error::expected_found(
-                            "integral type",
-                            &format!("type '{}'", type_name!(self, expr.ty)),
-                            arg_span,
-                        )
-                    );
-                };
-
-                CExpr::new(
-                    self.proj.types.insert(Type::User(GenericUserType::from_type_args(
-                        &self.proj.scopes,
-                        id,
-                        [target],
-                    ))),
-                    CExprData::SliceArray { callee: callee.into(), arg: expr.into() },
-                )
-            }
-        }
-    }
-
     fn check_subscript(
         &mut self,
-        callee: CExpr,
-        ty: TypeId,
-        args: CallArgs,
+        callee: Expr,
+        mut args: CallArgs,
         target: Option<TypeId>,
-        assign: bool,
+        assign: Option<Expr>,
         span: Span,
     ) -> CExpr {
+        if args.is_empty() {
+            return self.error(Error::new("subscript requires at least one argument", span));
+        }
+
+        let assign = if let Some(assign) = assign {
+            args.push((None, assign));
+            true
+        } else {
+            false
+        };
+
+        let callee = self.check_expr(callee, None);
+        let ty = callee.ty.strip_references(&self.proj.types);
+
         let imm_receiver = self.immutable_receiver(&callee);
+        if imm_receiver && assign {
+            args.into_iter().for_each(|(_, expr)| _ = self.check_expr(expr, None));
+            return self.error(Error::not_assignable(span));
+        }
+
         let mut candidates = vec![];
         for ut in self.proj.types[ty]
             .as_user()
@@ -3745,7 +3659,8 @@ impl TypeChecker {
             .into_iter()
             .chain(self.extensions_in_scope_for(ty, self.current))
         {
-            for &f in self.proj.scopes.get(ut.id).subscripts.iter() {
+            for f in self.proj.scopes.get(ut.id).subscripts.clone() {
+                self.resolve_proto(f);
                 let data = self.proj.scopes.get(f);
                 if assign != data.assign_subscript
                     || data.params.len() != args.len() + 1
@@ -3761,7 +3676,6 @@ impl TypeChecker {
             }
         }
 
-        candidates.iter().for_each(|f| self.resolve_proto(f.id));
         candidates.sort_unstable_by(|a, b| {
             let left = self
                 .proj
@@ -7610,7 +7524,7 @@ impl TypeChecker {
                     continue;
                 }
 
-                if !self.check_bounds_silent(in_scope, &ty_args, val, arg) {
+                if self.check_bounds_silent(in_scope, &ty_args, val, arg) {
                     return None;
                 }
             }
@@ -7660,10 +7574,10 @@ impl TypeChecker {
         for mut bound in self.proj.scopes.get(id).impls.clone().into_iter_checked() {
             bound.fill_templates(&mut self.proj.types, ty_args);
             if !self.do_implements_trait(in_scope, ty, &bound) {
-                return false;
+                return true;
             }
         }
-        true
+        false
     }
 
     fn do_infer_type_args<T>(
