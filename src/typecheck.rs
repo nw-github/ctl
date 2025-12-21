@@ -329,6 +329,7 @@ pub struct TypeChecker {
     current_expr: usize,
     current_static: Option<(VariableId, Vec<VariableId>)>,
     tables: Tables,
+    cache: HashMap<Vec<UserTypeId>, HashMap<TypeId, Vec<GenericExtension>>>,
 }
 
 impl TypeChecker {
@@ -349,6 +350,7 @@ impl TypeChecker {
             listening_expr: 1,
             current_expr: 1,
             current_static: None,
+            cache: Default::default(),
         };
 
         let mut autouse = vec![];
@@ -450,6 +452,7 @@ impl TypeChecker {
             listening_expr: 1,
             current_expr: 1,
             current_static: None,
+            cache: Default::default(),
         };
         let res = f(&mut tc);
         std::mem::swap(proj, &mut tc.proj);
@@ -5197,217 +5200,6 @@ impl TypeChecker {
         });
     }
 
-    fn is_impl_usable(
-        &mut self,
-        ut: UserTypeId,
-        idx: usize,
-        tr: &mut GenericTrait,
-        bound: &GenericTrait,
-    ) -> Option<TypeArgs> {
-        if let Some(block) = self.proj.scopes.get(ut).impl_blocks.get(idx) {
-            let mut ty_args = TypeArgs::unknown(block);
-            if ty_args.is_empty() {
-                return Some(ty_args);
-            } else if bound.id != tr.id {
-                return None;
-            }
-
-            // trait Trait<T>
-            // impl<X> Trait<X>
-
-            // bound:  Trait<T = int>
-            // tr:     Trait<T = X>
-
-            // ty_args: [X = int]
-            for (arg, val) in tr.ty_args.iter_mut() {
-                let Type::User(ut) = &self.proj.types[*val] else {
-                    return None;
-                };
-
-                ty_args.insert(ut.id, bound.ty_args[arg]);
-                *val = bound.ty_args[arg];
-            }
-
-            let mut good = true;
-            mute_errors!(self, {
-                for (&arg, &val) in ty_args.iter() {
-                    if val == TypeId::UNKNOWN {
-                        continue;
-                    }
-
-                    if self.check_bounds(&ty_args, val, arg, Span::default()) {
-                        good = false;
-                        break;
-                    }
-                }
-            });
-
-            good.then_some(ty_args)
-        } else {
-            Some(Default::default())
-        }
-    }
-
-    fn has_direct_impl(&mut self, ut: &GenericUserType, bound: &GenericTrait) -> bool {
-        self.resolve_impls(ut.id);
-        for (i, mut tr) in self.proj.scopes.get(ut.id).impls.clone().into_iter_checked_enumerate() {
-            if self.is_impl_usable(ut.id, i, &mut tr, bound).is_none() {
-                continue;
-            }
-
-            for mut tr in self
-                .proj
-                .scopes
-                .get_trait_impls_ex(&mut self.proj.types, tr)
-                .into_iter()
-                .filter(|tr| tr.id == bound.id)
-            {
-                tr.fill_templates(&mut self.proj.types, &ut.ty_args);
-                if &tr == bound {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    fn implements_trait(&mut self, ty: TypeId, bound: &GenericTrait) -> bool {
-        if ty == TypeId::UNKNOWN || self.proj.scopes.has_builtin_impl(&self.proj.types, ty, bound) {
-            return true;
-        }
-
-        if let Type::User(ut) = &self.proj.types[ty]
-            && self.has_direct_impl(&ut.clone(), bound)
-        {
-            return true;
-        }
-
-        for ext in self.extensions_in_scope_for(ty, self.current) {
-            if self.has_direct_impl(&ext, bound) {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    fn extensions_in_scope_for(&mut self, ty: TypeId, scope: ScopeId) -> Vec<GenericExtension> {
-        fn implements_trait(
-            this: &mut TypeChecker,
-            ty: TypeId,
-            bound: &GenericTrait,
-            ignore: &HashSet<ExtensionId>,
-            exts: &[ExtensionId],
-            cache: &mut [HashMap<TypeId, Option<GenericExtension>>],
-        ) -> bool {
-            if this.proj.scopes.has_builtin_impl(&this.proj.types, ty, bound) {
-                return true;
-            }
-
-            if let Type::User(ut) = &this.proj.types[ty]
-                && this.has_direct_impl(&ut.clone(), bound)
-            {
-                return true;
-            }
-
-            for (i, &ext) in exts.iter().enumerate() {
-                if ignore.contains(&ext) {
-                    continue;
-                }
-
-                let ext = match cache[i].get(&ty) {
-                    Some(ext) => ext.as_ref(),
-                    None => {
-                        let ext = applies_to(this, ty, ext, ignore, exts, cache);
-                        cache[i].entry(ty).or_insert(ext).as_ref()
-                    }
-                };
-
-                if ext.is_some_and(|ext| this.has_direct_impl(ext, bound)) {
-                    return true;
-                }
-            }
-
-            false
-        }
-
-        fn applies_to(
-            this: &mut TypeChecker,
-            ty: TypeId,
-            ext: ExtensionId,
-            ignore: &HashSet<ExtensionId>,
-            exts: &[ExtensionId],
-            cache: &mut [HashMap<TypeId, Option<GenericExtension>>],
-        ) -> Option<GenericExtension> {
-            let ext_ty_id = resolve_type!(
-                this,
-                *this.proj.scopes.get_mut(ext).kind.as_extension_mut().unwrap()
-            );
-            this.resolve_impls(ext);
-
-            let mut ext = GenericExtension::from_id_unknown(&this.proj.scopes, ext);
-            ext.infer_type_args(&this.proj.types, ext_ty_id, ty);
-            if ext_ty_id.with_templates(&mut this.proj.types, &ext.ty_args) != ty {
-                return None;
-            }
-
-            let mut ignore = ignore.clone();
-            ignore.insert(ext.id);
-            for (&id, &arg) in ext.ty_args.iter() {
-                if arg == TypeId::UNKNOWN {
-                    return None;
-                }
-                let bounds = this.proj.scopes.get(id).impls.clone();
-                for mut bound in bounds.into_iter_checked() {
-                    bound.fill_templates(&mut this.proj.types, &ext.ty_args);
-                    if !implements_trait(this, arg, &bound, &ignore, exts, cache) {
-                        return None;
-                    }
-                }
-            }
-
-            Some(ext)
-        }
-
-        if ty == TypeId::UNKNOWN {
-            return vec![];
-        }
-
-        fn get_tns_extensions<'a>(
-            scopes: &'a Scopes,
-            tns: &'a HashMap<StrId, Vis<TypeItem>>,
-        ) -> impl Iterator<Item = UserTypeId> + 'a {
-            tns.iter().flat_map(|s| {
-                s.1.as_type().filter(|&&id| scopes.get(id).kind.is_extension()).cloned()
-            })
-        }
-
-        let mut exts = vec![];
-        for (_, scope) in self.proj.scopes.walk(scope) {
-            exts.extend(get_tns_extensions(&self.proj.scopes, &scope.tns));
-            if matches!(scope.kind, ScopeKind::Module(_)) {
-                break;
-            }
-        }
-
-        exts.extend(get_tns_extensions(&self.proj.scopes, &self.proj.scopes.autouse_tns));
-
-        let mut cache = vec![HashMap::new(); exts.len()];
-        for (i, &id) in exts.iter().enumerate() {
-            // FIXME: by unconditionally calling applies_to we are duplicating work, since we may
-            // have already checked it. But we can't just blindly trust the contents of the cache
-            // if they are negative due to the `ignores` that prevents infinite recursion
-
-            // in fact, the cache may need to be per-call (defined in this loop) to be
-            // 100% correct, but I'm not sure at the moment. That works but has a significant effect
-            // on performance. If something stupid is happening with extensions, try here first
-            let ext = applies_to(self, ty, id, &HashSet::new(), &exts, &mut cache);
-            cache[i].insert(ty, ext);
-        }
-
-        cache.into_iter().flat_map(|mut map| map.remove(&ty).flatten()).collect()
-    }
-
     fn search(scopes: &Scopes, id: UserTypeId, method: StrId) -> Option<Vis<FunctionId>> {
         scopes.get(id).fns.iter().find(|&&id| scopes.get(*id).name.data == method).copied()
     }
@@ -6611,13 +6403,9 @@ impl TypeChecker {
                             borrows: false,
                         }),
                         Err(Some(_)) => {
-                            let Some(var) = self.insert_pattern_var(
-                                typ,
-                                ident,
-                                scrutinee,
-                                mutable,
-                                has_hint,
-                            ) else {
+                            let Some(var) =
+                                self.insert_pattern_var(typ, ident, scrutinee, mutable, has_hint)
+                            else {
                                 return CPattern::irrefutable(PatternData::Void);
                             };
                             CPattern::irrefutable(PatternData::Variable(var))
@@ -7278,7 +7066,9 @@ impl TypeChecker {
                 res
             }
             PathOrigin::This(this_span) => {
-                if let Some(ty) = self.resolve_this_type(this_span) && !path.components.is_empty() {
+                if let Some(ty) = self.resolve_this_type(this_span)
+                    && !path.components.is_empty()
+                {
                     return self.resolve_value_path_from_type(ty, &path.components, span);
                 }
 
@@ -7646,6 +7436,249 @@ impl TypeChecker {
                 }
             }
         }
+    }
+}
+
+impl TypeChecker {
+    fn extensions_in_scope_for(&mut self, ty: TypeId, scope: ScopeId) -> Vec<GenericExtension> {
+        let exts = self.extensions_in_scope(scope);
+        let res = self.do_extensions_in_scope_for(&exts, ty);
+        if self.proj.types[ty].as_user().is_some_and(|ut| {
+            self.proj.strings.resolve(&self.proj.scopes.get(ut.id).name.data) == "Hello"
+        }) {
+            println!(
+                "Hello extensions: {:?}",
+                res.iter()
+                    .map(|ut| type_name!(self, ut))
+                    .collect::<Vec<_>>()
+            )
+        }
+
+        res
+    }
+
+    fn implements_trait(&mut self, ty: TypeId, bound: &GenericTrait) -> bool {
+        // TODO: removing this causes errors in otherwise valid code
+        if ty == TypeId::UNKNOWN {
+            return true;
+        }
+
+        let exts = self.extensions_in_scope(self.current);
+        self.do_implements_trait(&exts, ty, bound)
+    }
+
+    fn has_direct_impl(&mut self, ut: &GenericUserType, bound: &GenericTrait) -> bool {
+        let exts = self.extensions_in_scope(self.current);
+        self.do_has_direct_impl(&exts, ut, bound)
+    }
+
+    fn is_impl_usable(
+        &mut self,
+        ut: UserTypeId,
+        idx: usize,
+        tr: &mut GenericTrait,
+        bound: &GenericTrait,
+    ) -> Option<TypeArgs> {
+        let exts = self.extensions_in_scope(self.current);
+        self.do_is_impl_usable(&exts, ut, idx, tr, bound)
+    }
+
+    fn extensions_in_scope(&self, scope: ScopeId) -> Vec<ExtensionId> {
+        fn get_tns_extensions<'a>(
+            scopes: &'a Scopes,
+            tns: &'a HashMap<StrId, Vis<TypeItem>>,
+        ) -> impl Iterator<Item = UserTypeId> + use<'a> {
+            tns.iter().flat_map(|s| {
+                s.1.as_type().filter(|&&id| scopes.get(id).kind.is_extension()).cloned()
+            })
+        }
+
+        let mut exts = vec![];
+        for (_, scope) in self.proj.scopes.walk(scope) {
+            exts.extend(get_tns_extensions(&self.proj.scopes, &scope.tns));
+            if matches!(scope.kind, ScopeKind::Module(_)) {
+                break;
+            }
+        }
+
+        exts.extend(get_tns_extensions(&self.proj.scopes, &self.proj.scopes.autouse_tns));
+        exts.sort();
+        exts
+    }
+}
+
+impl TypeChecker {
+    fn do_extensions_in_scope_for(
+        &mut self,
+        exts: &[ExtensionId],
+        ty: TypeId,
+    ) -> Vec<GenericExtension> {
+        if ty == TypeId::UNKNOWN {
+            return vec![];
+        }
+
+        let map = self.cache.entry(exts.to_vec()).or_default();
+        if let Some(checked) = map.get(&ty) {
+            return checked.clone();
+        }
+
+        // TODO: this breaks extensions being able to check impls from other extensions
+        //       (like in tests/ext/circular.ctl)
+        map.insert(ty, vec![]);
+
+        let res: Vec<_> = exts.iter().flat_map(|id| self.applies_to(ty, *id, exts)).collect();
+        self.cache.get_mut(exts).unwrap().insert(ty, res.clone());
+        res
+    }
+
+    fn applies_to(
+        &mut self,
+        ty: TypeId,
+        ext: ExtensionId,
+        in_scope: &[ExtensionId],
+    ) -> Option<GenericExtension> {
+        let ext_ty_id =
+            resolve_type!(self, *self.proj.scopes.get_mut(ext).kind.as_extension_mut().unwrap());
+        self.resolve_impls(ext);
+
+        let mut ext = GenericExtension::from_id_unknown(&self.proj.scopes, ext);
+        ext.infer_type_args(&self.proj.types, ext_ty_id, ty);
+        if ext_ty_id.with_templates(&mut self.proj.types, &ext.ty_args) != ty {
+            return None;
+        }
+
+        for (&id, &arg) in ext.ty_args.iter() {
+            if arg == TypeId::UNKNOWN {
+                return None;
+            }
+            let bounds = self.proj.scopes.get(id).impls.clone();
+            for mut bound in bounds.into_iter_checked() {
+                bound.fill_templates(&mut self.proj.types, &ext.ty_args);
+                if !self.do_implements_trait(in_scope, arg, &bound) {
+                    return None;
+                }
+            }
+        }
+
+        Some(ext)
+    }
+
+    fn do_implements_trait(
+        &mut self,
+        in_scope: &[ExtensionId],
+        ty: TypeId,
+        bound: &GenericTrait,
+    ) -> bool {
+        if self.proj.scopes.has_builtin_impl(&self.proj.types, ty, bound) {
+            return true;
+        }
+
+        if let Type::User(ut) = &self.proj.types[ty]
+            && self.do_has_direct_impl(in_scope, &ut.clone(), bound)
+        {
+            return true;
+        }
+
+        for ext in self.do_extensions_in_scope_for(in_scope, ty) {
+            if self.do_has_direct_impl(in_scope, &ext, bound) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn do_is_impl_usable(
+        &mut self,
+        in_scope: &[ExtensionId],
+        ut: UserTypeId,
+        idx: usize,
+        tr: &mut GenericTrait,
+        bound: &GenericTrait,
+    ) -> Option<TypeArgs> {
+        if let Some(block) = self.proj.scopes.get(ut).impl_blocks.get(idx) {
+            let mut ty_args = TypeArgs::unknown(block);
+            if ty_args.is_empty() {
+                return Some(ty_args);
+            } else if bound.id != tr.id {
+                return None;
+            }
+
+            // trait Trait<T>
+            // impl<X> Trait<X>
+
+            // bound:  Trait<T = int>
+            // tr:     Trait<T = X>
+
+            // ty_args: [X = int]
+            for (arg, val) in tr.ty_args.iter_mut() {
+                let Type::User(ut) = &self.proj.types[*val] else {
+                    return None;
+                };
+
+                ty_args.insert(ut.id, bound.ty_args[arg]);
+                *val = bound.ty_args[arg];
+            }
+
+            for (&arg, &val) in ty_args.iter() {
+                if val == TypeId::UNKNOWN {
+                    continue;
+                }
+
+                if !self.check_bounds_silent(in_scope, &ty_args, val, arg) {
+                    return None;
+                }
+            }
+
+            Some(ty_args)
+        } else {
+            Some(Default::default())
+        }
+    }
+
+    fn do_has_direct_impl(
+        &mut self,
+        in_scope: &[ExtensionId],
+        ut: &GenericUserType,
+        bound: &GenericTrait,
+    ) -> bool {
+        self.resolve_impls(ut.id);
+        for (i, mut tr) in self.proj.scopes.get(ut.id).impls.clone().into_iter_checked_enumerate() {
+            if self.do_is_impl_usable(in_scope, ut.id, i, &mut tr, bound).is_none() {
+                continue;
+            }
+
+            for mut tr in self
+                .proj
+                .scopes
+                .get_trait_impls_ex(&mut self.proj.types, tr)
+                .into_iter()
+                .filter(|tr| tr.id == bound.id)
+            {
+                tr.fill_templates(&mut self.proj.types, &ut.ty_args);
+                if &tr == bound {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn check_bounds_silent(
+        &mut self,
+        in_scope: &[ExtensionId],
+        ty_args: &TypeArgs,
+        ty: TypeId,
+        id: UserTypeId,
+    ) -> bool {
+        self.resolve_impls(id);
+        for mut bound in self.proj.scopes.get(id).impls.clone().into_iter_checked() {
+            bound.fill_templates(&mut self.proj.types, ty_args);
+            if !self.do_implements_trait(in_scope, ty, &bound) {
+                return false;
+            }
+        }
+        true
     }
 }
 

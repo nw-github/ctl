@@ -18,7 +18,7 @@ macro_rules! id {
     ($name: ident => $output: ident,
      $vec: ident,
      $namespace: ident) => {
-        #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+        #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
         pub struct $name(usize);
 
         impl ItemId for $name {
@@ -254,7 +254,7 @@ impl Function {
                 .params
                 .first()
                 .is_some_and(|p| p.label == Strings::THIS_PARAM && types[p.ty].is_safe_ptr())
-            && self.params.iter().all(|p| !types[p.ty].as_user().is_some_and(|ty| ty.id == this))
+            && self.params.iter().all(|p| types[p.ty].as_user().is_none_or(|ty| ty.id != this))
     }
 }
 
