@@ -1020,7 +1020,7 @@ impl TypeChecker {
             let member_cons_len = fns.len();
             fns.extend(this.declare_fns_iter(base.functions));
             let tag = if let Some(tag) = tag {
-                this.declare_type_hint(Located::new(tag.span(), TypeHint::Regular(tag)))
+                this.declare_type_hint(Located::new(tag.span(), TypeHint::Path(tag)))
             } else {
                 TypeId::UNKNOWN
             };
@@ -1367,7 +1367,7 @@ impl TypeChecker {
                     keyword: param.keyword,
                     label: match &param.patt.data {
                         Pattern::MutBinding(name) => Some(*name),
-                        Pattern::Path(name) => name.as_identifier(),
+                        Pattern::Path(name) => name.as_identifier().map(|name| name.data),
                         _ => None,
                     }
                     .unwrap_or_else(|| intern!(this, "$unnamed{i}")),
@@ -1584,13 +1584,13 @@ impl TypeChecker {
     ) -> Located<TypeHint> {
         Located::new(
             name.span,
-            TypeHint::Regular(Path::new(
+            TypeHint::Path(Path::new(
                 PathOrigin::Normal,
                 vec![(
                     *name,
                     type_params
                         .iter()
-                        .map(|(n, _)| Located::new(n.span, TypeHint::Regular(Path::from(*n))))
+                        .map(|(n, _)| Located::new(n.span, TypeHint::Path(Path::from(*n))))
                         .collect(),
                 )],
             )),
@@ -4781,7 +4781,7 @@ impl TypeChecker {
 
         let span = hint.span;
         match &hint.data {
-            TypeHint::Regular(path) => match self.resolve_type_path(path) {
+            TypeHint::Path(path) => match self.resolve_type_path(path) {
                 ResolvedType::Builtin(ty) => ty,
                 ResolvedType::UserType(ut) => {
                     if !self.proj.scopes.get(ut.id).kind.is_trait() {
@@ -4812,38 +4812,6 @@ impl TypeChecker {
                 .resolve_dyn_ptr(path)
                 .map(|tr| self.proj.types.insert(Type::DynMutPtr(tr)))
                 .unwrap_or_default(),
-            TypeHint::This => {
-                let current = self.current_function();
-                for (_, scope) in self.proj.scopes.walk(self.current) {
-                    match scope.kind {
-                        ScopeKind::UserType(id) => {
-                            check_hover!(self, span, id.into());
-                            match &self.proj.scopes.get(id).kind {
-                                &UserTypeKind::Trait { this: this_ty, .. } => {
-                                    let ut = GenericUserType::from_id(
-                                        &self.proj.scopes,
-                                        &mut self.proj.types,
-                                        this_ty,
-                                    );
-                                    return self.proj.types.insert(Type::User(ut));
-                                }
-                                UserTypeKind::Extension(ty) => return *ty,
-                                _ => {
-                                    let ut = GenericUserType::from_id(
-                                        &self.proj.scopes,
-                                        &mut self.proj.types,
-                                        id,
-                                    );
-                                    return self.proj.types.insert(Type::User(ut));
-                                }
-                            }
-                        }
-                        ScopeKind::Function(f) if Some(f) != current => break,
-                        _ => {}
-                    }
-                }
-                self.error(Error::new(format!("'{THIS_TYPE}' outside of type"), hint.span))
-            }
             TypeHint::Array(ty, count) => {
                 let id = self.resolve_typehint(ty);
                 let Some(n) = self.consteval_check((**count).clone(), TypeId::USIZE) else {
@@ -6630,11 +6598,11 @@ impl TypeChecker {
             Pattern::Path(path) => {
                 let value = self.resolve_value_path(&path, Some(scrutinee));
                 if let Some(ident) = path.as_identifier() {
-                    match self.get_union_variant(scrutinee, value, span) {
+                    match self.get_union_variant(scrutinee, value, ident.span) {
                         Ok((Some(_), _)) => self.error(Error::expected_found(
                             "empty variant pattern",
                             "tuple variant pattern",
-                            span,
+                            ident.span,
                         )),
                         Ok((None, variant)) => CPattern::refutable(PatternData::Variant {
                             pattern: None,
@@ -6645,7 +6613,7 @@ impl TypeChecker {
                         Err(Some(_)) => {
                             let Some(var) = self.insert_pattern_var(
                                 typ,
-                                Located::new(span, ident),
+                                ident,
                                 scrutinee,
                                 mutable,
                                 has_hint,
@@ -6874,7 +6842,7 @@ impl TypeChecker {
 
         let mut components = &path.components[..];
         let mut scope = match path.origin {
-            PathOrigin::Root => ScopeId::ROOT,
+            PathOrigin::Root(_) => ScopeId::ROOT,
             PathOrigin::Super(span) => {
                 if let Some(scope) = self.get_super(span) {
                     scope
@@ -6896,7 +6864,8 @@ impl TypeChecker {
                 }
                 ScopeId::ROOT
             }
-            PathOrigin::Infer => unreachable!("Infer origin in use path"),
+            PathOrigin::Infer(_) => unreachable!("Infer origin in use path"),
+            PathOrigin::This(_) => unreachable!("This origin in use path"),
         };
 
         for (i, comp) in components.iter().enumerate() {
@@ -6988,13 +6957,30 @@ impl TypeChecker {
     fn resolve_type_path(&mut self, path: &Path) -> ResolvedType {
         let span = path.span();
         match path.origin {
-            PathOrigin::Root => {
+            PathOrigin::Root(_) => {
                 self.resolve_type_path_in(&path.components, Default::default(), ScopeId::ROOT, span)
             }
             PathOrigin::Super(span) => self
                 .get_super(span)
                 .map(|id| self.resolve_type_path_in(&path.components, Default::default(), id, span))
                 .unwrap_or_default(),
+            PathOrigin::This(span) => {
+                let Some(ty) = self.resolve_this_type(span) else {
+                    return Default::default();
+                };
+
+                if path.components.is_empty() {
+                    ResolvedType::Builtin(ty)
+                } else if path.components.len() == 1
+                    && let Type::User(ut) = &self.proj.types[ty]
+                {
+                    let (name, args) = &path.components[0];
+                    self.find_associated_type(ut.id, *name, args)
+                } else {
+                    let name = path.components[0].0;
+                    named_error!(self, Error::no_symbol, name.data, name.span)
+                }
+            }
             PathOrigin::Normal => {
                 let ((name, ty_args), rest) = path.components.split_first().unwrap();
                 if rest.is_empty() {
@@ -7056,7 +7042,7 @@ impl TypeChecker {
                     ),
                 }
             }
-            PathOrigin::Infer => unreachable!("Infer path in type path"),
+            PathOrigin::Infer(_) => unreachable!("Infer path in type path"),
         }
     }
 
@@ -7130,7 +7116,7 @@ impl TypeChecker {
     fn resolve_value_path(&mut self, path: &Path, target: Option<TypeId>) -> ResolvedValue {
         let span = path.span();
         match path.origin {
-            PathOrigin::Root => self.resolve_value_path_in(
+            PathOrigin::Root(_) => self.resolve_value_path_in(
                 &path.components,
                 Default::default(),
                 ScopeId::ROOT,
@@ -7243,7 +7229,7 @@ impl TypeChecker {
                     }
                 }
             }
-            PathOrigin::Infer => {
+            PathOrigin::Infer(_) => {
                 let Some(scope) = target
                     .and_then(|t| self.proj.types[t.strip_references(&self.proj.types)].as_user())
                     .map(|ut| self.proj.scopes.get(ut.id))
@@ -7290,6 +7276,14 @@ impl TypeChecker {
                 }
 
                 res
+            }
+            PathOrigin::This(this_span) => {
+                if let Some(ty) = self.resolve_this_type(this_span) && !path.components.is_empty() {
+                    return self.resolve_value_path_from_type(ty, &path.components, span);
+                }
+
+                // TODO: allow This() to use struct/union constructor
+                named_error!(self, Error::no_symbol, Strings::THIS_TYPE, this_span)
             }
         }
     }
@@ -7488,7 +7482,7 @@ impl TypeChecker {
             return named_error!(self, Error::no_symbol, name.data, name.span);
         }
 
-        let mut candidates = vec![];
+        let mut candidates = HashSet::new();
         self.resolve_impls(ut);
 
         for tr in self.proj.scopes.get(ut).impls.iter_checked() {
@@ -7498,7 +7492,7 @@ impl TypeChecker {
                 };
 
                 if let Some(id) = assoc_types.get(&name.data) {
-                    candidates.push(*id);
+                    candidates.insert(*id);
                 }
             }
         }
@@ -7518,6 +7512,39 @@ impl TypeChecker {
             id,
             self.resolve_type_args(id, args, true, name.span),
         ))
+    }
+
+    fn resolve_this_type(&mut self, span: Span) -> Option<TypeId> {
+        let current = self.current_function();
+        for (_, scope) in self.proj.scopes.walk(self.current) {
+            match scope.kind {
+                ScopeKind::UserType(id) => {
+                    check_hover!(self, span, id.into());
+                    match &self.proj.scopes.get(id).kind {
+                        &UserTypeKind::Trait { this: this_ty, .. } => {
+                            let ut = GenericUserType::from_id(
+                                &self.proj.scopes,
+                                &mut self.proj.types,
+                                this_ty,
+                            );
+                            return Some(self.proj.types.insert(Type::User(ut)));
+                        }
+                        UserTypeKind::Extension(ty) => return Some(*ty),
+                        _ => {
+                            let ut = GenericUserType::from_id(
+                                &self.proj.scopes,
+                                &mut self.proj.types,
+                                id,
+                            );
+                            return Some(self.proj.types.insert(Type::User(ut)));
+                        }
+                    }
+                }
+                ScopeKind::Function(f) if Some(f) != current => break,
+                _ => {}
+            }
+        }
+        self.error(Error::new(format!("'{THIS_TYPE}' outside of type"), span))
     }
 }
 

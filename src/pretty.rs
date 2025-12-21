@@ -3,10 +3,10 @@ use colored::Colorize;
 use crate::{
     Located,
     ast::parsed::{
-        Expr, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path, Pattern, Stmt,
-        StmtData, Struct, TypeHint, UsePath, UsePathTail, Variant,
+        Expr, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path, PathOrigin, Pattern,
+        Stmt, StmtData, Struct, TypeHint, UsePath, UsePathTail, Variant,
     },
-    intern::{StrId, Strings, THIS_TYPE},
+    intern::{StrId, Strings},
 };
 
 const INDENT: &str = "  ";
@@ -779,7 +779,7 @@ struct FmtType<'a> {
 impl std::fmt::Display for FmtType<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.ty {
-            TypeHint::Regular(path) => write!(f, "{}", FmtPath::new(path, self.strings)),
+            TypeHint::Path(path) => write!(f, "{}", FmtPath::new(path, self.strings)),
             TypeHint::Array(ty, _) => {
                 write!(f, "[{}; <expr>]", FmtType::new(&ty.data, self.strings))
             }
@@ -840,7 +840,6 @@ impl std::fmt::Display for FmtType<'_> {
                 }
             }
             TypeHint::Void => write!(f, "void"),
-            TypeHint::This => write!(f, "{THIS_TYPE}"),
             TypeHint::Error => write!(f, "Error"),
         }
     }
@@ -860,7 +859,7 @@ impl std::fmt::Display for FmtPath<'_> {
 
         write!(tmp, "{}", self.path.origin)?;
         for (i, (name, ty_args)) in self.path.components.iter().enumerate() {
-            if i > 0 {
+            if i > 0 || matches!(self.path.origin, PathOrigin::This(_)) {
                 write!(tmp, "::")?;
             }
 

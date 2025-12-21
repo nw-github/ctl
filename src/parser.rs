@@ -232,7 +232,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 }
 
                 let mut components = Vec::new();
-                let origin = if self.next_if(Token::ScopeRes).is_some() {
+                let origin = if let Some(token) = self.next_if(Token::ScopeRes) {
                     let ident = self.expect_ident("expected path component");
                     if self.next_if(Token::ScopeRes).is_none() {
                         let end = self.expect(Token::Semicolon);
@@ -241,7 +241,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                                 earliest_span.extended_to(end.span),
                                 StmtData::Use(UsePath {
                                     components,
-                                    origin: PathOrigin::Root,
+                                    origin: PathOrigin::Root(token.span),
                                     public: public.is_some(),
                                     tail: UsePathTail::Ident(ident),
                                 }),
@@ -251,7 +251,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     }
 
                     components.push(ident);
-                    PathOrigin::Root
+                    PathOrigin::Root(token.span)
                 } else if let Some(token) = self.next_if(Token::Super) {
                     self.expect(Token::ScopeRes);
                     PathOrigin::Super(token.span)
@@ -503,7 +503,9 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 Expr::new(span, ExprData::Path(Located::new(span, Strings::THIS_PARAM).into()))
             }
             Token::ThisType => {
-                Expr::new(span, ExprData::Path(Located::new(span, Strings::THIS_TYPE).into()))
+                let origin = PathOrigin::This(span);
+                let data = self.path_components(None, &mut span);
+                Expr::new(span, ExprData::Path(Path::new(origin, data)))
             }
             Token::Ident(ident) => {
                 let ident = self.strings.get_or_intern(ident);
@@ -511,23 +513,25 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 Expr::new(span, ExprData::Path(Path::new(PathOrigin::Normal, data)))
             }
             Token::ScopeRes => {
+                let origin = PathOrigin::Root(span);
                 let ident = self.expect_ident("expected name");
                 let data = self.path_components(Some(ident), &mut span);
-                Expr::new(span, ExprData::Path(Path::new(PathOrigin::Root, data)))
+                Expr::new(span, ExprData::Path(Path::new(origin, data)))
             }
             Token::Super => {
-                let original = span;
+                let origin = PathOrigin::Super(span);
                 let mut data = self.path_components(None, &mut span);
                 if data.is_empty() {
                     data.push((Located::new(self.peek().span, Strings::EMPTY), vec![]));
                 }
-                Expr::new(span, ExprData::Path(Path::new(PathOrigin::Super(original), data)))
+                Expr::new(span, ExprData::Path(Path::new(origin, data)))
             }
             Token::Colon => {
+                let origin = PathOrigin::Infer(span);
                 let ident = self.expect_ident("expected identifier");
                 Expr::new(
                     span.extended_to(ident.span),
-                    ExprData::Path(Path::new(PathOrigin::Infer, vec![(ident, Default::default())])),
+                    ExprData::Path(Path::new(origin, vec![(ident, Default::default())])),
                 )
             }
             Token::StringPart(value) => {
@@ -899,10 +903,10 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     let mut expr = this.expression();
                     let mut name = None;
                     if let ExprData::Path(path) = &expr.data
-                        && let Some(ident) =
-                            path.as_identifier_l().filter(|_| this.next_if(Token::Colon).is_some())
+                        && let Some(ident) = path.as_identifier()
+                        && this.next_if(Token::Colon).is_some()
                     {
-                        name = Some(*ident);
+                        name = Some(ident);
                         if !this.matches_pred(|t| matches!(t, Token::Comma | Token::RParen)) {
                             expr = this.expression();
                         }
@@ -1138,14 +1142,18 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
 
     fn type_path(&mut self) -> Path {
         let origin = match self.peek().data {
-            Token::ScopeRes => {
-                self.next();
-                PathOrigin::Root
-            }
+            Token::ScopeRes => PathOrigin::Root(self.next().span),
             Token::Super => {
                 let span = self.next().span;
                 self.expect(Token::ScopeRes);
                 PathOrigin::Super(span)
+            }
+            Token::ThisType => {
+                let span = self.next().span;
+                if self.next_if(Token::ScopeRes).is_none() {
+                    return Path::this_type(span);
+                }
+                PathOrigin::This(span)
             }
             _ => PathOrigin::Normal,
         };
@@ -1381,9 +1389,9 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     .map(Pattern::Array);
             }
             Token::Colon => {
-                self.next();
+                let span = self.next().span;
                 let ident = self.expect_ident("expected identifier");
-                Path::new(PathOrigin::Infer, vec![(ident, Default::default())])
+                Path::new(PathOrigin::Infer(span), vec![(ident, Default::default())])
             }
             _ => {
                 if mut_var || self.next_if(Token::Mut).is_some() {
@@ -1577,7 +1585,6 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 self.csv_one(Token::RParen, left.span, Self::type_hint).map(TypeHint::Tuple)
             }
             Token::Void => self.next().map(|_| TypeHint::Void),
-            Token::ThisType => self.next().map(|_| TypeHint::This),
             Token::Extern | Token::Fn => {
                 let start = self.next();
                 let is_extern = start.data == Token::Extern;
@@ -1610,7 +1617,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
             }
             _ => {
                 let path = self.type_path();
-                Located::new(path.span(), TypeHint::Regular(path))
+                Located::new(path.span(), TypeHint::Path(path))
             }
         }
     }
@@ -1970,7 +1977,9 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     Pattern::Path(Path::from(Located::new(token.span, Strings::THIS_PARAM)))
                 };
 
-                let this_ty = Located::new(Span { len: 0, ..token.span }, TypeHint::This);
+                let span = Span { len: 0, ..token.span };
+                let this_ty =
+                    Located::new(span, TypeHint::Path(Path::new(PathOrigin::This(span), vec![])));
                 params.push(Param {
                     keyword,
                     patt: Located::new(token.span, patt),
