@@ -158,12 +158,16 @@ pub enum TraitImplData {
     Checked(GenericTrait),
 }
 
-#[derive(Clone, EnumAsInner, Default)]
+#[derive(Clone, EnumAsInner)]
 pub enum TraitImpls {
     Checked(Vec<Option<GenericTrait>>),
     Unchecked(Vec<TraitImplData>),
-    #[default]
-    None,
+}
+
+impl Default for TraitImpls {
+    fn default() -> Self {
+        Self::Checked(vec![])
+    }
 }
 
 impl TraitImpls {
@@ -172,6 +176,16 @@ impl TraitImpls {
     pub fn iter_checked(&self) -> impl Iterator<Item = &GenericTrait> {
         debug_assert!(self.is_checked());
         self.as_checked().into_iter().flat_map(|i| i.iter()).flatten()
+    }
+
+    /// Enumerate, but the index doesn't ignore `None` entries
+    pub fn iter_checked_enumerate(&self) -> impl Iterator<Item = (usize, &GenericTrait)> {
+        debug_assert!(self.is_checked());
+        self.as_checked()
+            .into_iter()
+            .flat_map(|i| i.iter())
+            .enumerate()
+            .flat_map(|(i, v)| v.as_ref().map(|v| (i, v)))
     }
 
     /// This function skips `None` entries and thus should NOT be used with `enumerate()` if the

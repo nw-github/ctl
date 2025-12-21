@@ -1,10 +1,9 @@
-// Output: 1 1 2 2 3 3
+// Output: 1 3 2 2 3 1
 
 fn main() {
     let a = [1, 2, 3][..];
-    let b = [1, 2, 3][..];
-    // TODO: fix type inference so this explicit specialization isnt necessary
-    for (a, b) in a.iter().zip::<*int, std::span::Iter<int>>(b.iter()) {
+    let b = [3, 2, 1][..];
+    for (a, b) in a.iter().zip(b.iter()) {
         print("{a} {b} ");
     }
 }

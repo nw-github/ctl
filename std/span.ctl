@@ -222,7 +222,7 @@ pub mod ext {
                 return false;
             }
 
-            for (l, r) in this.iter().zip::<*T, super::Iter<T>>(rhs.iter()) {
+            for (l, r) in this.iter().zip(rhs.iter()) {
                 if l != r {
                     return false;
                 }
