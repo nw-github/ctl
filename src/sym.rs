@@ -735,6 +735,10 @@ impl Scopes {
             return true;
         }
 
+        if ty.is_array() && Some(&bound.id) == self.lang_types.get(&Strings::LANG_ARRAY) {
+            return true;
+        }
+
         if let Some(int) = ty.as_integral(false) {
             if Some(&bound.id) == self.lang_types.get(&Strings::LANG_INTEGRAL) {
                 return true;

@@ -7758,6 +7758,12 @@ impl TypeChecker {
         wanted_tr: TraitId,
         ty: TypeId,
     ) -> Option<GenericTrait> {
+        if Some(&wanted_tr) == self.proj.scopes.lang_types.get(&Strings::LANG_ARRAY)
+            && let Type::Array(inner, _) = self.proj.types[ty]
+        {
+            return Some(GenericTrait::from_type_args(&self.proj.scopes, wanted_tr, [inner]));
+        }
+
         // TODO: builtin impls
         // TODO: find multiple?
         for ut in self.proj.types[ty]
