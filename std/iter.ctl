@@ -2,29 +2,12 @@
 pub trait Iterator<T> {
     fn next(mut this): ?T;
 
-    fn enumerate(my this): Enumerate<T, This> {
-        Enumerate::new(this)
-    }
-
-    fn take(my this, count: uint): Take<T, This> {
-        Take::new(this, count)
-    }
-
-    fn skip(my this, count: uint): Skip<T, This> {
-        Skip::new(this, count)
-    }
-
-    fn zip<U, I: Iterator<U>>(my this, rhs: I): Zip<T, U, This, I> {
-        Zip::new(this, rhs)
-    }
-
-    fn chain<I: Iterator<T>>(my this, rhs: I): Chain<T, This, I> {
-        Chain::new(this, rhs)
-    }
-
-    fn peekable(my this): Peekable<T, This> {
-        Peekable::new(this)
-    }
+    fn enumerate(my this): Enumerate<T, This> => Enumerate::new(this);
+    fn take(my this, count: uint): Take<T, This> => Take::new(this, count);
+    fn skip(my this, count: uint): Skip<T, This> => Skip::new(this, count);
+    fn zip<U, I: Iterator<U>>(my this, rhs: I): Zip<T, U, This, I> => Zip::new(this, rhs);
+    fn chain<I: Iterator<T>>(my this, rhs: I): Chain<T, This, I> => Chain::new(this, rhs);
+    fn peekable(my this): Peekable<T, This> => Peekable::new(this);
 
     fn count(my mut this): uint {
         mut count = 0u;
@@ -40,13 +23,11 @@ pub trait Iterator<T> {
         this.next()
     }
 
-    fn collect<I: FromIter<T>>(this): I {
-        I::from_iter(*this)
-    }
+    fn collect<C: FromIter<T>>(my this): C => C::from_iter(this);
 }
 
 pub trait FromIter<T> {
-    fn from_iter<I: Iterator<T>>(t: I): This;
+    fn from_iter<I: Iterator<T>>(iter: I): This;
 }
 
 pub struct Enumerate<T, I: Iterator<T>> {

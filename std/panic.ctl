@@ -56,13 +56,18 @@ pub fn assert_ne<Lhs: Debug + std::ops::Eq<Rhs>, Rhs: Debug>(
 }
 
 // TODO: this should take <T: Format>, but there is currently no way to default that
-pub fn debug_assert(cond: bool, msg: ?Arguments = null, loc: SourceLocation = SourceLocation::here()) {
-    @(feature(not(optimized)))
-    if !cond {
-        if msg is ?msg {
-            panic("debug assertion failed: {msg}", loc:);
+@(inline(always))
+pub fn debug_assert(
+    _cond: bool,
+    _msg: ?Arguments = null,
+    _loc: SourceLocation = SourceLocation::here(),
+) {
+    @(feature(debug))
+    if !_cond {
+        if _msg is ?msg {
+            panic("debug assertion failed: {msg}", loc: _loc);
         } else {
-            panic("debug assertion failed", loc:);
+            panic("debug assertion failed", loc: _loc);
         }
     }
 }
