@@ -10,7 +10,7 @@ pub sealed trait Integral: Numeric {}
 @(lang(signed))
 pub sealed trait Signed: Integral {}
 
-// i*, int, c_u*
+// u*, uint, c_u*
 @(lang(unsigned))
 pub sealed trait Unsigned: Integral {}
 
@@ -20,17 +20,10 @@ pub sealed trait Unsigned: Integral {}
 pub struct TypeId {
     tag: u64,
 
-    pub fn ==(this, rhs: *TypeId): bool {
-        this.tag == rhs.tag
-    }
-
-    pub fn get<T>(): TypeId {
-        std::intrin::type_id::<T>()
-    }
+    pub fn ==(this, rhs: *TypeId): bool => this.tag == rhs.tag;
+    pub fn get<T>(): TypeId => std::intrin::type_id::<T>();
 }
 
 pub use std::intrin::type_name;
 
-pub fn type_name_of_val<T>(_: *T): str {
-    type_name::<T>()
-}
+pub fn type_name_of_val<T>(_: *T): str => type_name::<T>();

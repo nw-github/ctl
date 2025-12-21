@@ -1,9 +1,6 @@
 pub trait Write {
     fn write_str(mut this, data: str): ?uint;
-
-    fn write_char(mut this, data: char): ?uint {
-        this.write_str(unsafe data.encode_utf8_unchecked(data.len_utf8(), [0u8; 4][..]))
-    }
+    fn write_char(mut this, data: char): ?uint => this.write_str(data.encode_utf8(&mut [0u8; 4]));
 }
 
 pub struct Formatter {

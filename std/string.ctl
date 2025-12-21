@@ -31,8 +31,9 @@ pub struct str {
     pub fn as_raw(this): ^u8 => this.span.as_raw();
     pub fn as_bytes(this): [u8..] => this.span;
 
-    pub fn chars(this): Chars  => Chars(s: this.as_bytes());
-    pub fn char_indices(this): CharIndices  => CharIndices(chars: this.chars(), len: this.len());
+    pub fn chars(this): Chars => Chars(s: this.as_bytes());
+    pub fn char_indices(this): CharIndices => CharIndices(chars: this.chars(), len: this.len());
+    pub fn utf16(this): Utf16 => Utf16(chars: this.chars(), trail: null);
 
     pub fn substr<R: RangeBounds<uint>>(this, range: R): ?str {
         let span = this.span[range];
@@ -114,7 +115,7 @@ pub struct Chars {
     impl Iterator<char> {
         fn next(mut this): ?char {
             unsafe if this.s.get(0) is ?cp {
-                mut cp = *cp as u32 & 0xff;
+                mut cp = *cp as u32;
                 if cp < 0x80 {
                     this.s = this.s[1u..];
                 } else if cp >> 5 == 0x6 {
@@ -123,16 +124,16 @@ pub struct Chars {
                 } else if cp >> 4 == 0xe {
                     cp = (
                         (cp << 12) & 0xffff) +
-                        (((*this.s.get_unchecked(1) as u32 & 0xff) << 6) & 0xfff
+                        ((*this.s.get_unchecked(1) as u32 << 6) & 0xfff
                     );
                     cp += *this.s.get_unchecked(2) as u32 & 0x3f;
                     this.s = this.s[3u..];
-                } else if cp >> 4 == 0x1e {
+                } else if cp >> 3 == 0x1e {
                     cp = (
                         (cp << 18) & 0x1fffff) +
-                        (((*this.s.get_unchecked(1) as u32 & 0xff) << 12) & 0x3ffff
+                        ((*this.s.get_unchecked(1) as u32 << 12) & 0x3ffff
                     );
-                    cp += ((*this.s.get_unchecked(2) as u32 & 0xff) << 6) & 0xfff;
+                    cp += (*this.s.get_unchecked(2) as u32 << 6) & 0xfff;
                     cp += *this.s.get_unchecked(3) as u32 & 0x3f;
                     this.s = this.s[4u..];
                 } else {
@@ -156,8 +157,23 @@ pub struct CharIndices {
     }
 }
 
-fn is_char_boundary(b: u8): bool {
-    // From the Rust standard library:
-    // This is bit magic equivalent to: b < 128 or b >= 192
-    b as! i8 >= -0x40
+pub struct Utf16 {
+    chars: Chars,
+    trail: ?u16,
+
+    impl Iterator<u16> {
+        fn next(mut this): ?u16 {
+            if this.trail.take() is ?next {
+                next
+            } else if this.chars.next() is ?ch {
+                let (lead, trail) = ch.encode_utf16();
+                this.trail = trail;
+                lead
+            }
+        }
+    }
 }
+
+// From the Rust standard library:
+// This is bit magic equivalent to: b < 128 or b >= 192
+fn is_char_boundary(b: u8): bool => b as! i8 >= -0x40;

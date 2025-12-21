@@ -1,38 +1,35 @@
 use std::hash::*;
 use std::ops::*;
 use std::fmt::*;
-use super::ByteSpanExt;
 
 pub extension CharImpl for char {
     impl Hash {
-        fn hash<H: Hasher>(this, h: *mut H) {
-            h.hash(this.as_byte_span());
-        }
+        fn hash<H: Hasher>(this, h: *mut H) => (*this as u32).hash(h);
     }
 
     impl Eq<This> {
         @(intrinsic(binary_op))
-        fn eq(this, rhs: *This): bool { this == rhs }
+        fn eq(this, rhs: *This): bool => this == rhs;
 
         @(intrinsic(binary_op))
-        fn ne(this, rhs: *This): bool { this != rhs }
+        fn ne(this, rhs: *This): bool => this != rhs;
     }
 
     impl Cmp<This> {
         @(intrinsic(binary_op))
-        fn cmp(this, rhs: *This): Ordering { this <=> rhs }
+        fn cmp(this, rhs: *This): Ordering => this <=> rhs;
 
         @(intrinsic(binary_op))
-        fn ge(this, rhs: *This): bool { this >= rhs }
+        fn ge(this, rhs: *This): bool => this >= rhs;
 
         @(intrinsic(binary_op))
-        fn gt(this, rhs: *This): bool { this > rhs }
+        fn gt(this, rhs: *This): bool => this > rhs;
 
         @(intrinsic(binary_op))
-        fn le(this, rhs: *This): bool { this <= rhs }
+        fn le(this, rhs: *This): bool => this <= rhs;
 
         @(intrinsic(binary_op))
-        fn lt(this, rhs: *This): bool { this < rhs }
+        fn lt(this, rhs: *This): bool => this < rhs;
     }
 
     impl Debug {
@@ -40,13 +37,17 @@ pub extension CharImpl for char {
     }
 
     impl Format {
-        fn fmt(this, f: *mut Formatter) {
-            f.pad(unsafe this.encode_utf8_unchecked(this.len_utf8(), [0u8; 4][..]))
-        }
+        fn fmt(this, f: *mut Formatter) => f.pad(this.encode_utf8(&mut [0u8; 4]));
     }
 
-    pub unsafe fn from_u32_unchecked(v: u32): char {
-        unsafe std::mem::transmute(v)
+    pub unsafe fn from_u32_unchecked(v: u32): char => unsafe std::mem::transmute(v);
+
+    pub fn from_u32(cp: u32): ?char {
+        if cp <= char::max_value() as u32
+            and !(LEAD_SURROGATE_MIN..=TRAIL_SURROGATE_MAX).contains(&cp)
+        {
+            unsafe char::from_u32_unchecked(cp)
+        }
     }
 
     pub fn len_utf8(my this): uint {
@@ -62,14 +63,7 @@ pub extension CharImpl for char {
         }
     }
 
-    pub fn encode_utf8(my this, buf: [mut u8..]): str {
-        let len = this.len_utf8();
-        if buf.len() < len {
-            panic("insufficient buffer size (has {buf.len()}, needs {len})");
-        }
-
-        unsafe this.encode_utf8_unchecked(len, buf)
-    }
+    pub fn len_utf16(my this): uint => this as u32 <= 0xffff then 1 else 2;
 
     pub fn is_ascii(my this): bool => (this as u32) < 0b1000_0000;
     pub fn is_ascii_upper(my this): bool => this is 'A'..='Z';
@@ -78,13 +72,8 @@ pub extension CharImpl for char {
     pub fn is_ascii_hexdigit(my this): bool => this is '0'..='9' | 'a'..='f' | 'A'..='F';
     pub fn is_ascii_whitespace(my this): bool => this is '\t' | '\n' | '\x0C' | '\r' | ' ';
 
-    pub fn make_ascii_upper(mut this) {
-        *this = this.to_ascii_upper();
-    }
-
-    pub fn make_ascii_lower(mut this) {
-        *this = this.to_ascii_lower();
-    }
+    pub fn make_ascii_upper(mut this) => *this = this.to_ascii_upper();
+    pub fn make_ascii_lower(mut this) => *this = this.to_ascii_lower();
 
     pub fn to_ascii_upper(my this): char {
         unsafe char::from_u32_unchecked(this as u32 ^ (0b10_0000 * this.is_ascii_lower() as u32))
@@ -117,31 +106,52 @@ pub extension CharImpl for char {
     pub fn min_value(): char => '\0';
     pub fn max_value(): char => '\u{10ffff}';
 
-    pub unsafe fn encode_utf8_unchecked(my this, len_utf8: uint, buf: [mut u8..]): str {
+    pub fn encode_utf8(my this, buf: *mut [u8; 4]): str {
+        unsafe this.encode_utf8_unchecked(buf[..].as_raw_mut())
+    }
+
+    pub unsafe fn encode_utf8_unchecked(my this, ptr: ^mut u8): str {
         unsafe {
             let cp = this as u32;
-            mut ptr = buf.as_raw_mut();
+            let len_utf8 = this.len_utf8();
             match len_utf8 {
                 1 => {
                     *ptr = cp as! u8;
                 }
                 2 => {
-                    *ptr++ = ((cp >> 6) | 0xc0) as! u8;
-                    *ptr   = ((cp & 0x3f) | 0x80) as! u8;
+                    *ptr        = ((cp >> 6) | 0xc0) as! u8;
+                    *ptr.add(1) = ((cp & 0x3f) | 0x80) as! u8;
                 }
                 3 => {
-                    *ptr++ = ((cp >> 12) | 0xe0) as! u8;
-                    *ptr++ = (((cp >> 6) & 0x3f) | 0x80) as! u8;
-                    *ptr   = ((cp & 0x3f) | 0x80) as! u8;
+                    *ptr        = ((cp >> 12) | 0xe0) as! u8;
+                    *ptr.add(1) = (((cp >> 6) & 0x3f) | 0x80) as! u8;
+                    *ptr.add(2) = ((cp & 0x3f) | 0x80) as! u8;
                 }
-                _ => {
-                    *ptr++ = ((cp >> 18) | 0xf0) as! u8;
-                    *ptr++ = (((cp >> 12) & 0x3f) | 0x80) as! u8;
-                    *ptr++ = (((cp >> 6) & 0x3f) | 0x80) as! u8;
-                    *ptr   = ((cp & 0x3f) | 0x80) as! u8;
+                4 => {
+                    *ptr        = ((cp >> 18) | 0xf0) as! u8;
+                    *ptr.add(1) = (((cp >> 12) & 0x3f) | 0x80) as! u8;
+                    *ptr.add(2) = (((cp >> 6) & 0x3f) | 0x80) as! u8;
+                    *ptr.add(3) = ((cp & 0x3f) | 0x80) as! u8;
                 }
+                _ => std::hint::unreachable_unchecked(),
             }
-            str::from_utf8_unchecked(buf[..len_utf8])
+            str::from_utf8_unchecked(std::span::Span::new(ptr, len_utf8))
+        }
+    }
+
+    pub fn encode_utf16(my this): (u16, ?u16) {
+        let cp = this as u32;
+        if cp <= 0xffff {
+            (cp as! u16, null)
+        } else {
+            (((cp >> 10) + LEAD_OFFSET) as! u16, ((cp & 0x3ff) + TRAIL_SURROGATE_MIN) as! u16)
         }
     }
 }
+
+const LEAD_SURROGATE_MIN: u32  = 0xd800;
+// const LEAD_SURROGATE_MAX: u32  = 0xdbff;
+const TRAIL_SURROGATE_MIN: u32 = 0xdc00;
+const TRAIL_SURROGATE_MAX: u32 = 0xdfff;
+const LEAD_OFFSET: u32         = LEAD_SURROGATE_MIN - (0x10000 >> 10);
+// const SURROGATE_OFFSET: u32    = 0x10000 - (LEAD_SURROGATE_MIN << 10) - TRAIL_SURROGATE_MIN;

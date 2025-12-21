@@ -13,7 +13,7 @@ pub extern fn align_of<T>(): uint;
 pub extern fn panic(args: std::fmt::Arguments, loc: std::panic::SourceLocation): never;
 
 @(intrinsic)
-pub extern fn unreachable_unchecked(): never;
+pub extern unsafe fn unreachable_unchecked(): never;
 
 @(intrinsic)
 pub extern fn type_id<T>(): TypeId;
