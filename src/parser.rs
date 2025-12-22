@@ -1585,10 +1585,15 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 self.csv_one(Token::RParen, left.span, Self::type_hint).map(TypeHint::Tuple)
             }
             Token::Void => self.next().map(|_| TypeHint::Void),
-            Token::Extern | Token::Fn => {
+            Token::Extern | Token::Unsafe | Token::Fn => {
                 let start = self.next();
                 let is_extern = start.data == Token::Extern;
+                let mut is_unsafe = start.data == Token::Unsafe;
                 if is_extern {
+                    is_unsafe = self.next_if(Token::Unsafe).is_some();
+                }
+
+                if start.data != Token::Fn {
                     self.expect(Token::Fn);
                 }
 
@@ -1602,7 +1607,10 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     None
                 };
 
-                Located::new(params.span, TypeHint::Fn { is_extern, params: params.data, ret })
+                Located::new(
+                    params.span,
+                    TypeHint::Fn { is_extern, is_unsafe, params: params.data, ret },
+                )
             }
             Token::Struct => {
                 let span = self.next().span;

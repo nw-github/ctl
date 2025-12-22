@@ -825,8 +825,10 @@ impl std::fmt::Display for FmtType<'_> {
             TypeHint::RawMutPtr(ty) => write!(f, "^mut {}", FmtType::new(&ty.data, self.strings)),
             TypeHint::DynPtr(ty) => write!(f, "*dyn {}", FmtPath::new(ty, self.strings)),
             TypeHint::DynMutPtr(ty) => write!(f, "*dyn mut {}", FmtPath::new(ty, self.strings)),
-            TypeHint::Fn { is_extern, params, ret } => {
-                write!(f, "{}fn (", if *is_extern { "extern " } else { "" })?;
+            TypeHint::Fn { is_extern, is_unsafe, params, ret } => {
+                crate::write_if!(*is_extern, f, "extern ");
+                crate::write_if!(*is_unsafe, f, "unsafe ");
+                write!(f, "fn (")?;
                 for (i, ty) in params.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;

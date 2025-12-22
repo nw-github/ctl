@@ -345,6 +345,7 @@ pub enum TypeHint {
     DynMutPtr(Path),
     Fn {
         is_extern: bool,
+        is_unsafe: bool,
         params: Vec<Located<TypeHint>>,
         ret: Option<Box<Located<TypeHint>>>,
     },

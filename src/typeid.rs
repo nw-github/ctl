@@ -111,6 +111,7 @@ impl GenericFn {
         let f = scopes.get(self.id);
         FnPtr {
             is_extern: f.is_extern,
+            is_unsafe: f.is_unsafe,
             params: f.params.iter().map(|p| p.ty.with_templates(types, &self.ty_args)).collect(),
             ret: f.ret.with_templates(types, &self.ty_args),
         }
@@ -286,8 +287,19 @@ impl Integer {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FnPtr {
     pub is_extern: bool,
+    pub is_unsafe: bool,
     pub params: Vec<TypeId>,
     pub ret: TypeId,
+}
+
+impl FnPtr {
+    pub fn is_unsafe_version_of(&self, rhs: &FnPtr) -> bool {
+        self.is_extern == rhs.is_extern
+            && self.params == rhs.params
+            && self.ret == rhs.ret
+            && self.is_unsafe
+            && !rhs.is_unsafe
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, EnumAsInner)]
@@ -534,6 +546,10 @@ impl TypeId {
                 let mut result = String::new();
                 if f.is_extern {
                     result.push_str("extern ");
+                }
+
+                if f.is_unsafe {
+                    result.push_str("unsafe ");
                 }
 
                 result.push_str("fn(");
@@ -831,6 +847,7 @@ impl TypeId {
                 let f = f.clone();
                 let fnptr = Type::FnPtr(FnPtr {
                     is_extern: f.is_extern,
+                    is_unsafe: f.is_unsafe,
                     params: f.params.iter().map(|p| p.with_templates(types, map)).collect(),
                     ret: f.ret.with_templates(types, map),
                 });

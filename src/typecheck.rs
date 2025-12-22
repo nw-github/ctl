@@ -3479,6 +3479,7 @@ impl TypeChecker {
                 let (target, yields) = self.proj.scopes[id].kind.as_lambda().unwrap();
                 let fnptr = Type::FnPtr(FnPtr {
                     is_extern: false,
+                    is_unsafe: false,
                     params: lparams,
                     ret: yields.then(|| *target).flatten().unwrap_or(TypeId::VOID),
                 });
@@ -4237,6 +4238,10 @@ impl TypeChecker {
                     self.error(Error::new("too few positional arguments", span))
                 }
 
+                if f.is_unsafe {
+                    check_unsafe!(self, Error::is_unsafe(span));
+                }
+
                 CExpr::new(f.ret, CExprData::CallFnPtr(callee.into(), result))
             }
             _ => bail!(
@@ -4678,9 +4683,10 @@ impl TypeChecker {
                     &mut self.proj.types,
                 )
             }
-            TypeHint::Fn { is_extern, params, ret } => {
+            TypeHint::Fn { is_extern, is_unsafe, params, ret } => {
                 let fnptr = FnPtr {
                     is_extern: *is_extern,
+                    is_unsafe: *is_unsafe,
                     params: params.iter().map(|p| self.resolve_typehint(p)).collect(),
                     ret: ret.as_ref().map(|ret| self.resolve_typehint(ret)).unwrap_or(TypeId::VOID),
                 };
@@ -5427,6 +5433,7 @@ impl TypeChecker {
                 (Type::Ptr(s), Type::Ptr(t) | Type::RawPtr(t)) => {
                     may_ptr_coerce(types, &types[*s], &types[*t])
                 }
+                (Type::FnPtr(s), Type::FnPtr(t)) => t.is_unsafe_version_of(s),
                 _ => false,
             }
         }
