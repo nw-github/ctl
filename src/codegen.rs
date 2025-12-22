@@ -494,24 +494,14 @@ impl<'a> Buffer<'a> {
             Type::Bool => write_de!(self, "$bool"),
             Type::Char => write_de!(self, "$char"),
             base @ (&Type::Ptr(i) | &Type::MutPtr(i) | &Type::RawPtr(i) | &Type::RawMutPtr(i)) => {
-                let id_is_ptr = base.is_ptr() || base.is_raw_ptr();
-                if let &Type::Array(ty, _) = &types[i] {
-                    self.emit_type(scopes, types, ty, min);
-                    if !min {
-                        write_de!(self, "/*");
-                        self.emit_type(scopes, types, i, min);
-                        write_de!(self, "*/");
-                    }
-                } else if matches!(types[i], Type::Void) {
+                let is_const = base.is_ptr() || base.is_raw_ptr();
+                if i.is_void() {
                     write_de!(self, "void");
                 } else {
                     self.emit_type(scopes, types, i, min);
                 }
-                if id_is_ptr {
-                    write_de!(self, " const*");
-                } else {
-                    write_de!(self, "*");
-                }
+                write_if!(is_const, self, " const");
+                write_de!(self, "*");
             }
             Type::FnPtr(_) => self.emit_mangled_name(scopes, types, id, min),
             Type::Fn(_) => self.emit_mangled_name(scopes, types, id, min),
@@ -1202,12 +1192,7 @@ impl<'a> Codegen<'a> {
 
                 self.emit_cast(expr.ty);
                 if let &Type::Ptr(from) | &Type::MutPtr(from) = &self.proj.types[inner.ty] {
-                    if self.proj.types[expr.ty].is_dyn_ptr() {
-                        write_de!(self.buffer, "{{.self=(void const*)");
-                    } else {
-                        write_de!(self.buffer, "{{.self=(void*)");
-                    }
-
+                    write_de!(self.buffer, "{{.self=");
                     self.emit_expr(*inner, state);
                     write_de!(self.buffer, ",.vtable=");
                     let vtable = Vtable { tr: to_tr, ty: from, scope };
@@ -2078,24 +2063,17 @@ impl<'a> Codegen<'a> {
                     return;
                 }
 
-                let array = self.proj.types[lhs.ty].is_array();
-                if !array {
-                    write_de!(self.buffer, "&");
-                }
                 let is_lvalue = match &lhs.data {
                     ExprData::Deref { .. } | ExprData::Var(_) => true,
                     ExprData::Member { source, .. } => !source.ty.is_packed_struct(&self.proj),
                     _ => false,
                 };
 
+                write_de!(self.buffer, "&");
                 if is_lvalue {
                     self.emit_expr_inner(lhs, state);
                 } else {
                     self.emit_tmpvar_ident(lhs, state);
-                }
-
-                if array {
-                    write_de!(self.buffer, ".{ARRAY_DATA_NAME}");
                 }
             }
             UnaryOp::Try => {
@@ -2734,26 +2712,35 @@ impl<'a> Codegen<'a> {
                     );
                 }
             }
-            PatternData::Array {
-                patterns: ArrayPattern { patterns, rest, arr_len, inner },
-                borrows,
-            } => {
+            PatternData::Array { patterns, borrows } => {
+                let ArrayPattern { patterns, rest, arr_len, inner } = patterns;
                 let is_any_ptr = self.proj.types[ty].is_any_ptr();
-                let src = Self::deref(&self.proj.types, src, ty);
-                let src = if is_any_ptr { src } else { format!("{src}.{ARRAY_DATA_NAME}") };
+                let src = format!("{}.{ARRAY_DATA_NAME}", Self::deref(&self.proj.types, src, ty));
                 let rest = rest.map(|RestPattern { id, pos }| {
                     let rest_len = arr_len - patterns.len();
                     if let Some(id) = id.filter(|&id| !self.proj.scopes.get(id).unused) {
                         usebuf!(self, bindings, {
-                            self.emit_var_decl(id, state);
                             if is_any_ptr {
-                                write_de!(self.buffer, "={src}+{pos};");
+                                // TODO: this is probably technically UB -- we are casting somewhere
+                                // in the middle of a `struct Array_T_N` to a `struct Array_T_M`
+                                let ty = self.emit_var_decl(id, state);
+                                write_de!(self.buffer, "=");
+                                self.emit_cast(ty);
+                                write_de!(self.buffer, "({src}+{pos});");
                             } else {
-                                write_de!(self.buffer, "={{.{ARRAY_DATA_NAME}={{");
-                                for i in 0..rest_len {
-                                    write_de!(self.buffer, "{src}[{}],", pos + i);
-                                }
-                                write_de!(self.buffer, "}}}};");
+                                let var = self.proj.scopes.get(id);
+                                let ty = var
+                                    .ty
+                                    .with_templates(&mut self.proj.types, &state.func.ty_args);
+                                let (size, _) =
+                                    ty.size_and_align(&self.proj.scopes, &mut self.proj.types);
+
+                                self.emit_type(ty);
+                                write_de!(self.buffer, " ");
+                                self.emit_var_name(id, state);
+                                write_de!(self.buffer, ";CTL_MEMCPY(&");
+                                self.emit_var_name(id, state);
+                                write_de!(self.buffer, ",{src}+{pos},{size});");
                             }
                         });
                     }
@@ -2783,16 +2770,8 @@ impl<'a> Codegen<'a> {
                 }
 
                 usebuf!(self, bindings, {
-                    let id = self.emit_var_decl(id, state);
-                    if borrow
-                        && id
-                            .as_pointee(&self.proj.types)
-                            .is_some_and(|i| self.proj.types[i].is_array())
-                    {
-                        write_de!(self.buffer, "={src}.{ARRAY_DATA_NAME};");
-                    } else {
-                        write_de!(self.buffer, "={}{src};", if borrow { "&" } else { "" });
-                    }
+                    self.emit_var_decl(id, state);
+                    write_de!(self.buffer, "={}{src};", if borrow { "&" } else { "" });
                 });
             }
             PatternData::Void => {}
@@ -3364,7 +3343,7 @@ impl<'a> Codegen<'a> {
             write_de!(self.buffer, " {tmp}[{}]={{", args.len());
             for (mut expr, opts) in args {
                 expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
-                write_de!(self.buffer, "{{.$value=(void const*)");
+                write_de!(self.buffer, "{{.$value=");
                 self.emit_tmpvar_ident(expr, state);
                 write_de!(self.buffer, ",.$format=");
                 self.emit_member_fn(state, opts.func, scope);
@@ -3470,11 +3449,7 @@ impl<'a> Codegen<'a> {
 
     fn deref(types: &Types, src: &str, ty: TypeId) -> String {
         if matches!(types[ty], Type::Ptr(_) | Type::MutPtr(_)) {
-            format!(
-                "({:*<1$}{src})",
-                "",
-                Self::indirection(types, ty) - usize::from(ty.strip_references_r(types).is_array())
-            )
+            format!("({:*<1$}{src})", "", Self::indirection(types, ty))
         } else {
             src.into()
         }
