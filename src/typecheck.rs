@@ -803,7 +803,9 @@ impl TypeChecker {
                         .map(|member| Param {
                             keyword: true,
                             // use default span so hovers ignore this
-                            patt: Located::nowhere(Pattern::Path(Path::from(member.name))),
+                            patt: Located::nowhere(Pattern::Path(Path::from(Located::nowhere(
+                                member.name.data,
+                            )))),
                             ty: member.ty.clone(),
                             default: member.default.clone(),
                         })
@@ -7339,10 +7341,10 @@ impl TypeChecker {
         if self.proj.types[ty].as_user().is_some_and(|ut| {
             self.proj.strings.resolve(&self.proj.scopes.get(ut.id).name.data) == "Hello"
         }) {
-            println!(
-                "Hello extensions: {:?}",
-                res.iter().map(|ut| type_name!(self, ut)).collect::<Vec<_>>()
-            )
+            // println!(
+            //     "Hello extensions: {:?}",
+            //     res.iter().map(|ut| type_name!(self, ut)).collect::<Vec<_>>()
+            // )
         }
 
         res
