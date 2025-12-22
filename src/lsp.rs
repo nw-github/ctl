@@ -1249,6 +1249,10 @@ fn visualize_func(
             small,
         );
         return res;
+    } else if let Some(id) = func.constructor.filter(|id| scopes.get(*id).kind.is_struct())
+        && !small
+    {
+        return visualize_type(id, scopes, types, strings);
     }
 
     let mut res =
