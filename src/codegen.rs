@@ -15,7 +15,7 @@ use crate::{
         BitSizeResult, CInt, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, Type,
         TypeArgs, TypeId, Types,
     },
-    write_de, writeln_de,
+    write_de,
 };
 
 #[macro_export]
@@ -494,24 +494,14 @@ impl<'a> Buffer<'a> {
             Type::Bool => write_de!(self, "$bool"),
             Type::Char => write_de!(self, "$char"),
             base @ (&Type::Ptr(i) | &Type::MutPtr(i) | &Type::RawPtr(i) | &Type::RawMutPtr(i)) => {
-                let id_is_ptr = base.is_ptr() || base.is_raw_ptr();
-                if let &Type::Array(ty, _) = &types[i] {
-                    self.emit_type(scopes, types, ty, min);
-                    if !min {
-                        write_de!(self, "/*");
-                        self.emit_type(scopes, types, i, min);
-                        write_de!(self, "*/");
-                    }
-                } else if matches!(types[i], Type::Void) {
+                let is_const = base.is_ptr() || base.is_raw_ptr();
+                if i.is_void() {
                     write_de!(self, "void");
                 } else {
                     self.emit_type(scopes, types, i, min);
                 }
-                if id_is_ptr {
-                    write_de!(self, " const*");
-                } else {
-                    write_de!(self, "*");
-                }
+                write_if!(is_const, self, " const");
+                write_de!(self, "*");
             }
             Type::FnPtr(_) => self.emit_mangled_name(scopes, types, id, min),
             Type::Fn(_) => self.emit_mangled_name(scopes, types, id, min),
@@ -863,9 +853,9 @@ impl Codegen<'_> {
             (exports.chain(std::iter::once(main.clone())).collect(), Some(main))
         };
 
-        let strings = std::mem::take(&mut proj.strings);
+        let strings = proj.strings.clone();
         let mut this = Codegen {
-            str_interp: StrInterp::new(&mut proj, &strings),
+            str_interp: StrInterp::new(&mut proj),
             flags: proj.conf.flags,
             proj,
             strings: &strings,
@@ -942,11 +932,16 @@ impl Codegen<'_> {
         this.buffer.emit("#ifdef __clang__\n");
         let warnings = include_str!("../compile_flags.txt");
         for warning in warnings.split("\n").flat_map(|s| s.strip_prefix("-Wno-")) {
-            writeln_de!(this.buffer, "#pragma clang diagnostic ignored \"-W{warning}\"");
+            write_de!(this.buffer, "#pragma clang diagnostic ignored \"-W{warning}\"\n");
         }
         this.buffer.emit("#endif\n");
         this.buffer.emit(include_str!("../ctl.h"));
         if let Some(ut) = &this.str_interp.string {
+            this.tg.add_type(
+                &this.proj.scopes,
+                &mut this.proj.types,
+                this.str_interp.string_ty.unwrap(),
+            );
             this.buffer.emit("#define STRLIT(data,n)(");
             this.buffer.emit_type_name(
                 &this.proj.scopes,
@@ -1073,9 +1068,16 @@ impl<'a> Codegen<'a> {
                 write_de!(self.buffer, ";");
             }
 
-            if let Some((id, name)) = thisptr {
-                self.emit_var_decl(id, state);
-                write_de!(self.buffer, "={name};");
+            match thisptr {
+                FirstParam::OverriddenLabel { tmp, label, ty }=> {
+                    self.emit_type(ty);
+                    write_de!(self.buffer, " {}={tmp};", strdata!(self, label));
+                }
+                FirstParam::OverriddenVar { tmp, id } => {
+                    self.emit_var_decl(id, state);
+                    write_de!(self.buffer, "={tmp};");
+                }
+                _ => {}
             }
 
             for param in params.iter() {
@@ -1163,11 +1165,27 @@ impl<'a> Codegen<'a> {
         match expr.data {
             ExprData::Binary(op, lhs, rhs) => self.emit_binary(state, op, expr.ty, *lhs, *rhs),
             ExprData::Unary(op, inner) => self.emit_unary(state, op, expr.ty, *inner),
-            ExprData::AutoDeref(expr, count) => {
-                write_de!(self.buffer, "({:*<1$}", "", count);
-                self.emit_expr(*expr, state);
-                write_de!(self.buffer, ")");
-            }
+            ExprData::Deref(inner, count) => match &self.proj.types[expr.ty] {
+                &Type::Array(_, _) => {
+                    let (sz, _) = expr.ty.size_and_align(&self.proj.scopes, &mut self.proj.types);
+                    tmpbuf_emit!(self, state, |tmp| {
+                        self.emit_type(expr.ty);
+                        write_de!(self.buffer, " {tmp};CTL_MEMCPY(&{tmp},({:*<1$}", "", count - 1);
+                        self.emit_expr_inline(*inner, state);
+                        write_de!(self.buffer, "),{sz});");
+                    });
+                }
+                Type::Void => {
+                    write_de!(self.buffer, "VOID(");
+                    self.emit_expr(*inner, state);
+                    write_de!(self.buffer, ")");
+                }
+                _ => {
+                    write_de!(self.buffer, "({:*<1$}", "", count);
+                    self.emit_expr(*inner, state);
+                    write_de!(self.buffer, ")");
+                }
+            },
             ExprData::DynCoerce(mut inner, scope) => {
                 inner.ty = inner.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
 
@@ -1181,12 +1199,7 @@ impl<'a> Codegen<'a> {
 
                 self.emit_cast(expr.ty);
                 if let &Type::Ptr(from) | &Type::MutPtr(from) = &self.proj.types[inner.ty] {
-                    if self.proj.types[expr.ty].is_dyn_ptr() {
-                        write_de!(self.buffer, "{{.self=(void const*)");
-                    } else {
-                        write_de!(self.buffer, "{{.self=(void*)");
-                    }
-
+                    write_de!(self.buffer, "{{.self=");
                     self.emit_expr(*inner, state);
                     write_de!(self.buffer, ",.vtable=");
                     let vtable = Vtable { tr: to_tr, ty: from, scope };
@@ -1488,9 +1501,9 @@ impl<'a> Codegen<'a> {
                     let tmp = tmpbuf!(self, state, |tmp| {
                         let ptr = self.proj.types.insert(Type::Ptr(source.ty));
                         self.emit_type(ptr);
-                        writeln_de!(self.buffer, " {tmp}=&");
+                        write_de!(self.buffer, " {tmp}=&");
                         self.emit_expr_inline(*source, state);
-                        writeln_de!(self.buffer, ";");
+                        write_de!(self.buffer, ";");
                         tmp
                     });
                     self.emit_bitfield_read(&format!("(*{tmp})"), id, member, expr.ty);
@@ -1568,73 +1581,6 @@ impl<'a> Codegen<'a> {
                         write_de!(self.buffer, "{name}:;");
                     }
                 });
-            }
-            ExprData::Subscript { callee, arg } => {
-                // TODO: bounds check
-                if self.proj.types[callee.ty].is_array() {
-                    match callee.data {
-                        ExprData::Unary(UnaryOp::Deref, expr) => {
-                            // we compile pointers to arrays as T *, not Array_T_N *, so in the case
-                            // there will be no data member
-                            self.emit_expr(*expr, state);
-                        }
-                        _ => {
-                            self.emit_expr(*callee, state);
-                            write_de!(self.buffer, ".{ARRAY_DATA_NAME}");
-                        }
-                    }
-                } else {
-                    write_de!(
-                        self.buffer,
-                        "({}",
-                        "*".repeat(Self::indirection(&self.proj.types, callee.ty) - 1)
-                    );
-                    self.emit_expr(*callee, state);
-                    write_de!(self.buffer, ")");
-                }
-
-                write_de!(self.buffer, "[");
-                self.emit_expr(*arg, state);
-                write_de!(self.buffer, "]");
-            }
-            ExprData::SliceArray { callee, arg } => {
-                let indirection = Self::indirection(&self.proj.types, callee.ty);
-                let src = tmpbuf!(self, state, |tmp| {
-                    let len = *callee.ty.strip_references_r(&self.proj.types).as_array().unwrap().1;
-                    self.emit_type(expr.ty);
-                    write_de!(self.buffer, " {tmp}={{.$ptr=");
-                    if indirection != 0 {
-                        self.buffer.emit("*".repeat(indirection - 1));
-                        self.emit_expr_inline(*callee, state);
-                    } else {
-                        self.emit_expr_inline(*callee, state);
-                        write_de!(self.buffer, ".{ARRAY_DATA_NAME}");
-                    }
-                    write_de!(self.buffer, ",.$len={len}}};");
-                    tmp
-                });
-                let ut = self.proj.types[expr.ty].as_user().unwrap().clone();
-                let mut func = GenericFn::from_type_args(
-                    &self.proj.scopes,
-                    self.proj
-                        .scopes
-                        .get(ut.id)
-                        .find_associated_fn(&self.proj.scopes, Strings::FN_SUBSPAN)
-                        .unwrap(),
-                    [arg.ty.with_templates(&mut self.proj.types, &state.func.ty_args)],
-                );
-                func.ty_args.copy_args(&ut.ty_args);
-                let new_state = State::in_body_scope(func, &self.proj.scopes);
-                self.buffer.emit_fn_name(
-                    &self.proj.scopes,
-                    &mut self.proj.types,
-                    &new_state.func,
-                    self.flags.minify,
-                );
-                write_de!(self.buffer, "({src}, ");
-                self.emit_expr_inline(*arg, state);
-                write_de!(self.buffer, ")");
-                self.funcs.insert(new_state);
             }
             ExprData::Return(mut expr) => never_expr!(self, {
                 expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
@@ -1790,11 +1736,15 @@ impl<'a> Codegen<'a> {
                     });
                 }
             }
+            ExprData::Discard(inner) => {
+                self.buffer.emit("VOID(");
+                self.emit_expr(*inner, state);
+                self.buffer.emit(")");
+            }
             ExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }
     }
 
-    #[inline(always)]
     fn emit_expr_inline(&mut self, mut expr: Expr, state: &mut State) {
         expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
         self.emit_expr_inner(expr, state);
@@ -2051,6 +2001,12 @@ impl<'a> Codegen<'a> {
                         return;
                     }
 
+                    if self.proj.types[lhs.ty].is_array()
+                        && matches!(&lhs.data, ExprData::Deref(_, _))
+                    {
+                        return self.emit_array_write_to_deref(state, lhs, rhs);
+                    }
+
                     if matches!(&lhs.data, ExprData::Member { source, .. }
                         if source.ty.is_packed_struct(&self.proj))
                     {
@@ -2073,6 +2029,7 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_unary(&mut self, state: &mut State, op: UnaryOp, ret: TypeId, mut lhs: Expr) {
+        let ret = ret.with_templates(&mut self.proj.types, &state.func.ty_args);
         match op {
             // OK for option since lhs has already been coerced
             UnaryOp::Plus | UnaryOp::Option => self.emit_expr(lhs, state),
@@ -2107,55 +2064,28 @@ impl<'a> Codegen<'a> {
                     self.emit_expr(lhs, state);
                 }
             }
-            UnaryOp::Deref => match &self.proj.types[ret] {
-                &Type::Array(inner, len) => {
-                    let (sz, _) = inner.size_and_align(&self.proj.scopes, &mut self.proj.types);
-                    tmpbuf_emit!(self, state, |tmp| {
-                        self.emit_type(ret);
-                        write_de!(self.buffer, " {tmp};CTL_MEMCPY(&{tmp},");
-                        self.emit_expr(lhs, state);
-                        write_de!(self.buffer, ",{len}*{sz});");
-                    });
-                }
-                Type::Void => {
-                    write_de!(self.buffer, "VOID(");
-                    self.emit_expr(lhs, state);
-                    write_de!(self.buffer, ")");
-                }
-                _ => {
-                    write_de!(self.buffer, "(*");
-                    self.emit_expr(lhs, state);
-                    write_de!(self.buffer, ")");
-                }
-            },
             UnaryOp::Addr | UnaryOp::AddrMut | UnaryOp::AddrRaw | UnaryOp::AddrRawMut => {
                 lhs.ty = lhs.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
-                if matches!(lhs.data, ExprData::Unary(UnaryOp::Deref, _)) {
-                    let ExprData::Unary(_, inner) = lhs.data else { unreachable!() };
-                    self.emit_expr_inner(*inner, state);
+                if let ExprData::Deref(inner, 1) = &mut lhs.data {
+                    self.emit_expr_inner(std::mem::take(inner), state);
+                    return;
+                } else if let ExprData::Deref(_, count @ 2..) = &mut lhs.data {
+                    *count -= 1;
+                    self.emit_expr_inner(std::mem::take(&mut lhs), state);
                     return;
                 }
 
-                let array = self.proj.types[lhs.ty].is_array();
-                if !array {
-                    write_de!(self.buffer, "&");
-                }
                 let is_lvalue = match &lhs.data {
-                    ExprData::AutoDeref { .. } | ExprData::Var(_) | ExprData::Subscript { .. } => {
-                        true
-                    }
+                    ExprData::Deref { .. } | ExprData::Var(_) => true,
                     ExprData::Member { source, .. } => !source.ty.is_packed_struct(&self.proj),
                     _ => false,
                 };
 
+                write_de!(self.buffer, "&");
                 if is_lvalue {
                     self.emit_expr_inner(lhs, state);
                 } else {
                     self.emit_tmpvar_ident(lhs, state);
-                }
-
-                if array {
-                    write_de!(self.buffer, ".{ARRAY_DATA_NAME}");
                 }
             }
             UnaryOp::Try => {
@@ -2192,6 +2122,7 @@ impl<'a> Codegen<'a> {
                 });
             }
             UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in gen_expr"),
+            UnaryOp::Deref => unreachable!("ICE: Untransformed UnaryOp::Deref in gen_expr"),
         }
     }
 
@@ -2793,26 +2724,35 @@ impl<'a> Codegen<'a> {
                     );
                 }
             }
-            PatternData::Array {
-                patterns: ArrayPattern { patterns, rest, arr_len, inner },
-                borrows,
-            } => {
+            PatternData::Array { patterns, borrows } => {
+                let ArrayPattern { patterns, rest, arr_len, inner } = patterns;
                 let is_any_ptr = self.proj.types[ty].is_any_ptr();
-                let src = Self::deref(&self.proj.types, src, ty);
-                let src = if is_any_ptr { src } else { format!("{src}.{ARRAY_DATA_NAME}") };
+                let src = format!("{}.{ARRAY_DATA_NAME}", Self::deref(&self.proj.types, src, ty));
                 let rest = rest.map(|RestPattern { id, pos }| {
                     let rest_len = arr_len - patterns.len();
                     if let Some(id) = id.filter(|&id| !self.proj.scopes.get(id).unused) {
                         usebuf!(self, bindings, {
-                            self.emit_var_decl(id, state);
                             if is_any_ptr {
-                                write_de!(self.buffer, "={src}+{pos};");
+                                // TODO: this is probably technically UB -- we are casting somewhere
+                                // in the middle of a `struct Array_T_N` to a `struct Array_T_M`
+                                let ty = self.emit_var_decl(id, state);
+                                write_de!(self.buffer, "=");
+                                self.emit_cast(ty);
+                                write_de!(self.buffer, "({src}+{pos});");
                             } else {
-                                write_de!(self.buffer, "={{.{ARRAY_DATA_NAME}={{");
-                                for i in 0..rest_len {
-                                    write_de!(self.buffer, "{src}[{}],", pos + i);
-                                }
-                                write_de!(self.buffer, "}}}};");
+                                let var = self.proj.scopes.get(id);
+                                let ty = var
+                                    .ty
+                                    .with_templates(&mut self.proj.types, &state.func.ty_args);
+                                let (size, _) =
+                                    ty.size_and_align(&self.proj.scopes, &mut self.proj.types);
+
+                                self.emit_type(ty);
+                                write_de!(self.buffer, " ");
+                                self.emit_var_name(id, state);
+                                write_de!(self.buffer, ";CTL_MEMCPY(&");
+                                self.emit_var_name(id, state);
+                                write_de!(self.buffer, ",{src}+{pos},{size});");
                             }
                         });
                     }
@@ -2842,16 +2782,8 @@ impl<'a> Codegen<'a> {
                 }
 
                 usebuf!(self, bindings, {
-                    let id = self.emit_var_decl(id, state);
-                    if borrow
-                        && id
-                            .as_pointee(&self.proj.types)
-                            .is_some_and(|i| self.proj.types[i].is_array())
-                    {
-                        write_de!(self.buffer, "={src}.{ARRAY_DATA_NAME};");
-                    } else {
-                        write_de!(self.buffer, "={}{src};", if borrow { "&" } else { "" });
-                    }
+                    self.emit_var_decl(id, state);
+                    write_de!(self.buffer, "={}{src};", if borrow { "&" } else { "" });
                 });
             }
             PatternData::Void => {}
@@ -2959,7 +2891,7 @@ impl<'a> Codegen<'a> {
         &mut self,
         state: &mut State,
         is_prototype: bool,
-    ) -> (Vec<VariableId>, Option<(VariableId, String)>) {
+    ) -> (Vec<VariableId>, FirstParam) {
         let f = self.proj.scopes.get(state.func.id);
         let ret = f.ret.with_templates(&mut self.proj.types, &state.func.ty_args);
         let is_extern = f.is_extern;
@@ -3000,7 +2932,7 @@ impl<'a> Codegen<'a> {
 
         let mut unused = vec![];
         let mut nonnull = vec![];
-        let mut thisptr = None;
+        let mut thisptr = FirstParam::Normal;
         for (i, param) in params.iter().enumerate() {
             let mut ty = param.ty;
             ty = ty.with_templates(&mut self.proj.types, &state.func.ty_args);
@@ -3032,7 +2964,7 @@ impl<'a> Codegen<'a> {
                 if override_with_voidptr {
                     let tmp = state.tmpvar();
                     self.buffer.emit(&tmp);
-                    thisptr = Some((*id, tmp));
+                    thisptr = FirstParam::OverriddenVar { tmp, id: *id };
                 } else {
                     self.emit_var_decl(*id, state);
                     if self.proj.scopes.get(*id).unused {
@@ -3040,10 +2972,15 @@ impl<'a> Codegen<'a> {
                     }
                 }
             } else {
-                if !override_with_voidptr {
+                //
+                if override_with_voidptr {
+                    let tmp = state.tmpvar();
+                    self.buffer.emit(&tmp);
+                    thisptr = FirstParam::OverriddenLabel { tmp, label: param.label, ty };
+                } else {
                     self.emit_type(ty);
+                    write_de!(self.buffer, " {}", strdata!(self, param.label));
                 }
-                write_de!(self.buffer, " {}", strdata!(self, param.label));
             }
         }
 
@@ -3119,13 +3056,32 @@ impl<'a> Codegen<'a> {
         }
 
         self.emit_type(ty);
-        if emit_const {
-            write_de!(self.buffer, " const");
-        }
+        write_if!(emit_const, self.buffer, " const");
         write_de!(self.buffer, " ");
         self.emit_var_name(id, state);
 
         ty
+    }
+
+    fn emit_array_write_to_deref(&mut self, state: &mut State, mut lhs: Expr, rhs: Expr) {
+        hoist!(self, {
+            let tmp = if let ExprData::Deref(inner, 1) = &mut lhs.data {
+                inner.ty = inner.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                self.emit_tmpvar(std::mem::take(inner), state)
+            } else if let ExprData::Deref(_, count) = &mut lhs.data {
+                *count -= 1;
+                self.emit_tmpvar(std::mem::take(&mut lhs), state)
+            } else {
+                unreachable!();
+            };
+
+            let (size, _) = lhs.ty.size_and_align(&self.proj.scopes, &mut self.proj.types);
+
+            write_de!(self.buffer, "CTL_MEMCPY({tmp},&");
+            self.emit_expr_inline(rhs, state);
+            write_de!(self.buffer, ",{size});");
+        });
+        self.buffer.emit(VOID_INSTANCE);
     }
 
     fn emit_bitfield_assign(
@@ -3141,19 +3097,19 @@ impl<'a> Codegen<'a> {
         let src = tmpbuf!(self, state, |tmp| {
             let ptr = self.proj.types.insert(Type::MutPtr(source.ty));
             self.emit_type(ptr);
-            writeln_de!(self.buffer, " {tmp}=&");
+            write_de!(self.buffer, " {tmp}=&");
             self.emit_expr_inline(source, state);
-            writeln_de!(self.buffer, ";");
+            write_de!(self.buffer, ";");
             format!("(*{tmp})")
         });
 
         let expr = tmpbuf!(self, state, |tmp| {
             self.emit_type(ty);
-            writeln_de!(self.buffer, " {tmp}=");
+            write_de!(self.buffer, " {tmp}=");
             if op != BinaryOp::Assign {
-                writeln_de!(self.buffer, "(");
+                write_de!(self.buffer, "(");
                 self.emit_bitfield_read(&src, id, member, ty);
-                writeln_de!(
+                write_de!(
                     self.buffer,
                     "){}",
                     match op {
@@ -3173,7 +3129,7 @@ impl<'a> Codegen<'a> {
             }
             self.emit_expr_inline(rhs, state);
 
-            writeln_de!(self.buffer, ";");
+            write_de!(self.buffer, ";");
             tmp
         });
         hoist!(self, self.emit_bitfield_write(&src, id, member, ty, &expr));
@@ -3402,7 +3358,7 @@ impl<'a> Codegen<'a> {
             write_de!(self.buffer, " {tmp}[{}]={{", args.len());
             for (mut expr, opts) in args {
                 expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
-                write_de!(self.buffer, "{{.$value=(void const*)");
+                write_de!(self.buffer, "{{.$value=");
                 self.emit_tmpvar_ident(expr, state);
                 write_de!(self.buffer, ",.$format=");
                 self.emit_member_fn(state, opts.func, scope);
@@ -3508,11 +3464,7 @@ impl<'a> Codegen<'a> {
 
     fn deref(types: &Types, src: &str, ty: TypeId) -> String {
         if matches!(types[ty], Type::Ptr(_) | Type::MutPtr(_)) {
-            format!(
-                "({:*<1$}{src})",
-                "",
-                Self::indirection(types, ty) - usize::from(ty.strip_references_r(types).is_array())
-            )
+            format!("({:*<1$}{src})", "", Self::indirection(types, ty))
         } else {
             src.into()
         }
@@ -3659,7 +3611,7 @@ struct StrInterp {
 }
 
 impl StrInterp {
-    pub fn new(proj: &mut Project, strings: &Strings) -> Self {
+    pub fn new(proj: &mut Project) -> Self {
         let string = proj
             .scopes
             .lang_types
@@ -3673,22 +3625,28 @@ impl StrInterp {
                 .map(|&ut| GenericUserType::from_id(&proj.scopes, &mut proj.types, ut)),
             string_ty: string.as_ref().map(|s| proj.types.insert(Type::User(s.clone()))),
             string,
-            opts: strings.get("opts").unwrap(),
-            width: strings.get("width").unwrap(),
-            prec: strings.get("prec").unwrap(),
-            fill: strings.get("fill").unwrap(),
-            align: strings.get("align").unwrap(),
-            upper: strings.get("upper").unwrap(),
-            alt: strings.get("alt").unwrap(),
-            sign: strings.get("sign").unwrap(),
-            zero: strings.get("zero").unwrap(),
-            align_none: strings.get("None").unwrap(),
-            align_left: strings.get("Left").unwrap(),
-            align_right: strings.get("Right").unwrap(),
-            align_center: strings.get("Center").unwrap(),
-            sign_none: strings.get("None").unwrap(),
-            sign_pos: strings.get("Plus").unwrap(),
-            sign_neg: strings.get("Minus").unwrap(),
+            opts: proj.strings.get("opts").unwrap(),
+            width: proj.strings.get("width").unwrap(),
+            prec: proj.strings.get("prec").unwrap(),
+            fill: proj.strings.get("fill").unwrap(),
+            align: proj.strings.get("align").unwrap(),
+            upper: proj.strings.get("upper").unwrap(),
+            alt: proj.strings.get("alt").unwrap(),
+            sign: proj.strings.get("sign").unwrap(),
+            zero: proj.strings.get("zero").unwrap(),
+            align_none: proj.strings.get("None").unwrap(),
+            align_left: proj.strings.get("Left").unwrap(),
+            align_right: proj.strings.get("Right").unwrap(),
+            align_center: proj.strings.get("Center").unwrap(),
+            sign_none: proj.strings.get("None").unwrap(),
+            sign_pos: proj.strings.get("Plus").unwrap(),
+            sign_neg: proj.strings.get("Minus").unwrap(),
         }
     }
+}
+
+enum FirstParam {
+    Normal,
+    OverriddenVar { tmp: String, id: VariableId },
+    OverriddenLabel { tmp: String, label: StrId , ty: TypeId },
 }

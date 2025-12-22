@@ -18,7 +18,7 @@ macro_rules! id {
     ($name: ident => $output: ident,
      $vec: ident,
      $namespace: ident) => {
-        #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+        #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
         pub struct $name(usize);
 
         impl ItemId for $name {
@@ -153,19 +153,62 @@ pub enum ParamPattern {
 
 #[derive(Clone)]
 pub enum TraitImplData {
-    Path(Path),
-    Operator { tr: StrId, ty_args: Vec<Located<TypeHint>>, span: Span },
+    Path(ScopeId, Path),
+    Operator { tr: StrId, ty_args: Vec<Located<TypeHint>>, span: Span, scope: ScopeId },
+    Checked(GenericTrait),
 }
 
-#[derive(Clone, EnumAsInner, Default)]
-pub enum TraitImpl {
-    Unchecked {
-        scope: ScopeId,
-        data: TraitImplData,
-    },
-    Checked(GenericTrait),
-    #[default]
-    None,
+#[derive(Clone, EnumAsInner)]
+pub enum TraitImpls {
+    Checked(Vec<Option<GenericTrait>>),
+    Unchecked(Vec<TraitImplData>),
+}
+
+impl Default for TraitImpls {
+    fn default() -> Self {
+        Self::Checked(vec![])
+    }
+}
+
+impl TraitImpls {
+    /// This function skips `None` entries and thus should NOT be used with `enumerate()` if the
+    /// index will be used to index into impl_blocks
+    pub fn iter_checked(&self) -> impl Iterator<Item = &GenericTrait> {
+        debug_assert!(self.is_checked());
+        self.as_checked().into_iter().flat_map(|i| i.iter()).flatten()
+    }
+
+    /// Enumerate, but the index doesn't ignore `None` entries
+    pub fn iter_checked_enumerate(&self) -> impl Iterator<Item = (usize, &GenericTrait)> {
+        debug_assert!(self.is_checked());
+        self.as_checked()
+            .into_iter()
+            .flat_map(|i| i.iter())
+            .enumerate()
+            .flat_map(|(i, v)| v.as_ref().map(|v| (i, v)))
+    }
+
+    /// This function skips `None` entries and thus should NOT be used with `enumerate()` if the
+    /// index will be used to index into impl_blocks
+    pub fn into_iter_checked(self) -> impl Iterator<Item = GenericTrait> {
+        debug_assert!(self.is_checked());
+        self.into_checked().into_iter().flat_map(|i| i.into_iter()).flatten()
+    }
+
+    /// Enumerate, but the index doesn't ignore `None` entries
+    pub fn into_iter_checked_enumerate(self) -> impl Iterator<Item = (usize, GenericTrait)> {
+        debug_assert!(self.is_checked());
+        self.into_checked()
+            .into_iter()
+            .flat_map(|i| i.into_iter())
+            .enumerate()
+            .flat_map(|(i, v)| v.map(|v| (i, v)))
+    }
+
+    pub fn get_checked(&self, i: usize) -> Option<&GenericTrait> {
+        debug_assert!(self.is_checked());
+        self.as_checked().and_then(|v| v.get(i).and_then(|v| v.as_ref()))
+    }
 }
 
 #[derive(Clone)]
@@ -214,7 +257,7 @@ pub struct Function {
 
 impl Function {
     pub fn is_dyn_compatible(&self, scopes: &Scopes, types: &Types, tr: UserTypeId) -> bool {
-        let (&this, _) = scopes
+        let (&this, _, _) = scopes
             .get(tr)
             .kind
             .as_trait()
@@ -225,7 +268,7 @@ impl Function {
                 .params
                 .first()
                 .is_some_and(|p| p.label == Strings::THIS_PARAM && types[p.ty].is_safe_ptr())
-            && self.params.iter().all(|p| !types[p.ty].as_user().is_some_and(|ty| ty.id == this))
+            && self.params.iter().all(|p| types[p.ty].as_user().is_none_or(|ty| ty.id != this))
     }
 }
 
@@ -284,12 +327,14 @@ pub enum UserTypeKind {
     Template,
     AnonStruct,
     Tuple,
-    Trait(UserTypeId, bool),
+    Trait { this: UserTypeId, sealed: bool, assoc_types: HashMap<StrId, UserTypeId> },
     Extension(TypeId),
 }
 
+#[derive(Clone)]
 pub struct ImplBlockData {
     pub type_params: Vec<UserTypeId>,
+    pub assoc_types: HashMap<StrId, Located<TypeId>>,
 }
 
 impl HasTypeParams for ImplBlockData {
@@ -304,7 +349,7 @@ pub struct UserType {
     pub name: Located<StrId>,
     pub body_scope: ScopeId,
     pub kind: UserTypeKind,
-    pub impls: Vec<TraitImpl>,
+    pub impls: TraitImpls,
     pub impl_blocks: Vec<ImplBlockData>,
     pub type_params: Vec<UserTypeId>,
     pub fns: Vec<Vis<FunctionId>>,
@@ -328,7 +373,7 @@ impl UserType {
                 .is_some_and(|u| u.ty.is_none())
     }
 
-    pub fn template(name: Located<StrId>, scope: ScopeId, impls: Vec<TraitImpl>) -> Self {
+    pub fn template(name: Located<StrId>, scope: ScopeId, impls: TraitImpls) -> Self {
         Self {
             public: false,
             name,
@@ -521,7 +566,7 @@ impl Scopes {
                             name: Default::default(),
                             body_scope: ScopeId::ROOT,
                             kind: UserTypeKind::Template,
-                            impls: Vec::new(),
+                            impls: Default::default(),
                             impl_blocks: Vec::new(),
                             type_params: Vec::new(),
                             attrs: Default::default(),
@@ -559,7 +604,7 @@ impl Scopes {
                     type_params,
                     kind: UserTypeKind::Tuple,
                     attrs: Default::default(),
-                    impls: Vec::new(),
+                    impls: Default::default(),
                     impl_blocks: Vec::new(),
                     fns: Vec::new(),
                     subscripts: Vec::new(),
@@ -595,7 +640,7 @@ impl Scopes {
                             name: Default::default(),
                             body_scope: ScopeId::ROOT,
                             kind: UserTypeKind::Template,
-                            impls: Vec::new(),
+                            impls: Default::default(),
                             impl_blocks: Vec::new(),
                             type_params: Vec::new(),
                             attrs: Default::default(),
@@ -628,7 +673,7 @@ impl Scopes {
                     kind: UserTypeKind::AnonStruct,
                     type_params,
                     attrs: Default::default(),
-                    impls: Vec::new(),
+                    impls: Default::default(),
                     impl_blocks: Vec::new(),
                     fns: Vec::new(),
                     subscripts: Vec::new(),
@@ -651,7 +696,7 @@ impl Scopes {
                 return;
             }
 
-            for tr in this.get(tr).impls.iter().flat_map(|tr| tr.as_checked()) {
+            for tr in this.get(tr).impls.iter_checked() {
                 inner(this, tr.id, results);
             }
         }
@@ -672,7 +717,7 @@ impl Scopes {
                 return;
             }
 
-            for imp in this.get(tr.id).impls.iter().flat_map(|tr| tr.as_checked()) {
+            for imp in this.get(tr.id).impls.iter_checked() {
                 let mut imp = imp.clone();
                 imp.fill_templates(types, &tr.ty_args);
                 inner(this, types, imp, results);
@@ -687,6 +732,10 @@ impl Scopes {
     pub fn has_builtin_impl(&self, types: &Types, id: TypeId, bound: &GenericTrait) -> bool {
         let ty = &types[id];
         if ty.is_numeric() && Some(&bound.id) == self.lang_types.get(&Strings::LANG_NUMERIC) {
+            return true;
+        }
+
+        if ty.is_array() && Some(&bound.id) == self.lang_types.get(&Strings::LANG_ARRAY) {
             return true;
         }
 

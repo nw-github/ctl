@@ -109,7 +109,7 @@ pub enum Stmt {
 pub enum ExprData {
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
-    AutoDeref(Box<Expr>, usize),
+    Deref(Box<Expr>, usize),
     Call {
         callee: Box<Expr>,
         args: IndexMap<StrId, Expr>,
@@ -177,14 +177,6 @@ pub enum ExprData {
         source: Box<Expr>,
         member: StrId,
     },
-    Subscript {
-        callee: Box<Expr>,
-        arg: Box<Expr>,
-    },
-    SliceArray {
-        callee: Box<Expr>,
-        arg: Box<Expr>,
-    },
     As(Box<Expr>, bool),
     Is(Box<Expr>, Pattern),
     Return(Box<Expr>),
@@ -192,6 +184,7 @@ pub enum ExprData {
     Break(Box<Expr>, ScopeId),
     Lambda(Vec<Stmt>),
     NeverCoerce(Box<Expr>),
+    Discard(Box<Expr>),
     Continue(ScopeId),
     #[default]
     Error,
@@ -248,43 +241,23 @@ pub struct Expr {
 impl Expr {
     pub fn is_assignable(&self, scopes: &Scopes, types: &Types) -> bool {
         match &self.data {
-            ExprData::AutoDeref(expr, _) => {
+            ExprData::Deref(expr, _) => {
                 matches!(types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
-            }
-            ExprData::Unary(op, expr) => {
-                matches!(op, UnaryOp::Deref)
-                    && matches!(types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
             }
             ExprData::Var(id) => scopes.get(*id).mutable,
             ExprData::Member { source, .. } => source.is_assignable(scopes, types),
-            ExprData::Subscript { callee, .. } => match &callee.data {
-                ExprData::Var(id) => {
-                    matches!(types[callee.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
-                        || scopes.get(*id).mutable
-                }
-                ExprData::Member { source, .. } => source.is_assignable(scopes, types),
-                _ => true,
-            },
             _ => false,
         }
     }
 
     pub fn can_addrmut(&self, scopes: &Scopes, types: &Types) -> bool {
         match &self.data {
-            ExprData::AutoDeref(expr, _) => {
+            ExprData::Deref(expr, _) => {
                 matches!(types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
-            }
-            ExprData::Unary(op, expr) => {
-                !matches!(op, UnaryOp::Deref)
-                    || matches!(types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
             }
             ExprData::Var(id) => scopes.get(*id).mutable,
             ExprData::Member { source, .. } => {
                 matches!(types[source.ty], Type::MutPtr(_)) || source.can_addrmut(scopes, types)
-            }
-            ExprData::Subscript { callee, .. } => {
-                matches!(types[callee.ty], Type::MutPtr(_) | Type::RawPtr(_))
-                    || callee.can_addrmut(scopes, types)
             }
             _ => true,
         }
@@ -330,7 +303,7 @@ impl Expr {
             std::cmp::Ordering::Equal => self,
             std::cmp::Ordering::Greater => Expr::new(
                 if needed != 0 { prev } else { ty },
-                ExprData::AutoDeref(self.into(), indirection - needed),
+                ExprData::Deref(self.into(), indirection - needed),
             ),
         }
     }

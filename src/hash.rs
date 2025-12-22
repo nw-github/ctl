@@ -77,6 +77,10 @@ impl<K, V> HashMap<K, V> {
     pub fn new() -> Self {
         Self(ZwoHashMap::default())
     }
+
+    pub fn with_capacity(size: usize) -> Self {
+        Self(ZwoHashMap::with_capacity_and_hasher(size, Default::default()))
+    }
 }
 
 impl<K, V> IntoIterator for HashMap<K, V> {

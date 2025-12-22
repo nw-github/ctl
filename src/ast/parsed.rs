@@ -1,7 +1,7 @@
 use crate::{
     ast::{Alignment, Sign},
     comptime_int::ComptimeInt,
-    intern::StrId,
+    intern::{StrId, THIS_TYPE},
     lexer::{Located, Span},
 };
 
@@ -9,17 +9,19 @@ use super::{Attributes, BinaryOp, UnaryOp};
 
 #[derive(Clone, Copy)]
 pub enum PathOrigin {
-    Root,
+    Root(Span),
     Super(Span),
+    Infer(Span),
+    This(Span),
     Normal,
-    Infer,
 }
 
 impl std::fmt::Display for PathOrigin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Root => write!(f, "::"),
-            Self::Infer => write!(f, ":"),
+            Self::Root(_) => write!(f, "::"),
+            Self::Infer(_) => write!(f, ":"),
+            Self::This(_) => write!(f, "{THIS_TYPE}"),
             Self::Super(_) => write!(f, "super::"),
             _ => Ok(()),
         }
@@ -79,6 +81,7 @@ pub enum StmtData {
         type_params: TypeParams,
         impls: Vec<Path>,
         functions: Vec<Located<Fn>>,
+        assoc_types: TypeParams,
     },
     Extension {
         public: bool,
@@ -225,29 +228,28 @@ pub struct Path {
 }
 
 impl Path {
-    pub fn as_identifier(&self) -> Option<StrId> {
-        self.components
-            .first()
-            .filter(|_| matches!(self.origin, PathOrigin::Normal) && self.components.len() == 1)
-            .filter(|(_, generics)| generics.is_empty())
-            .map(|(path, _)| path.data)
+    pub fn this_type(span: Span) -> Self {
+        Self { origin: PathOrigin::This(span), components: vec![] }
     }
 
-    pub fn as_identifier_l(&self) -> Option<&Located<StrId>> {
+    pub fn as_identifier(&self) -> Option<Located<StrId>> {
         self.components
             .first()
             .filter(|_| matches!(self.origin, PathOrigin::Normal) && self.components.len() == 1)
-            .filter(|(_, generics)| generics.is_empty())
-            .map(|(comp, _)| comp)
+            .filter(|(_, ty_args)| ty_args.is_empty())
+            .map(|(comp, _)| *comp)
     }
 
     pub fn span(&self) -> Span {
-        let end = self.components.last().unwrap().0.span;
-        if let PathOrigin::Super(span) = self.origin {
-            span.extended_to(end)
-        } else {
-            self.components.first().unwrap().0.span.extended_to(end)
-        }
+        let start = match self.origin {
+            PathOrigin::Root(span) => span,
+            PathOrigin::Super(span) => span,
+            PathOrigin::Normal => self.components.first().unwrap().0.span,
+            PathOrigin::Infer(span) => span,
+            PathOrigin::This(span) => span,
+        };
+        let end = self.components.last().map(|c| c.0.span).unwrap_or(start);
+        start.extended_to(end)
     }
 
     pub fn final_component_span(&self) -> Span {
@@ -325,7 +327,7 @@ pub struct FullPattern {
 
 #[derive(Default, Clone)]
 pub enum TypeHint {
-    Regular(Path),
+    Path(Path),
     Array(Box<Located<TypeHint>>, Box<Expr>),
     Vec(Box<Located<TypeHint>>),
     Slice(Box<Located<TypeHint>>),
@@ -347,7 +349,6 @@ pub enum TypeHint {
         ret: Option<Box<Located<TypeHint>>>,
     },
     Void,
-    This,
     #[default]
     Error,
 }
@@ -501,6 +502,7 @@ pub struct ImplBlock {
     pub attrs: Attributes,
     pub type_params: TypeParams,
     pub path: Path,
+    pub assoc_types: Vec<(Located<StrId>, Located<TypeHint>)>,
     pub functions: Vec<Located<Fn>>,
 }
 

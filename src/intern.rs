@@ -7,7 +7,7 @@ pub type StrId = lasso::Spur;
 pub(crate) const THIS_PARAM: &str = "this";
 pub(crate) const THIS_TYPE: &str = "This";
 
-#[derive(derive_more::Deref, derive_more::DerefMut)]
+#[derive(Clone, derive_more::Deref, derive_more::DerefMut)]
 pub struct Strings {
     #[deref]
     #[deref_mut]
@@ -40,7 +40,7 @@ impl Strings {
     pub const LANG_FMT_ARG: StrId = invent_str_id(23);
     pub const FN_WRITTEN: StrId = invent_str_id(24);
     pub const FN_INSERT: StrId = invent_str_id(25);
-    pub const FN_SUBSPAN: StrId = invent_str_id(26);
+    pub const LANG_ARRAY: StrId = invent_str_id(26);
     pub const VAR_LESS: StrId = invent_str_id(27);
     pub const VAR_GREATER: StrId = invent_str_id(28);
     pub const VAR_EQUAL: StrId = invent_str_id(29);
@@ -81,7 +81,7 @@ impl Strings {
         assert_eq!(Self::LANG_FMT_ARG, rodeo.get_or_intern_static("fmt_arg"));
         assert_eq!(Self::FN_WRITTEN, rodeo.get_or_intern_static("written"));
         assert_eq!(Self::FN_INSERT, rodeo.get_or_intern_static("insert"));
-        assert_eq!(Self::FN_SUBSPAN, rodeo.get_or_intern_static("subspan"));
+        assert_eq!(Self::LANG_ARRAY, rodeo.get_or_intern_static("array"));
         assert_eq!(Self::VAR_LESS, rodeo.get_or_intern_static("Less"));
         assert_eq!(Self::VAR_GREATER, rodeo.get_or_intern_static("Greater"));
         assert_eq!(Self::VAR_EQUAL, rodeo.get_or_intern_static("Equal"));

@@ -90,7 +90,7 @@ pub struct Arguments {
 
     impl Format {
         fn fmt(this, f: *mut Formatter) {
-            for (part, arg) in this.parts.iter().zip::<*Argument, std::span::Iter<Argument>>(this.args.iter()) {
+            for (part, arg) in this.parts.iter().zip(this.args.iter()) {
                 f.write_str(*part);
                 ({arg.format}(arg.value, &mut f.with_options(arg.opts)));
             }

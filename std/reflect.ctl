@@ -14,6 +14,9 @@ pub sealed trait Signed: Integral {}
 @(lang(unsigned))
 pub sealed trait Unsigned: Integral {}
 
+@(lang(array))
+pub sealed trait Array<T> {}
+
 /// A unique numeric identifier for each type. This value is not stable and may change between
 /// compilations of even identical source code, and thus should only be used for comparisons within
 /// the same compilation unit and never serialized or read directly.

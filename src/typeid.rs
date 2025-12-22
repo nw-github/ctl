@@ -15,7 +15,7 @@ use crate::{
 };
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
-use indexmap::{IndexSet, map::Entry};
+use indexmap::IndexSet;
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Deref, DerefMut)]
 pub struct TypeArgs(pub IndexMap<UserTypeId, TypeId>);
@@ -91,51 +91,6 @@ where
 impl<T> WithTypeArgs<T> {
     pub fn first_type_arg(&self) -> Option<TypeId> {
         self.ty_args.values().next().cloned()
-    }
-
-    pub fn infer_type_args(&mut self, types: &Types, mut src: TypeId, mut target: TypeId) {
-        loop {
-            match (&types[src], &types[target]) {
-                (
-                    Type::Ptr(gi) | Type::MutPtr(gi) | Type::RawPtr(gi) | Type::RawMutPtr(gi),
-                    Type::Ptr(ti) | Type::MutPtr(ti) | Type::RawPtr(ti) | Type::RawMutPtr(ti),
-                ) => {
-                    src = *gi;
-                    target = *ti;
-                }
-                (Type::Array(gi, _), Type::Array(ti, _)) => {
-                    src = *gi;
-                    target = *ti;
-                }
-                (Type::FnPtr(src), Type::FnPtr(target)) => {
-                    for (&src, &target) in src.params.iter().zip(target.params.iter()) {
-                        self.infer_type_args(types, src, target);
-                    }
-
-                    self.infer_type_args(types, src.ret, target.ret);
-                    break;
-                }
-                (Type::User(src), target_ty) => {
-                    // TODO: T => ?T
-                    if let Entry::Occupied(mut entry) = self.ty_args.entry(src.id) {
-                        if entry.get() != &TypeId::UNKNOWN {
-                            return;
-                        }
-
-                        entry.insert(target);
-                    } else if let Type::User(target) = target_ty
-                        && src.id == target.id
-                    {
-                        for (&src, &target) in src.ty_args.values().zip(target.ty_args.values()) {
-                            self.infer_type_args(types, src, target);
-                        }
-                    }
-
-                    break;
-                }
-                _ => break,
-            }
-        }
     }
 
     pub fn fill_templates(&mut self, types: &mut Types, map: &TypeArgs) {

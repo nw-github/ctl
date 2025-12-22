@@ -3,10 +3,10 @@ use colored::Colorize;
 use crate::{
     Located,
     ast::parsed::{
-        Expr, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path, Pattern, Stmt,
-        StmtData, Struct, TypeHint, UsePath, UsePathTail, Variant,
+        Expr, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path, PathOrigin, Pattern,
+        Stmt, StmtData, Struct, TypeHint, UsePath, UsePathTail, Variant,
     },
-    intern::{StrId, Strings, THIS_TYPE},
+    intern::{StrId, Strings},
 };
 
 const INDENT: &str = "  ";
@@ -98,14 +98,24 @@ pub fn print_stmt(stmt: &Stmt, strings: &Strings, indent: usize) {
         StmtData::UnsafeUnion(base) => {
             print_struct("StmtData::UnsafeUnion", vec![], base, None, strings, indent)
         }
-        StmtData::Trait { public, name, type_params, impls, functions, is_unsafe, sealed } => {
+        StmtData::Trait {
+            public,
+            name,
+            type_params,
+            impls,
+            functions,
+            is_unsafe,
+            sealed,
+            assoc_types,
+        } => {
             print_header(
                 &tabs,
                 "Stmt::Trait",
                 &[str!(name, strings, LOCATED), bool!(public), bool!(sealed), bool!(is_unsafe)],
             );
 
-            print_type_params(type_params, strings, indent + 1);
+            print_type_params(type_params, strings, indent + 1, None);
+            print_type_params(assoc_types, strings, indent + 1, Some("Associated Types"));
 
             let plus_1 = INDENT.repeat(indent + 1);
             if !impls.is_empty() {
@@ -124,7 +134,7 @@ pub fn print_stmt(stmt: &Stmt, strings: &Strings, indent: usize) {
         StmtData::Extension { public, name, ty, type_params, impls, functions, operators } => {
             print_header(&tabs, "Stmt::Extension", &[str!(name, strings, LOCATED), bool!(public)]);
 
-            print_type_params(type_params, strings, indent + 1);
+            print_type_params(type_params, strings, indent + 1, None);
 
             let plus_1 = INDENT.repeat(indent + 1);
             eprintln!("{plus_1}{}: {}", "For".yellow(), FmtType::new(&ty.data, strings));
@@ -571,21 +581,20 @@ fn print_type_params(
     type_params: &[(Located<StrId>, Vec<Path>)],
     strings: &Strings,
     indent: usize,
+    name: Option<&str>,
 ) {
     if !type_params.is_empty() {
         let tabs = INDENT.repeat(indent);
         let plus_1 = INDENT.repeat(indent + 1);
 
-        eprintln!("{tabs}{}:", "Type Params".yellow());
+        eprintln!("{tabs}{}:", name.unwrap_or("Type Params").yellow());
         for (name, impls) in type_params {
             eprint!("{plus_1}{}", strings.resolve(&name.data));
             for (i, path) in impls.iter().enumerate() {
-                eprintln!("{}{}", [" + ", ": "][(i == 0) as usize], FmtPath::new(path, strings));
+                eprint!("{}{}", [" + ", ": "][(i == 0) as usize], FmtPath::new(path, strings));
             }
 
-            if impls.is_empty() {
-                eprintln!();
-            }
+            eprintln!();
         }
     }
 }
@@ -600,7 +609,7 @@ fn do_print_fn(
     let plus_1 = INDENT.repeat(indent + 1);
     let plus_2 = INDENT.repeat(indent + 2);
 
-    print_type_params(type_params, strings, indent + 1);
+    print_type_params(type_params, strings, indent + 1, None);
 
     if !params.is_empty() {
         eprintln!("{plus_1}{}:", "Params".yellow());
@@ -690,7 +699,7 @@ fn print_struct(
     let plus_1 = INDENT.repeat(indent + 1);
     let plus_2 = INDENT.repeat(indent + 2);
 
-    print_type_params(type_params, strings, indent + 1);
+    print_type_params(type_params, strings, indent + 1, None);
 
     if let Some(variants) = variants
         && !variants.is_empty()
@@ -731,18 +740,32 @@ fn print_struct(
 }
 
 fn print_impls(indent: usize, impls: &[Located<ImplBlock>], strings: &Strings) {
+    if impls.is_empty() {
+        return;
+    }
+
     let tabs = INDENT.repeat(indent);
     let plus_1 = INDENT.repeat(indent + 1);
-    if !impls.is_empty() {
-        eprintln!("{tabs}{}:", "Impls".yellow());
-        for imp in impls {
-            eprintln!("{plus_1}{}: {}", "Path".yellow(), FmtPath::new(&imp.data.path, strings));
+    let plus_2 = INDENT.repeat(indent + 2);
+    eprintln!("{tabs}{}:", "Impls".yellow());
+    for imp in impls {
+        eprintln!("{plus_1}{}: {}", "Path".yellow(), FmtPath::new(&imp.data.path, strings));
 
-            print_type_params(&imp.data.type_params, strings, indent + 1);
+        print_type_params(&imp.data.type_params, strings, indent + 1, None);
 
-            for f in imp.data.functions.iter() {
-                print_fn(&f.data, strings, indent + 2);
+        if !imp.data.assoc_types.is_empty() {
+            eprintln!("{plus_1}{}:", "Associated Types".yellow());
+            for (name, typ) in imp.data.assoc_types.iter() {
+                eprintln!(
+                    "{plus_2}{}: {}",
+                    strings.resolve(&name.data),
+                    FmtType::new(&typ.data, strings)
+                );
             }
+        }
+
+        for f in imp.data.functions.iter() {
+            print_fn(&f.data, strings, indent + 2);
         }
     }
 }
@@ -756,7 +779,7 @@ struct FmtType<'a> {
 impl std::fmt::Display for FmtType<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.ty {
-            TypeHint::Regular(path) => write!(f, "{}", FmtPath::new(path, self.strings)),
+            TypeHint::Path(path) => write!(f, "{}", FmtPath::new(path, self.strings)),
             TypeHint::Array(ty, _) => {
                 write!(f, "[{}; <expr>]", FmtType::new(&ty.data, self.strings))
             }
@@ -817,7 +840,6 @@ impl std::fmt::Display for FmtType<'_> {
                 }
             }
             TypeHint::Void => write!(f, "void"),
-            TypeHint::This => write!(f, "{THIS_TYPE}"),
             TypeHint::Error => write!(f, "Error"),
         }
     }
@@ -837,7 +859,7 @@ impl std::fmt::Display for FmtPath<'_> {
 
         write!(tmp, "{}", self.path.origin)?;
         for (i, (name, ty_args)) in self.path.components.iter().enumerate() {
-            if i > 0 {
+            if i > 0 || matches!(self.path.origin, PathOrigin::This(_)) {
                 write!(tmp, "::")?;
             }
 

@@ -210,11 +210,11 @@ pub struct Vec<T> {
     pub fn []=<I: Integral>(mut this, idx: I, val: T) => this[..][idx] = val;
 
     @(inline(always))
-    pub fn []<R: RangeBounds<uint>>(this, range: R): [T..] => this.as_span()[range];
+    pub fn []<R: RangeBounds<uint>>(this, r: R): [T..] => this.as_span()[r];
 
     @(inline(always))
-    pub fn []<R: RangeBounds<uint>>(mut this, range: R): [mut T..] => this.as_span_mut()[range];
+    pub fn []<R: RangeBounds<uint>>(mut this, r: R): [mut T..] => this.as_span_mut()[r];
 
     @(inline(always))
-    pub fn []=<R: RangeBounds<uint>>(mut this, range: R, rhs: [T..]) => this[range] = rhs;
+    pub fn []=<R: RangeBounds<uint>>(mut this, r: R, rhs: [T..]) => this.as_span_mut()[r] = rhs;
 }
