@@ -1163,11 +1163,27 @@ impl<'a> Codegen<'a> {
         match expr.data {
             ExprData::Binary(op, lhs, rhs) => self.emit_binary(state, op, expr.ty, *lhs, *rhs),
             ExprData::Unary(op, inner) => self.emit_unary(state, op, expr.ty, *inner),
-            ExprData::AutoDeref(expr, count) => {
-                write_de!(self.buffer, "({:*<1$}", "", count);
-                self.emit_expr(*expr, state);
-                write_de!(self.buffer, ")");
-            }
+            ExprData::Deref(inner, count) => match &self.proj.types[expr.ty] {
+                &Type::Array(_, _) => {
+                    let (sz, _) = expr.ty.size_and_align(&self.proj.scopes, &mut self.proj.types);
+                    tmpbuf_emit!(self, state, |tmp| {
+                        self.emit_type(expr.ty);
+                        write_de!(self.buffer, " {tmp};CTL_MEMCPY(&{tmp},({:*<1$}", "", count - 1);
+                        self.emit_expr_inline(*inner, state);
+                        write_de!(self.buffer, "),{sz});");
+                    });
+                }
+                Type::Void => {
+                    write_de!(self.buffer, "VOID(");
+                    self.emit_expr(*inner, state);
+                    write_de!(self.buffer, ")");
+                }
+                _ => {
+                    write_de!(self.buffer, "({:*<1$}", "", count);
+                    self.emit_expr(*inner, state);
+                    write_de!(self.buffer, ")");
+                }
+            },
             ExprData::DynCoerce(mut inner, scope) => {
                 inner.ty = inner.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
 
@@ -1727,7 +1743,6 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    #[inline(always)]
     fn emit_expr_inline(&mut self, mut expr: Expr, state: &mut State) {
         expr.ty = expr.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
         self.emit_expr_inner(expr, state);
@@ -1984,6 +1999,12 @@ impl<'a> Codegen<'a> {
                         return;
                     }
 
+                    if self.proj.types[lhs.ty].is_array()
+                        && matches!(&lhs.data, ExprData::Deref(_, _))
+                    {
+                        return self.emit_array_write_to_deref(state, lhs, rhs);
+                    }
+
                     if matches!(&lhs.data, ExprData::Member { source, .. }
                         if source.ty.is_packed_struct(&self.proj))
                     {
@@ -2006,6 +2027,7 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_unary(&mut self, state: &mut State, op: UnaryOp, ret: TypeId, mut lhs: Expr) {
+        let ret = ret.with_templates(&mut self.proj.types, &state.func.ty_args);
         match op {
             // OK for option since lhs has already been coerced
             UnaryOp::Plus | UnaryOp::Option => self.emit_expr(lhs, state),
@@ -2040,32 +2062,14 @@ impl<'a> Codegen<'a> {
                     self.emit_expr(lhs, state);
                 }
             }
-            UnaryOp::Deref => match &self.proj.types[ret] {
-                &Type::Array(inner, len) => {
-                    let (sz, _) = inner.size_and_align(&self.proj.scopes, &mut self.proj.types);
-                    tmpbuf_emit!(self, state, |tmp| {
-                        self.emit_type(ret);
-                        write_de!(self.buffer, " {tmp};CTL_MEMCPY(&{tmp},");
-                        self.emit_expr(lhs, state);
-                        write_de!(self.buffer, ",{len}*{sz});");
-                    });
-                }
-                Type::Void => {
-                    write_de!(self.buffer, "VOID(");
-                    self.emit_expr(lhs, state);
-                    write_de!(self.buffer, ")");
-                }
-                _ => {
-                    write_de!(self.buffer, "(*");
-                    self.emit_expr(lhs, state);
-                    write_de!(self.buffer, ")");
-                }
-            },
             UnaryOp::Addr | UnaryOp::AddrMut | UnaryOp::AddrRaw | UnaryOp::AddrRawMut => {
                 lhs.ty = lhs.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
-                if matches!(lhs.data, ExprData::Unary(UnaryOp::Deref, _)) {
-                    let ExprData::Unary(_, inner) = lhs.data else { unreachable!() };
-                    self.emit_expr_inner(*inner, state);
+                if let ExprData::Deref(inner, 1) = &mut lhs.data {
+                    self.emit_expr_inner(std::mem::take(inner), state);
+                    return;
+                } else if let ExprData::Deref(_, count @ 2..) = &mut lhs.data {
+                    *count -= 1;
+                    self.emit_expr_inner(std::mem::take(&mut lhs), state);
                     return;
                 }
 
@@ -2074,7 +2078,7 @@ impl<'a> Codegen<'a> {
                     write_de!(self.buffer, "&");
                 }
                 let is_lvalue = match &lhs.data {
-                    ExprData::AutoDeref { .. } | ExprData::Var(_) => true,
+                    ExprData::Deref { .. } | ExprData::Var(_) => true,
                     ExprData::Member { source, .. } => !source.ty.is_packed_struct(&self.proj),
                     _ => false,
                 };
@@ -2123,6 +2127,7 @@ impl<'a> Codegen<'a> {
                 });
             }
             UnaryOp::Unwrap => panic!("ICE: UnaryOp::Unwrap in gen_expr"),
+            UnaryOp::Deref => unreachable!("ICE: Untransformed UnaryOp::Deref in gen_expr"),
         }
     }
 
@@ -3059,6 +3064,27 @@ impl<'a> Codegen<'a> {
         ty
     }
 
+    fn emit_array_write_to_deref(&mut self, state: &mut State, mut lhs: Expr, rhs: Expr) {
+        hoist!(self, {
+            let tmp = if let ExprData::Deref(inner, 1) = &mut lhs.data {
+                inner.ty = inner.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+                self.emit_tmpvar(std::mem::take(inner), state)
+            } else if let ExprData::Deref(_, count) = &mut lhs.data {
+                *count -= 1;
+                self.emit_tmpvar(std::mem::take(&mut lhs), state)
+            } else {
+                unreachable!();
+            };
+
+            let (size, _) = lhs.ty.size_and_align(&self.proj.scopes, &mut self.proj.types);
+
+            write_de!(self.buffer, "CTL_MEMCPY({tmp},&");
+            self.emit_expr_inline(rhs, state);
+            write_de!(self.buffer, ",{size});");
+        });
+        self.buffer.emit(VOID_INSTANCE);
+    }
+
     fn emit_bitfield_assign(
         &mut self,
         source: Expr,
@@ -3072,19 +3098,19 @@ impl<'a> Codegen<'a> {
         let src = tmpbuf!(self, state, |tmp| {
             let ptr = self.proj.types.insert(Type::MutPtr(source.ty));
             self.emit_type(ptr);
-            writeln_de!(self.buffer, " {tmp}=&");
+            write_de!(self.buffer, " {tmp}=&");
             self.emit_expr_inline(source, state);
-            writeln_de!(self.buffer, ";");
+            write_de!(self.buffer, ";");
             format!("(*{tmp})")
         });
 
         let expr = tmpbuf!(self, state, |tmp| {
             self.emit_type(ty);
-            writeln_de!(self.buffer, " {tmp}=");
+            write_de!(self.buffer, " {tmp}=");
             if op != BinaryOp::Assign {
-                writeln_de!(self.buffer, "(");
+                write_de!(self.buffer, "(");
                 self.emit_bitfield_read(&src, id, member, ty);
-                writeln_de!(
+                write_de!(
                     self.buffer,
                     "){}",
                     match op {
@@ -3104,7 +3130,7 @@ impl<'a> Codegen<'a> {
             }
             self.emit_expr_inline(rhs, state);
 
-            writeln_de!(self.buffer, ";");
+            write_de!(self.buffer, ";");
             tmp
         });
         hoist!(self, self.emit_bitfield_write(&src, id, member, ty, &expr));

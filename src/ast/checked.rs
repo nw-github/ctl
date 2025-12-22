@@ -109,7 +109,7 @@ pub enum Stmt {
 pub enum ExprData {
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
-    AutoDeref(Box<Expr>, usize),
+    Deref(Box<Expr>, usize),
     Call {
         callee: Box<Expr>,
         args: IndexMap<StrId, Expr>,
@@ -240,12 +240,8 @@ pub struct Expr {
 impl Expr {
     pub fn is_assignable(&self, scopes: &Scopes, types: &Types) -> bool {
         match &self.data {
-            ExprData::AutoDeref(expr, _) => {
+            ExprData::Deref(expr, _) => {
                 matches!(types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
-            }
-            ExprData::Unary(op, expr) => {
-                matches!(op, UnaryOp::Deref)
-                    && matches!(types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
             }
             ExprData::Var(id) => scopes.get(*id).mutable,
             ExprData::Member { source, .. } => source.is_assignable(scopes, types),
@@ -255,12 +251,8 @@ impl Expr {
 
     pub fn can_addrmut(&self, scopes: &Scopes, types: &Types) -> bool {
         match &self.data {
-            ExprData::AutoDeref(expr, _) => {
+            ExprData::Deref(expr, _) => {
                 matches!(types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
-            }
-            ExprData::Unary(op, expr) => {
-                !matches!(op, UnaryOp::Deref)
-                    || matches!(types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
             }
             ExprData::Var(id) => scopes.get(*id).mutable,
             ExprData::Member { source, .. } => {
@@ -310,7 +302,7 @@ impl Expr {
             std::cmp::Ordering::Equal => self,
             std::cmp::Ordering::Greater => Expr::new(
                 if needed != 0 { prev } else { ty },
-                ExprData::AutoDeref(self.into(), indirection - needed),
+                ExprData::Deref(self.into(), indirection - needed),
             ),
         }
     }

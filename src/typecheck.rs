@@ -2461,20 +2461,22 @@ impl TypeChecker {
                             self.check_expr(*expr, target)
                         };
 
-                        match self.proj.types[expr.ty] {
-                            Type::Ptr(inner) | Type::MutPtr(inner) => (inner, expr),
+                        let ty = match self.proj.types[expr.ty] {
+                            Type::Ptr(inner) | Type::MutPtr(inner) => inner,
                             Type::RawPtr(inner) | Type::RawMutPtr(inner) => {
                                 check_unsafe!(self, Error::is_unsafe(span));
-                                (inner, expr)
+                                inner
                             }
                             Type::Unknown => return Default::default(),
                             _ => {
                                 bail!(
                                     self,
-                                    Error::invalid_operator(op, &type_name!(self, expr.ty), span,)
+                                    Error::invalid_operator(op, &type_name!(self, expr.ty), span)
                                 )
                             }
-                        }
+                        };
+
+                        return CExpr::new(ty, CExprData::Deref(expr.into(), 1));
                     }
                     UnaryOp::Addr => {
                         let expr = self.check_expr(
@@ -3647,10 +3649,10 @@ impl TypeChecker {
         let ty = callee.ty.strip_references(&self.proj.types);
 
         let imm_receiver = self.immutable_receiver(&callee);
-        if imm_receiver && assign {
-            args.into_iter().for_each(|(_, expr)| _ = self.check_expr(expr, None));
-            return self.error(Error::not_assignable(span));
-        }
+        // if imm_receiver && assign {
+        //     args.into_iter().for_each(|(_, expr)| _ = self.check_expr(expr, None));
+        //     return self.error(Error::not_assignable(span));
+        // }
 
         let mut candidates = vec![];
         for ut in self.proj.types[ty]
@@ -3716,7 +3718,7 @@ impl TypeChecker {
             if !assign && let Type::Ptr(inner) | Type::MutPtr(inner) = &self.proj.types[ret] {
                 return CExpr::new(
                     *inner,
-                    CExprData::AutoDeref(
+                    CExprData::Deref(
                         CExpr::new(
                             ret,
                             CExprData::call(&mut self.proj.types, func, args, self.current, span),
