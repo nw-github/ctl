@@ -2328,7 +2328,15 @@ impl TypeChecker {
                 let assignment = op.is_assignment();
                 match op {
                     BinaryOp::Assign => {
-                        if let PExprData::Subscript { callee, args } = left.data {
+                        if let PExprData::Path(path) = &left.data
+                            && let Some(ident) = path.as_identifier()
+                            && ident.data == Strings::UNDERSCORE
+                        {
+                            return CExpr::new(
+                                TypeId::VOID,
+                                CExprData::Discard(self.check_expr(*right, None).into()),
+                            );
+                        } else if let PExprData::Subscript { callee, args } = left.data {
                             let span = left.span;
                             return self.check_subscript(*callee, args, target, Some(*right), span);
                         }

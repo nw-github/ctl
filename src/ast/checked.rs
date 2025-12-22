@@ -184,6 +184,7 @@ pub enum ExprData {
     Break(Box<Expr>, ScopeId),
     Lambda(Vec<Stmt>),
     NeverCoerce(Box<Expr>),
+    Discard(Box<Expr>),
     Continue(ScopeId),
     #[default]
     Error,

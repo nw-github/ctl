@@ -1736,6 +1736,11 @@ impl<'a> Codegen<'a> {
                     });
                 }
             }
+            ExprData::Discard(inner) => {
+                self.buffer.emit("VOID(");
+                self.emit_expr(*inner, state);
+                self.buffer.emit(")");
+            }
             ExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }
     }
@@ -2967,6 +2972,7 @@ impl<'a> Codegen<'a> {
                     }
                 }
             } else {
+                //
                 if override_with_voidptr {
                     let tmp = state.tmpvar();
                     self.buffer.emit(&tmp);
@@ -3050,9 +3056,7 @@ impl<'a> Codegen<'a> {
         }
 
         self.emit_type(ty);
-        if emit_const {
-            write_de!(self.buffer, " const");
-        }
+        write_if!(emit_const, self.buffer, " const");
         write_de!(self.buffer, " ");
         self.emit_var_name(id, state);
 
