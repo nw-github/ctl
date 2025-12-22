@@ -1069,7 +1069,7 @@ impl<'a> Codegen<'a> {
             }
 
             match thisptr {
-                FirstParam::OverriddenLabel { tmp, label, ty }=> {
+                FirstParam::OverriddenLabel { tmp, label, ty } => {
                     self.emit_type(ty);
                     write_de!(self.buffer, " {}={tmp};", strdata!(self, label));
                 }
@@ -2076,7 +2076,10 @@ impl<'a> Codegen<'a> {
                 }
 
                 let is_lvalue = match &lhs.data {
-                    ExprData::Deref { .. } | ExprData::Var(_) => true,
+                    ExprData::Deref { .. }
+                    | ExprData::Var(_)
+                    | ExprData::Fn(_, _)
+                    | ExprData::MemFn(_, _) => true,
                     ExprData::Member { source, .. } => !source.ty.is_packed_struct(&self.proj),
                     _ => false,
                 };
@@ -3648,5 +3651,5 @@ impl StrInterp {
 enum FirstParam {
     Normal,
     OverriddenVar { tmp: String, id: VariableId },
-    OverriddenLabel { tmp: String, label: StrId , ty: TypeId },
+    OverriddenLabel { tmp: String, label: StrId, ty: TypeId },
 }

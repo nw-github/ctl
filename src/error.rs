@@ -314,10 +314,6 @@ impl Warning {
         Self::new(format!("unused variable: '{name}'"), span)
     }
 
-    pub fn mut_function_ptr(span: Span) -> Error {
-        Self::new("&mut on function creates immutable function pointer (use &)", span)
-    }
-
     pub fn unnecessary_fallible_cast(src: &str, dst: &str, span: Span) -> Error {
         Self::new(
             format!("cast from type '{src}' to '{dst}' is infallible and may use an `as` cast",),

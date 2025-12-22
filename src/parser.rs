@@ -2066,7 +2066,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     ret,
                     body,
                     attrs,
-                    assign_subscript: false,
+                    typ: FunctionType::Normal,
                 },
             ))),
             Right(op) => {

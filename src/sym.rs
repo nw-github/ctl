@@ -5,7 +5,7 @@ use crate::{
     ast::{
         Attributes,
         checked::{Expr as CheckedExpr, Pattern as CheckedPattern},
-        parsed::{Expr, Path, Pattern, TypeHint, UsePath},
+        parsed::{Expr, FunctionType, Path, Pattern, TypeHint, UsePath},
     },
     comptime_int::ComptimeInt,
     hash::{HashMap, HashSet, IndexMap},
@@ -246,7 +246,7 @@ pub struct Function {
     pub variadic: bool,
     /// Is this a trait function with a body
     pub has_body: bool,
-    pub assign_subscript: bool,
+    pub typ: FunctionType,
     pub type_params: Vec<UserTypeId>,
     pub params: Vec<CheckedParam>,
     pub ret: TypeId,

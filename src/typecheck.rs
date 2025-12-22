@@ -498,11 +498,6 @@ impl TypeChecker {
             .unwrap_or_default()
     }
 
-    fn is_subscript(&self, f: FunctionId) -> bool {
-        // TODO: add a field to Function, don't check by name
-        strdata!(self, self.proj.scopes.get(f).name.data).starts_with("$sub")
-    }
-
     #[inline(always)]
     pub(crate) fn scopes(&self) -> &Scopes {
         &self.proj.scopes
@@ -810,7 +805,7 @@ impl TypeChecker {
                     ret: Some(Self::typehint_for_struct(&base.name, &base.type_params)),
                     body: None,
                     attrs: Default::default(),
-                    assign_subscript: false,
+                    typ: FunctionType::Normal,
                 })
             });
             let mut members = IndexMap::with_capacity(base.members.len());
@@ -1013,7 +1008,7 @@ impl TypeChecker {
                     ret: Some(ret.clone()),
                     body: None,
                     attrs: Default::default(),
-                    assign_subscript: false,
+                    typ: FunctionType::Normal,
                 }));
             }
             let member_cons_len = fns.len();
@@ -1316,7 +1311,7 @@ impl TypeChecker {
                 is_async: f.is_async,
                 is_unsafe: f.is_unsafe,
                 variadic: f.variadic,
-                assign_subscript: f.assign_subscript,
+                typ: f.typ,
                 has_body: f.body.is_some(),
                 type_params: Vec::new(),
                 params: Vec::new(),
@@ -2306,6 +2301,59 @@ impl TypeChecker {
         }
     }
 
+    fn check_addr(
+        &mut self,
+        op: UnaryOp,
+        inner: Expr,
+        span: Span,
+        target: Option<TypeId>,
+    ) -> CExpr {
+        let inner = self.check_expr(inner, target.and_then(|id| id.as_pointee(&self.proj.types)));
+        if matches!(op, UnaryOp::AddrMut | UnaryOp::AddrRawMut)
+            && !inner.can_addrmut(&self.proj.scopes, &self.proj.types)
+        {
+            self.error(Error::new(
+                "cannot create mutable pointer to immutable memory location",
+                span,
+            ))
+        }
+
+        let mut typ = None;
+        match &inner.data {
+            CExprData::Call { callee, .. } => {
+                if matches!(&callee.data, CExprData::Fn(f, _)
+                    if self.proj.scopes.get(f.id).typ.is_subscript())
+                {
+                    self.proj.diag.report(Warning::subscript_addr(span));
+                }
+            }
+            CExprData::Member { source, .. } => {
+                if source.ty.is_packed_struct(&self.proj) {
+                    self.proj.diag.report(Warning::bitfield_addr(span));
+                }
+            }
+            CExprData::Fn(func, _) | CExprData::MemFn(MemberFn { func, .. }, _) => {
+                if matches!(op, UnaryOp::AddrRaw | UnaryOp::AddrRawMut) {
+                    self.error(Error::new("cannot create raw pointer to function", span))
+                } else if matches!(op, UnaryOp::AddrMut) {
+                    self.error(Error::new("cannot create mutable pointer to function", span))
+                }
+
+                typ = Some(Type::FnPtr(func.as_fn_ptr(&self.proj.scopes, &mut self.proj.types)));
+            }
+            _ => {}
+        }
+
+        let out_ty = self.proj.types.insert(typ.unwrap_or_else(|| match op {
+            UnaryOp::Addr => Type::Ptr(inner.ty),
+            UnaryOp::AddrMut => Type::MutPtr(inner.ty),
+            UnaryOp::AddrRaw => Type::RawPtr(inner.ty),
+            UnaryOp::AddrRawMut => Type::RawMutPtr(inner.ty),
+            _ => unreachable!(),
+        }));
+        CExpr::new(out_ty, CExprData::Unary(op, inner.into()))
+    }
+
     fn check_expr_inner(&mut self, expr: PExpr, target: Option<TypeId>) -> CExpr {
         // FIXME: this should just be a parameter to this function
         self.current_expr += 1;
@@ -2476,127 +2524,8 @@ impl TypeChecker {
 
                         return CExpr::new(ty, CExprData::Deref(expr.into(), 1));
                     }
-                    UnaryOp::Addr => {
-                        let expr = self.check_expr(
-                            *expr,
-                            target.and_then(|id| id.as_pointee(&self.proj.types)),
-                        );
-                        match &expr.data {
-                            CExprData::Call { callee: inner, .. } => {
-                                if matches!(&inner.data, CExprData::Fn(f, _)
-                                    if self.is_subscript(f.id))
-                                {
-                                    self.proj.diag.report(Warning::subscript_addr(span));
-                                }
-                            }
-                            CExprData::Member { source, .. } => {
-                                if source.ty.is_packed_struct(&self.proj) {
-                                    self.proj.diag.report(Warning::bitfield_addr(span));
-                                }
-                            }
-                            CExprData::Fn(_, _) | CExprData::MemFn(_, _) => {
-                                let Type::Fn(f) = &self.proj.types[expr.ty] else { unreachable!() };
-                                let f = f.clone();
-                                let fptr = Type::FnPtr(
-                                    f.as_fn_ptr(&self.proj.scopes, &mut self.proj.types),
-                                );
-                                return CExpr::new(self.proj.types.insert(fptr), expr.data);
-                            }
-                            _ => {}
-                        }
-                        (self.proj.types.insert(Type::Ptr(expr.ty)), expr)
-                    }
-                    UnaryOp::AddrMut => {
-                        let expr = self.check_expr(
-                            *expr,
-                            target.and_then(|id| id.as_pointee(&self.proj.types)),
-                        );
-                        if !expr.can_addrmut(&self.proj.scopes, &self.proj.types) {
-                            self.error(Error::new(
-                                "cannot create mutable pointer to immutable memory location",
-                                span,
-                            ))
-                        }
-                        match &expr.data {
-                            CExprData::Call { callee: inner, .. } => {
-                                if matches!(&inner.data, CExprData::Fn(f, _)
-                                    if self.is_subscript(f.id))
-                                {
-                                    self.proj.diag.report(Warning::subscript_addr(span));
-                                }
-                            }
-                            CExprData::Member { source, .. } => {
-                                if source.ty.is_packed_struct(&self.proj) {
-                                    self.proj.diag.report(Warning::bitfield_addr(span));
-                                }
-                            }
-                            CExprData::Fn(_, _) | CExprData::MemFn(_, _) => {
-                                self.proj.diag.report(Warning::mut_function_ptr(span));
-
-                                let Type::Fn(f) = &self.proj.types[expr.ty] else { unreachable!() };
-                                let f = f.clone();
-                                let fptr = Type::FnPtr(
-                                    f.as_fn_ptr(&self.proj.scopes, &mut self.proj.types),
-                                );
-                                return CExpr::new(self.proj.types.insert(fptr), expr.data);
-                            }
-                            _ => {}
-                        }
-                        (self.proj.types.insert(Type::MutPtr(expr.ty)), expr)
-                    }
-                    UnaryOp::AddrRaw => {
-                        let expr = self.check_expr(
-                            *expr,
-                            target.and_then(|id| id.as_pointee(&self.proj.types)),
-                        );
-                        match &expr.data {
-                            CExprData::Call { callee: inner, .. } => {
-                                if matches!(&inner.data, CExprData::Fn(f, _)
-                                    if self.is_subscript(f.id))
-                                {
-                                    self.proj.diag.report(Warning::subscript_addr(span));
-                                }
-                            }
-                            CExprData::Member { source, .. } => {
-                                if source.ty.is_packed_struct(&self.proj) {
-                                    self.proj.diag.report(Warning::bitfield_addr(span));
-                                }
-                            }
-                            CExprData::Fn(_, _) | CExprData::MemFn(_, _) => self
-                                .error(Error::new("cannot create raw pointer to function", span)),
-                            _ => {}
-                        }
-                        (self.proj.types.insert(Type::RawPtr(expr.ty)), expr)
-                    }
-                    UnaryOp::AddrRawMut => {
-                        let expr = self.check_expr(
-                            *expr,
-                            target.and_then(|id| id.as_pointee(&self.proj.types)),
-                        );
-                        if !expr.can_addrmut(&self.proj.scopes, &self.proj.types) {
-                            self.error(Error::new(
-                                "cannot create mutable pointer to immutable memory location",
-                                span,
-                            ))
-                        }
-                        match &expr.data {
-                            CExprData::Call { callee: inner, .. } => {
-                                if matches!(&inner.data, CExprData::Fn(f, _)
-                                    if self.is_subscript(f.id))
-                                {
-                                    self.proj.diag.report(Warning::subscript_addr(span));
-                                }
-                            }
-                            CExprData::Member { source, .. } => {
-                                if source.ty.is_packed_struct(&self.proj) {
-                                    self.proj.diag.report(Warning::bitfield_addr(span));
-                                }
-                            }
-                            CExprData::Fn(_, _) | CExprData::MemFn(_, _) => self
-                                .error(Error::new("cannot create raw pointer to function", span)),
-                            _ => {}
-                        }
-                        (self.proj.types.insert(Type::RawMutPtr(expr.ty)), expr)
+                    UnaryOp::Addr | UnaryOp::AddrMut | UnaryOp::AddrRaw | UnaryOp::AddrRawMut => {
+                        return self.check_addr(op, *expr, span, target);
                     }
                     UnaryOp::Try => {
                         let expr = self
@@ -3662,7 +3591,7 @@ impl TypeChecker {
             for f in self.proj.scopes.get(ut.id).subscripts.clone() {
                 self.resolve_proto(f);
                 let data = self.proj.scopes.get(f);
-                if assign != data.assign_subscript
+                if assign != data.typ.is_assign_subscript()
                     || data.params.len() != args.len() + 1
                     || (imm_receiver
                         && data.params.first().is_some_and(|p| self.proj.types[p.ty].is_mut_ptr()))

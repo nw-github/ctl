@@ -643,7 +643,7 @@ fn print_fn(
         ret,
         public,
         body,
-        assign_subscript: _,
+        typ: _,
         attrs: _,
     }: &Fn,
     strings: &Strings,

@@ -419,6 +419,14 @@ pub enum OperatorFnType {
     ShrAssign,
 }
 
+#[derive(Clone, Copy, Default, enum_as_inner::EnumAsInner)]
+pub enum FunctionType {
+    #[default]
+    Normal,
+    Subscript,
+    AssignSubscript,
+}
+
 #[derive(Clone)]
 pub struct Fn {
     pub attrs: Attributes,
@@ -428,7 +436,7 @@ pub struct Fn {
     pub is_async: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
-    pub assign_subscript: bool,
+    pub typ: FunctionType,
     pub type_params: TypeParams,
     pub params: Vec<Param>,
     pub ret: Option<Located<TypeHint>>,
@@ -449,7 +457,11 @@ impl Fn {
             params: func.params,
             ret: func.ret,
             body: func.body,
-            assign_subscript: matches!(func.name.data, OperatorFnType::SubscriptAssign),
+            typ: match func.name.data {
+                OperatorFnType::SubscriptAssign => FunctionType::AssignSubscript,
+                OperatorFnType::Subscript => FunctionType::Subscript,
+                _ => FunctionType::Normal,
+            },
         }
     }
 }
