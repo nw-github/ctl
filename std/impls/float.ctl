@@ -47,8 +47,11 @@ pub extension F32Impl for f32 {
     }
 
     pub fn abs(my this): f32 => f32::from_bits(this.to_bits() & !(1 << 31));
+    pub fn signum(my this): f32 => this.is_nan() then this else 1.0f32.copysign(this);
+
     pub fn is_sign_positive(my this): bool => !this.is_sign_negative();
     pub fn is_sign_negative(my this): bool => this.to_bits() & (1 << 31) != 0;
+    pub fn is_nan(my this): bool => this != this;
 
     pub fn min(my this, rhs: This): This {
         if this < rhs {
@@ -129,8 +132,11 @@ pub extension F64Impl for f64 {
     }
 
     pub fn abs(my this): f64 => f64::from_bits(this.to_bits() & !(1 << 63));
+    pub fn signum(my this): f64 => this.is_nan() then this else 1.0f64.copysign(this);
+
     pub fn is_sign_positive(my this): bool => !this.is_sign_negative();
     pub fn is_sign_negative(my this): bool => this.to_bits() & (1 << 63) != 0;
+    pub fn is_nan(my this): bool => this != this;
 
     pub fn min(my this, rhs: This): This {
         if this < rhs {
