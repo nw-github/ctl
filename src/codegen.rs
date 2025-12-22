@@ -1068,9 +1068,16 @@ impl<'a> Codegen<'a> {
                 write_de!(self.buffer, ";");
             }
 
-            if let Some((id, name)) = thisptr {
-                self.emit_var_decl(id, state);
-                write_de!(self.buffer, "={name};");
+            match thisptr {
+                FirstParam::OverriddenLabel { tmp, label, ty }=> {
+                    self.emit_type(ty);
+                    write_de!(self.buffer, " {}={tmp};", strdata!(self, label));
+                }
+                FirstParam::OverriddenVar { tmp, id } => {
+                    self.emit_var_decl(id, state);
+                    write_de!(self.buffer, "={tmp};");
+                }
+                _ => {}
             }
 
             for param in params.iter() {
@@ -2879,7 +2886,7 @@ impl<'a> Codegen<'a> {
         &mut self,
         state: &mut State,
         is_prototype: bool,
-    ) -> (Vec<VariableId>, Option<(VariableId, String)>) {
+    ) -> (Vec<VariableId>, FirstParam) {
         let f = self.proj.scopes.get(state.func.id);
         let ret = f.ret.with_templates(&mut self.proj.types, &state.func.ty_args);
         let is_extern = f.is_extern;
@@ -2920,7 +2927,7 @@ impl<'a> Codegen<'a> {
 
         let mut unused = vec![];
         let mut nonnull = vec![];
-        let mut thisptr = None;
+        let mut thisptr = FirstParam::Normal;
         for (i, param) in params.iter().enumerate() {
             let mut ty = param.ty;
             ty = ty.with_templates(&mut self.proj.types, &state.func.ty_args);
@@ -2952,7 +2959,7 @@ impl<'a> Codegen<'a> {
                 if override_with_voidptr {
                     let tmp = state.tmpvar();
                     self.buffer.emit(&tmp);
-                    thisptr = Some((*id, tmp));
+                    thisptr = FirstParam::OverriddenVar { tmp, id: *id };
                 } else {
                     self.emit_var_decl(*id, state);
                     if self.proj.scopes.get(*id).unused {
@@ -2960,10 +2967,14 @@ impl<'a> Codegen<'a> {
                     }
                 }
             } else {
-                if !override_with_voidptr {
+                if override_with_voidptr {
+                    let tmp = state.tmpvar();
+                    self.buffer.emit(&tmp);
+                    thisptr = FirstParam::OverriddenLabel { tmp, label: param.label, ty };
+                } else {
                     self.emit_type(ty);
+                    write_de!(self.buffer, " {}", strdata!(self, param.label));
                 }
-                write_de!(self.buffer, " {}", strdata!(self, param.label));
             }
         }
 
@@ -3628,4 +3639,10 @@ impl StrInterp {
             sign_neg: proj.strings.get("Minus").unwrap(),
         }
     }
+}
+
+enum FirstParam {
+    Normal,
+    OverriddenVar { tmp: String, id: VariableId },
+    OverriddenLabel { tmp: String, label: StrId , ty: TypeId },
 }
