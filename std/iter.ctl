@@ -148,17 +148,22 @@ pub struct Skip<T, I: Iterator<T>> {
 pub struct Once<T> {
     val: ?T,
 
-    pub fn new(val: T): This {
-        Once(val:)
-    }
+    pub fn new(val: T): This => Once(val:);
 
     impl Iterator<T> {
-        fn next(mut this): ?T {
-            this.val.take()
-        }
+        fn next(mut this): ?T => this.val.take();
     }
 }
 
-pub fn once<T>(val: T): Once<T> {
-    Once::new(val)
+pub struct Repeat<T> {
+    val: T,
+
+    pub fn new(val: T): This => Repeat(val:);
+
+    impl Iterator<T> {
+        fn next(mut this): ?T { this.val }
+    }
 }
+
+pub fn once<T>(val: T): Once<T> => Once::new(val);
+pub fn repeat<T>(val: T): Repeat<T> => Repeat::new(val);
