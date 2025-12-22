@@ -15,7 +15,7 @@ use crate::{
         BitSizeResult, CInt, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, Type,
         TypeArgs, TypeId, Types,
     },
-    write_de, writeln_de,
+    write_de,
 };
 
 #[macro_export]
@@ -942,11 +942,16 @@ impl Codegen<'_> {
         this.buffer.emit("#ifdef __clang__\n");
         let warnings = include_str!("../compile_flags.txt");
         for warning in warnings.split("\n").flat_map(|s| s.strip_prefix("-Wno-")) {
-            writeln_de!(this.buffer, "#pragma clang diagnostic ignored \"-W{warning}\"");
+            write_de!(this.buffer, "#pragma clang diagnostic ignored \"-W{warning}\"\n");
         }
         this.buffer.emit("#endif\n");
         this.buffer.emit(include_str!("../ctl.h"));
         if let Some(ut) = &this.str_interp.string {
+            this.tg.add_type(
+                &this.proj.scopes,
+                &mut this.proj.types,
+                this.str_interp.string_ty.unwrap(),
+            );
             this.buffer.emit("#define STRLIT(data,n)(");
             this.buffer.emit_type_name(
                 &this.proj.scopes,
@@ -1504,9 +1509,9 @@ impl<'a> Codegen<'a> {
                     let tmp = tmpbuf!(self, state, |tmp| {
                         let ptr = self.proj.types.insert(Type::Ptr(source.ty));
                         self.emit_type(ptr);
-                        writeln_de!(self.buffer, " {tmp}=&");
+                        write_de!(self.buffer, " {tmp}=&");
                         self.emit_expr_inline(*source, state);
-                        writeln_de!(self.buffer, ";");
+                        write_de!(self.buffer, ";");
                         tmp
                     });
                     self.emit_bitfield_read(&format!("(*{tmp})"), id, member, expr.ty);
