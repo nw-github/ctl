@@ -423,7 +423,7 @@ impl LanguageServer for LspBackend {
         debug!(self, "references: {uri}");
         self.find_lsp_item(&uri, pos, async |src, proj| {
             let mut locations = vec![];
-            self.find_references(proj, src, |loc| locations.push(loc));
+            self.find_references(proj, src, |_, _, loc| locations.push(loc));
             Some(locations)
         })
         .await
@@ -433,8 +433,8 @@ impl LanguageServer for LspBackend {
         let pos = params.text_document_position.position;
         let uri = params.text_document_position.text_document.uri;
         debug!(self, "rename: {uri}");
-        self.find_lsp_item(&uri, pos, async |src, proj| {
-            if matches!(src, LspItem::BuiltinType(_)) {
+        self.find_lsp_item(&uri, pos, async |item, proj| {
+            if matches!(item, LspItem::BuiltinType(_)) {
                 return Some(WorkspaceEdit {
                     changes: None,
                     document_changes: None,
@@ -443,7 +443,13 @@ impl LanguageServer for LspBackend {
             }
 
             let mut changes = HashMap::<Url, Vec<TextEdit>>::new();
-            self.find_references(proj, src, |loc| {
+            self.find_references(proj, item, |src, span, loc| {
+                if span.len as usize == crate::intern::THIS_TYPE.len()
+                    && get_span_text(src, span).is_some_and(|text| text == crate::intern::THIS_TYPE)
+                {
+                    return;
+                }
+
                 let map = changes.entry(loc.uri).or_default();
                 map.push(TextEdit { range: loc.range, new_text: params.new_name.clone() });
             });
@@ -716,7 +722,12 @@ impl LspBackend {
         }
     }
 
-    fn find_references(&self, proj: &Project, src: &LspItem, mut next_range: impl FnMut(Location)) {
+    fn find_references(
+        &self,
+        proj: &Project,
+        src: &LspItem,
+        mut next_range: impl FnMut(&str, Span, Location),
+    ) {
         let is_constructor_for = |lhs: FunctionId, rhs: UserTypeId| {
             !proj.scopes.get(rhs).kind.is_union()
                 && proj.scopes.get(lhs).constructor.is_some_and(|lhs| lhs == rhs)
@@ -758,13 +769,10 @@ impl LspBackend {
                 continue;
             };
 
-            let Some(range) = self.with_source(path, &mut cache, |src| {
-                Diagnostics::get_span_range(src, *span, OffsetMode::Utf16)
-            }) else {
-                continue;
-            };
-
-            next_range(Location { uri, range });
+            _ = self.with_source(path, &mut cache, |src| {
+                let range = Diagnostics::get_span_range(src, *span, OffsetMode::Utf16);
+                next_range(src, *span, Location { uri, range });
+            });
         }
     }
 }
@@ -1527,4 +1535,8 @@ fn visualize_variant_body(
     if !small {
         write_de!(res, " = {}", union.discriminant(name).unwrap());
     }
+}
+
+fn get_span_text(s: &str, span: Span) -> Option<&str> {
+    s.get(span.pos as usize..span.pos as usize + span.len as usize)
 }
