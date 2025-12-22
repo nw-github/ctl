@@ -802,10 +802,7 @@ impl TypeChecker {
                         .iter()
                         .map(|member| Param {
                             keyword: true,
-                            // use default span so hovers ignore this
-                            patt: Located::nowhere(Pattern::Path(Path::from(Located::nowhere(
-                                member.name.data,
-                            )))),
+                            patt: nowhere(member.name.data, Pattern::Path),
                             ty: member.ty.clone(),
                             default: member.default.clone(),
                         })
@@ -911,7 +908,7 @@ impl TypeChecker {
 
                 params.push(Param {
                     keyword: true,
-                    patt: Located::new(member.name.span, Pattern::Path(Path::from(member.name))),
+                    patt: nowhere(member.name.data, Pattern::Path),
                     ty: member.ty,
                     default: member.default,
                 });
@@ -969,8 +966,7 @@ impl TypeChecker {
 
                             params.push(Param {
                                 keyword: true,
-                                // use default span so hovers ignore this
-                                patt: Located::nowhere(Pattern::Path(Path::from(member.name))),
+                                patt: nowhere(member.name.data, Pattern::Path),
                                 ty: member.ty,
                                 default: member.default,
                             });
@@ -997,9 +993,7 @@ impl TypeChecker {
                         for (i, (ty, default)) in members.into_iter().enumerate() {
                             params.push(Param {
                                 keyword: false,
-                                patt: Located::nowhere(Pattern::Path(Path::from(
-                                    Located::nowhere(intern!(this, "{i}")),
-                                ))),
+                                patt: nowhere(intern!(this, "{i}"), Pattern::Path),
                                 ty,
                                 default,
                             });
@@ -1587,19 +1581,13 @@ impl TypeChecker {
         name: &Located<StrId>,
         type_params: &[(Located<StrId>, Vec<Path>)],
     ) -> Located<TypeHint> {
-        Located::new(
-            name.span,
-            TypeHint::Path(Path::new(
-                PathOrigin::Normal,
-                vec![(
-                    *name,
-                    type_params
-                        .iter()
-                        .map(|(n, _)| Located::new(n.span, TypeHint::Path(Path::from(*n))))
-                        .collect(),
-                )],
-            )),
-        )
+        Located::nowhere(TypeHint::Path(Path::new(
+            PathOrigin::Normal,
+            vec![(
+                Located::nowhere(name.data),
+                type_params.iter().map(|(n, _)| nowhere(n.data, TypeHint::Path)).collect(),
+            )],
+        )))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -7797,4 +7785,9 @@ impl Tables {
             .into(),
         }
     }
+}
+
+fn nowhere<T>(name: StrId, cons: impl FnOnce(Path) -> T) -> Located<T> {
+    // uses default span so hover ignore it
+    Located::nowhere(cons(Path::from(Located::nowhere(name))))
 }
