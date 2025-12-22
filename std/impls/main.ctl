@@ -28,11 +28,14 @@ extension ByteSpanExt<T> for T {
     }
 }
 
-pub use boolean::*;
-pub use character::*;
-pub use dynany::*;
-pub use float::*;
-pub use numeric::*;
-pub use integral::*;
-pub use rawptr::*;
-pub use array::*;
+mod ext {
+    pub use super::boolean::*;
+    pub use super::character::*;
+    pub use super::dynany::*;
+    pub use super::float::*;
+    pub use super::numeric::*;
+    pub use super::integral::*;
+    pub use super::rawptr::*;
+    pub use super::array::*;
+    pub use super::VoidImpl;
+}

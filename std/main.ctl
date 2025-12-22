@@ -31,7 +31,7 @@ mod prelude {
     pub use super::string::str;
     pub use super::opt::Option::*;
     pub use super::iter::Iterator;
-    pub use super::impls::*;
+    pub use super::impls::ext::*;
     pub use super::span::ext::*;
     pub use super::opt::ext::*;
     pub use super::range::ext::*;
