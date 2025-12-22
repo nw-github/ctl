@@ -1985,6 +1985,7 @@ impl TypeChecker {
         }
 
         self.resolve_impls(tr.id);
+        let exts = self.extensions_in_scope(self.current);
         for mut dep in self.proj.scopes.get(tr.id).impls.clone().into_iter_checked() {
             for ty_arg in dep.ty_args.values_mut() {
                 if self.proj.types[*ty_arg].as_user().is_some_and(|ut| ut.id == this_id) {
@@ -1992,7 +1993,8 @@ impl TypeChecker {
                 }
             }
 
-            if !self.implements_trait(this, &dep) {
+            dep.fill_templates(&mut self.proj.types, &tr.ty_args);
+            if self.find_trait_impl(&exts, dep.id, this).is_none_or(|tr| tr != dep) {
                 self.proj.diag.report(Error::new(
                     format!(
                         "trait '{}' requires implementation of trait '{}'",
