@@ -689,29 +689,28 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     }
                 }
             }
-            Token::At => {
-                if self.next_if(Token::LBrace).is_some() {
-                    if let Some(rbrace) = self.next_if(Token::RBrace) {
-                        Expr::new(span.extended_to(rbrace.span), ExprData::Vec(Vec::new()))
-                    } else {
-                        let expr = self.expression();
-                        if self.next_if(Token::Semicolon).is_some() {
-                            let count = self.expression();
-                            let rbrace = self.expect(Token::RBrace);
-                            Expr::new(
-                                span.extended_to(rbrace.span),
-                                ExprData::VecWithInit { init: expr.into(), count: count.into() },
-                            )
-                        } else {
-                            self.csv(vec![expr], Token::RBrace, span, Self::expression)
-                                .map(ExprData::Vec)
-                        }
-                    }
+            Token::AtLBrace => {
+                if let Some(rbrace) = self.next_if(Token::RBrace) {
+                    Expr::new(span.extended_to(rbrace.span), ExprData::Vec(Vec::new()))
                 } else {
-                    let label = self.expect_ident("expected label identifier or vector literal");
-                    self.expect(Token::Colon);
-                    self.block_or_normal_expr(Some(label)).1
+                    let expr = self.expression();
+                    if self.next_if(Token::Semicolon).is_some() {
+                        let count = self.expression();
+                        let rbrace = self.expect(Token::RBrace);
+                        Expr::new(
+                            span.extended_to(rbrace.span),
+                            ExprData::VecWithInit { init: expr.into(), count: count.into() },
+                        )
+                    } else {
+                        self.csv(vec![expr], Token::RBrace, span, Self::expression)
+                            .map(ExprData::Vec)
+                    }
                 }
+            }
+            Token::At => {
+                let label = self.expect_ident("expected label identifier or vector literal");
+                self.expect(Token::Colon);
+                self.block_or_normal_expr(Some(label)).1
             }
             Token::Hash => {
                 self.expect(Token::LBrace);

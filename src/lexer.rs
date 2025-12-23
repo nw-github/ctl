@@ -31,6 +31,7 @@ pub enum Token<'a> {
     Semicolon,
     Hash,
     AtLParen,
+    AtLBrace,
     At,
     Move,
     Dollar,
@@ -160,6 +161,7 @@ impl std::fmt::Display for Token<'_> {
             Token::Semicolon => write!(f, ";"),
             Token::Hash => write!(f, "#"),
             Token::AtLParen => write!(f, "@("),
+            Token::AtLBrace => write!(f, "@["),
             Token::Assign => write!(f, "="),
             Token::Fn => write!(f, "fn"),
             Token::Import => write!(f, "import"),
@@ -334,6 +336,8 @@ impl<'a> Lexer<'a> {
             '@' => {
                 if self.advance_if('(') {
                     Token::AtLParen
+                } else if self.advance_if('[') {
+                    Token::AtLBrace
                 } else {
                     Token::At
                 }

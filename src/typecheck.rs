@@ -4391,15 +4391,11 @@ impl TypeChecker {
             }
         }
 
-        for param in self
-            .proj
-            .scopes
-            .get(func.id)
-            .params
-            .iter()
-            .filter(|p| !result.contains_key(&p.label))
-            .collect::<Vec<_>>()
-        {
+        for param in self.proj.scopes.get(func.id).params.iter() {
+            if result.contains_key(&param.label) {
+                continue;
+            }
+
             if let Some(DefaultExpr::Checked(expr)) = &param.default {
                 result.insert(param.label, expr.clone_at(self.current, span));
             }
