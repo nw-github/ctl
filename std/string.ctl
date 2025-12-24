@@ -151,11 +151,11 @@ pub struct Chars {
                 mut cp = *lead as u32;
                 match utf8::sequence_length(*lead) {
                     ?1 => {
-                        this.s = this.s[1u..];
+                        this.s = this.s.subspan_unchecked(1u..);
                     }
                     ?2 => {
                         cp = ((cp << 6) & 0x7ff) + (*this.s.get_unchecked(1) as u32 & 0x3f);
-                        this.s = this.s[2u..];
+                        this.s = this.s.subspan_unchecked(2u..);
                     }
                     ?3 => {
                         cp = (
@@ -163,7 +163,7 @@ pub struct Chars {
                             ((*this.s.get_unchecked(1) as u32 << 6) & 0xfff
                         );
                         cp += *this.s.get_unchecked(2) as u32 & 0x3f;
-                        this.s = this.s[3u..];
+                        this.s = this.s.subspan_unchecked(3u..);
                     }
                     ?4 => {
                         cp = (
@@ -172,7 +172,7 @@ pub struct Chars {
                         );
                         cp += (*this.s.get_unchecked(2) as u32 << 6) & 0xfff;
                         cp += *this.s.get_unchecked(3) as u32 & 0x3f;
-                        this.s = this.s[4u..];
+                        this.s = this.s.subspan_unchecked(4u..);
                     }
                     _ => std::hint::unreachable_unchecked()
                 }
