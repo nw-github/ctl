@@ -65,7 +65,7 @@ where
         Self::new(id, TypeArgs::in_order(scopes, id, args))
     }
 
-    pub fn from_type_params(scopes: &Scopes, types: &mut Types, id: T) -> Self {
+    pub fn from_type_params(scopes: &Scopes, types: &Types, id: T) -> Self {
         Self::new(
             id,
             TypeArgs(
@@ -91,7 +91,7 @@ impl<T> WithTypeArgs<T> {
         self.ty_args.values().next().cloned()
     }
 
-    pub fn fill_templates(&mut self, types: &mut Types, map: &TypeArgs) {
+    pub fn fill_templates(&mut self, types: &Types, map: &TypeArgs) {
         for ty in self.ty_args.values_mut() {
             *ty = ty.with_templates(types, map);
         }
@@ -105,7 +105,7 @@ impl GenericFn {
         Self::from_id_unknown(scopes, id)
     }
 
-    pub fn as_fn_ptr(&self, scopes: &Scopes, types: &mut Types) -> FnPtr {
+    pub fn as_fn_ptr(&self, scopes: &Scopes, types: &Types) -> FnPtr {
         let f = scopes.get(self.id);
         FnPtr {
             is_extern: f.is_extern,
@@ -119,7 +119,7 @@ impl GenericFn {
 pub type GenericUserType = WithTypeArgs<UserTypeId>;
 
 impl GenericUserType {
-    pub fn name(&self, scopes: &Scopes, types: &mut Types, strings: &Strings) -> String {
+    pub fn name(&self, scopes: &Scopes, types: &Types, strings: &Strings) -> String {
         match &scopes.get(self.id).kind {
             crate::sym::UserTypeKind::AnonStruct => {
                 let mut result = "struct {".to_string();
@@ -190,7 +190,11 @@ impl GenericUserType {
         }
     }
 
-    pub fn from_id(scopes: &Scopes, types: &mut Types, id: UserTypeId) -> Self {
+    pub fn name2(&self, proj: &Project) -> String {
+        self.name(&proj.scopes, &proj.types, &proj.strings)
+    }
+
+    pub fn from_id(scopes: &Scopes, types: &Types, id: UserTypeId) -> Self {
         Self::from_type_params(scopes, types, id)
     }
 
@@ -520,7 +524,7 @@ impl TypeId {
     pub const F64: TypeId = TypeId(10);
     pub const U16: TypeId = TypeId(11);
 
-    pub fn name(self, scopes: &Scopes, types: &mut Types, strings: &Strings) -> String {
+    pub fn name(self, scopes: &Scopes, types: &Types, strings: &Strings) -> String {
         match &types[self] {
             Type::Unknown => "{unknown}".into(),
             // for debug purposes, ideally this should never be visible
@@ -583,6 +587,10 @@ impl TypeId {
                 format!("c_{}{ty:#}", ["", "u"][matches!(id, Type::CUint(_)) as usize])
             }
         }
+    }
+
+    pub fn name2(&self, proj: &Project) -> String {
+        self.name(&proj.scopes, &proj.types, &proj.strings)
     }
 
     pub fn as_option_inner(self, proj: &Project) -> Option<TypeId> {
@@ -672,7 +680,7 @@ impl TypeId {
         }
     }
 
-    pub fn size_and_align(self, scopes: &Scopes, types: &mut Types) -> (usize, usize) {
+    pub fn size_and_align(self, scopes: &Scopes, types: &Types) -> (usize, usize) {
         let sz = match &types[self] {
             Type::Int(0) | Type::Uint(0) => 0,
             Type::Int(bits) | Type::Uint(bits) => nearest_pow_of_two(*bits) / 8,
@@ -799,7 +807,7 @@ impl TypeId {
         types.get(self).as_user().and_then(|s| s.can_omit_tag(scopes, types))
     }
 
-    pub fn with_templates(self, types: &mut Types, map: &TypeArgs) -> TypeId {
+    pub fn with_templates(self, types: &Types, map: &TypeArgs) -> TypeId {
         if map.is_empty() {
             return self;
         }

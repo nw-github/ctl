@@ -705,10 +705,10 @@ impl Scopes {
         result
     }
 
-    pub fn get_trait_impls_ex(&self, types: &mut Types, tr: GenericTrait) -> HashSet<GenericTrait> {
+    pub fn get_trait_impls_ex(&self, types: &Types, tr: GenericTrait) -> HashSet<GenericTrait> {
         fn inner(
             this: &Scopes,
-            types: &mut Types,
+            types: &Types,
             tr: GenericTrait,
             results: &mut HashSet<GenericTrait>,
         ) {

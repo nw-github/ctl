@@ -3162,6 +3162,11 @@ impl TypeChecker {
                         cond: cond.into(),
                         if_branch: if_branch.into(),
                         else_branch: else_branch.into(),
+                        dummy_scope: self.proj.scopes.create_scope(
+                            ScopeId::ROOT,
+                            ScopeKind::None,
+                            false,
+                        ),
                     },
                 )
             }
@@ -3358,7 +3363,18 @@ impl TypeChecker {
                 }
 
                 self.check_match_coverage(scrutinee.ty, result.iter().map(|it| &it.0), span);
-                CExpr::new(target, CExprData::Match { expr: scrutinee.into(), body: result })
+                CExpr::new(
+                    target,
+                    CExprData::Match {
+                        expr: scrutinee.into(),
+                        body: result,
+                        dummy_scope: self.proj.scopes.create_scope(
+                            ScopeId::ROOT,
+                            ScopeKind::None,
+                            false,
+                        ),
+                    },
+                )
             }
             PExprData::As { expr, ty, throwing } => {
                 let to_id = self.resolve_typehint(&ty);
