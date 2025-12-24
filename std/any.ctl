@@ -4,15 +4,12 @@ pub trait Any {
     fn type_id(this): TypeId;
 }
 
-pub mod ext {
-    use super::TypeId;
+mod ext {
     use super::*;
 
     pub extension AnyForAll<T> for T {
         impl Any {
-            fn type_id(this): TypeId {
-                TypeId::get::<T>()
-            }
+            fn type_id(this): TypeId => TypeId::get::<T>();
         }
     }
 }

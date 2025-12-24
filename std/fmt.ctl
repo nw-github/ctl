@@ -138,7 +138,7 @@ pub fn writeln<T: Write, U: Format>(write: *mut T, args: U) {
     "{args}\n".fmt(&mut Formatter::new(write))
 }
 
-pub mod ext {
+mod ext {
     use super::*;
 
     @(feature(alloc))

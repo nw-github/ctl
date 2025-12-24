@@ -208,7 +208,7 @@ fn raw_subscript_checked<T, I: Integral>(ptr: ^mut T, len: uint, idx: I): ^mut T
 
 // TODO: make these member functions/impls when the syntax allows for it
 
-pub mod ext {
+mod ext {
     use std::ops::Eq;
     use std::ops::Cmp;
     use std::hash::Hash;

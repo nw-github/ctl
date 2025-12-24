@@ -108,7 +108,7 @@ pub struct RangeFull {
     }
 }
 
-pub mod ext {
+mod ext {
     use super::*;
 
     pub extension RangeFromExt<T: Integral> for RangeFrom<T> {
