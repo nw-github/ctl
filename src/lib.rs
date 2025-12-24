@@ -1,9 +1,7 @@
 mod ast;
 mod codegen;
-mod comptime_int;
-mod dgraph;
+mod ds;
 mod error;
-mod hash;
 pub mod intern;
 mod lexer;
 mod lsp;
@@ -186,11 +184,12 @@ impl Compiler<Parsed> {
 
 impl Compiler<Checked> {
     pub fn build(self) -> (Option<String>, Configuration, Diagnostics) {
-        if self.state.0.diag.has_errors() {
-            return (None, self.state.0.conf, self.state.0.diag);
+        let proj = self.state.0;
+        if proj.diag.has_errors() {
+            return (None, proj.conf, proj.diag);
         }
 
-        let (code, proj) = Codegen::build(self.state.0);
+        let code = Codegen::build(&proj);
         (Some(code), proj.conf, proj.diag)
     }
 

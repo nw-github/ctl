@@ -3,8 +3,7 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     Span,
     ast::{Alignment, BinaryOp, Sign, UnaryOp},
-    comptime_int::ComptimeInt,
-    hash::IndexMap,
+    ds::{ComptimeInt, IndexMap},
     intern::{StrId, Strings},
     sym::{ScopeId, ScopeKind, Scopes, VariableId},
     typecheck::MemberFn,
@@ -162,6 +161,7 @@ pub enum ExprData {
         cond: Box<Expr>,
         if_branch: Box<Expr>,
         else_branch: Box<Expr>,
+        dummy_scope: ScopeId,
     },
     Loop {
         cond: Option<Box<Expr>>,
@@ -172,6 +172,7 @@ pub enum ExprData {
     Match {
         expr: Box<Expr>,
         body: Vec<(Pattern, Expr)>,
+        dummy_scope: ScopeId,
     },
     Member {
         source: Box<Expr>,
@@ -199,7 +200,7 @@ impl ExprData {
     }
 
     pub fn member_call(
-        types: &mut Types,
+        types: &Types,
         mfn: MemberFn,
         args: IndexMap<StrId, Expr>,
         scope: ScopeId,
@@ -217,7 +218,7 @@ impl ExprData {
     }
 
     pub fn call(
-        types: &mut Types,
+        types: &Types,
         func: GenericFn,
         args: IndexMap<StrId, Expr>,
         scope: ScopeId,
@@ -263,7 +264,7 @@ impl Expr {
         }
     }
 
-    pub fn auto_deref(self, types: &mut Types, target: TypeId) -> Expr {
+    pub fn auto_deref(self, types: &Types, target: TypeId) -> Expr {
         let mut needed = 0;
         let mut current = target;
         while let Type::Ptr(inner) | Type::MutPtr(inner) = &types[current] {

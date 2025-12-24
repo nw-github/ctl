@@ -1,13 +1,14 @@
-use crate::hash::{HashMap, HashSet};
+use super::hash::{HashMap, HashSet};
 use std::hash::Hash;
 
+#[derive(Clone)]
 pub enum Dependencies<T> {
     Resolving,
     Resolved(Vec<T>),
     Recursive,
 }
 
-#[derive(derive_more::Deref, derive_more::DerefMut)]
+#[derive(derive_more::Deref, derive_more::DerefMut, Clone)]
 pub struct DependencyGraph<T> {
     graph: HashMap<T, Dependencies<T>>,
 }

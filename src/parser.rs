@@ -3,7 +3,7 @@ use either::{Either, Either::*};
 use crate::{
     FormatLexer, FormatToken, Warning,
     ast::{Alignment, Attribute, Attributes, Sign, UnaryOp, parsed::*},
-    comptime_int::ComptimeInt,
+    ds::ComptimeInt,
     error::{Diagnostics, Error, FileId},
     intern::{StrId, Strings},
     lexer::{Lexer, Located, Precedence, Span, Token},

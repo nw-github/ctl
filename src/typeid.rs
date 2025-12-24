@@ -3,8 +3,7 @@ use std::{fmt::Display, ops::Index};
 use crate::{
     Located,
     ast::{BinaryOp, UnaryOp, parsed::TypeHint},
-    comptime_int::ComptimeInt,
-    hash::IndexMap,
+    ds::{ComptimeInt, HashArena, IndexMap},
     intern::Strings,
     nearest_pow_of_two,
     project::Project,
@@ -15,7 +14,6 @@ use crate::{
 };
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
-use indexmap::IndexSet;
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Deref, DerefMut)]
 pub struct TypeArgs(pub IndexMap<UserTypeId, TypeId>);
@@ -33,7 +31,7 @@ impl TypeArgs {
         self.extend(rhs.iter().map(|(x, y)| (*x, *y)));
     }
 
-    pub fn copy_args_with(&mut self, types: &mut Types, rhs: &TypeArgs, map: &TypeArgs) {
+    pub fn copy_args_with(&mut self, types: &Types, rhs: &TypeArgs, map: &TypeArgs) {
         self.extend(rhs.iter().map(|(x, y)| (*x, y.with_templates(types, map))));
     }
 
@@ -67,7 +65,7 @@ where
         Self::new(id, TypeArgs::in_order(scopes, id, args))
     }
 
-    pub fn from_type_params(scopes: &Scopes, types: &mut Types, id: T) -> Self {
+    pub fn from_type_params(scopes: &Scopes, types: &Types, id: T) -> Self {
         Self::new(
             id,
             TypeArgs(
@@ -93,7 +91,7 @@ impl<T> WithTypeArgs<T> {
         self.ty_args.values().next().cloned()
     }
 
-    pub fn fill_templates(&mut self, types: &mut Types, map: &TypeArgs) {
+    pub fn fill_templates(&mut self, types: &Types, map: &TypeArgs) {
         for ty in self.ty_args.values_mut() {
             *ty = ty.with_templates(types, map);
         }
@@ -107,7 +105,7 @@ impl GenericFn {
         Self::from_id_unknown(scopes, id)
     }
 
-    pub fn as_fn_ptr(&self, scopes: &Scopes, types: &mut Types) -> FnPtr {
+    pub fn as_fn_ptr(&self, scopes: &Scopes, types: &Types) -> FnPtr {
         let f = scopes.get(self.id);
         FnPtr {
             is_extern: f.is_extern,
@@ -121,7 +119,7 @@ impl GenericFn {
 pub type GenericUserType = WithTypeArgs<UserTypeId>;
 
 impl GenericUserType {
-    pub fn name(&self, scopes: &Scopes, types: &mut Types, strings: &Strings) -> String {
+    pub fn do_name(&self, scopes: &Scopes, types: &Types, strings: &Strings) -> String {
         match &scopes.get(self.id).kind {
             crate::sym::UserTypeKind::AnonStruct => {
                 let mut result = "struct {".to_string();
@@ -137,7 +135,7 @@ impl GenericUserType {
                             .get_index(i)
                             .map(|m| strings.resolve(m.0))
                             .unwrap_or("???"),
-                        concrete.name(scopes, types, strings)
+                        concrete.do_name(scopes, types, strings)
                     ));
                 }
                 format!("{result} }}")
@@ -148,7 +146,7 @@ impl GenericUserType {
                     if i > 0 {
                         result.push_str(", ");
                     }
-                    result.push_str(&concrete.name(scopes, types, strings));
+                    result.push_str(&concrete.do_name(scopes, types, strings));
                 }
                 format!("{result})")
             }
@@ -158,20 +156,20 @@ impl GenericUserType {
                     key.and_then(|key| scopes.lang_types.get(&key)).is_some_and(|&id| id == self.id)
                 };
                 if is_lang_type("option") {
-                    return format!("?{}", self.ty_args[0].name(scopes, types, strings));
+                    return format!("?{}", self.ty_args[0].do_name(scopes, types, strings));
                 } else if is_lang_type("span") {
-                    return format!("[{}..]", self.ty_args[0].name(scopes, types, strings));
+                    return format!("[{}..]", self.ty_args[0].do_name(scopes, types, strings));
                 } else if is_lang_type("span_mut") {
-                    return format!("[mut {}..]", self.ty_args[0].name(scopes, types, strings));
+                    return format!("[mut {}..]", self.ty_args[0].do_name(scopes, types, strings));
                 } else if is_lang_type("vec") {
-                    return format!("[{}]", self.ty_args[0].name(scopes, types, strings));
+                    return format!("[{}]", self.ty_args[0].do_name(scopes, types, strings));
                 } else if is_lang_type("set") {
-                    return format!("#[{}]", self.ty_args[0].name(scopes, types, strings));
+                    return format!("#[{}]", self.ty_args[0].do_name(scopes, types, strings));
                 } else if is_lang_type("map") {
                     return format!(
                         "[{}: {}]",
-                        self.ty_args[0].name(scopes, types, strings),
-                        self.ty_args[1].name(scopes, types, strings)
+                        self.ty_args[0].do_name(scopes, types, strings),
+                        self.ty_args[1].do_name(scopes, types, strings)
                     );
                 }
 
@@ -182,7 +180,7 @@ impl GenericUserType {
                         if i > 0 {
                             result.push_str(", ");
                         }
-                        result.push_str(&concrete.name(scopes, types, strings));
+                        result.push_str(&concrete.do_name(scopes, types, strings));
                     }
                     result.push('>');
                 }
@@ -192,7 +190,11 @@ impl GenericUserType {
         }
     }
 
-    pub fn from_id(scopes: &Scopes, types: &mut Types, id: UserTypeId) -> Self {
+    pub fn name(&self, proj: &Project) -> String {
+        self.do_name(&proj.scopes, &proj.types, &proj.strings)
+    }
+
+    pub fn from_id(scopes: &Scopes, types: &Types, id: UserTypeId) -> Self {
         Self::from_type_params(scopes, types, id)
     }
 
@@ -426,7 +428,7 @@ impl Type {
 }
 
 pub struct Types {
-    types: IndexSet<Type>,
+    types: HashArena<Type>,
     unresolved_types: Vec<(Located<TypeHint>, ScopeId)>,
 }
 
@@ -452,12 +454,12 @@ impl Types {
         }
     }
 
-    pub fn insert(&mut self, ty: Type) -> TypeId {
-        TypeId(self.types.insert_full(ty).0)
+    pub fn insert(&self, ty: Type) -> TypeId {
+        TypeId(self.types.insert(ty))
     }
 
     pub fn get(&self, id: TypeId) -> &Type {
-        &self.types[id.0]
+        self.types.get(id.0)
     }
 
     pub fn add_unresolved(&mut self, hint: Located<TypeHint>, scope: ScopeId) -> TypeId {
@@ -522,7 +524,7 @@ impl TypeId {
     pub const F64: TypeId = TypeId(10);
     pub const U16: TypeId = TypeId(11);
 
-    pub fn name(self, scopes: &Scopes, types: &mut Types, strings: &Strings) -> String {
+    pub fn do_name(self, scopes: &Scopes, types: &Types, strings: &Strings) -> String {
         match &types[self] {
             Type::Unknown => "{unknown}".into(),
             // for debug purposes, ideally this should never be visible
@@ -535,12 +537,14 @@ impl TypeId {
             Type::F64 => "f64".into(),
             Type::Bool => "bool".into(),
             Type::Char => "char".into(),
-            &Type::Ptr(id) => format!("*{}", id.name(scopes, types, strings)),
-            &Type::MutPtr(id) => format!("*mut {}", id.name(scopes, types, strings)),
-            &Type::RawPtr(id) => format!("^{}", id.name(scopes, types, strings)),
-            &Type::RawMutPtr(id) => format!("^mut {}", id.name(scopes, types, strings)),
-            Type::DynPtr(id) => format!("*dyn {}", id.clone().name(scopes, types, strings)),
-            Type::DynMutPtr(id) => format!("*dyn mut {}", id.clone().name(scopes, types, strings)),
+            &Type::Ptr(id) => format!("*{}", id.do_name(scopes, types, strings)),
+            &Type::MutPtr(id) => format!("*mut {}", id.do_name(scopes, types, strings)),
+            &Type::RawPtr(id) => format!("^{}", id.do_name(scopes, types, strings)),
+            &Type::RawMutPtr(id) => format!("^mut {}", id.do_name(scopes, types, strings)),
+            Type::DynPtr(id) => format!("*dyn {}", id.clone().do_name(scopes, types, strings)),
+            Type::DynMutPtr(id) => {
+                format!("*dyn mut {}", id.clone().do_name(scopes, types, strings))
+            }
             Type::FnPtr(f) => {
                 let f = f.clone();
                 let mut result = String::new();
@@ -558,9 +562,9 @@ impl TypeId {
                         result.push_str(", ");
                     }
 
-                    result.push_str(&param.name(scopes, types, strings));
+                    result.push_str(&param.do_name(scopes, types, strings));
                 }
-                format!("{result}) => {}", f.ret.name(scopes, types, strings))
+                format!("{result}) => {}", f.ret.do_name(scopes, types, strings))
             }
             Type::Fn(func) => {
                 let ty_args = func.ty_args.clone();
@@ -573,18 +577,24 @@ impl TypeId {
                     if i > 0 {
                         result.push_str(", ");
                     }
-                    result.push_str(&ty.name(scopes, types, strings));
+                    result.push_str(&ty.do_name(scopes, types, strings));
                 }
-                format!("{result}): {}", ret.name(scopes, types, strings))
+                format!("{result}): {}", ret.do_name(scopes, types, strings))
             }
-            Type::User(ty) => ty.clone().name(scopes, types, strings),
-            &Type::Array(ty, count) => format!("[{}; {}]", ty.name(scopes, types, strings), count),
+            Type::User(ty) => ty.clone().do_name(scopes, types, strings),
+            &Type::Array(ty, count) => {
+                format!("[{}; {}]", ty.do_name(scopes, types, strings), count)
+            }
             Type::Isize => "int".into(),
             Type::Usize => "uint".into(),
             id @ (Type::CInt(ty) | Type::CUint(ty)) => {
                 format!("c_{}{ty:#}", ["", "u"][matches!(id, Type::CUint(_)) as usize])
             }
         }
+    }
+
+    pub fn name(&self, proj: &Project) -> String {
+        self.do_name(&proj.scopes, &proj.types, &proj.strings)
     }
 
     pub fn as_option_inner(self, proj: &Project) -> Option<TypeId> {
@@ -674,7 +684,7 @@ impl TypeId {
         }
     }
 
-    pub fn size_and_align(self, scopes: &Scopes, types: &mut Types) -> (usize, usize) {
+    pub fn size_and_align(self, scopes: &Scopes, types: &Types) -> (usize, usize) {
         let sz = match &types[self] {
             Type::Int(0) | Type::Uint(0) => 0,
             Type::Int(bits) | Type::Uint(bits) => nearest_pow_of_two(*bits) / 8,
@@ -780,7 +790,7 @@ impl TypeId {
         }
     }
 
-    pub fn matched_inner_type(self, types: &mut Types, ty: TypeId) -> TypeId {
+    pub fn matched_inner_type(self, types: &Types, ty: TypeId) -> TypeId {
         let mut id = &types[self];
         if !matches!(id, Type::Ptr(_) | Type::MutPtr(_)) {
             return ty;
@@ -801,7 +811,7 @@ impl TypeId {
         types.get(self).as_user().and_then(|s| s.can_omit_tag(scopes, types))
     }
 
-    pub fn with_templates(self, types: &mut Types, map: &TypeArgs) -> TypeId {
+    pub fn with_templates(self, types: &Types, map: &TypeArgs) -> TypeId {
         if map.is_empty() {
             return self;
         }
@@ -867,7 +877,7 @@ impl TypeId {
         }
     }
 
-    pub fn with_ut_templates(self, types: &mut Types, id: TypeId) -> TypeId {
+    pub fn with_ut_templates(self, types: &Types, id: TypeId) -> TypeId {
         if let Type::User(ut) = &types[id] {
             self.with_templates(types, &ut.ty_args.clone())
         } else {

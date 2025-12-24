@@ -3,9 +3,9 @@ use std::{collections::HashSet, path::PathBuf};
 use crate::{
     CodegenFlags, Diagnostics, Span,
     ast::{Attribute, Attributes},
-    dgraph::DependencyGraph,
+    ds::{DependencyGraph, HashMap},
     intern::{StrId, Strings},
-    sym::{FunctionId, Scopes, UserTypeId, VariableId},
+    sym::{FunctionId, Scopes, TypeItem, UserTypeId, ValueItem, VariableId, Vis},
     typecheck::{Completions, LspItem},
     typeid::{TypeId, Types},
 };
@@ -24,6 +24,8 @@ pub struct Project {
     pub trait_deps: DependencyGraph<UserTypeId>,
     pub conf: Configuration,
     pub strings: Strings,
+    pub autouse_tns: HashMap<StrId, Vis<TypeItem>>,
+    pub autouse_vns: HashMap<StrId, Vis<ValueItem>>,
 }
 
 impl Project {
