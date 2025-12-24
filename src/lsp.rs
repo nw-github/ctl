@@ -224,7 +224,7 @@ impl LanguageServer for LspBackend {
             doc.inlay_hints
                 .get_or_try(|| {
                     self.with_source(path, &mut FileSourceProvider, |src| {
-                        get_inlay_hints(&proj.scopes, &mut proj.types, &proj.strings, src, file)
+                        get_inlay_hints(proj, src, file)
                     })
                 })
                 .cloned()
@@ -291,13 +291,10 @@ impl LanguageServer for LspBackend {
         let Some(completions) = proj.completions.as_ref() else {
             return Ok(None);
         };
-        let scopes = &proj.scopes;
-        let types = &mut proj.types;
-        let strings = &proj.strings;
         let completions = completions
             .items
             .iter()
-            .flat_map(|item| get_completion(scopes, types, strings, item, completions.method))
+            .flat_map(|item| get_completion(proj, item, completions.method))
             .collect();
         Ok(Some(CompletionResponse::Array(completions)))
     }
@@ -306,17 +303,14 @@ impl LanguageServer for LspBackend {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
         self.find_lsp_item(uri, pos, async |item, proj| {
-            let scopes = &proj.scopes;
-            let types = &mut proj.types;
-            let strings = &proj.strings;
             let str = match item {
                 &LspItem::Var(id) | &LspItem::FnParamLabel(id, _) => {
-                    Some(visualize_var(id, scopes, types, strings))
+                    Some(visualize_var(id, proj))
                 }
-                &LspItem::Fn(id, _) => Some(visualize_func(id, false, scopes, types, strings)),
-                &LspItem::Type(id) => Some(visualize_type(id, scopes, types, strings)),
+                &LspItem::Fn(id, _) => Some(visualize_func(id, false, proj)),
+                &LspItem::Type(id) => Some(visualize_type(id, proj)),
                 LspItem::Property(src_ty, id, name) => {
-                    let ut = scopes.get(*id);
+                    let ut = proj.scopes.get(*id);
                     let mem = ut.members.get(name);
                     let public = if ut.kind.is_union() {
                         "shared "
@@ -327,15 +321,11 @@ impl LanguageServer for LspBackend {
                     };
                     let ty = mem.map_or(TypeId::UNKNOWN, |m| m.ty);
                     if matches!(ut.kind, UserTypeKind::Tuple | UserTypeKind::AnonStruct) {
-                        let real = src_ty.map(|src| ty.with_ut_templates(types, src)).unwrap_or(ty);
-                        Some(format!(
-                            "{public}{}: {}",
-                            strings.resolve(name),
-                            real.name(scopes, types, strings)
-                        ))
+                        let real = src_ty.map(|src| ty.with_ut_templates(&proj.types, src)).unwrap_or(ty);
+                        Some(format!("{public}{}: {}", proj.strings.resolve(name), real.name(proj)))
                     } else {
                         let offs = if let UserTypeKind::PackedStruct(data) = &ut.kind {
-                            let size = match ty.bit_size(scopes, types) {
+                            let size = match ty.bit_size(&proj.scopes, &proj.types) {
                                 BitSizeResult::Size(n) => n,
                                 BitSizeResult::Tag(_, n) => n,
                                 _ => unreachable!(),
@@ -351,24 +341,24 @@ impl LanguageServer for LspBackend {
 
                         Some(format!(
                             "{}{offs}{public}{}: {}",
-                            visualize_location(ut.body_scope, scopes, strings),
-                            strings.resolve(name),
-                            ty.name(scopes, types, strings)
+                            visualize_location(ut.body_scope, proj),
+                            proj.strings.resolve(name),
+                            ty.name(proj)
                         ))
                     }
                 }
                 &LspItem::Module(id) => {
-                    let scope = &scopes[id];
+                    let scope = &proj.scopes[id];
                     let mut res = String::new();
                     if let Some(parent) = scope.parent.filter(|parent| *parent != ScopeId::ROOT) {
-                        res += &visualize_location(parent, scopes, strings);
+                        res += &visualize_location(parent, proj);
                     }
                     if scope.public {
                         res += "pub ";
                     }
                     Some(format!(
                         "{res}mod {}",
-                        strings.resolve(&scope.kind.name(scopes).unwrap().data)
+                        proj.strings.resolve(&scope.kind.name(&proj.scopes).unwrap().data)
                     ))
                 }
                 _ => None,
@@ -472,7 +462,7 @@ impl LanguageServer for LspBackend {
         self.with_proj_and_doc(&params.text_document.uri, async |doc, path, file, proj| {
             let symbols = doc.document_symbols.get_or_try(|| {
                 self.with_source(path, &mut FileSourceProvider, |src| {
-                    get_document_symbols(&proj.scopes, &proj.types, &proj.strings, src, file)
+                    get_document_symbols(proj, src, file)
                 })
             });
 
@@ -825,18 +815,12 @@ fn position_to_span(text: &str, file: FileId, line: u32, character: u32) -> Span
     Span::default()
 }
 
-fn get_inlay_hints(
-    scopes: &Scopes,
-    types: &mut Types,
-    strings: &Strings,
-    src: &str,
-    file: FileId,
-) -> Vec<InlayHint> {
+fn get_inlay_hints(proj: &Project, src: &str, file: FileId) -> Vec<InlayHint> {
     let mut hints = vec![];
-    for (_, var) in scopes.vars() {
+    for (_, var) in proj.scopes.vars() {
         if var.name.span.file != file
             || var.has_hint
-            || strings.resolve(&var.name.data).starts_with('$')
+            || proj.strings.resolve(&var.name.data).starts_with('$')
         {
             continue;
         }
@@ -844,7 +828,7 @@ fn get_inlay_hints(
         let r = Diagnostics::get_span_range(src, var.name.span, OffsetMode::Utf16);
         hints.push(InlayHint {
             position: r.end,
-            label: InlayHintLabel::String(format!(": {}", var.ty.name(scopes, types, strings))),
+            label: InlayHintLabel::String(format!(": {}", var.ty.name(proj))),
             kind: Some(InlayHintKind::TYPE),
             text_edits: Default::default(),
             tooltip: Default::default(),
@@ -928,30 +912,24 @@ fn get_semantic_token(
     Some(token)
 }
 
-fn get_document_symbols(
-    scopes: &Scopes,
-    _types: &Types,
-    strings: &Strings,
-    src: &str,
-    file: FileId,
-) -> Vec<DocumentSymbol> {
+fn get_document_symbols(proj: &Project, src: &str, file: FileId) -> Vec<DocumentSymbol> {
     let valid_name = |name: Located<StrId>| {
         name.span.file == file
             && name.data != Strings::EMPTY
-            && !strings.resolve(&name.data).starts_with('$')
+            && !proj.strings.resolve(&name.data).starts_with('$')
     };
 
     let func_symbol = |func: &Scoped<Function>| {
         let mut kind = SymbolKind::FUNCTION;
         if let Some(ut) = func.constructor
-            && scopes.get(ut).kind.is_union()
+            && proj.scopes.get(ut).kind.is_union()
         {
             kind = SymbolKind::ENUM_MEMBER;
         }
 
         let range = Diagnostics::get_span_range(src, func.name.span, OffsetMode::Utf16);
         DocumentSymbol {
-            name: strings.resolve(&func.name.data).into(),
+            name: proj.strings.resolve(&func.name.data).into(),
             kind,
             range,
             selection_range: range,
@@ -964,7 +942,7 @@ fn get_document_symbols(
     };
 
     let mut result = vec![];
-    for (_, ut) in scopes.types() {
+    for (_, ut) in proj.scopes.types() {
         if !valid_name(ut.name) {
             continue;
         }
@@ -978,11 +956,11 @@ fn get_document_symbols(
 
         let mut children = vec![];
         for id in ut.fns.iter() {
-            if !valid_name(scopes.get(**id).name) {
+            if !valid_name(proj.scopes.get(**id).name) {
                 continue;
             }
 
-            children.push(func_symbol(scopes.get(**id)));
+            children.push(func_symbol(proj.scopes.get(**id)));
         }
 
         for (name, member) in ut.members.iter() {
@@ -992,7 +970,7 @@ fn get_document_symbols(
 
             let range = Diagnostics::get_span_range(src, member.span, OffsetMode::Utf16);
             children.push(DocumentSymbol {
-                name: strings.resolve(name).into(),
+                name: proj.strings.resolve(name).into(),
                 kind: SymbolKind::FIELD,
                 range,
                 selection_range: range,
@@ -1006,7 +984,7 @@ fn get_document_symbols(
 
         let range = Diagnostics::get_span_range(src, ut.name.span, OffsetMode::Utf16);
         result.push(DocumentSymbol {
-            name: strings.resolve(&ut.name.data).into(),
+            name: proj.strings.resolve(&ut.name.data).into(),
             kind,
             range,
             selection_range: range,
@@ -1018,10 +996,10 @@ fn get_document_symbols(
         });
     }
 
-    for (_, func) in scopes.functions() {
+    for (_, func) in proj.scopes.functions() {
         if !valid_name(func.name)
-            || scopes[func.scope].kind.is_user_type()
-            || scopes[func.scope].kind.is_impl()
+            || proj.scopes[func.scope].kind.is_user_type()
+            || proj.scopes[func.scope].kind.is_impl()
             || func.constructor.is_some()
         {
             continue;
@@ -1030,14 +1008,14 @@ fn get_document_symbols(
         result.push(func_symbol(func));
     }
 
-    for (_, var) in scopes.vars() {
+    for (_, var) in proj.scopes.vars() {
         if !var.is_static || !valid_name(var.name) {
             continue;
         }
 
         let range = Diagnostics::get_span_range(src, var.name.span, OffsetMode::Utf16);
         result.push(DocumentSymbol {
-            name: strings.resolve(&var.name.data).into(),
+            name: proj.strings.resolve(&var.name.data).into(),
             kind: if var.mutable { SymbolKind::VARIABLE } else { SymbolKind::CONSTANT },
             range,
             selection_range: range,
@@ -1052,18 +1030,14 @@ fn get_document_symbols(
     result
 }
 
-fn get_completion(
-    scopes: &Scopes,
-    types: &mut Types,
-    strings: &Strings,
-    item: &LspItem,
-    method: bool,
-) -> Option<CompletionItem> {
+fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<CompletionItem> {
+    let scopes = &proj.scopes;
+    let strings = &proj.strings;
     Some(match item {
         LspItem::Property(_, id, name) => {
             let ut = scopes.get(*id);
             let member = ut.members.get(name).unwrap();
-            let detail = member.ty.name(scopes, types, strings);
+            let detail = member.ty.name(proj);
             CompletionItem {
                 label: strings.resolve(name).into(),
                 kind: Some(CompletionItemKind::FIELD),
@@ -1101,7 +1075,7 @@ fn get_completion(
                 text += ")";
                 text
             });
-            let desc = visualize_func(id, true, scopes, types, strings);
+            let desc = visualize_func(id, true, proj);
             CompletionItem {
                 label: name.into(),
                 label_details: Some(CompletionItemLabelDetails {
@@ -1166,7 +1140,7 @@ fn get_completion(
         }
         &LspItem::Var(id) | &LspItem::FnParamLabel(id, _) => {
             let var = scopes.get(id);
-            let typ = var.ty.name(scopes, types, strings);
+            let typ = var.ty.name(proj);
             let name = strings.resolve(&var.name.data).to_string();
             CompletionItem {
                 label: name.clone(),
@@ -1197,11 +1171,11 @@ fn get_completion(
     })
 }
 
-fn visualize_location(scope: ScopeId, scopes: &Scopes, strings: &Strings) -> String {
+fn visualize_location(scope: ScopeId, proj: &Project) -> String {
     let mut backward = vec![];
-    for (_, scope) in scopes.walk(scope) {
-        if let Some(name) = scope.kind.name(scopes) {
-            backward.push(strings.resolve(&name.data));
+    for (_, scope) in proj.scopes.walk(scope) {
+        if let Some(name) = scope.kind.name(&proj.scopes) {
+            backward.push(proj.strings.resolve(&name.data));
         }
     }
 
@@ -1209,13 +1183,7 @@ fn visualize_location(scope: ScopeId, scopes: &Scopes, strings: &Strings) -> Str
     backward.join("::") + "\n"
 }
 
-fn visualize_type_params(
-    res: &mut String,
-    params: &[UserTypeId],
-    scopes: &Scopes,
-    types: &mut Types,
-    strings: &Strings,
-) {
+fn visualize_type_params(res: &mut String, params: &[UserTypeId], proj: &Project) {
     if !params.is_empty() {
         *res += "<";
         for (i, id) in params.iter().enumerate() {
@@ -1223,27 +1191,21 @@ fn visualize_type_params(
                 res.push_str(", ");
             }
 
-            *res += &visualize_type(*id, scopes, types, strings);
+            *res += &visualize_type(*id, proj);
         }
         *res += ">";
     }
 }
 
-fn visualize_func(
-    id: FunctionId,
-    small: bool,
-    scopes: &Scopes,
-    types: &mut Types,
-    strings: &Strings,
-) -> String {
-    let func = scopes.get(id);
+fn visualize_func(id: FunctionId, small: bool, proj: &Project) -> String {
+    let func = proj.scopes.get(id);
     if let Some((union, id)) =
-        func.constructor.and_then(|id| scopes.get(id).kind.as_union().zip(Some(id)))
+        func.constructor.and_then(|id| proj.scopes.get(id).kind.as_union().zip(Some(id)))
     {
         let mut res = if small {
             String::new()
         } else {
-            visualize_location(scopes.get(id).body_scope, scopes, strings)
+            visualize_location(proj.scopes.get(id).body_scope, proj)
         };
         let variant = func.name.data;
         visualize_variant_body(
@@ -1251,20 +1213,17 @@ fn visualize_func(
             union,
             variant,
             union.variants.get(&variant).and_then(|inner| inner.ty),
-            scopes,
-            types,
-            strings,
+            proj,
             small,
         );
         return res;
-    } else if let Some(id) = func.constructor.filter(|id| scopes.get(*id).kind.is_struct())
+    } else if let Some(id) = func.constructor.filter(|id| proj.scopes.get(*id).kind.is_struct())
         && !small
     {
-        return visualize_type(id, scopes, types, strings);
+        return visualize_type(id, proj);
     }
 
-    let mut res =
-        if small { String::new() } else { visualize_location(func.scope, scopes, strings) };
+    let mut res = if small { String::new() } else { visualize_location(func.scope, proj) };
 
     if !small {
         if func.public {
@@ -1276,9 +1235,9 @@ fn visualize_func(
         }
 
         if func.is_unsafe {
-            write_de!(res, "unsafe fn {}", strings.resolve(&func.name.data))
+            write_de!(res, "unsafe fn {}", proj.strings.resolve(&func.name.data))
         } else {
-            write_de!(res, "fn {}", strings.resolve(&func.name.data))
+            write_de!(res, "fn {}", proj.strings.resolve(&func.name.data))
         }
     } else if func.is_unsafe {
         write_de!(res, "unsafe fn")
@@ -1286,7 +1245,7 @@ fn visualize_func(
         write_de!(res, "fn")
     }
 
-    visualize_type_params(&mut res, &func.type_params, scopes, types, strings);
+    visualize_type_params(&mut res, &func.type_params, proj);
 
     res += "(";
     for (i, param) in func.params.iter().enumerate() {
@@ -1299,14 +1258,14 @@ fn visualize_func(
         }
 
         if param.label == Strings::THIS_PARAM {
-            match types[param.ty] {
+            match proj.types[param.ty] {
                 Type::MutPtr(_) => res += "mut ",
                 Type::Ptr(_) => {}
                 _ => res += "my ",
             }
         }
 
-        let label = strings.resolve(&param.label);
+        let label = proj.strings.resolve(&param.label);
         if label.starts_with(|ch: char| ch.is_ascii_digit() || ch == '$') {
             res += "_";
         } else {
@@ -1318,7 +1277,7 @@ fn visualize_func(
                 res += "?";
             }
             res += ": ";
-            res += &param.ty.name(scopes, types, strings);
+            res += &param.ty.name(proj);
         }
     }
     if func.variadic {
@@ -1332,17 +1291,17 @@ fn visualize_func(
     res += ")";
     if func.ret != TypeId::VOID {
         res += ": ";
-        res += &func.ret.name(scopes, types, strings);
+        res += &func.ret.name(proj);
     }
 
     res
 }
 
-fn visualize_var(id: VariableId, scopes: &Scopes, types: &mut Types, strings: &Strings) -> String {
-    let var = scopes.get(id);
+fn visualize_var(id: VariableId, proj: &Project) -> String {
+    let var = proj.scopes.get(id);
     let mut res = String::new();
     if var.is_static {
-        res += &visualize_location(var.scope, scopes, strings);
+        res += &visualize_location(var.scope, proj);
     }
     if var.public {
         res += "pub ";
@@ -1353,15 +1312,16 @@ fn visualize_var(id: VariableId, scopes: &Scopes, types: &mut Types, strings: &S
         (false, true) => "mut",
         (false, false) => "let",
     };
-    let name = if var.name.data == Strings::EMPTY { "_" } else { strings.resolve(&var.name.data) };
-    write_de!(res, " {name}: {}", var.ty.name(scopes, types, strings));
+    let name =
+        if var.name.data == Strings::EMPTY { "_" } else { proj.strings.resolve(&var.name.data) };
+    write_de!(res, " {name}: {}", var.ty.name(proj));
     res
 }
 
-fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types, strings: &Strings) -> String {
-    let ut = scopes.get(id);
+fn visualize_type(id: UserTypeId, proj: &Project) -> String {
+    let ut = proj.scopes.get(id);
     let mut res = String::new();
-    let print_body = |types: &mut Types, res: &mut String, mut wrote: bool| {
+    let print_body = |res: &mut String, mut wrote: bool| {
         if wrote && !ut.members.is_empty() {
             *res += "\n";
         }
@@ -1374,12 +1334,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types, strings: &
                 ""
             };
 
-            write_de!(
-                res,
-                "\n\t{header}{}: {},",
-                strings.resolve(name),
-                member.ty.name(scopes, types, strings)
-            );
+            write_de!(res, "\n\t{header}{}: {},", proj.strings.resolve(name), member.ty.name(proj));
             wrote = true;
         }
 
@@ -1391,7 +1346,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types, strings: &
     };
 
     if !ut.kind.is_template() {
-        res += &visualize_location(ut.scope, scopes, strings);
+        res += &visualize_location(ut.scope, proj);
     }
 
     if ut.type_params.is_empty()
@@ -1405,7 +1360,8 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types, strings: &
         && !ut.recursive
     {
         let ut = GenericUserType::new(id, Default::default());
-        let (sz, align) = types.insert(Type::User(ut)).size_and_align(scopes, types);
+        let (sz, align) =
+            proj.types.insert(Type::User(ut)).size_and_align(&proj.scopes, &proj.types);
         writeln_de!(res, "// size = {sz} ({sz:#x}), align = {align:#x}");
     }
 
@@ -1418,32 +1374,30 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types, strings: &
                 write_de!(res, "packed ");
             }
 
-            write_de!(res, "struct {}", strings.resolve(&ut.item.name.data));
-            visualize_type_params(&mut res, &ut.type_params, scopes, types, strings);
+            write_de!(res, "struct {}", proj.strings.resolve(&ut.item.name.data));
+            visualize_type_params(&mut res, &ut.type_params, proj);
             res += " {";
-            print_body(types, &mut res, false);
+            print_body(&mut res, false);
         }
         UserTypeKind::UnsafeUnion => {
-            write_de!(res, "unsafe union {}", strings.resolve(&ut.item.name.data));
-            visualize_type_params(&mut res, &ut.type_params, scopes, types, strings);
+            write_de!(res, "unsafe union {}", proj.strings.resolve(&ut.item.name.data));
+            visualize_type_params(&mut res, &ut.type_params, proj);
             res += " {";
-            print_body(types, &mut res, false);
+            print_body(&mut res, false);
         }
         UserTypeKind::Union(union) => {
-            write_de!(res, "union {}", strings.resolve(&ut.item.name.data));
-            visualize_type_params(&mut res, &ut.type_params, scopes, types, strings);
-            write_de!(res, ": {} {{", union.tag.name(scopes, types, strings));
+            write_de!(res, "union {}", proj.strings.resolve(&ut.item.name.data));
+            visualize_type_params(&mut res, &ut.type_params, proj);
+            write_de!(res, ": {} {{", union.tag.name(proj));
             for (name, variant) in union.variants.iter() {
                 res += "\n\t";
-                visualize_variant_body(
-                    &mut res, union, *name, variant.ty, scopes, types, strings, false,
-                );
+                visualize_variant_body(&mut res, union, *name, variant.ty, proj, false);
                 res += ",";
             }
-            print_body(types, &mut res, !union.variants.is_empty());
+            print_body(&mut res, !union.variants.is_empty());
         }
         UserTypeKind::Template => {
-            res += strings.resolve(&ut.name.data);
+            res += proj.strings.resolve(&ut.name.data);
             for (i, tr) in ut.impls.iter_checked().enumerate() {
                 if i > 0 {
                     res += " + ";
@@ -1451,7 +1405,7 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types, strings: &
                     res += ": ";
                 }
 
-                res += strings.resolve(&scopes.get(tr.id).name.data);
+                res += proj.strings.resolve(&proj.scopes.get(tr.id).name.data);
                 if !tr.ty_args.is_empty() {
                     res += "<";
                     for (i, id) in tr.ty_args.iter().enumerate() {
@@ -1459,20 +1413,20 @@ fn visualize_type(id: UserTypeId, scopes: &Scopes, types: &mut Types, strings: &
                             res.push_str(", ");
                         }
 
-                        res += &id.1.name(scopes, types, strings);
+                        res += &id.1.name(proj);
                     }
                     res += ">";
                 }
             }
         }
         UserTypeKind::Trait { .. } => {
-            write_de!(res, "trait {}", strings.resolve(&ut.name.data));
-            visualize_type_params(&mut res, &ut.type_params, scopes, types, strings);
+            write_de!(res, "trait {}", proj.strings.resolve(&ut.name.data));
+            visualize_type_params(&mut res, &ut.type_params, proj);
         }
         UserTypeKind::Extension(ty) => {
-            write_de!(res, "extension {}", strings.resolve(&ut.name.data));
-            visualize_type_params(&mut res, &ut.type_params, scopes, types, strings);
-            write_de!(res, " for {}", ty.name(scopes, types, strings));
+            write_de!(res, "extension {}", proj.strings.resolve(&ut.name.data));
+            visualize_type_params(&mut res, &ut.type_params, proj);
+            write_de!(res, " for {}", ty.name(proj));
         }
         UserTypeKind::AnonStruct => {}
         UserTypeKind::Tuple => {}
@@ -1487,16 +1441,14 @@ fn visualize_variant_body(
     union: &Union,
     name: StrId,
     ty: Option<TypeId>,
-    scopes: &Scopes,
-    types: &mut Types,
-    strings: &Strings,
+    proj: &Project,
     small: bool,
 ) {
-    *res += strings.resolve(&name);
-    match ty.map(|id| (id, &types[id])) {
+    *res += proj.strings.resolve(&name);
+    match ty.map(|id| (id, &proj.types[id])) {
         Some((_, Type::User(ut))) => {
             let ut = ut.clone();
-            let inner = scopes.get(ut.id);
+            let inner = proj.scopes.get(ut.id);
             if inner.kind.is_anon_struct() {
                 *res += " {";
                 for (i, (name, _)) in inner.members.iter().enumerate() {
@@ -1504,12 +1456,8 @@ fn visualize_variant_body(
                         res,
                         "{}{}: {}",
                         if i > 0 { ", " } else { " " },
-                        strings.resolve(name),
-                        ut.ty_args
-                            .get_index(i)
-                            .map(|v| *v.1)
-                            .unwrap_or(TypeId::UNKNOWN)
-                            .name(scopes, types, strings)
+                        proj.strings.resolve(name),
+                        ut.ty_args.get_index(i).map(|v| *v.1).unwrap_or(TypeId::UNKNOWN).name(proj)
                     )
                 }
                 *res += " }";
@@ -1519,17 +1467,13 @@ fn visualize_variant_body(
                     if i > 0 {
                         *res += ", ";
                     }
-                    *res += &ut
-                        .ty_args
-                        .get_index(i)
-                        .map(|v| *v.1)
-                        .unwrap_or(TypeId::UNKNOWN)
-                        .name(scopes, types, strings)
+                    *res +=
+                        &ut.ty_args.get_index(i).map(|v| *v.1).unwrap_or(TypeId::UNKNOWN).name(proj)
                 }
                 *res += ")";
             }
         }
-        Some((id, _)) => write_de!(res, "({})", id.name(scopes, types, strings)),
+        Some((id, _)) => write_de!(res, "({})", id.name(proj)),
         None => {}
     }
     if !small {
