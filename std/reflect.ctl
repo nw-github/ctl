@@ -23,8 +23,9 @@ pub sealed trait Array<T> {}
 pub struct TypeId {
     tag: u64,
 
-    pub fn ==(this, rhs: *TypeId): bool => this.tag == rhs.tag;
-    pub fn get<T>(): TypeId => std::intrin::type_id::<T>();
+    pub fn ==(this, rhs: *This): bool => this.tag == rhs.tag;
+    pub fn of<T>(): This => std::intrin::type_id::<T>();
+    pub fn of_val<T>(_: *T): This => This::of::<T>();
 }
 
 pub use std::intrin::type_name;

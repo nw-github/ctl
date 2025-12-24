@@ -9,7 +9,7 @@ mod ext {
 
     pub extension AnyForAll<T> for T {
         impl Any {
-            fn type_id(this): TypeId => TypeId::get::<T>();
+            fn type_id(this): TypeId => TypeId::of::<T>();
         }
     }
 }

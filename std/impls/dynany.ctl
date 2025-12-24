@@ -2,7 +2,7 @@ use std::reflect::TypeId;
 
 pub extension DynAnyImpl for *dyn std::any::Any {
     pub fn downcast<T>(my this): ?*T {
-        if this.type_id() == TypeId::get::<T>() {
+        if this.type_id() == TypeId::of::<T>() {
             unsafe this.downcast_unchecked()
         }
     }
@@ -15,13 +15,13 @@ pub extension DynAnyImpl for *dyn std::any::Any {
 
 pub extension DynMutAnyImpl for *dyn mut std::any::Any {
     pub fn downcast<T>(my this): ?*T {
-        if this.type_id() == TypeId::get::<T>() {
+        if this.type_id() == TypeId::of::<T>() {
             unsafe this.downcast_unchecked()
         }
     }
 
     pub fn downcast_mut<T>(my mut this): ?*mut T {
-        if this.type_id() == TypeId::get::<T>() {
+        if this.type_id() == TypeId::of::<T>() {
             unsafe this.downcast_unchecked_mut()
         }
     }
