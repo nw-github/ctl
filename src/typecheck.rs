@@ -356,15 +356,15 @@ impl TypeChecker {
             for scope in autouse.drain(..) {
                 this.enter_id_and_resolve(scope, |_| {});
 
-                for (&name, &item) in this.proj.scopes[scope].tns.clone().iter() {
+                for (&name, &item) in this.proj.scopes[scope].tns.iter() {
                     if item.public {
-                        this.proj.scopes.autouse_tns.entry(name).or_insert(Vis::new(*item, false));
+                        this.proj.autouse_tns.entry(name).or_insert(Vis::new(*item, false));
                     }
                 }
 
-                for (&name, &item) in this.proj.scopes[scope].vns.clone().iter() {
+                for (&name, &item) in this.proj.scopes[scope].vns.iter() {
                     if item.public {
-                        this.proj.scopes.autouse_vns.entry(name).or_insert(Vis::new(*item, false));
+                        this.proj.autouse_vns.entry(name).or_insert(Vis::new(*item, false));
                     }
                 }
             }
@@ -534,7 +534,7 @@ impl TypeChecker {
             }
 
             for tr in self.proj.scopes.get(ut_id).impls.iter_checked() {
-                for tr in self.proj.scopes.get_trait_impls(tr.id) {
+                for tr in self.proj.scopes.walk_super_traits(tr.id) {
                     let data = self.proj.scopes.get(tr);
                     add_methods(&self.proj, &mut completions, &data.fns, cap, tr, false);
                 }
@@ -544,7 +544,7 @@ impl TypeChecker {
         } else if let Some(tr) = self.proj.types[ty].as_dyn_pointee() {
             let tr_id = tr.id;
             self.resolve_impls(tr_id);
-            for tr in self.proj.scopes.get_trait_impls(tr_id) {
+            for tr in self.proj.scopes.walk_super_traits(tr_id) {
                 add_methods(
                     &self.proj,
                     &mut completions,
@@ -560,7 +560,7 @@ impl TypeChecker {
         for ext in extensions.iter() {
             self.resolve_impls(ext.id);
             for imp in self.proj.scopes.get(ext.id).impls.iter_checked() {
-                for tr in self.proj.scopes.get_trait_impls(imp.id) {
+                for tr in self.proj.scopes.walk_super_traits(imp.id) {
                     add_methods(
                         &self.proj,
                         &mut completions,
@@ -659,14 +659,14 @@ impl TypeChecker {
         }
 
         if !ty {
-            add_from_vns(&mut completions, &self.proj.scopes.autouse_vns, false);
+            add_from_vns(&mut completions, &self.proj.autouse_vns, false);
 
             if !saw_root {
                 add_from_vns(&mut completions, &self.proj.scopes[ScopeId::ROOT].vns, false);
             }
         }
 
-        add_from_tns(&mut completions, &self.proj.scopes.autouse_tns);
+        add_from_tns(&mut completions, &self.proj.autouse_tns);
         if !saw_root {
             add_from_tns(&mut completions, &self.proj.scopes[ScopeId::ROOT].tns);
         }
@@ -5073,17 +5073,16 @@ impl TypeChecker {
         ) -> Option<MemberFn> {
             let src_scope = this.proj.scopes.get(ut.id).scope;
             for tr in this.proj.scopes.get(ut.id).impls.clone().into_iter_checked() {
-                for imp in this.proj.scopes.get_trait_impls_ex(&this.proj.types, tr) {
+                for imp in this.proj.scopes.walk_super_traits_ex(&this.proj.types, tr) {
                     let Some(f) = TypeChecker::search(&this.proj.scopes, imp.id, name) else {
                         continue;
                     };
 
-                    let ty_args = imp.ty_args.clone();
                     let mut func = GenericFn::new(f.id, finish(this, f.id));
                     if IS_EXT && let Type::User(ut) = &this.proj.types[inst] {
-                        func.ty_args.copy_args_with(&this.proj.types, &ty_args, &ut.ty_args);
+                        func.ty_args.copy_args_with(&this.proj.types, &imp.ty_args, &ut.ty_args);
                     }
-                    func.ty_args.copy_args_with(&this.proj.types, &ty_args, &ut.ty_args);
+                    func.ty_args.copy_args_with(&this.proj.types, &imp.ty_args, &ut.ty_args);
                     func.ty_args
                         .insert(*this.proj.scopes.get(imp.id).kind.as_trait().unwrap().0, inst);
                     return Some(MemberFn {
@@ -5111,7 +5110,7 @@ impl TypeChecker {
             let tr = tr.clone();
             self.resolve_impls(tr.id);
             let data = self.proj.scopes.get(tr.id);
-            for imp in self.proj.scopes.get_trait_impls(tr.id) {
+            for imp in self.proj.scopes.walk_super_traits(tr.id) {
                 if let Some(f) = Self::search(&self.proj.scopes, imp, name) {
                     let src_scope = data.scope;
                     let mut func = GenericFn::new(f.id, finish(self, f.id));
@@ -5208,7 +5207,7 @@ impl TypeChecker {
         ) -> Option<MemberFn> {
             let src_scope = this.proj.scopes.get(ut.id).scope;
             for tr in this.proj.scopes.get(ut.id).impls.iter_checked() {
-                for imp in this.proj.scopes.get_trait_impls(tr.id) {
+                for imp in this.proj.scopes.walk_super_traits(tr.id) {
                     if wanted_tr != imp {
                         continue;
                     }
@@ -5406,9 +5405,8 @@ impl TypeChecker {
                 }
             }
             (Type::Fn(lhs), Type::FnPtr(rhs)) => {
-                let rhs = rhs.clone();
-                let fptr = lhs.clone().as_fn_ptr(&self.proj.scopes, &self.proj.types);
-                if fptr == rhs {
+                let fptr = lhs.as_fn_ptr(&self.proj.scopes, &self.proj.types);
+                if &fptr == rhs {
                     Ok(CExpr::new(self.proj.types.insert(Type::FnPtr(fptr)), expr.data))
                 } else {
                     Err(expr)
@@ -6331,7 +6329,7 @@ impl TypeChecker {
             }
         }
 
-        if let Some(item) = self.proj.scopes.autouse_tns.get(&name).copied() {
+        if let Some(item) = self.proj.autouse_tns.get(&name).copied() {
             return Some(item);
         }
 
@@ -6353,7 +6351,7 @@ impl TypeChecker {
             }
         }
 
-        if let Some(item) = self.proj.scopes.autouse_vns.get(&name).copied() {
+        if let Some(item) = self.proj.autouse_vns.get(&name).copied() {
             return Some(item);
         }
 
@@ -7043,7 +7041,7 @@ impl TypeChecker {
         self.resolve_impls(ut);
 
         for tr in self.proj.scopes.get(ut).impls.iter_checked() {
-            for tr in self.proj.scopes.get_trait_impls(tr.id) {
+            for tr in self.proj.scopes.walk_super_traits(tr.id) {
                 let UserTypeKind::Trait { assoc_types, .. } = &self.proj.scopes.get(tr).kind else {
                     unreachable!();
                 };
@@ -7317,7 +7315,7 @@ pub trait SharedStuff {
         ) -> Option<MemberFn> {
             let src_scope = proj.scopes.get(ut.id).scope;
             for tr in proj.scopes.get(ut.id).impls.clone().into_iter_checked() {
-                for imp in proj.scopes.get_trait_impls_ex(&proj.types, tr) {
+                for imp in proj.scopes.walk_super_traits_ex(&proj.types, tr) {
                     if wanted_tr != &imp {
                         continue;
                     }
@@ -7326,12 +7324,11 @@ pub trait SharedStuff {
                         continue;
                     };
 
-                    let ty_args = imp.ty_args.clone();
                     let mut func = GenericFn::new(f.id, finish(proj, f.id));
                     if is_ext && let Type::User(ut) = &proj.types[inst] {
-                        func.ty_args.copy_args_with(&proj.types, &ty_args, &ut.ty_args);
+                        func.ty_args.copy_args_with(&proj.types, &imp.ty_args, &ut.ty_args);
                     }
-                    func.ty_args.copy_args_with(&proj.types, &ty_args, &ut.ty_args);
+                    func.ty_args.copy_args_with(&proj.types, &imp.ty_args, &ut.ty_args);
                     func.ty_args.insert(*proj.scopes.get(imp.id).kind.as_trait().unwrap().0, inst);
                     return Some(MemberFn {
                         func,
@@ -7407,7 +7404,7 @@ pub trait SharedStuff {
             }
         }
 
-        exts.extend(get_tns_extensions(scopes, &scopes.autouse_tns));
+        exts.extend(get_tns_extensions(scopes, &self.proj().autouse_tns));
         exts.sort();
         exts
     }
@@ -7416,14 +7413,14 @@ pub trait SharedStuff {
 
     fn do_extensions_in_scope_for(
         &mut self,
-        exts: &[ExtensionId],
+        in_scope: &[ExtensionId],
         ty: TypeId,
     ) -> Vec<GenericExtension> {
         if ty == TypeId::UNKNOWN {
             return vec![];
         }
 
-        let map = self.extension_cache().entry(exts.to_vec()).or_default();
+        let map = self.extension_cache().entry(in_scope.to_vec()).or_default();
         if let Some(checked) = map.get(&ty) {
             return checked.clone();
         }
@@ -7432,16 +7429,17 @@ pub trait SharedStuff {
         //       (like in tests/ext/circular.ctl)
         map.insert(ty, vec![]);
 
-        let res: Vec<_> = exts.iter().flat_map(|id| self.applies_to(ty, *id, exts)).collect();
-        self.extension_cache().get_mut(exts).unwrap().insert(ty, res.clone());
+        let res: Vec<_> =
+            in_scope.iter().flat_map(|id| self.applies_to(in_scope, ty, *id)).collect();
+        self.extension_cache().get_mut(in_scope).unwrap().insert(ty, res.clone());
         res
     }
 
     fn applies_to(
         &mut self,
+        in_scope: &[ExtensionId],
         ty: TypeId,
         ext: ExtensionId,
-        in_scope: &[ExtensionId],
     ) -> Option<GenericExtension> {
         let ext_ty_id = self.resolve_ext_type(ext);
         self.do_resolve_impls(ext);
@@ -7456,8 +7454,7 @@ pub trait SharedStuff {
             if arg == TypeId::UNKNOWN {
                 return None;
             }
-            let bounds = self.proj().scopes.get(id).impls.clone();
-            for mut bound in bounds.into_iter_checked() {
+            for mut bound in self.proj().scopes.get(id).impls.clone().into_iter_checked() {
                 bound.fill_templates(&self.proj().types, &ext.ty_args);
                 if !self.do_implements_trait(in_scope, arg, &bound) {
                     return None;
@@ -7474,7 +7471,7 @@ pub trait SharedStuff {
         ty: TypeId,
         bound: &GenericTrait,
     ) -> bool {
-        if self.proj().scopes.has_builtin_impl(&self.proj().types, ty, bound) {
+        if self.has_builtin_impl(ty, bound) {
             return true;
         }
 
@@ -7557,7 +7554,7 @@ pub trait SharedStuff {
             for mut tr in self
                 .proj()
                 .scopes
-                .get_trait_impls_ex(&self.proj().types, tr)
+                .walk_super_traits_ex(&self.proj().types, tr)
                 .into_iter()
                 .filter(|tr| tr.id == bound.id)
             {
@@ -7671,6 +7668,32 @@ pub trait SharedStuff {
                 }
             }
         }
+    }
+
+    fn has_builtin_impl(&self, id: TypeId, bound: &GenericTrait) -> bool {
+        let scopes = &self.proj().scopes;
+        let ty = &self.proj().types[id];
+        if ty.is_numeric() && Some(&bound.id) == scopes.lang_types.get(&Strings::LANG_NUMERIC) {
+            return true;
+        }
+
+        if ty.is_array() && Some(&bound.id) == scopes.lang_types.get(&Strings::LANG_ARRAY) {
+            return true;
+        }
+
+        if let Some(int) = ty.as_integral(false) {
+            if Some(&bound.id) == scopes.lang_types.get(&Strings::LANG_INTEGRAL) {
+                return true;
+            }
+            if int.signed && Some(&bound.id) == scopes.lang_types.get(&Strings::LANG_SIGNED) {
+                return true;
+            }
+            if !int.signed && Some(&bound.id) == scopes.lang_types.get(&Strings::LANG_UNSIGNED) {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn find_trait_impl(

@@ -481,8 +481,6 @@ pub struct Scopes {
     structs: HashMap<Vec<StrId>, UserTypeId>,
     pub lang_types: HashMap<StrId, UserTypeId>,
     pub intrinsics: HashMap<FunctionId, StrId>,
-    pub autouse_tns: HashMap<StrId, Vis<TypeItem>>,
-    pub autouse_vns: HashMap<StrId, Vis<ValueItem>>,
 }
 
 impl Scopes {
@@ -496,8 +494,6 @@ impl Scopes {
             structs: HashMap::new(),
             lang_types: HashMap::new(),
             intrinsics: HashMap::new(),
-            autouse_tns: HashMap::new(),
-            autouse_vns: HashMap::new(),
         }
     }
 
@@ -689,7 +685,7 @@ impl Scopes {
         types.insert(Type::User(GenericUserType::from_type_args(self, id, ty_args)))
     }
 
-    pub fn get_trait_impls(&self, tr: TraitId) -> HashSet<TraitId> {
+    pub fn walk_super_traits(&self, tr: TraitId) -> HashSet<TraitId> {
         fn inner(this: &Scopes, tr: TraitId, results: &mut HashSet<TraitId>) {
             if !results.insert(tr) {
                 return;
@@ -705,7 +701,7 @@ impl Scopes {
         result
     }
 
-    pub fn get_trait_impls_ex(&self, types: &Types, tr: GenericTrait) -> HashSet<GenericTrait> {
+    pub fn walk_super_traits_ex(&self, types: &Types, tr: GenericTrait) -> HashSet<GenericTrait> {
         fn inner(
             this: &Scopes,
             types: &Types,
@@ -726,31 +722,6 @@ impl Scopes {
         let mut result = HashSet::new();
         inner(self, types, tr, &mut result);
         result
-    }
-
-    pub fn has_builtin_impl(&self, types: &Types, id: TypeId, bound: &GenericTrait) -> bool {
-        let ty = &types[id];
-        if ty.is_numeric() && Some(&bound.id) == self.lang_types.get(&Strings::LANG_NUMERIC) {
-            return true;
-        }
-
-        if ty.is_array() && Some(&bound.id) == self.lang_types.get(&Strings::LANG_ARRAY) {
-            return true;
-        }
-
-        if let Some(int) = ty.as_integral(false) {
-            if Some(&bound.id) == self.lang_types.get(&Strings::LANG_INTEGRAL) {
-                return true;
-            }
-            if int.signed && Some(&bound.id) == self.lang_types.get(&Strings::LANG_SIGNED) {
-                return true;
-            }
-            if !int.signed && Some(&bound.id) == self.lang_types.get(&Strings::LANG_UNSIGNED) {
-                return true;
-            }
-        }
-
-        false
     }
 
     pub fn borrow_twice(&mut self, a: ScopeId, b: ScopeId) -> Option<(&mut Scope, &mut Scope)> {
