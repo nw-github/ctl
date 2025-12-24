@@ -1873,9 +1873,9 @@ impl<'a> Codegen<'a> {
         mut lhs: Expr,
         rhs: Expr,
     ) {
+        lhs.ty = lhs.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
         match op {
             BinaryOp::NoneCoalesceAssign => {
-                lhs.ty = lhs.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
                 let opt_type = lhs.ty;
                 let tag = if opt_type.can_omit_tag(&self.proj.scopes, &self.proj.types).is_some() {
                     ""
@@ -1917,7 +1917,6 @@ impl<'a> Codegen<'a> {
                     self.emit_type(ret);
                     write_de!(self.buffer, " {tmp};");
 
-                    lhs.ty = lhs.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
                     let opt_type = lhs.ty;
                     let name = hoist!(self, self.emit_tmpvar(lhs, state));
                     self.emit_pattern_if_stmt(state, &null_variant(ret), &name, opt_type);
@@ -1938,6 +1937,9 @@ impl<'a> Codegen<'a> {
                 });
             }
             BinaryOp::Cmp => {
+                let mut rhs = rhs;
+                rhs.ty = rhs.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
+
                 let (lhs, rhs) =
                     hoist!(self, (self.emit_tmpvar(lhs, state), self.emit_tmpvar(rhs, state)));
                 let union = self
@@ -1987,7 +1989,6 @@ impl<'a> Codegen<'a> {
                 });
             }
             _ => {
-                lhs.ty = lhs.ty.with_templates(&mut self.proj.types, &state.func.ty_args);
                 if ret == TypeId::BOOL && lhs.ty != TypeId::BOOL {
                     self.emit_cast(ret);
                 }
