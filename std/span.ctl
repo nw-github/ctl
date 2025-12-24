@@ -25,13 +25,11 @@ pub struct Span<T> {
 
     pub fn iter(my this): Iter<T> => Iter(ptr: this.ptr, end: this.ptr.add(this.len));
 
-    pub fn subspan<R: RangeBounds<uint>>(my this, range: R): This {
+    pub fn subspan<R: RangeBounds<uint>>(my this, range: R): ?This {
         let (start, end) = range_bounds(range, this.len);
-        if end < start or start > this.len or end > this.len {
-            panic("invalid range {start}..{end} in span of len {this.len}");
+        if start <= end and end <= this.len {
+            unsafe Span::new(this.ptr.add(start), end - start)
         }
-
-        unsafe Span::new(this.ptr.add(start), end - start)
     }
 
     pub unsafe fn subspan_unchecked<R: RangeBounds<uint>>(my this, range: R): This {
@@ -53,7 +51,14 @@ pub struct Span<T> {
     }
 
     @(inline(always))
-    pub fn []<R: RangeBounds<uint>>(my this, range: R): This => this.subspan(range);
+    pub fn []<R: RangeBounds<uint>>(my this, range: R): This {
+        if this.subspan(range) is ?span {
+            span
+        } else {
+            let (start, end) = range_bounds(range, this.len);
+            panic("invalid range {start}..{end} in span of len {this.len}");
+        }
+    }
 }
 
 @(lang(span_mut))
@@ -90,13 +95,11 @@ pub struct SpanMut<T> {
     pub fn iter(this): Iter<T> => Iter(ptr: this.ptr, end: this.ptr.add(this.len));
     pub fn iter_mut(my this): IterMut<T> => IterMut(ptr: this.ptr, end: this.ptr.add(this.len));
 
-    pub fn subspan<R: RangeBounds<uint>>(my this, range: R): This {
+    pub fn subspan<R: RangeBounds<uint>>(my this, range: R): ?This {
         let (start, end) = range_bounds(range, this.len);
-        if end < start or start > this.len or end > this.len {
-            panic("invalid range {start}..{end} in span of len {this.len}");
+        if start <= end and end <= this.len {
+            unsafe SpanMut::new(this.ptr.add(start), end - start)
         }
-
-        unsafe SpanMut::new(this.ptr.add(start), end - start)
     }
 
     pub unsafe fn subspan_unchecked<R: RangeBounds<uint>>(my this, range: R): This {
@@ -141,11 +144,18 @@ pub struct SpanMut<T> {
     }
 
     @(inline(always))
-    pub fn []<R: RangeBounds<uint>>(my this, range: R): This => this.subspan(range);
+    pub fn []<R: RangeBounds<uint>>(my this, range: R): This {
+        if this.subspan(range) is ?span {
+            span
+        } else {
+            let (start, end) = range_bounds(range, this.len);
+            panic("invalid range {start}..{end} in span of len {this.len}");
+        }
+    }
 
     @(inline(always))
     pub fn []=<R: RangeBounds<uint>>(my this, range: R, rhs: Span<T>) {
-        let subspan = this.subspan(range);
+        let subspan = this[range];
         if subspan.len() != rhs.len() {
             panic("span assignment requires that both sides are the same length");
         }

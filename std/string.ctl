@@ -65,7 +65,7 @@ pub struct str {
     pub fn utf16(this): Utf16 => Utf16(chars: this.chars(), trail: null);
 
     pub fn substr<R: RangeBounds<uint>>(this, range: R): ?str {
-        let span = this.span[range];
+        let span = this.span.subspan(range)?;
         if span.first() is ?ch and !utf8::is_char_boundary(*ch) {
             return null;
         } else if span.last() is ?ch and !utf8::is_char_boundary(*ch) {
