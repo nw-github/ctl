@@ -18,13 +18,8 @@ pub struct RangeTo<T> {
     pub end: T,
 
     impl RangeBounds<T> {
-        fn begin(this): Bound<T> {
-            Bound::Unbounded
-        }
-
-        fn end(this): Bound<T> {
-            Bound::Exclusive(this.end)
-        }
+        fn begin(this): Bound<T> => :Unbounded;
+        fn end(this): Bound<T> => :Exclusive(this.end);
     }
 }
 
@@ -34,13 +29,8 @@ pub struct RangeToInclusive<T> {
     pub end: T,
 
     impl RangeBounds<T> {
-        fn begin(this): Bound<T> {
-            Bound::Unbounded
-        }
-
-        fn end(this): Bound<T> {
-            Bound::Inclusive(this.end)
-        }
+        fn begin(this): Bound<T> => :Unbounded;
+        fn end(this): Bound<T> => :Inclusive(this.end);
     }
 }
 
@@ -50,13 +40,8 @@ pub struct RangeFrom<T: Integral> {
     pub start: T,
 
     impl RangeBounds<T> {
-        fn begin(this): Bound<T> {
-            Bound::Inclusive(this.start)
-        }
-
-        fn end(this): Bound<T> {
-            Bound::Unbounded
-        }
+        fn begin(this): Bound<T> => :Inclusive(this.start);
+        fn end(this): Bound<T> => :Unbounded;
     }
 }
 
@@ -67,13 +52,8 @@ pub struct Range<T> {
     pub end: T,
 
     impl RangeBounds<T> {
-        fn begin(this): Bound<T> {
-            Bound::Inclusive(this.start)
-        }
-
-        fn end(this): Bound<T> {
-            Bound::Exclusive(this.end)
-        }
+        fn begin(this): Bound<T> => :Inclusive(this.start);
+        fn end(this): Bound<T> => :Exclusive(this.end);
     }
 }
 
@@ -84,13 +64,8 @@ pub struct RangeInclusive<T> {
     pub end: T,
 
     impl RangeBounds<T> {
-        fn begin(this): Bound<T> {
-            Bound::Inclusive(this.start)
-        }
-
-        fn end(this): Bound<T> {
-            Bound::Inclusive(this.end)
-        }
+        fn begin(this): Bound<T> => :Inclusive(this.start);
+        fn end(this): Bound<T> => :Inclusive(this.end);
     }
 }
 
@@ -98,18 +73,14 @@ pub struct RangeInclusive<T> {
 @(lang(range_full))
 pub struct RangeFull {
     impl<T> RangeBounds<T> {
-        fn begin(this): Bound<T> {
-            Bound::Unbounded
-        }
-
-        fn end(this): Bound<T> {
-            Bound::Unbounded
-        }
+        fn begin(this): Bound<T> => :Unbounded;
+        fn end(this): Bound<T> => :Unbounded;
     }
 }
 
 mod ext {
     use super::*;
+    use std::ops::*;
 
     pub extension RangeFromExt<T: Integral> for RangeFrom<T> {
         impl Iterator<T> {
@@ -119,16 +90,12 @@ mod ext {
         }
     }
 
-    pub extension RangeExt<T: Integral> for Range<T> {
+    pub extension RangeExt<T: Inc + Cmp<T>> for Range<T> {
         impl Iterator<T> {
-            fn next(mut this): ?T {
-                this.start < this.end then this.start++
-            }
+            fn next(mut this): ?T => this.start < this.end then this.start++;
         }
 
-        pub fn contains(this, rhs: *T): bool {
-            this.start <= rhs and this.end > rhs
-        }
+        pub fn contains(this, rhs: *T): bool => this.start <= rhs and this.end > rhs;
     }
 
     pub extension RangeInclusiveExt<T: Integral> for RangeInclusive<T> {
@@ -137,15 +104,19 @@ mod ext {
                 if this.start < this.end {
                     this.start++
                 } else if this.start == this.end {
-                    // avoid overflow at the upper end
-                    this.end--;
-                    this.start
+                    // This wouldn't work for u0 but that doesn't compile anyway
+                    if this.end.checked_sub(1.cast()) is ?end {
+                        this.end = end;
+                        this.start
+                    } else {
+                        let val = this.start;
+                        this.start++;
+                        val
+                    }
                 }
             }
         }
 
-        pub fn contains(this, rhs: *T): bool {
-            this.start <= rhs and this.end >= rhs
-        }
+        pub fn contains(this, rhs: *T): bool => this.start <= rhs and this.end >= rhs;
     }
 }
