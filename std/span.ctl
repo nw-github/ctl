@@ -25,23 +25,17 @@ pub struct Span<T> {
 
     pub fn iter(my this): Iter<T> => Iter(ptr: this.ptr, end: this.ptr.add(this.len));
 
-    pub fn subspan<R: RangeBounds<uint>>(my this, range: R): [T..] {
-        let start = match range.begin() {
-            :Inclusive(start) => start,
-            :Exclusive(start) => start + 1,
-            :Unbounded => 0,
-        };
-
-        let end = match range.end() {
-            :Inclusive(end) => end + 1,
-            :Exclusive(end) => end,
-            :Unbounded => this.len,
-        };
-
+    pub fn subspan<R: RangeBounds<uint>>(my this, range: R): This {
+        let (start, end) = range_bounds(range, this.len);
         if end < start or start > this.len or end > this.len {
             panic("invalid range {start}..{end} in span of len {this.len}");
         }
 
+        unsafe Span::new(this.ptr.add(start), end - start)
+    }
+
+    pub unsafe fn subspan_unchecked<R: RangeBounds<uint>>(my this, range: R): This {
+        let (start, end) = range_bounds(range, this.len);
         unsafe Span::new(this.ptr.add(start), end - start)
     }
 
@@ -59,7 +53,7 @@ pub struct Span<T> {
     }
 
     @(inline(always))
-    pub fn []<R: RangeBounds<uint>>(my this, range: R): [T..] => this.subspan(range);
+    pub fn []<R: RangeBounds<uint>>(my this, range: R): This => this.subspan(range);
 }
 
 @(lang(span_mut))
@@ -89,30 +83,24 @@ pub struct SpanMut<T> {
     pub unsafe fn get_unchecked(my this, idx: uint): *T => unsafe &*this.ptr.add(idx);
     pub unsafe fn get_mut_unchecked(my this, idx: uint): *mut T => unsafe &mut *this.ptr.add(idx);
 
-    pub fn as_span(my this): [T..] => this;
+    pub fn as_span(my this): Span<T> => this;
     pub fn as_raw(my this): ^T => this.ptr;
     pub fn as_raw_mut(my this): ^mut T => this.ptr;
 
     pub fn iter(this): Iter<T> => Iter(ptr: this.ptr, end: this.ptr.add(this.len));
     pub fn iter_mut(my this): IterMut<T> => IterMut(ptr: this.ptr, end: this.ptr.add(this.len));
 
-    pub fn subspan<R: RangeBounds<uint>>(my this, range: R): [mut T..] {
-        let start = match range.begin() {
-            :Inclusive(start) => start,
-            :Exclusive(start) => start + 1,
-            :Unbounded => 0,
-        };
-
-        let end = match range.end() {
-            :Inclusive(end) => end + 1,
-            :Exclusive(end) => end,
-            :Unbounded => this.len(),
-        };
-
+    pub fn subspan<R: RangeBounds<uint>>(my this, range: R): This {
+        let (start, end) = range_bounds(range, this.len);
         if end < start or start > this.len or end > this.len {
             panic("invalid range {start}..{end} in span of len {this.len}");
         }
 
+        unsafe SpanMut::new(this.ptr.add(start), end - start)
+    }
+
+    pub unsafe fn subspan_unchecked<R: RangeBounds<uint>>(my this, range: R): This {
+        let (start, end) = range_bounds(range, this.len);
         unsafe SpanMut::new(this.ptr.add(start), end - start)
     }
 
@@ -153,10 +141,10 @@ pub struct SpanMut<T> {
     }
 
     @(inline(always))
-    pub fn []<R: RangeBounds<uint>>(my this, range: R): [mut T..] => this.subspan(range);
+    pub fn []<R: RangeBounds<uint>>(my this, range: R): This => this.subspan(range);
 
     @(inline(always))
-    pub fn []=<R: RangeBounds<uint>>(my this, range: R, rhs: [T..]) {
+    pub fn []=<R: RangeBounds<uint>>(my this, range: R, rhs: Span<T>) {
         let subspan = this.subspan(range);
         if subspan.len() != rhs.len() {
             panic("span assignment requires that both sides are the same length");
@@ -204,6 +192,23 @@ fn raw_subscript_checked<T, I: Integral>(ptr: ^mut T, len: uint, idx: I): ^mut T
     } else {
         panic("index {idx} is out of bounds for span of length {len}");
     }
+}
+
+@(inline(always))
+fn range_bounds<R: RangeBounds<uint>>(range: R, len: uint): (uint, uint) {
+    let start = match range.begin() {
+        :Inclusive(start) => start,
+        :Exclusive(start) => start + 1,
+        :Unbounded => 0,
+    };
+
+    let end = match range.end() {
+        :Inclusive(end) => end + 1,
+        :Exclusive(end) => end,
+        :Unbounded => len,
+    };
+
+    (start, end)
 }
 
 // TODO: make these member functions/impls when the syntax allows for it

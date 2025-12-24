@@ -23,6 +23,12 @@ pub trait Iterator<T> {
         this.next()
     }
 
+    fn advance_by(mut this, mut n: uint): ?uint {
+        while this.next().is_some() and n != 0 { n--; }
+
+        n == 0 then null else n
+    }
+
     fn collect<C: FromIter<T>>(my this): C => C::from_iter(this);
 }
 

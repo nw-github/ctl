@@ -32,7 +32,7 @@ pub struct str {
     pub fn as_bytes(this): [u8..] => this.span;
 
     pub fn chars(this): Chars => Chars(s: this.as_bytes());
-    pub fn char_indices(this): CharIndices => CharIndices(chars: this.chars(), len: this.len());
+    pub fn char_indices(this): CharIndices => CharIndices(chars: this.chars());
     pub fn utf16(this): Utf16 => Utf16(chars: this.chars(), trail: null);
 
     pub fn substr<R: RangeBounds<uint>>(this, range: R): ?str {
@@ -45,8 +45,12 @@ pub struct str {
         str(span:)
     }
 
+    pub unsafe fn substr_unchecked<R: RangeBounds<uint>>(this, range: R): str {
+        str(span: unsafe this.span.subspan_unchecked(range))
+    }
+
     pub fn trim_start(this): str {
-        for (i, ch) in this.as_bytes().iter().enumerate() {
+        for (i, ch) in this.char_indices() {
             if !ch.is_ascii_whitespace() {
                 return this[i..];
             }
@@ -147,14 +151,20 @@ pub struct Chars {
 }
 
 pub struct CharIndices {
-    len: uint,
+    offs: uint = 0,
     chars: Chars,
 
     impl Iterator<(uint, char)> {
         fn next(mut this): ?(uint, char) {
-            this.chars.next() is ?ch then (this.len - this.chars.s.len(), ch)
+            if this.chars.next() is ?ch {
+                let offs = this.offs;
+                this.offs += ch.len_utf8();
+                (offs, ch)
+            }
         }
     }
+
+    pub fn offset(this): uint => this.offs;
 }
 
 pub struct Utf16 {

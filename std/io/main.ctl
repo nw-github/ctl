@@ -4,9 +4,9 @@ extern fn write(fd: c_int, buf: ^void, count: uint): int;
 
 struct Stdio {
     impl fmt::Write {
-        fn write_str(mut this, s: str): ?uint {
+        fn write_str(mut this, s: str) {
             if !s.is_empty() {
-                unsafe write(1, s.as_raw().cast(), s.len()) as! uint
+                unsafe write(1, s.as_raw().cast(), s.len());
             }
         }
     }
@@ -14,9 +14,9 @@ struct Stdio {
 
 struct Stderr {
     impl fmt::Write {
-        fn write_str(mut this, s: str): ?uint {
+        fn write_str(mut this, s: str) {
             if !s.is_empty() {
-                unsafe write(2, s.as_raw().cast(), s.len()) as! uint
+                unsafe write(2, s.as_raw().cast(), s.len());
             }
         }
     }

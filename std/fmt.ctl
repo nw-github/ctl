@@ -1,6 +1,19 @@
 pub trait Write {
-    fn write_str(mut this, data: str): ?uint;
-    fn write_char(mut this, data: char): ?uint => this.write_str(data.encode_utf8(&mut [0; 4]));
+    fn write_str(mut this, data: str);
+    fn write_char(mut this, data: char) => this.write_str(data.encode_utf8(&mut [0; 4]));
+}
+
+struct Pad {
+    fill: char,
+    width: u16,
+
+    impl Format {
+        fn fmt(this, f: *mut Formatter) {
+            for _ in 0u16..this.width {
+                f.write.write_char(this.fill);
+            }
+        }
+    }
 }
 
 pub struct Formatter {
@@ -13,29 +26,111 @@ pub struct Formatter {
 
     pub fn options(this): *Options => &this.opts;
 
-    pub fn pad(mut this, value: str) {
-        // TODO: actually pad
-        this.write.write_str(value);
+    // Ported from the Rust standard library
+    pub fn pad(mut this, s: str) {
+        let width = this.opts.width;
+        let prec = this.opts.prec;
+        if width == 0 and prec == 0 {
+            return this.write.write_str(s);
+        }
+
+        // The `precision` field can be interpreted as a maximum width for the
+        // string being formatted.
+        let (s, char_count) = if prec != 0 {
+            mut iter = s.char_indices();
+            let remaining = match iter.advance_by(prec as uint) {
+                ?remaining => remaining,
+                null => 0,
+            };
+
+            // SAFETY: The offset of `.char_indices()` is guaranteed to be
+            // in-bounds and between character boundaries.
+            let truncated = unsafe s.substr_unchecked(..iter.offset());
+            (truncated, prec as uint - remaining)
+        } else {
+            // Use the optimized char counting algorithm for the full string.
+            (s, s.chars().count())
+        };
+
+        // The `width` field is more of a minimum width parameter at this point.
+        if char_count < width as uint {
+            // If we're under the minimum width, then fill up the minimum width
+            // with the specified string + some alignment.
+            let post_padding = this.padding(width - char_count as! u16, :Left);
+            this.write.write_str(s);
+            post_padding.fmt(this)
+        } else {
+            // If we're over the minimum width or there is no minimum width, we
+            // can just emit the string.
+            this.write.write_str(s)
+        }
     }
 
-    pub fn pad_integral(mut this, kw negative: bool, kw prefix: ?str, kw digits: str) {
-        // TODO: actually pad
-        if negative {
-            this.write.write_char('-');
+    // Ported from the Rust standard library
+    pub fn pad_integral(mut this, kw negative: bool, kw mut prefix: ?str, kw digits: str) {
+        mut width = digits.len();
+        mut sign = if negative {
+            width++;
+            '-'
         } else if this.opts.sign is :Plus {
-            this.write.write_char('+');
-        }
+            width++;
+            '+'
+        };
 
         if this.opts.alt and prefix is ?prefix {
-            this.write.write_str(prefix);
+            width += prefix.len();
+        } else {
+            prefix = null;
         }
 
-        this.write.write_str(digits);
+        fn write_prefix(f: *mut Formatter, sign: ?char, prefix: ?str) {
+            if sign is ?sign {
+                f.write.write_char(sign);
+            }
+            if prefix is ?prefix {
+                f.write.write_str(prefix);
+            }
+        }
+
+        let min = this.opts.width;
+        if width >= min as uint {
+            // We're over the minimum width, so then we can just write the bytes.
+            write_prefix(this, sign, prefix);
+            this.write.write_str(digits);
+        } else if this.opts.zero {
+            // The sign and prefix goes before the padding if the fill character is zero
+            let old_options = this.opts;
+            this.opts.fill = '0';
+            this.opts.align = :Right;
+            write_prefix(this, sign, prefix);
+            let post_padding = this.padding(min - width as! u16, :Right);
+            this.write.write_str(digits);
+            post_padding.fmt(this);
+            this.opts = old_options;
+        } else {
+            // Otherwise, the sign and prefix goes after the padding
+            let post_padding = this.padding(min - width as! u16, :Right);
+            write_prefix(this, sign, prefix);
+            this.write.write_str(digits);
+            post_padding.fmt(this)
+        }
+    }
+
+    fn padding(mut this, padding: u16, align: Align): Pad {
+        let fill = this.opts.fill;
+        let padding_left = match this.opts.align is :None then align else this.opts.align {
+            :Center => padding / 2,
+            :Right => padding,
+            _ => 0,
+        };
+
+        Pad(fill:, width: padding_left).fmt(this);
+        Pad(fill:, width: padding - padding_left)
     }
 
     impl Write {
-        fn write_str(mut this, data: str): ?uint => this.write.write_str(data);
-        fn write_char(mut this, data: char): ?uint => this.write.write_char(data);
+        fn write_str(mut this, data: str) => this.write.write_str(data);
+        fn write_char(mut this, data: char) => this.write.write_char(data);
     }
 }
 
@@ -107,10 +202,10 @@ pub struct StringBuilder {
     pub fn new(): This => StringBuilder();
 
     impl Write {
-        fn write_str(mut this, data: str): ?uint {
+        fn write_str(mut this, data: str) {
             let len = data.len();
             guard len != 0 else {
-                return 0;
+                return;
             }
 
             this.buffer.reserve(add: len);
@@ -121,7 +216,6 @@ pub struct StringBuilder {
                     num: len,
                 );
                 this.buffer.set_len(this.buffer.len() + len);
-                len
             }
         }
     }
