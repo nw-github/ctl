@@ -3,6 +3,7 @@ mod codegen;
 mod comptime_int;
 mod dgraph;
 mod error;
+mod hash_arena;
 mod hash;
 pub mod intern;
 mod lexer;

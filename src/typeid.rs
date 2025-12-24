@@ -4,6 +4,7 @@ use crate::{
     Located,
     ast::{BinaryOp, UnaryOp, parsed::TypeHint},
     comptime_int::ComptimeInt,
+    hash_arena::HashArena,
     hash::IndexMap,
     intern::Strings,
     nearest_pow_of_two,
@@ -15,7 +16,6 @@ use crate::{
 };
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
-use indexmap::IndexSet;
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Deref, DerefMut)]
 pub struct TypeArgs(pub IndexMap<UserTypeId, TypeId>);
@@ -426,7 +426,7 @@ impl Type {
 }
 
 pub struct Types {
-    types: IndexSet<Type>,
+    types: HashArena<Type>,
     unresolved_types: Vec<(Located<TypeHint>, ScopeId)>,
 }
 
@@ -452,12 +452,12 @@ impl Types {
         }
     }
 
-    pub fn insert(&mut self, ty: Type) -> TypeId {
-        TypeId(self.types.insert_full(ty).0)
+    pub fn insert(&self, ty: Type) -> TypeId {
+        TypeId(self.types.insert(ty))
     }
 
     pub fn get(&self, id: TypeId) -> &Type {
-        &self.types[id.0]
+        self.types.get(id.0)
     }
 
     pub fn add_unresolved(&mut self, hint: Located<TypeHint>, scope: ScopeId) -> TypeId {
