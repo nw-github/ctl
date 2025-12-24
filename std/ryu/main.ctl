@@ -1,5 +1,3 @@
-use std::span::Span;
-
 static NAN: str = "NaN";
 static INFINITY: str = "inf";
 static NEG_INFINITY: str = "-inf";

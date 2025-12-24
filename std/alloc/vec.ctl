@@ -1,5 +1,4 @@
 use std::mem;
-use std::span::*;
 use std::range::RangeBounds;
 use std::reflect::*;
 
@@ -38,8 +37,8 @@ pub struct Vec<T> {
     pub fn as_span_mut(mut this): [mut T..] => unsafe SpanMut::new(this.ptr, this.len);
     pub fn as_raw(this): ^T => this.ptr;
     pub fn as_raw_mut(this): ^mut T => this.ptr;
-    pub fn iter(this): Iter<T> => this[..].iter();
-    pub fn iter_mut(mut this): IterMut<T> => this[..].iter_mut();
+    pub fn iter(this): std::span::Iter<T> => this[..].iter();
+    pub fn iter_mut(mut this): std::span::IterMut<T> => this[..].iter_mut();
 
     pub fn push(mut this, val: T) {
         if !this.can_insert(1) {

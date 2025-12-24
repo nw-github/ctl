@@ -29,6 +29,8 @@ mod prelude {
     pub use super::panic::assert_ne;
     pub use super::panic::debug_assert;
     pub use super::string::str;
+    pub use super::span::Span;
+    pub use super::span::SpanMut;
     pub use super::opt::Option::*;
     pub use super::iter::Iterator;
     pub use super::impls::ext::*;

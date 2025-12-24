@@ -135,7 +135,7 @@ pub extension CharImpl for char {
                 }
                 _ => std::hint::unreachable_unchecked(),
             }
-            str::from_utf8_unchecked(std::span::Span::new(ptr, len_utf8))
+            str::from_utf8_unchecked(Span::new(ptr, len_utf8))
         }
     }
 

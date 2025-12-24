@@ -1,7 +1,6 @@
 use std::hash::*;
 use std::ops::*;
 use std::fmt::*;
-use std::span::*;
 
 pub extension VoidImpl for void {
     impl Hash {

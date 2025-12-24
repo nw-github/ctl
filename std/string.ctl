@@ -19,11 +19,11 @@ pub struct str {
     pub unsafe fn from_utf8_unchecked(span: [u8..]): str => str(span:);
 
     pub unsafe fn from_cstr(s: ^c_char): ?str {
-        str::from_utf8(unsafe std::span::Span::new((&raw *s).cast(), std::intrin::strlen(s)))
+        str::from_utf8(unsafe Span::new((&raw *s).cast(), std::intrin::strlen(s)))
     }
 
     pub unsafe fn from_cstr_unchecked(s: ^c_char): str {
-        str(span: unsafe std::span::Span::new((&raw *s).cast(), std::intrin::strlen(s)))
+        str(span: unsafe Span::new((&raw *s).cast(), std::intrin::strlen(s)))
     }
 
     pub fn len(this): uint => this.span.len();

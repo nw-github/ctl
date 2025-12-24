@@ -1,5 +1,4 @@
 use std::fmt::*;
-use std::span::Span;
 use std::intrin;
 
 pub extension RawImpl<T> for ^T {

@@ -13,9 +13,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     buckets: [mut Bucket<K, V>..],
     len:     uint,
 
-    pub fn new(): Map<K, V> {
-        Map(buckets: std::span::SpanMut::empty(), len: 0)
-    }
+    pub fn new(): Map<K, V> => Map(buckets: SpanMut::empty(), len: 0);
 
     pub fn with_capacity(cap: uint): Map<K, V> {
         mut self: Map<K, V> = Map::new();
@@ -71,42 +69,18 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         }
     }
 
-    pub fn contains(this, key: *K): bool {
-        this.get(key).is_some()
-    }
+    pub fn contains(this, key: *K): bool => this.get(key).is_some();
 
-    pub fn len(this): uint {
-        // TODO: len() currenty includes tombstones, so this isn't a useful number to return
-        this.len
-    }
+    // TODO: len() currenty includes tombstones, so this isn't a useful number to return
+    pub fn len(this): uint => this.len;
+    pub fn is_empty(this): bool => this.len == 0;
+    pub fn capacity(this): uint => this.buckets.len();
 
-    pub fn is_empty(this): bool {
-        this.len == 0
-    }
-
-    pub fn capacity(this): uint {
-        this.buckets.len()
-    }
-
-    pub fn iter(this): Iter<K, V> {
-        Iter(buckets: this.buckets)
-    }
-
-    pub fn iter_mut(mut this): IterMut<K, V> {
-        IterMut(buckets: this.buckets)
-    }
-
-    pub fn keys(this): Keys<K, V> {
-        Keys(iter: this.iter())
-    }
-
-    pub fn values(this): Values<K, V> {
-        Values(iter: this.iter())
-    }
-
-    pub fn values_mut(mut this): ValuesMut<K, V> {
-        ValuesMut(iter: this.iter_mut())
-    }
+    pub fn iter(this): Iter<K, V> => Iter(buckets: this.buckets);
+    pub fn iter_mut(mut this): IterMut<K, V> => IterMut(buckets: this.buckets);
+    pub fn keys(this): Keys<K, V> => Keys(iter: this.iter());
+    pub fn values(this): Values<K, V> => Values(iter: this.iter());
+    pub fn values_mut(mut this): ValuesMut<K, V> => ValuesMut(iter: this.iter_mut());
 
     fn entry_pos(this, k: *K): uint {
         guard !this.buckets.is_empty() else {
@@ -114,7 +88,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         }
 
         mut idx = {
-            mut h = Fnv1a::new();
+            mut h = Fnv1a();
             k.hash(&mut h);
             h.finish() as! uint
         } % this.capacity();
@@ -232,9 +206,7 @@ pub struct Keys<K, V> {
     iter: Iter<K, V>,
 
     impl Iterator<*K> {
-        fn next(mut this): ?*K {
-            this.iter.next() is ?item then item.0
-        }
+        fn next(mut this): ?*K => this.iter.next() is ?item then item.0;
     }
 }
 
@@ -242,9 +214,7 @@ pub struct Values<K, V> {
     iter: Iter<K, V>,
 
     impl Iterator<*V> {
-        fn next(mut this): ?*V {
-            this.iter.next() is ?item then item.1
-        }
+        fn next(mut this): ?*V => this.iter.next() is ?item then item.1;
     }
 }
 
@@ -252,18 +222,12 @@ pub struct ValuesMut<K, V> {
     iter: IterMut<K, V>,
 
     impl Iterator<*mut V> {
-        fn next(mut this): ?*mut V {
-            this.iter.next() is ?item then item.1
-        }
+        fn next(mut this): ?*mut V => this.iter.next() is ?item then item.1;
     }
 }
 
 struct Fnv1a {
     val: u64 = 0,
-
-    pub fn new(): Fnv1a {
-        Fnv1a()
-    }
 
     impl Hasher {
         fn hash(mut this, data: [u8..]) {
@@ -275,8 +239,6 @@ struct Fnv1a {
             }
         }
 
-        fn finish(this): u64 {
-            this.val
-        }
+        fn finish(this): u64 => this.val;
     }
 }

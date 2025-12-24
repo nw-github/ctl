@@ -1,4 +1,3 @@
-use std::span::*;
 use std::reflect::Integral;
 use std::reflect::Array;
 use std::range::RangeBounds;
@@ -14,10 +13,10 @@ pub extension ArrayImpl<A: Array<T>, T> for A {
     pub fn as_span_mut(mut this): [mut T..] => unsafe SpanMut::new(this.as_raw_mut(), this.len());
 
     @(inline(always))
-    pub fn iter(this): Iter<T> => this.as_span().iter();
+    pub fn iter(this): std::span::Iter<T> => this.as_span().iter();
 
     @(inline(always))
-    pub fn iter_mut(mut this): IterMut<T> => this.as_span_mut().iter_mut();
+    pub fn iter_mut(mut this): std::span::IterMut<T> => this.as_span_mut().iter_mut();
 
     @(inline(always))
     pub fn get(this, idx: uint): ?*T => this.as_span().get(idx);

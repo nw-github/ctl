@@ -84,9 +84,7 @@ pub struct Arguments {
     parts: [str..],
     args:  [Argument..],
 
-    pub fn empty(): This {
-        Arguments(parts: std::span::Span::empty(), args: std::span::Span::empty())
-    }
+    pub fn empty(): This => Arguments(parts: Span::empty(), args: Span::empty());
 
     impl Format {
         fn fmt(this, f: *mut Formatter) {
