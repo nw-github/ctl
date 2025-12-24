@@ -1,10 +1,7 @@
 mod ast;
 mod codegen;
-mod comptime_int;
-mod dgraph;
+mod ds;
 mod error;
-mod hash_arena;
-mod hash;
 pub mod intern;
 mod lexer;
 mod lsp;

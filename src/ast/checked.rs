@@ -3,8 +3,7 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     Span,
     ast::{Alignment, BinaryOp, Sign, UnaryOp},
-    comptime_int::ComptimeInt,
-    hash::IndexMap,
+    ds::{ComptimeInt, IndexMap},
     intern::{StrId, Strings},
     sym::{ScopeId, ScopeKind, Scopes, VariableId},
     typecheck::MemberFn,

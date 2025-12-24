@@ -1,4 +1,4 @@
-use crate::hash::{HashMap, HashSet};
+use super::hash::{HashMap, HashSet};
 use std::hash::Hash;
 
 pub enum Dependencies<T> {

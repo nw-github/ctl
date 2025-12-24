@@ -3,9 +3,7 @@ use std::{fmt::Display, ops::Index};
 use crate::{
     Located,
     ast::{BinaryOp, UnaryOp, parsed::TypeHint},
-    comptime_int::ComptimeInt,
-    hash_arena::HashArena,
-    hash::IndexMap,
+    ds::{HashArena, ComptimeInt, IndexMap},
     intern::Strings,
     nearest_pow_of_two,
     project::Project,

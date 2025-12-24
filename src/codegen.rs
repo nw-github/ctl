@@ -3,9 +3,7 @@ use std::fmt::Write;
 use crate::{
     CachingSourceProvider, CodegenFlags, Diagnostics, OffsetMode, SourceProvider, Span,
     ast::{Alignment, BinaryOp, Sign, UnaryOp, checked::*, parsed::RangePattern},
-    comptime_int::ComptimeInt,
-    dgraph::{Dependencies, DependencyGraph},
-    hash::{HashMap, HashSet, IndexMap},
+    ds::{ComptimeInt, Dependencies, DependencyGraph, HashMap, HashSet, IndexMap},
     intern::{StrId, Strings},
     nearest_pow_of_two,
     project::Project,

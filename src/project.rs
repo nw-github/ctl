@@ -3,7 +3,7 @@ use std::{collections::HashSet, path::PathBuf};
 use crate::{
     CodegenFlags, Diagnostics, Span,
     ast::{Attribute, Attributes},
-    dgraph::DependencyGraph,
+    ds::DependencyGraph,
     intern::{StrId, Strings},
     sym::{FunctionId, Scopes, UserTypeId, VariableId},
     typecheck::{Completions, LspItem},

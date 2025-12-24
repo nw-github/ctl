@@ -1,6 +1,6 @@
 use crate::{
     ast::{Alignment, Sign},
-    comptime_int::ComptimeInt,
+    ds::ComptimeInt,
     intern::{StrId, THIS_TYPE},
     lexer::{Located, Span},
 };
