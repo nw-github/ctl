@@ -551,7 +551,7 @@ impl Scopes {
         &mut self,
         ty_args: Vec<TypeId>,
         strings: &mut Strings,
-        types: &mut Types,
+        types: &Types,
     ) -> TypeId {
         let id = if let Some(id) = self.tuples.get(&ty_args.len()) {
             *id
@@ -625,7 +625,7 @@ impl Scopes {
         names: Vec<StrId>,
         ty_args: Vec<TypeId>,
         strings: &mut Strings,
-        types: &mut Types,
+        types: &Types,
     ) -> TypeId {
         let id = if let Some(id) = self.structs.get(&names) {
             *id

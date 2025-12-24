@@ -8,7 +8,7 @@ use crate::{
     nearest_pow_of_two,
     project::Project,
     sym::*,
-    typecheck::{MemberFn, MemberFnType, TypeChecker},
+    typecheck::{ExtensionCache, MemberFn, MemberFnType, SharedStuff},
     typeid::{
         BitSizeResult, CInt, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, Type,
         TypeArgs, TypeId, Types,
@@ -399,10 +399,6 @@ struct Buffer<'a>(String, &'a Project);
 impl<'a> Buffer<'a> {
     pub fn new(proj: &'a Project) -> Self {
         Self(Default::default(), proj)
-    }
-
-    pub fn project(&self) -> &Project {
-        self.1
     }
 
     pub fn take(&mut self) -> Self {
@@ -801,6 +797,7 @@ pub struct Codegen<'a> {
     tg: TypeGen,
     str_interp: StrInterp,
     source: CachingSourceProvider,
+    ext_cache: ExtensionCache,
 }
 
 impl Codegen<'_> {
@@ -840,6 +837,7 @@ impl Codegen<'_> {
             emitted_vtables: Default::default(),
             defers: Default::default(),
             tg: Default::default(),
+            ext_cache: Default::default(),
             source: CachingSourceProvider::new(),
         };
         let main = main.map(|mut main| this.gen_c_main(&mut main));
@@ -1376,7 +1374,7 @@ impl<'a> Codegen<'a> {
                 } else if expr.ty == TypeId::F64 {
                     write_de!(self.buffer, "CTL_IEEE_F64({:#x}ull)", value.to_bits());
                 } else {
-                    panic!("ICE: attempt to generate float of type {}", expr.ty.name2(&self.proj))
+                    panic!("ICE: attempt to generate float of type {}", expr.ty.name(self.proj))
                 }
             }
             ExprData::String(value) => self.emit_string_literal(strdata!(self, value)),
@@ -1669,9 +1667,9 @@ impl<'a> Codegen<'a> {
                 &tr,
                 self.proj.scopes.get(mfn.func.id).name.data,
                 state.caller,
-                |tc, id| {
+                |proj, id| {
                     TypeArgs::in_order(
-                        tc.scopes(),
+                        &proj.scopes,
                         id,
                         mfn.func.ty_args.0.into_iter().map(|kv| kv.1),
                     )
@@ -1787,7 +1785,7 @@ impl<'a> Codegen<'a> {
                 } else {
                     ".$Some.$0"
                 };
-                let mut left = Buffer::new(&self.proj);
+                let mut left = Buffer::new(self.proj);
                 usebuf!(self, &mut left, self.emit_expr_inner(lhs, state));
                 let left = left.finish();
 
@@ -1914,7 +1912,7 @@ impl<'a> Codegen<'a> {
                     }
 
                     if matches!(&lhs.data, ExprData::Member { source, .. }
-                        if source.ty.is_packed_struct(&self.proj))
+                        if source.ty.is_packed_struct(self.proj))
                     {
                         let ExprData::Member { source, member } = lhs.data else { unreachable!() };
                         return self.emit_bitfield_assign(*source, state, member, lhs.ty, rhs, op);
@@ -1986,7 +1984,7 @@ impl<'a> Codegen<'a> {
                     | ExprData::Var(_)
                     | ExprData::Fn(_, _)
                     | ExprData::MemFn(_, _) => true,
-                    ExprData::Member { source, .. } => !source.ty.is_packed_struct(&self.proj),
+                    ExprData::Member { source, .. } => !source.ty.is_packed_struct(self.proj),
                     _ => false,
                 };
 
@@ -2008,7 +2006,7 @@ impl<'a> Codegen<'a> {
                     let inner_tmp = self.emit_tmpvar(lhs, state);
                     self.emit_pattern_if_stmt(state, &null_variant(ret), &inner_tmp, inner_ty);
                     hoist_point!(self, {
-                        let mut buffer = Buffer::new(&self.proj);
+                        let mut buffer = Buffer::new(self.proj);
                         usebuf!(self, &mut buffer, {
                             write_de!(self.buffer, "return ");
                             let mut ret_type = self.proj.scopes.get(state.func.id).ret;
@@ -2304,7 +2302,7 @@ impl<'a> Codegen<'a> {
                 write_de!(self.buffer, "{{ .$tag = {} }}", func.first_type_arg().unwrap().as_raw());
             }
             "type_name" => {
-                self.emit_string_literal(&func.first_type_arg().unwrap().name2(self.proj));
+                self.emit_string_literal(&func.first_type_arg().unwrap().name(self.proj));
             }
             "read_volatile" => {
                 write_de!(self.buffer, "*(volatile ");
@@ -2666,10 +2664,10 @@ impl<'a> Codegen<'a> {
             }
             PatternData::Void => {}
             PatternData::Or(patterns) => {
-                let mut conds = JoiningBuilder::new(&self.proj, "||", "1");
-                let mut binds = Buffer::new(&self.proj);
+                let mut conds = JoiningBuilder::new(self.proj, "||", "1");
+                let mut binds = Buffer::new(self.proj);
                 for pattern in patterns {
-                    let mut tmp = JoiningBuilder::new(&self.proj, "&&", "1");
+                    let mut tmp = JoiningBuilder::new(self.proj, "&&", "1");
                     self.emit_pattern_inner(
                         state,
                         &pattern.data,
@@ -3010,7 +3008,7 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_bitfield_read(&mut self, tmp: &str, id: UserTypeId, member: StrId, ty: TypeId) {
-        let mut result = JoiningBuilder::new(&self.proj, "|", "0");
+        let mut result = JoiningBuilder::new(self.proj, "|", "0");
         self.bitfield_access(id, member, ty, |this, access| {
             let BitfieldAccess {
                 word,
@@ -3139,7 +3137,7 @@ impl<'a> Codegen<'a> {
             }
         }
 
-        let mut result = JoiningBuilder::new(&self.proj, "|", "0");
+        let mut result = JoiningBuilder::new(self.proj, "|", "0");
         let mut number = |this: &mut Self, number: &ComptimeInt, shift: u32| {
             result.next(|buffer| {
                 usebuf!(this, buffer, {
@@ -3297,18 +3295,15 @@ impl<'a> Codegen<'a> {
         tr: &GenericTrait,
         method: StrId,
         scope: ScopeId,
-        finish: impl FnOnce(&mut TypeChecker, FunctionId) -> TypeArgs + Clone,
+        finish: impl FnOnce(&Project, FunctionId) -> TypeArgs + Clone,
     ) -> GenericFn {
-        // TODO: fix this disgusting hack
-        let Some(mfn) = TypeChecker::with_project(&mut self.proj, |tc| {
-            tc.get_member_fn_ex(inst, Some(tr), method, scope, finish)
-        }) else {
+        let Some(mfn) = self.lookup_trait_fn(inst, tr, method, scope, finish) else {
             panic!(
                 "searching from scope: '{}', cannot find implementation for method '{}::{}' for type '{}'",
                 full_name(&self.proj.scopes, &self.proj.strings, scope, Strings::EMPTY),
-                tr.name2(self.proj),
+                tr.name(self.proj),
                 strdata!(self, method),
-                inst.name2(self.proj)
+                inst.name(self.proj)
             )
         };
 
@@ -3316,9 +3311,9 @@ impl<'a> Codegen<'a> {
             panic!(
                 "searching from scope: '{}', get_member_fn_ex picked invalid function for implementation for method '{}::{}' for type '{}'",
                 full_name(&self.proj.scopes, &self.proj.strings, scope, Strings::EMPTY),
-                tr.name2(self.proj),
+                tr.name(self.proj),
                 strdata!(self, method),
-                inst.name2(self.proj)
+                inst.name(self.proj)
             )
         }
 
@@ -3352,7 +3347,7 @@ impl<'a> Codegen<'a> {
                     }
 
                     if let Some(real) = state.func.ty_args.get(&id) {
-                        result.push_str(&real.name2(self.proj));
+                        result.push_str(&real.name(self.proj));
                     } else {
                         result.push_str(strdata!(self, self.proj.scopes.get(id).name.data));
                     }
@@ -3375,6 +3370,22 @@ impl<'a> Codegen<'a> {
         print_type_params(&mut result, &func.type_params);
 
         Expr::new(self.str_interp.string_ty.unwrap(), ExprData::GeneratedString(result))
+    }
+}
+
+impl SharedStuff for Codegen<'_> {
+    fn resolve_ext_type(&mut self, id: ExtensionId) -> TypeId {
+        *self.proj.scopes.get(id).kind.as_extension().unwrap()
+    }
+
+    fn do_resolve_impls(&mut self, _: UserTypeId) {}
+
+    fn proj(&self) -> &Project {
+        self.proj
+    }
+
+    fn extension_cache(&mut self) -> &mut crate::typecheck::ExtensionCache {
+        &mut self.ext_cache
     }
 }
 
@@ -3475,13 +3486,13 @@ impl StrInterp {
             .scopes
             .lang_types
             .get(&Strings::LANG_STRING)
-            .map(|&ut| GenericUserType::from_id(&proj.scopes, &mut proj.types, ut));
+            .map(|&ut| GenericUserType::from_id(&proj.scopes, &proj.types, ut));
         Self {
             fmt_arg: proj
                 .scopes
                 .lang_types
                 .get(&Strings::LANG_FMT_ARG)
-                .map(|&ut| GenericUserType::from_id(&proj.scopes, &mut proj.types, ut)),
+                .map(|&ut| GenericUserType::from_id(&proj.scopes, &proj.types, ut)),
             string_ty: string.as_ref().map(|s| proj.types.insert(Type::User(s.clone()))),
             string,
             opts: proj.strings.get("opts").unwrap(),
