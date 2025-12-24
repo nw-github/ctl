@@ -45,16 +45,16 @@ pub extern fn ptr_diff<T>(a: ^T, b: ^T): int;
 
 
 @(c_opaque, c_name(CTL_MEMSET))
-pub extern fn memset(dst: ^mut u8, c: c_int, len: uint): ^mut u8;
+pub extern fn memset(dst: ^mut void, c: c_int, len: uint): ^mut void;
 
 @(c_opaque, c_name(CTL_MEMCPY))
-pub extern fn memcpy(dst: ^mut u8, src: ^u8, len: uint): ^mut u8;
+pub extern fn memcpy(dst: ^mut void, src: ^void, len: uint): ^mut void;
 
 @(c_opaque, c_name(CTL_MEMMOVE))
-pub extern fn memmove(dst: ^mut u8, src: ^u8, len: uint): ^mut u8;
+pub extern fn memmove(dst: ^mut void, src: ^void, len: uint): ^mut void;
 
 @(c_opaque, c_name(CTL_MEMCMP))
-pub extern fn memcmp(dst: ^u8, src: ^u8, len: uint): c_int;
+pub extern fn memcmp(dst: ^void, src: ^void, len: uint): c_int;
 
 @(c_opaque, c_name(CTL_STRLEN))
 pub extern fn strlen(ptr: ^c_char): uint;
