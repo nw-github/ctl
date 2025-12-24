@@ -205,10 +205,10 @@ pub extension IntegralImpl<T: Integral> for T {
     ///
     /// Returns the position of the start of the digits within `buf`
     pub unsafe fn write_digits(my mut this, buf: [mut u8..], radix: u32, upper: bool): uint {
-        static UPPER_DIGITS: [u8; 36] = *b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-        static LOWER_DIGITS: [u8; 36] = *b"0123456789abcdefghijklmnopqrstuvwxyz";
+        static UPPER_DIGITS: *[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        static LOWER_DIGITS: *[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
 
-        let digits = upper then &UPPER_DIGITS else &LOWER_DIGITS;
+        let digits = upper then UPPER_DIGITS else LOWER_DIGITS;
         let radix = radix as! int;
         mut pos = buf.len();
         loop {
@@ -244,12 +244,12 @@ pub extension IntegralImpl<T: Integral> for T {
     fn format_into(my mut this, f: *mut Formatter, radix: u32) {
         if std::mem::size_of::<T>() <= std::mem::size_of::<u128>() {
             mut buf: [u8; std::mem::size_of::<u128>() * 8];
-            let pos = unsafe this.write_digits(buf[..], radix, f.options().upper);
-            let buf = unsafe str::from_utf8_unchecked(buf[pos..]);
-            f.pad_integral(negative: this < 0.cast(), value: buf, prefix: match radix {
-                 2 => ?"0b",
-                 8 => ?"0o",
-                16 => ?"0x",
+            let start = unsafe this.write_digits(buf[..], radix, f.options().upper);
+            let digits = unsafe str::from_utf8_unchecked(buf[start..]);
+            f.pad_integral(negative: this < 0.cast(), digits:, prefix: match radix {
+                 2 => "0b",
+                 8 => "0o",
+                16 => "0x",
                  _ => null,
             });
         } else {

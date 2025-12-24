@@ -13,7 +13,7 @@ pub struct Vec<T> {
 
     pub fn with_capacity(cap: uint): This {
         mut self: This = Vec::new();
-        self.reserve(cap);
+        self.reserve(add: cap);
         self
     }
 
@@ -143,7 +143,7 @@ pub struct Vec<T> {
         }
     }
 
-    pub fn reserve(mut this, add: uint) => this.do_reserve(this.len + add);
+    pub fn reserve(mut this, kw add: uint) => this.do_reserve(this.len + add);
 
     pub fn get(this, idx: uint): ?*T {
         if idx < this.len {
@@ -157,7 +157,9 @@ pub struct Vec<T> {
         }
     }
 
-    pub unsafe fn set_len(mut this, len: uint) => this.len = len;
+    pub unsafe fn set_len(mut this, len: uint) {
+        this.len = len;
+    }
 
     fn grow(mut this) => this.do_reserve(this.cap * 2);
 

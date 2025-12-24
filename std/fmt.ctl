@@ -1,6 +1,6 @@
 pub trait Write {
     fn write_str(mut this, data: str): ?uint;
-    fn write_char(mut this, data: char): ?uint => this.write_str(data.encode_utf8(&mut [0u8; 4]));
+    fn write_char(mut this, data: char): ?uint => this.write_str(data.encode_utf8(&mut [0; 4]));
 }
 
 pub struct Formatter {
@@ -18,7 +18,7 @@ pub struct Formatter {
         this.write.write_str(value);
     }
 
-    pub fn pad_integral(mut this, kw negative: bool, kw prefix: ?str, kw value: str) {
+    pub fn pad_integral(mut this, kw negative: bool, kw prefix: ?str, kw digits: str) {
         // TODO: actually pad
         if negative {
             this.write.write_char('-');
@@ -30,7 +30,7 @@ pub struct Formatter {
             this.write.write_str(prefix);
         }
 
-        this.write.write_str(value);
+        this.write.write_str(digits);
     }
 
     impl Write {
@@ -113,15 +113,14 @@ pub struct StringBuilder {
                 return 0;
             }
 
-            let new_len = this.buffer.len() + len;
-            this.buffer.reserve(new_len);
+            this.buffer.reserve(add: len);
             unsafe {
                 std::mem::copy(
                     dst: this.buffer.as_raw_mut().add(this.buffer.len()),
                     src: data.as_raw(),
                     num: len,
                 );
-                this.buffer.set_len(new_len);
+                this.buffer.set_len(this.buffer.len() + len);
                 len
             }
         }

@@ -37,7 +37,7 @@ pub extension CharImpl for char {
     }
 
     impl Format {
-        fn fmt(this, f: *mut Formatter) => f.pad(this.encode_utf8(&mut [0u8; 4]));
+        fn fmt(this, f: *mut Formatter) => f.pad(this.encode_utf8(&mut [0; 4]));
     }
 
     pub unsafe fn from_u32_unchecked(v: u32): char => unsafe std::mem::transmute(v);
@@ -107,7 +107,7 @@ pub extension CharImpl for char {
     pub fn max_value(): char => '\u{10ffff}';
 
     pub fn encode_utf8(my this, buf: *mut [u8; 4]): str {
-        unsafe this.encode_utf8_unchecked(buf[..].as_raw_mut())
+        unsafe this.encode_utf8_unchecked(buf.as_raw_mut())
     }
 
     pub unsafe fn encode_utf8_unchecked(my this, ptr: ^mut u8): str {
