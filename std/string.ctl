@@ -9,21 +9,50 @@ pub struct str {
     span: [u8..],
 
     pub fn from_utf8(span: [u8..]): ?str {
-        // TODO: actually validate
+        mut iter = span.iter();
+        while iter.next() is ?byte0 {
+            let len = utf8::sequence_length(*byte0)?;
+            mut cp = *byte0 as u32;
+            match len {
+                1 => {},
+                2 => {
+                    let byte1 = *iter.next()?;
+                    cp = ((cp << 6) & 0x7ff) + (byte1 as u32 & 0x3f);
+                }
+                3 => {
+                    let byte1 = *iter.next()?;
+                    let byte2 = *iter.next()?;
+                    cp = ((cp << 12) & 0xffff) + ((byte1 as u32 << 6) & 0xfff);
+                    cp += byte2 as u32 & 0x3f;
+                }
+                4 => {
+                    let byte1 = *iter.next()?;
+                    let byte2 = *iter.next()?;
+                    let byte3 = *iter.next()?;
+                    cp = ((cp << 18) & 0x1fffff) + ((byte1 as u32 << 12) & 0x3ffff);
+                    cp += (byte2 as u32 << 6) & 0xfff;
+                    cp += byte3 as u32 & 0x3f;
+                }
+                _ => unsafe std::hint::unreachable_unchecked(),
+            }
 
-        unsafe {
-            str::from_utf8_unchecked(span)
+            if char::from_u32(cp)?.len_utf8() != len {
+                // Overlong sequence
+                return null;
+            }
         }
+
+        unsafe str::from_utf8_unchecked(span)
     }
 
     pub unsafe fn from_utf8_unchecked(span: [u8..]): str => str(span:);
 
     pub unsafe fn from_cstr(s: ^c_char): ?str {
-        str::from_utf8(unsafe Span::new((&raw *s).cast(), std::intrin::strlen(s)))
+        str::from_utf8(unsafe Span::new(s.cast(), std::intrin::strlen(s)))
     }
 
     pub unsafe fn from_cstr_unchecked(s: ^c_char): str {
-        str(span: unsafe Span::new((&raw *s).cast(), std::intrin::strlen(s)))
+        str(span: unsafe Span::new(s.cast(), std::intrin::strlen(s)))
     }
 
     pub fn len(this): uint => this.span.len();
@@ -37,9 +66,9 @@ pub struct str {
 
     pub fn substr<R: RangeBounds<uint>>(this, range: R): ?str {
         let span = this.span[range];
-        if span.first() is ?ch and !is_char_boundary(*ch) {
+        if span.first() is ?ch and !utf8::is_char_boundary(*ch) {
             return null;
-        } else if span.last() is ?ch and !is_char_boundary(*ch) {
+        } else if span.last() is ?ch and !utf8::is_char_boundary(*ch) {
             return null;
         }
         str(span:)
@@ -118,30 +147,34 @@ pub struct Chars {
 
     impl Iterator<char> {
         fn next(mut this): ?char {
-            unsafe if this.s.get(0) is ?cp {
-                mut cp = *cp as u32;
-                if cp < 0x80 {
-                    this.s = this.s[1u..];
-                } else if cp >> 5 == 0x6 {
-                    cp = ((cp << 6) & 0x7ff) + (*this.s.get_unchecked(1) as u32 & 0x3f);
-                    this.s = this.s[2u..];
-                } else if cp >> 4 == 0xe {
-                    cp = (
-                        (cp << 12) & 0xffff) +
-                        ((*this.s.get_unchecked(1) as u32 << 6) & 0xfff
-                    );
-                    cp += *this.s.get_unchecked(2) as u32 & 0x3f;
-                    this.s = this.s[3u..];
-                } else if cp >> 3 == 0x1e {
-                    cp = (
-                        (cp << 18) & 0x1fffff) +
-                        ((*this.s.get_unchecked(1) as u32 << 12) & 0x3ffff
-                    );
-                    cp += (*this.s.get_unchecked(2) as u32 << 6) & 0xfff;
-                    cp += *this.s.get_unchecked(3) as u32 & 0x3f;
-                    this.s = this.s[4u..];
-                } else {
-                    std::hint::unreachable_unchecked();
+            unsafe if this.s.get(0) is ?lead {
+                mut cp = *lead as u32;
+                match utf8::sequence_length(*lead) {
+                    ?1 => {
+                        this.s = this.s[1u..];
+                    }
+                    ?2 => {
+                        cp = ((cp << 6) & 0x7ff) + (*this.s.get_unchecked(1) as u32 & 0x3f);
+                        this.s = this.s[2u..];
+                    }
+                    ?3 => {
+                        cp = (
+                            (cp << 12) & 0xffff) +
+                            ((*this.s.get_unchecked(1) as u32 << 6) & 0xfff
+                        );
+                        cp += *this.s.get_unchecked(2) as u32 & 0x3f;
+                        this.s = this.s[3u..];
+                    }
+                    ?4 => {
+                        cp = (
+                            (cp << 18) & 0x1fffff) +
+                            ((*this.s.get_unchecked(1) as u32 << 12) & 0x3ffff
+                        );
+                        cp += (*this.s.get_unchecked(2) as u32 << 6) & 0xfff;
+                        cp += *this.s.get_unchecked(3) as u32 & 0x3f;
+                        this.s = this.s[4u..];
+                    }
+                    _ => std::hint::unreachable_unchecked()
                 }
 
                 char::from_u32_unchecked(cp)
@@ -184,6 +217,24 @@ pub struct Utf16 {
     }
 }
 
-// From the Rust standard library:
-// This is bit magic equivalent to: b < 128 or b >= 192
-fn is_char_boundary(b: u8): bool => b as! i8 >= -0x40;
+
+mod utf8 {
+    // From the Rust standard library:
+    // This is bit magic equivalent to: b < 128 or b >= 192
+    pub fn is_char_boundary(b: u8): bool => b as! i8 >= -0x40;
+
+    pub fn sequence_length(lead: u8): ?uint {
+        if lead < 0x80 {
+            1
+        } else if lead >> 5 == 0x6 {
+            2
+        } else if lead >> 4 == 0xe {
+            3
+        } else if lead >> 3 == 0x1e {
+            4
+        } else {
+            null
+        }
+    }
+}
+

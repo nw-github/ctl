@@ -51,15 +51,11 @@ pub extension CharImpl for char {
     }
 
     pub fn len_utf8(my this): uint {
-        let cp = this as u32;
-        if cp < 0x80 {
-            1
-        } else if cp < 0x800 {
-            2
-        } else if cp < 0x10000 {
-            3
-        } else {
-            4
+        match this as u32 {
+            ..0x80 => 1,
+            ..0x800 => 2,
+            ..0x10000 => 3,
+            _ => 4,
         }
     }
 
@@ -105,6 +101,7 @@ pub extension CharImpl for char {
 
     pub fn min_value(): char => '\0';
     pub fn max_value(): char => '\u{10ffff}';
+    pub fn replacement_marker(): char => '\u{fffd}';
 
     pub fn encode_utf8(my this, buf: *mut [u8; 4]): str {
         unsafe this.encode_utf8_unchecked(buf.as_raw_mut())
