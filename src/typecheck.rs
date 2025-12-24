@@ -4825,7 +4825,7 @@ impl TypeChecker {
             check_ty!(
                 union.tag,
                 Error::new(
-                    "union tag makes this struct recursive",
+                    "union tag makes this type recursive",
                     self.proj.scopes.get(id).name.span
                 )
             );
