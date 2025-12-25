@@ -1,4 +1,5 @@
 use std::fmt::*;
+use std::libc;
 
 pub struct SourceLocation {
     pub file: str,
@@ -72,14 +73,71 @@ pub fn debug_assert(
     }
 }
 
-@(feature(hosted, io))
-@(panic_handler)
+@(thread_local, feature(hosted))
+static mut CTL_PANIC_JMPBUF: ?libc::JmpBuf = null;
+
+@(thread_local, feature(hosted))
+static mut CTL_PANIC_INFO: str = "";
+
+@(thread_local, feature(hosted))
+static mut IS_PANICKING: bool = false;
+
+pub struct PanicInfo {
+    args: Arguments,
+    loc: SourceLocation,
+
+    impl Format {
+        fn fmt(this, f: *mut Formatter) {
+            if this.loc.func is ?func {
+                write(f, "fatal error in function '{func}' at {this.loc}:\n\t{this.args}")
+            } else {
+                write(f, "fatal error at {this.loc}: {this.args}")
+            }
+        }
+    }
+}
+
+@(panic_handler, feature(hosted, io))
 fn panic_handler(args: Arguments, loc: SourceLocation): never {
-    if loc.func is ?func {
-        eprintln("fatal error in function '{func}' at {loc}:\n\t{args}");
-    } else {
-        eprintln("fatal error at {loc}: {args}");
+    let info = PanicInfo(args:, loc:);
+    if unsafe IS_PANICKING {
+        eprintln("During the execution of the panic_handler, this panic occured:\n{info}");
+        unsafe libc::abort();
     }
 
-    unsafe super::libc::abort();
+    unsafe {
+        IS_PANICKING = true;
+        if &mut CTL_PANIC_JMPBUF is ?jmp_buf {
+            CTL_PANIC_INFO = info.to_str();
+            libc::longjmp(jmp_buf, 1);
+        }
+    }
+
+    eprintln(info);
+    unsafe libc::abort();
+}
+
+@(feature(hosted))
+pub union CatchResult<T> {
+    Ok(T),
+    Err(str),
+}
+
+@(feature(hosted))
+pub fn catch_panic<R, A>(func: fn(A) => R, arg: A): CatchResult<R> {
+    let buf = unsafe CTL_PANIC_JMPBUF.insert(std::mem::zeroed());
+    // TODO: Make this an intrinsic so that we use the macro and follow the very specific semantics
+    // of setjmp
+    let res = match unsafe libc::_setjmp(buf) {
+        0 => CatchResult::Ok(func(arg)),
+        _ => CatchResult::Err(unsafe CTL_PANIC_INFO),
+    };
+
+    unsafe {
+        IS_PANICKING = false;
+        CTL_PANIC_INFO = "";
+        CTL_PANIC_JMPBUF.take();
+    }
+
+    res
 }
