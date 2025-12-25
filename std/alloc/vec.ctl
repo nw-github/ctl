@@ -219,3 +219,50 @@ pub struct Vec<T> {
     @(inline(always))
     pub fn []=<R: RangeBounds<uint>>(mut this, r: R, rhs: [T..]) => this.as_span_mut()[r] = rhs;
 }
+
+unittest "@[T; N] initialization" {
+    mut x = @[0xff; 5];
+    assert_eq(x.len(), 5);
+    assert_eq(x.pop(), 0xff);
+    assert_eq(x.pop(), 0xff);
+    assert_eq(x.pop(), 0xff);
+    assert_eq(x.pop(), 0xff);
+    assert_eq(x.pop(), 0xff);
+    assert_eq(x.pop(), null);
+}
+
+unittest "list initialization" {
+    mut x = @[1, 2, 3, 4];
+    assert_eq(x.len(), 4);
+    assert_eq(x.pop(), 4);
+    assert_eq(x.pop(), 3);
+    assert_eq(x.pop(), 2);
+    assert_eq(x.pop(), 1);
+    assert_eq(x.pop(), null);
+}
+
+unittest "removal" {
+    mut vec = @[1, 2, 3, 4, 5, 6, 7];
+    assert_eq(vec.swap_remove(1), 2);
+    assert_eq(vec.len(), 6);
+    assert_eq(vec.remove(3), 4);
+    assert_eq(vec.len(), 5);
+    assert_eq(vec[..], [1, 7, 3, 5, 6][..]);
+}
+
+unittest "push and insert" {
+    mut x: [int] = @[];
+    x.push(1);
+    x.push(2);
+    x.push(3);
+    assert_eq(x.len(), 3);
+
+    x.insert(idx: 1, 4);
+    assert_eq(x.len(), 4);
+
+    assert_eq(x.pop(), 3);
+    assert_eq(x.pop(), 2);
+    assert_eq(x.pop(), 4);
+    assert_eq(x.pop(), 1);
+    assert_eq(x.pop(), null);
+}

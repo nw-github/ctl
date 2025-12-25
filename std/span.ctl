@@ -312,3 +312,12 @@ mod ext {
         }
     }
 }
+
+unittest "slice with ranges" {
+    mut x = [1, 2, 3, 4];
+    assert_eq(x[1u..2u], [2][..]);
+    assert_eq(x[1u..=2u], [2, 3][..]);
+    assert_eq(x[..2u], [1, 2][..]);
+    assert_eq(x[..=2u], [1, 2, 3][..]);
+    assert_eq(x[..], [1, 2, 3, 4][..]);
+}

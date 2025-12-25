@@ -120,3 +120,21 @@ mod ext {
         pub fn contains(this, rhs: *T): bool => this.start <= rhs and this.end >= rhs;
     }
 }
+
+unittest "range inclusive" {
+    mut r = u32::min_value()..=u32::min_value();
+    assert_eq(r.next(), 0);
+    assert_eq(r.next(), null);
+
+    mut r = u32::max_value()..=u32::max_value();
+    assert_eq(r.next(), 4294967295);
+    assert_eq(r.next(), null);
+
+    mut r = i32::min_value()..=i32::min_value();
+    assert_eq(r.next(), -2147483648);
+    assert_eq(r.next(), null);
+
+    mut r = i32::max_value()..=i32::max_value();
+    assert_eq(r.next(), 2147483647);
+    assert_eq(r.next(), null);
+}

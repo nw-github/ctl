@@ -242,7 +242,6 @@ pub struct Utf16 {
     }
 }
 
-
 mod utf8 {
     // From the Rust standard library:
     // This is bit magic equivalent to: b < 128 or b >= 192
@@ -263,3 +262,7 @@ mod utf8 {
     }
 }
 
+unittest "from_utf8 overlong encoding" {
+    assert_eq(str::from_utf8(b"\xc0\xaf\xc1\x81"[..]), null); // Overlong encoding of '/A'
+    assert_eq(str::from_utf8(b"\x2f\x41"[..]), "/A");
+}

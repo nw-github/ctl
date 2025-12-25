@@ -292,3 +292,38 @@ mod ext {
         }
     }
 }
+
+mod test {
+    extern fn sprintf(dst: ^mut c_char, fmt: ^c_char, ...): c_int;
+
+    unittest "format pointer to format type" {
+        let ptr = &10i32;
+        mut buf = [0u8; 1024];
+        let len = unsafe sprintf(
+            dst: buf.as_raw_mut().cast(),
+            fmt: "Cool: %p %d!\0".as_raw().cast(),
+            ptr,
+            *ptr,
+        ) as! uint;
+
+        let ctl = "Cool: {ptr:p} {ptr}!".to_str();
+        assert_eq(ctl.len(), len);
+        assert_eq(ctl.as_bytes(), buf[..len]);
+    }
+
+    unittest "format pointer to non-format type" {
+        struct NoFmt {}
+
+        let ptr = &NoFmt();
+        mut buf = [0u8; 1024];
+        let len = unsafe sprintf(
+            dst: buf.as_raw_mut().cast(),
+            fmt: "%p\0".as_raw().cast(),
+            ptr,
+        ) as! uint;
+
+        let ctl = "{ptr:p}".to_str();
+        assert_eq(ctl.len(), len);
+        assert_eq(ctl.as_bytes(), buf[..len]);
+    }
+}

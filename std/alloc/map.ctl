@@ -242,3 +242,39 @@ struct Fnv1a {
         fn finish(this): u64 => this.val;
     }
 }
+
+unittest "init" {
+    let map = [10: "a", 20: "b", 30: "c"];
+    assert_eq(map[&10], "a");
+    assert_eq(map[&20], "b");
+    assert_eq(map[&30], "c");
+}
+
+unittest "insert and remove" {
+    mut map: [str: str] = [:];
+    assert_eq(map.len(), 0);
+
+    assert_eq(map.insert("e", "eternal"), null);
+    assert_eq(map.insert("d", "dragonfruit"), null);
+    assert_eq(map.insert("c", "cat"), null);
+    assert_eq(map.insert("b", "banana"), null);
+    assert_eq(map.insert("a", "apple"), null);
+
+    assert_eq(map.len(), 5);
+
+    map.clear();
+    assert_eq(map.len(), 0);
+
+    assert_eq(map.insert("e", "eternal"), null);
+    assert_eq(map.insert("d", "dragonfruit"), null);
+    assert_eq(map.insert("c", "cat"), null);
+    assert_eq(map.insert("b", "banana"), null);
+    assert_eq(map.insert("a", "apple"), null);
+    assert_eq(map.len(), 5);
+
+    assert_eq(map.remove(&"c"), "cat");
+    assert_eq(map.len(), 4);
+
+    assert_eq(map.insert("a", "asthma"), "apple");
+    assert_eq(map.len(), 4);
+}
