@@ -2856,6 +2856,11 @@ impl<'a> Codegen<'a> {
             write_de!(self.buffer, "static ");
         }
 
+        let strid_thrd_lcl = self.proj.strings.get("thread_local");
+        if strid_thrd_lcl.is_some_and(|id| var.attrs.has(id)) {
+            write_de!(self.buffer, "_Thread_local ");
+        }
+
         self.emit_type(ty);
         write_if!(emit_const, self.buffer, " const");
         write_de!(self.buffer, " ");
