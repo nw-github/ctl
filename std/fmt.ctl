@@ -189,7 +189,7 @@ pub struct Arguments {
             }
 
             if this.parts.len() > this.args.len() {
-                f.write_str(*this.parts.last()!);
+                f.write_str(unsafe *this.parts.get_unchecked(this.parts.len() - 1));
             }
         }
     }
@@ -228,7 +228,8 @@ pub fn write<T: Write, U: Format>(write: *mut T, args: U) {
 }
 
 pub fn writeln<T: Write, U: Format>(write: *mut T, args: U) {
-    "{args}\n".fmt(&mut Formatter::new(write))
+    args.fmt(&mut Formatter::new(write));
+    write.write_char('\n');
 }
 
 mod ext {

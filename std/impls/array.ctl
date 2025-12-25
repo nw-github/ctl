@@ -13,6 +13,16 @@ pub extension ArrayImpl<A: Array<T>, T> for A {
     pub fn as_span_mut(mut this): [mut T..] => unsafe SpanMut::new(this.as_raw_mut(), this.len());
 
     @(inline(always))
+    pub unsafe fn subspan_unchecked<R: RangeBounds<uint>>(this, range: R): [T..] {
+        unsafe this.as_span().subspan_unchecked(range)
+    }
+
+    @(inline(always))
+    pub fn subspan_mut_unchecked<R: RangeBounds<uint>>(mut this, range: R): [mut T..] {
+        unsafe this.as_span_mut().subspan_unchecked(range)
+    }
+
+    @(inline(always))
     pub fn iter(this): std::span::Iter<T> => this.as_span().iter();
 
     @(inline(always))

@@ -223,35 +223,30 @@ pub extension IntegralImpl<T: Integral> for T {
                 this = (dividend / radix).cast();
                 (dividend % radix).cast()
             };
-            let digit = digit < 0 then -digit else digit;
-            unsafe *buf.as_raw_mut().add(--pos) = digits[digit];
+            let digit = (digit < 0 then -digit else digit).cast::<uint>();
+            unsafe *buf.as_raw_mut().add(--pos) = *digits.get_unchecked(digit);
         } while this != 0.cast();
 
         pos
     }
 
     impl Debug {
-        fn dbg(this, f: *mut Formatter) => this.format_into(f, 10);
+        fn dbg(this, f: *mut Formatter) => this.format_into(f, 10, null);
     }
 
     impl Format {
-        fn fmt(this, f: *mut Formatter) => this.format_into(f, 10);
-        fn bin(this, f: *mut Formatter) => this.format_into(f, 2);
-        fn hex(this, f: *mut Formatter) => this.format_into(f, 16);
-        fn oct(this, f: *mut Formatter) => this.format_into(f, 8);
+        fn fmt(this, f: *mut Formatter) => this.format_into(f, 10, null);
+        fn bin(this, f: *mut Formatter) => this.format_into(f, 2, "0b");
+        fn hex(this, f: *mut Formatter) => this.format_into(f, 16, "0x");
+        fn oct(this, f: *mut Formatter) => this.format_into(f, 8, "0o");
     }
 
-    fn format_into(my mut this, f: *mut Formatter, radix: u32) {
+    fn format_into(my mut this, f: *mut Formatter, radix: u32, prefix: ?str) {
         if std::mem::size_of::<T>() <= std::mem::size_of::<u128>() {
             mut buf: [u8; std::mem::size_of::<u128>() * 8];
-            let start = unsafe this.write_digits(buf[..], radix, f.options().upper);
-            let digits = unsafe str::from_utf8_unchecked(buf[start..]);
-            f.pad_integral(negative: this < 0.cast(), digits:, prefix: match radix {
-                 2 => "0b",
-                 8 => "0o",
-                16 => "0x",
-                 _ => null,
-            });
+            let start = unsafe this.write_digits(buf.subspan_mut_unchecked(..), radix, f.options().upper);
+            let digits = unsafe str::from_utf8_unchecked(buf.subspan_unchecked(start..));
+            f.pad_integral(negative: this < 0.cast(), digits:, prefix:);
         } else {
             "<TODO: format int >128 bits>".fmt(f);
         }
