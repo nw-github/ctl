@@ -7250,7 +7250,8 @@ pub trait SharedStuff {
             finish: impl FnOnce(&Project, FunctionId) -> TypeArgs + Clone,
         ) -> Option<MemberFn> {
             for tr in proj.scopes.get(ut.id).impls.clone().into_iter_checked() {
-                for imp in proj.scopes.walk_super_traits_ex(&proj.types, tr) {
+                for mut imp in proj.scopes.walk_super_traits_ex(&proj.types, tr) {
+                    imp.ty_args.copy_args(&wanted_tr.ty_args);
                     if wanted_tr != &imp {
                         continue;
                     }
