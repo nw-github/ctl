@@ -30,6 +30,10 @@ pub extension RawImpl<T> for ^T {
             )));
         }
     }
+
+    impl Pointer {
+        fn ptr(this, f: *mut Formatter) => this.dbg(f);
+    }
 }
 
 pub extension RawMutImpl<T> for ^mut T {
@@ -71,6 +75,10 @@ pub extension RawMutImpl<T> for ^mut T {
 
     impl Debug {
         fn dbg(this, f: *mut Formatter) => (*this as ^T).dbg(f);
+    }
+
+    impl Pointer {
+        fn ptr(this, f: *mut Formatter) => (*this as ^T).ptr(f);
     }
 }
 

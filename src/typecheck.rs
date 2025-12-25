@@ -2764,24 +2764,15 @@ impl TypeChecker {
                 CExpr::new(self.make_lang_type_by_name("string", [], span), CExprData::String(s))
             }
             PExprData::StringInterpolation { strings, args } => {
-                let Some(fmt_id) = self.get_lang_type_or_err("fmt_format", span) else {
-                    return Default::default();
-                };
-
-                let Some(dbg_id) = self.get_lang_type_or_err("fmt_debug", span) else {
-                    return Default::default();
-                };
-
                 let mut out = Vec::with_capacity(args.len());
                 for (expr, opts) in args {
                     let span = expr.span;
                     let expr = self.check_expr(expr, None);
-                    let ty = expr.ty.strip_references(&self.proj.types);
-                    if ty == TypeId::UNKNOWN {
+                    if expr.ty.strip_references(&self.proj.types) == TypeId::UNKNOWN {
                         continue;
                     }
 
-                    let mut target_tr = fmt_id;
+                    let mut target_tr = "fmt_format";
                     let mut target_fn = "fmt";
                     let mut upper = false;
                     match opts.as_ref().and_then(|opts| opts.typ) {
@@ -2792,7 +2783,10 @@ impl TypeChecker {
                                 "o" | "O" => "oct",
                                 "b" | "B" => "bin",
                                 "e" | "E" => "exp",
-                                "p" | "P" => "ptr",
+                                "p" | "P" => {
+                                    target_tr = "fmt_pointer";
+                                    "ptr"
+                                }
                                 typ => {
                                     self.proj.diag.report(Error::new(
                                         format!("invalid format type '{typ}'"),
@@ -2804,22 +2798,26 @@ impl TypeChecker {
                             upper = typ.chars().next().is_some_and(|ch| ch.is_ascii_uppercase());
                         }
                         Some(FormatType::Debug) => {
-                            target_tr = dbg_id;
+                            target_tr = "fmt_debug";
                             target_fn = "dbg";
                         }
                         None => {}
                     }
 
+                    let Some(target_tr) = self.get_lang_type_or_err(target_tr, span) else {
+                        continue;
+                    };
+
                     let fmt = self.proj.strings.get_or_intern_static(target_fn);
                     let Some(mfn) = self.lookup_trait_fn(
-                        ty,
+                        expr.ty,
                         &GenericTrait::from_type_args(&self.proj.scopes, target_tr, []),
                         fmt,
                         self.current,
                         |proj, id| TypeArgs::in_order(&proj.scopes, id, []),
                     ) else {
                         self.proj.diag.report(Error::doesnt_implement(
-                            &type_name!(self, ty),
+                            &type_name!(self, expr.ty),
                             strdata!(self, target_tr.name(&self.proj.scopes).data),
                             span,
                         ));
@@ -2853,8 +2851,6 @@ impl TypeChecker {
                         res.zero = opts.zero;
                     }
 
-                    let ptr_to_unk = self.proj.types.insert(Type::Ptr(TypeId::UNKNOWN));
-                    let expr = expr.auto_deref(&self.proj.types, ptr_to_unk);
                     out.push((expr, res));
                 }
 

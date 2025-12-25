@@ -3165,7 +3165,7 @@ impl<'a> Codegen<'a> {
             write_de!(self.buffer, " {tmp}[{}]={{", args.len());
             for (mut expr, opts) in args {
                 expr.ty = expr.ty.with_templates(&self.proj.types, &state.func.ty_args);
-                write_de!(self.buffer, "{{.value=");
+                write_de!(self.buffer, "{{.value=&");
                 self.emit_tmpvar_ident(expr, state);
                 write_de!(self.buffer, ",.format=");
                 self.emit_member_fn(state, opts.func, scope);
