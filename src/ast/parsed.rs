@@ -253,7 +253,13 @@ impl Path {
     }
 
     pub fn final_component_span(&self) -> Span {
-        self.components.last().unwrap().0.span
+        self.components.last().map(|c| c.0.span).unwrap_or_else(|| match self.origin {
+            PathOrigin::Root(span) => span,
+            PathOrigin::Super(span) => span,
+            PathOrigin::Normal => self.components.first().unwrap().0.span,
+            PathOrigin::Infer(span) => span,
+            PathOrigin::This(span) => span,
+        })
     }
 }
 
