@@ -2137,9 +2137,8 @@ impl<'a> Codegen<'a> {
                 write_de!(self.buffer, "({tmp}<0?-{tmp}:{tmp})");
             }
             "numeric_cast" => {
-                let (_, expr) = args.shift_remove_index(0).unwrap();
                 self.emit_cast(ret);
-                self.emit_expr(expr, state);
+                self.emit_expr(args.shift_remove_index(0).unwrap().1, state);
             }
             "max_value" => {
                 self.emit_literal(ret.as_integral(&self.proj.types, true).unwrap().max(), ret)
@@ -2266,22 +2265,17 @@ impl<'a> Codegen<'a> {
             }
             "type_id" => {
                 self.emit_cast(ret);
-                write_de!(self.buffer, "{{ .tag = {} }}", func.first_type_arg().unwrap().as_raw());
+                write_de!(self.buffer, "{{.tag={}}}", func.first_type_arg().unwrap().as_raw());
             }
             "type_name" => {
                 self.emit_string_literal(&func.first_type_arg().unwrap().name(self.proj));
             }
             "read_volatile" => {
+                const COMPLAINT: &str = "ICE: read_volatile should receive one argument";
                 write_de!(self.buffer, "*(volatile ");
                 self.emit_type(ret);
                 write_de!(self.buffer, " const*)(");
-                self.emit_expr_inline(
-                    args.into_iter()
-                        .next()
-                        .expect("ICE: read_volatile should receive one argument")
-                        .1,
-                    state,
-                );
+                self.emit_expr_inline(args.into_iter().next().expect(COMPLAINT).1, state);
                 write_de!(self.buffer, ")");
             }
             "write_volatile" => {
@@ -2293,7 +2287,7 @@ impl<'a> Codegen<'a> {
                 self.emit_type(arg0.ty);
                 write_de!(self.buffer, ")(");
                 self.emit_expr_inline(arg0, state);
-                write_de!(self.buffer, ") = ");
+                write_de!(self.buffer, ")=");
                 self.emit_expr_inline(args.next().expect(COMPLAINT).1, state);
                 write_de!(self.buffer, ")");
             }
@@ -2302,7 +2296,6 @@ impl<'a> Codegen<'a> {
                     self.proj.scopes.walk(scope).find_map(|s| s.1.kind.as_function().copied());
                 let sl_typ = self.proj.types[ret].as_user().unwrap().id;
                 let func_strid = self.proj.strings.get("func").unwrap();
-                let zero_strid = self.proj.strings.get("0").unwrap();
                 let option_typ = self.proj.scopes.get(sl_typ).members.get(&func_strid).unwrap().ty;
 
                 self.buffer.emit("(");
@@ -2325,7 +2318,10 @@ impl<'a> Codegen<'a> {
                     let str = self.function_name(func, state);
                     let expr = Expr::new(
                         option_typ,
-                        ExprData::VariantInstance(Strings::SOME, [(zero_strid, str)].into()),
+                        ExprData::VariantInstance(
+                            Strings::SOME,
+                            [(Strings::TUPLE_ZERO, str)].into(),
+                        ),
                     );
                     self.emit_expr_inline(expr, state);
                 } else {
@@ -2340,33 +2336,20 @@ impl<'a> Codegen<'a> {
             }
             "ptr_add_signed" | "ptr_add_unsigned" | "ptr_sub_signed" | "ptr_sub_unsigned"
             | "ptr_diff" => {
+                const COMPLAINT: &str = "ICE: ptr intrinsic should receive two arguments";
                 let mut args = args.into_iter();
-                let lhs = args
-                    .next()
-                    .expect("ICE: ptr intrinsic should receive two arguments")
-                    .1
-                    .auto_deref(&self.proj.types, TypeId::UNKNOWN);
-                let rhs = args
-                    .next()
-                    .expect("ICE: ptr intrinsic should receive two arguments")
-                    .1
-                    .auto_deref(&self.proj.types, TypeId::UNKNOWN);
+                let lhs = args.next().expect(COMPLAINT).1;
+                let rhs = args.next().expect(COMPLAINT).1;
 
                 self.emit_cast(ret);
-                write_de!(self.buffer, "(");
+                self.buffer.emit("(");
                 self.emit_expr(lhs, state);
-                write_de!(
-                    self.buffer,
-                    "{}",
-                    match strdata!(self, name) {
-                        "ptr_add_signed" | "ptr_add_unsigned" => "+",
-                        _ => "-",
-                    }
-                );
+                let plus = matches!(strdata!(self, name), "ptr_add_signed" | "ptr_add_unsigned");
+                self.buffer.emit(["-", "+"][plus as usize]);
                 self.emit_expr(rhs, state);
-                write_de!(self.buffer, ")");
+                self.buffer.emit(")");
             }
-            _ => unreachable!(),
+            name => unreachable!("ICE: Attempt to codegen unsupported intrinsic: '{name}'"),
         }
     }
 
