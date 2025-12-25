@@ -80,12 +80,12 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
     //
 
     fn try_item(&mut self) -> Result<Stmt, (Option<Located<Token<'a>>>, Attributes)> {
-        let attrs = self.attributes();
-        let public = self.next_if(Token::Pub);
+        let mut attrs = self.attributes();
+        let is_public = self.next_if(Token::Pub);
         let is_extern = self.next_if(Token::Extern);
         let is_unsafe = self.next_if(Token::Unsafe);
         let conf = FnConfig {
-            tk_public: public.as_ref().map(|t| t.span),
+            tk_public: is_public.as_ref().map(|t| t.span),
             tk_extern: is_extern.as_ref().map(|t| t.span),
             tk_unsafe: is_unsafe.as_ref().map(|t| t.span),
             require_body: is_extern.is_none(),
@@ -135,7 +135,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 // TODO: packed struct Foo: u64 {}
                 Ok(Stmt {
                     attrs,
-                    data: self.structure(public.is_some(), earliest_span, false).map(|base| {
+                    data: self.structure(is_public.is_some(), earliest_span, false).map(|base| {
                         StmtData::Struct { base, packed: matches!(token.data, Token::Packed) }
                     }),
                 })
@@ -149,10 +149,10 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 Ok(Stmt {
                     attrs,
                     data: if is_unsafe.is_some() {
-                        self.structure(public.is_some(), earliest_span, true)
+                        self.structure(is_public.is_some(), earliest_span, true)
                             .map(StmtData::UnsafeUnion)
                     } else {
-                        self.union(public.is_some(), earliest_span)
+                        self.union(is_public.is_some(), earliest_span)
                     },
                 })
             }
@@ -169,7 +169,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 Ok(Stmt {
                     attrs,
                     data: self.r#trait(
-                        public.is_some(),
+                        is_public.is_some(),
                         earliest_span,
                         is_unsafe.is_some(),
                         sealed,
@@ -186,7 +186,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     self.error_no_sync(Error::not_valid_here(&token));
                 }
 
-                Ok(Stmt { attrs, data: self.extension(public.is_some(), earliest_span) })
+                Ok(Stmt { attrs, data: self.extension(is_public.is_some(), earliest_span) })
             }
             Token::Mod => {
                 self.next();
@@ -206,7 +206,12 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     Ok(Stmt {
                         data: Located::new(
                             earliest_span.extended_to(span),
-                            StmtData::Module { public: public.is_some(), file: false, name, body },
+                            StmtData::Module {
+                                public: is_public.is_some(),
+                                file: false,
+                                name,
+                                body,
+                            },
                         ),
                         attrs,
                     })
@@ -215,7 +220,11 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     Ok(Stmt {
                         data: Located::new(
                             earliest_span.extended_to(end.span),
-                            StmtData::ModuleOOL { public: public.is_some(), name, resolved: false },
+                            StmtData::ModuleOOL {
+                                public: is_public.is_some(),
+                                name,
+                                resolved: false,
+                            },
                         ),
                         attrs,
                     })
@@ -242,7 +251,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                                 StmtData::Use(UsePath {
                                     components,
                                     origin: PathOrigin::Root(token.span),
-                                    public: public.is_some(),
+                                    public: is_public.is_some(),
                                     tail: UsePathTail::Ident(ident),
                                 }),
                             ),
@@ -265,7 +274,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                                 StmtData::Use(UsePath {
                                     components,
                                     origin: PathOrigin::Normal,
-                                    public: public.is_some(),
+                                    public: is_public.is_some(),
                                     tail: UsePathTail::Ident(ident),
                                 }),
                             ),
@@ -286,7 +295,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                                 StmtData::Use(UsePath {
                                     components,
                                     origin,
-                                    public: public.is_some(),
+                                    public: is_public.is_some(),
                                     tail: UsePathTail::All,
                                 }),
                             ),
@@ -303,7 +312,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                                 StmtData::Use(UsePath {
                                     components,
                                     origin,
-                                    public: public.is_some(),
+                                    public: is_public.is_some(),
                                     tail: UsePathTail::Ident(ident),
                                 }),
                             ),
@@ -342,7 +351,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     data: Located::new(
                         earliest_span.extended_to(end.span),
                         StmtData::Binding {
-                            public: public.is_some(),
+                            public: is_public.is_some(),
                             constant: matches!(token.data, Token::Const),
                             is_extern: is_extern.is_some(),
                             mutable: mutable.is_some(),
@@ -350,6 +359,57 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                             ty,
                             value,
                         },
+                    ),
+                    attrs,
+                })
+            }
+            Token::UnitTest => {
+                self.next();
+                if let Some(token) = is_public {
+                    self.error_no_sync(Error::not_valid_here(&token));
+                }
+
+                if let Some(token) = is_unsafe {
+                    self.error_no_sync(Error::not_valid_here(&token));
+                }
+
+                if let Some(token) = is_extern {
+                    self.error_no_sync(Error::not_valid_here(&token));
+                }
+
+                let name = self.next();
+                let name = if let Some(data) = name.data.as_string() {
+                    let name = Located::new(name.span, self.strings.get_or_intern(data));
+                    let test = self.strings.get_or_intern_static("test");
+                    attrs.push(Attribute {
+                        name: Located::nowhere(Strings::ATTR_FEATURE),
+                        props: vec![Attribute { name: Located::nowhere(test), props: vec![] }],
+                    });
+                    name
+                } else {
+                    self.error(Error::new("expected string literal", name.span));
+                    name.map(|_| Strings::EMPTY)
+                };
+
+                let lcurly = self.expect(Token::LCurly);
+                let body = self.block_expr(lcurly.span, None);
+                Ok(Stmt {
+                    data: Located::new(
+                        earliest_span.extended_to(body.span),
+                        StmtData::Fn(Fn {
+                            attrs: Default::default(),
+                            public: false,
+                            name,
+                            is_extern: false,
+                            is_async: false,
+                            is_unsafe: false,
+                            variadic: false,
+                            typ: FunctionType::Test,
+                            type_params: vec![],
+                            params: vec![],
+                            ret: None,
+                            body: Some(body),
+                        }),
                     ),
                     attrs,
                 })

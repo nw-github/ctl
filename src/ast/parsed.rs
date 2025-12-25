@@ -432,6 +432,7 @@ pub enum FunctionType {
     Normal,
     Subscript,
     AssignSubscript,
+    Test,
 }
 
 #[derive(Clone)]

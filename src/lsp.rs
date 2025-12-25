@@ -529,13 +529,15 @@ impl LspBackend {
     ) -> Result<MutexGuard<'_, Option<LastChecked>>> {
         debug!(self, "Checking project: '{}'", uri);
         let path = Self::uri_to_path(uri);
-        let unloaded = match UnloadedProject::new(get_file_project(path)) {
+        let mut unloaded = match UnloadedProject::new(get_file_project(path)) {
             Ok(proj) => proj,
             Err(err) => {
                 self.client.log_message(MessageType::ERROR, format!("{err}")).await;
                 return Err(Error::internal_error());
             }
         };
+
+        unloaded.conf.set_feature(Strings::FEAT_TEST);
 
         let mut proj_lock_guard = self.project.lock().await;
         if !change {

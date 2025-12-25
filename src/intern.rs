@@ -54,6 +54,7 @@ impl Strings {
     pub const FEAT_HOSTED: StrId = invent_str_id(37);
     pub const FEAT_BOEHM: StrId = invent_str_id(38);
     pub const ITER_VAR_NAME: StrId = invent_str_id(39);
+    pub const FEAT_TEST: StrId = invent_str_id(40);
 
     pub fn new() -> Self {
         let mut rodeo = Rodeo::default();
@@ -96,6 +97,7 @@ impl Strings {
         assert_eq!(Self::FEAT_HOSTED, rodeo.get_or_intern_static("hosted"));
         assert_eq!(Self::FEAT_BOEHM, rodeo.get_or_intern_static("boehm"));
         assert_eq!(Self::ITER_VAR_NAME, rodeo.get_or_intern_static("$iter"));
+        assert_eq!(Self::FEAT_TEST, rodeo.get_or_intern_static("test"));
         Self { rodeo }
     }
 }

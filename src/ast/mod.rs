@@ -2,7 +2,7 @@ use crate::{
     intern::StrId,
     lexer::{Located, Token},
 };
-use derive_more::{Deref, Display};
+use derive_more::{Deref, DerefMut, Display};
 
 use self::parsed::OperatorFnType;
 
@@ -16,7 +16,7 @@ pub struct Attribute {
     pub props: Vec<Attribute>,
 }
 
-#[derive(Default, Debug, Clone, Deref)]
+#[derive(Default, Debug, Clone, Deref, DerefMut)]
 pub struct Attributes {
     attrs: Vec<Attribute>,
 }
