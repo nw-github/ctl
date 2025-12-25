@@ -25,11 +25,17 @@ fn test_runner(tests: [TestInfo..]) {
 
     mut [passed, skipped] = [0; 3];
     mut failed: [FailedTest] = @[];
+    mut prev_mod = "";
     for {test, name, module, skip, skip_reason} in tests.iter() {
-        eprint("test {"{module}::'{name}'".to_str():<50} ... ");
+        if module != prev_mod {
+            prev_mod = *module;
+            eprintln("module '{module}':");
+        }
+
+        eprint("    {name:<35} ... ");
         if *skip {
             if skip_reason is ?reason {
-                eprintln("{YELLOW}SKIPPED{CLEAR}: '{reason}'");
+                eprintln("{YELLOW}SKIPPED{CLEAR} ({reason})");
             } else {
                 eprintln("{YELLOW}SKIPPED{CLEAR}");
             }

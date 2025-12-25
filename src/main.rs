@@ -126,6 +126,11 @@ enum SubCommand {
         /// The modules to dump. If empty, the module corresponding to the input project will be dumped.
         modules: Vec<String>,
     },
+    #[clap(alias = "t")]
+    Test {
+        #[clap(flatten)]
+        build: BuildOrRun,
+    },
     Lsp,
 }
 
@@ -270,13 +275,31 @@ fn dump_tokens(input: Option<&Path>) -> Result<()> {
     let source = std::fs::read_to_string(input.context("missing input file")?)?;
     let mut lexer = ctl::Lexer::new(&source, Default::default());
     let mut diag = ctl::Diagnostics::default();
-    loop  {
+    loop {
         let token = lexer.next(&mut diag);
         if token.data == ctl::Token::Eof {
             break Ok(());
         }
 
         println!("{token:?}");
+    }
+}
+
+fn execute_binary(path: &Path, args: Option<Vec<OsString>>) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        Err(Command::new(path).args(args.into_iter().flatten()).exec().into())
+    }
+
+    #[cfg(not(unix))]
+    {
+        let status = Command::new(path)
+            .args(args.into_iter().flatten())
+            .spawn()
+            .context("Couldn't invoke the generated program")?
+            .wait()?;
+        std::process::exit(status.code().unwrap_or_default());
     }
 }
 
@@ -290,9 +313,10 @@ fn main() -> Result<()> {
             }
 
             input
-        },
+        }
         SubCommand::Build { build, .. } => &build.input,
         SubCommand::Run { build, .. } => &build.input,
+        SubCommand::Test { build, .. } => &build.input,
         SubCommand::Lsp => {
             tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(async {
                 let stdin = tokio::io::stdin();
@@ -313,6 +337,10 @@ fn main() -> Result<()> {
     proj.conf.flags.minify = matches!(args.command, SubCommand::Print { minify: true, .. });
     if let SubCommand::Dump { modules, .. } = &args.command {
         return dump(proj, modules);
+    }
+
+    if let SubCommand::Test { .. } = &args.command {
+        proj.conf.set_feature(Strings::FEAT_TEST);
     }
 
     let result = Compiler::new().parse(proj)?.typecheck(None).build();
@@ -339,25 +367,15 @@ fn main() -> Result<()> {
             }
         }
         SubCommand::Build { build } => _ = compile_results(&result, build, conf)?,
-        SubCommand::Run { build, targs } => {
-            let binary = compile_results(&result, build, conf)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::CommandExt;
-                return Err(Command::new(binary).args(targs).exec().into());
-            }
-
-            #[cfg(not(unix))]
-            {
-                let status = Command::new(executable)
-                    .args(targs)
-                    .spawn()
-                    .context("Couldn't invoke the generated program")?
-                    .wait()?;
-                std::process::exit(status.code().unwrap_or_default());
-            }
+        SubCommand::Test { build } => {
+            let path = compile_results(&result, build, conf)?;
+            execute_binary(&path, None)?;
         }
-        _ => {}
+        SubCommand::Run { build, targs } => {
+            let path = compile_results(&result, build, conf)?;
+            execute_binary(&path, Some(targs))?;
+        }
+        SubCommand::Dump { .. } | SubCommand::Lsp => {}
     }
 
     Ok(())
