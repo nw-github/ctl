@@ -397,7 +397,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     data: Located::new(
                         earliest_span.extended_to(body.span),
                         StmtData::Fn(Fn {
-                            attrs: Default::default(),
+                            attrs,
                             public: false,
                             name,
                             is_extern: false,
@@ -411,7 +411,7 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                             body: Some(body),
                         }),
                     ),
-                    attrs,
+                    attrs: Default::default(),
                 })
             }
             _ => {

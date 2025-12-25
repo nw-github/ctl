@@ -309,6 +309,13 @@ impl Expr {
         }
     }
 
+    pub fn option_some(opt: TypeId, val: Expr) -> Expr {
+        Expr::new(
+            opt,
+            ExprData::VariantInstance(Strings::SOME, [(Strings::TUPLE_ZERO, val)].into()),
+        )
+    }
+
     pub fn option_null(opt: TypeId) -> Expr {
         Expr::new(opt, ExprData::VariantInstance(Strings::NULL, Default::default()))
     }

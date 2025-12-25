@@ -55,6 +55,9 @@ impl Strings {
     pub const FEAT_BOEHM: StrId = invent_str_id(38);
     pub const ITER_VAR_NAME: StrId = invent_str_id(39);
     pub const FEAT_TEST: StrId = invent_str_id(40);
+    pub const ATTR_TEST_RUNNER: StrId = invent_str_id(41);
+    pub const SKIP: StrId = invent_str_id(42);
+    pub const SKIP_REASON: StrId = invent_str_id(43);
 
     pub fn new() -> Self {
         let mut rodeo = Rodeo::default();
@@ -98,6 +101,9 @@ impl Strings {
         assert_eq!(Self::FEAT_BOEHM, rodeo.get_or_intern_static("boehm"));
         assert_eq!(Self::ITER_VAR_NAME, rodeo.get_or_intern_static("$iter"));
         assert_eq!(Self::FEAT_TEST, rodeo.get_or_intern_static("test"));
+        assert_eq!(Self::ATTR_TEST_RUNNER, rodeo.get_or_intern_static("test_runner"));
+        assert_eq!(Self::SKIP, rodeo.get_or_intern_static("skip"));
+        assert_eq!(Self::SKIP_REASON, rodeo.get_or_intern_static("skip_reason"));
         Self { rodeo }
     }
 }

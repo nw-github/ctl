@@ -354,6 +354,10 @@ impl State {
         Self::new(func, scope)
     }
 
+    pub fn from_non_generic(id: FunctionId, scopes: &Scopes) -> Self {
+        Self::new(GenericFn::from_id(scopes, id), scopes.get(id).body_scope)
+    }
+
     pub fn with_inst(mut func: GenericFn, types: &Types, inst: TypeId, caller: ScopeId) -> Self {
         if let Type::User(ut) = &types[inst] {
             func.ty_args.copy_args(&ut.ty_args);
@@ -528,7 +532,7 @@ impl<'a> Buffer<'a> {
                 self.emit_mangled_name(ty, min);
             }
         } else {
-            self.emit(full_name(&self.1.scopes, &self.1.strings, ty.scope, ty.name.data));
+            self.emit(full_name(self.1, ty.scope, ty.name.data));
             if !ut.ty_args.is_empty() {
                 write_de!(self, "$");
                 for &ty in ut.ty_args.values() {
@@ -554,6 +558,11 @@ impl<'a> Buffer<'a> {
 
     fn emit_fn_name(&mut self, func: &GenericFn, min: bool) {
         let f = &self.1.scopes.get(func.id);
+        if f.typ.is_test() {
+            write_de!(self, "test{}", func.id);
+            return;
+        }
+
         if !f.is_extern {
             if min {
                 write_de!(self, "p{}", func.id);
@@ -561,7 +570,7 @@ impl<'a> Buffer<'a> {
                     self.emit_mangled_name(ty, min);
                 }
             } else {
-                self.emit(full_name(&self.1.scopes, &self.1.strings, f.scope, f.name.data));
+                self.emit(full_name(self.1, f.scope, f.name.data));
                 if !func.ty_args.is_empty() {
                     write_de!(self, "$");
                     for &ty in func.ty_args.values() {
@@ -582,7 +591,7 @@ impl<'a> Buffer<'a> {
             write_de!(self, "t{tr}");
         } else {
             let ty = self.1.scopes.get(tr);
-            self.emit(full_name(&self.1.scopes, &self.1.strings, ty.scope, ty.name.data));
+            self.emit(full_name(self.1, ty.scope, ty.name.data));
         }
         write_de!(self, "_");
     }
@@ -592,7 +601,7 @@ impl<'a> Buffer<'a> {
             write_de!(self, "p{id}");
         } else {
             let f = self.1.scopes.get(id);
-            self.emit(full_name(&self.1.scopes, &self.1.strings, f.scope, f.name.data));
+            self.emit(full_name(self.1, f.scope, f.name.data));
         }
     }
 
@@ -782,19 +791,12 @@ pub struct Codegen<'a> {
 
 impl<'a> Codegen<'a> {
     pub fn build(proj: &'a Project) -> String {
-        let exports = proj.scopes.functions().filter(|(_, f)| f.is_extern && f.body.is_some()).map(
-            |(id, _)| State::in_body_scope(GenericFn::from_id(&proj.scopes, id), &proj.scopes),
-        );
-        let (funcs, main) = if proj.conf.flags.lib {
-            (exports.collect(), None)
-        } else {
-            let main = State::in_body_scope(
-                GenericFn::from_id(&proj.scopes, proj.main.unwrap()),
-                &proj.scopes,
-            );
-            (exports.chain(std::iter::once(main.clone())).collect(), Some(main))
-        };
-
+        let funcs: HashSet<State> = proj
+            .scopes
+            .functions()
+            .filter(|(_, f)| f.is_extern && f.body.is_some())
+            .map(|(id, _)| State::from_non_generic(id, &proj.scopes))
+            .collect();
         let mut this = Codegen {
             str_interp: StrInterp::new(proj),
             flags: proj.conf.flags,
@@ -818,7 +820,7 @@ impl<'a> Codegen<'a> {
             ext_cache: Default::default(),
             source: CachingSourceProvider::new(),
         };
-        let main = main.map(|mut main| this.gen_c_main(&mut main));
+        let main = this.gen_c_main();
         let mut static_defs = Buffer::new(proj);
         let mut static_init = Buffer::new(proj);
         let mut prototypes = Buffer::new(proj);
@@ -946,21 +948,90 @@ impl<'a> Codegen<'a> {
         self.emitted_vtables.insert(vtable);
     }
 
-    fn gen_c_main(&mut self, main: &mut State) -> String {
-        self.buffer.emit("int main(int argc, char **argv){{");
-        let returns = self.proj.types[self.proj.scopes.get(main.func.id).ret].is_integral();
+    fn gen_c_main(&mut self) -> Option<String> {
+        self.buffer.emit("int main(int argc, char **argv){CTL_ARGV=argv;CTL_ARGC=argc;");
+        if self.proj.conf.has_feature(Strings::FEAT_TEST) {
+            self.gen_test_main();
+            return Some(self.buffer.take().finish());
+        }
 
-        self.buffer.emit("CTL_ARGV=argv;CTL_ARGC=argc;");
+        let main = State::from_non_generic(self.proj.main?, &self.proj.scopes);
+
+        let returns = self.proj.types[self.proj.scopes.get(main.func.id).ret].is_integral();
         if returns {
             self.buffer.emit("return ");
         }
         self.buffer.emit_fn_name(&main.func, self.flags.minify);
         if returns {
-            self.buffer.emit("();}}");
+            self.buffer.emit("();}");
         } else {
-            self.buffer.emit("();return 0;}}");
+            self.buffer.emit("();return 0;}");
         }
-        self.buffer.take().finish()
+        self.funcs.insert(main.clone());
+        Some(self.buffer.take().finish())
+    }
+
+    fn gen_test_main(&mut self) {
+        let dummy_state = &mut State::new(
+            GenericFn::from_id(&self.proj.scopes, FunctionId::RESERVED),
+            ScopeId::ROOT,
+        );
+
+        hoist_point!(self, {
+            let test_info_id = self.proj.strings.get("test_info").unwrap();
+            let test_info_ty = self.proj.scopes.lang_types.get(&test_info_id).unwrap();
+            self.buffer.emit_type_name(
+                &GenericUserType::new(*test_info_ty, TypeArgs::default()),
+                self.flags.minify,
+            );
+            self.buffer.emit(" tests[]={");
+
+            let runner = State::from_non_generic(self.proj.test_runner.unwrap(), &self.proj.scopes);
+            let mut test_count = 0;
+            for (id, func) in self.proj.scopes.functions().filter(|f| f.1.typ.is_test()) {
+                let state = State::from_non_generic(id, &self.proj.scopes);
+                write_de!(self.buffer, "{{.name=");
+                self.emit_string_literal(strdata!(self, func.name.data));
+                write_de!(self.buffer, ",.module=");
+                self.emit_string_literal(&full_name_pretty(self.proj, func.scope, true));
+                write_de!(self.buffer, ",.test=");
+                self.buffer.emit_fn_name(&state.func, self.flags.minify);
+
+                let skip = func.attrs.iter().find(|attr| attr.name.data == Strings::SKIP);
+                write_de!(self.buffer, ",.skip={},.skip_reason=", skip.is_some() as usize);
+
+                let skip_reason_ty = self
+                    .proj
+                    .scopes
+                    .get(*test_info_ty)
+                    .members
+                    .get(&Strings::SKIP_REASON)
+                    .unwrap()
+                    .ty;
+                if let Some(reason) = skip.and_then(|v| v.props.first()) {
+                    let str_ty = self.str_interp.string_ty.unwrap();
+                    self.emit_expr_inline(
+                        Expr::option_some(
+                            skip_reason_ty,
+                            Expr::new(str_ty, ExprData::String(reason.name.data)),
+                        ),
+                        dummy_state,
+                    );
+                } else {
+                    self.emit_expr_inline(Expr::option_null(skip_reason_ty), dummy_state);
+                }
+                write_de!(self.buffer, "}},");
+
+                self.funcs.insert(state);
+                test_count += 1;
+            }
+            self.buffer.emit("};");
+            self.buffer.emit_fn_name(&runner.func, self.flags.minify);
+            write_de!(self.buffer, "(");
+            self.emit_cast(self.proj.scopes.get(runner.func.id).params[0].ty);
+            write_de!(self.buffer, "{{.ptr=tests,.len={test_count}}});return 0;}}");
+            self.funcs.insert(runner);
+        });
     }
 
     fn emit_fn(&mut self, state: &mut State, prototypes: &mut Buffer<'a>) {
@@ -2167,11 +2238,8 @@ impl<'a> Codegen<'a> {
                 );
             }
             "panic" => {
-                let panic = State::in_body_scope(
-                    GenericFn::from_id(
-                        &self.proj.scopes,
-                        self.proj.panic_handler.expect("a panic handler should exist"),
-                    ),
+                let panic = State::from_non_generic(
+                    self.proj.panic_handler.expect("a panic handler should exist"),
                     &self.proj.scopes,
                 );
 
@@ -2316,14 +2384,7 @@ impl<'a> Codegen<'a> {
                 );
                 if let Some(func) = func {
                     let str = self.function_name(func, state);
-                    let expr = Expr::new(
-                        option_typ,
-                        ExprData::VariantInstance(
-                            Strings::SOME,
-                            [(Strings::TUPLE_ZERO, str)].into(),
-                        ),
-                    );
-                    self.emit_expr_inline(expr, state);
+                    self.emit_expr_inline(Expr::option_some(option_typ, str), state);
                 } else {
                     self.emit_expr_inline(Expr::option_null(option_typ), state);
                 }
@@ -2822,12 +2883,7 @@ impl<'a> Codegen<'a> {
             if var.is_extern {
                 self.buffer.emit_str(var.attrs.val(Strings::ATTR_LINKNAME).unwrap_or(var.name.data))
             } else {
-                self.buffer.emit(full_name(
-                    &self.proj.scopes,
-                    &self.proj.strings,
-                    var.scope,
-                    var.name.data,
-                ));
+                self.buffer.emit(full_name(self.proj, var.scope, var.name.data));
             }
         } else {
             if is_c_reserved_ident(strdata!(self, var.name.data)) {
@@ -3234,7 +3290,7 @@ impl<'a> Codegen<'a> {
         let Some(mfn) = self.lookup_trait_fn(inst, tr, method, scope, finish) else {
             panic!(
                 "searching from scope: '{}', cannot find implementation for method '{}::{}' for type '{}'",
-                full_name(&self.proj.scopes, &self.proj.strings, scope, Strings::EMPTY),
+                full_name_pretty(self.proj, scope, false),
                 tr.name(self.proj),
                 strdata!(self, method),
                 inst.name(self.proj)
@@ -3244,7 +3300,7 @@ impl<'a> Codegen<'a> {
         if !self.proj.scopes.get(mfn.func.id).has_body {
             panic!(
                 "searching from scope: '{}', get_member_fn_ex picked invalid function for implementation for method '{}::{}' for type '{}'",
-                full_name(&self.proj.scopes, &self.proj.strings, scope, Strings::EMPTY),
+                full_name_pretty(self.proj, scope, false),
                 tr.name(self.proj),
                 strdata!(self, method),
                 inst.name(self.proj)
@@ -3382,17 +3438,32 @@ fn is_c_reserved_ident(name: &str) -> bool {
         | "typeof" | "typeof_unqual" | "union" | "unsigned" | "void" | "volatile" | "while")
 }
 
-fn full_name(scopes: &Scopes, strings: &Strings, id: ScopeId, ident: StrId) -> String {
-    let mut name: String = strings.resolve(&ident).chars().rev().collect();
-    for scope_name in scopes.walk(id).flat_map(|(_, scope)| scope.kind.name(scopes)) {
-        let scope_name = strings.resolve(&scope_name.data);
-        name.reserve(scope_name.len() + 1);
-        name.push('_');
-        for c in scope_name.chars().rev() {
-            name.push(c);
-        }
+fn full_name(proj: &Project, id: ScopeId, ident: StrId) -> String {
+    let mut parts = vec![proj.strings.resolve(&ident)];
+    for (_, scope) in proj.scopes.walk(id) {
+        let Some(scope_name) = scope.kind.name(&proj.scopes) else {
+            continue;
+        };
+        parts.push(proj.strings.resolve(&scope_name.data));
     }
-    name.chars().rev().collect::<String>()
+    parts.reverse();
+    parts.join("_")
+}
+
+fn full_name_pretty(proj: &Project, id: ScopeId, modonly: bool) -> String {
+    let mut parts = vec![];
+    for (_, scope) in proj.scopes.walk(id) {
+        let Some(scope_name) = scope.kind.name(&proj.scopes) else {
+            continue;
+        };
+        if modonly && !scope.kind.is_module() {
+            continue;
+        }
+
+        parts.push(proj.strings.resolve(&scope_name.data));
+    }
+    parts.reverse();
+    parts.join("::")
 }
 
 fn bit_mask(bits: u32) -> u64 {

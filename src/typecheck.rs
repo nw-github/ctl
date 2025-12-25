@@ -417,6 +417,14 @@ impl TypeChecker {
             ));
         }
 
+        if this.proj.test_runner.is_none() && this.proj.conf.has_feature(Strings::ATTR_TEST_RUNNER)
+        {
+            this.proj.diag.report(Error::new(
+                "missing test runner function",
+                Span { file: last_file_id.unwrap_or_default(), pos: 0, len: 0 },
+            ));
+        }
+
         for (_, var) in this.proj.scopes.vars() {
             let data = strdata!(this, var.name.data);
             if !var.unused
@@ -2062,6 +2070,16 @@ impl TypeChecker {
                         let data = strdata!(this, fn_name.data);
                         this.proj.diag.report(Error::invalid_impl(data, &why, fn_name.span))
                     }
+                }
+            } else if func.attrs.has(Strings::ATTR_TEST_RUNNER) {
+                if body.is_none() {
+                    this.proj.diag.report(Error::new("panic handler must have a definition", func.name.span));
+                }
+
+                // TODO: validate the signature of this method
+                if let Some(_old) = this.proj.test_runner.replace(id) {
+                    // TODO: report that it was previously defined at the span of _old
+                    this.proj.diag.report(Error::new("a panic handler already exists", func.name.span));
                 }
             }
 
@@ -5370,13 +5388,7 @@ impl TypeChecker {
             (_, rhs) => {
                 if let Some(inner) = rhs.as_option_inner(&self.proj.scopes) {
                     match self.coerce(expr, inner) {
-                        Ok(expr) => Ok(CExpr::new(
-                            target,
-                            CExprData::VariantInstance(
-                                Strings::SOME,
-                                [(Strings::TUPLE_ZERO, expr)].into(),
-                            ),
-                        )),
+                        Ok(expr) => Ok(CExpr::option_some(target, expr)),
                         Err(expr) => Err(expr),
                     }
                 } else if self.can_span_coerce(expr.ty, target).is_some() {

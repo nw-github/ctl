@@ -19,6 +19,7 @@ pub struct Project {
     pub lsp_items: Option<Vec<(LspItem, Span)>>,
     pub main: Option<FunctionId>,
     pub panic_handler: Option<FunctionId>,
+    pub test_runner: Option<FunctionId>,
     pub deps: DependencyGraph<TypeId>,
     pub static_deps: DependencyGraph<VariableId>,
     pub trait_deps: DependencyGraph<UserTypeId>,
