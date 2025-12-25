@@ -285,6 +285,21 @@ impl TypeGen {
             }};
         }
 
+        macro_rules! fnptr_dependency {
+            ($ty: expr) => {{
+                let dep = $ty;
+                let mut inner = dep;
+                while let Some(id) = inner.as_pointee(types) {
+                    inner = id;
+                }
+                if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_)) {
+                    deps.push(inner);
+                }
+
+                self.add_type(scopes, types, dep);
+            }};
+        }
+
         match &types[ty] {
             Type::Int(_) | Type::Uint(_) => {}
             Type::DynMutPtr(tr) | Type::DynPtr(tr) => {
@@ -293,18 +308,17 @@ impl TypeGen {
                 }
             }
             Type::FnPtr(f) => {
-                let ret = f.ret;
                 for param in f.params.iter() {
-                    self.add_type(scopes, types, *param);
+                    fnptr_dependency!(*param);
                 }
-                self.add_type(scopes, types, ret);
+                fnptr_dependency!(f.ret);
             }
             Type::Fn(f) => {
                 let func = scopes.get(f.id);
                 for p in func.params.iter() {
-                    self.add_type(scopes, types, p.ty.with_templates(types, &f.ty_args));
+                    fnptr_dependency!(p.ty.with_templates(types, &f.ty_args));
                 }
-                self.add_type(scopes, types, func.ret.with_templates(types, &f.ty_args));
+                fnptr_dependency!(func.ret.with_templates(types, &f.ty_args));
             }
             &Type::Array(ty, _) => dependency!(ty),
             Type::User(ut) => {
@@ -3439,12 +3453,21 @@ fn is_c_reserved_ident(name: &str) -> bool {
 }
 
 fn full_name(proj: &Project, id: ScopeId, ident: StrId) -> String {
-    let mut parts = vec![proj.strings.resolve(&ident)];
+    use std::borrow::Cow;
+
+    let mut parts = vec![Cow::Borrowed(proj.strings.resolve(&ident))];
     for (_, scope) in proj.scopes.walk(id) {
         let Some(scope_name) = scope.kind.name(&proj.scopes) else {
             continue;
         };
-        parts.push(proj.strings.resolve(&scope_name.data));
+
+        if let Some(id) = scope.kind.as_function()
+            && proj.scopes.get(*id).typ.is_test()
+        {
+            parts.push(Cow::Owned(format!("test_{id}")));
+        } else {
+            parts.push(Cow::Borrowed(proj.strings.resolve(&scope_name.data)));
+        }
     }
     parts.reverse();
     parts.join("_")
