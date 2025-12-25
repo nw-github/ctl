@@ -3865,10 +3865,9 @@ impl TypeChecker {
                 iter_span,
             );
 
-            let name = intern!(this, "$iter{}", this.current.0);
             let iter_var = this.insert::<VariableId>(
                 Variable {
-                    name: Located::nowhere(name),
+                    name: Located::nowhere(Strings::ITER_VAR_NAME),
                     ty: iter.ty,
                     mutable: true,
                     value: None,
@@ -3909,7 +3908,7 @@ impl TypeChecker {
                     next_fn_call.into(),
                     CPattern::refutable(PatternData::Variant {
                         pattern: Some(
-                            CPattern::irrefutable(PatternData::Destrucure {
+                            CPattern::irrefutable(PatternData::Destructure {
                                 patterns: vec![(Strings::TUPLE_ZERO, next_ty, patt)],
                                 borrows: false,
                             })
@@ -5881,7 +5880,7 @@ impl TypeChecker {
 
         CPattern {
             irrefutable,
-            data: PatternData::Destrucure {
+            data: PatternData::Destructure {
                 patterns: checked,
                 borrows: self.proj.types[scrutinee].is_any_ptr(),
             },
@@ -5947,7 +5946,7 @@ impl TypeChecker {
 
         CPattern {
             irrefutable,
-            data: PatternData::Destrucure {
+            data: PatternData::Destructure {
                 patterns: checked,
                 borrows: self.proj.types[scrutinee].is_any_ptr(),
             },

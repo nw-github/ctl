@@ -46,7 +46,7 @@ pub enum PatternData {
         inner: TypeId,
         borrows: bool,
     },
-    Destrucure {
+    Destructure {
         patterns: Vec<(StrId, TypeId, Pattern)>,
         borrows: bool,
     },

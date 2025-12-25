@@ -59,8 +59,8 @@ macro_rules! id {
     };
 }
 
-#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub struct ScopeId(pub usize);
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, Hash, derive_more::Display)]
+pub struct ScopeId(usize);
 
 impl ScopeId {
     pub const ROOT: ScopeId = ScopeId(0);
