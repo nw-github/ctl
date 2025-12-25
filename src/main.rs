@@ -100,6 +100,10 @@ enum SubCommand {
         /// Minify the resulting C code
         #[clap(action, short, long)]
         minify: bool,
+
+        /// Print the code in test mode
+        #[clap(action, short, long)]
+        test: bool,
     },
     #[clap(alias = "b")]
     Build {
@@ -339,7 +343,7 @@ fn main() -> Result<()> {
         return dump(proj, modules);
     }
 
-    if let SubCommand::Test { .. } = &args.command {
+    if let SubCommand::Test { .. } | SubCommand::Print { test: true, .. } = &args.command {
         proj.conf.set_feature(Strings::FEAT_TEST);
     }
 
