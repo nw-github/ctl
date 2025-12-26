@@ -3,8 +3,12 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     Span,
     ast::{Alignment, BinaryOp, Sign, UnaryOp},
-    ds::{ComptimeInt, IndexMap},
+    ds::{
+        ComptimeInt, IndexMap,
+        arena::{self, Arena},
+    },
     intern::{StrId, Strings},
+    project::Project,
     sym::{ScopeId, ScopeKind, Scopes, VariableId},
     typecheck::MemberFn,
     typeid::{GenericFn, Type, TypeId, Types},
@@ -104,33 +108,35 @@ pub enum Stmt {
     None,
 }
 
-#[derive(Default, Clone)]
+pub type ExprId = arena::Id<ExprData>;
+
+#[derive(Clone)]
 pub enum ExprData {
-    Binary(BinaryOp, Box<Expr>, Box<Expr>),
-    Unary(UnaryOp, Box<Expr>),
-    Deref(Box<Expr>, usize),
+    Binary(BinaryOp, Expr, Expr),
+    Unary(UnaryOp, Expr),
+    Deref(Expr, usize),
     Call {
-        callee: Box<Expr>,
+        callee: Expr,
         args: IndexMap<StrId, Expr>,
         /// This is ONLY used for the SourceLocation intrinsic, not trait resolution
         scope: ScopeId,
         span: Span,
     },
     CallDyn(GenericFn, IndexMap<StrId, Expr>),
-    CallFnPtr(Box<Expr>, Vec<Expr>),
-    DynCoerce(Box<Expr>, ScopeId),
+    CallFnPtr(Expr, Vec<Expr>),
+    DynCoerce(Expr, ScopeId),
     VariantInstance(StrId, IndexMap<StrId, Expr>),
-    SpanMutCoerce(Box<Expr>),
+    SpanMutCoerce(Expr),
     Instance(IndexMap<StrId, Expr>),
     Array(Vec<Expr>),
     ArrayWithInit {
-        init: Box<Expr>,
+        init: Expr,
         count: usize,
     },
     Vec(Vec<Expr>),
     VecWithInit {
-        init: Box<Expr>,
-        count: Box<Expr>,
+        init: Expr,
+        count: Expr,
     },
     Set(Vec<Expr>, ScopeId),
     Map(Vec<(Expr, Expr)>, ScopeId),
@@ -150,7 +156,7 @@ pub enum ExprData {
     Var(VariableId),
     Block(Block),
     AffixOperator {
-        callee: Box<Expr>,
+        callee: Expr,
         mfn: MemberFn,
         param: StrId,
         scope: ScopeId,
@@ -158,36 +164,35 @@ pub enum ExprData {
         span: Span,
     },
     If {
-        cond: Box<Expr>,
-        if_branch: Box<Expr>,
-        else_branch: Box<Expr>,
+        cond: Expr,
+        if_branch: Expr,
+        else_branch: Expr,
         dummy_scope: ScopeId,
     },
     Loop {
-        cond: Option<Box<Expr>>,
+        cond: Option<Expr>,
         body: Block,
         do_while: bool,
         optional: bool,
     },
     Match {
-        expr: Box<Expr>,
+        scrutinee: Expr,
         body: Vec<(Pattern, Expr)>,
         dummy_scope: ScopeId,
     },
     Member {
-        source: Box<Expr>,
+        source: Expr,
         member: StrId,
     },
-    As(Box<Expr>, bool),
-    Is(Box<Expr>, Pattern),
-    Return(Box<Expr>),
-    Yield(Box<Expr>, ScopeId),
-    Break(Box<Expr>, ScopeId),
+    As(Expr, bool),
+    Is(Expr, Pattern),
+    Return(Expr),
+    Yield(Expr, ScopeId),
+    Break(Expr, ScopeId),
     Lambda(Vec<Stmt>),
-    NeverCoerce(Box<Expr>),
-    Discard(Box<Expr>),
+    NeverCoerce(Expr),
+    Discard(Expr),
     Continue(ScopeId),
-    #[default]
     Error,
 }
 
@@ -198,73 +203,42 @@ impl ExprData {
             _ => None,
         }
     }
-
-    pub fn member_call(
-        types: &Types,
-        mfn: MemberFn,
-        args: IndexMap<StrId, Expr>,
-        scope: ScopeId,
-        span: Span,
-    ) -> Self {
-        Self::Call {
-            callee: Box::new(Expr::new(
-                types.insert(Type::Fn(mfn.func.clone())),
-                Self::MemFn(mfn, scope),
-            )),
-            args,
-            scope,
-            span,
-        }
-    }
-
-    pub fn call(
-        types: &Types,
-        func: GenericFn,
-        args: IndexMap<StrId, Expr>,
-        scope: ScopeId,
-        span: Span,
-    ) -> Self {
-        Self::Call {
-            callee: Expr::new(types.insert(Type::Fn(func.clone())), Self::Fn(func, scope)).into(),
-            args,
-            scope,
-            span,
-        }
-    }
 }
 
-#[derive(Default, Clone, derive_more::Constructor)]
+#[derive(Clone, Copy, derive_more::Constructor)]
 pub struct Expr {
     pub ty: TypeId,
-    pub data: ExprData,
+    pub data: ExprId,
 }
 
 impl Expr {
-    pub fn is_assignable(&self, scopes: &Scopes, types: &Types) -> bool {
-        match &self.data {
+    pub const VOID: Self = ExprArena::VOID;
+
+    pub fn is_assignable(&self, proj: &Project, arena: &ExprArena) -> bool {
+        match arena.get(self.data) {
             ExprData::Deref(expr, _) => {
-                matches!(types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
+                matches!(proj.types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
             }
-            ExprData::Var(id) => scopes.get(*id).mutable,
-            ExprData::Member { source, .. } => source.is_assignable(scopes, types),
+            ExprData::Var(id) => proj.scopes.get(*id).mutable,
+            ExprData::Member { source, .. } => source.is_assignable(proj, arena),
             _ => false,
         }
     }
 
-    pub fn can_addrmut(&self, scopes: &Scopes, types: &Types) -> bool {
-        match &self.data {
+    pub fn can_addrmut(&self, proj: &Project, arena: &ExprArena) -> bool {
+        match arena.get(self.data) {
             ExprData::Deref(expr, _) => {
-                matches!(types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
+                matches!(proj.types[expr.ty], Type::MutPtr(_) | Type::RawMutPtr(_))
             }
-            ExprData::Var(id) => scopes.get(*id).mutable,
+            ExprData::Var(id) => proj.scopes.get(*id).mutable,
             ExprData::Member { source, .. } => {
-                matches!(types[source.ty], Type::MutPtr(_)) || source.can_addrmut(scopes, types)
+                matches!(proj.types[source.ty], Type::MutPtr(_)) || source.can_addrmut(proj, arena)
             }
             _ => true,
         }
     }
 
-    pub fn auto_deref(self, types: &Types, target: TypeId) -> Expr {
+    pub fn auto_deref(self, types: &Types, target: TypeId, arena: &mut ExprArena) -> Self {
         let mut needed = 0;
         let mut current = target;
         while let Type::Ptr(inner) | Type::MutPtr(inner) = &types[current] {
@@ -292,58 +266,108 @@ impl Expr {
                 if matches!(types[target], Type::Ptr(_)) {
                     Expr::new(
                         types.insert(Type::Ptr(self.ty)),
-                        ExprData::Unary(UnaryOp::Addr, self.into()),
+                        arena.alloc(ExprData::Unary(UnaryOp::Addr, self)),
                     )
                 } else {
                     Expr::new(
                         types.insert(Type::MutPtr(self.ty)),
-                        ExprData::Unary(UnaryOp::AddrMut, self.into()),
+                        arena.alloc(ExprData::Unary(UnaryOp::AddrMut, self)),
                     )
                 }
             }
             std::cmp::Ordering::Equal => self,
             std::cmp::Ordering::Greater => Expr::new(
                 if needed != 0 { prev } else { ty },
-                ExprData::Deref(self.into(), indirection - needed),
+                arena.alloc(ExprData::Deref(self, indirection - needed)),
             ),
         }
     }
 
-    pub fn option_some(opt: TypeId, val: Expr) -> Expr {
+    pub fn option_some(opt: TypeId, val: Expr, arena: &mut ExprArena) -> Self {
         Expr::new(
             opt,
-            ExprData::VariantInstance(Strings::SOME, [(Strings::TUPLE_ZERO, val)].into()),
+            arena.alloc(ExprData::VariantInstance(
+                Strings::SOME,
+                [(Strings::TUPLE_ZERO, val)].into(),
+            )),
         )
     }
 
-    pub fn option_null(opt: TypeId) -> Expr {
-        Expr::new(opt, ExprData::VariantInstance(Strings::NULL, Default::default()))
+    pub fn option_null(opt: TypeId, arena: &mut ExprArena) -> Self {
+        Expr::new(opt, arena.alloc(ExprData::VariantInstance(Strings::NULL, Default::default())))
     }
 
-    pub fn void() -> Expr {
-        Expr::new(TypeId::VOID, ExprData::Void)
-    }
-
-    pub fn clone_at(&self, new_scope: ScopeId, new_span: Span) -> Expr {
-        let mut expr = self.clone();
+    pub fn clone_at(&self, new_scope: ScopeId, new_span: Span, arena: &mut ExprArena) -> Self {
         // TODO: do this recursively
-        if let ExprData::Call { scope, span, .. } = &mut expr.data {
-            *scope = new_scope;
-            *span = new_span;
+        if let &ExprData::Call { callee, ref args, .. } = arena.get(self.data) {
+            arena.typed(
+                self.ty,
+                ExprData::Call { callee, args: args.clone(), scope: new_scope, span: new_span },
+            )
+        } else {
+            *self
         }
-        expr
+    }
+
+    pub fn from_char(value: char, arena: &mut ExprArena) -> Self {
+        Self::from_int(TypeId::CHAR, ComptimeInt::from(value as u32), arena)
+    }
+
+    pub fn from_bool(value: bool, arena: &mut ExprArena) -> Self {
+        Self::from_int(TypeId::BOOL, ComptimeInt::from(value as u32), arena)
+    }
+
+    pub fn from_int(ty: TypeId, value: ComptimeInt, arena: &mut ExprArena) -> Self {
+        Expr::new(ty, arena.alloc(ExprData::Int(value)))
+    }
+
+    pub fn member_call(
+        ty: TypeId,
+        types: &Types,
+        mfn: MemberFn,
+        args: IndexMap<StrId, Expr>,
+        scope: ScopeId,
+        span: Span,
+        arena: &mut ExprArena,
+    ) -> Self {
+        let func = mfn.func.clone();
+        let callee = arena.alloc(ExprData::MemFn(mfn, scope));
+        Self {
+            ty,
+            data: arena.alloc(ExprData::Call {
+                callee: Expr::new(types.insert(Type::Fn(func)), callee),
+                args,
+                scope,
+                span,
+            }),
+        }
+    }
+
+    pub fn call(
+        ty: TypeId,
+        types: &Types,
+        func: GenericFn,
+        args: IndexMap<StrId, Expr>,
+        scope: ScopeId,
+        span: Span,
+        arena: &mut ExprArena,
+    ) -> Self {
+        let callee = arena.alloc(ExprData::Fn(func.clone(), scope));
+        Expr {
+            ty,
+            data: arena.alloc(ExprData::Call {
+                callee: Expr::new(types.insert(Type::Fn(func)), callee),
+                args,
+                scope,
+                span,
+            }),
+        }
     }
 }
 
-impl From<char> for Expr {
-    fn from(value: char) -> Self {
-        Expr::new(TypeId::CHAR, ExprData::Int(ComptimeInt::from(value as u32)))
-    }
-}
-
-impl From<bool> for Expr {
-    fn from(value: bool) -> Self {
-        Expr::new(TypeId::BOOL, ExprData::Int(ComptimeInt::from(value)))
+impl Default for Expr {
+    fn default() -> Self {
+        ExprArena::ERROR
     }
 }
 
@@ -358,4 +382,37 @@ pub struct FormatOpts {
     pub zero: bool,
     pub upper: bool,
     pub func: MemberFn,
+}
+
+#[derive(derive_more::Deref, derive_more::DerefMut)]
+pub struct ExprArena {
+    arena: Arena<ExprData>,
+}
+
+impl ExprArena {
+    pub const ERROR: Expr = Expr { ty: TypeId::UNKNOWN, data: ExprId::new(0) };
+    pub const VOID: Expr = Expr { ty: TypeId::VOID, data: ExprId::new(1) };
+    pub const ZERO: ExprId = ExprId::new(2);
+
+    pub fn new() -> Self {
+        Self::with_capacity(2048)
+    }
+
+    pub fn with_capacity(cap: usize) -> Self {
+        let mut this = Self { arena: Arena::with_capacity(cap) };
+        this.alloc(ExprData::Error);
+        this.alloc(ExprData::Void);
+        this.alloc(ExprData::Int(ComptimeInt::Small(0)));
+        this
+    }
+
+    pub fn typed(&mut self, ty: TypeId, data: ExprData) -> Expr {
+        Expr { ty, data: self.alloc(data) }
+    }
+}
+
+impl Default for ExprArena {
+    fn default() -> Self {
+        Self::new()
+    }
 }

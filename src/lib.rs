@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 pub use project::Configuration;
 
 use crate::{
+    ast::checked::ExprArena,
     intern::Strings,
     parser::{ModuleAttributes, Parser},
     typecheck::TypeChecker,
@@ -38,7 +39,7 @@ pub trait CompileState {}
 
 pub struct Source<T>(T);
 pub struct Parsed(Vec<Stmt>, Diagnostics, Configuration, Strings);
-pub struct Checked(Project);
+pub struct Checked(Project, ExprArena);
 
 impl<T> CompileState for Source<T> {}
 impl CompileState for Parsed {}
@@ -170,15 +171,9 @@ impl Compiler<Parsed> {
     }
 
     pub fn typecheck(self, lsp: Option<LspInput>) -> Compiler<Checked> {
-        Compiler {
-            state: Checked(TypeChecker::check(
-                self.state.0,
-                self.state.1,
-                lsp,
-                self.state.2,
-                self.state.3,
-            )),
-        }
+        let (proj, arena) =
+            TypeChecker::check(self.state.0, self.state.1, lsp, self.state.2, self.state.3);
+        Compiler { state: Checked(proj, arena) }
     }
 }
 
@@ -189,7 +184,7 @@ impl Compiler<Checked> {
             return (None, proj.conf, proj.diag);
         }
 
-        let code = Codegen::build(&proj);
+        let code = Codegen::build(&proj, self.state.1);
         (Some(code), proj.conf, proj.diag)
     }
 

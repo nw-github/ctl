@@ -5,8 +5,9 @@ use crate::{
     ast::{
         Attributes, BinaryOp, UnaryOp,
         checked::{
-            ArrayPattern, Block, Expr as CExpr, ExprData as CExprData, FormatOpts as CFormatSpec,
-            Pattern as CPattern, PatternData, RestPattern, Stmt as CStmt,
+            ArrayPattern, Block, Expr as CExpr, ExprArena, ExprData as CExprData,
+            FormatOpts as CFormatSpec, Pattern as CPattern, PatternData, RestPattern,
+            Stmt as CStmt,
         },
         declared::{Fn as DFn, ImplBlock as DImplBlock, Stmt as DStmt},
         parsed::{
@@ -323,6 +324,7 @@ pub struct TypeChecker {
     current_static: Option<(VariableId, Vec<VariableId>)>,
     tables: Tables,
     cache: ExtensionCache,
+    arena: ExprArena,
 }
 
 impl TypeChecker {
@@ -332,7 +334,7 @@ impl TypeChecker {
         lsp: Option<LspInput>,
         conf: Configuration,
         mut strings: Strings,
-    ) -> Project {
+    ) -> (Project, ExprArena) {
         let mut this = Self {
             tables: Tables::new(&mut strings),
             safety: Safety::Safe,
@@ -344,6 +346,7 @@ impl TypeChecker {
             current_expr: 1,
             current_static: None,
             cache: Default::default(),
+            arena: Default::default(),
         };
 
         let mut autouse = vec![];
@@ -439,7 +442,7 @@ impl TypeChecker {
             }
         }
 
-        this.proj
+        (this.proj, this.arena)
     }
 
     fn error<T: Default>(&mut self, error: Error) -> T {
@@ -2085,19 +2088,19 @@ impl TypeChecker {
                 let args = func
                     .params
                     .iter()
-                    .flat_map(|param| Some((param.label, CExpr::new(
+                    .flat_map(|param| Some((param.label, this.arena.typed(
                         param.ty,
                         CExprData::Var(*param.patt.as_checked().and_then(|p| p.data.as_variable())?)
                     ))))
                     .collect();
                 let variant = func.name.data;
                 let ut = Type::User(GenericUserType::from_id(&this.proj.scopes, &this.proj.types, ut_id));
-                this.proj.scopes.get_mut(id).body = Some(CExpr::new(
+                this.proj.scopes.get_mut(id).body = Some(this.arena.typed(
                     this.proj.types.insert(ut),
                     if this.proj.scopes.get(ut_id).kind.is_union() {
-                        CExprData::VariantInstance(variant, args)
+                       CExprData::VariantInstance(variant, args)
                     } else {
-                        CExprData::Instance(args)
+                       CExprData::Instance(args)
                     },
                 ));
                 return;
@@ -2114,7 +2117,7 @@ impl TypeChecker {
             this.proj.scopes.get_mut(id).body = Some(match this.coerce(body, ret) {
                 Ok(body) => body,
                 Err(body) => {
-                    match body.data.is_yielding_block(&this.proj.scopes) {
+                    match this.arena.get(body.data).is_yielding_block(&this.proj.scopes) {
                         // Yielding blocks already perform a type_check
                         Some(true) => {}
                         Some(false) => {
@@ -2208,24 +2211,23 @@ impl TypeChecker {
         let [p0, p1, ..] = &f.params[..] else {
             return Default::default();
         };
-        let arg0 = (p0.label, lhs.auto_deref(&self.proj.types, p0.ty));
+        let arg0 = (p0.label, lhs.auto_deref(&self.proj.types, p0.ty, &mut self.arena));
         let p1_ty = p1.ty.with_templates(&self.proj.types, &mfn.func.ty_args);
         let ret = f.ret.with_templates(&self.proj.types, &mfn.func.ty_args);
         let rhs_span = rhs.span;
         let rhs_name = p1.label;
         let rhs = self.check_expr(rhs, Some(p1_ty.strip_references(&self.proj.types)));
-        let rhs = rhs.auto_deref(&self.proj.types, p1_ty);
+        let rhs = rhs.auto_deref(&self.proj.types, p1_ty, &mut self.arena);
         let arg0val = (rhs_name, self.type_check_checked(rhs, p1_ty, rhs_span));
 
-        CExpr::new(
+        CExpr::member_call(
             ret,
-            CExprData::member_call(
-                &self.proj.types,
-                mfn,
-                [arg0, arg0val].into(),
-                self.current,
-                span,
-            ),
+            &self.proj.types,
+            mfn,
+            [arg0, arg0val].into(),
+            self.current,
+            span,
+            &mut self.arena,
         )
     }
 
@@ -2261,10 +2263,11 @@ impl TypeChecker {
                 | UnaryOp::PostDecrement
                 | UnaryOp::PostIncrement
         ) {
-            CExpr::new(
+            let callee = expr.auto_deref(&self.proj.types, p0.ty, &mut self.arena);
+            self.arena.typed(
                 stripped,
                 CExprData::AffixOperator {
-                    callee: expr.auto_deref(&self.proj.types, p0.ty).into(),
+                    callee,
                     mfn,
                     param: p0.label,
                     scope: self.current,
@@ -2273,16 +2276,15 @@ impl TypeChecker {
                 },
             )
         } else {
-            let arg0 = expr.auto_deref(&self.proj.types, p0.ty);
-            CExpr::new(
+            let arg0 = expr.auto_deref(&self.proj.types, p0.ty, &mut self.arena);
+            CExpr::member_call(
                 f.ret.with_templates(&self.proj.types, &mfn.func.ty_args),
-                CExprData::member_call(
-                    &self.proj.types,
-                    mfn,
-                    [(p0.label, arg0)].into(),
-                    self.current,
-                    span,
-                ),
+                &self.proj.types,
+                mfn,
+                [(p0.label, arg0)].into(),
+                self.current,
+                span,
+                &mut self.arena,
             )
         }
     }
@@ -2296,10 +2298,10 @@ impl TypeChecker {
     ) -> CExpr {
         let inner = self.check_expr(inner, target.and_then(|id| id.as_pointee(&self.proj.types)));
         if matches!(op, UnaryOp::AddrMut | UnaryOp::AddrRawMut) {
-            if matches!(inner.data, CExprData::Var(id) if self.proj.scopes.get(id).kind.is_const())
+            if matches!(self.arena.get(inner.data), CExprData::Var(id) if self.proj.scopes.get(*id).kind.is_const())
             {
                 self.proj.diag.report(Warning::mut_ptr_to_const(span));
-            } else if !inner.can_addrmut(&self.proj.scopes, &self.proj.types) {
+            } else if !inner.can_addrmut(&self.proj, &self.arena) {
                 self.error(Error::new(
                     "cannot create mutable pointer to immutable memory location",
                     span,
@@ -2308,9 +2310,9 @@ impl TypeChecker {
         }
 
         let mut typ = None;
-        match &inner.data {
+        match self.arena.get(inner.data) {
             CExprData::Call { callee, .. } => {
-                if matches!(&callee.data, CExprData::Fn(f, _)
+                if matches!(self.arena.get(callee.data), CExprData::Fn(f, _)
                     if self.proj.scopes.get(f.id).typ.is_subscript())
                 {
                     self.proj.diag.report(Warning::subscript_addr(span));
@@ -2323,9 +2325,11 @@ impl TypeChecker {
             }
             CExprData::Fn(func, _) | CExprData::MemFn(MemberFn { func, .. }, _) => {
                 if matches!(op, UnaryOp::AddrRaw | UnaryOp::AddrRawMut) {
-                    self.error(Error::new("cannot create raw pointer to function", span))
+                    self.proj.diag.report(Error::new("cannot create raw pointer to function", span))
                 } else if matches!(op, UnaryOp::AddrMut) {
-                    self.error(Error::new("cannot create mutable pointer to function", span))
+                    self.proj
+                        .diag
+                        .report(Error::new("cannot create mutable pointer to function", span))
                 }
 
                 typ = Some(Type::FnPtr(func.as_fn_ptr(&self.proj.scopes, &self.proj.types)));
@@ -2340,7 +2344,7 @@ impl TypeChecker {
             UnaryOp::AddrRawMut => Type::RawMutPtr(inner.ty),
             _ => unreachable!(),
         }));
-        CExpr::new(out_ty, CExprData::Unary(op, inner.into()))
+        self.arena.typed(out_ty, CExprData::Unary(op, inner))
     }
 
     fn check_expr_inner(&mut self, expr: PExpr, target: Option<TypeId>) -> CExpr {
@@ -2357,10 +2361,8 @@ impl TypeChecker {
                             && let Some(ident) = path.as_identifier()
                             && ident.data == Strings::UNDERSCORE
                         {
-                            return CExpr::new(
-                                TypeId::VOID,
-                                CExprData::Discard(self.check_expr(*right, None).into()),
-                            );
+                            let right = self.check_expr(*right, None);
+                            return self.arena.typed(TypeId::VOID, CExprData::Discard(right));
                         } else if let PExprData::Subscript { callee, args } = left.data {
                             let span = left.span;
                             return self.check_subscript(*callee, args, target, Some(*right), span);
@@ -2390,7 +2392,7 @@ impl TypeChecker {
                             }
                             return Default::default();
                         };
-                        if assignment && !lhs.is_assignable(&self.proj.scopes, &self.proj.types) {
+                        if assignment && !lhs.is_assignable(&self.proj, &self.arena) {
                             // TODO: report a better error here
                             self.error(Error::not_assignable(lhs_span))
                         }
@@ -2398,10 +2400,8 @@ impl TypeChecker {
                         let span = right.span;
                         let rhs = self.check_expr_inner(*right, Some(target));
                         let rhs = self.type_check_checked(rhs, target, span);
-                        return CExpr::new(
-                            if assignment { TypeId::VOID } else { target },
-                            CExprData::Binary(op, lhs.into(), rhs.into()),
-                        );
+                        let ty = if assignment { TypeId::VOID } else { target };
+                        return self.arena.typed(ty, CExprData::Binary(op, lhs, rhs));
                     }
                     BinaryOp::LogicalAnd => {
                         let was_listening = self.listening_expr == self.current_expr;
@@ -2415,10 +2415,7 @@ impl TypeChecker {
                             self.listening_vars.extend(rvars);
                         }
 
-                        return CExpr::new(
-                            TypeId::BOOL,
-                            CExprData::Binary(op, left.into(), right.into()),
-                        );
+                        return self.arena.typed(TypeId::BOOL, CExprData::Binary(op, left, right));
                     }
                     _ => {}
                 }
@@ -2429,7 +2426,7 @@ impl TypeChecker {
                     return Default::default();
                 }
 
-                if assignment && !left.is_assignable(&self.proj.scopes, &self.proj.types) {
+                if assignment && !left.is_assignable(&self.proj, &self.arena) {
                     // TODO: report a better error here
                     self.error(Error::not_assignable(left_span))
                 }
@@ -2459,30 +2456,28 @@ impl TypeChecker {
                                 span,
                             ));
                         }
-                        CExpr::new(
+                        self.arena.typed(
                             if assignment { TypeId::VOID } else { left.ty },
-                            CExprData::Binary(op, left.into(), right.into()),
+                            CExprData::Binary(op, left, right),
                         )
                     }
                     _ => {
                         let right = self.type_check(*right, left.ty);
-                        CExpr::new(
-                            match op {
-                                BinaryOp::NoneCoalesce => unreachable!(),
-                                BinaryOp::Cmp => self.make_lang_type_by_name("ordering", [], span),
-                                BinaryOp::Gt
-                                | BinaryOp::GtEqual
-                                | BinaryOp::Lt
-                                | BinaryOp::LtEqual
-                                | BinaryOp::Equal
-                                | BinaryOp::NotEqual
-                                | BinaryOp::LogicalOr
-                                | BinaryOp::LogicalAnd => TypeId::BOOL,
-                                op if op.is_assignment() => TypeId::VOID,
-                                _ => left.ty,
-                            },
-                            CExprData::Binary(op, left.into(), right.into()),
-                        )
+                        let ty = match op {
+                            BinaryOp::NoneCoalesce => unreachable!(),
+                            BinaryOp::Cmp => self.make_lang_type_by_name("ordering", [], span),
+                            BinaryOp::Gt
+                            | BinaryOp::GtEqual
+                            | BinaryOp::Lt
+                            | BinaryOp::LtEqual
+                            | BinaryOp::Equal
+                            | BinaryOp::NotEqual
+                            | BinaryOp::LogicalOr
+                            | BinaryOp::LogicalAnd => TypeId::BOOL,
+                            op if op.is_assignment() => TypeId::VOID,
+                            _ => left.ty,
+                        };
+                        self.arena.typed(ty, CExprData::Binary(op, left, right))
                     }
                 }
             }
@@ -2511,7 +2506,7 @@ impl TypeChecker {
                             }
                         };
 
-                        return CExpr::new(ty, CExprData::Deref(expr.into(), 1));
+                        return self.arena.typed(ty, CExprData::Deref(expr, 1));
                     }
                     UnaryOp::Addr | UnaryOp::AddrMut | UnaryOp::AddrRaw | UnaryOp::AddrRawMut => {
                         return self.check_addr(op, *expr, span, target);
@@ -2563,7 +2558,7 @@ impl TypeChecker {
                                 | UnaryOp::PostDecrement
                                 | UnaryOp::PreIncrement
                                 | UnaryOp::PreDecrement
-                        ) && !expr.is_assignable(&self.proj.scopes, &self.proj.types)
+                        ) && !expr.is_assignable(&self.proj, &self.arena)
                         {
                             self.error(Error::not_assignable(span))
                         }
@@ -2572,7 +2567,7 @@ impl TypeChecker {
                     }
                 };
 
-                CExpr::new(out_ty, CExprData::Unary(op, expr.into()))
+                self.arena.typed(out_ty, CExprData::Unary(op, expr))
             }
             PExprData::Call { callee, args } => self.check_call(target, *callee, args, span),
             PExprData::Array(elements) => {
@@ -2590,7 +2585,7 @@ impl TypeChecker {
                 };
 
                 checked.extend(elements.map(|e| self.type_check(e, ty)));
-                CExpr::new(
+                self.arena.typed(
                     self.proj.types.insert(Type::Array(ty, checked.len())),
                     CExprData::Array(checked),
                 )
@@ -2603,10 +2598,8 @@ impl TypeChecker {
                 };
                 if let Some(res) = self.consteval_check(*count, TypeId::USIZE) {
                     let count = res.val.try_into().unwrap();
-                    CExpr::new(
-                        self.proj.types.insert(Type::Array(init.ty, count)),
-                        CExprData::ArrayWithInit { init: init.into(), count },
-                    )
+                    let ty = self.proj.types.insert(Type::Array(init.ty, count));
+                    self.arena.typed(ty, CExprData::ArrayWithInit { init, count })
                 } else {
                     Default::default()
                 }
@@ -2628,12 +2621,10 @@ impl TypeChecker {
                     (expr, ty)
                 };
 
+                let count = self.type_check(*count, TypeId::USIZE);
                 CExpr::new(
                     self.make_lang_type(vec, [ty], span),
-                    CExprData::VecWithInit {
-                        init: init.into(),
-                        count: self.type_check(*count, TypeId::USIZE).into(),
-                    },
+                    self.arena.alloc(CExprData::VecWithInit { init, count }),
                 )
             }
             PExprData::Tuple(elements) => {
@@ -2654,7 +2645,7 @@ impl TypeChecker {
                     result_elems.insert(intern!(self, "{i}"), result);
                 }
 
-                CExpr::new(
+                self.arena.typed(
                     self.proj.scopes.get_tuple(result_ty, &mut self.proj.strings, &self.proj.types),
                     CExprData::Instance(result_elems),
                 )
@@ -2682,7 +2673,10 @@ impl TypeChecker {
                 };
 
                 checked.extend(elements.map(|e| self.type_check(e, ty)));
-                CExpr::new(self.make_lang_type(vec, [ty], span), CExprData::Vec(checked))
+                CExpr::new(
+                    self.make_lang_type(vec, [ty], span),
+                    self.arena.alloc(CExprData::Vec(checked)),
+                )
             }
             PExprData::Set(elements) => {
                 let mut checked = Vec::with_capacity(elements.len());
@@ -2709,7 +2703,7 @@ impl TypeChecker {
                 checked.extend(elements.map(|e| self.type_check(e, ty)));
                 CExpr::new(
                     self.make_lang_type(set, [ty], span),
-                    CExprData::Set(checked, self.current),
+                    self.arena.alloc(CExprData::Set(checked, self.current)),
                 )
             }
             PExprData::Map(elements) => {
@@ -2742,7 +2736,7 @@ impl TypeChecker {
                 );
                 CExpr::new(
                     self.make_lang_type(map, [k, v], span),
-                    CExprData::Map(result, self.current),
+                    self.arena.alloc(CExprData::Map(result, self.current)),
                 )
             }
             PExprData::Range { start, end, inclusive } => {
@@ -2769,18 +2763,22 @@ impl TypeChecker {
                     (None, None) => {
                         return CExpr::new(
                             self.make_lang_type_by_name("range_full", [], span),
-                            CExprData::Instance(Default::default()),
+                            self.arena.alloc(CExprData::Instance(Default::default())),
                         );
                     }
                 };
                 let Some(id) = self.get_lang_type_or_err(item, span) else {
                     return Default::default();
                 };
-                CExpr::new(self.make_lang_type(id, [ty], span), CExprData::Instance(inst))
+                CExpr::new(
+                    self.make_lang_type(id, [ty], span),
+                    self.arena.alloc(CExprData::Instance(inst)),
+                )
             }
-            PExprData::String(s) => {
-                CExpr::new(self.make_lang_type_by_name("string", [], span), CExprData::String(s))
-            }
+            PExprData::String(s) => CExpr::new(
+                self.make_lang_type_by_name("string", [], span),
+                self.arena.alloc(CExprData::String(s)),
+            ),
             PExprData::StringInterpolation { strings, args } => {
                 let mut out = Vec::with_capacity(args.len());
                 for (expr, opts) in args {
@@ -2843,8 +2841,8 @@ impl TypeChecker {
                     };
 
                     let mut res = CFormatSpec {
-                        width: CExpr::new(TypeId::U16, CExprData::Int(ComptimeInt::Small(0))),
-                        prec: CExpr::new(TypeId::U16, CExprData::Int(ComptimeInt::Small(0))),
+                        width: CExpr::new(TypeId::U16, ExprArena::ZERO),
+                        prec: CExpr::new(TypeId::U16, ExprArena::ZERO),
                         fill: ' ',
                         align: None,
                         sign: None,
@@ -2874,22 +2872,24 @@ impl TypeChecker {
 
                 CExpr::new(
                     self.make_lang_type_by_name("fmt_args", [], span),
-                    CExprData::StringInterp { strings, args: out, scope: self.current },
+                    self.arena.alloc(CExprData::StringInterp {
+                        strings,
+                        args: out,
+                        scope: self.current,
+                    }),
                 )
             }
             PExprData::ByteString(s) => {
                 let arr = self.proj.types.insert(Type::Array(TypeId::U8, s.len()));
-                CExpr::new(self.proj.types.insert(Type::Ptr(arr)), CExprData::ByteString(s))
+                self.arena.typed(self.proj.types.insert(Type::Ptr(arr)), CExprData::ByteString(s))
             }
-            PExprData::Char(s) => {
-                CExpr::new(TypeId::CHAR, CExprData::Int(ComptimeInt::from(s as u32)))
-            }
-            PExprData::ByteChar(c) => CExpr::new(TypeId::U8, CExprData::Int(ComptimeInt::from(c))),
-            PExprData::Void => CExpr::void(),
-            PExprData::Bool(v) => CExpr::from(v),
+            PExprData::Char(s) => CExpr::from_char(s, &mut self.arena),
+            PExprData::ByteChar(c) => CExpr::from_int(TypeId::U8, c.into(), &mut self.arena),
+            PExprData::Void => CExpr::VOID,
+            PExprData::Bool(v) => CExpr::from_bool(v, &mut self.arena),
             PExprData::Integer(integer) => {
                 let (ty, value) = self.get_int_type_and_val(target, integer, span);
-                CExpr::new(ty, CExprData::Int(value))
+                CExpr::from_int(ty, value, &mut self.arena)
             }
             PExprData::Float(float) => {
                 let typ = if let Some(suffix) = float.suffix {
@@ -2898,7 +2898,7 @@ impl TypeChecker {
                         "f64" => TypeId::F64,
                         data => {
                             return self.error(Error::new(
-                                format!("invalid float literal type: {data}"),
+                                format!("invalid float literal type: '{data}'"),
                                 span,
                             ));
                         }
@@ -2923,8 +2923,7 @@ impl TypeChecker {
                 }
 
                 // TODO: warn for lossy conversion from literal
-
-                CExpr::new(typ, CExprData::Float(float.value))
+                self.arena.typed(typ, CExprData::Float(float.value))
             }
             PExprData::Path(path) => match self.resolve_value_path(&path, target) {
                 ResolvedValue::Var(id) => {
@@ -2975,7 +2974,7 @@ impl TypeChecker {
 
                     let ty = var.ty;
                     self.proj.scopes.get_mut(id).unused = false;
-                    CExpr::new(ty, CExprData::Var(id))
+                    self.arena.typed(ty, CExprData::Var(id))
                 }
                 ResolvedValue::Fn(mut func) => {
                     let unknowns: HashSet<_> = func
@@ -2996,7 +2995,7 @@ impl TypeChecker {
                             .get(id)
                             .is_empty_variant(self.proj.scopes.get(func.id).name.data)
                     {
-                        return CExpr::new(
+                        return self.arena.typed(
                             self.proj
                                 .types
                                 .insert(Type::User(GenericUserType::new(id, func.ty_args))),
@@ -3007,7 +3006,7 @@ impl TypeChecker {
                         );
                     }
 
-                    CExpr::new(
+                    self.arena.typed(
                         self.proj.types.insert(Type::Fn(func.clone())),
                         CExprData::Fn(func, self.current),
                     )
@@ -3032,7 +3031,7 @@ impl TypeChecker {
                             .get(id)
                             .is_empty_variant(self.proj.scopes.get(mfn.func.id).name.data)
                     {
-                        return CExpr::new(
+                        return self.arena.typed(
                             self.proj
                                 .types
                                 .insert(Type::User(GenericUserType::new(id, mfn.func.ty_args))),
@@ -3043,7 +3042,7 @@ impl TypeChecker {
                         );
                     }
 
-                    CExpr::new(
+                    self.arena.typed(
                         self.proj.types.insert(Type::Fn(mfn.func.clone())),
                         CExprData::MemFn(mfn, self.current),
                     )
@@ -3077,7 +3076,7 @@ impl TypeChecker {
                     (_, true) => data.target,
                     _ => None,
                 };
-                CExpr::new(target.unwrap_or(TypeId::VOID), CExprData::Block(block))
+                self.arena.typed(target.unwrap_or(TypeId::VOID), CExprData::Block(block))
             }
             PExprData::If { cond, if_branch, else_branch } => {
                 let (cond, vars) = self.type_check_with_listen(*cond);
@@ -3125,24 +3124,28 @@ impl TypeChecker {
                     // All resolve to type `void` instead of ?never/?void while
                     //                  if false { 10 }
                     // Has type ?int
-                    if if_branch.data.is_yielding_block(&self.proj.scopes).unwrap_or(true)
+                    if self
+                        .arena
+                        .get(if_branch.data)
+                        .is_yielding_block(&self.proj.scopes)
+                        .unwrap_or(true)
                         && !matches!(out_type, TypeId::NEVER | TypeId::VOID | TypeId::UNKNOWN)
                     {
                         out_type = self.make_lang_type_by_name("option", [out_type], span);
                         if_branch = self.try_coerce(if_branch, out_type);
-                        CExpr::option_null(out_type)
+                        CExpr::option_null(out_type, &mut self.arena)
                     } else {
                         out_type = TypeId::VOID;
-                        CExpr::void()
+                        CExpr::VOID
                     }
                 };
 
-                CExpr::new(
+                self.arena.typed(
                     out_type,
                     CExprData::If {
-                        cond: cond.into(),
-                        if_branch: if_branch.into(),
-                        else_branch: else_branch.into(),
+                        cond,
+                        if_branch,
+                        else_branch,
                         dummy_scope: self.proj.scopes.create_scope(
                             ScopeId::ROOT,
                             ScopeKind::None,
@@ -3162,7 +3165,7 @@ impl TypeChecker {
                             this.define(&vars);
                         }
                     });
-                    (Some(cond.into()), body)
+                    (Some(cond), body)
                 } else {
                     (None, self.create_block(body, ScopeKind::Loop(kind)))
                 };
@@ -3170,7 +3173,7 @@ impl TypeChecker {
                     self.proj.scopes[body.scope].kind.as_loop().copied().unwrap(),
                     span,
                 );
-                CExpr::new(out_type, CExprData::Loop { cond, body, do_while, optional })
+                self.arena.typed(out_type, CExprData::Loop { cond, body, do_while, optional })
             }
             PExprData::For { patt, iter, body, label } => {
                 self.check_for_expr(target, patt, *iter, body, label)
@@ -3224,13 +3227,9 @@ impl TypeChecker {
                         name.span,
                     ));
                 }
-                CExpr::new(
-                    ty,
-                    CExprData::Member {
-                        source: source.auto_deref(&self.proj.types, id).into(),
-                        member: name.data,
-                    },
-                )
+
+                let source = source.auto_deref(&self.proj.types, id, &mut self.arena);
+                self.arena.typed(ty, CExprData::Member { source, member: name.data })
             }
             PExprData::Subscript { callee, args } => {
                 self.check_subscript(*callee, args, target, None, span)
@@ -3292,7 +3291,7 @@ impl TypeChecker {
                     }
                 };
 
-                CExpr::new(TypeId::NEVER, CExprData::Continue(id))
+                self.arena.typed(TypeId::NEVER, CExprData::Continue(id))
             }
             PExprData::Is { expr, pattern } => self.enter(ScopeKind::None, |this| {
                 let mut prev = this.current_expr;
@@ -3306,7 +3305,7 @@ impl TypeChecker {
                     has_hint: false,
                 });
                 std::mem::swap(&mut this.current_expr, &mut prev);
-                CExpr::new(TypeId::BOOL, CExprData::Is(expr.into(), patt))
+                this.arena.typed(TypeId::BOOL, CExprData::Is(expr, patt))
             }),
             PExprData::Match { expr, body } => {
                 let scrutinee = self.check_expr(*expr, None);
@@ -3344,10 +3343,10 @@ impl TypeChecker {
                 }
 
                 self.check_match_coverage(scrutinee.ty, result.iter().map(|it| &it.0), span);
-                CExpr::new(
+                self.arena.typed(
                     target,
                     CExprData::Match {
-                        expr: scrutinee.into(),
+                        scrutinee,
                         body: result,
                         dummy_scope: self.proj.scopes.create_scope(
                             ScopeId::ROOT,
@@ -3411,7 +3410,7 @@ impl TypeChecker {
                     }
                     _ => {}
                 }
-                CExpr::new(to_id, CExprData::As(expr.into(), throwing))
+                self.arena.typed(to_id, CExprData::As(expr, throwing))
             }
             PExprData::Error => CExpr::default(),
             PExprData::Lambda { params, ret, body, moves: _ } => {
@@ -3478,7 +3477,7 @@ impl TypeChecker {
                     params: lparams,
                     ret: yields.then(|| *target).flatten().unwrap_or(TypeId::VOID),
                 });
-                CExpr::new(self.proj.types.insert(fnptr), CExprData::Lambda(body))
+                self.arena.typed(self.proj.types.insert(fnptr), CExprData::Lambda(body))
             }
             PExprData::Unsafe(expr) => {
                 let mut span = span;
@@ -3505,7 +3504,7 @@ impl TypeChecker {
     fn check_expr(&mut self, expr: PExpr, target: Option<TypeId>) -> CExpr {
         let expr = self.check_expr_inner(expr, target);
         if expr.ty == TypeId::NEVER
-            && !matches!(expr.data, CExprData::Yield(_, scope) if scope == self.current)
+            && !matches!(self.arena.get(expr.data), &CExprData::Yield(_, scope) if scope == self.current)
         {
             // TODO: lambdas
             if let ScopeKind::Block(BlockScopeKind { branches, .. }) =
@@ -3623,14 +3622,16 @@ impl TypeChecker {
 
         for mut func in candidates {
             let args = args.clone();
-            let recv = callee
-                .clone()
-                .auto_deref(&self.proj.types, self.proj.scopes.get(func.id).params[0].ty);
+            let recv = callee.auto_deref(
+                &self.proj.types,
+                self.proj.scopes.get(func.id).params[0].ty,
+                &mut self.arena,
+            );
             let err_idx = self.proj.diag.capture_errors();
             let (args, ret, failed) = self.check_fn_args(&mut func, Some(recv), args, target, span);
             // TODO: if the arguments have non overload related errors, just stop overload
             // resolution
-            if failed || args.iter().any(|arg| matches!(arg.1.data, CExprData::Error)) {
+            if failed || args.iter().any(|arg| arg.1.data == ExprArena::ERROR.data) {
                 self.proj.diag.truncate_errors(err_idx);
                 continue;
             }
@@ -3640,24 +3641,12 @@ impl TypeChecker {
                 check_unsafe!(self, Error::is_unsafe(span));
             }
 
+            let call =
+                CExpr::call(ret, &self.proj.types, func, args, self.current, span, &mut self.arena);
             if !assign && let Type::Ptr(inner) | Type::MutPtr(inner) = &self.proj.types[ret] {
-                return CExpr::new(
-                    *inner,
-                    CExprData::Deref(
-                        CExpr::new(
-                            ret,
-                            CExprData::call(&self.proj.types, func, args, self.current, span),
-                        )
-                        .into(),
-                        1,
-                    ),
-                );
+                return self.arena.typed(*inner, CExprData::Deref(call, 1));
             }
-
-            return CExpr::new(
-                ret,
-                CExprData::call(&self.proj.types, func, args, self.current, span),
-            );
+            return call;
         }
 
         let args: Vec<_> = args.into_iter().map(|(_, expr)| self.check_expr(expr, None)).collect();
@@ -3686,7 +3675,7 @@ impl TypeChecker {
         if !matches!(
             self.proj.types[callee.ty],
             Type::Ptr(_) | Type::MutPtr(_) | Type::DynPtr(_) | Type::DynMutPtr(_)
-        ) && !callee.can_addrmut(&self.proj.scopes, &self.proj.types)
+        ) && !callee.can_addrmut(&self.proj, &self.arena)
         {
             return true;
         }
@@ -3725,15 +3714,12 @@ impl TypeChecker {
                     } else {
                         ScopeKind::Lambda(Some(expr.ty), true)
                     };
-
-                    return CExpr::new(TypeId::NEVER, CExprData::Return(expr.into()));
+                    return self.arena.typed(TypeId::NEVER, CExprData::Return(expr));
                 }
                 &ScopeKind::Function(id) => {
                     let target = self.proj.scopes.get(id).ret;
-                    return CExpr::new(
-                        TypeId::NEVER,
-                        CExprData::Return(self.type_check(expr, target).into()),
-                    );
+                    let expr = self.type_check(expr, target);
+                    return self.arena.typed(TypeId::NEVER, CExprData::Return(expr));
                 }
                 ScopeKind::Defer => {
                     self.proj.diag.report(Error::new("cannot return in defer block", span));
@@ -3776,15 +3762,15 @@ impl TypeChecker {
             let (target, opt) = self.loop_out_type(data, span);
             if opt { self.try_coerce(expr, target) } else { expr }
         } else if let Some(target) = data.target {
-            self.type_check_checked(CExpr::void(), target, span)
+            self.type_check_checked(CExpr::VOID, target, span)
         } else {
             data.target = Some(TypeId::VOID);
             data.breaks = LoopBreak::WithNothing;
-            CExpr::void()
+            CExpr::VOID
         };
 
         self.proj.scopes[id].kind = ScopeKind::Loop(data);
-        CExpr::new(TypeId::NEVER, CExprData::Break(expr.into(), id))
+        self.arena.typed(TypeId::NEVER, CExprData::Break(expr, id))
     }
 
     fn check_yield(
@@ -3796,11 +3782,10 @@ impl TypeChecker {
     ) -> CExpr {
         let expr = if let Some(target) = data.target {
             expr.map(|expr| self.type_check(*expr, target))
-                .unwrap_or_else(|| self.type_check_checked(CExpr::void(), target, span))
+                .unwrap_or_else(|| self.type_check_checked(CExpr::VOID, target, span))
         } else {
             let span = expr.as_ref().map(|e| e.span).unwrap_or(span);
-            let expr =
-                expr.map(|expr| self.check_expr(*expr, data.target)).unwrap_or_else(CExpr::void);
+            let expr = expr.map(|expr| self.check_expr(*expr, data.target)).unwrap_or(CExpr::VOID);
             // expr could contain a nested expr that sets the target, ex. `@outer: { { break @outer 10 } }`
             data = *self.proj.scopes[id].kind.as_block().unwrap();
             if let Some(target) = data.target {
@@ -3814,7 +3799,7 @@ impl TypeChecker {
         data.yields = true;
         self.proj.scopes[id].kind = ScopeKind::Block(data);
 
-        CExpr::new(TypeId::NEVER, CExprData::Yield(expr.into(), id))
+        self.arena.typed(TypeId::NEVER, CExprData::Yield(expr, id))
     }
 
     fn check_for_expr(
@@ -3896,30 +3881,27 @@ impl TypeChecker {
                 let Some(p0) = f.params.first().map(|p| p.label) else {
                     panic!("ICE: Iterator::next() has 0 parameters");
                 };
-                let arg0 = CExpr::new(
+                let inner = this.arena.typed(iter.ty, CExprData::Var(iter_var));
+                let arg0 = this.arena.typed(
                     this.proj.types.insert(Type::MutPtr(iter.ty)),
-                    CExprData::Unary(
-                        UnaryOp::AddrMut,
-                        CExpr::new(iter.ty, CExprData::Var(iter_var)).into(),
-                    ),
+                    CExprData::Unary(UnaryOp::AddrMut, inner),
                 );
 
-                CExpr::new(
+                CExpr::member_call(
                     f.ret.with_templates(&this.proj.types, &mfn.func.ty_args),
-                    CExprData::member_call(
-                        &this.proj.types,
-                        mfn,
-                        [(p0, arg0)].into(),
-                        this.current,
-                        iter_span,
-                    ),
+                    &this.proj.types,
+                    mfn,
+                    [(p0, arg0)].into(),
+                    this.current,
+                    iter_span,
+                    &mut this.arena,
                 )
             };
 
-            let cond = CExpr::new(
+            let cond = this.arena.typed(
                 TypeId::BOOL,
                 CExprData::Is(
-                    next_fn_call.into(),
+                    next_fn_call,
                     CPattern::refutable(PatternData::Variant {
                         pattern: Some(
                             CPattern::irrefutable(PatternData::Destructure {
@@ -3934,12 +3916,12 @@ impl TypeChecker {
                     }),
                 ),
             );
-            let while_loop = CExpr::new(
-                out,
-                CExprData::Loop { cond: Some(cond.into()), body, do_while: false, optional },
-            );
+            let while_loop = this
+                .arena
+                .typed(out, CExprData::Loop { cond: Some(cond), body, do_while: false, optional });
 
-            CExpr::new(
+            let inner = this.arena.typed(out, CExprData::Yield(while_loop, this.current));
+            this.arena.typed(
                 out,
                 CExprData::Block(Block {
                     body: vec![
@@ -3947,10 +3929,7 @@ impl TypeChecker {
                             CPattern { irrefutable: true, data: PatternData::Variable(iter_var) },
                             Some(iter),
                         ),
-                        CStmt::Expr(CExpr::new(
-                            out,
-                            CExprData::Yield(while_loop.into(), this.current),
-                        )),
+                        CStmt::Expr(inner),
                     ],
                     scope: this.current,
                 }),
@@ -4034,7 +4013,7 @@ impl TypeChecker {
             }
         }
 
-        CExpr::new(self.proj.types.insert(Type::User(ut)), CExprData::Instance(members))
+        self.arena.typed(self.proj.types.insert(Type::User(ut)), CExprData::Instance(members))
     }
 
     fn check_call(
@@ -4106,7 +4085,7 @@ impl TypeChecker {
                     if !matches!(
                         self.proj.types[recv.ty],
                         Type::Ptr(_) | Type::MutPtr(_) | Type::DynPtr(_) | Type::DynMutPtr(_)
-                    ) && !recv.can_addrmut(&self.proj.scopes, &self.proj.types)
+                    ) && !recv.can_addrmut(&self.proj, &self.arena)
                     {
                         report_error!(
                             self,
@@ -4130,21 +4109,26 @@ impl TypeChecker {
                         )
                     }
 
-                    if matches!(&recv.data, CExprData::Member { source, .. } if source.ty.is_packed_struct(&self.proj))
+                    if matches!(self.arena.get(recv.data), CExprData::Member { source, .. } if source.ty.is_packed_struct(&self.proj))
                     {
                         self.proj.diag.report(Warning::call_mutating_on_bitfield(span))
                     }
                 }
 
-                let recv = recv.auto_deref(&self.proj.types, this_param_ty);
+                let recv = recv.auto_deref(&self.proj.types, this_param_ty, &mut self.arena);
                 let (args, ret, _) =
                     self.check_fn_args(&mut mfn.func, Some(recv), args, target, span);
                 if mfn.typ.is_dynamic() {
-                    return CExpr::new(ret, CExprData::CallDyn(mfn.func, args));
+                    return self.arena.typed(ret, CExprData::CallDyn(mfn.func, args));
                 } else {
-                    return CExpr::new(
+                    return CExpr::member_call(
                         ret,
-                        CExprData::member_call(&self.proj.types, mfn, args, self.current, span),
+                        &self.proj.types,
+                        mfn,
+                        args,
+                        self.current,
+                        span,
+                        &mut self.arena,
                     );
                 }
             }
@@ -4177,11 +4161,16 @@ impl TypeChecker {
                     let (args, ret, _) =
                         self.check_fn_args(&mut mfn.func, None, args, target, span);
                     if mfn.typ.is_dynamic() {
-                        return CExpr::new(ret, CExprData::CallDyn(mfn.func, args));
+                        return self.arena.typed(ret, CExprData::CallDyn(mfn.func, args));
                     } else {
-                        return CExpr::new(
+                        return CExpr::member_call(
                             ret,
-                            CExprData::member_call(&self.proj.types, mfn, args, self.current, span),
+                            &self.proj.types,
+                            mfn,
+                            args,
+                            self.current,
+                            span,
+                            &mut self.arena,
                         );
                     }
                 }
@@ -4226,7 +4215,7 @@ impl TypeChecker {
                     check_unsafe!(self, Error::is_unsafe(span));
                 }
 
-                CExpr::new(f.ret, CExprData::CallFnPtr(callee.into(), result))
+                self.arena.typed(f.ret, CExprData::CallFnPtr(callee, result))
             }
             _ => bail!(
                 self,
@@ -4264,7 +4253,7 @@ impl TypeChecker {
         }
 
         let (args, ret, _) = self.check_fn_args(&mut func, None, args, target, span);
-        CExpr::new(ret, CExprData::call(&self.proj.types, func, args, self.current, span))
+        CExpr::call(ret, &self.proj.types, func, args, self.current, span, &mut self.arena)
     }
 
     fn check_arg<T>(
@@ -4381,7 +4370,7 @@ impl TypeChecker {
             }
 
             if let Some(DefaultExpr::Checked(expr)) = &param.default {
-                result.insert(param.label, expr.clone_at(self.current, span));
+                result.insert(param.label, expr.clone_at(self.current, span, &mut self.arena));
             }
         }
 
@@ -4718,7 +4707,7 @@ impl TypeChecker {
                             (res.val, span)
                         } else {
                             let expr = self.check_expr(expr, None);
-                            let Some(res) = self.consteval(&expr, span) else {
+                            let Some(res) = self.consteval(expr, span) else {
                                 continue;
                             };
 
@@ -5320,7 +5309,7 @@ impl TypeChecker {
     }
 
     #[allow(clippy::result_large_err)]
-    fn coerce(&mut self, mut expr: CExpr, target: TypeId) -> Result<CExpr, CExpr> {
+    fn coerce(&mut self, expr: CExpr, target: TypeId) -> Result<CExpr, CExpr> {
         // TODO: This is cacheable by TypeId
         fn may_ptr_coerce(types: &Types, from: &Type, to: &Type) -> bool {
             match (from, to) {
@@ -5345,29 +5334,26 @@ impl TypeChecker {
 
         match (&self.proj.types[expr.ty], &self.proj.types[target]) {
             (Type::Never, Type::Never) => Ok(expr),
-            (Type::Never, _) => Ok(CExpr::new(target, CExprData::NeverCoerce(expr.into()))),
-            (Type::Unknown, _) | (_, Type::Unknown) => {
-                expr.ty = target;
-                Ok(expr)
-            }
+            (Type::Never, _) => Ok(self.arena.typed(target, CExprData::NeverCoerce(expr))),
+            (Type::Unknown, _) | (_, Type::Unknown) => Ok(CExpr::new(target, expr.data)),
             (Type::DynPtr(lhs), Type::DynPtr(rhs))
             | (Type::DynMutPtr(lhs), Type::DynMutPtr(rhs) | Type::DynPtr(rhs)) => {
                 if lhs == rhs || self.has_direct_impl(&lhs.clone(), &rhs.clone()) {
-                    Ok(CExpr::new(target, CExprData::DynCoerce(expr.into(), self.current)))
+                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr, self.current)))
                 } else {
                     Err(expr)
                 }
             }
             (&Type::Ptr(lhs), Type::DynPtr(rhs)) => {
                 if self.implements_trait(lhs, &rhs.clone()) {
-                    Ok(CExpr::new(target, CExprData::DynCoerce(expr.into(), self.current)))
+                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr, self.current)))
                 } else {
                     Err(expr)
                 }
             }
             (Type::MutPtr(lhs), Type::DynPtr(rhs) | Type::DynMutPtr(rhs)) => {
                 if self.implements_trait(*lhs, &rhs.clone()) {
-                    Ok(CExpr::new(target, CExprData::DynCoerce(expr.into(), self.current)))
+                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr, self.current)))
                 } else {
                     Err(expr)
                 }
@@ -5381,18 +5367,17 @@ impl TypeChecker {
                 }
             }
             (lhs, rhs) if may_ptr_coerce(&self.proj.types, lhs, rhs) => {
-                expr.ty = target;
-                Ok(expr)
+                Ok(CExpr::new(target, expr.data))
             }
             (lhs, rhs) if lhs == rhs => Ok(expr),
             (_, rhs) => {
                 if let Some(inner) = rhs.as_option_inner(&self.proj.scopes) {
                     match self.coerce(expr, inner) {
-                        Ok(expr) => Ok(CExpr::option_some(target, expr)),
+                        Ok(expr) => Ok(CExpr::option_some(target, expr, &mut self.arena)),
                         Err(expr) => Err(expr),
                     }
                 } else if self.can_span_coerce(expr.ty, target).is_some() {
-                    Ok(CExpr::new(target, CExprData::SpanMutCoerce(expr.into())))
+                    Ok(self.arena.typed(target, CExprData::SpanMutCoerce(expr)))
                 } else {
                     Err(expr)
                 }
@@ -7072,13 +7057,13 @@ impl TypeChecker {
     fn consteval_check(&mut self, expr: PExpr, target: TypeId) -> Option<ConstValue> {
         let span = expr.span;
         let expr = self.type_check(expr, target);
-        (expr.ty == target).then(|| self.consteval(&expr, span)).flatten()
+        (expr.ty == target).then(|| self.consteval(expr, span)).flatten()
     }
 
-    fn consteval(&mut self, expr: &CExpr, span: Span) -> Option<ConstValue> {
-        match &expr.data {
+    fn consteval(&mut self, expr: CExpr, span: Span) -> Option<ConstValue> {
+        match self.arena.get(expr.data) {
             CExprData::Int(val) => Some(ConstValue { ty: expr.ty, val: val.clone() }),
-            CExprData::Binary(op, lhs, rhs) => {
+            &CExprData::Binary(op, lhs, rhs) => {
                 let mut lhs = self.consteval(lhs, span)?;
                 let rhs = self.consteval(rhs, span)?;
                 let int = lhs.ty.as_integral(&self.proj.types, false).unwrap();
@@ -7120,7 +7105,7 @@ impl TypeChecker {
                 Some(lhs)
             }
             CExprData::Call { callee, .. } => {
-                let CExprData::Fn(func, _) = &callee.data else {
+                let CExprData::Fn(func, _) = self.arena.get(callee.data) else {
                     return self.error(Error::no_consteval(span));
                 };
 
