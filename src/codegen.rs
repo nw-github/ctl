@@ -151,7 +151,7 @@ impl TypeGen {
         write_de!(decls, " ");
         decls.emit_type_name(ut, flags.minify);
         write_de!(decls, ";");
-        if scopes.get(ut.id).attrs.has(Strings::ATTR_NOGEN) {
+        if scopes.get(ut.id).attrs.no_gen {
             return;
         }
 
@@ -458,7 +458,9 @@ impl<'a> Buffer<'a> {
                 write_de!(self, "__Unknown");
                 eprintln!("ICE: TypeId::Unknown in emit_generic_mangled_name")
             }
-            Type::Unresolved(_, _) => panic!("ICE: TypeId::Unresolved in emit_generic_mangled_name"),
+            Type::Unresolved(_, _) => {
+                panic!("ICE: TypeId::Unresolved in emit_generic_mangled_name")
+            }
         }
     }
 
@@ -533,9 +535,9 @@ impl<'a> Buffer<'a> {
         }
 
         if !generic {
-            if let Some(name) = self.1.scopes.get(ut.id).attrs.val(Strings::ATTR_LINKNAME) {
+            if let Some(name) = self.1.scopes.get(ut.id).attrs.link_name {
                 return self.emit_str(name);
-            } else if self.1.scopes.get(ut.id).attrs.has(Strings::ATTR_NOGEN) {
+            } else if self.1.scopes.get(ut.id).attrs.no_gen {
                 return self.emit_str(self.1.scopes.get(ut.id).name.data);
             }
         }
@@ -595,7 +597,7 @@ impl<'a> Buffer<'a> {
                 }
             }
         } else {
-            self.emit_str(f.attrs.val(Strings::ATTR_LINKNAME).unwrap_or(f.name.data));
+            self.emit_str(f.attrs.link_name.unwrap_or(f.name.data));
         }
     }
 
@@ -1036,11 +1038,10 @@ impl<'a> Codegen<'a> {
             let mut test_count = 0;
             for (id, func) in self.proj.scopes.functions().filter(|f| f.1.typ.is_test()) {
                 let state = State::from_non_generic(id, &self.proj.scopes);
-                let skip = func.attrs.iter().find(|attr| attr.name.data == Strings::SKIP);
                 write_de!(
                     self.buffer,
-                    "{{.skip={}.name={},.module={},.test=",
-                    skip.is_some() as usize,
+                    "{{.skip={},.name={},.module={},.test=",
+                    func.attrs.test_skip.is_some() as usize,
                     StringLiteral(strdata!(self, func.name.data)),
                     StringLiteral(&full_name_pretty(self.proj, func.scope, true))
                 );
@@ -1055,9 +1056,9 @@ impl<'a> Codegen<'a> {
                     .get(&Strings::SKIP_REASON)
                     .unwrap()
                     .ty;
-                let opt = if let Some(reason) = skip.and_then(|v| v.props.first()) {
+                let opt = if let Some(reason) = func.attrs.test_skip.flatten() {
                     let str_ty = self.str_interp.string_ty.unwrap();
-                    let str = self.arena.typed(str_ty, ExprData::String(reason.name.data));
+                    let str = self.arena.typed(str_ty, ExprData::String(reason));
                     Expr::option_some(skip_reason_ty, str, &mut self.arena)
                 } else {
                     Expr::option_null(skip_reason_ty, &mut self.arena)
@@ -1080,7 +1081,7 @@ impl<'a> Codegen<'a> {
     fn emit_fn(&mut self, state: &mut State, prototypes: &mut Buffer<'a>) {
         // TODO: emit an error if a function has the c_macro attribute and a body
         let func = self.proj.scopes.get(state.func.id);
-        if func.attrs.has(Strings::ATTR_NOGEN) {
+        if func.attrs.no_gen {
             return;
         }
 
@@ -2843,10 +2844,10 @@ impl<'a> Codegen<'a> {
         } else {
             write_de!(self.buffer, "static ");
             // TODO: inline manually
-            match f.attrs.val(Strings::ATTR_INLINE).map(|k| strdata!(self, k)) {
-                Some("always") => write_de!(self.buffer, "CTL_FORCEINLINE "),
-                Some("never") => write_de!(self.buffer, "CTL_NEVERINLINE "),
-                _ if f.attrs.has(Strings::ATTR_INLINE) => write_de!(self.buffer, "CTL_INLINE "),
+            match f.attrs.inline {
+                Some(FunctionInline::Always) => write_de!(self.buffer, "CTL_FORCEINLINE "),
+                Some(FunctionInline::Never) => write_de!(self.buffer, "CTL_NEVERINLINE "),
+                Some(FunctionInline::Encouraged) => write_de!(self.buffer, "CTL_INLINE "),
                 _ => {}
             }
         }
@@ -2944,7 +2945,7 @@ impl<'a> Codegen<'a> {
         let var = self.proj.scopes.get(id);
         if var.kind.is_static() {
             if var.is_extern {
-                self.buffer.emit_str(var.attrs.val(Strings::ATTR_LINKNAME).unwrap_or(var.name.data))
+                self.buffer.emit_str(var.attrs.link_name.unwrap_or(var.name.data))
             } else {
                 self.buffer.emit(full_name(self.proj, var.scope, var.name.data));
             }
@@ -2972,7 +2973,7 @@ impl<'a> Codegen<'a> {
             write_de!(self.buffer, "static ");
         }
 
-        if self.proj.strings.get("thread_local").is_some_and(|id| var.attrs.has(id)) {
+        if var.attrs.thread_local {
             write_de!(self.buffer, "_Thread_local ");
         }
 
@@ -3463,9 +3464,7 @@ fn vtable_methods(scopes: &Scopes, types: &Types, tr: UserTypeId) -> Vec<Vis<Fun
 
 fn member_name(proj: &Project, id: Option<UserTypeId>, name: StrId) -> String {
     let data = proj.strings.resolve(&name);
-    if id.is_some_and(|id| proj.scopes.get(id).attrs.has(Strings::ATTR_NOGEN))
-        || !is_c_reserved_ident(data)
-    {
+    if id.is_some_and(|id| proj.scopes.get(id).attrs.no_gen) || !is_c_reserved_ident(data) {
         data.into()
     } else {
         format!("${data}")

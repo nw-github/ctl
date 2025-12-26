@@ -423,8 +423,7 @@ impl<'a> TypeChecker<'a> {
             ));
         }
 
-        if this.proj.test_runner.is_none() && this.proj.conf.has_feature(Strings::ATTR_TEST_RUNNER)
-        {
+        if this.proj.test_runner.is_none() && this.proj.conf.has_feature(Strings::FEAT_TEST) {
             this.proj.diag.report(Error::new(
                 "missing test runner function",
                 Span { file: last_file_id.unwrap_or_default(), pos: 0, len: 0 },
@@ -761,7 +760,7 @@ impl TypeChecker<'_> {
 impl<'a> TypeChecker<'a> {
     fn insert_user_type(&mut self, value: UserType, public: bool) -> UserTypeId {
         let id = self.insert::<UserTypeId>(value, public, true);
-        if let Some(name) = self.proj.scopes.get(id).attrs.val(Strings::ATTR_LANG) {
+        if let Some(name) = self.proj.scopes.get(id).attrs.lang {
             self.proj.scopes.lang_types.insert(name, id);
         }
         for (&name, m) in self.proj.scopes.get(id).members.iter() {
@@ -1223,10 +1222,11 @@ impl<'a> TypeChecker<'a> {
                     unused = false;
                 }
 
+                let attrs = VariableAttrs::relevant(&stmt.attrs, &mut self.proj);
                 DStmt::Binding {
                     id: self.insert::<VariableId>(
                         Variable {
-                            attrs: stmt.attrs.clone(),
+                            attrs,
                             public,
                             name,
                             ty,
@@ -1267,10 +1267,11 @@ impl<'a> TypeChecker<'a> {
             self.error(Error::new("generic functions cannot be declared 'extern'", span))
         }
 
+        let attrs = FunctionAttrs::relevant(f.name.data, &f.attrs, &mut self.proj);
         let id = self.insert::<FunctionId>(
             Function {
                 public: f.public,
-                attrs: f.attrs.clone(),
+                attrs,
                 name: f.name,
                 is_extern: f.is_extern,
                 is_async: f.is_async,
@@ -1289,26 +1290,10 @@ impl<'a> TypeChecker<'a> {
             true,
         );
 
-        let mut allow_safe_extern = false;
-        for attr in self.proj.scopes.get::<FunctionId>(id).attrs.clone().iter() {
-            match attr.name.data {
-                Strings::ATTR_INSTRINSIC => {
-                    allow_safe_extern = true;
-                    let (name, span) = if let Some(attr) = attr.props.first() {
-                        (attr.name.data, attr.name.span)
-                    } else {
-                        (self.proj.scopes.get(id).name.data, attr.name.span)
-                    };
-                    if self.tables.intrinsics.contains(&name) {
-                        self.proj.scopes.intrinsics.insert(id, name);
-                    } else {
-                        let name = strdata!(self, name);
-                        self.error(Error::new(format!("intrinsic '{name}' is not supported"), span))
-                    }
-                }
-                Strings::ATTR_SAFE => allow_safe_extern = true,
-                _ => {}
-            }
+        let mut allow_safe_extern = self.proj.scopes.get(id).attrs.safe_extern;
+        if let Some(name) = self.proj.scopes.get(id).attrs.intrinsic {
+            self.proj.scopes.intrinsics.insert(id, name);
+            allow_safe_extern = true;
         }
 
         self.enter(ScopeKind::Function(id), |this| {
@@ -1551,7 +1536,7 @@ impl<'a> TypeChecker<'a> {
         subscripts: &[DFn],
     ) -> UserType {
         UserType {
-            attrs: attrs.clone(),
+            attrs: UserTypeAttrs::relevant(attrs, &mut self.proj),
             name,
             public,
             kind,
@@ -2018,7 +2003,7 @@ impl TypeChecker<'_> {
             }
 
             let func = this.proj.scopes.get(id);
-            if func.attrs.has(Strings::ATTR_PANIC_HANDLER) {
+            if func.attrs.panic_handler {
                 if body.is_none() {
                     this.proj.diag.report(Error::new("panic handler must have a definition", func.name.span));
                 }
@@ -2036,15 +2021,15 @@ impl TypeChecker<'_> {
                         this.proj.diag.report(Error::invalid_impl(data, &why, fn_name.span))
                     }
                 }
-            } else if func.attrs.has(Strings::ATTR_TEST_RUNNER) {
+            } else if func.attrs.test_runner {
                 if body.is_none() {
-                    this.proj.diag.report(Error::new("panic handler must have a definition", func.name.span));
+                    this.proj.diag.report(Error::new("test runner must have a definition", func.name.span));
                 }
 
                 // TODO: validate the signature of this method
                 if let Some(_old) = this.proj.test_runner.replace(id) {
                     // TODO: report that it was previously defined at the span of _old
-                    this.proj.diag.report(Error::new("a panic handler already exists", func.name.span));
+                    this.proj.diag.report(Error::new("a test runner already exists", func.name.span));
                 }
             }
 
@@ -7558,7 +7543,6 @@ pub trait SharedStuff {
 }
 
 struct Tables {
-    intrinsics: HashSet<StrId>,
     binary_op_traits: HashMap<BinaryOp, (StrId, StrId)>,
     unary_op_traits: HashMap<UnaryOp, (StrId, StrId)>,
 }
@@ -7569,29 +7553,6 @@ impl Tables {
         let op_cmp = strings.get_or_intern_static("op_cmp");
         let op_eq = strings.get_or_intern_static("op_eq");
         Self {
-            intrinsics: [
-                strings.get_or_intern_static("size_of"),
-                strings.get_or_intern_static("align_of"),
-                strings.get_or_intern_static("panic"),
-                strings.get_or_intern_static("binary_op"),
-                strings.get_or_intern_static("unary_op"),
-                strings.get_or_intern_static("numeric_cast"),
-                strings.get_or_intern_static("numeric_abs"),
-                strings.get_or_intern_static("max_value"),
-                strings.get_or_intern_static("min_value"),
-                strings.get_or_intern_static("unreachable_unchecked"),
-                strings.get_or_intern_static("type_id"),
-                strings.get_or_intern_static("type_name"),
-                strings.get_or_intern_static("read_volatile"),
-                strings.get_or_intern_static("write_volatile"),
-                strings.get_or_intern_static("source_location"),
-                strings.get_or_intern_static("ptr_add_signed"),
-                strings.get_or_intern_static("ptr_add_unsigned"),
-                strings.get_or_intern_static("ptr_sub_signed"),
-                strings.get_or_intern_static("ptr_sub_unsigned"),
-                strings.get_or_intern_static("ptr_diff"),
-            ]
-            .into(),
             binary_op_traits: [
                 (BinaryOp::Cmp, (op_cmp, strings.get_or_intern_static("cmp"))),
                 (BinaryOp::Gt, (op_cmp, strings.get_or_intern_static("gt"))),

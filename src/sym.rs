@@ -3,7 +3,6 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{
-        Attributes,
         checked::{Expr as CheckedExpr, Pattern as CheckedPattern},
         parsed::{Expr, FunctionType, Path, Pattern, TypeHint, UsePath},
     },
@@ -12,6 +11,10 @@ use crate::{
     lexer::{Located, Span},
     typeid::{GenericTrait, GenericUserType, Type, TypeId, Types},
 };
+pub use attrs::*;
+
+#[path = "attrs.rs"]
+mod attrs;
 
 macro_rules! id {
     ($name: ident => $output: ident,
@@ -229,7 +232,7 @@ pub enum VariableKind {
 
 #[derive(Default)]
 pub struct Variable {
-    pub attrs: Attributes,
+    pub attrs: VariableAttrs,
     pub public: bool,
     pub name: Located<StrId>,
     pub ty: TypeId,
@@ -245,7 +248,7 @@ pub struct Variable {
 #[derive(Default)]
 pub struct Function {
     pub public: bool,
-    pub attrs: Attributes,
+    pub attrs: FunctionAttrs,
     pub name: Located<StrId>,
     pub is_extern: bool,
     pub is_async: bool,
@@ -351,7 +354,7 @@ impl HasTypeParams for ImplBlockData {
 }
 
 pub struct UserType {
-    pub attrs: Attributes,
+    pub attrs: UserTypeAttrs,
     pub public: bool,
     pub name: Located<StrId>,
     pub body_scope: ScopeId,

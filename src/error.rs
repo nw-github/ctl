@@ -276,6 +276,10 @@ impl Error {
     pub fn invalid_impl(func: &str, why: &str, span: Span) -> Self {
         Self::new(format!("invalid implementation of function '{func}': {why}"), span)
     }
+
+    pub fn invalid_attr(name: &str, span: Span) -> Self {
+        Self::new(format!("invalid attribute '{name}'"), span)
+    }
 }
 
 pub struct Warning;

@@ -21,7 +21,7 @@ impl Strings {
     pub const NULL: StrId = invent_str_id(4);
     pub const NEW: StrId = invent_str_id(5);
     pub const ATTR_LANG: StrId = invent_str_id(6);
-    pub const ATTR_INSTRINSIC: StrId = invent_str_id(7);
+    pub const ATTR_INTRINSIC: StrId = invent_str_id(7);
     pub const ATTR_SAFE: StrId = invent_str_id(8);
     pub const LANG_SPAN: StrId = invent_str_id(9);
     pub const LANG_SPAN_MUT: StrId = invent_str_id(10);
@@ -58,6 +58,8 @@ impl Strings {
     pub const ATTR_TEST_RUNNER: StrId = invent_str_id(41);
     pub const SKIP: StrId = invent_str_id(42);
     pub const SKIP_REASON: StrId = invent_str_id(43);
+    pub const ATTR_THREAD_LOCAL: StrId = invent_str_id(44);
+    pub const ATTR_COLD: StrId = invent_str_id(45);
 
     pub fn new() -> Self {
         let mut rodeo = Rodeo::default();
@@ -67,7 +69,7 @@ impl Strings {
         assert_eq!(Self::NULL, rodeo.get_or_intern_static("null"));
         assert_eq!(Self::NEW, rodeo.get_or_intern_static("new"));
         assert_eq!(Self::ATTR_LANG, rodeo.get_or_intern_static("lang"));
-        assert_eq!(Self::ATTR_INSTRINSIC, rodeo.get_or_intern_static("intrinsic"));
+        assert_eq!(Self::ATTR_INTRINSIC, rodeo.get_or_intern_static("intrinsic"));
         assert_eq!(Self::ATTR_SAFE, rodeo.get_or_intern_static("safe"));
         assert_eq!(Self::LANG_SPAN, rodeo.get_or_intern_static("span"));
         assert_eq!(Self::LANG_SPAN_MUT, rodeo.get_or_intern_static("span_mut"));
@@ -104,6 +106,8 @@ impl Strings {
         assert_eq!(Self::ATTR_TEST_RUNNER, rodeo.get_or_intern_static("test_runner"));
         assert_eq!(Self::SKIP, rodeo.get_or_intern_static("skip"));
         assert_eq!(Self::SKIP_REASON, rodeo.get_or_intern_static("skip_reason"));
+        assert_eq!(Self::ATTR_THREAD_LOCAL, rodeo.get_or_intern_static("thread_local"));
+        assert_eq!(Self::ATTR_COLD, rodeo.get_or_intern_static("cold"));
         Self { rodeo }
     }
 }
