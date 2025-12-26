@@ -2246,7 +2246,16 @@ impl TypeChecker<'_> {
         span: Span,
         target: Option<TypeId>,
     ) -> CExpr {
-        let inner = self.check_expr(inner, target.and_then(|id| id.as_pointee(&self.proj.types)));
+        let target = target.and_then(|id| id.as_pointee(&self.proj.types));
+        // allow &raw mut FOO to not be unsafe even if FOO is a static mut
+        let inner = if matches!(op, UnaryOp::AddrRaw | UnaryOp::AddrRawMut)
+            && matches!(self.parsed.get(inner.data), ExprData::Path(_))
+        {
+            self.in_unsafe_context(|this| this.check_expr(inner, target)).1
+        } else {
+            self.check_expr(inner, target)
+        };
+
         if matches!(op, UnaryOp::AddrMut | UnaryOp::AddrRawMut) {
             if matches!(self.arena.get(inner.data), CExprData::Var(id) if self.proj.scopes.get(*id).kind.is_const())
             {
@@ -3377,16 +3386,21 @@ impl TypeChecker<'_> {
 
                 // consider the body of the
                 self.current_expr -= 1;
-                let old_safety = std::mem::replace(&mut self.safety, Safety::Unsafe(false));
-                let expr = self.check_expr(expr, target);
-                let old_safety = std::mem::replace(&mut self.safety, old_safety);
-                if !was_unsafe && matches!(old_safety, Safety::Unsafe(false)) {
+                let (safety, expr) = self.in_unsafe_context(|this| this.check_expr(expr, target));
+                if !was_unsafe && matches!(safety, Safety::Unsafe(false)) {
                     self.proj.diag.report(Warning::useless_unsafe(span));
                 }
 
                 expr
             }
         }
+    }
+
+    fn in_unsafe_context<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> (Safety, T) {
+        let old_safety = std::mem::replace(&mut self.safety, Safety::Unsafe(false));
+        let res = f(self);
+        let old_safety = std::mem::replace(&mut self.safety, old_safety);
+        (old_safety, res)
     }
 
     fn check_expr(&mut self, expr: PExpr, target: Option<TypeId>) -> CExpr {
