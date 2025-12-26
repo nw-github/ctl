@@ -1,16 +1,5 @@
 @(feature(hosted))
-mod libc {
-    pub struct JmpBuf {
-        pad: [u8; 0xc8],
-    }
-
-    pub extern fn abort(): never;
-    pub extern fn exit(code: c_int): never;
-
-    // The C macro `setjmp` calls _setjmp, which does not save the signal mask
-    pub extern fn _setjmp(env: *mut JmpBuf): c_int;
-    pub extern fn longjmp(env: *mut JmpBuf, val: c_int): never;
-}
+mod libc;
 
 @(feature(hosted))
 pub fn exit(code: u32): never {

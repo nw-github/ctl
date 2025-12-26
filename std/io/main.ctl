@@ -1,12 +1,11 @@
 use std::fmt;
-
-extern fn write(fd: c_int, buf: ^void, count: uint): int;
+use std::libc;
 
 struct Stdio {
     impl fmt::Write {
         fn write_str(mut this, s: str) {
             if !s.is_empty() {
-                unsafe write(1, s.as_raw().cast(), s.len());
+                unsafe libc::write(1, s.as_raw().cast(), s.len());
             }
         }
     }
@@ -16,7 +15,7 @@ struct Stderr {
     impl fmt::Write {
         fn write_str(mut this, s: str) {
             if !s.is_empty() {
-                unsafe write(2, s.as_raw().cast(), s.len());
+                unsafe libc::write(2, s.as_raw().cast(), s.len());
             }
         }
     }

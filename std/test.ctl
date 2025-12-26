@@ -29,7 +29,7 @@ fn test_runner(tests: [TestInfo..]) {
     for {test, name, module, skip, skip_reason} in tests.iter() {
         if module != prev_mod {
             prev_mod = *module;
-            eprintln("module '{module}':");
+            eprintln("{module}:");
         }
 
         eprint("    {name:<35} ... ");
@@ -55,12 +55,14 @@ fn test_runner(tests: [TestInfo..]) {
         }
     }
 
-    let total = tests.len();
-    eprint("\n{GREEN}Passed{CLEAR}: {passed}/{total}");
-    eprint(" | {RED}Failed{CLEAR}: {failed.len()}/{total}");
-    eprint(" | {YELLOW}Skipped{CLEAR}: {skipped}/{total}\n\n");
-    eprintln("Failed Tests: ");
-    for test in failed.iter() {
-        eprintln("    {test.module}::'{test.name}': {test.panic_msg}");
+    eprint("\n{GREEN}Passed{CLEAR}: {passed}/{tests.len()}");
+    eprint(" | {RED}Failed{CLEAR}: {failed.len()}/{tests.len()}");
+    eprint(" | {YELLOW}Skipped{CLEAR}: {skipped}/{tests.len()}\n");
+
+    if !failed.is_empty() {
+        eprintln("\nFailed Tests: ");
+        for test in failed.iter() {
+            eprintln("    {test.module}::'{test.name}': {test.panic_msg}");
+        }
     }
 }
