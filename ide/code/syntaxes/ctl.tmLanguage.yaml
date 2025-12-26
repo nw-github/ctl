@@ -329,6 +329,10 @@ repository:
         name: keyword.other.fn.ctl
         match: \bfn\b
       -
+        comment: unittest
+        name: keyword.other.unittest.ctl
+        match: \bunittest\b
+      -
         comment: crate
         name: keyword.other.crate.ctl
         match: \bcrate\b

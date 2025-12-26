@@ -1507,20 +1507,37 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
     }
 
     fn attribute(&mut self) -> Attribute {
+        let mut props = false;
+        let name = self.next();
+        let span = name.span;
+        let name = name.map(|data| match data {
+            Token::String(name) => self.strings.get_or_intern(name),
+            Token::Ident(name) => {
+                props = true;
+                self.strings.get_or_intern(name)
+            }
+            _ => {
+                self.error(Error::new("expected attribute name", span));
+                Strings::EMPTY
+            }
+        });
+
         Attribute {
-            name: self.expect_ident("expected name"),
-            props: self
-                .next_if(Token::LParen)
-                .map(|tk| self.csv_one(Token::RParen, tk.span, Self::attribute).data)
-                .unwrap_or_default(),
+            name,
+            props: if props {
+                self.next_if(Token::LParen)
+                    .map(|tk| self.csv_one(Token::RParen, tk.span, Self::attribute).data)
+                    .unwrap_or_default()
+            } else {
+                vec![]
+            },
         }
     }
 
     fn attributes(&mut self) -> Attributes {
         let mut attrs = vec![];
         while let Some(token) = self.next_if(Token::AtLParen) {
-            let attr = self.csv_one(Token::RParen, token.span, Self::attribute);
-            attrs.extend(attr.data);
+            attrs.extend(self.csv_one(Token::RParen, token.span, Self::attribute).data);
         }
         Attributes::new(attrs)
     }
