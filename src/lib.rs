@@ -18,17 +18,16 @@ use std::path::{Path, PathBuf};
 pub use project::Configuration;
 
 use crate::{
-    ast::checked::ExprArena,
+    ast::checked::ExprArena as CExprArena,
+    ast::parsed::{ExprArena as PExprArena, Stmt, StmtData},
+    codegen::Codegen,
     intern::Strings,
     parser::{ModuleAttributes, Parser},
-    typecheck::TypeChecker,
+    project::Project,
+    typecheck::{LspInput, TypeChecker},
 };
 use anyhow::{Context, Result};
-use ast::parsed::{Stmt, StmtData};
-use codegen::Codegen;
 use indexmap::IndexMap;
-use project::Project;
-use typecheck::LspInput;
 
 pub use error::*;
 pub use lexer::*;
@@ -38,8 +37,14 @@ pub use source::*;
 pub trait CompileState {}
 
 pub struct Source<T>(T);
-pub struct Parsed(Vec<Stmt>, Diagnostics, Configuration, Strings);
-pub struct Checked(Project, ExprArena);
+pub struct Parsed {
+    modules: Vec<Stmt>,
+    diag: Diagnostics,
+    conf: Configuration,
+    strings: Strings,
+    arena: PExprArena,
+}
+pub struct Checked(Project, CExprArena);
 
 impl<T> CompileState for Source<T> {}
 impl CompileState for Parsed {}
@@ -76,18 +81,20 @@ impl<T: SourceProvider> Compiler<Source<T>> {
     pub fn parse(mut self, project: UnloadedProject) -> Result<Compiler<Parsed>> {
         let mut diag = Diagnostics::default();
         let mut strings = Strings::new();
-        let mut stmts = vec![];
+        let mut arena = PExprArena::new();
+        let mut mods = Vec::with_capacity(project.mods.len());
         for (path, module) in project.mods {
-            stmts.push(self.load_module(&mut diag, &mut strings, path, module, None)?);
+            mods.push(self.load_module(&mut diag, &mut strings, &mut arena, path, module, None)?);
         }
 
-        Ok(Compiler { state: Parsed(stmts, diag, project.conf, strings) })
+        Ok(Compiler { state: Parsed { modules: mods, diag, conf: project.conf, strings, arena } })
     }
 
     fn load_module(
         &mut self,
         diag: &mut Diagnostics,
         strings: &mut Strings,
+        arena: &mut PExprArena,
         path: PathBuf,
         module: Module,
         attrs: Option<ModuleAttributes>,
@@ -95,7 +102,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
         let name = strings.get_or_intern(module.name);
         let mut parsed = self.state.0.get_source(&path, |src| {
             let file_id = diag.add_file(path.clone());
-            Parser::parse(src, name, diag, strings, file_id, attrs.unwrap_or_default())
+            Parser::parse(src, name, diag, strings, arena, file_id, attrs.unwrap_or_default())
         })?;
 
         let StmtData::Module { body, .. } = &mut parsed.data.data else {
@@ -115,7 +122,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
                 }
             });
 
-            body.push(self.load_module(diag, strings, path, module, attrs)?);
+            body.push(self.load_module(diag, strings, arena, path, module, attrs)?);
         }
 
         Ok(parsed)
@@ -131,15 +138,15 @@ impl Default for Compiler<Source<FileSourceProvider>> {
 impl Compiler<Parsed> {
     pub fn dump(&self, mods: &[String]) {
         if mods.is_empty()
-            && let Some(ast) = self.state.0.last()
+            && let Some(ast) = self.state.modules.last()
         {
-            pretty::print_stmt(ast, &self.state.3, 0);
+            pretty::print_stmt(ast, &self.state.strings, &self.state.arena, 0);
         }
 
         for module in mods {
             if let Some(stmt) = self.find_module(module) {
                 eprintln!("Module {module}:");
-                pretty::print_stmt(stmt, &self.state.3, 0);
+                pretty::print_stmt(stmt, &self.state.strings, &self.state.arena, 0);
             } else {
                 eprintln!("Couldn't find module: '{module}'");
             }
@@ -148,11 +155,11 @@ impl Compiler<Parsed> {
 
     pub fn find_module(&self, module: &str) -> Option<&Stmt> {
         // std::alloc::vec
-        let (mut stmt, mut body) = (None, &self.state.0);
+        let (mut stmt, mut body) = (None, &self.state.modules);
         for submod in module.split("::") {
             let res = body.iter().find_map(|stmt| {
                 if let StmtData::Module { name, body, .. } = &stmt.data.data
-                    && self.state.3.resolve(&name.data) == submod
+                    && self.state.strings.resolve(&name.data) == submod
                 {
                     Some((stmt, body))
                 } else {
@@ -167,12 +174,18 @@ impl Compiler<Parsed> {
     }
 
     pub fn diagnostics(&self) -> &Diagnostics {
-        &self.state.1
+        &self.state.diag
     }
 
     pub fn typecheck(self, lsp: Option<LspInput>) -> Compiler<Checked> {
-        let (proj, arena) =
-            TypeChecker::check(self.state.0, self.state.1, lsp, self.state.2, self.state.3);
+        let (proj, arena) = TypeChecker::check(
+            self.state.modules,
+            self.state.diag,
+            lsp,
+            self.state.conf,
+            &self.state.arena,
+            self.state.strings,
+        );
         Compiler { state: Checked(proj, arena) }
     }
 }

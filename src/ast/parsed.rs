@@ -1,6 +1,9 @@
 use crate::{
     ast::{Alignment, Sign},
-    ds::ComptimeInt,
+    ds::{
+        ComptimeInt,
+        arena::{Arena, Id},
+    },
     intern::{StrId, THIS_TYPE},
     lexer::{Located, Span},
 };
@@ -59,7 +62,7 @@ pub enum StmtData {
     Use(UsePath),
     Let {
         patt: Located<Pattern>,
-        ty: Option<Located<TypeHint>>,
+        ty: Option<TypeHint>,
         value: Option<Expr>,
     },
     Fn(Fn),
@@ -68,7 +71,7 @@ pub enum StmtData {
         packed: bool,
     },
     Union {
-        tag: Option<Path>,
+        tag: Option<TypeHint>,
         base: Struct,
         variants: Vec<Variant>,
     },
@@ -86,7 +89,7 @@ pub enum StmtData {
     Extension {
         public: bool,
         name: Located<StrId>,
-        ty: Located<TypeHint>,
+        ty: TypeHint,
         type_params: TypeParams,
         impls: Vec<Located<ImplBlock>>,
         functions: Vec<Located<Fn>>,
@@ -98,7 +101,7 @@ pub enum StmtData {
         is_extern: bool,
         mutable: bool,
         name: Located<StrId>,
-        ty: Located<TypeHint>,
+        ty: TypeHint,
         value: Option<Expr>,
     },
     Module {
@@ -115,48 +118,44 @@ pub enum StmtData {
     Error,
 }
 
-pub type Expr = Located<ExprData>;
-
-pub type CallArgs = Vec<(Option<Located<StrId>>, Expr)>;
-
 #[derive(Clone)]
 pub enum ExprData {
     Binary {
         op: BinaryOp,
-        left: Box<Expr>,
-        right: Box<Expr>,
+        left: Expr,
+        right: Expr,
     },
     Is {
-        expr: Box<Expr>,
+        expr: Expr,
         pattern: Located<Pattern>,
     },
     As {
-        expr: Box<Expr>,
-        ty: Located<TypeHint>,
+        expr: Expr,
+        ty: TypeHint,
         throwing: bool,
     },
     Unary {
         op: UnaryOp,
-        expr: Box<Expr>,
+        expr: Expr,
     },
     Call {
-        callee: Box<Expr>,
+        callee: Expr,
         args: CallArgs,
     },
     Subscript {
-        callee: Box<Expr>,
+        callee: Expr,
         args: CallArgs,
     },
     Array(Vec<Expr>),
     Set(Vec<Expr>),
     Vec(Vec<Expr>),
     ArrayWithInit {
-        init: Box<Expr>,
-        count: Box<Expr>,
+        init: Expr,
+        count: Expr,
     },
     VecWithInit {
-        init: Box<Expr>,
-        count: Box<Expr>,
+        init: Expr,
+        count: Expr,
     },
     Tuple(Vec<Expr>),
     Map(Vec<(Expr, Expr)>),
@@ -171,45 +170,45 @@ pub enum ExprData {
     Void,
     Block(Vec<Stmt>, Option<StrId>),
     If {
-        cond: Box<Expr>,
-        if_branch: Box<Expr>,
-        else_branch: Option<Box<Expr>>,
+        cond: Expr,
+        if_branch: Expr,
+        else_branch: Option<Expr>,
     },
     Loop {
-        cond: Option<Box<Expr>>,
+        cond: Option<Expr>,
         body: Vec<Stmt>,
         do_while: bool,
         label: Option<StrId>,
     },
     For {
         patt: Located<Pattern>,
-        iter: Box<Expr>,
+        iter: Expr,
         body: Vec<Stmt>,
         label: Option<StrId>,
     },
     Match {
-        expr: Box<Expr>,
-        body: Vec<(Located<FullPattern>, Expr)>,
+        expr: Expr,
+        body: Vec<(FullPattern, Expr)>,
     },
     Member {
-        source: Box<Expr>,
-        generics: Vec<Located<TypeHint>>,
+        source: Expr,
+        generics: Vec<TypeHint>,
         member: Located<StrId>,
     },
-    Return(Box<Expr>),
-    Tail(Box<Expr>),
-    Break(Option<Box<Expr>>, Option<Located<StrId>>),
-    Unsafe(Box<Expr>),
+    Return(Expr),
+    Tail(Expr),
+    Break(Option<Expr>, Option<Located<StrId>>),
+    Unsafe(Expr),
     Range {
-        start: Option<Box<Expr>>,
-        end: Option<Box<Expr>>,
+        start: Option<Expr>,
+        end: Option<Expr>,
         inclusive: bool,
     },
     Continue(Option<Located<StrId>>),
     Lambda {
-        params: Vec<(Located<StrId>, Option<Located<TypeHint>>)>,
-        ret: Option<Located<TypeHint>>,
-        body: Box<Expr>,
+        params: Vec<(Located<StrId>, Option<TypeHint>)>,
+        ret: Option<TypeHint>,
+        body: Expr,
         moves: bool,
     },
     StringInterpolation {
@@ -219,7 +218,7 @@ pub enum ExprData {
     Error,
 }
 
-pub type PathComponent = (Located<StrId>, Vec<Located<TypeHint>>);
+pub type PathComponent = (Located<StrId>, Vec<TypeHint>);
 
 #[derive(Clone, derive_more::Constructor)]
 pub struct Path {
@@ -308,7 +307,7 @@ pub enum Pattern {
     // x is mut y
     MutBinding(StrId),
     // x is ?mut y
-    Option(Box<Pattern>),
+    Option(Box<Located<Pattern>>),
     // let {x, y} = z;
     Struct(Vec<Destructure>),
     Tuple(Vec<Located<Pattern>>),
@@ -327,36 +326,31 @@ pub enum Pattern {
 
 #[derive(Clone)]
 pub struct FullPattern {
-    pub data: Pattern,
-    pub if_expr: Option<Box<Expr>>,
+    pub data: Located<Pattern>,
+    pub if_expr: Option<Expr>,
 }
 
-#[derive(Default, Clone)]
-pub enum TypeHint {
+
+#[derive(Clone)]
+pub enum TypeHintData {
     Path(Path),
-    Array(Box<Located<TypeHint>>, Box<Expr>),
-    Vec(Box<Located<TypeHint>>),
-    Slice(Box<Located<TypeHint>>),
-    SliceMut(Box<Located<TypeHint>>),
-    Tuple(Vec<Located<TypeHint>>),
-    AnonStruct(Vec<(StrId, Located<TypeHint>)>),
-    Set(Box<Located<TypeHint>>),
-    Map(Box<[Located<TypeHint>; 2]>),
-    Option(Box<Located<TypeHint>>),
-    Ptr(Box<Located<TypeHint>>),
-    MutPtr(Box<Located<TypeHint>>),
-    RawPtr(Box<Located<TypeHint>>),
-    RawMutPtr(Box<Located<TypeHint>>),
+    Array(TypeHint, Expr),
+    Vec(TypeHint),
+    Slice(TypeHint),
+    SliceMut(TypeHint),
+    Tuple(Vec<TypeHint>),
+    AnonStruct(Vec<(StrId, TypeHint)>),
+    Set(TypeHint),
+    Map([TypeHint; 2]),
+    Option(TypeHint),
+    Ptr(TypeHint),
+    MutPtr(TypeHint),
+    RawPtr(TypeHint),
+    RawMutPtr(TypeHint),
     DynPtr(Path),
     DynMutPtr(Path),
-    Fn {
-        is_extern: bool,
-        is_unsafe: bool,
-        params: Vec<Located<TypeHint>>,
-        ret: Option<Box<Located<TypeHint>>>,
-    },
+    Fn { is_extern: bool, is_unsafe: bool, params: Vec<TypeHint>, ret: Option<TypeHint> },
     Void,
-    #[default]
     Error,
 }
 
@@ -364,7 +358,7 @@ pub enum TypeHint {
 pub struct Param {
     pub keyword: bool,
     pub patt: Located<Pattern>,
-    pub ty: Located<TypeHint>,
+    pub ty: TypeHint,
     pub default: Option<Expr>,
 }
 
@@ -447,7 +441,7 @@ pub struct Fn {
     pub typ: FunctionType,
     pub type_params: TypeParams,
     pub params: Vec<Param>,
-    pub ret: Option<Located<TypeHint>>,
+    pub ret: Option<TypeHint>,
     pub body: Option<Expr>,
 }
 
@@ -480,23 +474,23 @@ pub struct OperatorFn {
     pub name: Located<OperatorFnType>,
     pub type_params: TypeParams,
     pub params: Vec<Param>,
-    pub ret: Option<Located<TypeHint>>,
+    pub ret: Option<TypeHint>,
     pub body: Option<Expr>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Member {
     pub public: bool,
     pub name: Located<StrId>,
-    pub ty: Located<TypeHint>,
+    pub ty: TypeHint,
     pub default: Option<Expr>,
 }
 
 #[derive(Clone)]
 pub enum VariantData {
     Empty,
-    StructLike(Vec<Member>),
-    TupleLike(Vec<(Located<TypeHint>, Option<Expr>)>),
+    StructLike(Vec<Member>, TypeHint),
+    TupleLike(Vec<(TypeHint, Option<Expr>)>, TypeHint),
 }
 
 #[derive(Clone)]
@@ -522,7 +516,7 @@ pub struct ImplBlock {
     pub attrs: Attributes,
     pub type_params: TypeParams,
     pub path: Path,
-    pub assoc_types: Vec<(Located<StrId>, Located<TypeHint>)>,
+    pub assoc_types: Vec<(Located<StrId>, TypeHint)>,
     pub functions: Vec<Located<Fn>>,
 }
 
@@ -534,7 +528,7 @@ pub enum FormatType {
     Custom(Located<StrId>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct FormatOpts {
     pub width: Option<Expr>,
     pub prec: Option<Expr>,
@@ -544,4 +538,45 @@ pub struct FormatOpts {
     pub alt: bool,
     pub zero: bool,
     pub typ: Option<FormatType>,
+}
+
+pub type CallArgs = Vec<(Option<Located<StrId>>, Expr)>;
+
+pub type TypeHint = Located<Id<TypeHintData>>;
+pub type Expr = Located<Id<ExprData>>;
+
+#[derive(Default, derive_more::Deref, derive_more::DerefMut)]
+pub struct ExprArena {
+    #[deref]
+    #[deref_mut]
+    pub exprs: Arena<ExprData>,
+    pub hints: Arena<TypeHintData>,
+}
+
+impl ExprArena {
+    pub const EXPR_ERROR: Expr = Expr { span: Span::nowhere(), data: Id::new(0) };
+    pub const HINT_ERROR: TypeHint = TypeHint { span: Span::nowhere(), data: Id::new(0) };
+    pub const HINT_VOID: TypeHint = Self::hint_void(Span::nowhere());
+    pub const HINT_THIS: TypeHint = TypeHint { span: Span::nowhere(), data: Id::new(2) };
+
+    pub fn new() -> Self {
+        let mut this = Self::default();
+        this.exprs.alloc(ExprData::Error);
+        this.hints.alloc(TypeHintData::Error);
+        this.hints.alloc(TypeHintData::Void);
+        this.hints.alloc(TypeHintData::Path(Path::new(PathOrigin::This(Span::default()), vec![])));
+        this
+    }
+
+    pub fn expr(&mut self, span: Span, data: ExprData) -> Expr {
+        Located { span, data: self.exprs.alloc(data) }
+    }
+
+    pub fn hint(&mut self, span: Span, data: TypeHintData) -> TypeHint {
+        Located { span, data: self.hints.alloc(data) }
+    }
+
+    pub const fn hint_void(span: Span) -> TypeHint {
+        TypeHint { span, data: Id::new(1) }
+    }
 }

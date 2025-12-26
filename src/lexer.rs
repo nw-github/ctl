@@ -237,7 +237,7 @@ impl Token<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Span {
     pub pos: u32,
     pub len: u32,
@@ -245,6 +245,10 @@ pub struct Span {
 }
 
 impl Span {
+    pub const fn nowhere() -> Self {
+        unsafe { std::mem::zeroed() }
+    }
+
     pub fn extend_to(&mut self, b: impl Into<Span>) {
         *self = self.extended_to(b);
     }
@@ -262,7 +266,7 @@ impl Span {
     }
 }
 
-#[derive(Default, Clone, Copy, derive_more::Constructor)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Hash, derive_more::Constructor)]
 pub struct Located<T> {
     pub span: Span,
     pub data: T,

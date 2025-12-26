@@ -11,7 +11,7 @@ pub enum OffsetMode {
     Utf32,
 }
 
-#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Hash)]
 pub struct FileId(u32);
 
 impl std::fmt::Display for FileId {

@@ -1,7 +1,6 @@
 use std::{fmt::Display, ops::Index};
 
 use crate::{
-    Located,
     ast::{BinaryOp, UnaryOp, parsed::TypeHint},
     ds::{ComptimeInt, HashArena, IndexMap},
     intern::Strings,
@@ -308,7 +307,7 @@ impl FnPtr {
 pub enum Type {
     #[default]
     Unknown,
-    Unresolved(UnresolvedTypeId),
+    Unresolved(TypeHint, ScopeId),
     Void,
     Never,
     Int(u32),
@@ -429,13 +428,11 @@ impl Type {
 
 pub struct Types {
     types: HashArena<Type>,
-    unresolved_types: Vec<(Located<TypeHint>, ScopeId)>,
 }
 
 impl Types {
     pub fn new() -> Self {
         Self {
-            unresolved_types: Vec::new(),
             types: [
                 Type::Unknown,
                 Type::Void,
@@ -460,16 +457,6 @@ impl Types {
 
     pub fn get(&self, id: TypeId) -> &Type {
         self.types.get(id.0)
-    }
-
-    pub fn add_unresolved(&mut self, hint: Located<TypeHint>, scope: ScopeId) -> TypeId {
-        let id = UnresolvedTypeId(self.unresolved_types.len());
-        self.unresolved_types.push((hint, scope));
-        self.insert(Type::Unresolved(id))
-    }
-
-    pub fn take_unresolved(&mut self, id: UnresolvedTypeId) -> (Located<TypeHint>, ScopeId) {
-        std::mem::take(&mut self.unresolved_types[id.0])
     }
 }
 
@@ -499,9 +486,6 @@ impl TypeId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct UnresolvedTypeId(usize);
-
 #[derive(Debug, Clone, Copy, EnumAsInner)]
 pub enum BitSizeResult {
     Size(u32),
@@ -528,7 +512,7 @@ impl TypeId {
         match &types[self] {
             Type::Unknown => "{unknown}".into(),
             // for debug purposes, ideally this should never be visible
-            Type::Unresolved(_) => "{unresolved}".into(),
+            Type::Unresolved(_, _) => "{unresolved}".into(),
             Type::Void => "void".into(),
             Type::Never => "never".into(),
             Type::Int(bits) => format!("i{bits}"),
@@ -772,7 +756,7 @@ impl TypeId {
             BitSizeResult::Size(int.bits)
         } else {
             match &types[self] {
-                Type::Unknown | Type::Unresolved(_) => BitSizeResult::Size(0),
+                Type::Unknown | Type::Unresolved(_, _) => BitSizeResult::Size(0),
                 Type::User(ut) => {
                     let ut = scopes.get(ut.id);
                     if let Some(u) = ut.kind.as_union().filter(|u| u.enum_union) {

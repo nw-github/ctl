@@ -31,6 +31,12 @@ impl<T> std::hash::Hash for Id<T> {
     }
 }
 
+impl<T> std::fmt::Debug for Id<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Id").field(&self.0).finish()
+    }
+}
+
 impl<T> Eq for Id<T> {}
 
 pub struct Arena<T> {
@@ -62,6 +68,10 @@ impl<T> Arena<T> {
 
     pub fn get(&self, item: Id<T>) -> &T {
         &self.data[item.0]
+    }
+
+    pub fn get_mut(&mut self, item: Id<T>) -> &mut T {
+        &mut self.data[item.0]
     }
 }
 

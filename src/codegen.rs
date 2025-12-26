@@ -458,7 +458,7 @@ impl<'a> Buffer<'a> {
                 write_de!(self, "__Unknown");
                 eprintln!("ICE: TypeId::Unknown in emit_generic_mangled_name")
             }
-            Type::Unresolved(_) => panic!("ICE: TypeId::Unresolved in emit_generic_mangled_name"),
+            Type::Unresolved(_, _) => panic!("ICE: TypeId::Unresolved in emit_generic_mangled_name"),
         }
     }
 
@@ -515,7 +515,7 @@ impl<'a> Buffer<'a> {
             Type::DynPtr(_) => write_de!(self, "DynPtr"),
             Type::DynMutPtr(_) => write_de!(self, "DynMutPtr"),
             Type::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
-            Type::Unresolved(_) => panic!("ICE: TypeId::Unresolved in emit_type"),
+            Type::Unresolved(_, _) => panic!("ICE: TypeId::Unresolved in emit_type"),
         }
     }
 

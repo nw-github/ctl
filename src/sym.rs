@@ -153,7 +153,7 @@ pub enum ParamPattern {
 #[derive(Clone)]
 pub enum TraitImplData {
     Path(ScopeId, Path),
-    Operator { tr: StrId, ty_args: Vec<Located<TypeHint>>, span: Span, scope: ScopeId },
+    Operator { tr: StrId, ty_args: Vec<TypeHint>, span: Span, scope: ScopeId },
     Checked(GenericTrait),
 }
 
