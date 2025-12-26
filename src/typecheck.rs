@@ -617,7 +617,8 @@ impl TypeChecker {
                     }
                     ValueItem::Var(id) => {
                         let var = self.proj.scopes.get(id);
-                        if !var.is_static && current_func != self.proj.scopes.function_of(var.scope)
+                        if var.kind.is_normal()
+                            && current_func != self.proj.scopes.function_of(var.scope)
                         {
                             return;
                         }
@@ -710,7 +711,7 @@ impl TypeChecker {
                     }
                     ValueItem::Var(id) => {
                         let var = self.proj.scopes.get(id);
-                        if !var.is_static {
+                        if var.kind.is_normal() {
                             continue;
                         }
                         completions.push(LspItem::Var(id));
@@ -1248,7 +1249,7 @@ impl TypeChecker {
                             ty,
                             unused,
                             is_extern,
-                            is_static: true,
+                            kind: [VariableKind::Static, VariableKind::Const][constant as usize],
                             has_hint: true,
                             mutable: mutable && !constant,
                             ..Default::default()
@@ -1257,7 +1258,6 @@ impl TypeChecker {
                         true,
                     ),
                     value,
-                    constant,
                 }
             }
             PStmtData::Use(stmt) => {
@@ -1792,11 +1792,8 @@ impl TypeChecker {
                 return CStmt::Guard { cond, body };
             }
             DStmt::Fn(f) => self.check_fn(f),
-            DStmt::Binding { id, value, constant } => {
-                // TODO: constants
-                let _ = constant;
-                // FIXME: detect cycles like static X: usize = X;
-                // FIXME: non-const statics should be disallowed
+            DStmt::Binding { id, value } => {
+                // FIXME: reject non-constexpr const/static
                 let ty = resolve_type!(self, self.proj.scopes.get_mut(id).ty);
 
                 self.proj.static_deps.insert(id, Dependencies::Resolving);
@@ -1809,18 +1806,18 @@ impl TypeChecker {
                 self.proj.static_deps.insert(id, Dependencies::Resolved(deps));
 
                 let var = self.proj.scopes.get_mut(id);
-                if value.is_none() && var.is_static && !var.is_extern {
-                    self.proj.diag.report(Error::new(
-                        "non-extern static variable must be initialized",
-                        var.name.span,
-                    ))
+                if value.is_none() {
+                    match var.kind {
+                        VariableKind::Static if !var.is_extern => self.proj.diag.report(
+                            Error::new("non-extern static must be initialized", var.name.span),
+                        ),
+                        VariableKind::Const => self
+                            .proj
+                            .diag
+                            .report(Error::new("constant must be initialized", var.name.span)),
+                        _ => {}
+                    }
                 }
-
-                // if value.is_none() && constant {
-                //     self.proj
-                //         .diag
-                //         .error(Error::new("constant must be initialized", var.name.span))
-                // }
 
                 var.value = value;
             }
@@ -2298,13 +2295,16 @@ impl TypeChecker {
         target: Option<TypeId>,
     ) -> CExpr {
         let inner = self.check_expr(inner, target.and_then(|id| id.as_pointee(&self.proj.types)));
-        if matches!(op, UnaryOp::AddrMut | UnaryOp::AddrRawMut)
-            && !inner.can_addrmut(&self.proj.scopes, &self.proj.types)
-        {
-            self.error(Error::new(
-                "cannot create mutable pointer to immutable memory location",
-                span,
-            ))
+        if matches!(op, UnaryOp::AddrMut | UnaryOp::AddrRawMut) {
+            if matches!(inner.data, CExprData::Var(id) if self.proj.scopes.get(id).kind.is_const())
+            {
+                self.proj.diag.report(Warning::mut_ptr_to_const(span));
+            } else if !inner.can_addrmut(&self.proj.scopes, &self.proj.types) {
+                self.error(Error::new(
+                    "cannot create mutable pointer to immutable memory location",
+                    span,
+                ))
+            }
         }
 
         let mut typ = None;
@@ -2929,7 +2929,7 @@ impl TypeChecker {
             PExprData::Path(path) => match self.resolve_value_path(&path, target) {
                 ResolvedValue::Var(id) => {
                     let var = self.proj.scopes.get(id);
-                    if !var.is_static {
+                    if var.kind.is_normal() {
                         if self.current_function() != self.proj.scopes.function_of(var.scope) {
                             self.proj.diag.report(Error::new(
                                 "cannot reference local variable of enclosing function",
@@ -2961,12 +2961,12 @@ impl TypeChecker {
                         }
                     }
 
-                    if var.is_static && var.is_extern {
+                    if var.kind.is_static() && var.is_extern {
                         check_unsafe!(
                             self,
                             Error::new("accessing static extern variable is unsafe", span)
                         );
-                    } else if var.is_static && var.mutable {
+                    } else if var.kind.is_static() && var.mutable {
                         check_unsafe!(
                             self,
                             Error::new("accessing static mutable variable is unsafe", span)

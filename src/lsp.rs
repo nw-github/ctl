@@ -8,6 +8,7 @@ use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
+use crate::sym::VariableKind;
 use crate::{
     CachingSourceProvider, Compiler, FileSourceProvider, Located, SourceProvider, UnloadedProject,
     error::{Diagnostics, FileId, OffsetMode},
@@ -860,11 +861,11 @@ fn get_semantic_token(
             let var = scopes.get(id);
             if var.mutable || types[var.ty].is_mut_ptr() {
                 mods |= token::mods::MUTABLE;
-            } else if var.is_static {
+            } else if matches!(var.kind, VariableKind::Const | VariableKind::Static) {
                 mods |= token::mods::READONLY | token::mods::CONSTANT;
             }
 
-            if var.is_static {
+            if var.kind.is_static() {
                 mods |= token::mods::STATIC;
             }
 
@@ -1011,7 +1012,7 @@ fn get_document_symbols(proj: &Project, src: &str, file: FileId) -> Vec<Document
     }
 
     for (_, var) in proj.scopes.vars() {
-        if !var.is_static || !valid_name(var.name) {
+        if var.kind.is_normal() || !valid_name(var.name) {
             continue;
         }
 
@@ -1146,10 +1147,10 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
             let name = strings.resolve(&var.name.data).to_string();
             CompletionItem {
                 label: name.clone(),
-                kind: Some(if var.is_static {
-                    CompletionItemKind::CONSTANT
-                } else {
+                kind: Some(if var.kind.is_normal() {
                     CompletionItemKind::VARIABLE
+                } else {
+                    CompletionItemKind::CONSTANT
                 }),
                 label_details: Some(CompletionItemLabelDetails {
                     detail: None,
@@ -1302,17 +1303,18 @@ fn visualize_func(id: FunctionId, small: bool, proj: &Project) -> String {
 fn visualize_var(id: VariableId, proj: &Project) -> String {
     let var = proj.scopes.get(id);
     let mut res = String::new();
-    if var.is_static {
+    if !var.kind.is_normal() {
         res += &visualize_location(var.scope, proj);
     }
     if var.public {
         res += "pub ";
     }
-    res += match (var.is_static, var.mutable) {
-        (true, true) => "static mut",
-        (true, false) => "static",
-        (false, true) => "mut",
-        (false, false) => "let",
+    res += match (var.kind, var.mutable) {
+        (VariableKind::Const, _) => "const",
+        (VariableKind::Static, true) => "static mut",
+        (VariableKind::Static, false) => "static",
+        (VariableKind::Normal, true) => "mut",
+        (VariableKind::Normal, false) => "let",
     };
     let name =
         if var.name.data == Strings::EMPTY { "_" } else { proj.strings.resolve(&var.name.data) };

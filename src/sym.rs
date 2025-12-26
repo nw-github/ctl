@@ -219,13 +219,21 @@ pub struct CheckedParam {
     pub default: Option<DefaultExpr>,
 }
 
+#[derive(Default, Clone, Copy, EnumAsInner)]
+pub enum VariableKind {
+    #[default]
+    Normal,
+    Static,
+    Const,
+}
+
 #[derive(Default)]
 pub struct Variable {
     pub attrs: Attributes,
     pub public: bool,
     pub name: Located<StrId>,
     pub ty: TypeId,
-    pub is_static: bool,
+    pub kind: VariableKind,
     pub is_extern: bool,
     pub mutable: bool,
     pub value: Option<CheckedExpr>,

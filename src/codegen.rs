@@ -1456,8 +1456,16 @@ impl<'a> Codegen<'a> {
             }
             ExprData::MemFn(mfn, scope) => self.emit_member_fn(state, mfn, scope),
             ExprData::Var(id) => {
-                if self.proj.scopes.get(id).is_static {
-                    self.statics.insert(id);
+                let var = self.proj.scopes.get(id);
+                match var.kind {
+                    VariableKind::Static => _ = self.statics.insert(id),
+                    VariableKind::Const => {
+                        return self.emit_expr(
+                            var.value.clone().expect("ICE: emitting const with no value"),
+                            state,
+                        );
+                    }
+                    VariableKind::Normal => {}
                 }
                 self.emit_var_name(id, state);
             }
@@ -2032,10 +2040,8 @@ impl<'a> Codegen<'a> {
                 }
 
                 let is_lvalue = match &lhs.data {
-                    ExprData::Deref { .. }
-                    | ExprData::Var(_)
-                    | ExprData::Fn(_, _)
-                    | ExprData::MemFn(_, _) => true,
+                    ExprData::Deref { .. } | ExprData::Fn(_, _) | ExprData::MemFn(_, _) => true,
+                    ExprData::Var(id) => !self.proj.scopes.get(*id).kind.is_const(),
                     ExprData::Member { source, .. } => !source.ty.is_packed_struct(self.proj),
                     _ => false,
                 };
@@ -2893,7 +2899,7 @@ impl<'a> Codegen<'a> {
         }
 
         let var = self.proj.scopes.get(id);
-        if var.is_static {
+        if var.kind.is_static() {
             if var.is_extern {
                 self.buffer.emit_str(var.attrs.val(Strings::ATTR_LINKNAME).unwrap_or(var.name.data))
             } else {
@@ -2916,23 +2922,20 @@ impl<'a> Codegen<'a> {
 
     fn emit_var_decl(&mut self, id: VariableId, state: &mut State) -> TypeId {
         let var = self.proj.scopes.get(id);
-        let ty = var.ty.with_templates(&self.proj.types, &state.func.ty_args);
-        let emit_const = !var.mutable && !var.is_static;
-        let has_value = var.value.is_some();
-
-        if var.is_extern && !has_value {
+        assert!(!var.kind.is_const());
+        if var.is_extern && var.value.is_none() {
             write_de!(self.buffer, "extern ");
-        } else if var.is_static && !var.is_extern {
+        } else if var.kind.is_static() && !var.is_extern {
             write_de!(self.buffer, "static ");
         }
 
-        let strid_thrd_lcl = self.proj.strings.get("thread_local");
-        if strid_thrd_lcl.is_some_and(|id| var.attrs.has(id)) {
+        if self.proj.strings.get("thread_local").is_some_and(|id| var.attrs.has(id)) {
             write_de!(self.buffer, "_Thread_local ");
         }
 
+        let ty = var.ty.with_templates(&self.proj.types, &state.func.ty_args);
         self.emit_type(ty);
-        write_if!(emit_const, self.buffer, " const");
+        write_if!(!var.mutable && !var.kind.is_static(), self.buffer, " const");
         write_de!(self.buffer, " ");
         self.emit_var_name(id, state);
 

@@ -324,4 +324,8 @@ impl Warning {
     pub fn call_mutating_on_bitfield(span: Span) -> Error {
         Self::new("call to mutating method with bitfield receiver operates on a copy", span)
     }
+
+    pub fn mut_ptr_to_const(span: Span) -> Error {
+        Self::new("taking a mutable pointer to a constant operates on a copy", span)
+    }
 }
