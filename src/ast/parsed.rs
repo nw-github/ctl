@@ -157,7 +157,7 @@ pub enum ExprData {
         init: Expr,
         count: Expr,
     },
-    Tuple(Vec<Expr>),
+    Tuple(Vec<(Option<Located<StrId>>, Expr)>),
     Map(Vec<(Expr, Expr)>),
     Bool(bool),
     Integer(IntPattern),

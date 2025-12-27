@@ -301,8 +301,16 @@ impl Pretty<'_> {
             }
             ExprData::Tuple(elements) => {
                 self.print_header(&tabs, "Expr::Tuple", &[]);
-                for el in elements {
-                    self.print_expr(el, indent + 1);
+                let tabs = INDENT.repeat(indent + 1);
+                let mut positional = 0;
+                for (name, expr) in elements {
+                    if let Some(name) = name {
+                        eprintln!("{tabs}{}:", self.strings.resolve(&name.data));
+                    } else {
+                        eprintln!("{tabs}{positional}:");
+                        positional += 1;
+                    }
+                    self.print_expr(expr, indent + 2);
                 }
             }
             ExprData::Map(expr) => {

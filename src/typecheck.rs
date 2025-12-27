@@ -2581,9 +2581,11 @@ impl TypeChecker<'_> {
                 )
             }
             PExprData::Tuple(elements) => {
+                let mut names = Vec::with_capacity(elements.len());
                 let mut result_ty = Vec::with_capacity(elements.len());
                 let mut result_elems = IndexMap::with_capacity(elements.len());
-                for (i, expr) in elements.iter().copied().enumerate() {
+                let mut positional = 0;
+                for (i, (label, expr)) in elements.iter().copied().enumerate() {
                     let result = if let Some(&target) = target
                         .and_then(|t| self.proj.types[t].as_user())
                         .filter(|t| self.proj.scopes.get(t.id).kind.is_tuple())
@@ -2595,11 +2597,22 @@ impl TypeChecker<'_> {
                     };
 
                     result_ty.push(result.ty);
-                    result_elems.insert(intern!(self, "{i}"), result);
+                    let label = label.map(|label| label.data).unwrap_or_else(|| {
+                        let name = intern!(self, "{positional}");
+                        positional += 1;
+                        name
+                    });
+                    names.push(label);
+                    result_elems.insert(label, result);
                 }
 
                 self.arena.typed(
-                    self.proj.scopes.get_tuple(result_ty, &mut self.proj.strings, &self.proj.types),
+                    self.proj.scopes.get_anon_struct(
+                        names,
+                        result_ty,
+                        &mut self.proj.strings,
+                        &self.proj.types,
+                    ),
                     CExprData::Instance(result_elems),
                 )
             }
@@ -6221,7 +6234,7 @@ impl TypeChecker<'_> {
             val: Option<&TypeItem>,
             span: Span,
             last: bool,
-            in_type: &mut bool
+            in_type: &mut bool,
         ) -> CheckResult {
             match val {
                 Some(&TypeItem::Module(next)) => {

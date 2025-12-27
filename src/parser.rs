@@ -697,13 +697,13 @@ impl<'a> Parser<'a> {
             }
             // complex expressions
             Token::LParen => {
-                let mut expr = self.expression();
-                if self.matches(Token::Comma) {
+                let (label, mut expr) = self.maybe_labeled_expr();
+                if label.is_some() || self.matches(Token::Comma) {
                     self.csv_expr(
-                        vec![expr],
+                        vec![(label, expr)],
                         Token::RParen,
                         span,
-                        Self::expression,
+                        Self::maybe_labeled_expr,
                         ExprData::Tuple,
                     )
                 } else {
@@ -979,21 +979,7 @@ impl<'a> Parser<'a> {
             }
             Token::LParen | Token::LBrace => {
                 let closing = if op.data == Token::LParen { Token::RParen } else { Token::RBrace };
-                let args = self.csv(Vec::new(), closing, left.span, |this| {
-                    let mut expr = this.expression();
-                    let mut name = None;
-                    if let ExprData::Path(path) = this.arena.get(expr.data)
-                        && let Some(ident) = path.as_identifier()
-                        && this.next_if(Token::Colon).is_some()
-                    {
-                        name = Some(ident);
-                        if !this.matches_pred(|t| matches!(t, Token::Comma | Token::RParen)) {
-                            expr = this.expression();
-                        }
-                    }
-                    (name, expr)
-                });
-
+                let args = self.csv(Vec::new(), closing, left.span, Self::maybe_labeled_expr);
                 if op.data == Token::LParen {
                     args.map(|args| self.arena.alloc(ExprData::Call { callee: left, args }))
                 } else {
@@ -1023,6 +1009,21 @@ impl<'a> Parser<'a> {
             "labels are only valid for loop and block expressions",
             span,
         ));
+    }
+
+    fn maybe_labeled_expr(&mut self) -> (Option<Located<StrId>>, Expr) {
+            let mut expr = self.expression();
+            let mut name = None;
+            if let ExprData::Path(path) = self.arena.get(expr.data)
+                && let Some(ident) = path.as_identifier()
+                && self.next_if(Token::Colon).is_some()
+            {
+                name = Some(ident);
+                if !self.matches_pred(|t| matches!(t, Token::Comma | Token::RParen)) {
+                    expr = self.expression();
+                }
+            }
+            (name, expr)
     }
 
     fn block_or_normal_expr(&mut self, label: Option<Located<StrId>>) -> (bool, Expr) {
