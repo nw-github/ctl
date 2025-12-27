@@ -2068,8 +2068,9 @@ impl<'a> Codegen<'a> {
             }
             UnaryOp::Addr | UnaryOp::AddrMut | UnaryOp::AddrRaw | UnaryOp::AddrRawMut => {
                 lhs.ty = lhs.ty.with_templates(&self.proj.types, &state.func.ty_args);
-                if let &ExprData::Deref(inner, count) = self.arena.get(lhs.data) {
+                if let &ExprData::Deref(mut inner, count) = self.arena.get(lhs.data) {
                     if count == 1 {
+                        inner.ty = inner.ty.with_templates(&self.proj.types, &state.func.ty_args);
                         self.emit_expr_inner(inner, state);
                     } else {
                         let expr = self.arena.typed(lhs.ty, ExprData::Deref(inner, count - 1));
