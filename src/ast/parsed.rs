@@ -485,22 +485,16 @@ pub struct Member {
 }
 
 #[derive(Clone)]
-pub struct DataVariant {
+pub struct VariantData {
     pub name: Located<StrId>,
     pub ty: TypeHint,
     pub default: Option<Expr>,
 }
 
 #[derive(Clone)]
-pub enum VariantData {
-    Empty,
-    StructLike(Vec<DataVariant>, TypeHint),
-}
-
-#[derive(Clone)]
 pub struct Variant {
     pub name: Located<StrId>,
-    pub data: VariantData,
+    pub data: Option<(Vec<VariantData>, TypeHint)>,
     pub tag: Option<Expr>,
 }
 

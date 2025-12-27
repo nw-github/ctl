@@ -899,53 +899,35 @@ impl<'a> TypeChecker<'a> {
             let mut enum_union = true;
             for variant in variants {
                 let mut params = params.clone();
-                match &variant.data {
-                    VariantData::Empty => {
-                        rvariants.insert(
-                            variant.name.data,
-                            CheckedVariant {
-                                ty: None,
-                                span: variant.name.span,
-                                discrim: variant
-                                    .tag
-                                    .map(Discriminant::Unchecked)
-                                    .unwrap_or_default(),
-                            },
-                        );
-                    }
-                    VariantData::StructLike(smembers, hint) => {
-                        enum_union = false;
-                        rvariants.insert(
-                            variant.name.data,
-                            CheckedVariant {
-                                ty: Some(this.declare_type_hint(*hint)),
-                                span: variant.name.span,
-                                discrim: variant
-                                    .tag
-                                    .map(Discriminant::Unchecked)
-                                    .unwrap_or_default(),
-                            },
-                        );
-
-                        for member in smembers {
-                            if members.contains_key(&member.name.data) {
-                                let err = Error::shared_member(
-                                    strdata!(this, member.name.data),
-                                    member.name.span,
-                                );
-                                this.error(err)
-                            }
-
-                            params.push(Param {
-                                keyword: !strdata!(this, member.name.data)
-                                    .starts_with(|ch: char| ch.is_ascii_digit()),
-                                patt: nowhere(member.name.data, Pattern::Path),
-                                ty: member.ty,
-                                default: member.default,
-                            });
+                if let Some((smembers, _)) = &variant.data {
+                    enum_union = false;
+                    for member in smembers {
+                        if members.contains_key(&member.name.data) {
+                            let err = Error::shared_member(
+                                strdata!(this, member.name.data),
+                                member.name.span,
+                            );
+                            this.error(err)
                         }
+
+                        params.push(Param {
+                            keyword: !strdata!(this, member.name.data)
+                                .starts_with(|ch: char| ch.is_ascii_digit()),
+                            patt: nowhere(member.name.data, Pattern::Path),
+                            ty: member.ty,
+                            default: member.default,
+                        });
                     }
                 }
+
+                rvariants.insert(
+                    variant.name.data,
+                    CheckedVariant {
+                        ty: variant.data.as_ref().map(|data| this.declare_type_hint(data.1)),
+                        span: variant.name.span,
+                        discrim: variant.tag.map(Discriminant::Unchecked).unwrap_or_default(),
+                    },
+                );
 
                 fns.push(this.declare_fn(&Fn {
                     public: base.public,

@@ -1880,13 +1880,13 @@ impl<'a> Parser<'a> {
                         let (name, ty) = this.label_or_positional(original, &mut next);
                         let default = this.next_if(Token::Assign).map(|_| this.expression());
                         hint_data.push((name, ty));
-                        DataVariant { name, ty, default }
+                        VariantData { name, ty, default }
                     });
                     let hint =
                         Located::nowhere(this.arena.hints.alloc(TypeHintData::Tuple(hint_data)));
-                    VariantData::StructLike(members.data, hint)
+                    Some((members.data, hint))
                 } else {
-                    VariantData::Empty
+                    None
                 };
 
                 let tag = this.next_if(Token::Assign).map(|_| this.expression());

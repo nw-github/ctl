@@ -4,7 +4,7 @@ use crate::{
     Located,
     ast::parsed::{
         Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path, Pattern,
-        Stmt, StmtData, Struct, TypeHint, UsePath, UsePathTail, Variant, VariantData,
+        Stmt, StmtData, Struct, TypeHint, UsePath, UsePathTail, Variant,
     },
     format::{FmtHint, FmtPath, FmtPatt},
     intern::{StrId, Strings},
@@ -732,15 +732,13 @@ impl Pretty<'_> {
 
         self.print_type_params(type_params, indent + 1, None);
 
-        if let Some(variants) = variants
-            && !variants.is_empty()
-        {
+        if let Some(variants) = variants.filter(|v| !v.is_empty()) {
             eprintln!("{plus_1}{}: ", "Variants".yellow());
             for member in variants {
                 eprint!("{plus_2}{}", self.strings.resolve(&member.name.data));
                 match &member.data {
-                    VariantData::Empty => eprintln!(),
-                    VariantData::StructLike(_, hint) => eprintln!(": {}", self.typ(*hint)),
+                    Some((_, hint)) => eprintln!(": {}", self.typ(*hint)),
+                    None => eprintln!(),
                 }
 
                 if let Some(default) = &member.tag {
