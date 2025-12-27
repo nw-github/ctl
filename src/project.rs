@@ -51,6 +51,7 @@ pub struct Configuration {
     pub build: Option<PathBuf>,
     pub libs: Option<Vec<String>>,
     pub name: Option<String>,
+    pub no_std: bool,
 }
 
 impl Configuration {
@@ -96,6 +97,7 @@ impl Default for Configuration {
             build: None,
             libs: None,
             name: None,
+            no_std: false,
         }
     }
 }

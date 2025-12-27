@@ -331,14 +331,16 @@ fn main() -> Result<()> {
             return Ok(());
         }
     };
-    let mut proj = UnloadedProject::new(input.as_deref().unwrap_or(Path::new(".")))?;
+    let mut conf = Configuration::default();
+    conf.flags.no_bit_int = args.no_bit_int;
+    conf.flags.lib = args.shared.unwrap_or(conf.flags.lib);
+    conf.flags.minify = matches!(args.command, SubCommand::Print { minify: true, .. });
+    conf.no_std = args.no_std;
     if args.leak {
-        proj.conf.remove_feature(Strings::FEAT_BOEHM);
+        conf.remove_feature(Strings::FEAT_BOEHM);
     }
 
-    proj.conf.flags.no_bit_int = args.no_bit_int;
-    proj.conf.flags.lib = args.shared.unwrap_or(proj.conf.flags.lib);
-    proj.conf.flags.minify = matches!(args.command, SubCommand::Print { minify: true, .. });
+    let mut proj = UnloadedProject::with_conf(input.as_deref().unwrap_or(Path::new(".")), conf)?;
     if let SubCommand::Dump { modules, .. } = &args.command {
         return dump(proj, modules);
     }

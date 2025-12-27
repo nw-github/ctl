@@ -2,6 +2,7 @@ mod ast;
 mod codegen;
 mod ds;
 mod error;
+mod format;
 pub mod intern;
 mod lexer;
 mod lsp;
@@ -12,7 +13,6 @@ mod source;
 mod sym;
 mod typecheck;
 mod typeid;
-mod format;
 
 use std::path::{Path, PathBuf};
 
@@ -255,9 +255,8 @@ pub struct UnloadedProject {
 }
 
 impl UnloadedProject {
-    pub fn new(path: &Path) -> Result<Self> {
+    pub fn with_conf(path: &Path, mut conf: Configuration) -> Result<Self> {
         let mut mods = IndexMap::new();
-        let mut conf = Configuration::default();
         let path = path.canonicalize()?;
 
         let mut modpaths = vec![path];
@@ -279,6 +278,10 @@ impl UnloadedProject {
         // TODO: actual dependency ordering
         mods.reverse();
         Ok(Self { mods, conf })
+    }
+
+    pub fn new(path: &Path) -> Result<Self> {
+        Self::with_conf(path, Configuration::default())
     }
 
     fn load_module(
@@ -325,7 +328,7 @@ impl UnloadedProject {
         mods: &mut Vec<PathBuf>,
         conf: Option<&mut Configuration>,
     ) -> Result<()> {
-        let mut needs_stdlib = true;
+        let mut needs_stdlib = !conf.as_ref().is_some_and(|conf| conf.no_std);
         if path.is_dir() {
             match std::fs::read_to_string(path.join("ctl.toml")) {
                 Ok(val) => {
