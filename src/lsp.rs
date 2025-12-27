@@ -337,7 +337,7 @@ impl LanguageServer for LspBackend {
                     let ty = mem.map_or(TypeId::UNKNOWN, |m| m.ty);
                     if matches!(ut.kind, UserTypeKind::Tuple | UserTypeKind::AnonStruct) {
                         let real = src_ty.map(|src| ty.with_ut_templates(&proj.types, src)).unwrap_or(ty);
-                        Some(format!("{public}{}: {}", proj.strings.resolve(name), real.name(proj)))
+                        Some(format!("{public}{}: {}", proj.strings.resolve(name), proj.fmt_ty(real)))
                     } else {
                         let offs = if let UserTypeKind::PackedStruct(data) = &ut.kind {
                             let size = match ty.bit_size(&proj.scopes, &proj.types) {
@@ -358,7 +358,7 @@ impl LanguageServer for LspBackend {
                             "{}{offs}{public}{}: {}",
                             visualize_location(ut.body_scope, proj),
                             proj.strings.resolve(name),
-                            ty.name(proj)
+                            proj.fmt_ty(ty)
                         ))
                     }
                 }
@@ -858,7 +858,7 @@ fn get_inlay_hints(proj: &Project, src: &str, file: FileId) -> Vec<InlayHint> {
         let r = Diagnostics::get_span_range(src, var.name.span, OffsetMode::Utf16);
         hints.push(InlayHint {
             position: r.end,
-            label: InlayHintLabel::String(format!(": {}", var.ty.name(proj))),
+            label: InlayHintLabel::String(format!(": {}", proj.fmt_ty(var.ty))),
             kind: Some(InlayHintKind::TYPE),
             text_edits: Default::default(),
             tooltip: Default::default(),
@@ -1067,7 +1067,7 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
         LspItem::Property(_, id, name) => {
             let ut = scopes.get(*id);
             let member = ut.members.get(name).unwrap();
-            let detail = member.ty.name(proj);
+            let detail = proj.fmt_ty(member.ty).to_string();
             CompletionItem {
                 label: strings.resolve(name).into(),
                 kind: Some(CompletionItemKind::FIELD),
@@ -1170,7 +1170,6 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
         }
         &LspItem::Var(id) | &LspItem::FnParamLabel(id, _) => {
             let var = scopes.get(id);
-            let typ = var.ty.name(proj);
             let name = strings.resolve(&var.name.data).to_string();
             CompletionItem {
                 label: name.clone(),
@@ -1181,7 +1180,7 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
                 }),
                 label_details: Some(CompletionItemLabelDetails {
                     detail: None,
-                    description: Some(typ),
+                    description: Some(proj.fmt_ty(var.ty).to_string()),
                 }),
                 detail: Some(name),
                 ..Default::default()
@@ -1306,8 +1305,7 @@ fn visualize_func(id: FunctionId, small: bool, proj: &Project) -> String {
             if param.default.is_some() {
                 res += "?";
             }
-            res += ": ";
-            res += &param.ty.name(proj);
+            write_de!(res, ": {}", proj.fmt_ty(param.ty));
         }
     }
     if func.variadic {
@@ -1320,8 +1318,7 @@ fn visualize_func(id: FunctionId, small: bool, proj: &Project) -> String {
 
     res += ")";
     if func.ret != TypeId::VOID {
-        res += ": ";
-        res += &func.ret.name(proj);
+        write_de!(res, ": {}", proj.fmt_ty(func.ret));
     }
 
     res
@@ -1345,7 +1342,7 @@ fn visualize_var(id: VariableId, proj: &Project) -> String {
     };
     let name =
         if var.name.data == Strings::EMPTY { "_" } else { proj.strings.resolve(&var.name.data) };
-    write_de!(res, " {name}: {}", var.ty.name(proj));
+    write_de!(res, " {name}: {}", proj.fmt_ty(var.ty));
     res
 }
 
@@ -1365,7 +1362,12 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
                 ""
             };
 
-            write_de!(res, "\n\t{header}{}: {},", proj.strings.resolve(name), member.ty.name(proj));
+            write_de!(
+                res,
+                "\n\t{header}{}: {},",
+                proj.strings.resolve(name),
+                proj.fmt_ty(member.ty)
+            );
             wrote = true;
         }
 
@@ -1419,7 +1421,7 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
         UserTypeKind::Union(union) => {
             write_de!(res, "union {}", proj.strings.resolve(&ut.item.name.data));
             visualize_type_params(&mut res, &ut.type_params, proj);
-            write_de!(res, ": {} {{", union.tag.name(proj));
+            write_de!(res, ": {} {{", proj.fmt_ty(union.tag));
             for (name, variant) in union.variants.iter() {
                 res += "\n\t";
                 visualize_variant_body(&mut res, union, *name, variant.ty, proj, false);
@@ -1443,8 +1445,7 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
                         if i > 0 {
                             res.push_str(", ");
                         }
-
-                        res += &id.1.name(proj);
+                        write_de!(res, "{}", proj.fmt_ty(*id.1));
                     }
                     res += ">";
                 }
@@ -1454,10 +1455,10 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
             write_de!(res, "trait {}", proj.strings.resolve(&ut.name.data));
             visualize_type_params(&mut res, &ut.type_params, proj);
         }
-        UserTypeKind::Extension(ty) => {
+        &UserTypeKind::Extension(ty) => {
             write_de!(res, "extension {}", proj.strings.resolve(&ut.name.data));
             visualize_type_params(&mut res, &ut.type_params, proj);
-            write_de!(res, " for {}", ty.name(proj));
+            write_de!(res, " for {}", proj.fmt_ty(ty));
         }
         UserTypeKind::AnonStruct => {}
         UserTypeKind::Tuple => {}
@@ -1478,17 +1479,17 @@ fn visualize_variant_body(
     *res += proj.strings.resolve(&name);
     match ty.map(|id| (id, &proj.types[id])) {
         Some((_, Type::User(ut))) => {
-            let ut = ut.clone();
             let inner = proj.scopes.get(ut.id);
             if inner.kind.is_anon_struct() {
                 *res += " {";
                 for (i, (name, _)) in inner.members.iter().enumerate() {
+                    let ty = ut.ty_args.get_index(i).map(|v| *v.1).unwrap_or(TypeId::UNKNOWN);
                     write_de!(
                         res,
                         "{}{}: {}",
                         if i > 0 { ", " } else { " " },
                         proj.strings.resolve(name),
-                        ut.ty_args.get_index(i).map(|v| *v.1).unwrap_or(TypeId::UNKNOWN).name(proj)
+                        proj.fmt_ty(ty),
                     )
                 }
                 *res += " }";
@@ -1498,13 +1499,13 @@ fn visualize_variant_body(
                     if i > 0 {
                         *res += ", ";
                     }
-                    *res +=
-                        &ut.ty_args.get_index(i).map(|v| *v.1).unwrap_or(TypeId::UNKNOWN).name(proj)
+                    let ty = ut.ty_args.get_index(i).map(|v| *v.1).unwrap_or(TypeId::UNKNOWN);
+                    write_de!(res, "{}", proj.fmt_ty(ty));
                 }
                 *res += ")";
             }
         }
-        Some((id, _)) => write_de!(res, "({})", id.name(proj)),
+        Some((id, _)) => write_de!(res, "({})", proj.fmt_ty(id)),
         None => {}
     }
     if !small {

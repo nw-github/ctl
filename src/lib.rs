@@ -12,6 +12,7 @@ mod source;
 mod sym;
 mod typecheck;
 mod typeid;
+mod format;
 
 use std::path::{Path, PathBuf};
 

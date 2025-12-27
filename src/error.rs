@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::{fmt::Display, path::{Path, PathBuf}};
 
 use tower_lsp::lsp_types::{Position, Range};
 
@@ -143,7 +143,7 @@ impl Error {
         Self { message: message.into(), span: span.into(), severity: ErrorSeverity::Error }
     }
 
-    pub fn invalid_operator(op: impl std::fmt::Display, ty: &str, span: Span) -> Self {
+    pub fn invalid_operator(op: impl Display, ty: impl Display, span: Span) -> Self {
         Self::new(format!("operator '{op}' is invalid for a value of type '{ty}'"), span)
     }
 
@@ -166,11 +166,7 @@ impl Error {
         Self::new(format!("'{}' is not valid here", token.data), token.span)
     }
 
-    pub fn type_mismatch(expected: &str, received: &str, span: Span) -> Self {
-        Self::new(format!("type mismatch: expected type '{expected}', found '{received}'",), span)
-    }
-
-    pub fn type_mismatch_s(expected: &str, received: &str, span: Span) -> Self {
+    pub fn type_mismatch(expected: impl Display, received: impl Display, span: Span) -> Self {
         Self::new(format!("type mismatch: expected type '{expected}', found '{received}'"), span)
     }
 
@@ -178,15 +174,15 @@ impl Error {
         Self::new(format!("'{item}' is private"), span)
     }
 
-    pub fn private_member(ty: &str, member: &str, span: Span) -> Self {
+    pub fn private_member(ty: impl Display, member: &str, span: Span) -> Self {
         Self::new(format!("cannot access private member '{member}' of type '{ty}'"), span)
     }
 
-    pub fn no_member(ty: &str, member: &str, span: Span) -> Self {
+    pub fn no_member(ty: impl Display, member: &str, span: Span) -> Self {
         Self::new(format!("no member '{member}' found on type '{ty}'"), span)
     }
 
-    pub fn no_method(ty: &str, method: &str, span: Span) -> Self {
+    pub fn no_method(ty: impl Display, method: &str, span: Span) -> Self {
         Self::new(format!("no method '{method}' found on type '{ty}'"), span)
     }
 
@@ -198,8 +194,8 @@ impl Error {
         Self::new(format!("missing language item: '{name}'"), span)
     }
 
-    pub fn doesnt_implement(ty: &str, trait_name: &str, span: Span) -> Self {
-        Self::new(format!("type '{ty}' does not implement '{trait_name}'"), span)
+    pub fn doesnt_implement(ty: impl Display, tr: impl Display, span: Span) -> Self {
+        Self::new(format!("type '{ty}' does not implement '{tr}'"), span)
     }
 
     pub fn wildcard_import(span: Span) -> Self {
@@ -222,19 +218,15 @@ impl Error {
         Self::new(format!("{ty} must be irrefuable"), span)
     }
 
-    pub fn expected_found(expected: &str, received: &str, span: Span) -> Self {
+    pub fn expected_found(expected: impl Display, received: impl Display, span: Span) -> Self {
         Self::new(format!("expected {expected}, found {received}"), span)
     }
 
-    pub fn match_statement(why: &str, span: Span) -> Self {
+    pub fn match_statement(why: impl Display, span: Span) -> Self {
         Self::new(format!("match statement does not cover all cases {why}"), span)
     }
 
-    pub fn cyclic(a: &str, b: &str, span: Span) -> Self {
-        Self::new(format!("cyclic dependency between {a} and {b}"), span)
-    }
-
-    pub fn bad_destructure(ty: &str, span: Span) -> Self {
+    pub fn bad_destructure(ty: impl Display, span: Span) -> Self {
         Self::new(format!("cannot destructure value of type '{ty}'"), span)
     }
 
@@ -318,7 +310,7 @@ impl Warning {
         Self::new(format!("unused variable: '{name}'"), span)
     }
 
-    pub fn unnecessary_fallible_cast(src: &str, dst: &str, span: Span) -> Error {
+    pub fn unnecessary_fallible_cast(src: impl Display, dst: impl Display, span: Span) -> Error {
         Self::new(
             format!("cast from type '{src}' to '{dst}' is infallible and may use an `as` cast",),
             span,

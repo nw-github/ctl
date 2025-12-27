@@ -75,12 +75,8 @@ macro_rules! strdata {
 
 macro_rules! type_mismatch_err {
     ($self: expr, $expected: expr, $received: expr, $span: expr) => {
-        Error::type_mismatch(&$expected.name(&$self.proj), &$received.name(&$self.proj), $span)
+        Error::type_mismatch($self.proj.fmt_ty($expected), $self.proj.fmt_ty($received), $span)
     };
-}
-
-macro_rules! type_name {
-    ($self: expr, $typ: expr) => {{ $typ.name(&$self.proj) }};
 }
 
 macro_rules! intern {
@@ -1812,8 +1808,8 @@ impl TypeChecker<'_> {
             if has != wants {
                 Err(format!(
                     "expected '{}', found '{}'",
-                    type_name!(self, wants),
-                    type_name!(self, has),
+                    self.proj.fmt_ty(wants),
+                    self.proj.fmt_ty(has),
                 ))
             } else {
                 Ok(())
@@ -1923,8 +1919,8 @@ impl TypeChecker<'_> {
                 self.proj.diag.report(Error::new(
                     format!(
                         "trait '{}' requires implementation of trait '{}'",
-                        type_name!(self, tr),
-                        type_name!(self, dep),
+                        self.proj.fmt_ut(&tr),
+                        self.proj.fmt_ut(&dep),
                     ),
                     block.span,
                 ));
@@ -1962,10 +1958,10 @@ impl TypeChecker<'_> {
 
         for id in required {
             if !self.proj.scopes.get(*id).has_body {
-                let tr = type_name!(self, tr);
                 self.error(Error::new(
                     format!(
-                        "must implement '{tr}::{}'",
+                        "must implement '{}::{}'",
+                        self.proj.fmt_ut(&tr),
                         strdata!(self, self.proj.scopes.get(*id).name.data)
                     ),
                     block.span,
@@ -2071,7 +2067,7 @@ impl TypeChecker<'_> {
                             this.proj.diag.report(Error::new(
                                 format!("function '{}' must return a value of type '{}' from all code paths",
                                     strdata!(this, func.name.data),
-                                    type_name!(this, func.ret),
+                                    this.proj.fmt_ty(func.ret),
                                 ),
                                 func.name.span,
                             ));
@@ -2110,7 +2106,7 @@ impl TypeChecker<'_> {
                 if let Some(gtr) = this.proj.scopes.get(id).impls.get_checked(i).cloned() {
                     if !seen.insert(gtr.clone()) {
                         this.proj.diag.report(Error::new(
-                            format!("duplicate implementation of trait {}", type_name!(this, gtr)),
+                            format!("duplicate implementation of trait {}", this.proj.fmt_ut(&gtr)),
                             block.span,
                         ))
                     }
@@ -2134,7 +2130,7 @@ impl TypeChecker<'_> {
         span: Span,
     ) -> CExpr {
         let Some(&(trait_name, fn_name)) = self.tables.binary_op_traits.get(&op) else {
-            bail!(self, Error::invalid_operator(op, &type_name!(self, lhs.ty), span,));
+            bail!(self, Error::invalid_operator(op, self.proj.fmt_ty(lhs.ty), span));
         };
 
         let Some(tr_id) = self.proj.scopes.lang_types.get(&trait_name).copied() else {
@@ -2146,7 +2142,7 @@ impl TypeChecker<'_> {
             bail!(
                 self,
                 Error::doesnt_implement(
-                    &type_name!(self, stripped),
+                    self.proj.fmt_ty(stripped),
                     strdata!(self, self.proj.scopes.get(tr_id).name.data),
                     lhs_span,
                 )
@@ -2179,7 +2175,7 @@ impl TypeChecker<'_> {
 
     fn check_unary(&mut self, expr: CExpr, op: UnaryOp, span: Span) -> CExpr {
         let Some(&(trait_name, fn_name)) = self.tables.unary_op_traits.get(&op) else {
-            bail!(self, Error::invalid_operator(op, &type_name!(self, expr.ty), span,));
+            bail!(self, Error::invalid_operator(op, self.proj.fmt_ty(expr.ty), span,));
         };
 
         let Some(tr_id) = self.proj.scopes.lang_types.get(&trait_name).copied() else {
@@ -2191,7 +2187,7 @@ impl TypeChecker<'_> {
             bail!(
                 self,
                 Error::doesnt_implement(
-                    &type_name!(self, stripped),
+                    self.proj.fmt_ty(stripped),
                     strdata!(self, self.proj.scopes.get(tr_id).name.data),
                     span,
                 )
@@ -2343,7 +2339,7 @@ impl TypeChecker<'_> {
                             if lhs.ty != TypeId::UNKNOWN {
                                 self.proj.diag.report(Error::invalid_operator(
                                     op,
-                                    &type_name!(self, lhs.ty),
+                                    self.proj.fmt_ty(lhs.ty),
                                     lhs_span,
                                 ));
                             }
@@ -2407,9 +2403,9 @@ impl TypeChecker<'_> {
                         if self.proj.types[right.ty].as_integral(false).is_none_or(|v| v.signed)
                             && right.ty != TypeId::UNKNOWN
                         {
-                            self.proj.diag.report(Error::type_mismatch_s(
+                            self.proj.diag.report(Error::type_mismatch(
                                 "{unsigned}",
-                                &type_name!(self, right.ty),
+                                self.proj.fmt_ty(right.ty),
                                 span,
                             ));
                         }
@@ -2458,7 +2454,7 @@ impl TypeChecker<'_> {
                             _ => {
                                 bail!(
                                     self,
-                                    Error::invalid_operator(op, &type_name!(self, expr.ty), span)
+                                    Error::invalid_operator(op, self.proj.fmt_ty(expr.ty), span)
                                 )
                             }
                         };
@@ -2492,7 +2488,7 @@ impl TypeChecker<'_> {
                         } else {
                             bail!(
                                 self,
-                                Error::invalid_operator(op, &type_name!(self, expr.ty), span,)
+                                Error::invalid_operator(op, self.proj.fmt_ty(expr.ty), span,)
                             );
                         }
                     }
@@ -2790,7 +2786,7 @@ impl TypeChecker<'_> {
                         |proj, id| TypeArgs::in_order(&proj.scopes, id, []),
                     ) else {
                         self.proj.diag.report(Error::doesnt_implement(
-                            &type_name!(self, expr.ty),
+                            self.proj.fmt_ty(expr.ty),
                             strdata!(self, target_tr.name(&self.proj.scopes).data),
                             span,
                         ));
@@ -2874,7 +2870,7 @@ impl TypeChecker<'_> {
                     self.proj.diag.report(Error::new(
                         format!(
                             "literal is out of range for type '{0}' (use {0}::inf() if infinity is desired)",
-                            type_name!(self, TypeId::F32)
+                            self.proj.fmt_ty(typ)
                         ),
                         span,
                     ));
@@ -3009,7 +3005,7 @@ impl TypeChecker<'_> {
                     self,
                     Error::expected_found(
                         "expression",
-                        &format!("type '{}'", type_name!(self, ut)),
+                        format_args!("type '{}'", self.proj.fmt_ut(&ut)),
                         span,
                     )
                 ),
@@ -3151,7 +3147,7 @@ impl TypeChecker<'_> {
                         bail!(
                             self,
                             Error::no_member(
-                                &type_name!(self, id),
+                                self.proj.fmt_ty(id),
                                 strdata!(self, name.data),
                                 name.span
                             )
@@ -3166,7 +3162,7 @@ impl TypeChecker<'_> {
                     bail!(
                         self,
                         Error::no_member(
-                            &type_name!(self, source.ty),
+                            self.proj.fmt_ty(source.ty),
                             strdata!(self, name.data),
                             name.span
                         )
@@ -3180,7 +3176,7 @@ impl TypeChecker<'_> {
                 let ty = member.ty.with_ut_templates(&self.proj.types, id);
                 if !member.public && !self.can_access_privates(ut.scope) {
                     self.proj.diag.report(Error::private_member(
-                        &type_name!(self, id),
+                        self.proj.fmt_ty(id),
                         strdata!(self, name.data),
                         name.span,
                     ));
@@ -3343,8 +3339,8 @@ impl TypeChecker<'_> {
                     Cast::None => self.proj.diag.report(Error::new(
                         format!(
                             "cannot cast expression of type '{}' to '{}'",
-                            type_name!(self, from_id),
-                            type_name!(self, to_id),
+                            self.proj.fmt_ty(from_id),
+                            self.proj.fmt_ty(to_id),
                         ),
                         span,
                     )),
@@ -3354,15 +3350,15 @@ impl TypeChecker<'_> {
                     Cast::Fallible if !throwing => self.proj.diag.report(Error::new(
                         format!(
                             "cast of expression of type '{}' to '{}' requires fallible cast",
-                            type_name!(self, from_id),
-                            type_name!(self, to_id),
+                            self.proj.fmt_ty(from_id),
+                            self.proj.fmt_ty(to_id),
                         ),
                         span,
                     )),
                     Cast::Infallible if throwing => {
                         self.proj.diag.report(Warning::unnecessary_fallible_cast(
-                            &type_name!(self, from_id),
-                            &type_name!(self, to_id),
+                            self.proj.fmt_ty(from_id),
+                            self.proj.fmt_ty(to_id),
                             span,
                         ))
                     }
@@ -3558,10 +3554,10 @@ impl TypeChecker<'_> {
             Error::new(
                 format!(
                     "type '{}' does not support subscript{} with arguments of type ({})",
-                    &type_name!(self, callee.ty),
+                    self.proj.fmt_ty(callee.ty),
                     if assign { " assign" } else { "" },
                     args.into_iter()
-                        .map(|expr| type_name!(self, expr.ty))
+                        .map(|expr| self.proj.fmt_ty(expr.ty).to_string())
                         .collect::<Vec<_>>()
                         .join(", "),
                 ),
@@ -3725,8 +3721,8 @@ impl TypeChecker<'_> {
             let key = this.proj.strings.get_or_intern_static("next");
             let Some(mfn) = this.lookup_unk_trait_fn(iter.ty, iter_tr_id, key) else {
                 this.check_block(body);
-                let name = type_name!(this, iter.ty);
-                return this.error(Error::doesnt_implement(&name, "Iterator", iter_span));
+                let name = this.proj.fmt_ty(iter.ty);
+                return this.error(Error::doesnt_implement(name, "Iterator", iter_span));
             };
 
             let next_ty = this
@@ -3937,7 +3933,7 @@ impl TypeChecker<'_> {
                 let Some(mut mfn) = self.lookup_member_fn(id, member.data, generics, span) else {
                     bail!(
                         self,
-                        Error::no_method(&type_name!(self, id), strdata!(self, member.data), span)
+                        Error::no_method(self.proj.fmt_ty(id), strdata!(self, member.data), span)
                     );
                 };
                 self.check_hover(member.span, LspItem::Fn(mfn.func.id, None));
@@ -3956,7 +3952,7 @@ impl TypeChecker<'_> {
                         span,
                         "cannot access private method '{}' of type '{}'",
                         strdata!(self, self.proj.scopes.get(mfn.func.id).name.data),
-                        type_name!(self, id),
+                        self.proj.fmt_ty(id),
                     )
                 }
 
@@ -4051,7 +4047,7 @@ impl TypeChecker<'_> {
                         if ut.is_empty_variant(self.proj.scopes.get(mfn.func.id).name.data) {
                             return self.error(Error::expected_found(
                                 "function",
-                                &format!("union variant '{}'", strdata!(self, f.name.data)),
+                                format_args!("union variant '{}'", strdata!(self, f.name.data)),
                                 span,
                             ));
                         }
@@ -4120,7 +4116,7 @@ impl TypeChecker<'_> {
                 self,
                 Error::expected_found(
                     "callable item",
-                    &format!("'{}'", &type_name!(self, callee.ty)),
+                    format_args!("'{}'", self.proj.fmt_ty(callee.ty)),
                     span,
                 )
             ),
@@ -4145,7 +4141,7 @@ impl TypeChecker<'_> {
                 let name = strdata!(self, f.name.data);
                 return self.error(Error::expected_found(
                     "function",
-                    &format!("union variant '{name}'"),
+                    format_args!("union variant '{name}'"),
                     span,
                 ));
             }
@@ -4346,8 +4342,8 @@ impl TypeChecker<'_> {
             if !self.implements_trait(ty, &bound) {
                 failed = true;
                 self.proj.diag.report(Error::doesnt_implement(
-                    &type_name!(self, ty),
-                    &type_name!(self, bound),
+                    self.proj.fmt_ty(ty),
+                    self.proj.fmt_ut(&bound),
                     span,
                 ));
             }
@@ -4454,7 +4450,7 @@ impl TypeChecker<'_> {
                         self,
                         Error::expected_found(
                             "trait",
-                            &format!("type '{}'", type_name!(self, ut)),
+                            format_args!("type '{}'", self.proj.fmt_ut(&ut)),
                             path.final_component_span(),
                         )
                     )
@@ -4464,7 +4460,7 @@ impl TypeChecker<'_> {
                 self,
                 Error::expected_found(
                     "trait",
-                    &format!("type '{}'", type_name!(self, ty)),
+                    format_args!("type '{}'", self.proj.fmt_ty(ty)),
                     path.final_component_span(),
                 )
             ),
@@ -4494,7 +4490,7 @@ impl TypeChecker<'_> {
                             self,
                             Error::expected_found(
                                 "type",
-                                &format!("trait '{}'", type_name!(self, ut)),
+                                format_args!("trait '{}'", self.proj.fmt_ut(&ut)),
                                 path.final_component_span(),
                             )
                         )
@@ -4820,19 +4816,17 @@ impl TypeChecker<'_> {
                             if this.proj.scopes.get(ut.id).kind.is_trait() {
                                 Some(ut)
                             } else {
-                                let name = format!("type '{}'", type_name!(this, ut));
                                 this.error(Error::expected_found(
                                     "trait",
-                                    &name,
+                                    format_args!("type '{}'", this.proj.fmt_ut(&ut)),
                                     path.final_component_span(),
                                 ))
                             }
                         }
                         ResolvedType::Builtin(ty) => {
-                            let name = format!("type '{}'", type_name!(this, ty));
                             this.error(Error::expected_found(
                                 "trait",
-                                &name,
+                                format_args!("type '{}'", this.proj.fmt_ty(ty)),
                                 path.final_component_span(),
                             ))
                         }
@@ -5155,7 +5149,7 @@ impl TypeChecker<'_> {
         if negative {
             if !stats.signed {
                 self.proj.diag.report(Error::new(
-                    format!("cannot negate unsigned integer type '{}'", type_name!(self, ty)),
+                    format!("cannot negate unsigned integer type '{}'", self.proj.fmt_ty(ty)),
                     span,
                 ));
                 return (ty, value);
@@ -5171,7 +5165,7 @@ impl TypeChecker<'_> {
                 Error::new(
                     format!(
                         "integer literal does not fit in range for type '{}' (range is {min}..{max})",
-                        type_name!(self, ty),
+                        self.proj.fmt_ty(ty),
                     ),
                     span,
                 )
@@ -5441,7 +5435,7 @@ impl TypeChecker<'_> {
 
             if !missing.is_empty() {
                 self.error(Error::match_statement(
-                    &format!("(missing variant(s) {})", missing.join(", ")),
+                    format_args!("(missing variant(s) {})", missing.join(", ")),
                     span,
                 ))
             }
@@ -5470,7 +5464,7 @@ impl TypeChecker<'_> {
             .map(|ut| ut.id)
         else {
             return Err(Some(Error::new(
-                format!("cannot use union pattern on type '{}'", type_name!(self, scrutinee)),
+                format!("cannot use union pattern on type '{}'", self.proj.fmt_ty(scrutinee)),
                 span,
             )));
         };
@@ -5479,16 +5473,16 @@ impl TypeChecker<'_> {
             ResolvedValue::Fn(f) => f,
             ResolvedValue::MemberFn(m) => m.func,
             ResolvedValue::UnionConstructor(ut) => {
-                return Err(Some(Error::type_mismatch_s(
-                    &type_name!(self, scrutinee),
-                    &type_name!(self, ut),
+                return Err(Some(Error::type_mismatch(
+                    self.proj.fmt_ty(scrutinee),
+                    self.proj.fmt_ut(&ut),
                     span,
                 )));
             }
             ResolvedValue::Var(id) => {
                 return Err(Some(Error::expected_found(
-                    &type_name!(self, scrutinee),
-                    &format!("variable '{}'", strdata!(self, self.proj.scopes.get(id).name.data)),
+                    self.proj.fmt_ty(scrutinee),
+                    format_args!("variable '{}'", strdata!(self, self.proj.scopes.get(id).name.data)),
                     span,
                 )));
             }
@@ -5517,22 +5511,22 @@ impl TypeChecker<'_> {
                 variant,
             ))
         } else if f.constructor.is_some_and(|id| self.proj.scopes.get(id).kind.is_union()) {
-            self.proj.diag.report(Error::type_mismatch_s(
-                &type_name!(self, scrutinee),
-                &type_name!(self, f.ret),
+            self.proj.diag.report(Error::type_mismatch(
+                self.proj.fmt_ty(scrutinee),
+                self.proj.fmt_ty(f.ret),
                 span,
             ));
             Err(Default::default())
         } else if f.constructor.is_some() {
-            Err(Some(Error::type_mismatch_s(
-                &type_name!(self, scrutinee),
-                &type_name!(self, f.ret),
+            Err(Some(Error::type_mismatch(
+                self.proj.fmt_ty(scrutinee),
+                self.proj.fmt_ty(f.ret),
                 span,
             )))
         } else {
             Err(Some(Error::expected_found(
-                &type_name!(self, scrutinee),
-                &format!("function '{}'", strdata!(self, f.name.data)),
+                self.proj.fmt_ty(scrutinee),
+                format_args!("function '{}'", strdata!(self, f.name.data)),
                 span,
             )))
         }
@@ -5651,7 +5645,7 @@ impl TypeChecker<'_> {
                         Error::new(
                             format!(
                                 "array pattern cannot match value of type '{}'",
-                                type_name!(self, target)
+                                self.proj.fmt_ty(target)
                             ),
                             span,
                         )
@@ -5729,7 +5723,7 @@ impl TypeChecker<'_> {
                 UserTypeKind::Struct | UserTypeKind::Union(_) | UserTypeKind::AnonStruct
             )
         }) else {
-            bail!(self, Error::bad_destructure(&type_name!(self, scrutinee), span,));
+            bail!(self, Error::bad_destructure(self.proj.fmt_ty(scrutinee), span,));
         };
         let ut_id = ut.id;
         self.resolve_members(ut_id);
@@ -5741,7 +5735,7 @@ impl TypeChecker<'_> {
         for &Destructure { name, mutable: pm, ref pattern } in destructures {
             let Some(member) = self.proj.scopes.get(ut_id).members.get(&name.data) else {
                 self.proj.diag.report(Error::no_member(
-                    &type_name!(self, scrutinee),
+                    self.proj.fmt_ty(scrutinee),
                     strdata!(self, name.data),
                     name.span,
                 ));
@@ -5750,7 +5744,7 @@ impl TypeChecker<'_> {
 
             if !member.public && !cap {
                 self.proj.diag.report(Error::private_member(
-                    &type_name!(self, scrutinee),
+                    self.proj.fmt_ty(scrutinee),
                     strdata!(self, name.data),
                     name.span,
                 ));
@@ -5801,8 +5795,8 @@ impl TypeChecker<'_> {
             bail!(
                 self,
                 Error::expected_found(
-                    &type_name!(self, scrutinee),
-                    &format!("({})", ["_"].repeat(subpatterns.len()).join(", ")),
+                    self.proj.fmt_ty(scrutinee),
+                    format_args!("({})", ["_"].repeat(subpatterns.len()).join(", ")),
                     span,
                 )
             );
@@ -5810,8 +5804,8 @@ impl TypeChecker<'_> {
 
         if ut.ty_args.len() != subpatterns.len() {
             self.proj.diag.report(Error::expected_found(
-                &type_name!(self, scrutinee),
-                &format!("({})", ["_"].repeat(subpatterns.len()).join(", ")),
+                self.proj.fmt_ty(scrutinee),
+                format_args!("({})", ["_"].repeat(subpatterns.len()).join(", ")),
                 span,
             ));
         }
@@ -5942,8 +5936,8 @@ impl TypeChecker<'_> {
                     prev_vars.remove(&var.name.data).map(|v| self.proj.scopes.get(v).ty)
                 {
                     if var.ty != old_ty {
-                        let ty_name = type_name!(self, var.ty);
-                        let old_ty_name = type_name!(self, old_ty);
+                        let ty_name = self.proj.fmt_ty(var.ty);
+                        let old_ty_name = self.proj.fmt_ty(old_ty);
                         report_error!(
                             self,
                             var.name.span,
@@ -6406,7 +6400,7 @@ impl TypeChecker<'_> {
                             if self.proj.scopes.get(id).kind.is_extension() {
                                 return self.error(Error::expected_found(
                                     "type",
-                                    &format!(
+                                    format_args!(
                                         "extension '{}'",
                                         strdata!(self, self.proj.scopes.get(id).name.data)
                                     ),
@@ -6484,7 +6478,7 @@ impl TypeChecker<'_> {
                         if self.proj.scopes.get(id).kind.is_extension() {
                             return self.error(Error::expected_found(
                                 "type",
-                                &format!(
+                                format_args!(
                                     "extension '{}'",
                                     strdata!(self, self.proj.scopes.get(id).name.data)
                                 ),
@@ -6814,7 +6808,7 @@ impl TypeChecker<'_> {
                 name.span,
                 "cannot access private method '{}' of type '{}'",
                 strdata!(self, self.proj.scopes.get(mfn.func.id).name.data),
-                type_name!(self, ty)
+                self.proj.fmt_ty(ty)
             )
         }
         ResolvedValue::MemberFn(mfn)

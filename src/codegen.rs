@@ -1472,7 +1472,7 @@ impl<'a> Codegen<'a> {
                 } else if expr.ty == TypeId::F64 {
                     write_de!(self.buffer, "CTL_IEEE_F64({:#x}ull)", value.to_bits());
                 } else {
-                    panic!("ICE: attempt to generate float of type {}", expr.ty.name(self.proj))
+                    panic!("ICE: attempt to generate float of type {}", self.proj.fmt_ty(expr.ty))
                 }
             }
             &ExprData::String(v) => write_de!(self.buffer, "{}", StringLiteral(strdata!(self, v))),
@@ -2398,11 +2398,8 @@ impl<'a> Codegen<'a> {
                 write_de!(self.buffer, "{{.tag={}}}", func.first_type_arg().unwrap().as_raw());
             }
             "type_name" => {
-                write_de!(
-                    self.buffer,
-                    "{}",
-                    StringLiteral(&func.first_type_arg().unwrap().name(self.proj))
-                )
+                let name = self.proj.fmt_ty(func.first_type_arg().unwrap()).to_string();
+                write_de!(self.buffer, "{}", StringLiteral(&name))
             }
             "read_volatile" => {
                 const COMPLAINT: &str = "ICE: read_volatile should receive one argument";
@@ -3347,9 +3344,9 @@ impl<'a> Codegen<'a> {
             panic!(
                 "searching from scope: '{}', cannot find implementation for method '{}::{}' for type '{}'",
                 full_name_pretty(self.proj, scope, false),
-                tr.name(self.proj),
+                self.proj.fmt_ut(tr),
                 strdata!(self, method),
-                inst.name(self.proj)
+                self.proj.fmt_ty(inst)
             )
         };
 
@@ -3357,9 +3354,9 @@ impl<'a> Codegen<'a> {
             panic!(
                 "searching from scope: '{}', get_member_fn_ex picked invalid function for implementation for method '{}::{}' for type '{}'",
                 full_name_pretty(self.proj, scope, false),
-                tr.name(self.proj),
+                self.proj.fmt_ut(tr),
                 strdata!(self, method),
-                inst.name(self.proj)
+                self.proj.fmt_ty(inst)
             )
         }
 
@@ -3393,7 +3390,7 @@ impl<'a> Codegen<'a> {
                     }
 
                     if let Some(real) = state.func.ty_args.get(&id) {
-                        result.push_str(&real.name(self.proj));
+                        write_de!(result, "{}", self.proj.fmt_ty(*real));
                     } else {
                         result.push_str(strdata!(self, self.proj.scopes.get(id).name.data));
                     }

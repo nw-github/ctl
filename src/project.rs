@@ -7,7 +7,8 @@ use crate::{
     intern::{StrId, Strings},
     sym::{FunctionId, Scopes, TypeItem, UserTypeId, ValueItem, VariableId, Vis},
     typecheck::{Completions, LspItem},
-    typeid::{TypeId, Types},
+    typeid::{GenericUserType, TypeId, Types},
+    format::{FmtTy, FmtUt},
 };
 
 #[derive(Default)]
@@ -32,6 +33,14 @@ pub struct Project {
 impl Project {
     pub fn new(conf: Configuration, diag: Diagnostics, strings: Strings, lsp: bool) -> Self {
         Self { diag, conf, strings, lsp_items: lsp.then(Vec::new), ..Default::default() }
+    }
+
+    pub fn fmt_ty(&self, ty: TypeId) -> FmtTy<'_> {
+        FmtTy::new(ty, self)
+    }
+
+    pub fn fmt_ut<'b>(&self, ty: &'b GenericUserType) -> FmtUt<'b, '_> {
+        FmtUt::new(ty, self)
     }
 }
 

@@ -3,7 +3,6 @@ use std::{fmt::Display, ops::Index};
 use crate::{
     ast::{BinaryOp, UnaryOp, parsed::TypeHint},
     ds::{ComptimeInt, HashArena, IndexMap},
-    intern::Strings,
     nearest_pow_of_two,
     project::Project,
     sym::{
@@ -87,7 +86,7 @@ where
 
 impl<T> WithTypeArgs<T> {
     pub fn first_type_arg(&self) -> Option<TypeId> {
-        self.ty_args.values().next().cloned()
+        self.ty_args.values().next().copied()
     }
 
     pub fn fill_templates(&mut self, types: &Types, map: &TypeArgs) {
@@ -118,81 +117,6 @@ impl GenericFn {
 pub type GenericUserType = WithTypeArgs<UserTypeId>;
 
 impl GenericUserType {
-    pub fn do_name(&self, scopes: &Scopes, types: &Types, strings: &Strings) -> String {
-        match &scopes.get(self.id).kind {
-            crate::sym::UserTypeKind::AnonStruct => {
-                let mut result = "struct {".to_string();
-                for (i, concrete) in self.ty_args.values().enumerate() {
-                    if i > 0 {
-                        result.push(',');
-                    }
-                    result.push_str(&format!(
-                        " {}: {}",
-                        scopes
-                            .get(self.id)
-                            .members
-                            .get_index(i)
-                            .map(|m| strings.resolve(m.0))
-                            .unwrap_or("???"),
-                        concrete.do_name(scopes, types, strings)
-                    ));
-                }
-                format!("{result} }}")
-            }
-            crate::sym::UserTypeKind::Tuple => {
-                let mut result = "(".to_string();
-                for (i, concrete) in self.ty_args.values().enumerate() {
-                    if i > 0 {
-                        result.push_str(", ");
-                    }
-                    result.push_str(&concrete.do_name(scopes, types, strings));
-                }
-                format!("{result})")
-            }
-            _ => {
-                let is_lang_type = |name: &str| {
-                    let key = strings.get(name);
-                    key.and_then(|key| scopes.lang_types.get(&key)).is_some_and(|&id| id == self.id)
-                };
-                if is_lang_type("option") {
-                    return format!("?{}", self.ty_args[0].do_name(scopes, types, strings));
-                } else if is_lang_type("span") {
-                    return format!("[{}..]", self.ty_args[0].do_name(scopes, types, strings));
-                } else if is_lang_type("span_mut") {
-                    return format!("[mut {}..]", self.ty_args[0].do_name(scopes, types, strings));
-                } else if is_lang_type("vec") {
-                    return format!("[{}]", self.ty_args[0].do_name(scopes, types, strings));
-                } else if is_lang_type("set") {
-                    return format!("#[{}]", self.ty_args[0].do_name(scopes, types, strings));
-                } else if is_lang_type("map") {
-                    return format!(
-                        "[{}: {}]",
-                        self.ty_args[0].do_name(scopes, types, strings),
-                        self.ty_args[1].do_name(scopes, types, strings)
-                    );
-                }
-
-                let mut result = strings.resolve(&scopes.get(self.id).name.data).to_string();
-                if !self.ty_args.is_empty() {
-                    result.push('<');
-                    for (i, concrete) in self.ty_args.values().enumerate() {
-                        if i > 0 {
-                            result.push_str(", ");
-                        }
-                        result.push_str(&concrete.do_name(scopes, types, strings));
-                    }
-                    result.push('>');
-                }
-
-                result
-            }
-        }
-    }
-
-    pub fn name(&self, proj: &Project) -> String {
-        self.do_name(&proj.scopes, &proj.types, &proj.strings)
-    }
-
     pub fn from_id(scopes: &Scopes, types: &Types, id: UserTypeId) -> Self {
         Self::from_type_params(scopes, types, id)
     }
@@ -508,79 +432,6 @@ impl TypeId {
     pub const F64: TypeId = TypeId(10);
     pub const U16: TypeId = TypeId(11);
 
-    pub fn do_name(self, scopes: &Scopes, types: &Types, strings: &Strings) -> String {
-        match &types[self] {
-            Type::Unknown => "{unknown}".into(),
-            // for debug purposes, ideally this should never be visible
-            Type::Unresolved(_, _) => "{unresolved}".into(),
-            Type::Void => "void".into(),
-            Type::Never => "never".into(),
-            Type::Int(bits) => format!("i{bits}"),
-            Type::Uint(bits) => format!("u{bits}"),
-            Type::F32 => "f32".into(),
-            Type::F64 => "f64".into(),
-            Type::Bool => "bool".into(),
-            Type::Char => "char".into(),
-            &Type::Ptr(id) => format!("*{}", id.do_name(scopes, types, strings)),
-            &Type::MutPtr(id) => format!("*mut {}", id.do_name(scopes, types, strings)),
-            &Type::RawPtr(id) => format!("^{}", id.do_name(scopes, types, strings)),
-            &Type::RawMutPtr(id) => format!("^mut {}", id.do_name(scopes, types, strings)),
-            Type::DynPtr(id) => format!("*dyn {}", id.clone().do_name(scopes, types, strings)),
-            Type::DynMutPtr(id) => {
-                format!("*dyn mut {}", id.clone().do_name(scopes, types, strings))
-            }
-            Type::FnPtr(f) => {
-                let f = f.clone();
-                let mut result = String::new();
-                if f.is_extern {
-                    result.push_str("extern ");
-                }
-
-                if f.is_unsafe {
-                    result.push_str("unsafe ");
-                }
-
-                result.push_str("fn(");
-                for (i, &param) in f.params.iter().enumerate() {
-                    if i > 0 {
-                        result.push_str(", ");
-                    }
-
-                    result.push_str(&param.do_name(scopes, types, strings));
-                }
-                format!("{result}) => {}", f.ret.do_name(scopes, types, strings))
-            }
-            Type::Fn(func) => {
-                let ty_args = func.ty_args.clone();
-                let f = scopes.get(func.id);
-                let mut result = format!("fn {}(", strings.resolve(&f.name.data));
-                let ret = f.ret.with_templates(types, &ty_args);
-                let params: Vec<_> =
-                    f.params.iter().map(|p| p.ty.with_templates(types, &ty_args)).collect();
-                for (i, ty) in params.into_iter().enumerate() {
-                    if i > 0 {
-                        result.push_str(", ");
-                    }
-                    result.push_str(&ty.do_name(scopes, types, strings));
-                }
-                format!("{result}): {}", ret.do_name(scopes, types, strings))
-            }
-            Type::User(ty) => ty.clone().do_name(scopes, types, strings),
-            &Type::Array(ty, count) => {
-                format!("[{}; {}]", ty.do_name(scopes, types, strings), count)
-            }
-            Type::Isize => "int".into(),
-            Type::Usize => "uint".into(),
-            id @ (Type::CInt(ty) | Type::CUint(ty)) => {
-                format!("c_{}{ty:#}", ["", "u"][matches!(id, Type::CUint(_)) as usize])
-            }
-        }
-    }
-
-    pub fn name(&self, proj: &Project) -> String {
-        self.do_name(&proj.scopes, &proj.types, &proj.strings)
-    }
-
     pub fn as_option_inner(self, proj: &Project) -> Option<TypeId> {
         proj.types[self].as_option_inner(&proj.scopes)
     }
@@ -591,10 +442,6 @@ impl TypeId {
             id = *inner;
         }
         id
-    }
-
-    pub fn strip_references_r(self, types: &Types) -> &Type {
-        &types[self.strip_references(types)]
     }
 
     pub fn strip_options(self, proj: &Project) -> TypeId {
@@ -685,7 +532,6 @@ impl TypeId {
             Type::Char => std::mem::size_of::<char>(),
             Type::FnPtr(_) => std::mem::size_of::<fn()>(),
             Type::User(ut) if !scopes.get(ut.id).recursive => {
-                let ut = ut.clone();
                 struct SizeAndAlign {
                     size: usize,
                     align: usize,
@@ -838,7 +684,6 @@ impl TypeId {
                 types.insert(Type::Fn(tr))
             }
             Type::FnPtr(f) => {
-                let f = f.clone();
                 let fnptr = Type::FnPtr(FnPtr {
                     is_extern: f.is_extern,
                     is_unsafe: f.is_unsafe,
@@ -863,7 +708,7 @@ impl TypeId {
 
     pub fn with_ut_templates(self, types: &Types, id: TypeId) -> TypeId {
         if let Type::User(ut) = &types[id] {
-            self.with_templates(types, &ut.ty_args.clone())
+            self.with_templates(types, &ut.ty_args)
         } else {
             self
         }
