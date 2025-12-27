@@ -97,6 +97,15 @@ struct FileInfoCache {
 struct LastChecked {
     data: UnloadedProject,
     checked: Project,
+    diagnostics: HashSet<Url>,
+}
+
+impl LastChecked {
+    pub async fn clear_diagnostics(&mut self, client: &Client) {
+        for doc in std::mem::take(&mut self.diagnostics) {
+            client.publish_diagnostics(doc, vec![], None).await;
+        }
+    }
 }
 
 pub struct LspBackend {
@@ -218,6 +227,11 @@ impl LanguageServer for LspBackend {
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         debug!(self, "did_close: '{}'", params.text_document.uri);
         self.open_files.remove(&params.text_document.uri);
+        if self.open_files.is_empty()
+            && let Some(mut prev) = self.project.lock().await.take()
+        {
+            prev.clear_diagnostics(&self.client).await;
+        }
     }
 
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
@@ -538,23 +552,26 @@ impl LspBackend {
             }
         };
 
+        // Always show tests in the LSP
         unloaded.conf.set_feature(Strings::FEAT_TEST);
 
         let mut proj_lock_guard = self.project.lock().await;
-        if !change {
-            if let Some(prev) = proj_lock_guard.as_ref()
-                && unloaded
-                    .mods
-                    .iter()
-                    .all(|(path, module)| prev.data.mods.get(path).is_some_and(|m| m == module))
-            {
+        if let Some(prev) = proj_lock_guard.as_ref()
+            && unloaded
+                .mods
+                .iter()
+                .all(|(path, module)| prev.data.mods.get(path).is_some_and(|m| m == module))
+        {
+            if !change {
                 debug!(self, " -> Checking file in submodule of previous project, skip");
                 return Ok(proj_lock_guard);
             }
 
-            self.documents.clear();
+            unloaded = prev.data.clone();
+            debug!(self, " -> Checking file in submodule of previous project, using prev data");
         }
 
+        self.documents.clear();
         let parsed = match Compiler::with_provider(LspFileProvider::new(&self.open_files))
             .parse(unloaded.clone())
         {
@@ -620,14 +637,20 @@ impl LspBackend {
             items.dedup_by_key(|(_, span)| (span.file, span.pos));
             items.reverse();
         }
+
+        let mut sent = HashSet::new();
         for (id, path) in proj.diag.paths() {
             let Ok(uri) = Url::from_file_path(path) else {
                 continue;
             };
 
-            self.client
-                .publish_diagnostics(uri.clone(), all.remove(&uri).unwrap_or_default(), None)
-                .await;
+            if let Some(diagnostics) = all.remove(&uri) {
+                self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
+                sent.insert(uri.clone());
+                if let Some(prev) = proj_lock_guard.as_mut() {
+                    prev.diagnostics.remove(&uri);
+                }
+            }
 
             let mut doc = self.documents.entry(uri).or_default();
             doc.lsp_items = proj
@@ -640,7 +663,11 @@ impl LspBackend {
             doc.document_symbols = Lazy::None;
         }
 
-        *proj_lock_guard = Some(LastChecked { data: unloaded, checked: proj });
+        if let Some(prev) = proj_lock_guard.as_mut() {
+            prev.clear_diagnostics(&self.client).await;
+        }
+
+        *proj_lock_guard = Some(LastChecked { data: unloaded, checked: proj, diagnostics: sent });
 
         debug!(self, " -> done check_project");
         Ok(proj_lock_guard)
