@@ -52,7 +52,7 @@ struct TypeGen {
 impl TypeGen {
     fn gen_fnptr(buffer: &mut Buffer, flags: &CodegenFlags, f: &FnPtr) {
         write_de!(buffer, "typedef ");
-        if f.ret.is_void() {
+        if f.ret.is_void_like() {
             write_de!(buffer, "void");
         } else {
             buffer.emit_type(f.ret, flags.minify);
@@ -490,7 +490,7 @@ impl<'a> Buffer<'a> {
             Type::Char => write_de!(self, "$char"),
             base @ (&Type::Ptr(i) | &Type::MutPtr(i) | &Type::RawPtr(i) | &Type::RawMutPtr(i)) => {
                 let is_const = base.is_ptr() || base.is_raw_ptr();
-                if i.is_void() {
+                if i.is_void_like() {
                     write_de!(self, "void");
                 } else {
                     self.emit_type(i, min);
@@ -625,7 +625,7 @@ impl<'a> Buffer<'a> {
         let func_data = self.1.scopes.get(func.id);
         let types = &self.1.types;
         let ret = func_data.ret.with_templates(types, &func.ty_args);
-        if ret.is_void() {
+        if ret.is_void_like() {
             write_de!(self, "void");
         } else {
             self.emit_type(ret, min);
@@ -1092,7 +1092,7 @@ impl<'a> Codegen<'a> {
         let func = self.proj.scopes.get(state.func.id);
         if let Some(body) = func.body {
             let void_return =
-                func.ret.with_templates(&self.proj.types, &state.func.ty_args).is_void();
+                func.ret.with_templates(&self.proj.types, &state.func.ty_args).is_void_like();
             let (unused, thisptr) = self.emit_prototype(state, false);
             write_de!(self.buffer, "{{");
             for id in unused {
@@ -1140,7 +1140,7 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_expr_stmt(&mut self, expr: Expr, state: &mut State) {
-        if self.has_side_effects(&expr) && !expr.ty.is_void() {
+        if self.has_side_effects(&expr) && !expr.ty.is_void_like() {
             self.emit_expr_inline(expr, state);
             write_de!(self.buffer, ";");
         } else {
@@ -1275,19 +1275,19 @@ impl<'a> Codegen<'a> {
                     }
                 }
 
-                if expr.ty.is_void() {
+                if expr.ty.is_void_like() {
                     write_de!(self.buffer, "VOID(");
                 }
                 self.emit_expr(*callee, state);
                 write_de!(self.buffer, "(");
                 self.finish_emit_fn_args(state, func.id, args);
-                if expr.ty.is_void() {
+                if expr.ty.is_void_like() {
                     write_de!(self.buffer, ")");
                 }
             }
             ExprData::CallDyn(func, args) => {
                 let mut args = args.clone();
-                if expr.ty.is_void() {
+                if expr.ty.is_void_like() {
                     write_de!(self.buffer, "VOID(");
                 }
                 let (_, recv) = args.shift_remove_index(0).unwrap();
@@ -1307,13 +1307,13 @@ impl<'a> Codegen<'a> {
                     write_de!(self.buffer, ",");
                     self.finish_emit_fn_args(state, id, args);
                 }
-                if expr.ty.is_void() {
+                if expr.ty.is_void_like() {
                     write_de!(self.buffer, ")");
                 }
             }
             ExprData::CallFnPtr(inner, args) => {
                 let args = args.clone();
-                if expr.ty.is_void() {
+                if expr.ty.is_void_like() {
                     write_de!(self.buffer, "VOID(");
                 }
                 write_de!(self.buffer, "(");
@@ -1327,7 +1327,7 @@ impl<'a> Codegen<'a> {
                     self.emit_expr(arg, state);
                 }
                 write_de!(self.buffer, ")");
-                if expr.ty.is_void() {
+                if expr.ty.is_void_like() {
                     write_de!(self.buffer, ")");
                 }
             }
@@ -1597,7 +1597,7 @@ impl<'a> Codegen<'a> {
             }
             &ExprData::Return(mut expr) => never_expr!(self, {
                 expr.ty = expr.ty.with_templates(&self.proj.types, &state.func.ty_args);
-                let void = expr.ty.is_void();
+                let void = expr.ty.is_void_like();
                 let tmp = self.emit_tmpvar(expr, state);
                 let str = if void {
                     write_de!(self.buffer, "(void){tmp};");
@@ -1997,7 +1997,7 @@ impl<'a> Codegen<'a> {
                     self.emit_cast(ret);
                 }
                 if op.is_assignment() {
-                    if lhs.ty.is_void() {
+                    if lhs.ty.is_void_like() {
                         hoist!(self, {
                             self.emit_expr(lhs, state);
                             write_de!(self.buffer, ";");
@@ -2856,7 +2856,7 @@ impl<'a> Codegen<'a> {
         }
 
         let is_import = f.is_extern && f.body.is_none();
-        if ret.is_void() {
+        if ret.is_void_like() {
             write_de!(self.buffer, "void ");
         } else {
             self.emit_type(ret);

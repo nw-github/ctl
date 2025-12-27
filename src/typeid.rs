@@ -707,14 +707,10 @@ impl TypeId {
     }
 
     pub fn with_ut_templates(self, types: &Types, id: TypeId) -> TypeId {
-        if let Type::User(ut) = &types[id] {
-            self.with_templates(types, &ut.ty_args)
-        } else {
-            self
-        }
+        if let Type::User(ut) = &types[id] { self.with_templates(types, &ut.ty_args) } else { self }
     }
 
-    pub fn is_void(self) -> bool {
+    pub fn is_void_like(self) -> bool {
         matches!(self, TypeId::NEVER | TypeId::VOID)
     }
 
