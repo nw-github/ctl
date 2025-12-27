@@ -335,7 +335,7 @@ pub enum UserTypeKind {
     Union(Union),
     UnsafeUnion,
     Template,
-    AnonStruct,
+    Tuple,
     Trait { this: UserTypeId, sealed: bool, assoc_types: HashMap<StrId, UserTypeId> },
     Extension(TypeId),
 }
@@ -487,7 +487,7 @@ pub struct Scopes {
     fns: Vec<Scoped<Function>>,
     types: Vec<Scoped<UserType>>,
     vars: Vec<Scoped<Variable>>,
-    structs: HashMap<Vec<StrId>, UserTypeId>,
+    tuples: HashMap<Vec<StrId>, UserTypeId>,
     pub lang_types: HashMap<StrId, UserTypeId>,
     pub intrinsics: HashMap<FunctionId, StrId>,
 }
@@ -499,7 +499,7 @@ impl Scopes {
             fns: vec![Scoped::new(Function::default(), ScopeId::ROOT)],
             types: Vec::new(),
             vars: Vec::new(),
-            structs: HashMap::new(),
+            tuples: HashMap::new(),
             lang_types: HashMap::new(),
             intrinsics: HashMap::new(),
         }
@@ -551,13 +551,8 @@ impl Scopes {
         id.get_mut(self)
     }
 
-    pub fn get_anon_struct(
-        &mut self,
-        names: Vec<StrId>,
-        ty_args: Vec<TypeId>,
-        types: &Types,
-    ) -> TypeId {
-        let id = if let Some(id) = self.structs.get(&names) {
+    pub fn get_tuple(&mut self, names: Vec<StrId>, ty_args: Vec<TypeId>, types: &Types) -> TypeId {
+        let id = if let Some(id) = self.tuples.get(&names) {
             *id
         } else {
             let type_params: Vec<_> = (0..names.len())
@@ -599,7 +594,7 @@ impl Scopes {
                         .collect(),
                     name: Located::nowhere(Strings::ANON_STRUCT_NAME),
                     body_scope: ScopeId::ROOT,
-                    kind: UserTypeKind::AnonStruct,
+                    kind: UserTypeKind::Tuple,
                     type_params,
                     attrs: Default::default(),
                     impls: Default::default(),
@@ -613,7 +608,7 @@ impl Scopes {
                 ScopeId::ROOT,
             );
 
-            self.structs.insert(names, res.id);
+            self.tuples.insert(names, res.id);
             res.id
         };
         types.insert(Type::User(GenericUserType::from_type_args(self, id, ty_args)))

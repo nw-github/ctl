@@ -2565,7 +2565,7 @@ impl TypeChecker<'_> {
                 for (label, expr) in elements.iter().copied() {
                     let result = if let Some(target) = target
                         .and_then(|t| self.proj.types[t].as_user())
-                        .filter(|t| self.proj.scopes.get(t.id).kind.is_anon_struct())
+                        .filter(|t| self.proj.scopes.get(t.id).kind.is_tuple())
                         .and_then(|ut| {
                             let member = self.proj.scopes.get(ut.id).members.get(&label.data)?;
                             Some(member.ty.with_templates(&self.proj.types, &ut.ty_args))
@@ -2581,7 +2581,7 @@ impl TypeChecker<'_> {
                 }
 
                 self.arena.typed(
-                    self.proj.scopes.get_anon_struct(names, types, &self.proj.types),
+                    self.proj.scopes.get_tuple(names, types, &self.proj.types),
                     CExprData::Instance(result_elems),
                 )
             }
@@ -4519,7 +4519,7 @@ impl TypeChecker<'_> {
                     names.push(name.data);
                     types.push(self.resolve_typehint(ty));
                 }
-                self.proj.scopes.get_anon_struct(names, types, &self.proj.types)
+                self.proj.scopes.get_tuple(names, types, &self.proj.types)
             }
             TypeHintData::Fn { is_extern, is_unsafe, params, ret } => {
                 let fnptr = FnPtr {
@@ -5694,7 +5694,7 @@ impl TypeChecker<'_> {
         let Some(ut) = self.proj.types[stripped].as_user().filter(|ut| {
             matches!(
                 self.proj.scopes.get(ut.id).kind,
-                UserTypeKind::Struct | UserTypeKind::Union(_) | UserTypeKind::AnonStruct
+                UserTypeKind::Struct | UserTypeKind::Union(_) | UserTypeKind::Tuple
             )
         }) else {
             bail!(self, Error::bad_destructure(self.proj.fmt_ty(scrutinee), span,));
@@ -5763,7 +5763,7 @@ impl TypeChecker<'_> {
             .types
             .get(stripped)
             .as_user()
-            .filter(|ut| self.proj.scopes.get(ut.id).kind.is_anon_struct())
+            .filter(|ut| self.proj.scopes.get(ut.id).kind.is_tuple())
             .cloned()
         else {
             bail!(

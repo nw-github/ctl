@@ -82,7 +82,7 @@ impl std::fmt::Display for FmtUt<'_, '_> {
         let p = self.p;
         let ut = self.ut;
         match &p.scopes.get(ut.id).kind {
-            crate::sym::UserTypeKind::AnonStruct => {
+            crate::sym::UserTypeKind::Tuple => {
                 write!(f, "(")?;
                 for (i, (name, member)) in p.scopes.get(ut.id).members.iter().enumerate() {
                     if i > 0 {

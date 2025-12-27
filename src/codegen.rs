@@ -539,7 +539,7 @@ impl<'a> Buffer<'a> {
             }
         } else {
             self.emit(full_name(self.1, ty.scope, ty.name.data));
-            if ty.kind.is_anon_struct() {
+            if ty.kind.is_tuple() {
                 for name in ty.members.keys() {
                     write_de!(self, "_{}", self.1.strings.resolve(name));
                 }

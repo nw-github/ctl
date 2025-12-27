@@ -335,7 +335,7 @@ impl LanguageServer for LspBackend {
                         ""
                     };
                     let ty = mem.map_or(TypeId::UNKNOWN, |m| m.ty);
-                    if matches!(ut.kind, UserTypeKind::AnonStruct) {
+                    if matches!(ut.kind, UserTypeKind::Tuple) {
                         let real = src_ty.map(|src| ty.with_ut_templates(&proj.types, src)).unwrap_or(ty);
                         Some(format!("{public}{}: {}", proj.strings.resolve(name), proj.fmt_ty(real)))
                     } else {
@@ -1460,7 +1460,7 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
             visualize_type_params(&mut res, &ut.type_params, proj);
             write_de!(res, " for {}", proj.fmt_ty(ty));
         }
-        UserTypeKind::AnonStruct => {}
+        UserTypeKind::Tuple => {}
     }
 
     res
@@ -1479,7 +1479,7 @@ fn visualize_variant_body(
     match ty.map(|id| (id, &proj.types[id])) {
         Some((_, Type::User(ut))) => {
             let inner = proj.scopes.get(ut.id);
-            if inner.kind.is_anon_struct() {
+            if inner.kind.is_tuple() {
                 *res += "(";
                 for (i, (name, member)) in inner.members.iter().enumerate() {
                     if i > 0 {
