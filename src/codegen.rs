@@ -579,7 +579,7 @@ impl<'a> Buffer<'a> {
             return;
         }
 
-        if !f.is_extern {
+        if !f.is_extern || f.body.is_some() {
             if min {
                 write_de!(self, "p{}", func.id);
                 for &ty in func.ty_args.values() {
@@ -841,7 +841,7 @@ impl<'a> Codegen<'a> {
         let funcs: HashSet<State> = proj
             .scopes
             .functions()
-            .filter(|(_, f)| f.is_extern && f.body.is_some())
+            .filter(|(_, f)| f.is_extern && f.type_params.is_empty() && f.body.is_some())
             .map(|(id, _)| State::from_non_generic(id, &proj.scopes))
             .collect();
         let mut this = Codegen {
