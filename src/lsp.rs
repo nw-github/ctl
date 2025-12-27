@@ -547,7 +547,7 @@ impl LspBackend {
         let mut unloaded = match UnloadedProject::new(get_file_project(path)) {
             Ok(proj) => proj,
             Err(err) => {
-                self.client.log_message(MessageType::ERROR, format!("{err}")).await;
+                error!(self, "{err}");
                 return Err(Error::internal_error());
             }
         };
@@ -577,7 +577,7 @@ impl LspBackend {
         {
             Ok(parsed) => parsed,
             Err(err) => {
-                self.client.log_message(MessageType::ERROR, format!("{err}")).await;
+                error!(self, "{err}");
                 return Err(Error::internal_error());
             }
         };

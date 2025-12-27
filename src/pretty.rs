@@ -3,10 +3,11 @@ use colored::Colorize;
 use crate::{
     Located,
     ast::parsed::{
-        Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path, PathOrigin,
-        Pattern, Stmt, StmtData, Struct, TypeHint, TypeHintData, UsePath, UsePathTail, Variant,
+        Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path, 
+        Pattern, Stmt, StmtData, Struct, TypeHint, UsePath, UsePathTail, Variant,
     },
     intern::{StrId, Strings},
+    format::{FmtHint, FmtPath, FmtPatt},
 };
 
 const INDENT: &str = "  ";
@@ -797,15 +798,15 @@ impl Pretty<'_> {
 
 impl<'a> Pretty<'a> {
     fn patt(&'a self, patt: &'a Pattern) -> FmtPatt<'a> {
-        FmtPatt { patt, strings: self.strings }
+        FmtPatt::new(patt, self.strings)
     }
 
-    fn typ(&'a self, ty: TypeHint) -> FmtType<'a> {
-        FmtType { ty, strings: self.strings, arena: self.arena }
+    fn typ(&'a self, ty: TypeHint) -> FmtHint<'a> {
+        FmtHint::new(ty, self.strings, self.arena)
     }
 
     fn path(&'a self, path: &'a Path) -> FmtPath<'a> {
-        FmtPath { path, strings: self.strings, arena: self.arena }
+        FmtPath::new(path, self.strings, self.arena)
     }
 }
 
@@ -815,136 +816,6 @@ enum HeaderVar {
     Unnamed(&'static str),
     #[default]
     None,
-}
-
-#[derive(Clone, Copy, derive_more::Constructor)]
-struct FmtType<'a> {
-    ty: TypeHint,
-    strings: &'a Strings,
-    arena: &'a ExprArena,
-}
-
-impl FmtType<'_> {
-    fn subtype(&self, ty: TypeHint) -> Self {
-        Self { ty, ..*self }
-    }
-}
-
-impl std::fmt::Display for FmtType<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.arena.hints.get(self.ty.data) {
-            TypeHintData::Path(path) => {
-                write!(f, "{}", FmtPath::new(path, self.strings, self.arena))
-            }
-            &TypeHintData::Array(ty, _) => write!(f, "[{}; <expr>]", self.subtype(ty)),
-            &TypeHintData::Vec(ty) => write!(f, "[{}]", self.subtype(ty)),
-            &TypeHintData::Slice(ty) => write!(f, "[{}..]", self.subtype(ty)),
-            &TypeHintData::SliceMut(ty) => write!(f, "[mut {}..]", self.subtype(ty)),
-            TypeHintData::Tuple(vals) => {
-                write!(f, "(")?;
-                for (i, ty) in vals.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", self.subtype(*ty))?;
-                }
-                write!(f, ")")
-            }
-            TypeHintData::AnonStruct(vals) => {
-                write!(f, "struct {{")?;
-                for (i, (name, ty)) in vals.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}: {}", self.strings.resolve(name), self.subtype(*ty))?;
-                }
-                write!(f, "}}")
-            }
-            &TypeHintData::Set(ty) => write!(f, "#[{}]", self.subtype(ty)),
-            &TypeHintData::Map([k, v]) => write!(f, "[{}: {}]", self.subtype(k), self.subtype(v)),
-            &TypeHintData::Option(ty) => write!(f, "?{}", self.subtype(ty)),
-            &TypeHintData::Ptr(ty) => write!(f, "*{}", self.subtype(ty)),
-            &TypeHintData::MutPtr(ty) => write!(f, "*mut {}", self.subtype(ty)),
-            &TypeHintData::RawPtr(ty) => write!(f, "^{}", self.subtype(ty)),
-            &TypeHintData::RawMutPtr(ty) => write!(f, "^mut {}", self.subtype(ty)),
-            TypeHintData::DynPtr(ty) => {
-                write!(f, "*dyn {}", FmtPath::new(ty, self.strings, self.arena))
-            }
-            TypeHintData::DynMutPtr(ty) => {
-                write!(f, "*dyn mut {}", FmtPath::new(ty, self.strings, self.arena))
-            }
-            TypeHintData::Fn { is_extern, is_unsafe, params, ret } => {
-                crate::write_if!(*is_extern, f, "extern ");
-                crate::write_if!(*is_unsafe, f, "unsafe ");
-                write!(f, "fn (")?;
-                for (i, ty) in params.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", self.subtype(*ty))?;
-                }
-                if let Some(ret) = ret {
-                    write!(f, "): {}", self.subtype(*ret))
-                } else {
-                    write!(f, ")")
-                }
-            }
-            TypeHintData::Void => write!(f, "void"),
-            TypeHintData::Error => write!(f, "Error"),
-        }
-    }
-}
-
-#[derive(derive_more::Constructor)]
-struct FmtPath<'a> {
-    path: &'a Path,
-    strings: &'a Strings,
-    arena: &'a ExprArena,
-}
-
-impl std::fmt::Display for FmtPath<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use std::fmt::Write;
-
-        let mut tmp = String::new();
-
-        write!(tmp, "{}", self.path.origin)?;
-        for (i, (name, ty_args)) in self.path.components.iter().enumerate() {
-            if i > 0 || matches!(self.path.origin, PathOrigin::This(_)) {
-                write!(tmp, "::")?;
-            }
-
-            write!(tmp, "{}", self.strings.resolve(&name.data))?;
-            if ty_args.is_empty() {
-                continue;
-            }
-
-            write!(tmp, "::<")?;
-            for (i, generic) in ty_args.iter().enumerate() {
-                if i > 0 {
-                    write!(tmp, ", ")?;
-                }
-                write!(tmp, "{}", FmtType::new(*generic, self.strings, self.arena))?;
-            }
-            write!(tmp, ">")?;
-        }
-
-        if tmp.is_empty() { write!(f, "<empty>") } else { write!(f, "{tmp}") }
-    }
-}
-
-#[derive(derive_more::Constructor)]
-struct FmtPatt<'a> {
-    patt: &'a Pattern,
-    strings: &'a Strings,
-}
-
-impl std::fmt::Display for FmtPatt<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        _ = self.patt;
-        _ = self.strings;
-        write!(f, "<TODO: Pattern>")
-    }
 }
 
 pub fn print_stmt(stmt: &Stmt, strings: &Strings, arena: &ExprArena, indent: usize) {
