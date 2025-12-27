@@ -330,7 +330,6 @@ pub struct FullPattern {
     pub if_expr: Option<Expr>,
 }
 
-
 #[derive(Clone)]
 pub enum TypeHintData {
     Path(Path),
@@ -338,8 +337,7 @@ pub enum TypeHintData {
     Vec(TypeHint),
     Slice(TypeHint),
     SliceMut(TypeHint),
-    Tuple(Vec<TypeHint>),
-    AnonStruct(Vec<(StrId, TypeHint)>),
+    Tuple(Vec<(Option<Located<StrId>>, TypeHint)>),
     Set(TypeHint),
     Map([TypeHint; 2]),
     Option(TypeHint),

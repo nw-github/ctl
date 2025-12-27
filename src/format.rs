@@ -173,23 +173,16 @@ impl std::fmt::Display for FmtHint<'_> {
             &TypeHintData::SliceMut(ty) => write!(f, "[mut {}..]", self.subtype(ty)),
             TypeHintData::Tuple(vals) => {
                 write!(f, "(")?;
-                for (i, ty) in vals.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", self.subtype(*ty))?;
-                }
-                write!(f, ")")
-            }
-            TypeHintData::AnonStruct(vals) => {
-                write!(f, "struct {{")?;
                 for (i, (name, ty)) in vals.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}: {}", self.strings.resolve(name), self.subtype(*ty))?;
+                    if let Some(name) = name {
+                        write!(f, "{}: ", self.strings.resolve(&name.data))?;
+                    }
+                    write!(f, "{}", self.subtype(*ty))?;
                 }
-                write!(f, "}}")
+                write!(f, ")")
             }
             &TypeHintData::Set(ty) => write!(f, "#[{}]", self.subtype(ty)),
             &TypeHintData::Map([k, v]) => write!(f, "[{}: {}]", self.subtype(k), self.subtype(v)),

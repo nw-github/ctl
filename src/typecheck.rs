@@ -4544,14 +4544,15 @@ impl TypeChecker<'_> {
                 self.resolve_lang_type("span_mut", std::slice::from_ref(ty), span)
             }
             TypeHintData::Tuple(params) => {
-                let params = params.iter().map(|&p| self.resolve_typehint(p)).collect();
-                self.proj.scopes.get_tuple(params, &mut self.proj.strings, &self.proj.types)
-            }
-            TypeHintData::AnonStruct(params) => {
                 let mut types = Vec::with_capacity(params.len());
                 let mut names = Vec::with_capacity(params.len());
+                let mut positional = 0;
                 for (name, ty) in params.iter().cloned() {
-                    names.push(name);
+                    names.push(name.map(|name| name.data).unwrap_or_else(|| {
+                        let name = intern!(self, "{positional}");
+                        positional += 1;
+                        name
+                    }));
                     types.push(self.resolve_typehint(ty));
                 }
                 self.proj.scopes.get_anon_struct(

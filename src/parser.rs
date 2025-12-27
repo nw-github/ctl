@@ -1012,18 +1012,18 @@ impl<'a> Parser<'a> {
     }
 
     fn maybe_labeled_expr(&mut self) -> (Option<Located<StrId>>, Expr) {
-            let mut expr = self.expression();
-            let mut name = None;
-            if let ExprData::Path(path) = self.arena.get(expr.data)
-                && let Some(ident) = path.as_identifier()
-                && self.next_if(Token::Colon).is_some()
-            {
-                name = Some(ident);
-                if !self.matches_pred(|t| matches!(t, Token::Comma | Token::RParen)) {
-                    expr = self.expression();
-                }
+        let mut expr = self.expression();
+        let mut name = None;
+        if let ExprData::Path(path) = self.arena.get(expr.data)
+            && let Some(ident) = path.as_identifier()
+            && self.next_if(Token::Colon).is_some()
+        {
+            name = Some(ident);
+            if !self.matches_pred(|t| matches!(t, Token::Comma | Token::RParen)) {
+                expr = self.expression();
             }
-            (name, expr)
+        }
+        (name, expr)
     }
 
     fn block_or_normal_expr(&mut self, label: Option<Located<StrId>>) -> (bool, Expr) {
@@ -1676,8 +1676,18 @@ impl<'a> Parser<'a> {
             }
             Token::LParen => {
                 let left = self.next();
-                self.csv_one(Token::RParen, left.span, Self::type_hint)
-                    .map(|args| self.arena.hints.alloc(TypeHintData::Tuple(args)))
+                self.csv_one(Token::RParen, left.span, |this| {
+                    let hint = this.type_hint();
+                    if let TypeHintData::Path(path) = this.arena.hints.get(hint.data)
+                        && let Some(ident) = path.as_identifier()
+                        && this.next_if(Token::Colon).is_some()
+                    {
+                        (Some(ident), this.type_hint())
+                    } else {
+                        (None, hint)
+                    }
+                })
+                .map(|args| self.arena.hints.alloc(TypeHintData::Tuple(args)))
             }
             Token::Void => ExprArena::hint_void(self.next().span),
             Token::Extern | Token::Unsafe | Token::Fn => {
@@ -1706,17 +1716,6 @@ impl<'a> Parser<'a> {
                     params.span,
                     TypeHintData::Fn { is_extern, is_unsafe, params: params.data, ret },
                 )
-            }
-            Token::Struct => {
-                let span = self.next().span;
-                self.expect(Token::LCurly);
-                self.csv(Vec::new(), Token::RCurly, span, |this| {
-                    let name = this.expect_ident("expected member name");
-                    this.expect(Token::Colon);
-                    let ty = this.type_hint();
-                    (name.data, ty)
-                })
-                .map(|data| self.arena.hints.alloc(TypeHintData::AnonStruct(data)))
             }
             _ => {
                 let path = self.type_path();
@@ -1858,7 +1857,7 @@ impl<'a> Parser<'a> {
                             )
                         });
                         let hint = Located::nowhere(this.arena.hints.alloc(TypeHintData::Tuple(
-                            members.data.iter().map(|(ty, _)| *ty).collect(),
+                            members.data.iter().map(|(ty, _)| (None, *ty)).collect(),
                         )));
                         VariantData::TupleLike(members.data, hint)
                     }
@@ -1879,8 +1878,8 @@ impl<'a> Parser<'a> {
                             }
                         });
                         let hint =
-                            Located::nowhere(this.arena.hints.alloc(TypeHintData::AnonStruct(
-                                members.data.iter().map(|m| (m.name.data, m.ty)).collect(),
+                            Located::nowhere(this.arena.hints.alloc(TypeHintData::Tuple(
+                                members.data.iter().map(|m| (Some(m.name), m.ty)).collect(),
                             )));
                         VariantData::StructLike(members.data, hint)
                     }
