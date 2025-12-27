@@ -4823,13 +4823,11 @@ impl TypeChecker<'_> {
                                 ))
                             }
                         }
-                        ResolvedType::Builtin(ty) => {
-                            this.error(Error::expected_found(
-                                "trait",
-                                format_args!("type '{}'", this.proj.fmt_ty(ty)),
-                                path.final_component_span(),
-                            ))
-                        }
+                        ResolvedType::Builtin(ty) => this.error(Error::expected_found(
+                            "trait",
+                            format_args!("type '{}'", this.proj.fmt_ty(ty)),
+                            path.final_component_span(),
+                        )),
                         ResolvedType::Error => Default::default(),
                     })
                 }
@@ -5482,7 +5480,10 @@ impl TypeChecker<'_> {
             ResolvedValue::Var(id) => {
                 return Err(Some(Error::expected_found(
                     self.proj.fmt_ty(scrutinee),
-                    format_args!("variable '{}'", strdata!(self, self.proj.scopes.get(id).name.data)),
+                    format_args!(
+                        "variable '{}'",
+                        strdata!(self, self.proj.scopes.get(id).name.data)
+                    ),
                     span,
                 )));
             }
@@ -6220,6 +6221,7 @@ impl TypeChecker<'_> {
             val: Option<&TypeItem>,
             span: Span,
             last: bool,
+            in_type: &mut bool
         ) -> CheckResult {
             match val {
                 Some(&TypeItem::Module(next)) => {
@@ -6227,6 +6229,7 @@ impl TypeChecker<'_> {
                     CheckResult::Next(next)
                 }
                 Some(&TypeItem::Type(id)) => {
+                    *in_type = true;
                     this.check_hover(span, id.into());
                     if !last {
                         this.proj.diag.report(Error::new("expected module name", span));
@@ -6239,7 +6242,16 @@ impl TypeChecker<'_> {
             }
         }
 
+        fn can_import_value_item(this: &TypeChecker, item: ValueItem, in_type: bool) -> bool {
+            !in_type
+                || item
+                    .as_fn()
+                    .and_then(|id| this.proj.scopes.get(*id).constructor)
+                    .is_some_and(|ut| this.proj.scopes.get(ut).kind.is_union())
+        }
+
         let mut components = &path.components[..];
+        let mut in_type = false;
         let mut scope = match path.origin {
             PathOrigin::Root(_) => ScopeId::ROOT,
             PathOrigin::Super(span) => {
@@ -6252,7 +6264,7 @@ impl TypeChecker<'_> {
             PathOrigin::Normal => 'out: {
                 if let Some((first, rest)) = components.split_first() {
                     let value = self.find_in_tns(first.data).map(|i| i.id);
-                    match check(self, value.as_ref(), first.span, rest.is_empty()) {
+                    match check(self, value.as_ref(), first.span, rest.is_empty(), &mut in_type) {
                         CheckResult::BadType => return Ok(()),
                         CheckResult::NotFound => {}
                         CheckResult::Next(next) => {
@@ -6272,8 +6284,15 @@ impl TypeChecker<'_> {
                 self.enter_id_and_resolve(scope, |_| {});
             }
 
-            let val = self.proj.scopes[scope].find_in_tns(comp.data);
-            match check(self, val.as_deref(), comp.span, i == components.len() - 1) {
+            let item = self.proj.scopes[scope].find_in_tns(comp.data);
+            if let Some(item) = item
+                && !item.public
+                && !self.can_access_privates(scope)
+            {
+                named_error!(self, Error::private, comp.data, comp.span)
+            }
+
+            match check(self, item.as_deref(), comp.span, i == components.len() - 1, &mut in_type) {
                 CheckResult::NotFound => return Err(*comp),
                 CheckResult::BadType => return Ok(()),
                 CheckResult::Next(next) => scope = next,
@@ -6302,7 +6321,9 @@ impl TypeChecker<'_> {
                 }
                 found = true;
             }
-            if let Some(item) = self.proj.scopes[scope].find_in_vns(tail.data) {
+            if let Some(item) = self.proj.scopes[scope].find_in_vns(tail.data)
+                && can_import_value_item(self, *item, in_type)
+            {
                 self.check_hover(
                     tail.span,
                     match item.id {
@@ -6335,18 +6356,26 @@ impl TypeChecker<'_> {
             }
         } else {
             let cap = self.can_access_privates(scope);
-            if let Some((scope, current)) = self.proj.scopes.borrow_twice(scope, self.current) {
-                for (&name, &item) in scope.tns.iter() {
-                    if item.public || cap {
-                        current.tns.entry(name).or_insert(Vis::new(*item, path.public));
-                    }
+            let mut tns = vec![];
+            let mut vns = vec![];
+            for (&name, &item) in self.proj.scopes[scope].tns.iter() {
+                if item.public || cap {
+                    tns.push((name, Vis::new(*item, path.public)));
                 }
+            }
 
-                for (&name, &item) in scope.vns.iter() {
-                    if item.public || cap {
-                        current.vns.entry(name).or_insert(Vis::new(*item, path.public));
-                    }
+            for (&name, &item) in self.proj.scopes[scope].vns.iter() {
+                if (item.public || cap) && can_import_value_item(self, *item, in_type) {
+                    vns.push((name, Vis::new(*item, path.public)));
                 }
+            }
+
+            for (name, item) in tns {
+                self.proj.scopes[self.current].tns.entry(name).or_insert(item);
+            }
+
+            for (name, item) in vns {
+                self.proj.scopes[self.current].vns.entry(name).or_insert(item);
             }
         }
 
