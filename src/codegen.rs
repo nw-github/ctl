@@ -80,15 +80,10 @@ impl TypeGen {
         write_de!(buffer, ");");
     }
 
-    fn gen_vtable_info(
-        flags: &CodegenFlags,
-        buf: &mut Buffer,
-        trait_deps: &DependencyGraph<UserTypeId>,
-        tr: UserTypeId,
-    ) {
+    fn gen_vtable_info(flags: &CodegenFlags, buf: &mut Buffer, tr: UserTypeId) {
         // TODO: not sure if losing type information on the vtables will affect optimization in any
         // way. if it does, we can go back to emitting full vtable structs per trait.
-        let Some(Dependencies::Resolved(deps)) = trait_deps.get(&tr) else {
+        let Some(Dependencies::Resolved(deps)) = buf.1.trait_deps.get(&tr) else {
             panic!(
                 "ICE: Dyn pointer for trait '{}' has invalid dependencies",
                 buf.1.strings.resolve(&tr.name(&buf.1.scopes).data),
@@ -203,12 +198,7 @@ impl TypeGen {
         write_de!(defs, "}};");
     }
 
-    fn emit(
-        &self,
-        trait_deps: &DependencyGraph<UserTypeId>,
-        decls: &mut Buffer,
-        flags: &CodegenFlags,
-    ) {
+    fn emit(&self, decls: &mut Buffer, flags: &CodegenFlags) {
         let types = &decls.1.types;
         let scopes = &decls.1.scopes;
 
@@ -218,7 +208,7 @@ impl TypeGen {
             Type::FnPtr(f) => Self::gen_fnptr(&mut defs, flags, f),
             Type::User(ut) => Self::gen_usertype(flags, decls, &mut defs, ut),
             Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                Self::gen_vtable_info(flags, &mut defs, trait_deps, tr.id);
+                Self::gen_vtable_info(flags, &mut defs, tr.id)
             }
             &Type::Int(bits) if bits != 0 => {
                 let nearest = nearest_pow_of_two(bits);
@@ -549,6 +539,12 @@ impl<'a> Buffer<'a> {
             }
         } else {
             self.emit(full_name(self.1, ty.scope, ty.name.data));
+            if ty.kind.is_anon_struct() {
+                for name in ty.members.keys() {
+                    write_de!(self, "_{}", self.1.strings.resolve(name));
+                }
+            }
+
             if !ut.ty_args.is_empty() {
                 write_de!(self, "$");
                 for &ty in ut.ty_args.values() {
@@ -944,7 +940,7 @@ impl<'a> Codegen<'a> {
             this.buffer.emit("){.span={.ptr=(u8*)data,.len=(usize)n}}\n");
         }
 
-        this.tg.emit(&this.proj.trait_deps, &mut this.buffer, &this.flags);
+        this.tg.emit(&mut this.buffer, &this.flags);
         this.buffer.emit(prototypes.finish());
         this.buffer.emit(this.vtables.finish());
         this.buffer.emit(static_defs.finish());

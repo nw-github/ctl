@@ -488,7 +488,6 @@ pub struct Scopes {
     fns: Vec<Scoped<Function>>,
     types: Vec<Scoped<UserType>>,
     vars: Vec<Scoped<Variable>>,
-    tuples: HashMap<usize, UserTypeId>,
     structs: HashMap<Vec<StrId>, UserTypeId>,
     pub lang_types: HashMap<StrId, UserTypeId>,
     pub intrinsics: HashMap<FunctionId, StrId>,
@@ -501,7 +500,6 @@ impl Scopes {
             fns: vec![Scoped::new(Function::default(), ScopeId::ROOT)],
             types: Vec::new(),
             vars: Vec::new(),
-            tuples: HashMap::new(),
             structs: HashMap::new(),
             lang_types: HashMap::new(),
             intrinsics: HashMap::new(),
@@ -560,71 +558,10 @@ impl Scopes {
         strings: &mut Strings,
         types: &Types,
     ) -> TypeId {
-        let id = if let Some(id) = self.tuples.get(&ty_args.len()) {
-            *id
-        } else {
-            let type_params: Vec<_> = (0..ty_args.len())
-                .map(|_| {
-                    UserTypeId::insert_in(
-                        self,
-                        UserType {
-                            public: false,
-                            name: Default::default(),
-                            body_scope: ScopeId::ROOT,
-                            kind: UserTypeKind::Template,
-                            impls: Default::default(),
-                            impl_blocks: Vec::new(),
-                            type_params: Vec::new(),
-                            attrs: Default::default(),
-                            fns: Vec::new(),
-                            members: IndexMap::new(),
-                            subscripts: Vec::new(),
-                            members_resolved: true,
-                            recursive: false,
-                        },
-                        false,
-                        ScopeId::ROOT,
-                    )
-                    .id
-                })
-                .collect();
-            let res = UserTypeId::insert_in(
-                self,
-                UserType {
-                    public: false,
-                    members: type_params
-                        .iter()
-                        .enumerate()
-                        .map(|(i, id)| {
-                            let ty = Type::User(GenericUserType::from_id(self, types, *id));
-                            (
-                                strings.get_or_intern(format!("{i}")),
-                                CheckedMember::new(true, types.insert(ty), Span::default()),
-                            )
-                        })
-                        .collect(),
-                    name: Located::nowhere(
-                        strings.get_or_intern(format!("$tuple{}", ty_args.len())),
-                    ),
-                    body_scope: ScopeId::ROOT,
-                    type_params,
-                    kind: UserTypeKind::Tuple,
-                    attrs: Default::default(),
-                    impls: Default::default(),
-                    impl_blocks: Vec::new(),
-                    fns: Vec::new(),
-                    subscripts: Vec::new(),
-                    members_resolved: true,
-                    recursive: false,
-                },
-                false,
-                ScopeId::ROOT,
-            );
-
-            self.tuples.insert(ty_args.len(), res.id);
-            res.id
-        };
-        types.insert(Type::User(GenericUserType::from_type_args(self, id, ty_args)))
+        let names =
+            (0..ty_args.len()).map(|i| strings.get_or_intern(format!("{i}"))).collect::<Vec<_>>();
+        let name = strings.get_or_intern_static("$tuple");
+        self.get_struct(names, ty_args, types, UserTypeKind::Tuple, name)
     }
 
     pub fn get_anon_struct(
@@ -633,6 +570,18 @@ impl Scopes {
         ty_args: Vec<TypeId>,
         strings: &mut Strings,
         types: &Types,
+    ) -> TypeId {
+        let name = strings.get_or_intern_static("$anonstruct");
+        self.get_struct(names, ty_args, types, UserTypeKind::AnonStruct, name)
+    }
+
+    fn get_struct(
+        &mut self,
+        names: Vec<StrId>,
+        ty_args: Vec<TypeId>,
+        types: &Types,
+        kind: UserTypeKind,
+        name: StrId,
     ) -> TypeId {
         let id = if let Some(id) = self.structs.get(&names) {
             *id
@@ -674,9 +623,9 @@ impl Scopes {
                             (names[i], CheckedMember::new(true, types.insert(ty), Span::default()))
                         })
                         .collect(),
-                    name: Located::nowhere(strings.get_or_intern("$anonstruct")),
+                    name: Located::nowhere(name),
                     body_scope: ScopeId::ROOT,
-                    kind: UserTypeKind::AnonStruct,
+                    kind,
                     type_params,
                     attrs: Default::default(),
                     impls: Default::default(),
