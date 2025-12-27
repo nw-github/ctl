@@ -236,7 +236,7 @@ pub fn writeln<T: Write, U: Format>(write: *mut T, args: U) {
     write.write_char('\n');
 }
 
-mod ext {
+pub mod ext {
     use super::*;
 
     @(feature(alloc))

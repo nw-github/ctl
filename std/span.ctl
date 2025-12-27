@@ -223,7 +223,7 @@ fn range_bounds<R: RangeBounds<uint>>(range: R, len: uint): (uint, uint) {
 
 // TODO: make these member functions/impls when the syntax allows for it
 
-mod ext {
+pub mod ext {
     use std::ops::Eq;
     use std::ops::Cmp;
     use std::hash::Hash;

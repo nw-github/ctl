@@ -27,7 +27,7 @@ extension ByteSpanExt<T> for T {
     }
 }
 
-mod ext {
+pub mod ext {
     pub use super::boolean::*;
     pub use super::character::*;
     pub use super::dynany::*;

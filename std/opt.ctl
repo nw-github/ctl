@@ -34,7 +34,7 @@ pub union Option<T> {
     }
 }
 
-mod ext {
+pub mod ext {
     pub extension OptionDebug<T: std::fmt::Debug> for ?T {
         impl std::fmt::Debug {
             fn dbg(this, f: *mut std::fmt::Formatter) {

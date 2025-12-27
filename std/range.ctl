@@ -78,7 +78,7 @@ pub struct RangeFull {
     }
 }
 
-mod ext {
+pub mod ext {
     use super::*;
     use std::ops::*;
 
