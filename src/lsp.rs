@@ -335,7 +335,7 @@ impl LanguageServer for LspBackend {
                         ""
                     };
                     let ty = mem.map_or(TypeId::UNKNOWN, |m| m.ty);
-                    if matches!(ut.kind, UserTypeKind::Tuple | UserTypeKind::AnonStruct) {
+                    if matches!(ut.kind, UserTypeKind::AnonStruct) {
                         let real = src_ty.map(|src| ty.with_ut_templates(&proj.types, src)).unwrap_or(ty);
                         Some(format!("{public}{}: {}", proj.strings.resolve(name), proj.fmt_ty(real)))
                     } else {
@@ -1461,7 +1461,6 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
             write_de!(res, " for {}", proj.fmt_ty(ty));
         }
         UserTypeKind::AnonStruct => {}
-        UserTypeKind::Tuple => {}
     }
 
     res
@@ -1481,25 +1480,18 @@ fn visualize_variant_body(
         Some((_, Type::User(ut))) => {
             let inner = proj.scopes.get(ut.id);
             if inner.kind.is_anon_struct() {
-                *res += " {";
-                for (i, (name, _)) in inner.members.iter().enumerate() {
-                    let ty = ut.ty_args.get_index(i).map(|v| *v.1).unwrap_or(TypeId::UNKNOWN);
-                    write_de!(
-                        res,
-                        "{}{}: {}",
-                        if i > 0 { ", " } else { " " },
-                        proj.strings.resolve(name),
-                        proj.fmt_ty(ty),
-                    )
-                }
-                *res += " }";
-            } else if inner.kind.is_tuple() {
                 *res += "(";
-                for i in 0..inner.members.len() {
+                for (i, (name, member)) in inner.members.iter().enumerate() {
                     if i > 0 {
                         *res += ", ";
                     }
-                    let ty = ut.ty_args.get_index(i).map(|v| *v.1).unwrap_or(TypeId::UNKNOWN);
+
+                    let name = proj.strings.resolve(name);
+                    if !name.starts_with(|ch: char| ch.is_ascii_digit()) {
+                        write_de!(res, "{name}: ");
+                    }
+
+                    let ty = member.ty.with_templates(&proj.types, &ut.ty_args);
                     write_de!(res, "{}", proj.fmt_ty(ty));
                 }
                 *res += ")";

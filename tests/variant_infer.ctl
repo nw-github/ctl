@@ -3,7 +3,7 @@
 union Foo {
     A,
     B(i32),
-    C { x: i32 }
+    C(x: i32)
 }
 
 fn main() {

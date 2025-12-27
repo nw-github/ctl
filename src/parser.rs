@@ -699,11 +699,16 @@ impl<'a> Parser<'a> {
             Token::LParen => {
                 let (label, mut expr) = self.maybe_labeled_expr();
                 if label.is_some() || self.matches(Token::Comma) {
+                    let mut next = 0;
+                    let first = self.label_or_positional((label, expr), &mut next);
                     self.csv_expr(
-                        vec![(label, expr)],
+                        vec![first],
                         Token::RParen,
                         span,
-                        Self::maybe_labeled_expr,
+                        |this| {
+                            let res = this.maybe_labeled_expr();
+                            this.label_or_positional(res, &mut next)
+                        },
                         ExprData::Tuple,
                     )
                 } else {
@@ -1009,6 +1014,20 @@ impl<'a> Parser<'a> {
             "labels are only valid for loop and block expressions",
             span,
         ));
+    }
+
+    fn label_or_positional<T>(
+        &mut self,
+        ipt: (Option<Located<StrId>>, Located<T>),
+        next: &mut usize,
+    ) -> (Located<StrId>, Located<T>) {
+        if let Some(label) = ipt.0 {
+            (label, ipt.1)
+        } else {
+            let label = Located::new(ipt.1.span, self.strings.get_or_intern(format!("{}", *next)));
+            *next += 1;
+            (label, ipt.1)
+        }
     }
 
     fn maybe_labeled_expr(&mut self) -> (Option<Located<StrId>>, Expr) {
@@ -1590,6 +1609,18 @@ impl<'a> Parser<'a> {
         impls
     }
 
+    fn maybe_labeled_type_hint(&mut self) -> (Option<Located<StrId>>, TypeHint) {
+        let hint = self.type_hint();
+        if let TypeHintData::Path(path) = self.arena.hints.get(hint.data)
+            && let Some(ident) = path.as_identifier()
+            && self.next_if(Token::Colon).is_some()
+        {
+            (Some(ident), self.type_hint())
+        } else {
+            (None, hint)
+        }
+    }
+
     fn type_hint(&mut self) -> TypeHint {
         match self.peek().data {
             Token::Asterisk => {
@@ -1676,16 +1707,10 @@ impl<'a> Parser<'a> {
             }
             Token::LParen => {
                 let left = self.next();
-                self.csv_one(Token::RParen, left.span, |this| {
-                    let hint = this.type_hint();
-                    if let TypeHintData::Path(path) = this.arena.hints.get(hint.data)
-                        && let Some(ident) = path.as_identifier()
-                        && this.next_if(Token::Colon).is_some()
-                    {
-                        (Some(ident), this.type_hint())
-                    } else {
-                        (None, hint)
-                    }
+                let mut next = 0;
+                self.csv(vec![], Token::RParen, left.span, |this| {
+                    let item = this.maybe_labeled_type_hint();
+                    this.label_or_positional(item, &mut next)
                 })
                 .map(|args| self.arena.hints.alloc(TypeHintData::Tuple(args)))
             }
@@ -1847,46 +1872,24 @@ impl<'a> Parser<'a> {
                 members.push(Member { public: true, name, ty, default: value });
             } else {
                 let name = this.expect_ident("expected variant name");
-                let data = match this.peek().data {
-                    Token::LParen => {
-                        let span = this.next().span;
-                        let members = this.csv_one(Token::RParen, span, |this| {
-                            (
-                                this.type_hint(),
-                                this.next_if(Token::Assign).map(|_| this.expression()),
-                            )
-                        });
-                        let hint = Located::nowhere(this.arena.hints.alloc(TypeHintData::Tuple(
-                            members.data.iter().map(|(ty, _)| (None, *ty)).collect(),
-                        )));
-                        VariantData::TupleLike(members.data, hint)
-                    }
-                    Token::LCurly => {
-                        let span = this.next().span;
-                        let members = this.csv_one(Token::RCurly, span, |this| {
-                            if let Some(token) = this.next_if(Token::Pub) {
-                                this.error_no_sync(Error::not_valid_here(&token));
-                            }
-
-                            let name = this.expect_ident("expected name");
-                            this.expect(Token::Colon);
-                            Member {
-                                public: true,
-                                name,
-                                ty: this.type_hint(),
-                                default: this.next_if(Token::Assign).map(|_| this.expression()),
-                            }
-                        });
-                        let hint =
-                            Located::nowhere(this.arena.hints.alloc(TypeHintData::Tuple(
-                                members.data.iter().map(|m| (Some(m.name), m.ty)).collect(),
-                            )));
-                        VariantData::StructLike(members.data, hint)
-                    }
-                    _ => VariantData::Empty,
+                let data = if let Some(start) = this.next_if(Token::LParen) {
+                    let mut hint_data = vec![];
+                    let mut next = 0;
+                    let members = this.csv(vec![], Token::RParen, start.span, |this| {
+                        let original = this.maybe_labeled_type_hint();
+                        let (name, ty) = this.label_or_positional(original, &mut next);
+                        let default = this.next_if(Token::Assign).map(|_| this.expression());
+                        hint_data.push((name, ty));
+                        DataVariant { name, ty, default }
+                    });
+                    let hint =
+                        Located::nowhere(this.arena.hints.alloc(TypeHintData::Tuple(hint_data)));
+                    VariantData::StructLike(members.data, hint)
+                } else {
+                    VariantData::Empty
                 };
-                let tag = this.next_if(Token::Assign).map(|_| this.expression());
 
+                let tag = this.next_if(Token::Assign).map(|_| this.expression());
                 if !this.matches(Token::RCurly) {
                     this.expect(Token::Comma);
                 }

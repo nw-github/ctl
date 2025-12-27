@@ -937,33 +937,11 @@ impl<'a> TypeChecker<'a> {
                             }
 
                             params.push(Param {
-                                keyword: true,
+                                keyword: !strdata!(this, member.name.data)
+                                    .starts_with(|ch: char| ch.is_ascii_digit()),
                                 patt: nowhere(member.name.data, Pattern::Path),
                                 ty: member.ty,
                                 default: member.default,
-                            });
-                        }
-                    }
-                    VariantData::TupleLike(members, hint) => {
-                        enum_union = false;
-                        rvariants.insert(
-                            variant.name.data,
-                            CheckedVariant {
-                                ty: Some(this.declare_type_hint(*hint)),
-                                span: variant.name.span,
-                                discrim: variant
-                                    .tag
-                                    .map(Discriminant::Unchecked)
-                                    .unwrap_or_default(),
-                            },
-                        );
-
-                        for (i, (ty, default)) in members.iter().cloned().enumerate() {
-                            params.push(Param {
-                                keyword: false,
-                                patt: nowhere(intern!(this, "{i}"), Pattern::Path),
-                                ty,
-                                default,
                             });
                         }
                     }
@@ -2582,37 +2560,28 @@ impl TypeChecker<'_> {
             }
             PExprData::Tuple(elements) => {
                 let mut names = Vec::with_capacity(elements.len());
-                let mut result_ty = Vec::with_capacity(elements.len());
+                let mut types = Vec::with_capacity(elements.len());
                 let mut result_elems = IndexMap::with_capacity(elements.len());
-                let mut positional = 0;
-                for (i, (label, expr)) in elements.iter().copied().enumerate() {
-                    let result = if let Some(&target) = target
+                for (label, expr) in elements.iter().copied() {
+                    let result = if let Some(target) = target
                         .and_then(|t| self.proj.types[t].as_user())
-                        .filter(|t| self.proj.scopes.get(t.id).kind.is_tuple())
-                        .and_then(|ut| ut.ty_args.get_index(i).map(|(_, v)| v))
-                    {
+                        .filter(|t| self.proj.scopes.get(t.id).kind.is_anon_struct())
+                        .and_then(|ut| {
+                            let member = self.proj.scopes.get(ut.id).members.get(&label.data)?;
+                            Some(member.ty.with_templates(&self.proj.types, &ut.ty_args))
+                        }) {
                         self.type_check(expr, target)
                     } else {
                         self.check_expr(expr, None)
                     };
 
-                    result_ty.push(result.ty);
-                    let label = label.map(|label| label.data).unwrap_or_else(|| {
-                        let name = intern!(self, "{positional}");
-                        positional += 1;
-                        name
-                    });
-                    names.push(label);
-                    result_elems.insert(label, result);
+                    names.push(label.data);
+                    types.push(result.ty);
+                    result_elems.insert(label.data, result);
                 }
 
                 self.arena.typed(
-                    self.proj.scopes.get_anon_struct(
-                        names,
-                        result_ty,
-                        &mut self.proj.strings,
-                        &self.proj.types,
-                    ),
+                    self.proj.scopes.get_anon_struct(names, types, &self.proj.types),
                     CExprData::Instance(result_elems),
                 )
             }
@@ -4546,21 +4515,11 @@ impl TypeChecker<'_> {
             TypeHintData::Tuple(params) => {
                 let mut types = Vec::with_capacity(params.len());
                 let mut names = Vec::with_capacity(params.len());
-                let mut positional = 0;
                 for (name, ty) in params.iter().cloned() {
-                    names.push(name.map(|name| name.data).unwrap_or_else(|| {
-                        let name = intern!(self, "{positional}");
-                        positional += 1;
-                        name
-                    }));
+                    names.push(name.data);
                     types.push(self.resolve_typehint(ty));
                 }
-                self.proj.scopes.get_anon_struct(
-                    names,
-                    types,
-                    &mut self.proj.strings,
-                    &self.proj.types,
-                )
+                self.proj.scopes.get_anon_struct(names, types, &self.proj.types)
             }
             TypeHintData::Fn { is_extern, is_unsafe, params, ret } => {
                 let fnptr = FnPtr {
@@ -5804,7 +5763,7 @@ impl TypeChecker<'_> {
             .types
             .get(stripped)
             .as_user()
-            .filter(|ut| self.proj.scopes.get(ut.id).kind.is_tuple())
+            .filter(|ut| self.proj.scopes.get(ut.id).kind.is_anon_struct())
             .cloned()
         else {
             bail!(
@@ -5828,11 +5787,16 @@ impl TypeChecker<'_> {
         let mut irrefutable = true;
         let mut checked = Vec::new();
         for (i, patt) in subpatterns.iter().enumerate() {
-            let (inner, ty) = if let Some((_, &ty)) = ut.ty_args.get_index(i) {
-                (ty, scrutinee.matched_inner_type(&self.proj.types, ty))
-            } else {
-                (TypeId::UNKNOWN, TypeId::UNKNOWN)
-            };
+            let member = intern!(self, "{i}");
+            let (inner, ty) = self
+                .proj
+                .scopes
+                .get(ut.id)
+                .members
+                .get(&member)
+                .map(|m| m.ty.with_templates(&self.proj.types, &ut.ty_args))
+                .map(|ty| (ty, scrutinee.matched_inner_type(&self.proj.types, ty)))
+                .unwrap_or_default();
 
             let patt = self.check_pattern(PatternParams {
                 scrutinee: ty,
@@ -5844,7 +5808,7 @@ impl TypeChecker<'_> {
             if !patt.irrefutable {
                 irrefutable = false;
             }
-            checked.push((intern!(self, "{i}"), inner, patt));
+            checked.push((member, inner, patt));
         }
 
         CPattern {

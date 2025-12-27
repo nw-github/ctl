@@ -1,13 +1,10 @@
 use colored::Colorize;
 
 use crate::{
-    Located,
     ast::parsed::{
         Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path, 
-        Pattern, Stmt, StmtData, Struct, TypeHint, UsePath, UsePathTail, Variant,
-    },
-    intern::{StrId, Strings},
-    format::{FmtHint, FmtPath, FmtPatt},
+        Pattern, Stmt, StmtData, Struct, TypeHint, UsePath, UsePathTail, Variant, VariantData,
+    }, format::{FmtHint, FmtPath, FmtPatt}, intern::{StrId, Strings}, Located
 };
 
 const INDENT: &str = "  ";
@@ -302,14 +299,8 @@ impl Pretty<'_> {
             ExprData::Tuple(elements) => {
                 self.print_header(&tabs, "Expr::Tuple", &[]);
                 let tabs = INDENT.repeat(indent + 1);
-                let mut positional = 0;
                 for (name, expr) in elements {
-                    if let Some(name) = name {
-                        eprintln!("{tabs}{}:", self.strings.resolve(&name.data));
-                    } else {
-                        eprintln!("{tabs}{positional}:");
-                        positional += 1;
-                    }
+                    eprintln!("{tabs}{}:", self.strings.resolve(&name.data));
                     self.print_expr(expr, indent + 2);
                 }
             }
@@ -743,7 +734,12 @@ impl Pretty<'_> {
         {
             eprintln!("{plus_1}{}: ", "Variants".yellow());
             for member in variants {
-                eprintln!("{plus_2}{}: <TODO: Variant>", self.strings.resolve(&member.name.data),);
+                eprint!("{plus_2}{}", self.strings.resolve(&member.name.data));
+                match &member.data {
+                    VariantData::Empty => eprintln!(),
+                    VariantData::StructLike(_, hint) => eprintln!(": {}", self.typ(*hint)),
+                }
+
                 if let Some(default) = &member.tag {
                     self.print_expr(default, indent + 3);
                 }
@@ -806,7 +802,7 @@ impl Pretty<'_> {
 
 impl<'a> Pretty<'a> {
     fn patt(&'a self, patt: &'a Pattern) -> FmtPatt<'a> {
-        FmtPatt::new(patt, self.strings)
+        FmtPatt::new(patt, self.strings, self.arena)
     }
 
     fn typ(&'a self, ty: TypeHint) -> FmtHint<'a> {

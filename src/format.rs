@@ -83,32 +83,18 @@ impl std::fmt::Display for FmtUt<'_, '_> {
         let ut = self.ut;
         match &p.scopes.get(ut.id).kind {
             crate::sym::UserTypeKind::AnonStruct => {
-                write!(f, "struct {{")?;
-                for (i, concrete) in ut.ty_args.values().enumerate() {
-                    if i > 0 {
-                        write!(f, ",")?;
-                    }
-                    write!(
-                        f,
-                        " {}: {}",
-                        p.scopes
-                            .get(ut.id)
-                            .members
-                            .get_index(i)
-                            .map(|m| p.strings.resolve(m.0))
-                            .unwrap_or("???"),
-                        p.fmt_ty(*concrete),
-                    )?;
-                }
-                write!(f, " }}")
-            }
-            crate::sym::UserTypeKind::Tuple => {
                 write!(f, "(")?;
-                for (i, concrete) in ut.ty_args.values().enumerate() {
+                for (i, (name, member)) in p.scopes.get(ut.id).members.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", p.fmt_ty(*concrete))?;
+                    let name = p.strings.resolve(name);
+                    let ty = member.ty.with_templates(&p.types, &ut.ty_args);
+                    if name.starts_with(|ch: char| ch.is_ascii_digit()) {
+                        write!(f, "{}", p.fmt_ty(ty))?;
+                    } else {
+                        write!(f, "{name}: {}", p.fmt_ty(ty))?;
+                    }
                 }
                 write!(f, ")")
             }
@@ -177,7 +163,8 @@ impl std::fmt::Display for FmtHint<'_> {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    if let Some(name) = name {
+                    if !self.strings.resolve(&name.data).starts_with(|ch: char| ch.is_ascii_digit())
+                    {
                         write!(f, "{}: ", self.strings.resolve(&name.data))?;
                     }
                     write!(f, "{}", self.subtype(*ty))?;
@@ -261,12 +248,18 @@ impl std::fmt::Display for FmtPath<'_> {
 pub struct FmtPatt<'a> {
     patt: &'a Pattern,
     strings: &'a Strings,
+    arena: &'a ExprArena,
 }
 
 impl std::fmt::Display for FmtPatt<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        _ = self.patt;
-        _ = self.strings;
-        write!(f, "<TODO: Pattern>")
+        match self.patt {
+            Pattern::Path(path) => write!(f, "{}", FmtPath::new(path, self.strings, self.arena)),
+            Pattern::MutBinding(v) => write!(f, "mut {}", self.strings.resolve(v)),
+            Pattern::Option(v) => {
+                write!(f, "?({})", FmtPatt::new(&v.data, self.strings, self.arena))
+            }
+            _ => write!(f, "<TODO: Pattern>"),
+        }
     }
 }

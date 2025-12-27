@@ -157,7 +157,7 @@ pub enum ExprData {
         init: Expr,
         count: Expr,
     },
-    Tuple(Vec<(Option<Located<StrId>>, Expr)>),
+    Tuple(Vec<(Located<StrId>, Expr)>),
     Map(Vec<(Expr, Expr)>),
     Bool(bool),
     Integer(IntPattern),
@@ -337,7 +337,7 @@ pub enum TypeHintData {
     Vec(TypeHint),
     Slice(TypeHint),
     SliceMut(TypeHint),
-    Tuple(Vec<(Option<Located<StrId>>, TypeHint)>),
+    Tuple(Vec<(Located<StrId>, TypeHint)>),
     Set(TypeHint),
     Map([TypeHint; 2]),
     Option(TypeHint),
@@ -485,10 +485,16 @@ pub struct Member {
 }
 
 #[derive(Clone)]
+pub struct DataVariant {
+    pub name: Located<StrId>,
+    pub ty: TypeHint,
+    pub default: Option<Expr>,
+}
+
+#[derive(Clone)]
 pub enum VariantData {
     Empty,
-    StructLike(Vec<Member>, TypeHint),
-    TupleLike(Vec<(TypeHint, Option<Expr>)>, TypeHint),
+    StructLike(Vec<DataVariant>, TypeHint),
 }
 
 #[derive(Clone)]

@@ -336,7 +336,6 @@ pub enum UserTypeKind {
     UnsafeUnion,
     Template,
     AnonStruct,
-    Tuple,
     Trait { this: UserTypeId, sealed: bool, assoc_types: HashMap<StrId, UserTypeId> },
     Extension(TypeId),
 }
@@ -552,36 +551,11 @@ impl Scopes {
         id.get_mut(self)
     }
 
-    pub fn get_tuple(
-        &mut self,
-        ty_args: Vec<TypeId>,
-        strings: &mut Strings,
-        types: &Types,
-    ) -> TypeId {
-        let names =
-            (0..ty_args.len()).map(|i| strings.get_or_intern(format!("{i}"))).collect::<Vec<_>>();
-        let name = strings.get_or_intern_static("$tuple");
-        self.get_struct(names, ty_args, types, UserTypeKind::Tuple, name)
-    }
-
     pub fn get_anon_struct(
         &mut self,
         names: Vec<StrId>,
         ty_args: Vec<TypeId>,
-        strings: &mut Strings,
         types: &Types,
-    ) -> TypeId {
-        let name = strings.get_or_intern_static("$anonstruct");
-        self.get_struct(names, ty_args, types, UserTypeKind::AnonStruct, name)
-    }
-
-    fn get_struct(
-        &mut self,
-        names: Vec<StrId>,
-        ty_args: Vec<TypeId>,
-        types: &Types,
-        kind: UserTypeKind,
-        name: StrId,
     ) -> TypeId {
         let id = if let Some(id) = self.structs.get(&names) {
             *id
@@ -623,9 +597,9 @@ impl Scopes {
                             (names[i], CheckedMember::new(true, types.insert(ty), Span::default()))
                         })
                         .collect(),
-                    name: Located::nowhere(name),
+                    name: Located::nowhere(Strings::ANON_STRUCT_NAME),
                     body_scope: ScopeId::ROOT,
-                    kind,
+                    kind: UserTypeKind::AnonStruct,
                     type_params,
                     attrs: Default::default(),
                     impls: Default::default(),
