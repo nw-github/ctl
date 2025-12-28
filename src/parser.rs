@@ -1862,7 +1862,6 @@ impl<'a> Parser<'a> {
                     Right(func) => operators.push(func),
                 }
             } else if this.next_if(Token::Shared).is_some() {
-                // warn if pub was specified that it is useless
                 let name = this.expect_ident("expected name");
                 this.expect(Token::Colon);
                 let ty = this.type_hint();
