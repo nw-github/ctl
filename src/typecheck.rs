@@ -858,11 +858,11 @@ impl<'a> TypeChecker<'a> {
         &mut self,
         tag: Option<TypeHint>,
         base: &Struct,
-        variants: &[Variant],
+        pvariants: &[Variant],
         attrs: &Attributes,
     ) -> DStmt {
         let (ut, impls, fns, member_cons_len) = self.enter(ScopeKind::None, |this| {
-            let mut rvariants = IndexMap::with_capacity(base.members.len());
+            let mut variants = IndexMap::with_capacity(base.members.len());
             let mut members = IndexMap::with_capacity(base.members.len());
             let mut params = Vec::with_capacity(base.members.len());
             let mut fns = Vec::with_capacity(base.members.len());
@@ -897,17 +897,24 @@ impl<'a> TypeChecker<'a> {
             let (impls, blocks, block_data, subscripts) =
                 this.declare_impl_blocks(&base.impls, &base.operators);
             let mut enum_union = true;
-            for variant in variants {
+            for variant in pvariants {
                 let mut params = params.clone();
                 if let Some((smembers, _)) = &variant.data {
                     enum_union = false;
+
+                    let mut names = HashSet::new();
                     for member in smembers {
                         if members.contains_key(&member.name.data) {
-                            let err = Error::shared_member(
+                            this.error(Error::shared_member(
                                 strdata!(this, member.name.data),
                                 member.name.span,
-                            );
-                            this.error(err)
+                            ))
+                        }
+
+                        if !names.insert(member.name.data) {
+                            // We don't have to report an error, the typehint check will do it for
+                            // us
+                            continue;
                         }
 
                         params.push(Param {
@@ -920,7 +927,7 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
 
-                rvariants.insert(
+                variants.insert(
                     variant.name.data,
                     CheckedVariant {
                         ty: variant.data.as_ref().map(|data| this.declare_type_hint(data.1)),
@@ -952,7 +959,7 @@ impl<'a> TypeChecker<'a> {
                 base.name,
                 base.public,
                 members,
-                UserTypeKind::Union(Union { tag, variants: rvariants, enum_union }),
+                UserTypeKind::Union(Union { tag, variants, enum_union }),
                 &base.type_params,
                 &fns,
                 impls,
@@ -2557,9 +2564,16 @@ impl TypeChecker<'_> {
                         self.check_expr(expr, None)
                     };
 
-                    names.push(label.data);
-                    types.push(result.ty);
-                    result_elems.insert(label.data, result);
+                    if result_elems.insert(label.data, result).is_some() {
+                        self.proj.diag.report(Error::redefinition_k(
+                            "field",
+                            strdata!(self, label.data),
+                            label.span,
+                        ));
+                    } else {
+                        names.push(label.data);
+                        types.push(result.ty);
+                    }
                 }
 
                 self.arena.typed(
@@ -4497,7 +4511,17 @@ impl TypeChecker<'_> {
             TypeHintData::Tuple(params) => {
                 let mut types = Vec::with_capacity(params.len());
                 let mut names = Vec::with_capacity(params.len());
+                let mut unique = HashSet::new();
                 for (name, ty) in params.iter().cloned() {
+                    if !unique.insert(name.data) {
+                        self.proj.diag.report(Error::redefinition_k(
+                            "field",
+                            strdata!(self, name.data),
+                            name.span,
+                        ));
+                        continue;
+                    }
+
                     names.push(name.data);
                     types.push(self.resolve_typehint(ty));
                 }
@@ -5770,7 +5794,7 @@ impl TypeChecker<'_> {
         let mut checked = Vec::new();
         for (i, patt) in subpatterns.iter().enumerate() {
             let member = intern!(self, "{i}");
-            let (inner, ty) = self
+            let Some((inner, ty)) = self
                 .proj
                 .scopes
                 .get(ut.id)
@@ -5778,7 +5802,14 @@ impl TypeChecker<'_> {
                 .get(&member)
                 .map(|m| m.ty.with_templates(&self.proj.types, &ut.ty_args))
                 .map(|ty| (ty, scrutinee.matched_inner_type(&self.proj.types, ty)))
-                .unwrap_or_default();
+            else {
+                self.proj.diag.report(Error::no_member(
+                    self.proj.fmt_ty(scrutinee),
+                    strdata!(self, member),
+                    patt.span,
+                ));
+                continue;
+            };
 
             let patt = self.check_pattern(PatternParams {
                 scrutinee: ty,
