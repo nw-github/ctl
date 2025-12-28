@@ -378,7 +378,7 @@ impl<'a> TypeChecker<'a> {
 
         this.proj.main =
             this.proj.scopes[last_scope].vns.get(&Strings::MAIN).and_then(|id| id.as_fn()).copied();
-        if !this.proj.conf.flags.lib {
+        if !this.proj.conf.flags.lib && !this.proj.conf.has_feature(Strings::FEAT_TEST) {
             if let Some(id) = this.proj.main {
                 let func = this.proj.scopes.get(id);
                 if !func.params.is_empty() {
