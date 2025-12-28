@@ -1,8 +1,3 @@
-pub union Result<T, E> {
-    Ok(T),
-    Err(E),
-}
-
 pub union ParseError {
     InputTooShort,
     InputTooLong,

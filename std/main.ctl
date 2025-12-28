@@ -2,11 +2,7 @@
 mod libc;
 
 @(feature(hosted))
-pub fn exit(code: u32): never {
-    unsafe libc::exit(code as! c_int)
-}
-
-mod ryu;
+pub mod proc;
 
 @(feature(io))
 pub mod io;
@@ -16,6 +12,8 @@ pub mod env;
 
 @(feature(alloc))
 pub mod alloc;
+
+mod ryu;
 
 @(autouse)
 mod prelude {
@@ -38,6 +36,8 @@ mod prelude {
     pub use super::fmt::ext::*;
     pub use super::fmt::write;
     pub use super::fmt::writeln;
+    pub use super::err::Result;
+    pub use super::err::Result::*;
 
     @(feature(alloc))
     pub use super::alloc::collections::*;
