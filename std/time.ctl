@@ -6,16 +6,16 @@ pub struct Duration {
     secs: u64,
     nanos: u32,
 
-    pub fn new(kw mut secs: u64, kw mut nanos: u32): This {
-        secs += (nanos / NS_PER_SEC as! u32) as u64;
-        nanos %= NS_PER_SEC as! u32;
-        Duration(secs:, nanos:)
+    pub fn new(kw mut secs: u64, kw nanos: u32): This {
+        mut dur = Duration::from_nanos(nanos as u64);
+        dur.secs += secs;
+        dur
     }
     pub fn zero(): This => Duration(secs: 0, nanos: 0);
 
     pub fn from_nanos(ns: u64): This => Duration(secs: ns / NS_PER_SEC, nanos: (ns % NS_PER_SEC) as! u32);
     pub fn from_micros(us: u64): This => This::from_nanos(us * 1_000);
-    pub fn from_millis(ms: u64): This => This::from_millis(ms * 1_000_000);
+    pub fn from_millis(ms: u64): This => This::from_nanos(ms * 1_000_000);
     pub fn from_secs(secs: u64): This => Duration(secs:, nanos: 0);
 
     pub fn as_nanos(this): u64 => this.secs * NS_PER_SEC + this.nanos as u64;
