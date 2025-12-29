@@ -1,40 +1,39 @@
 pub use std::libc::atomic::MemoryOrder;
 
 use std::libc::atomic::*;
+use std::mem::Mutable;
 
 pub struct Atomic<T> {
-    val: T,
+    val: Mutable<T>,
 
-    pub fn new(val: T): This {
-        Atomic(val:)
-    }
+    pub fn new(val: T): This => Atomic(val: Mutable::new(val));
 
     @(inline(always))
-    pub fn store(mut this, val: T, order: MemoryOrder = :SeqCst) {
-        unsafe atomic_store_explicit(&mut this.val, val, order as u32);
+    pub fn store(this, val: T, order: MemoryOrder = :SeqCst) {
+        unsafe atomic_store_explicit(this.val.get(), val, order as u32);
     }
 
     @(inline(always))
     pub fn load(this, order: MemoryOrder = :SeqCst): T {
-        unsafe atomic_load_explicit(&this.val, order as u32)
+        unsafe atomic_load_explicit(this.val.get(), order as u32)
     }
 
     @(inline(always))
-    pub fn replace(mut this, val: T, order: MemoryOrder = :SeqCst): T {
-        unsafe atomic_exchange_explicit(&mut this.val, val, order as u32)
+    pub fn replace(this, val: T, order: MemoryOrder = :SeqCst): T {
+        unsafe atomic_exchange_explicit(this.val.get(), val, order as u32)
     }
 
     // On success, this function returns null. On error, it returns Some(actual value)
     @(inline(always))
     pub fn compare_exchange(
-        mut this,
+        this,
         kw mut expected: T,
         kw val: T,
         kw success: MemoryOrder = :SeqCst,
         kw failure: MemoryOrder = :SeqCst,
     ): ?T {
         if !unsafe atomic_compare_exchange_strong_explicit(
-            &mut this.val,
+            this.val.get(),
             &mut expected,
             val,
             success as u32,
@@ -46,14 +45,14 @@ pub struct Atomic<T> {
 
     @(inline(always))
     pub fn compare_exchange_weak(
-        mut this,
+        this,
         kw mut expected: T,
         kw val: T,
         kw success: MemoryOrder = :SeqCst,
         kw failure: MemoryOrder = :SeqCst,
     ): ?T {
         if !unsafe atomic_compare_exchange_weak_explicit(
-            &mut this.val,
+            this.val.get(),
             &mut expected,
             val,
             success as u32,
@@ -64,37 +63,37 @@ pub struct Atomic<T> {
     }
 
     @(inline(always))
-    pub fn is_lock_free(this): bool => unsafe atomic_is_lock_free(&this.val);
+    pub fn is_lock_free(this): bool => unsafe atomic_is_lock_free(this.val.get());
 
     @(inline(always))
-    pub fn as_raw(this): ^T => &raw this.val;
+    pub fn as_raw(this): ^T => this.val.get();
 
     @(inline(always))
-    pub fn as_raw_mut(mut this): ^mut T => &raw mut this.val;
+    pub fn as_raw_mut(this): ^mut T => this.val.get();
 
     @(inline(always))
-    pub fn fetch_add(mut this, val: T, order: MemoryOrder = :SeqCst): T {
-        unsafe atomic_fetch_add_explicit(&mut this.val, val, order as u32)
+    pub fn fetch_add(this, val: T, order: MemoryOrder = :SeqCst): T {
+        unsafe atomic_fetch_add_explicit(this.val.get(), val, order as u32)
     }
 
     @(inline(always))
-    pub fn fetch_sub(mut this, val: T, order: MemoryOrder = :SeqCst): T {
-        unsafe atomic_fetch_sub_explicit(&mut this.val, val, order as u32)
+    pub fn fetch_sub(this, val: T, order: MemoryOrder = :SeqCst): T {
+        unsafe atomic_fetch_sub_explicit(this.val.get(), val, order as u32)
     }
 
     @(inline(always))
-    pub fn fetch_and(mut this, val: T, order: MemoryOrder = :SeqCst): T {
-        unsafe atomic_fetch_and_explicit(&mut this.val, val, order as u32)
+    pub fn fetch_and(this, val: T, order: MemoryOrder = :SeqCst): T {
+        unsafe atomic_fetch_and_explicit(this.val.get(), val, order as u32)
     }
 
     @(inline(always))
-    pub fn fetch_or(mut this, val: T, order: MemoryOrder = :SeqCst): T {
-        unsafe atomic_fetch_or_explicit(&mut this.val, val, order as u32)
+    pub fn fetch_or(this, val: T, order: MemoryOrder = :SeqCst): T {
+        unsafe atomic_fetch_or_explicit(this.val.get(), val, order as u32)
     }
 
     @(inline(always))
-    pub fn fetch_xor(mut this, val: T, order: MemoryOrder = :SeqCst): T {
-        unsafe atomic_fetch_xor_explicit(&mut this.val, val, order as u32)
+    pub fn fetch_xor(this, val: T, order: MemoryOrder = :SeqCst): T {
+        unsafe atomic_fetch_xor_explicit(this.val.get(), val, order as u32)
     }
 }
 
