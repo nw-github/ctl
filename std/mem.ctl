@@ -37,3 +37,16 @@ pub unsafe fn transmute<In, Out>(from: In): Out {
     debug_assert(size_of::<In>() == size_of::<Out>());
     unsafe Transmuter::<In, Out>(from:).to
 }
+
+@(lang(mutable))
+pub struct Mutable<T> {
+    value: T,
+
+    pub fn new(value: T): This => Mutable(value:);
+
+    // Safe to cast away const as the language ensures variables of type Mutable<T> and types that
+    // contain it are never generated as `const`
+    pub fn get(this): *mut T => unsafe &raw this.value as ^mut T as *mut T;
+
+    pub fn into_inner(my this): T => this.value;
+}

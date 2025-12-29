@@ -366,6 +366,7 @@ pub struct UserType {
     pub members: IndexMap<StrId, CheckedMember>,
     pub members_resolved: bool,
     pub recursive: bool,
+    pub interior_mutable: bool,
 }
 
 impl UserType {
@@ -397,6 +398,7 @@ impl UserType {
             subscripts: Vec::new(),
             members_resolved: true,
             recursive: false,
+            interior_mutable: false,
         }
     }
 }
@@ -573,6 +575,7 @@ impl Scopes {
                             subscripts: Vec::new(),
                             members_resolved: true,
                             recursive: false,
+            interior_mutable: false,
                         },
                         false,
                         ScopeId::ROOT,
@@ -603,6 +606,7 @@ impl Scopes {
                     subscripts: Vec::new(),
                     members_resolved: true,
                     recursive: false,
+            interior_mutable: false,
                 },
                 false,
                 ScopeId::ROOT,

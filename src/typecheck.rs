@@ -481,11 +481,6 @@ impl<'a> TypeChecker<'a> {
             .map(|target| self.proj.scopes.walk(self.current).any(|(id, _)| id == target))
             .unwrap_or_default()
     }
-
-    #[inline(always)]
-    pub(crate) fn scopes(&self) -> &Scopes {
-        &self.proj.scopes
-    }
 }
 
 /// LSP routines
@@ -1512,6 +1507,7 @@ impl<'a> TypeChecker<'a> {
             subscripts: subscripts.iter().map(|s| s.id).collect(),
             members_resolved: false,
             recursive: false,
+            interior_mutable: false,
         }
     }
 
@@ -1561,7 +1557,7 @@ impl TypeChecker<'_> {
                 });
             }
             DStmt::ModuleOOL { name } => {
-                let item = self.scopes()[self.current].find_in_tns(name.data);
+                let item = self.proj.scopes[self.current].find_in_tns(name.data);
                 if let Some(scope) = item.and_then(|item| item.id.into_module().ok()) {
                     self.check_hover(name.span, LspItem::Module(scope));
                 }
@@ -1972,7 +1968,7 @@ impl TypeChecker<'_> {
                     this.proj.diag.report(Error::new("a panic handler already exists", func.name.span));
                 }
 
-                if let Some((&panic, _)) = this.scopes().intrinsics.iter().find(|(_, v)| strdata!(this, v) == "panic") {
+                if let Some((&panic, _)) = this.proj.scopes.intrinsics.iter().find(|(_, v)| strdata!(this, v) == "panic") {
                     let fn_name = func.name;
                     this.resolve_proto(panic);
                     if let Err(why) = this.check_signature_match(None, id, panic, &TypeArgs::default()) {
@@ -4541,18 +4537,35 @@ impl TypeChecker<'_> {
     }
 
     fn resolve_members(&mut self, id: UserTypeId) {
+        fn set_interior_mutable(this: &mut TypeChecker, id: UserTypeId, ty: TypeId) {
+            let Some(&typ) = this
+                .proj
+                .strings
+                .get("mutable")
+                .and_then(|id| this.proj.scopes.lang_types.get(&id))
+            else {
+                return;
+            };
+
+            if id == typ || this.proj.types[ty].as_user().is_some_and(|ut| ut.id == typ) {
+                this.proj.scopes.get_mut(id).interior_mutable = true;
+            }
+        }
+
         if self.proj.scopes.get(id).members_resolved {
             return;
         }
 
         for i in 0..self.proj.scopes.get(id).members.len() {
-            resolve_type!(self, self.proj.scopes.get_mut(id).members[i].ty);
+            let ty = resolve_type!(self, self.proj.scopes.get_mut(id).members[i].ty);
+            set_interior_mutable(self, id, ty);
         }
 
         if let Some(mut union) = self.proj.scopes.get(id).kind.as_union().cloned() {
             resolve_type!(self, union.tag);
             for variant in union.variants.values_mut().flat_map(|v| &mut v.ty) {
-                resolve_type!(self, *variant);
+                let ty = resolve_type!(self, *variant);
+                set_interior_mutable(self, id, ty);
             }
 
             let mut target = None;
@@ -4647,13 +4660,18 @@ impl TypeChecker<'_> {
 
         macro_rules! check_ty {
             ($ty: expr, $err: expr) => {
-                let ty = $ty;
-                let ty = ty.with_ut_templates(&self.proj.types, this);
+                let ty = $ty.with_ut_templates(&self.proj.types, this);
                 if self.check_member_dep(ty, this, &mut deps) {
                     failed = true;
                     if canonical {
                         self.error($err)
                     }
+                }
+                if self.proj.types[ty]
+                    .as_user()
+                    .is_some_and(|ut| self.proj.scopes.get(ut.id).interior_mutable)
+                {
+                    self.proj.scopes.get_mut(id).interior_mutable = true;
                 }
             };
         }

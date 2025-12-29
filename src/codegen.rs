@@ -2973,7 +2973,13 @@ impl<'a> Codegen<'a> {
 
         let ty = var.ty.with_templates(&self.proj.types, &state.func.ty_args);
         self.emit_type(ty);
-        write_if!(!var.mutable && !var.kind.is_static(), self.buffer, " const");
+        if !var.mutable {
+            let mutable = var.kind.is_static()
+                || self.proj.types[ty]
+                    .as_user()
+                    .is_some_and(|ut| self.proj.scopes.get(ut.id).interior_mutable);
+            self.buffer.emit(if !mutable { " const" } else { "/*const*/" });
+        }
         write_de!(self.buffer, " ");
         self.emit_var_name(id, state);
 
