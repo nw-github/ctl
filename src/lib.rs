@@ -334,7 +334,8 @@ impl UnloadedProject {
                 Ok(val) => {
                     let mut config = toml::from_str::<ProjectConfig>(&val)?;
                     if let Some(root) = config.root.take() {
-                        *path = Path::new(&root).canonicalize()?;
+                        let root = Path::new(&root);
+                        *path = if root.is_absolute() { root.into() } else { path.join(root) };
                     }
 
                     if let Some(rename) = config.name {
