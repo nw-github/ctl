@@ -5,8 +5,8 @@ use std::libc::math;
 pub extension F32Impl for f32 {
     pub fn parse(s: str): ?f32 => s2f::s2f(s.as_bytes()) is :Ok(v) then v;
 
-    pub fn to_bits(my this): u32 => unsafe std::mem::transmute(this);
-    pub fn from_bits(v: u32): f32 => unsafe std::mem::transmute(v);
+    pub fn to_bits(my this): u32 => unsafe std::mem::bit_cast(this);
+    pub fn from_bits(v: u32): f32 => unsafe std::mem::bit_cast(v);
 
     pub fn sqrt(my this): f32 => unsafe math::sqrtf(this);
     pub fn sin(my this): f32 => unsafe math::sinf(this);
@@ -91,8 +91,8 @@ pub extension F32Impl for f32 {
 pub extension F64Impl for f64 {
     pub fn parse(s: str): ?f64 => s2d::s2d(s.as_bytes()) is :Ok(v) then v;
 
-    pub fn to_bits(my this): u64 => unsafe std::mem::transmute(this);
-    pub fn from_bits(v: u64): f64 => unsafe std::mem::transmute(v);
+    pub fn to_bits(my this): u64 => unsafe std::mem::bit_cast(this);
+    pub fn from_bits(v: u64): f64 => unsafe std::mem::bit_cast(v);
 
     pub fn sqrt(my this): f64 => unsafe math::sqrt(this);
     pub fn sin(my this): f64 => unsafe math::sin(this);

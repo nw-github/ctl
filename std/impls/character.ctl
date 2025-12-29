@@ -40,7 +40,7 @@ pub extension CharImpl for char {
         fn fmt(this, f: *mut Formatter) => f.pad(this.encode_utf8(&mut [0; 4]));
     }
 
-    pub unsafe fn from_u32_unchecked(v: u32): char => unsafe std::mem::transmute(v);
+    pub unsafe fn from_u32_unchecked(v: u32): char => unsafe std::mem::bit_cast(v);
 
     pub fn from_u32(cp: u32): ?char {
         if cp <= char::max_value() as u32

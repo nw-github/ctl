@@ -29,7 +29,7 @@ pub unsafe fn zeroed<T>(): T {
 pub fn swap<T>(lhs: *mut T, rhs: *mut T) => unsafe (lhs as ^mut T).swap(rhs);
 pub fn replace<T>(ptr: *mut T, val: T): T => unsafe (ptr as ^mut T).replace(val);
 
-pub unsafe fn transmute<In, Out>(from: In): Out {
+pub unsafe fn bit_cast<In, Out>(from: In): Out {
     unsafe union Transmuter<T, U> {
         from: T,
         to: U,
