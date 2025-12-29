@@ -1728,7 +1728,9 @@ impl<'a> Parser<'a> {
                 }
 
                 self.expect(Token::LParen);
-                let mut params = self.csv(Vec::new(), Token::RParen, start.span, Self::type_hint);
+                let mut params = self.csv(Vec::new(), Token::RParen, start.span, |this| {
+                    this.maybe_labeled_type_hint().1
+                });
                 let ret = if self.next_if(Token::FatArrow).is_some() {
                     let hint = self.type_hint();
                     params.span.extend_to(hint.span);
@@ -1776,10 +1778,6 @@ impl<'a> Parser<'a> {
         let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
             let public = this.next_if(Token::Pub);
-            if let Some(token) = public.as_ref().filter(|_| union) {
-                this.error_no_sync(Error::not_valid_here(token));
-            }
-
             let config = FnConfig {
                 tk_public: public.as_ref().map(|t| t.span),
                 tk_unsafe: this.next_if(Token::Unsafe).map(|t| t.span),
@@ -1805,6 +1803,10 @@ impl<'a> Parser<'a> {
                     Right(func) => operators.push(func),
                 }
             } else {
+                if let Some(token) = public.as_ref().filter(|_| union) {
+                    this.error_no_sync(Error::not_valid_here(token));
+                }
+
                 let name = this.expect_ident("expected name");
                 this.expect(Token::Colon);
                 let ty = this.type_hint();
