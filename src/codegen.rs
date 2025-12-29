@@ -1769,11 +1769,7 @@ impl<'a> Codegen<'a> {
                 self.proj.scopes.get(mfn.func.id).name.data,
                 state.caller,
                 |proj, id| {
-                    TypeArgs::in_order(
-                        &proj.scopes,
-                        id,
-                        mfn.func.ty_args.0.into_iter().map(|kv| kv.1),
-                    )
+                    TypeArgs::in_order(&proj.scopes, id, mfn.func.ty_args.0.iter().map(|kv| *kv.1))
                 },
             );
         }
@@ -3340,7 +3336,7 @@ impl<'a> Codegen<'a> {
         tr: &GenericTrait,
         method: StrId,
         scope: ScopeId,
-        finish: impl FnOnce(&Project, FunctionId) -> TypeArgs + Clone,
+        finish: impl FnOnce(&Project, FunctionId) -> TypeArgs + Copy,
     ) -> GenericFn {
         let Some(mfn) = self.lookup_trait_fn(inst, tr, method, scope, finish) else {
             panic!(
@@ -3352,13 +3348,16 @@ impl<'a> Codegen<'a> {
             )
         };
 
-        if !self.proj.scopes.get(mfn.func.id).has_body {
+        let picked = self.proj.scopes.get(mfn.func.id);
+        if !picked.has_body {
             panic!(
-                "searching from scope: '{}', get_member_fn_ex picked invalid function for implementation for method '{}::{}' for type '{}'",
+                "searching from scope: '{}', get_member_fn_ex picked invalid function for implementation for method '{}::{}' for type '{}' (picked {}::{})",
                 full_name_pretty(self.proj, scope, false),
                 self.proj.fmt_ut(tr),
                 strdata!(self, method),
-                self.proj.fmt_ty(inst)
+                self.proj.fmt_ty(inst),
+                full_name_pretty(self.proj, picked.scope, false),
+                strdata!(self, picked.name.data),
             )
         }
 

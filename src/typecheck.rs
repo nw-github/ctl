@@ -5021,32 +5021,34 @@ impl TypeChecker<'_> {
         wanted_tr: TraitId,
         method: StrId,
     ) -> Option<MemberFn> {
-        fn finish_fn(
-            this: &mut TypeChecker,
-            inst: TypeId,
-            wanted_tr: TraitId,
-            f: Vis<FunctionId>,
-            ut: &GenericUserType,
-        ) -> Option<MemberFn> {
-            let scope = this.proj.scopes.get(f.id).scope;
-            let &impl_i = this.proj.scopes[scope].kind.as_impl()?;
-            let imp = this.proj.scopes.get_mut(ut.id).impls.get_checked(impl_i)?;
-            if imp.id != wanted_tr {
-                return None;
-            }
+        let search = |this: &mut TypeChecker, ut: &GenericUserType| -> Option<MemberFn> {
+            for f in this.proj().scopes.get(ut.id).fns.clone() {
+                if this.proj().scopes.get(f.id).name.data == method {
+                    let scope = this.proj.scopes.get(f.id).scope;
+                    let Some(&idx) = this.proj.scopes[scope].kind.as_impl() else {
+                        continue;
+                    };
+                    let imp = this.proj.scopes.get_mut(ut.id).impls.get_checked(idx)?;
+                    if imp.id != wanted_tr {
+                        return None;
+                    }
 
-            let mut func = GenericFn::from_id_unknown(&this.proj.scopes, f.id);
-            func.ty_args.copy_args(&ut.ty_args);
-            func.ty_args
-                .copy_args(&TypeArgs::unknown(&this.proj.scopes.get(ut.id).impl_blocks[impl_i]));
-            Some(MemberFn {
-                func,
-                owner: this.proj.scopes.get(ut.id).scope,
-                typ: MemberFnType::Normal,
-                public: f.public,
-                inst,
-            })
-        }
+                    let mut func = GenericFn::from_id_unknown(&this.proj.scopes, f.id);
+                    func.ty_args.copy_args(&ut.ty_args);
+                    func.ty_args.copy_args(&TypeArgs::unknown(
+                        &this.proj.scopes.get(ut.id).impl_blocks[idx],
+                    ));
+                    return Some(MemberFn {
+                        func,
+                        owner: this.proj.scopes.get(ut.id).scope,
+                        typ: MemberFnType::Normal,
+                        public: f.public,
+                        inst,
+                    });
+                }
+            }
+            None
+        };
 
         fn search_impls(
             proj: &Project,
@@ -5085,9 +5087,7 @@ impl TypeChecker<'_> {
             let ut = ut.clone();
             self.resolve_impls(ut.id);
 
-            if let Some(f) = Self::search(&self.proj.scopes, ut.id, method)
-                .and_then(|f| finish_fn(self, inst, wanted_tr, f, &ut))
-            {
+            if let Some(f) = search(self, &ut) {
                 return Some(f);
             }
             Some(ut)
@@ -5096,10 +5096,7 @@ impl TypeChecker<'_> {
         };
 
         let exts = self.extensions_in_scope_for(inst);
-        if let Some(f) = exts.iter().find_map(|ext| {
-            let f = Self::search(&self.proj.scopes, ext.id, method);
-            f.and_then(|f| finish_fn(self, inst, wanted_tr, f, ext))
-        }) {
+        if let Some(f) = exts.iter().find_map(|ext| search(self, ext)) {
             return Some(f);
         }
 
@@ -7132,36 +7129,39 @@ pub trait SharedStuff {
         wanted_tr: &GenericTrait,
         method: StrId,
         scope: ScopeId,
-        finish: impl FnOnce(&Project, FunctionId) -> TypeArgs + Clone,
+        finish: impl FnOnce(&Project, FunctionId) -> TypeArgs + Copy,
     ) -> Option<MemberFn> {
         let exts = &self.extensions_in_scope(scope);
-        let finish_fn = |this: &mut Self,
-                         inst: TypeId,
-                         wanted_tr: &GenericTrait,
-                         f: Vis<FunctionId>,
-                         ut: &GenericUserType,
-                         ty_args: TypeArgs|
-         -> Option<MemberFn> {
-            let scope = this.proj().scopes.get(f.id).scope;
-            let impl_i = this.proj().scopes[scope].kind.as_impl().cloned()?;
-            let mut imp = this.proj().scopes.get(ut.id).impls.get_checked(impl_i).cloned()?;
-            imp.fill_templates(&this.proj().types, &ut.ty_args);
+        let search = |this: &mut Self, ut: &GenericUserType| -> Option<MemberFn> {
+            for f in this.proj().scopes.get(ut.id).fns.clone() {
+                if this.proj().scopes.get(f.id).name.data == method {
+                    let scope = this.proj().scopes.get(f.id).scope;
+                    let Some(idx) = this.proj().scopes[scope].kind.as_impl().cloned() else {
+                        continue;
+                    };
+                    let mut imp = this.proj().scopes.get(ut.id).impls.get_checked(idx).cloned()?;
+                    imp.fill_templates(&this.proj().types, &ut.ty_args);
 
-            let imp_ty_args = this.do_is_impl_usable(exts, ut.id, impl_i, &mut imp, wanted_tr)?;
-            if &imp != wanted_tr {
-                return None;
+                    let imp_ty_args =
+                        this.do_is_impl_usable(exts, ut.id, idx, &mut imp, wanted_tr)?;
+                    if &imp != wanted_tr {
+                        continue;
+                    }
+
+                    let mut func = GenericFn::new(f.id, finish(this.proj(), f.id));
+                    func.ty_args.copy_args(&ut.ty_args);
+                    func.ty_args.copy_args(&imp_ty_args);
+                    return Some(MemberFn {
+                        func,
+                        owner: this.proj().scopes.get(ut.id).scope,
+                        typ: MemberFnType::Normal,
+                        public: f.public,
+                        inst,
+                    });
+                }
             }
 
-            let mut func = GenericFn::new(f.id, ty_args);
-            func.ty_args.copy_args(&ut.ty_args);
-            func.ty_args.copy_args(&imp_ty_args);
-            Some(MemberFn {
-                func,
-                owner: this.proj().scopes.get(ut.id).scope,
-                typ: MemberFnType::Normal,
-                public: f.public,
-                inst,
-            })
+            None
         };
 
         fn search_impls(
@@ -7203,9 +7203,7 @@ pub trait SharedStuff {
             let ut = ut.clone();
             self.do_resolve_impls(ut.id);
 
-            if let Some(f) = TypeChecker::search(&self.proj().scopes, ut.id, method).and_then(|f| {
-                finish_fn(self, inst, wanted_tr, f, &ut, finish.clone()(self.proj(), f.id))
-            }) {
+            if let Some(f) = search(self, &ut) {
                 return Some(f);
             }
             Some(ut)
@@ -7214,19 +7212,14 @@ pub trait SharedStuff {
         };
 
         let exts = self.do_extensions_in_scope_for(exts, inst);
-        if let Some(f) = exts.iter().find_map(|ext| {
-            let f = TypeChecker::search(&self.proj().scopes, ext.id, method);
-            f.and_then(|f| {
-                finish_fn(self, inst, wanted_tr, f, ext, finish.clone()(self.proj(), f.id))
-            })
-        }) {
+        if let Some(f) = exts.iter().find_map(|ext| search(self, ext)) {
             return Some(f);
         }
 
         // look through trait impls AFTER exhausting all concrete functions
         ut.into_iter()
             .chain(exts)
-            .find_map(|ut| search_impls(self.proj(), inst, wanted_tr, method, &ut, finish.clone()))
+            .find_map(|ut| search_impls(self.proj(), inst, wanted_tr, method, &ut, finish))
     }
 
     // ------
