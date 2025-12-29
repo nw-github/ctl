@@ -597,6 +597,7 @@ impl<'a> Lexer<'a> {
             Some('n') => '\n',
             Some('t') => '\t',
             Some('r') => '\r',
+            Some('e') => '\x1b',
             Some('0') => '\0',
             Some('{') => '{',
             Some('}') => '}',
@@ -650,8 +651,12 @@ impl<'a> Lexer<'a> {
                     '\0'
                 }
             }
-            _ => {
-                diag.report(Error::new("invalid escape sequence", self.here(1)));
+            ch => {
+                let mut span = self.here(1);
+                if let Some(ch) = ch {
+                    span.pos -= ch.len_utf8() as u32;
+                }
+                diag.report(Error::new("invalid escape sequence",span));
                 '\0'
             }
         }

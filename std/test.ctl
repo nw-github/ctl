@@ -18,10 +18,10 @@ struct FailedTest {
 fn test_runner(tests: [TestInfo..]) {
     fn run_test(func: fn()) => func();
 
-    const GREEN: str = "\x1b[32m";
-    const RED: str = "\x1b[31m";
-    const YELLOW: str = "\x1b[33m";
-    const CLEAR: str = "\x1b[0m";
+    const GREEN: str = "\e[32m";
+    const RED: str = "\e[31m";
+    const YELLOW: str = "\e[33m";
+    const CLEAR: str = "\e[0m";
 
     mut [passed, skipped] = [0; 3];
     mut failed: [FailedTest] = @[];
