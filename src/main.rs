@@ -50,6 +50,10 @@ struct Arguments {
     #[clap(action, short, long)]
     #[arg(global = true)]
     quiet: bool,
+
+    /// View messages from the C compiler
+    #[clap(action, short, long)]
+    verbose: bool,
 }
 
 #[derive(Args)]
@@ -66,16 +70,17 @@ struct BuildOrRun {
     #[clap(long)]
     ccargs: Option<String>,
 
-    /// View messages from the C compiler
-    #[clap(action, short, long)]
-    verbose: bool,
-
     #[clap(action, short, long)]
     optimized: bool,
 
-    /// The output path for the compiled binary.
+    /// The output path for the compiled artifacts.
     #[clap(long)]
     out_dir: Option<PathBuf>,
+
+    /// File name for the emitted source code. If not specified, it will be passed to the C compiler
+    /// with stdin.
+    #[clap(short, long)]
+    file: Option<OsString>,
 
     #[clap(short, long)]
     libs: Vec<String>,
@@ -138,8 +143,31 @@ enum SubCommand {
     Lsp,
 }
 
-fn compile_results(code: &str, build: BuildOrRun, conf: Configuration) -> Result<PathBuf> {
-    let [stdout, stderr] = if build.verbose {
+trait LogIfVerbose {
+    fn log_if_verbose(&mut self, verbose: bool) -> &mut Self;
+}
+
+impl LogIfVerbose for Command {
+    fn log_if_verbose(&mut self, verbose: bool) -> &mut Self {
+        if verbose {
+            print!("Executing command: \"{}", self.get_program().display());
+            for arg in self.get_args() {
+                print!(" {}", arg.display());
+            }
+            println!("\"");
+        }
+
+        self
+    }
+}
+
+fn compile_results(
+    code: &str,
+    build: BuildOrRun,
+    conf: Configuration,
+    verbose: bool,
+) -> Result<PathBuf> {
+    let [stdout, stderr] = if verbose {
         std::array::from_fn(|_| Stdio::inherit())
     } else {
         std::array::from_fn(|_| Stdio::piped())
@@ -148,11 +176,22 @@ fn compile_results(code: &str, build: BuildOrRun, conf: Configuration) -> Result
     let output = build.out_dir.or(conf.build).unwrap_or_else(|| PathBuf::from("."));
     std::fs::create_dir_all(&output)?;
 
+    let file_path = if let Some(name) = &build.file {
+        let path = output.join(name);
+        let mut file = File::create(&path)?;
+        print_results(code.as_bytes(), true, verbose, &mut file)?;
+        Some(path)
+    } else {
+        None
+    };
+
     let output = output.join(conf.name.as_deref().unwrap_or("a.out"));
+    let debug_flags = ["-fno-omit-frame-pointer", "-rdynamic", "-g"];
     let mut cc = Command::new(build.cc)
         .args(include_str!("../compile_flags.txt").split("\n").filter(|f| !f.is_empty()))
         .args(build.ccargs.unwrap_or_default().split(' ').filter(|f| !f.is_empty()))
         .args(build.optimized.then_some("-O2"))
+        .args((!build.optimized).then_some(debug_flags).into_iter().flatten())
         .args(has_boehm.then_some("-lgc"))
         .args(
             build
@@ -161,14 +200,20 @@ fn compile_results(code: &str, build: BuildOrRun, conf: Configuration) -> Result
                 .chain(conf.libs.unwrap_or_default().iter())
                 .map(|lib| format!("-l{lib}")),
         )
-        .args(["-x", "c", "-", "-o"])
+        .arg(file_path.as_deref().unwrap_or(Path::new("-")))
+        .args(["-x", "c", "-o"])
         .arg(&output)
+        .log_if_verbose(verbose)
         .stdin(Stdio::piped())
         .stdout(stdout)
         .stderr(stderr)
         .spawn()
         .context("Couldn't invoke the compiler")?;
-    cc.stdin.as_mut().context("The C compiler closed stdin")?.write_all(code.as_bytes())?;
+
+    if build.file.is_none() {
+        cc.stdin.as_mut().context("The C compiler closed stdin")?.write_all(code.as_bytes())?;
+    }
+
     let status = cc.wait()?;
     if !status.success() {
         if let Some(mut stderr) = cc.stderr {
@@ -184,9 +229,10 @@ fn compile_results(code: &str, build: BuildOrRun, conf: Configuration) -> Result
     Ok(output)
 }
 
-fn print_results(src: &[u8], pretty: bool, output: &mut impl Write) -> Result<()> {
+fn print_results(src: &[u8], pretty: bool, verbose: bool, output: &mut impl Write) -> Result<()> {
     if pretty {
         let mut cc = Command::new("clang-format")
+            .log_if_verbose(verbose)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -367,19 +413,22 @@ fn main() -> Result<()> {
         SubCommand::Print { output, pretty, .. } => {
             if let Some(output) = output {
                 let mut output = File::create(output)?;
-                print_results(result.as_bytes(), pretty, &mut output)?;
+                print_results(result.as_bytes(), pretty, args.verbose, &mut output)?;
             } else {
-                print_results(result.as_bytes(), pretty, &mut std::io::stdout().lock())?;
+                print_results(
+                    result.as_bytes(),
+                    pretty,
+                    args.verbose,
+                    &mut std::io::stdout().lock(),
+                )?;
             }
         }
-        SubCommand::Build { build } => _ = compile_results(&result, build, conf)?,
+        SubCommand::Build { build } => _ = compile_results(&result, build, conf, args.verbose)?,
         SubCommand::Test { build } => {
-            let path = compile_results(&result, build, conf)?;
-            execute_binary(&path, None)?;
+            execute_binary(&compile_results(&result, build, conf, args.verbose)?, None)?;
         }
         SubCommand::Run { build, targs } => {
-            let path = compile_results(&result, build, conf)?;
-            execute_binary(&path, Some(targs))?;
+            execute_binary(&compile_results(&result, build, conf, args.verbose)?, Some(targs))?;
         }
         SubCommand::Dump { .. } | SubCommand::Lsp => {}
     }
