@@ -1,31 +1,33 @@
 use std::mem::*;
+use std::deps::*;
 
-@(feature(not(boehm)))
-mod lib {
-    pub extern fn malloc(size: uint): ?^mut void;
-    pub extern fn realloc(addr: ^mut void, size: uint): ?^mut void;
+fn _malloc(size: uint): ?^mut void {
+    @(feature(boehm))
+    return unsafe libgc::GC_malloc(size);
+
+    @(feature(not(boehm)))
+    return unsafe libc::malloc(size);
 }
 
-@(feature(boehm))
-mod lib {
-    @(c_opaque, c_name(GC_MALLOC))
-    pub extern fn malloc(size: uint): ?^mut void;
+fn _realloc(ptr: ^mut void, size: uint): ?^mut void {
+    @(feature(boehm))
+    return unsafe libgc::GC_realloc(ptr, size);
 
-    @(c_opaque, c_name(GC_REALLOC))
-    pub extern fn realloc(addr: ^mut void, size: uint): ?^mut void;
+    @(feature(not(boehm)))
+    return unsafe libc::realloc(ptr, size);
 }
 
 pub fn alloc<T>(count: uint): ?^mut T {
     // TODO: alignment
     let size = size_of::<T>().checked_mul(count)?;
-    if unsafe lib::malloc(size) is ?ptr {
+    if _malloc(size) is ?ptr {
         ptr.cast()
     }
 }
 
 pub fn realloc<T>(addr: ^mut T, count: uint): ?^mut T {
     let size = size_of::<T>().checked_mul(count)?;
-    if unsafe lib::realloc(addr.cast(), size) is ?ptr {
+    if _realloc(addr.cast(), size) is ?ptr {
         ptr.cast()
     }
 }

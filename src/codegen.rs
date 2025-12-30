@@ -916,9 +916,6 @@ impl<'a> Codegen<'a> {
         if this.proj.conf.has_feature(Strings::FEAT_HOSTED) {
             this.buffer.emit("#define CTL_HOSTED 1\n");
         }
-        if this.proj.conf.has_feature(Strings::FEAT_BOEHM) {
-            this.buffer.emit("#define CTL_USE_BOEHM 1\n");
-        }
 
         this.buffer.emit("#ifdef __clang__\n");
         let warnings = include_str!("../compile_flags.txt");

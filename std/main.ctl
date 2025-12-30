@@ -10,9 +10,9 @@ pub mod env;
 @(feature(alloc))
 pub mod alloc;
 
-mod ryu;
-
 mod deps;
+mod runtime;
+mod ryu;
 
 @(autouse)
 mod prelude {

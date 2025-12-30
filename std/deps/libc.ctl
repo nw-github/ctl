@@ -5,6 +5,9 @@ pub struct JmpBuf {
 pub extern fn abort(): never;
 pub extern fn exit(code: c_int): never;
 
+pub extern fn malloc(size: uint): ?^mut void;
+pub extern fn realloc(addr: ^mut void, size: uint): ?^mut void;
+
 // The C macro `setjmp` calls _setjmp, which does not save the signal mask
 pub extern fn _setjmp(env: *mut JmpBuf): c_int;
 pub extern fn longjmp(env: *mut JmpBuf, val: c_int): never;

@@ -41,10 +41,6 @@
 
 #include <stdint.h>
 
-#if defined(CTL_USE_BOEHM)
-#  include <gc.h>
-#endif
-
 #if defined(_MSC_VER)
 #  include <string.h>
 #  if defined(__cplusplus)
@@ -132,19 +128,17 @@
 static void $ctl_static_init(void);
 static void $ctl_static_deinit(void);
 
+static void $ctl_stdlib_init(void);
+static void $ctl_stdlib_deinit(void);
+
 CTL_DEINIT($ctl_runtime_deinit) {
   $ctl_static_deinit();
-
-#if defined(CTL_USE_BOEHM)
-  GC_deinit();
-#endif
+  $ctl_stdlib_deinit();
 }
 
 CTL_INIT($ctl_runtime_init) {
-#if defined(CTL_USE_BOEHM)
-  GC_INIT();
-#endif
   $ctl_static_init();
+  $ctl_stdlib_init();
 
 #if defined(_MSC_VER)
   int __cdecl atexit(void(__cdecl *)(void));
