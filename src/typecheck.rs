@@ -4029,19 +4029,15 @@ impl TypeChecker<'_> {
 
                     let (args, ret, _) =
                         self.check_fn_args(&mut mfn.func, None, args, target, span);
-                    if mfn.typ.is_dynamic() {
-                        return self.arena.typed(ret, CExprData::CallDyn(mfn.func, args));
-                    } else {
-                        return CExpr::member_call(
-                            ret,
-                            &self.proj.types,
-                            mfn,
-                            args,
-                            self.current,
-                            span,
-                            &mut self.arena,
-                        );
-                    }
+                    return CExpr::member_call(
+                        ret,
+                        &self.proj.types,
+                        mfn,
+                        args,
+                        self.current,
+                        span,
+                        &mut self.arena,
+                    );
                 }
                 ResolvedValue::NotFound(err) => {
                     return named_error!(self, Error::no_symbol, err.data, err.span);

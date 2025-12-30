@@ -259,6 +259,7 @@ impl Expr {
             && !matches!(types[target], Type::DynMutPtr(_) | Type::DynPtr(_))
         {
             indirection += 1;
+            prev = ty;
         }
 
         match indirection.cmp(&needed) {
