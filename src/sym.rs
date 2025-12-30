@@ -330,7 +330,7 @@ pub struct PackedStruct {
 
 #[derive(EnumAsInner)]
 pub enum UserTypeKind {
-    Struct,
+    Struct(FunctionId),
     PackedStruct(PackedStruct),
     Union(Union),
     UnsafeUnion,
@@ -575,7 +575,7 @@ impl Scopes {
                             subscripts: Vec::new(),
                             members_resolved: true,
                             recursive: false,
-            interior_mutable: false,
+                            interior_mutable: false,
                         },
                         false,
                         ScopeId::ROOT,
@@ -606,7 +606,7 @@ impl Scopes {
                     subscripts: Vec::new(),
                     members_resolved: true,
                     recursive: false,
-            interior_mutable: false,
+                    interior_mutable: false,
                 },
                 false,
                 ScopeId::ROOT,

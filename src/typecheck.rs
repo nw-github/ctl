@@ -810,7 +810,7 @@ impl<'a> TypeChecker<'a> {
             let kind = if packed {
                 UserTypeKind::PackedStruct(PackedStruct::default())
             } else {
-                UserTypeKind::Struct
+                UserTypeKind::Struct(init.id)
             };
             let ut = this.ut_from_stuff(
                 attrs,
@@ -2669,38 +2669,36 @@ impl TypeChecker<'_> {
             &PExprData::Range { start, end, inclusive } => {
                 let start_id = self.proj.strings.get_or_intern_static("start");
                 let end_id = self.proj.strings.get_or_intern_static("end");
-
-                let (item, ty, inst) = match (start, end) {
-                    // this could be skipped by just transforming these expressions to calls
-                    (Some(start), Some(end)) => {
-                        let start = self.check_expr(start, None);
-                        let end = self.type_check(end, start.ty);
-                        let item = if inclusive { "range_inclusive" } else { "range" };
-                        (item, start.ty, [(start_id, start), (end_id, end)].into())
-                    }
-                    (None, Some(end)) => {
-                        let end = self.check_expr(end, None);
-                        let item = if inclusive { "range_to_inclusive" } else { "range_to" };
-                        (item, end.ty, [(end_id, end)].into())
-                    }
-                    (Some(start), None) => {
-                        let start = self.check_expr(start, None);
-                        ("range_from", start.ty, [(start_id, start)].into())
-                    }
-                    (None, None) => {
-                        return CExpr::new(
-                            self.make_lang_type_by_name("range_full", [], span),
-                            self.arena.alloc(CExprData::Instance(Default::default())),
-                        );
-                    }
+                let name = match (start.is_some(), end.is_some()) {
+                    (false, false) => "range_full",
+                    (true, false) => "range_from",
+                    (false, true) => ["range_to", "range_to_inclusive"][inclusive as usize],
+                    (true, true) => ["range", "range_inclusive"][inclusive as usize],
                 };
-                let Some(id) = self.get_lang_type_or_err(item, span) else {
+                let Some(ut_id) = self.get_lang_type_or_err(name, span) else {
                     return Default::default();
                 };
-                CExpr::new(
-                    self.make_lang_type(id, [ty], span),
-                    self.arena.alloc(CExprData::Instance(inst)),
-                )
+
+                let &constructor = self.proj.scopes.get(ut_id).kind.as_struct().unwrap();
+                // Put them nowhere or else the LSP will use argument label semantic tokens
+                let call_args = [
+                    start.map(|v| (Some(Located::nowhere(start_id)), v)),
+                    end.map(|v| (Some(Located::nowhere(end_id)), v)),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+
+                let mut func = GenericFn::from_id_unknown(&self.proj.scopes, constructor);
+                func.ty_args.copy_args(&TypeArgs::in_order(
+                    &self.proj.scopes,
+                    ut_id,
+                    std::iter::repeat(TypeId::UNKNOWN),
+                ));
+
+                let (args, ret, _failed) =
+                    self.check_fn_args(&mut func, None, &call_args, target, span);
+                CExpr::new(ret, self.arena.alloc(CExprData::Instance(args)))
             }
             &PExprData::String(s) => CExpr::new(
                 self.make_lang_type_by_name("string", [], span),
@@ -5711,7 +5709,7 @@ impl TypeChecker<'_> {
         let Some(ut) = self.proj.types[stripped].as_user().filter(|ut| {
             matches!(
                 self.proj.scopes.get(ut.id).kind,
-                UserTypeKind::Struct | UserTypeKind::Union(_) | UserTypeKind::Tuple
+                UserTypeKind::Struct(_) | UserTypeKind::Union(_) | UserTypeKind::Tuple
             )
         }) else {
             bail!(self, Error::bad_destructure(self.proj.fmt_ty(scrutinee), span,));

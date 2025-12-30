@@ -1385,7 +1385,7 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
     if ut.type_params.is_empty()
         && matches!(
             ut.kind,
-            UserTypeKind::Struct
+            UserTypeKind::Struct(_)
                 | UserTypeKind::PackedStruct(_)
                 | UserTypeKind::Union(_)
                 | UserTypeKind::UnsafeUnion
@@ -1402,7 +1402,7 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
         res += "pub ";
     }
     match &ut.kind {
-        UserTypeKind::PackedStruct(_) | UserTypeKind::Struct => {
+        UserTypeKind::PackedStruct(_) | UserTypeKind::Struct(_) => {
             if ut.kind.is_packed_struct() {
                 write_de!(res, "packed ");
             }
