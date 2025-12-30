@@ -571,29 +571,28 @@ impl<'a> Buffer<'a> {
     fn emit_fn_name(&mut self, func: &GenericFn, min: bool) {
         let f = &self.1.scopes.get(func.id);
         if f.typ.is_test() {
-            write_de!(self, "test{}", func.id);
-            return;
+            return write_de!(self, "test{}", func.id);
+        } else if let Some(name) = f.attrs.link_name {
+            return self.emit_str(name);
+        } else if f.is_extern && f.body.is_none() {
+            return self.emit_str(f.name.data);
         }
 
-        if !f.is_extern || f.body.is_some() {
-            if min {
-                write_de!(self, "p{}", func.id);
-                for &ty in func.ty_args.values() {
-                    self.emit_mangled_name(ty, min);
-                }
-            } else {
-                self.emit(full_name(self.1, f.scope, f.name.data));
-                if !func.ty_args.is_empty() {
-                    write_de!(self, "$");
-                    for &ty in func.ty_args.values() {
-                        write_de!(self, "$");
-                        self.emit_mangled_name(ty, min);
-                    }
-                    write_de!(self, "$$");
-                }
+        if min {
+            write_de!(self, "p{}", func.id);
+            for &ty in func.ty_args.values() {
+                self.emit_mangled_name(ty, min);
             }
         } else {
-            self.emit_str(f.attrs.link_name.unwrap_or(f.name.data));
+            self.emit(full_name(self.1, f.scope, f.name.data));
+            if !func.ty_args.is_empty() {
+                write_de!(self, "$");
+                for &ty in func.ty_args.values() {
+                    write_de!(self, "$");
+                    self.emit_mangled_name(ty, min);
+                }
+                write_de!(self, "$$");
+            }
         }
     }
 
@@ -834,18 +833,17 @@ pub struct Codegen<'a> {
 
 impl<'a> Codegen<'a> {
     pub fn build(proj: &'a Project, arena: ExprArena) -> String {
-        let funcs: HashSet<State> = proj
-            .scopes
-            .functions()
-            .filter(|(_, f)| f.is_extern && f.type_params.is_empty() && f.body.is_some())
-            .map(|(id, _)| State::from_non_generic(id, &proj.scopes))
-            .collect();
         let mut this = Codegen {
             arena,
             str_interp: StrInterp::new(proj),
             flags: proj.conf.flags,
             proj,
-            funcs,
+            funcs: proj
+                .scopes
+                .functions()
+                .filter(|(_, f)| f.is_extern && f.type_params.is_empty() && f.body.is_some())
+                .map(|(id, _)| State::from_non_generic(id, &proj.scopes))
+                .collect(),
             statics: proj
                 .scopes
                 .vars()
