@@ -1,5 +1,5 @@
 use std::fmt;
-use std::libc;
+use std::deps::libc;
 
 struct Stdio {
     impl fmt::Write {

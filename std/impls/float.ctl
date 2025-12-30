@@ -1,6 +1,6 @@
 use std::fmt::*;
 use std::ryu::*;
-use std::libc::math;
+use std::deps::libc::math;
 
 pub extension F32Impl for f32 {
     pub fn parse(s: str): ?f32 => s2f::s2f(s.as_bytes()) is :Ok(v) then v;

@@ -1,4 +1,4 @@
-use std::libc;
+use std::deps::libc;
 
 const NS_PER_SEC: u64 = 1_000_000_000;
 

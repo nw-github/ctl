@@ -318,8 +318,14 @@ pub extension UnsignedImpl<T: Unsigned> for T {
     //       pub fn count_ones(this) => (this as! T::UI).count_ones();
     // In the meantime, an intrinsic might be the way to go
 
-    pub fn count_ones(this): u32 => unsafe gcc_intrin::__builtin_popcountg(*this) as! u32;
-    pub fn count_zeros(this): u32 => unsafe gcc_intrin::__builtin_popcountg(!*this) as! u32;
-    pub fn leading_zeros(this): u32 => unsafe gcc_intrin::__builtin_clzg(*this) as! u32;
-    pub fn trailing_zeros(this): u32 => unsafe gcc_intrin::__builtin_ctzg(*this) as! u32;
+    pub fn count_ones(my this): u32 => unsafe gcc_intrin::__builtin_popcountg(this) as! u32;
+    pub fn count_zeros(my this): u32 => unsafe gcc_intrin::__builtin_popcountg(!this) as! u32;
+    pub fn leading_zeros(my this): u32 => unsafe gcc_intrin::__builtin_clzg(this) as! u32;
+    pub fn trailing_zeros(my this): u32 => unsafe gcc_intrin::__builtin_ctzg(this) as! u32;
+}
+
+pub extension U32Impl for u32 {
+    pub fn from_le_bytes(bytes: [u8; 4]): u32 => unsafe std::mem::bit_cast(bytes);
+    pub fn from_ne_bytes(bytes: [u8; 4]): u32 => unsafe std::mem::bit_cast(bytes);
+    pub fn from_be_bytes(bytes: [u8; 4]): u32 => unsafe std::mem::bit_cast::<[u8; 4], u32>(bytes).swap_bytes();
 }

@@ -1,7 +1,4 @@
 @(feature(hosted))
-mod libc;
-
-@(feature(hosted))
 pub mod proc;
 
 @(feature(io))
@@ -14,6 +11,8 @@ pub mod env;
 pub mod alloc;
 
 mod ryu;
+
+mod deps;
 
 @(autouse)
 mod prelude {

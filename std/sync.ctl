@@ -1,6 +1,6 @@
-pub use std::libc::atomic::MemoryOrder;
+pub use std::deps::libc::atomic::MemoryOrder;
 
-use std::libc::atomic::*;
+use std::deps::libc::atomic::*;
 use std::mem::Mutable;
 
 pub struct Atomic<T> {

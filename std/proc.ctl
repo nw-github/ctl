@@ -1,4 +1,4 @@
-use std::libc;
+use std::deps::libc;
 
 /// Exit the process with exit code `code`
 pub fn exit(code: u32): never => unsafe libc::exit(code as! c_int);
