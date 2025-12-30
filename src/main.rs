@@ -98,9 +98,9 @@ enum SubCommand {
         #[clap(short, long)]
         output: Option<PathBuf>,
 
-        /// Run clang-format on the resulting C code
+        /// Do not run clang-format on the resulting C code
         #[clap(action, short, long)]
-        pretty: bool,
+        ugly: bool,
 
         /// Minify the resulting C code
         #[clap(action, short, long)]
@@ -410,14 +410,14 @@ fn main() -> Result<()> {
         }
     };
     match args.command {
-        SubCommand::Print { output, pretty, .. } => {
+        SubCommand::Print { output, ugly, .. } => {
             if let Some(output) = output {
                 let mut output = File::create(output)?;
-                print_results(&result, pretty, args.verbose, &mut output)?;
+                print_results(&result, !ugly, args.verbose, &mut output)?;
             } else {
                 print_results(
                     &result,
-                    pretty,
+                    !ugly,
                     args.verbose,
                     &mut std::io::stdout().lock(),
                 )?;
