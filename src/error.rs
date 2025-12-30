@@ -70,7 +70,7 @@ impl Diagnostics {
 
     pub fn get_span_range(data: &str, span: Span, mode: OffsetMode) -> Range {
         // maybe do this first and keep a vector of positions?
-        let mut start = (0, 0);
+        let mut start = Position::new(0, 0);
         let mut chars = data.char_indices();
         for (i, ch) in &mut chars {
             if i as u32 >= span.pos {
@@ -78,10 +78,10 @@ impl Diagnostics {
             }
 
             if ch == '\n' {
-                start.0 += 1;
-                start.1 = 0;
+                start.line += 1;
+                start.character = 0;
             } else {
-                start.1 += match mode {
+                start.character += match mode {
                     OffsetMode::Utf8 => ch.len_utf8(),
                     OffsetMode::Utf16 => ch.len_utf16(),
                     OffsetMode::Utf32 => 1,
@@ -89,6 +89,7 @@ impl Diagnostics {
             }
         }
 
+        let mut prev = start;
         let mut end = start;
         for (i, ch) in chars {
             if i as u32 > span.pos + span.len {
@@ -96,10 +97,11 @@ impl Diagnostics {
             }
 
             if ch == '\n' {
-                end.0 += 1;
-                end.1 = 0;
+                prev = end;
+                end.line += 1;
+                end.character = 0;
             } else {
-                end.1 += match mode {
+                end.character += match mode {
                     OffsetMode::Utf8 => ch.len_utf8(),
                     OffsetMode::Utf16 => ch.len_utf16(),
                     OffsetMode::Utf32 => 1,
@@ -107,7 +109,12 @@ impl Diagnostics {
             }
         }
 
-        Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1))
+        if end.character == 0 {
+            end.line = prev.line;
+            end.character = prev.character + 1;
+        }
+
+        Range::new(start, end)
     }
 
     pub fn set_errors_enabled(&mut self, enabled: bool) -> bool {
