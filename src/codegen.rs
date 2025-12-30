@@ -3479,7 +3479,11 @@ fn full_name(proj: &Project, id: ScopeId, ident: StrId) -> String {
     use std::borrow::Cow;
 
     let mut parts = vec![Cow::Borrowed(proj.strings.resolve(&ident))];
-    for (_, scope) in proj.scopes.walk(id) {
+    for (id, scope) in proj.scopes.walk(id) {
+        if scope.kind.is_impl() {
+            parts.push(Cow::Owned(format!("{id}")));
+        }
+
         let Some(scope_name) = scope.kind.name(&proj.scopes) else {
             continue;
         };
