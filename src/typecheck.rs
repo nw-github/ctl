@@ -1321,7 +1321,10 @@ impl<'a> TypeChecker<'a> {
                     tr_name,
                     fn_name,
                     vec![
-                        f.params.get(1).map(|p| p.ty).unwrap_or(PExprArena::HINT_ERROR),
+                        f.params
+                            .get(1)
+                            .map(|p| p.ty)
+                            .unwrap_or(Located::nowhere(PExprArena::HINT_ERROR)),
                         f.ret.unwrap_or(PExprArena::HINT_VOID),
                     ],
                 )
@@ -1354,8 +1357,12 @@ impl<'a> TypeChecker<'a> {
                         (tr_name, fn_name, vec![p.ty])
                     }
                 } else {
-                    let mut args =
-                        vec![f.params.get(1).map(|p| p.ty).unwrap_or(PExprArena::HINT_ERROR)];
+                    let mut args = vec![
+                        f.params
+                            .get(1)
+                            .map(|p| p.ty)
+                            .unwrap_or(Located::nowhere(PExprArena::HINT_ERROR)),
+                    ];
                     if !op.is_assignment() {
                         args.push(f.ret.unwrap_or(PExprArena::HINT_VOID));
                     }

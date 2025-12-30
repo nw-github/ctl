@@ -857,7 +857,7 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 self.error(Error::new("unexpected token", span));
-                ExprArena::EXPR_ERROR
+                Located::new(span, ExprArena::EXPR_ERROR)
             }
         }
     }
@@ -923,7 +923,7 @@ impl<'a> Parser<'a> {
             }
             Token::Range | Token::RangeInclusive => {
                 let inclusive = op.data == Token::RangeInclusive;
-                if self.is_range_end(ctx) {
+                if !inclusive && self.is_range_end(ctx) {
                     self.arena.expr(
                         left.span.extended_to(op.span),
                         ExprData::Range { start: Some(left), end: None, inclusive },
@@ -1002,7 +1002,7 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 self.error(Error::new("unexpected token", op.span));
-                ExprArena::EXPR_ERROR
+                Located::new(op.span, ExprArena::EXPR_ERROR)
             }
         }
     }
@@ -1694,7 +1694,7 @@ impl<'a> Parser<'a> {
                     } else {
                         let end = self.next().span;
                         self.error(Error::new("expected ']', ';', or ':'", end));
-                        ExprArena::HINT_ERROR
+                        Located::new(end, ExprArena::HINT_ERROR)
                     }
                 }
             }

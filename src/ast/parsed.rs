@@ -552,8 +552,8 @@ pub struct ExprArena {
 }
 
 impl ExprArena {
-    pub const EXPR_ERROR: Expr = Expr { span: Span::nowhere(), data: Id::new(0) };
-    pub const HINT_ERROR: TypeHint = TypeHint { span: Span::nowhere(), data: Id::new(0) };
+    pub const EXPR_ERROR: Id<ExprData> = Id::new(0);
+    pub const HINT_ERROR: Id<TypeHintData> = Id::new(0);
     pub const HINT_VOID: TypeHint = Self::hint_void(Span::nowhere());
     pub const HINT_THIS: TypeHint = TypeHint { span: Span::nowhere(), data: Id::new(2) };
 
