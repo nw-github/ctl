@@ -436,12 +436,18 @@ impl TypeId {
         proj.types[self].as_option_inner(&proj.scopes)
     }
 
-    pub fn strip_references(self, types: &Types) -> TypeId {
+    pub fn strip_references_ex(self, types: &Types) -> (TypeId, usize) {
         let mut id = self;
+        let mut count = 0;
         while let Type::Ptr(inner) | Type::MutPtr(inner) = &types[id] {
             id = *inner;
+            count += 1;
         }
-        id
+        (id, count)
+    }
+
+    pub fn strip_references(self, types: &Types) -> TypeId {
+        self.strip_references_ex(types).0
     }
 
     pub fn strip_options(self, proj: &Project) -> TypeId {

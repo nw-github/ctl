@@ -1700,7 +1700,7 @@ impl<'a> Codegen<'a> {
             }
             &ExprData::AffixOperator { callee, ref mfn, param, scope, postfix, span } => {
                 let mfn = mfn.clone();
-                let deref = "*".repeat(Self::indirection(&self.proj.types, callee.ty));
+                let deref = "*".repeat(callee.ty.strip_references_ex(&self.proj.types).1);
                 if !postfix {
                     hoist!(self, {
                         let expr = Expr::member_call(
@@ -2517,8 +2517,8 @@ impl<'a> Codegen<'a> {
                 });
             }
             PatternData::IntRange(RangePattern { inclusive, start, end }) => {
-                let src = Self::deref(&self.proj.types, src, ty);
-                let base = ty.strip_references(&self.proj.types);
+                let (base, ind) = ty.strip_references_ex(&self.proj.types);
+                let src = Self::apply_deref(src, ind);
                 if let Some(start) = start {
                     conditions.next(|buffer| {
                         usebuf!(self, buffer, {
@@ -2551,10 +2551,9 @@ impl<'a> Codegen<'a> {
                     });
                 });
             }
-            PatternData::Variant { pattern, variant, inner, borrows } => {
-                let variant = *variant;
-                let src = Self::deref(&self.proj.types, src, ty);
-                let base = ty.strip_references(&self.proj.types);
+            &PatternData::Variant { ref pattern, variant, inner, borrows } => {
+                let (base, ind) = ty.strip_references_ex(&self.proj.types);
+                let src = Self::apply_deref(src, ind);
                 if base.can_omit_tag(&self.proj.scopes, &self.proj.types).is_some() {
                     if variant == Strings::SOME {
                         conditions.next_str(format!("{src}!={NULLPTR}"));
@@ -2592,8 +2591,8 @@ impl<'a> Codegen<'a> {
                             state,
                             &pattern.data,
                             &format!("{src}.{}", member_name(self.proj, ut_id, variant)),
-                            *inner,
-                            borrow || *borrows,
+                            inner,
+                            borrow || borrows,
                             bindings,
                             conditions,
                         );
@@ -2644,8 +2643,8 @@ impl<'a> Codegen<'a> {
                 }
             }
             PatternData::Destructure { patterns, borrows } => {
-                let src = Self::deref(&self.proj.types, src, ty);
-                let ty = ty.strip_references(&self.proj.types);
+                let (ty, ind) = ty.strip_references_ex(&self.proj.types);
+                let src = Self::apply_deref(src, ind);
                 let ut_id = self.proj.types[ty].as_user().map(|ut| ut.id);
                 for (member, inner, patt) in patterns {
                     let inner = inner.with_templates(&self.proj.types, &state.func.ty_args);
@@ -3365,20 +3364,12 @@ impl<'a> Codegen<'a> {
     }
 
     fn deref(types: &Types, src: &str, ty: TypeId) -> String {
-        if matches!(types[ty], Type::Ptr(_) | Type::MutPtr(_)) {
-            format!("({:*<1$}{src})", "", Self::indirection(types, ty))
-        } else {
-            src.into()
-        }
+        let (_inner, ind) = ty.strip_references_ex(types);
+        Self::apply_deref(src, ind)
     }
 
-    fn indirection(types: &Types, mut id: TypeId) -> usize {
-        let mut count = 0;
-        while let Type::Ptr(inner) | Type::MutPtr(inner) = &types[id] {
-            id = *inner;
-            count += 1;
-        }
-        count
+    fn apply_deref(src: &str, ind: usize) -> String {
+        if ind != 0 { format!("({:*<1$}{src})", "", ind) } else { src.into() }
     }
 
     fn function_name(&mut self, id: FunctionId, state: &State) -> Expr {

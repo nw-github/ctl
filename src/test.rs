@@ -14,7 +14,7 @@ fn test_diagnostics(diag: Diagnostics, expected: &[&str]) -> datatest_stable::Re
         .diagnostics()
         .iter()
         .filter(|e| e.severity.is_error())
-        .map(|e| e.message.clone())
+        .map(|e| e.message.as_str())
         .collect();
     for line in expected {
         if let Some(pos) = errors.iter().position(|err| err.contains(line)) {

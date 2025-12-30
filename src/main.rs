@@ -150,11 +150,11 @@ trait LogIfVerbose {
 impl LogIfVerbose for Command {
     fn log_if_verbose(&mut self, verbose: bool) -> &mut Self {
         if verbose {
-            print!("Executing command: \"{}", self.get_program().display());
+            eprint!("Executing command: \"{}\"", self.get_program().display());
             for arg in self.get_args() {
-                print!(" {}", arg.display());
+                eprint!(" {}", arg.display());
             }
-            println!("\"");
+            eprintln!();
         }
 
         self
@@ -179,19 +179,19 @@ fn compile_results(
     let file_path = if let Some(name) = &build.file {
         let path = output.join(name);
         let mut file = File::create(&path)?;
-        print_results(code.as_bytes(), true, verbose, &mut file)?;
+        print_results(code, true, verbose, &mut file)?;
         Some(path)
     } else {
         None
     };
 
     let output = output.join(conf.name.as_deref().unwrap_or("a.out"));
-    let debug_flags = ["-fno-omit-frame-pointer", "-rdynamic", "-g"];
+    let debug_flags = &["-fno-omit-frame-pointer", "-rdynamic", "-g"][..];
+    let opt_flags = &["-O2"][..];
     let mut cc = Command::new(build.cc)
         .args(include_str!("../compile_flags.txt").split("\n").filter(|f| !f.is_empty()))
         .args(build.ccargs.unwrap_or_default().split(' ').filter(|f| !f.is_empty()))
-        .args(build.optimized.then_some("-O2"))
-        .args((!build.optimized).then_some(debug_flags).into_iter().flatten())
+        .args(if build.optimized { opt_flags } else { debug_flags })
         .args(has_boehm.then_some("-lgc"))
         .args(
             build
@@ -200,9 +200,9 @@ fn compile_results(
                 .chain(conf.libs.unwrap_or_default().iter())
                 .map(|lib| format!("-l{lib}")),
         )
-        .arg(file_path.as_deref().unwrap_or(Path::new("-")))
         .args(["-x", "c", "-o"])
         .arg(&output)
+        .arg(file_path.as_deref().unwrap_or(Path::new("-")))
         .log_if_verbose(verbose)
         .stdin(Stdio::piped())
         .stdout(stdout)
@@ -210,8 +210,8 @@ fn compile_results(
         .spawn()
         .context("Couldn't invoke the compiler")?;
 
-    if build.file.is_none() {
-        cc.stdin.as_mut().context("The C compiler closed stdin")?.write_all(code.as_bytes())?;
+    if file_path.is_none() {
+        cc.stdin.take().context("The C compiler closed stdin")?.write_all(code.as_bytes())?;
     }
 
     let status = cc.wait()?;
@@ -229,7 +229,7 @@ fn compile_results(
     Ok(output)
 }
 
-fn print_results(src: &[u8], pretty: bool, verbose: bool, output: &mut impl Write) -> Result<()> {
+fn print_results(src: &str, pretty: bool, verbose: bool, output: &mut impl Write) -> Result<()> {
     if pretty {
         let mut cc = Command::new("clang-format")
             .log_if_verbose(verbose)
@@ -238,7 +238,7 @@ fn print_results(src: &[u8], pretty: bool, verbose: bool, output: &mut impl Writ
             .stderr(Stdio::null())
             .spawn()
             .context("Couldn't invoke clang-format")?;
-        cc.stdin.as_mut().context("clang-format closed stdin")?.write_all(src)?;
+        cc.stdin.take().context("clang-format closed stdin")?.write_all(src.as_bytes())?;
         let result = cc.wait_with_output()?;
         if !result.status.success() {
             anyhow::bail!(
@@ -249,7 +249,7 @@ fn print_results(src: &[u8], pretty: bool, verbose: bool, output: &mut impl Writ
 
         output.write_all(&result.stdout)?;
     } else {
-        output.write_all(src)?;
+        output.write_all(src.as_bytes())?;
     }
 
     Ok(())
@@ -413,10 +413,10 @@ fn main() -> Result<()> {
         SubCommand::Print { output, pretty, .. } => {
             if let Some(output) = output {
                 let mut output = File::create(output)?;
-                print_results(result.as_bytes(), pretty, args.verbose, &mut output)?;
+                print_results(&result, pretty, args.verbose, &mut output)?;
             } else {
                 print_results(
-                    result.as_bytes(),
+                    &result,
                     pretty,
                     args.verbose,
                     &mut std::io::stdout().lock(),
