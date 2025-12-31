@@ -490,16 +490,15 @@ impl<'a> Parser<'a> {
                 _ => {
                     let (needs_semicolon, mut expr) = self.block_or_normal_expr(None);
                     let mut span = expr.span;
+                    if let Some(is_unsafe) = is_unsafe {
+                        span = is_unsafe.span.extended_to(span);
+                        expr = self.arena.expr(span, ExprData::Unsafe(expr));
+                    }
+
                     if self.matches(Token::RCurly) {
                         expr = self.arena.expr(expr.span, ExprData::Tail(expr));
                     } else if needs_semicolon {
                         span.extend_to(self.expect(Token::Semicolon).span);
-                    }
-
-                    if let Some(is_unsafe) = is_unsafe {
-                        expr = self
-                            .arena
-                            .expr(is_unsafe.span.extended_to(span), ExprData::Unsafe(expr));
                     }
 
                     Stmt { attrs, data: Located::new(span, StmtData::Expr(expr)) }
