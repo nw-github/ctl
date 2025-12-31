@@ -218,6 +218,13 @@ enum PatternType {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+enum Listen {
+    No,
+    Passthrough,
+    Yes,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Cast {
     None,
     Unsafe,
@@ -314,9 +321,7 @@ pub struct TypeChecker<'a> {
     current: ScopeId,
     lsp_input: LspInput,
     proj: Project,
-    listening_vars: Vec<VariableId>,
-    listening_expr: usize,
-    current_expr: usize,
+    listening_vars: Option<Vec<VariableId>>,
     current_static: Option<(VariableId, Vec<VariableId>)>,
     tables: Tables,
     cache: ExtensionCache,
@@ -339,9 +344,7 @@ impl<'a> TypeChecker<'a> {
             current: ScopeId::ROOT,
             proj: Project::new(conf, diag, strings, lsp.is_some()),
             lsp_input: lsp.unwrap_or_default(),
-            listening_vars: Vec::new(),
-            listening_expr: 1,
-            current_expr: 1,
+            listening_vars: None,
             current_static: None,
             cache: Default::default(),
             arena: ExprArena::with_capacity(arena.len()),
@@ -1699,9 +1702,9 @@ impl TypeChecker<'_> {
                 );
             }
             DStmt::Guard { cond, body } => {
-                let (cond, vars) = self.type_check_with_listen(cond);
+                let (cond, vars) = self.check_condition(cond);
                 let span = body.span;
-                let body = self.check_expr_inner(body, Some(TypeId::NEVER));
+                let body = self.check_expr_no_never_propagation(body, Some(TypeId::NEVER));
                 let body = self.type_check_checked(body, TypeId::NEVER, span);
                 self.define(&vars);
                 return CStmt::Guard { cond, body };
@@ -2268,9 +2271,8 @@ impl TypeChecker<'_> {
         self.arena.typed(out_ty, CExprData::Unary(op, inner))
     }
 
+    /// Do not call this function directly
     fn check_expr_inner(&mut self, expr: PExpr, target: Option<TypeId>) -> CExpr {
-        // FIXME: this should just be a parameter to this function
-        self.current_expr += 1;
         let span = expr.span;
         match self.parsed.get(expr.data) {
             &PExprData::Binary { op, left, right } => {
@@ -2321,21 +2323,20 @@ impl TypeChecker<'_> {
                         }
 
                         let span = right.span;
-                        let rhs = self.check_expr_inner(right, Some(target));
+                        let rhs = self.check_expr_no_never_propagation(right, Some(target));
                         let rhs = self.type_check_checked(rhs, target, span);
                         let ty = if assignment { TypeId::VOID } else { target };
                         return self.arena.typed(ty, CExprData::Binary(op, lhs, rhs));
                     }
                     BinaryOp::LogicalAnd => {
-                        let was_listening = self.listening_expr == self.current_expr;
-                        let (left, lvars) = self.type_check_with_listen(left);
+                        let (left, lvars) = self.check_condition(left);
                         let (right, rvars) = self.enter(ScopeKind::None, |this| {
                             this.define(&lvars);
-                            this.type_check_with_listen(right)
+                            this.check_condition(right)
                         });
-                        if was_listening {
-                            self.listening_vars.extend(lvars);
-                            self.listening_vars.extend(rvars);
+                        if let Some(listen) = &mut self.listening_vars {
+                            listen.extend(lvars);
+                            listen.extend(rvars);
                         }
 
                         return self.arena.typed(TypeId::BOOL, CExprData::Binary(op, left, right));
@@ -3012,7 +3013,7 @@ impl TypeChecker<'_> {
                 self.arena.typed(target.unwrap_or(TypeId::VOID), CExprData::Block(block))
             }
             &PExprData::If { cond, if_branch, else_branch } => {
-                let (cond, vars) = self.type_check_with_listen(cond);
+                let (cond, vars) = self.check_condition(cond);
                 let target = if else_branch.is_none() {
                     target.and_then(|t| t.as_option_inner(&self.proj))
                 } else {
@@ -3022,7 +3023,7 @@ impl TypeChecker<'_> {
                 let if_span = if_branch.span;
                 let mut if_branch = self.enter(ScopeKind::None, |this| {
                     this.define(&vars);
-                    this.check_expr_inner(if_branch, target)
+                    this.check_expr_no_never_propagation(if_branch, target)
                 });
                 if let Some(target) = target {
                     if_branch = self.type_check_checked(if_branch, target, if_span);
@@ -3031,13 +3032,14 @@ impl TypeChecker<'_> {
                 let mut out_type = if_branch.ty;
                 let else_branch = if let Some(expr) = else_branch {
                     if out_type == TypeId::NEVER {
-                        let expr = self.check_expr_inner(expr, None);
+                        let expr = self.check_expr_no_never_propagation(expr, None);
                         out_type = expr.ty;
                         if_branch = self.try_coerce(if_branch, expr.ty);
                         expr
                     } else {
                         let span = expr.span;
-                        let source = self.check_expr_inner(expr, target.or(Some(out_type)));
+                        let source =
+                            self.check_expr_no_never_propagation(expr, target.or(Some(out_type)));
                         if source.ty.as_option_inner(&self.proj).is_some_and(|v| v == out_type) {
                             let Ok(expr) = self.coerce(if_branch, source.ty) else {
                                 unreachable!()
@@ -3092,7 +3094,7 @@ impl TypeChecker<'_> {
                 let target = self.loop_target(target, infinite);
                 let kind = LoopScopeKind { target, breaks: LoopBreak::None, infinite, label };
                 let (cond, body) = if let Some(cond) = cond {
-                    let (cond, vars) = self.type_check_with_listen(cond);
+                    let (cond, vars) = self.check_condition(cond);
                     let body = self.create_block_with_init(body, ScopeKind::Loop(kind), |this| {
                         if !do_while {
                             this.define(&vars);
@@ -3227,9 +3229,7 @@ impl TypeChecker<'_> {
                 self.arena.typed(TypeId::NEVER, CExprData::Continue(id))
             }
             &PExprData::Is { expr, ref pattern } => self.enter(ScopeKind::None, |this| {
-                let mut prev = this.current_expr;
                 let expr = this.check_expr(expr, None);
-                std::mem::swap(&mut this.current_expr, &mut prev);
                 let patt = this.check_pattern(PatternParams {
                     scrutinee: expr.ty,
                     mutable: false,
@@ -3237,7 +3237,6 @@ impl TypeChecker<'_> {
                     typ: PatternType::Regular,
                     has_hint: false,
                 });
-                std::mem::swap(&mut this.current_expr, &mut prev);
                 this.arena.typed(TypeId::BOOL, CExprData::Is(expr, patt))
             }),
             &PExprData::Match { expr, ref body } => {
@@ -3355,9 +3354,9 @@ impl TypeChecker<'_> {
                     self.proj.diag.report(Warning::redundant_unsafe(span));
                 }
 
-                // consider the body of the
-                self.current_expr -= 1;
-                let (safety, expr) = self.in_unsafe_context(|this| this.check_expr(expr, target));
+                let (safety, expr) = self.in_unsafe_context(|this| {
+                    this.check_expr_ex(expr, target, Listen::Passthrough, true).0
+                });
                 if !was_unsafe && matches!(safety, Safety::Unsafe(false)) {
                     self.proj.diag.report(Warning::useless_unsafe(span));
                 }
@@ -3375,8 +3374,28 @@ impl TypeChecker<'_> {
     }
 
     fn check_expr(&mut self, expr: PExpr, target: Option<TypeId>) -> CExpr {
-        let expr = self.check_expr_inner(expr, target);
-        if expr.ty == TypeId::NEVER
+        self.check_expr_ex(expr, target, Listen::No, true).0
+    }
+
+    fn check_expr_ex(
+        &mut self,
+        expr: PExpr,
+        target: Option<TypeId>,
+        listen: Listen,
+        propagate_never: bool,
+    ) -> (CExpr, Option<Vec<VariableId>>) {
+        let (expr, res) = if listen != Listen::Passthrough {
+            let listen = listen == Listen::Yes;
+            let prev = std::mem::replace(&mut self.listening_vars, listen.then(Vec::new));
+            let expr = self.check_expr_inner(expr, target);
+            let res = std::mem::replace(&mut self.listening_vars, prev);
+            (expr, res)
+        } else {
+            (self.check_expr_inner(expr, target), None)
+        };
+
+        if propagate_never
+            && expr.ty == TypeId::NEVER
             && !matches!(self.arena.get(expr.data), &CExprData::Yield(_, scope) if scope == self.current)
         {
             // TODO: lambdas
@@ -3386,23 +3405,23 @@ impl TypeChecker<'_> {
                 *branches = true;
             }
         }
-        expr
+        (expr, res)
     }
 
-    fn type_check_with_listen(&mut self, expr: PExpr) -> (CExpr, Vec<VariableId>) {
-        self.listen_for_vars(self.current_expr + 1, |this| this.type_check(expr, TypeId::BOOL))
+    fn check_expr_no_never_propagation(&mut self, expr: PExpr, target: Option<TypeId>) -> CExpr {
+        self.check_expr_ex(expr, target, Listen::No, false).0
     }
 
-    fn listen_for_vars<T>(
-        &mut self,
-        expr: usize,
-        f: impl FnOnce(&mut Self) -> T,
-    ) -> (T, Vec<VariableId>) {
-        let prev = std::mem::take(&mut self.listening_vars);
-        let prev_insp = std::mem::replace(&mut self.listening_expr, expr);
-        let res = f(self);
-        self.listening_expr = prev_insp;
-        (res, std::mem::replace(&mut self.listening_vars, prev))
+    fn check_condition(&mut self, expr: PExpr) -> (CExpr, Vec<VariableId>) {
+        let (res, vars) = self.check_expr_ex(expr, Some(TypeId::BOOL), Listen::Yes, true);
+        (self.type_check_checked(res, TypeId::BOOL, expr.span), vars.unwrap_or_default())
+    }
+
+    fn listen_for_vars<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> (T, Vec<VariableId>) {
+        let prev = self.listening_vars.replace(Vec::new());
+        let expr = f(self);
+        let res = std::mem::replace(&mut self.listening_vars, prev);
+        (expr, res.unwrap_or_default())
     }
 
     fn define(&mut self, vars: &[VariableId]) {
@@ -5326,8 +5345,8 @@ impl TypeChecker<'_> {
             false,
             no_redef,
         );
-        if self.current_expr == self.listening_expr {
-            self.listening_vars.push(id);
+        if let Some(listen) = &mut self.listening_vars {
+            listen.push(id);
         }
         good.then_some(id)
     }
@@ -5910,7 +5929,7 @@ impl TypeChecker<'_> {
         let nsubpatterns = subpatterns.len();
         for (i, pattern) in subpatterns.iter().enumerate() {
             let patt_span = pattern.span;
-            let (res, vars) = self.listen_for_vars(self.current_expr, |this| {
+            let (res, vars) = self.listen_for_vars(|this| {
                 this.check_pattern(PatternParams {
                     scrutinee,
                     mutable,
@@ -5920,8 +5939,8 @@ impl TypeChecker<'_> {
                 })
             });
             patterns.push(res);
-            if self.current_expr == self.listening_expr {
-                self.listening_vars.extend_from_slice(&vars);
+            if let Some(listen) = &mut self.listening_vars {
+                listen.extend_from_slice(&vars);
             }
 
             if i == 0 {
