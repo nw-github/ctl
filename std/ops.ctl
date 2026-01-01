@@ -4,8 +4,11 @@ pub union Ordering: i8 {
     Greater = 0,
     Equal = 1,
 
-    impl std::fmt::Format {
-        fn fmt(this, f: *mut std::fmt::Formatter) {
+    pub fn ==(this, rhs: *Ordering): bool => *this as i8 == *rhs as i8;
+    pub fn <=>(this, rhs: *Ordering): Ordering => *this as i8 <=> *rhs as i8;
+
+    impl std::fmt::Debug {
+        fn dbg(this, f: *mut std::fmt::Formatter) {
             match this {
                 :Less => "Less".fmt(f),
                 :Greater => "Greater".fmt(f),

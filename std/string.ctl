@@ -112,12 +112,11 @@ pub struct str {
         this[this.len()..]
     }
 
+    pub fn ==(this, rhs: *str): bool => this.as_bytes() == rhs.as_bytes();
+    pub fn <=>(this, rhs: *str): std::ops::Ordering => this.as_bytes() <=> rhs.as_bytes();
+
     impl Hash {
         fn hash<H: Hasher>(this, h: *mut H) => h.hash(this.span);
-    }
-
-    impl Eq<str> {
-        fn eq(this, rhs: *str): bool => this.as_bytes() == rhs.as_bytes();
     }
 
     impl Debug {

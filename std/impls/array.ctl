@@ -85,3 +85,8 @@ pub extension ArrayEq<A: Array<T>, T: std::ops::Eq<T>> for A {
     @(inline(always))
     pub fn ==(this, rhs: *A): bool => this[..] == rhs[..];
 }
+
+pub extension ArrayCmp<A: Array<T>, T: std::ops::Cmp<T>> for A {
+    @(inline(always))
+    pub fn <=>(this, rhs: *A): std::ops::Ordering => this[..] <=> rhs[..];
+}

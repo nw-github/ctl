@@ -247,6 +247,19 @@ pub mod ext {
         }
     }
 
+    pub extension SpanCmp<T: Cmp<T>> for [T..] {
+        pub fn <=>(this, rhs: *[T..]): std::ops::Ordering {
+            for (l, r) in this.iter().zip(rhs.iter()) {
+                let ord = l <=> r;
+                if ord != :Equal {
+                    return ord;
+                }
+            }
+
+            this.len().cmp(&rhs.len())
+        }
+    }
+
     pub extension SpanHash<T: Hash> for [T..] {
         impl Hash {
             fn hash<H: Hasher>(this, hasher: *mut H) {
@@ -267,7 +280,9 @@ pub mod ext {
         pub fn ==(this, rhs: *[T..]): bool => this.as_span() == rhs;
     }
 
-    pub extension SpanMutSort<T: Cmp<T>> for [mut T..] {
+    pub extension SpanMutCmp<T: Cmp<T>> for [mut T..] {
+        pub fn <=>(this, rhs: *[T..]): std::ops::Ordering => this.as_span().cmp(rhs);
+
         pub fn sort(this) {
             guard !this.is_empty() else {
                 return;
@@ -320,4 +335,43 @@ unittest "slice with ranges" {
     assert_eq(x[..2u], [1, 2][..]);
     assert_eq(x[..=2u], [1, 2, 3][..]);
     assert_eq(x[..], [1, 2, 3, 4][..]);
+}
+
+unittest "span comparisons of equal length" {
+    let a = [1, 2, 3].as_span();
+    let b = [1, 2, 3].as_span();
+
+    assert_eq(a == b, true);
+    assert_eq(a < b, false);
+    assert_eq(a > b, false);
+
+    let a = [1, 2, 3].as_span();
+    let b = [1, 4, 3].as_span();
+
+    assert_eq(a == b, false);
+    assert_eq(a < b, true);
+    assert_eq(a > b, false);
+
+    let a = [1, 4, 3].as_span();
+    let b = [1, 2, 3].as_span();
+
+    assert_eq(a == b, false);
+    assert_eq(a < b, false);
+    assert_eq(a > b, true);
+}
+
+unittest "span comparisons of different lengths" {
+    let a = [1, 2, 3].as_span();
+    let b = [1, 2, 3, 4].as_span();
+
+    assert_eq(a == b, false);
+    assert_eq(a < b, true);
+    assert_eq(a > b, false);
+
+    let a = [1, 2, 3, 4].as_span();
+    let b = [1, 2, 3].as_span();
+
+    assert_eq(a == b, false);
+    assert_eq(a < b, false);
+    assert_eq(a > b, true);
 }
