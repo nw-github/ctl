@@ -411,38 +411,45 @@ impl<'a> Buffer<'a> {
 
     fn emit_mangled_name(&mut self, id: TypeId, min: bool) {
         match &self.1.types[id] {
-            Type::Void => write_de!(self, "void"),
-            Type::Never => write_de!(self, "never"),
+            Type::Void => write_de!(self, "v"),
+            Type::Never => write_de!(self, "n"),
             Type::Int(bits) => write_de!(self, "i{bits}"),
             Type::Uint(bits) => write_de!(self, "u{bits}"),
-            Type::CInt(inner) => write_de!(self, "c_{inner:#}"),
-            Type::CUint(inner) => write_de!(self, "c_u{inner:#}"),
-            Type::Isize => write_de!(self, "isize"),
-            Type::Usize => write_de!(self, "usize"),
-            Type::F32 => write_de!(self, "f32"),
-            Type::F64 => write_de!(self, "f64"),
-            Type::Bool => write_de!(self, "bool"),
-            Type::Char => write_de!(self, "char"),
+            Type::CInt(inner) => write_de!(self, "c{inner:#}"),
+            Type::CUint(inner) => write_de!(self, "C{inner:#}"),
+            Type::Isize => write_de!(self, "I"),
+            Type::Usize => write_de!(self, "U"),
+            Type::F32 => write_de!(self, "f"),
+            Type::F64 => write_de!(self, "F"),
+            Type::Bool => write_de!(self, "B"),
+            Type::Char => write_de!(self, "X"),
             &Type::Ptr(inner) => {
-                self.emit(if min { "p" } else { "ptr_" });
+                self.emit("p");
                 self.emit_mangled_name(inner, min);
             }
             &Type::MutPtr(inner) => {
-                self.emit(if min { "m" } else { "mutptr_" });
+                self.emit("P");
                 self.emit_mangled_name(inner, min);
             }
             &Type::RawPtr(inner) => {
-                self.emit(if min { "r" } else { "rawptr_" });
+                self.emit("r");
                 self.emit_mangled_name(inner, min);
             }
             &Type::RawMutPtr(inner) => {
-                self.emit(if min { "rm" } else { "rawmutptr_" });
+                self.emit("R");
                 self.emit_mangled_name(inner, min);
             }
-            Type::DynPtr(tr) | Type::DynMutPtr(tr) => self.emit_type_name(tr, min),
+            Type::DynPtr(tr) => {
+                self.emit("d");
+                self.emit_type_name(tr, min);
+            }
+            Type::DynMutPtr(tr) => {
+                self.emit("D");
+                self.emit_type_name(tr, min);
+            }
             Type::FnPtr(f) => self.emit_fnptr_name(f, min),
             Type::Fn(f) => self.emit_fnptr_name(&f.as_fn_ptr(&self.1.scopes, &self.1.types), min),
-            Type::User(ut) => self.emit_type_name_ex(ut, min, true),
+            Type::User(ut) => self.emit_type_name(ut, min),
             &Type::Array(ty, len) => self.emit_array_struct_name(ty, len, min),
             Type::Unknown => {
                 write_de!(self, "__Unknown");
@@ -455,14 +462,14 @@ impl<'a> Buffer<'a> {
     }
 
     fn emit_fnptr_name(&mut self, f: &FnPtr, min: bool) {
-        write_de!(self, "fn");
-        self.emit_mangled_name(f.ret, min);
-        for (i, &param) in f.params.iter().enumerate() {
-            if i > 0 && !min {
-                write_de!(self, "_");
-            }
-            self.emit_mangled_name(param, min);
+        write_de!(self, "N");
+        for &param in f.params.iter() {
+            let mut buf = Buffer::new(self.1);
+            buf.emit_mangled_name(param, min);
+            self.write_len_prefixed(&buf.finish());
         }
+        write_de!(self, "n");
+        self.emit_mangled_name(f.ret, min);
     }
 
     fn emit_type(&mut self, id: TypeId, min: bool) {
@@ -512,10 +519,6 @@ impl<'a> Buffer<'a> {
     }
 
     fn emit_type_name(&mut self, ut: &GenericUserType, min: bool) {
-        self.emit_type_name_ex(ut, min, false)
-    }
-
-    fn emit_type_name_ex(&mut self, ut: &GenericUserType, min: bool, generic: bool) {
         let ty = self.1.scopes.get(ut.id);
         if ty.kind.is_template() {
             eprintln!("ICE: Template type in emit_type_name_ex");
@@ -524,12 +527,8 @@ impl<'a> Buffer<'a> {
             eprintln!("ty is empty");
         }
 
-        if !generic {
-            if let Some(name) = self.1.scopes.get(ut.id).attrs.link_name {
-                return self.emit_str(name);
-            } else if self.1.scopes.get(ut.id).attrs.no_gen {
-                return self.emit_str(self.1.scopes.get(ut.id).name.data);
-            }
+        if let Some(name) = self.1.scopes.get(ut.id).attrs.link_name {
+            return self.emit_str(name);
         }
 
         if min {
@@ -537,42 +536,28 @@ impl<'a> Buffer<'a> {
             for &ty in ut.ty_args.values() {
                 self.emit_mangled_name(ty, min);
             }
+        } else if ty.kind.is_tuple() {
+            write_de!(self, "L");
+            for (_name, member) in ty.members.iter() {
+                // TODO: tuple names
+                let mut data = Buffer::new(self.1);
+                data.emit_mangled_name(member.ty.with_templates(&self.1.types, &ut.ty_args), false);
+                self.write_len_prefixed(&data.finish());
+            }
         } else {
-            self.emit(full_name(self.1, ty.scope, ty.name.data));
-            if ty.kind.is_tuple() {
-                for name in ty.members.keys() {
-                    write_de!(self, "_{}", self.1.strings.resolve(name));
-                }
-            }
-
-            if !ut.ty_args.is_empty() {
-                write_de!(self, "$");
-                for &ty in ut.ty_args.values() {
-                    write_de!(self, "$");
-                    self.emit_mangled_name(ty, min);
-                }
-                write_de!(self, "$$");
-            }
+            write_de!(self, "T");
+            self.scope_emit_mangled_name(ty.body_scope, &ut.ty_args);
         }
     }
 
     fn emit_array_struct_name(&mut self, ty: TypeId, size: usize, min: bool) {
-        if min {
-            write_de!(self, "a");
-            self.emit_mangled_name(ty, min);
-            write_de!(self, "{size}");
-        } else {
-            write_de!(self, "Array_");
-            self.emit_mangled_name(ty, min);
-            write_de!(self, "_{size}");
-        }
+        write_de!(self, "A{size}");
+        self.emit_mangled_name(ty, min);
     }
 
     fn emit_fn_name(&mut self, func: &GenericFn, min: bool) {
         let f = &self.1.scopes.get(func.id);
-        if f.typ.is_test() {
-            return write_de!(self, "test{}", func.id);
-        } else if let Some(name) = f.attrs.link_name {
+        if let Some(name) = f.attrs.link_name {
             return self.emit_str(name);
         } else if f.is_extern && f.body.is_none() {
             return self.emit_str(f.name.data);
@@ -584,15 +569,8 @@ impl<'a> Buffer<'a> {
                 self.emit_mangled_name(ty, min);
             }
         } else {
-            self.emit(full_name(self.1, f.scope, f.name.data));
-            if !func.ty_args.is_empty() {
-                write_de!(self, "$");
-                for &ty in func.ty_args.values() {
-                    write_de!(self, "$");
-                    self.emit_mangled_name(ty, min);
-                }
-                write_de!(self, "$$");
-            }
+            write_de!(self, "_CTL");
+            self.scope_emit_mangled_name(f.body_scope, &func.ty_args);
         }
     }
 
@@ -638,6 +616,93 @@ impl<'a> Buffer<'a> {
             }
         }
         write_de!(self, ")");
+    }
+
+    fn scope_emit_mangled_name(&mut self, id: ScopeId, ty_args: &TypeArgs) {
+        let mut parts = vec![];
+        let mut imp = None;
+        for (_id, scope) in self.1.scopes.walk(id) {
+            match &scope.kind {
+                &ScopeKind::Function(id) => parts.push(self.raw_get_mangled_name(id, ty_args)),
+                &ScopeKind::UserType(id) => {
+                    let ut = self.1.scopes.get(id);
+                    if let Some(imp) = imp.take().and_then(|i| ut.impls.get_checked(i)) {
+                        let mut name = Buffer::new(self.1);
+                        name.emit_type_name(&imp.with_templates(&self.1.types, ty_args), false);
+
+                        let mut data = Buffer::new(self.1);
+                        write_de!(data, "I");
+                        data.write_len_prefixed(&name.finish());
+                        parts.push(data.finish());
+                    } else if let Some(this) =
+                        ut.kind.as_trait().and_then(|(this, _, _)| ty_args.get(this))
+                    {
+                        let mut name = Buffer::new(self.1);
+                        name.emit_mangled_name(*this, false);
+
+                        let mut data = Buffer::new(self.1);
+                        write_de!(data, "S");
+                        data.write_len_prefixed(&name.finish());
+                        parts.push(data.finish());
+                    }
+                    parts.push(self.raw_get_mangled_name(id, ty_args));
+                }
+                &ScopeKind::Impl(i) => imp = Some(i),
+                ScopeKind::Module(name) => {
+                    let mut data = Buffer::new(self.1);
+                    data.write_len_prefixed(self.1.strings.resolve(&name.data));
+                    parts.push(data.finish());
+                }
+                _ => {}
+            }
+        }
+
+        for part in parts.iter().rev() {
+            self.emit(part);
+        }
+    }
+
+    fn raw_get_mangled_name<T: ItemId + std::fmt::Display>(
+        &self,
+        id: T,
+        ty_args: &TypeArgs,
+    ) -> String
+    where
+        T::Value: HasTypeParams,
+    {
+        let mut buffer = Buffer::new(self.1);
+
+        let name = id.name(&self.1.scopes);
+        let item = id.get(&self.1.scopes);
+
+        let data = self.1.strings.resolve(&name.data);
+        if !data.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            let name = format!("{id}");
+            buffer.write_len_prefixed(&name);
+        } else if name.data != Strings::ANON_STRUCT_NAME {
+            buffer.write_len_prefixed(data);
+        }
+
+        let mut wrote = false;
+        for &ty in item.get_type_params().iter().flat_map(|id| ty_args.get(id)) {
+            if !wrote {
+                write_de!(buffer, "G");
+            }
+
+            let mut data = Buffer::new(self.1);
+            data.emit_mangled_name(ty, false);
+            buffer.write_len_prefixed(&data.finish());
+            wrote = true;
+        }
+
+        if wrote {
+            write_de!(buffer, "g");
+        }
+        buffer.finish()
+    }
+
+    fn write_len_prefixed(&mut self, data: &str) {
+        write_de!(self, "{}{data}", data.len());
     }
 
     fn finish(self) -> String {

@@ -94,6 +94,12 @@ impl<T> WithTypeArgs<T> {
             *ty = ty.with_templates(types, map);
         }
     }
+
+    pub fn with_templates(&self, types: &Types, map: &TypeArgs) -> Self where T: Clone {
+        let mut res = self.clone();
+        res.fill_templates(types, map);
+        res
+    }
 }
 
 pub type GenericFn = WithTypeArgs<FunctionId>;
