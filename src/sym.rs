@@ -595,7 +595,7 @@ impl Scopes {
                             (names[i], CheckedMember::new(true, types.insert(ty), Span::default()))
                         })
                         .collect(),
-                    name: Located::nowhere(Strings::ANON_STRUCT_NAME),
+                    name: Located::nowhere(Strings::TUPLE_NAME),
                     body_scope: ScopeId::ROOT,
                     kind: UserTypeKind::Tuple,
                     type_params,

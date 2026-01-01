@@ -130,7 +130,6 @@ impl FunctionAttrs {
 
 #[derive(Default)]
 pub struct UserTypeAttrs {
-    pub no_gen: bool,
     pub link_name: Option<StrId>,
     pub lang: Option<StrId>,
 }
@@ -141,7 +140,6 @@ impl UserTypeAttrs {
         for attr in attrs.iter() {
             match attr.name.data {
                 Strings::ATTR_LINKNAME => this.link_name = one_arg(attr, proj),
-                Strings::ATTR_NOGEN => this.no_gen = true,
                 Strings::ATTR_LANG => this.lang = one_arg(attr, proj),
                 _ => unrecognized(attr, proj),
             }

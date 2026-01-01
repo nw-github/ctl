@@ -146,7 +146,9 @@ impl TypeGen {
         write_de!(decls, " ");
         decls.emit_type_name(ut, flags.minify);
         write_de!(decls, ";");
-        if scopes.get(ut.id).attrs.no_gen {
+
+        let members = &ut_data.members;
+        if members.is_empty() && ut_data.kind.as_union().is_some_and(|u| u.variants.is_empty()) {
             return;
         }
 
@@ -154,7 +156,6 @@ impl TypeGen {
         defs.emit_type_name(ut, flags.minify);
         write_de!(defs, "{{");
 
-        let members = &scopes.get(ut.id).members;
         match &ut_data.kind {
             UserTypeKind::Union(union) => {
                 if !matches!(types[union.tag], Type::Uint(0) | Type::Int(0)) {
@@ -679,7 +680,7 @@ impl<'a> Buffer<'a> {
         if !data.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
             let name = format!("{id}");
             buffer.write_len_prefixed(&name);
-        } else if name.data != Strings::ANON_STRUCT_NAME {
+        } else if name.data != Strings::TUPLE_NAME {
             buffer.write_len_prefixed(data);
         }
 
@@ -3508,9 +3509,9 @@ fn vtable_methods(scopes: &Scopes, types: &Types, tr: UserTypeId) -> Vec<Vis<Fun
         .collect()
 }
 
-fn member_name(proj: &Project, id: Option<UserTypeId>, name: StrId) -> String {
+fn member_name(proj: &Project, _id: Option<UserTypeId>, name: StrId) -> String {
     let data = proj.strings.resolve(&name);
-    if id.is_some_and(|id| proj.scopes.get(id).attrs.no_gen) || !is_c_reserved_ident(data) {
+    if !is_c_reserved_ident(data) {
         data.into()
     } else {
         format!("${data}")

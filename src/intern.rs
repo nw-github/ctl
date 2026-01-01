@@ -60,7 +60,7 @@ impl Strings {
     pub const SKIP_REASON: StrId = invent_str_id(43);
     pub const ATTR_THREAD_LOCAL: StrId = invent_str_id(44);
     pub const ATTR_COLD: StrId = invent_str_id(45);
-    pub const ANON_STRUCT_NAME: StrId = invent_str_id(46);
+    pub const TUPLE_NAME: StrId = invent_str_id(46);
     pub const FEAT_BACKTRACE: StrId = invent_str_id(47);
 
     pub fn new() -> Self {
@@ -110,7 +110,7 @@ impl Strings {
         assert_eq!(Self::SKIP_REASON, rodeo.get_or_intern_static("skip_reason"));
         assert_eq!(Self::ATTR_THREAD_LOCAL, rodeo.get_or_intern_static("thread_local"));
         assert_eq!(Self::ATTR_COLD, rodeo.get_or_intern_static("cold"));
-        assert_eq!(Self::ANON_STRUCT_NAME, rodeo.get_or_intern_static("$tuple"));
+        assert_eq!(Self::TUPLE_NAME, rodeo.get_or_intern_static("$tuple"));
         assert_eq!(Self::FEAT_BACKTRACE, rodeo.get_or_intern_static("backtrace"));
         Self { rodeo }
     }
