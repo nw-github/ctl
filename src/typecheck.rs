@@ -7576,21 +7576,13 @@ pub trait SharedStuff {
             .chain(self.do_extensions_in_scope_for(in_scope, ty))
         {
             self.do_resolve_impls(ut.id);
-            let Some((_idx, tr)) = self
-                .proj()
-                .scopes
-                .get(ut.id)
-                .impls
-                .iter_checked_enumerate()
-                .find(|(_, tr)| tr.id == wanted_tr)
+            let Some(tr) =
+                self.proj().scopes.get(ut.id).impls.iter_checked().find(|tr| tr.id == wanted_tr)
             else {
                 continue;
             };
 
-            let mut res = tr.clone();
-            res.fill_templates(&self.proj().types, &ut.ty_args);
-            // self.proj.scopes.get(ut.id).impl_blocks[idx].assoc_types;
-            return Some(res);
+            return Some(tr.with_templates(&self.proj().types, &ut.ty_args));
         }
 
         None

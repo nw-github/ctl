@@ -646,9 +646,7 @@ impl Scopes {
             }
 
             for imp in this.get(tr.id).impls.iter_checked() {
-                let mut imp = imp.clone();
-                imp.fill_templates(types, &tr.ty_args);
-                inner(this, types, imp, results);
+                inner(this, types, imp.with_templates(types, &tr.ty_args), results);
             }
         }
 

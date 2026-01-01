@@ -1315,8 +1315,7 @@ impl<'a> Codegen<'a> {
                 let func = self.proj.types[callee.ty].as_fn().unwrap();
                 let args = args.clone();
                 if let Some(name) = self.proj.scopes.intrinsic_name(func.id) {
-                    let mut func = func.clone();
-                    func.fill_templates(&self.proj.types, &state.func.ty_args);
+                    let func = func.with_templates(&self.proj.types, &state.func.ty_args);
                     return self.emit_intrinsic(name, expr.ty, &func, args, state, (*scope, *span));
                 } else if let Some(id) = self.proj.scopes.get(func.id).constructor {
                     if self.proj.scopes.get(id).kind.is_union() {
@@ -1543,11 +1542,9 @@ impl<'a> Codegen<'a> {
             }
             ExprData::Void => self.buffer.emit(VOID_INSTANCE),
             &ExprData::Fn(ref func, scope) => {
-                let mut func = func.clone();
-                func.fill_templates(&self.proj.types, &state.func.ty_args);
-                let state = State::new(func, scope);
-                self.buffer.emit_fn_name(&state.func, self.flags.minify);
-                self.funcs.insert(state);
+                let func = func.with_templates(&self.proj.types, &state.func.ty_args);
+                self.buffer.emit_fn_name(&func, self.flags.minify);
+                self.funcs.insert(State::new(func, scope));
             }
             ExprData::MemFn(mfn, scope) => self.emit_member_fn(state, mfn.clone(), *scope),
             &ExprData::Var(id) => {
@@ -1835,9 +1832,8 @@ impl<'a> Codegen<'a> {
         }
 
         mfn.func.fill_templates(&self.proj.types, &state.func.ty_args);
-        let state = State::new(mfn.func, scope);
-        self.buffer.emit_fn_name(&state.func, self.flags.minify);
-        self.funcs.insert(state);
+        self.buffer.emit_fn_name(&mfn.func, self.flags.minify);
+        self.funcs.insert(State::new(mfn.func, scope));
     }
 
     fn emit_instance(&mut self, state: &mut State, ty: TypeId, members: IndexMap<StrId, Expr>) {

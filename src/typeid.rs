@@ -95,7 +95,10 @@ impl<T> WithTypeArgs<T> {
         }
     }
 
-    pub fn with_templates(&self, types: &Types, map: &TypeArgs) -> Self where T: Clone {
+    pub fn with_templates(&self, types: &Types, map: &TypeArgs) -> Self
+    where
+        T: Clone,
+    {
         let mut res = self.clone();
         res.fill_templates(types, map);
         res
@@ -659,61 +662,29 @@ impl TypeId {
         }
 
         match &types[self] {
-            &Type::Array(ty, len) => {
-                let ty = Type::Array(ty.with_templates(types, map), len);
-                types.insert(ty)
-            }
-            Type::Ptr(t) => {
-                let ty = Type::Ptr(t.with_templates(types, map));
-                types.insert(ty)
-            }
-            Type::MutPtr(t) => {
-                let ty = Type::MutPtr(t.with_templates(types, map));
-                types.insert(ty)
-            }
-            Type::RawPtr(t) => {
-                let ty = Type::RawPtr(t.with_templates(types, map));
-                types.insert(ty)
-            }
-            Type::RawMutPtr(t) => {
-                let ty = Type::RawMutPtr(t.with_templates(types, map));
-                types.insert(ty)
-            }
+            &Type::Array(ty, len) => types.insert(Type::Array(ty.with_templates(types, map), len)),
+            Type::Ptr(t) => types.insert(Type::Ptr(t.with_templates(types, map))),
+            Type::MutPtr(t) => types.insert(Type::MutPtr(t.with_templates(types, map))),
+            Type::RawPtr(t) => types.insert(Type::RawPtr(t.with_templates(types, map))),
+            Type::RawMutPtr(t) => types.insert(Type::RawMutPtr(t.with_templates(types, map))),
             Type::User(ut) => {
                 if let Some(&ty) = map.get(&ut.id).filter(|&&ty| ty != TypeId::UNKNOWN) {
                     ty
                 } else if !ut.ty_args.is_empty() {
-                    let mut ut = ut.clone();
-                    ut.fill_templates(types, map);
-                    types.insert(Type::User(ut))
+                    types.insert(Type::User(ut.with_templates(types, map)))
                 } else {
                     self
                 }
             }
-            Type::Fn(f) => {
-                let mut tr = f.clone();
-                tr.fill_templates(types, map);
-                types.insert(Type::Fn(tr))
-            }
-            Type::FnPtr(f) => {
-                let fnptr = Type::FnPtr(FnPtr {
-                    is_extern: f.is_extern,
-                    is_unsafe: f.is_unsafe,
-                    params: f.params.iter().map(|p| p.with_templates(types, map)).collect(),
-                    ret: f.ret.with_templates(types, map),
-                });
-                types.insert(fnptr)
-            }
-            Type::DynPtr(tr) => {
-                let mut tr = tr.clone();
-                tr.fill_templates(types, map);
-                types.insert(Type::DynPtr(tr))
-            }
-            Type::DynMutPtr(tr) => {
-                let mut tr = tr.clone();
-                tr.fill_templates(types, map);
-                types.insert(Type::DynMutPtr(tr))
-            }
+            Type::Fn(f) => types.insert(Type::Fn(f.with_templates(types, map))),
+            Type::FnPtr(f) => types.insert(Type::FnPtr(FnPtr {
+                is_extern: f.is_extern,
+                is_unsafe: f.is_unsafe,
+                params: f.params.iter().map(|p| p.with_templates(types, map)).collect(),
+                ret: f.ret.with_templates(types, map),
+            })),
+            Type::DynPtr(tr) => types.insert(Type::DynPtr(tr.with_templates(types, map))),
+            Type::DynMutPtr(tr) => types.insert(Type::DynMutPtr(tr.with_templates(types, map))),
             _ => self,
         }
     }
