@@ -24,22 +24,22 @@ mod gcc_intrin {
     use super::Unsigned;
 
     // TODO: compiler independent fallback for these functions
-    @(c_opaque)
+    @(c_macro)
     pub extern fn __builtin_add_overflow<T: Integral>(x: T, y: T, res: ^mut T): bool;
 
-    @(c_opaque)
+    @(c_macro)
     pub extern fn __builtin_sub_overflow<T: Integral>(x: T, y: T, res: ^mut T): bool;
 
-    @(c_opaque)
+    @(c_macro)
     pub extern fn __builtin_mul_overflow<T: Integral>(x: T, y: T, res: ^mut T): bool;
 
-    @(c_opaque)
+    @(c_macro)
     pub extern fn __builtin_popcountg<T: Unsigned>(u: T): c_int;
 
-    @(c_opaque)
+    @(c_macro)
     pub extern fn __builtin_clzg<T: Unsigned>(u: T): c_int;
 
-    @(c_opaque)
+    @(c_macro)
     pub extern fn __builtin_ctzg<T: Unsigned>(u: T): c_int;
 }
 

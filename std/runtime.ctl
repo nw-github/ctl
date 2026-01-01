@@ -5,7 +5,7 @@ use std::deps::libdwfl::*;
 @(feature(backtrace))
 pub static mut DWFL: ?*mut Dwfl = null;
 
-@(c_name("$ctl_stdlib_init"))
+@(link_name("$ctl_stdlib_init"))
 extern fn init() {
     @(feature(boehm))
     unsafe libgc::GC_init();
@@ -14,7 +14,7 @@ extern fn init() {
     unsafe DWFL = init_dwfl();
 }
 
-@(c_name("$ctl_stdlib_deinit"))
+@(link_name("$ctl_stdlib_deinit"))
 extern fn deinit() {
     @(feature(boehm))
     unsafe libgc::GC_deinit();

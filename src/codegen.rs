@@ -528,10 +528,6 @@ impl<'a> Buffer<'a> {
             eprintln!("ty is empty");
         }
 
-        if let Some(name) = self.1.scopes.get(ut.id).attrs.link_name {
-            return self.emit_str(name);
-        }
-
         if min {
             write_de!(self, "t{}", ut.id);
             for &ty in ut.ty_args.values() {
@@ -558,7 +554,7 @@ impl<'a> Buffer<'a> {
 
     fn emit_fn_name(&mut self, func: &GenericFn, min: bool) {
         let f = &self.1.scopes.get(func.id);
-        if let Some(name) = f.attrs.link_name {
+        if let Some(name) = f.attrs.macro_name.or(f.attrs.link_name) {
             return self.emit_str(name);
         } else if f.is_extern && f.body.is_none() {
             return self.emit_str(f.name.data);
@@ -1136,9 +1132,8 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_fn(&mut self, state: &mut State, prototypes: &mut Buffer<'a>) {
-        // TODO: emit an error if a function has the c_macro attribute and a body
         let func = self.proj.scopes.get(state.func.id);
-        if func.attrs.no_gen {
+        if func.attrs.macro_name.is_some() {
             return;
         }
 
@@ -1146,7 +1141,6 @@ impl<'a> Codegen<'a> {
             self.emit_prototype(state, true);
             write_de!(self.buffer, ";");
         });
-        let func = self.proj.scopes.get(state.func.id);
         if let Some(body) = func.body {
             let void_return =
                 func.ret.with_templates(&self.proj.types, &state.func.ty_args).is_void_like();
@@ -3511,11 +3505,7 @@ fn vtable_methods(scopes: &Scopes, types: &Types, tr: UserTypeId) -> Vec<Vis<Fun
 
 fn member_name(proj: &Project, _id: Option<UserTypeId>, name: StrId) -> String {
     let data = proj.strings.resolve(&name);
-    if !is_c_reserved_ident(data) {
-        data.into()
-    } else {
-        format!("${data}")
-    }
+    if !is_c_reserved_ident(data) { data.into() } else { format!("${data}") }
 }
 
 #[rustfmt::skip]

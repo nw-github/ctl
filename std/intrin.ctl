@@ -44,23 +44,23 @@ pub extern fn ptr_diff<T>(a: ^T, b: ^T): int;
 
 
 
-@(c_opaque, c_name(CTL_MEMSET))
+@(c_macro("CTL_MEMSET"))
 pub extern fn memset(dst: ^mut void, c: c_int, len: uint): ^mut void;
 
-@(c_opaque, c_name(CTL_MEMCPY))
+@(c_macro("CTL_MEMCPY"))
 pub extern fn memcpy(dst: ^mut void, src: ^void, len: uint): ^mut void;
 
-@(c_opaque, c_name(CTL_MEMMOVE))
+@(c_macro("CTL_MEMMOVE"))
 pub extern fn memmove(dst: ^mut void, src: ^void, len: uint): ^mut void;
 
-@(c_opaque, c_name(CTL_MEMCMP))
+@(c_macro("CTL_MEMCMP"))
 pub extern fn memcmp(dst: ^void, src: ^void, len: uint): c_int;
 
-@(c_opaque, c_name(CTL_STRLEN))
+@(c_macro("CTL_STRLEN"))
 pub extern fn strlen(ptr: ^c_char): uint;
 
-@(safe, c_opaque, c_name(CTL_LIKELY))
+@(safe, c_macro("CTL_LIKELY"))
 pub extern fn likely(val: bool): bool;
 
-@(safe, c_opaque, c_name(CTL_UNLIKELY))
+@(safe, c_macro("CTL_UNLIKELY"))
 pub extern fn unlikely(val: bool): bool;

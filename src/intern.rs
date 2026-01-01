@@ -9,8 +9,6 @@ pub(crate) const THIS_TYPE: &str = "This";
 
 #[derive(Clone, derive_more::Deref, derive_more::DerefMut)]
 pub struct Strings {
-    #[deref]
-    #[deref_mut]
     rodeo: Rodeo,
 }
 
@@ -35,7 +33,7 @@ impl Strings {
     pub const LANG_INTEGRAL: StrId = invent_str_id(18);
     pub const LANG_SIGNED: StrId = invent_str_id(19);
     pub const LANG_UNSIGNED: StrId = invent_str_id(20);
-    pub const ATTR_NOGEN: StrId = invent_str_id(21);
+    pub const ATTR_MACRO: StrId = invent_str_id(21);
     pub const ATTR_LINKNAME: StrId = invent_str_id(22);
     pub const LANG_FMT_ARG: StrId = invent_str_id(23);
     pub const FN_WRITTEN: StrId = invent_str_id(24);
@@ -85,8 +83,8 @@ impl Strings {
         assert_eq!(Self::LANG_INTEGRAL, rodeo.get_or_intern_static("integral"));
         assert_eq!(Self::LANG_SIGNED, rodeo.get_or_intern_static("signed"));
         assert_eq!(Self::LANG_UNSIGNED, rodeo.get_or_intern_static("unsigned"));
-        assert_eq!(Self::ATTR_NOGEN, rodeo.get_or_intern_static("c_opaque"));
-        assert_eq!(Self::ATTR_LINKNAME, rodeo.get_or_intern_static("c_name"));
+        assert_eq!(Self::ATTR_MACRO, rodeo.get_or_intern_static("c_macro"));
+        assert_eq!(Self::ATTR_LINKNAME, rodeo.get_or_intern_static("link_name"));
         assert_eq!(Self::LANG_FMT_ARG, rodeo.get_or_intern_static("fmt_arg"));
         assert_eq!(Self::FN_WRITTEN, rodeo.get_or_intern_static("written"));
         assert_eq!(Self::FN_INSERT, rodeo.get_or_intern_static("insert"));

@@ -32,7 +32,7 @@ fn test_runner(tests: [TestInfo..]) {
             eprintln("{module}:");
         }
 
-        eprint("    {name:<35} ... ");
+        eprint("    {name:<60} ... ");
         if *skip {
             if skip_reason is ?reason {
                 eprintln("{YELLOW}SKIPPED{CLEAR} ({reason})");

@@ -38,16 +38,16 @@ pub mod atomic {
         SeqCst,
     }
 
-    @(c_opaque, c_name(ctl_atomic_store_explicit))
+    @(c_macro("ctl_atomic_store_explicit"))
     pub extern fn atomic_store_explicit<T>(obj: *mut T, desired: T, order: u32);
 
-    @(c_opaque, c_name(ctl_atomic_load_explicit))
+    @(c_macro("ctl_atomic_load_explicit"))
     pub extern fn atomic_load_explicit<T>(obj: *T, order: u32): T;
 
-    @(c_opaque, c_name(ctl_atomic_exchange_explicit))
+    @(c_macro("ctl_atomic_exchange_explicit"))
     pub extern fn atomic_exchange_explicit<T>(obj: *mut T, desired: T, order: u32): T;
 
-    @(c_opaque, c_name(ctl_atomic_compare_exchange_strong_explicit))
+    @(c_macro("ctl_atomic_compare_exchange_strong_explicit"))
     pub extern fn atomic_compare_exchange_strong_explicit<T>(
         obj: *mut T,
         expected: *mut T,
@@ -56,7 +56,7 @@ pub mod atomic {
         failure: u32,
     ): bool; // _Bool
 
-    @(c_opaque, c_name(ctl_atomic_compare_exchange_weak_explicit))
+    @(c_macro("ctl_atomic_compare_exchange_weak_explicit"))
     pub extern fn atomic_compare_exchange_weak_explicit<T>(
         obj: *mut T,
         expected: *mut T,
@@ -65,22 +65,22 @@ pub mod atomic {
         failure: u32,
     ): bool; // _Bool
 
-    @(c_opaque, c_name(ctl_atomic_fetch_add_explicit))
+    @(c_macro("ctl_atomic_fetch_add_explicit"))
     pub extern fn atomic_fetch_add_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
-    @(c_opaque, c_name(ctl_atomic_fetch_sub_explicit))
+    @(c_macro("ctl_atomic_fetch_sub_explicit"))
     pub extern fn atomic_fetch_sub_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
-    @(c_opaque, c_name(ctl_atomic_fetch_and_explicit))
+    @(c_macro("ctl_atomic_fetch_and_explicit"))
     pub extern fn atomic_fetch_and_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
-    @(c_opaque, c_name(ctl_atomic_fetch_or_explicit))
+    @(c_macro("ctl_atomic_fetch_or_explicit"))
     pub extern fn atomic_fetch_or_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
-    @(c_opaque, c_name(ctl_atomic_fetch_xor_explicit))
+    @(c_macro("ctl_atomic_fetch_xor_explicit"))
     pub extern fn atomic_fetch_xor_explicit<T>(obj: *mut T, arg: T, order: u32): T;
 
-    @(c_opaque, c_name(ctl_atomic_is_lock_free))
+    @(c_macro("ctl_atomic_is_lock_free"))
     pub extern fn atomic_is_lock_free<T>(obj: *T): bool; // _Bool
 }
 

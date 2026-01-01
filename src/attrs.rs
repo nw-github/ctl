@@ -79,13 +79,13 @@ pub enum FunctionInline {
 pub struct FunctionAttrs {
     pub panic_handler: bool,
     pub test_runner: bool,
-    pub no_gen: bool,
     pub cold: bool,
     pub safe_extern: bool,
     pub link_name: Option<StrId>,
     pub test_skip: Option<Option<StrId>>,
     pub inline: Option<FunctionInline>,
     pub intrinsic: Option<StrId>,
+    pub macro_name: Option<StrId>,
 }
 
 impl FunctionAttrs {
@@ -95,7 +95,13 @@ impl FunctionAttrs {
             match attr.name.data {
                 Strings::ATTR_TEST_RUNNER => this.test_runner = true,
                 Strings::ATTR_PANIC_HANDLER => this.panic_handler = true,
-                Strings::ATTR_NOGEN => this.no_gen = true,
+                Strings::ATTR_MACRO => {
+                    if attr.props.is_empty() {
+                        this.macro_name = Some(fn_name);
+                    } else {
+                        this.macro_name = one_arg(attr, proj);
+                    }
+                }
                 Strings::ATTR_COLD => this.cold = true,
                 Strings::ATTR_LINKNAME => this.link_name = one_arg(attr, proj),
                 Strings::SKIP => {
@@ -130,7 +136,6 @@ impl FunctionAttrs {
 
 #[derive(Default)]
 pub struct UserTypeAttrs {
-    pub link_name: Option<StrId>,
     pub lang: Option<StrId>,
 }
 
@@ -139,7 +144,6 @@ impl UserTypeAttrs {
         let mut this = Self::default();
         for attr in attrs.iter() {
             match attr.name.data {
-                Strings::ATTR_LINKNAME => this.link_name = one_arg(attr, proj),
                 Strings::ATTR_LANG => this.lang = one_arg(attr, proj),
                 _ => unrecognized(attr, proj),
             }
