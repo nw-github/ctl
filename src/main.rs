@@ -19,11 +19,6 @@ struct Arguments {
     #[command(subcommand)]
     command: SubCommand,
 
-    /// Print a textual representation of the AST to stderr.
-    #[clap(action, short, long)]
-    #[arg(global = true)]
-    dump_ast: bool,
-
     /// Compile without including the entire standard library.
     #[clap(action, long)]
     #[arg(global = true)]
@@ -54,6 +49,10 @@ struct Arguments {
     /// View messages from the C compiler
     #[clap(action, short, long)]
     verbose: bool,
+
+    /// Minify the resulting C code
+    #[clap(action, short, long)]
+    minify: bool,
 }
 
 #[derive(Args)]
@@ -70,19 +69,28 @@ struct BuildOrRun {
     #[clap(long)]
     ccargs: Option<String>,
 
+    #[clap(
+        short,
+        long,
+        num_args = 0..=1,
+        default_missing_value = "3",
+        value_parser = clap::value_parser!(i32).range(0..=3),
+    )]
+    opt_level: Option<i32>,
+
+    /// Include debug info and assertions
     #[clap(action, short, long)]
-    optimized: bool,
+    debug: bool,
 
     /// The output path for the compiled artifacts.
     #[clap(long)]
     out_dir: Option<PathBuf>,
 
-    /// File name for the emitted source code. If not specified, it will be passed to the C compiler
-    /// with stdin.
-    #[clap(short, long)]
-    file: Option<OsString>,
+    /// Pass the C source code to the compiler via stdin.
+    #[clap(action, long)]
+    use_stdin: bool,
 
-    #[clap(short, long)]
+    #[clap(long)]
     libs: Vec<String>,
 }
 
@@ -101,10 +109,6 @@ enum SubCommand {
         /// Do not run clang-format on the resulting C code
         #[clap(action, short, long)]
         ugly: bool,
-
-        /// Minify the resulting C code
-        #[clap(action, short, long)]
-        minify: bool,
 
         /// Print the code in test mode
         #[clap(action, short, long)]
@@ -150,7 +154,7 @@ trait LogIfVerbose {
 impl LogIfVerbose for Command {
     fn log_if_verbose(&mut self, verbose: bool) -> &mut Self {
         if verbose {
-            eprint!("Executing command: \"{}\"", self.get_program().display());
+            eprint!("{} \"{}\"", "Executing command:".cyan(), self.get_program().display());
             for arg in self.get_args() {
                 eprint!(" {}", arg.display());
             }
@@ -163,7 +167,7 @@ impl LogIfVerbose for Command {
 
 fn compile_results(
     code: &str,
-    build: BuildOrRun,
+    mut build: BuildOrRun,
     conf: Configuration,
     verbose: bool,
 ) -> Result<PathBuf> {
@@ -172,12 +176,17 @@ fn compile_results(
     } else {
         std::array::from_fn(|_| Stdio::piped())
     };
+
+    if conf.has_feature(Strings::FEAT_BACKTRACE) {
+        build.libs.push(String::from("dw"));
+    }
+
     let has_boehm = conf.has_feature(Strings::FEAT_BOEHM);
-    let output = build.out_dir.or(conf.build).unwrap_or_else(|| PathBuf::from("."));
+    let output = build.out_dir.or(conf.build).unwrap_or_else(|| PathBuf::from("./build"));
     std::fs::create_dir_all(&output)?;
 
-    let file_path = if let Some(name) = &build.file {
-        let path = output.join(name);
+    let file_path = if !build.use_stdin {
+        let path = output.join(format!("{}.c", conf.name.as_deref().unwrap_or("main")));
         let mut file = File::create(&path)?;
         print_results(code, true, verbose, &mut file)?;
         Some(path)
@@ -186,12 +195,13 @@ fn compile_results(
     };
 
     let output = output.join(conf.name.as_deref().unwrap_or("a.out"));
-    let debug_flags = &["-fno-omit-frame-pointer", "-rdynamic", "-g"][..];
-    let opt_flags = &["-O2"][..];
+    let debug_flags = ["-fno-omit-frame-pointer", "-rdynamic", "-g"];
+    let debug_info = build.debug || build.opt_level.is_none_or(|l| l == 0);
     let mut cc = Command::new(build.cc)
         .args(include_str!("../compile_flags.txt").split("\n").filter(|f| !f.is_empty()))
         .args(build.ccargs.unwrap_or_default().split(' ').filter(|f| !f.is_empty()))
-        .args(if build.optimized { opt_flags } else { debug_flags })
+        .arg(format!("-O{}", build.opt_level.unwrap_or_default()))
+        .args(debug_info.then_some(debug_flags).into_iter().flatten())
         .args(has_boehm.then_some("-lgc"))
         .args(
             build
@@ -335,20 +345,19 @@ fn dump_tokens(input: Option<&Path>) -> Result<()> {
     }
 }
 
-fn execute_binary(path: &Path, args: Option<Vec<OsString>>) -> Result<()> {
+fn execute_binary(path: &Path, args: Option<Vec<OsString>>, verbose: bool) -> Result<()> {
+    let mut cmd = Command::new(path);
+    let cmd = cmd.args(args.into_iter().flatten()).log_if_verbose(verbose);
+
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        Err(Command::new(path).args(args.into_iter().flatten()).exec().into())
+        Err(cmd.exec().into())
     }
 
     #[cfg(not(unix))]
     {
-        let status = Command::new(path)
-            .args(args.into_iter().flatten())
-            .spawn()
-            .context("Couldn't invoke the generated program")?
-            .wait()?;
+        let status = cmd.spawn().context("Couldn't invoke the generated program")?.wait()?;
         std::process::exit(status.code().unwrap_or_default());
     }
 }
@@ -380,7 +389,7 @@ fn main() -> Result<()> {
     let mut conf = Configuration::default();
     conf.flags.no_bit_int = args.no_bit_int;
     conf.flags.lib = args.shared.unwrap_or(conf.flags.lib);
-    conf.flags.minify = matches!(args.command, SubCommand::Print { minify: true, .. });
+    conf.flags.minify = args.minify;
     conf.no_std = args.no_std;
     if args.leak {
         conf.remove_feature(Strings::FEAT_BOEHM);
@@ -415,20 +424,23 @@ fn main() -> Result<()> {
                 let mut output = File::create(output)?;
                 print_results(&result, !ugly, args.verbose, &mut output)?;
             } else {
-                print_results(
-                    &result,
-                    !ugly,
-                    args.verbose,
-                    &mut std::io::stdout().lock(),
-                )?;
+                print_results(&result, !ugly, args.verbose, &mut std::io::stdout().lock())?;
             }
         }
         SubCommand::Build { build } => _ = compile_results(&result, build, conf, args.verbose)?,
         SubCommand::Test { build } => {
-            execute_binary(&compile_results(&result, build, conf, args.verbose)?, None)?;
+            execute_binary(
+                &compile_results(&result, build, conf, args.verbose)?,
+                None,
+                args.verbose,
+            )?;
         }
         SubCommand::Run { build, targs } => {
-            execute_binary(&compile_results(&result, build, conf, args.verbose)?, Some(targs))?;
+            execute_binary(
+                &compile_results(&result, build, conf, args.verbose)?,
+                Some(targs),
+                args.verbose,
+            )?;
         }
         SubCommand::Dump { .. } | SubCommand::Lsp => {}
     }

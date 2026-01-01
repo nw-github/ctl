@@ -4,3 +4,4 @@ node_modules
 a.out
 main.c
 ctl.tmLanguage.json
+/build
