@@ -26,6 +26,8 @@ pub extern fn nanosleep(time: *Timespec, remaining: ?*mut Timespec): c_int;
 pub extern fn getpid(): c_int /* pid_t */;
 pub extern fn backtrace(buffer: ^mut ?^mut void, size: c_int): c_int;
 
+pub extern fn memmem(kw haystack: ^void, kw hlen: uint, kw needle: ^void, kw nlen: uint): ?^void;
+
 pub mod atomic {
     pub union MemoryOrder {
         Relaxed,

@@ -83,27 +83,19 @@ pub struct str {
     }
 
     pub fn find(this, rhs: str): ?uint {
-        // TODO: use something standard or add an intrinsic
-        pub extern fn memmem(
-            kw haystack: ^void,
-            kw hlen: uint,
-            kw needle: ^void,
-            kw nlen: uint,
-        ): ?^void;
-
         guard this.len() >= rhs.len() else {
             return null;
         }
 
-        let ptr: ^void = this.span.as_raw().cast();
-        let cmp = unsafe memmem(
+        // TODO: use something standard or add an intrinsic
+        let cmp = unsafe std::deps::libc::memmem(
             haystack: this.span.as_raw().cast(),
             hlen: this.span.len(),
             needle: rhs.span.as_raw().cast(),
             nlen: rhs.span.len(),
         );
         if cmp is ?val {
-            return ptr.sub_ptr(val) as! uint
+            return this.span.as_raw().cast::<void>().sub_ptr(val) as! uint
         }
     }
 
