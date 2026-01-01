@@ -23,6 +23,8 @@ pub const CLOCK_MONOTONIC: c_int = 1;
 
 pub extern fn clock_gettime(clockid: c_int, tp: *mut Timespec): c_int;
 pub extern fn nanosleep(time: *Timespec, remaining: ?*mut Timespec): c_int;
+pub extern fn getpid(): c_int /* pid_t */;
+pub extern fn backtrace(buffer: ^mut ?^mut void, size: c_int): c_int;
 
 pub mod atomic {
     pub union MemoryOrder {

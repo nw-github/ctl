@@ -91,6 +91,8 @@ impl Default for Configuration {
                 Strings::FEAT_IO,
                 Strings::FEAT_HOSTED,
                 Strings::FEAT_BOEHM,
+                #[cfg(target_os = "linux")]
+                Strings::FEAT_BACKTRACE,
             ]
             .into(),
             flags: Default::default(),

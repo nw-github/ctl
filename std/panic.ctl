@@ -89,7 +89,7 @@ pub struct PanicInfo {
     impl Format {
         fn fmt(this, f: *mut Formatter) {
             if this.loc.func is ?func {
-                write(f, "fatal error in function '{func}' at {this.loc}:\n\t{this.args}")
+                write(f, "fatal error in function '{func}' at {this.loc}:\n{this.args}")
             } else {
                 write(f, "fatal error at {this.loc}: {this.args}")
             }
@@ -114,6 +114,19 @@ fn panic_handler(args: Arguments, loc: SourceLocation): never {
     }
 
     eprintln(info);
+
+    @(feature(backtrace))
+    {
+        let bt = std::bt::Backtrace::capture();
+        for (i, addr) in bt.iter().enumerate() {
+            if addr.symbolicate() is ?{func, file, line, col, offs} {
+                eprintln("{i:>5}: {func} + {offs:#x} [{addr.addr():#x}]\n{"":<8}at {file ?? "??"}:{line}:{col}");
+            } else {
+                eprintln("{i:>5}: ?? [{addr.addr():#x}]");
+            }
+        }
+    }
+
     unsafe libc::abort();
 }
 

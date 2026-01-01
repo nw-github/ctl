@@ -64,6 +64,14 @@ pub struct str {
     pub fn char_indices(this): CharIndices => CharIndices(chars: this.chars());
     pub fn utf16(this): Utf16 => Utf16(chars: this.chars(), trail: null);
 
+    pub fn strip_prefix(this, prefix: str): ?str {
+        guard prefix.len() <= this.len() and this[..prefix.len()] == prefix else {
+            return null;
+        }
+
+        this[prefix.len()..]
+    }
+
     pub fn substr<R: RangeBounds<uint>>(this, range: R): ?str {
         let span = this.span.subspan(range)?;
         if span.first() is ?ch and !utf8::is_char_boundary(*ch) {
