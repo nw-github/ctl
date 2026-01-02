@@ -90,6 +90,10 @@ struct BuildOrRun {
     #[clap(action, long)]
     use_stdin: bool,
 
+    /// Run clang-format on the resulting C code
+    #[clap(action, short, long)]
+    pretty: bool,
+
     #[clap(long)]
     libs: Vec<String>,
 }
@@ -188,7 +192,7 @@ fn compile_results(
     let file_path = if !build.use_stdin {
         let path = output.join(format!("{}.c", conf.name.as_deref().unwrap_or("main")));
         let mut file = File::create(&path)?;
-        print_results(code, true, verbose, &mut file)?;
+        print_results(code, build.pretty, verbose, &mut file)?;
         Some(path)
     } else {
         None

@@ -14,6 +14,7 @@ use crate::{
         TypeArgs, TypeId, Types,
     },
     write_de,
+    writeln_de,
 };
 
 #[macro_export]
@@ -77,7 +78,7 @@ impl TypeGen {
                 buffer.emit_type(param, flags.minify);
             }
         }
-        write_de!(buffer, ");");
+        writeln_de!(buffer, ");");
     }
 
     fn gen_vtable_info(flags: &CodegenFlags, buf: &mut Buffer, tr: UserTypeId) {
@@ -107,7 +108,7 @@ impl TypeGen {
         }
 
         buf.emit_vtable_prefix(tr, flags.minify);
-        write_de!(buf, "{VTABLE_TRAIT_LEN}={offset}}};");
+        writeln_de!(buf, "{VTABLE_TRAIT_LEN}={offset}}};");
     }
 
     fn gen_usertype(
@@ -132,7 +133,7 @@ impl TypeGen {
             }
 
             buffer.emit_type(ty, min);
-            write_de!(buffer, " {};", member_name(buffer.1, Some(ut.id), name));
+            writeln_de!(buffer, " {};", member_name(buffer.1, Some(ut.id), name));
         }
 
         let types = &decls.1.types;
@@ -145,7 +146,7 @@ impl TypeGen {
         decls.emit_type_name(ut, flags.minify);
         write_de!(decls, " ");
         decls.emit_type_name(ut, flags.minify);
-        write_de!(decls, ";");
+        writeln_de!(decls, ";");
 
         let members = &ut_data.members;
         if members.is_empty() && ut_data.kind.as_union().is_some_and(|u| u.variants.is_empty()) {
@@ -160,7 +161,7 @@ impl TypeGen {
             UserTypeKind::Union(union) => {
                 if !matches!(types[union.tag], Type::Uint(0) | Type::Int(0)) {
                     defs.emit_type(union.tag, flags.minify);
-                    write_de!(defs, " {UNION_TAG_NAME};");
+                    writeln_de!(defs, " {UNION_TAG_NAME};");
                 }
 
                 for (&name, member) in members {
@@ -174,11 +175,11 @@ impl TypeGen {
                             emit_member(ut, name, ty, defs, flags.minify);
                         }
                     }
-                    write_de!(defs, "}};");
+                    writeln_de!(defs, "}};");
                 }
             }
             UserTypeKind::PackedStruct(data) => {
-                write_de!(
+                writeln_de!(
                     defs,
                     "u{} {ARRAY_DATA_NAME}[{}];",
                     data.align * 8,
@@ -187,7 +188,7 @@ impl TypeGen {
             }
             _ => {
                 if members.is_empty() {
-                    write_de!(defs, "CTL_DUMMY_MEMBER;");
+                    writeln_de!(defs, "CTL_DUMMY_MEMBER;");
                 }
 
                 for (&name, member) in members {
@@ -196,7 +197,7 @@ impl TypeGen {
             }
         }
 
-        write_de!(defs, "}};");
+        writeln_de!(defs, "}};");
     }
 
     fn emit(&self, decls: &mut Buffer, flags: &CodegenFlags) {
@@ -214,9 +215,9 @@ impl TypeGen {
             &Type::Int(bits) if bits != 0 => {
                 let nearest = nearest_pow_of_two(bits);
                 if flags.no_bit_int || nearest == bits as usize {
-                    write_de!(decls, "typedef int{nearest}_t s{bits};",);
+                    writeln_de!(decls, "typedef int{nearest}_t s{bits};",);
                 } else {
-                    write_de!(decls, "typedef _BitInt({bits}) s{bits};",);
+                    writeln_de!(decls, "typedef _BitInt({bits}) s{bits};",);
                 }
             }
             &Type::Uint(bits) if bits != 0 => {
@@ -232,13 +233,13 @@ impl TypeGen {
                 decls.emit_array_struct_name(ty, len, flags.minify);
                 write_de!(decls, " ");
                 decls.emit_array_struct_name(ty, len, flags.minify);
-                write_de!(decls, ";");
+                writeln_de!(decls, ";");
 
                 write_de!(defs, "struct ");
                 defs.emit_array_struct_name(ty, len, flags.minify);
                 write_de!(defs, "{{");
                 defs.emit_type(ty, flags.minify);
-                write_de!(defs, " {ARRAY_DATA_NAME}[{len}];}};");
+                writeln_de!(defs, " {ARRAY_DATA_NAME}[{len}];\n}};");
             }
             _ => {}
         });
@@ -797,7 +798,7 @@ macro_rules! enter_block {
         let $tmp = format!("{SCOPE_VAR_PREFIX}{scope}");
         hoist!($self, {
             emit_type!($self, ty);
-            write_de!($self.buffer, " {};", $tmp);
+            writeln_de!($self.buffer, " {};", $tmp);
             $body;
         });
 
@@ -815,7 +816,7 @@ macro_rules! enter_loop {
         let $tmp = format!("{SCOPE_VAR_PREFIX}{}", $self.cur_loop);
         hoist!($self, {
             $self.emit_type(ty);
-            write_de!($self.buffer, " {};", $tmp);
+            writeln_de!($self.buffer, " {};", $tmp);
             $body;
         });
 
@@ -952,7 +953,7 @@ impl<'a> Codegen<'a> {
                     static_state.caller = this.proj.scopes.get(id).scope;
                     usebuf!(this, &mut static_defs, {
                         this.emit_var_decl(id, static_state);
-                        write_de!(this.buffer, ";");
+                        writeln_de!(this.buffer, ";");
                     });
 
                     if let Some(v) = this.proj.scopes.get(id).value {
@@ -963,7 +964,7 @@ impl<'a> Codegen<'a> {
                                 this.emit_var_name(id, static_state);
                                 write_de!(this.buffer, "=");
                                 this.emit_expr_inner(v, static_state);
-                                write_de!(this.buffer, ";");
+                                writeln_de!(this.buffer, ";");
                             })
                         );
                     }
@@ -1042,7 +1043,7 @@ impl<'a> Codegen<'a> {
                     self.funcs.insert(State::new(func, vtable.scope));
                 }
             }
-            write_de!(self.buffer, "}};");
+            writeln_de!(self.buffer, "}};");
         });
 
         self.vtables.emit(buffer.finish());
@@ -1064,9 +1065,9 @@ impl<'a> Codegen<'a> {
         }
         self.buffer.emit_fn_name(&main.func, self.flags.minify);
         if returns {
-            self.buffer.emit("();}");
+            self.buffer.emit("();}\n");
         } else {
-            self.buffer.emit("();return 0;}");
+            self.buffer.emit("();return 0;}\n");
         }
         self.funcs.insert(main);
         Some(self.buffer.take().finish())
@@ -1122,11 +1123,11 @@ impl<'a> Codegen<'a> {
                 self.funcs.insert(state);
                 test_count += 1;
             }
-            self.buffer.emit("};");
+            self.buffer.emit("};\n");
             self.buffer.emit_fn_name(&runner.func, self.flags.minify);
             write_de!(self.buffer, "(");
             self.emit_cast(self.proj.scopes.get(runner.func.id).params[0].ty);
-            write_de!(self.buffer, "{{.ptr=tests,.len={test_count}}});return 0;}}");
+            writeln_de!(self.buffer, "{{.ptr=tests,.len={test_count}}});return 0;}}");
             self.funcs.insert(runner);
         });
     }
@@ -1139,7 +1140,7 @@ impl<'a> Codegen<'a> {
 
         usebuf!(self, prototypes, {
             self.emit_prototype(state, true);
-            write_de!(self.buffer, ";");
+            writeln_de!(self.buffer, ";");
         });
         if let Some(body) = func.body {
             let void_return =
@@ -1149,17 +1150,17 @@ impl<'a> Codegen<'a> {
             for id in unused {
                 write_de!(self.buffer, "(void)");
                 self.emit_var_name(id, state);
-                write_de!(self.buffer, ";");
+                writeln_de!(self.buffer, ";");
             }
 
             match thisptr {
                 FirstParam::OverriddenLabel { tmp, label, ty } => {
                     self.emit_type(ty);
-                    write_de!(self.buffer, " {}={tmp};", strdata!(self, label));
+                    writeln_de!(self.buffer, " {}={tmp};", strdata!(self, label));
                 }
                 FirstParam::OverriddenVar { tmp, id } => {
                     self.emit_var_decl(id, state);
-                    write_de!(self.buffer, "={tmp};");
+                    writeln_de!(self.buffer, "={tmp};");
                 }
                 _ => {}
             }
@@ -1180,11 +1181,11 @@ impl<'a> Codegen<'a> {
             hoist_point!(self, {
                 if void_return {
                     self.emit_expr_stmt(body, state);
-                    write_de!(self.buffer, "}}");
+                    writeln_de!(self.buffer, "}}");
                 } else {
                     write_de!(self.buffer, "return ");
                     self.emit_expr_inline(body, state);
-                    write_de!(self.buffer, ";}}");
+                    writeln_de!(self.buffer, ";}}");
                 }
             });
         }
@@ -1193,11 +1194,11 @@ impl<'a> Codegen<'a> {
     fn emit_expr_stmt(&mut self, expr: Expr, state: &mut State) {
         if self.has_side_effects(&expr) && !expr.ty.is_void_like() {
             self.emit_expr_inline(expr, state);
-            write_de!(self.buffer, ";");
+            writeln_de!(self.buffer, ";");
         } else {
             write_de!(self.buffer, "(void)(");
             self.emit_expr_inline(expr, state);
-            write_de!(self.buffer, ");");
+            writeln_de!(self.buffer, ");");
         }
     }
 
@@ -1213,7 +1214,7 @@ impl<'a> Codegen<'a> {
                             write_de!(self.buffer, "=");
                             self.emit_expr_inner(expr, state);
                         }
-                        write_de!(self.buffer, ";");
+                        writeln_de!(self.buffer, ";");
                     } else if let Some(expr) = value {
                         self.emit_expr_stmt(expr, state);
                     }
@@ -1256,7 +1257,7 @@ impl<'a> Codegen<'a> {
                         self.emit_type(expr.ty);
                         write_de!(self.buffer, " {tmp};CTL_MEMCPY(&{tmp},({:*<1$}", "", count - 1);
                         self.emit_expr_inline(inner, state);
-                        write_de!(self.buffer, "),{sz});");
+                        writeln_de!(self.buffer, "),{sz});");
                     });
                 }
                 Type::Void => {
@@ -1411,7 +1412,7 @@ impl<'a> Codegen<'a> {
                             " {tmp}; for(usize i=0;i<{count};i++){{{tmp}.{ARRAY_DATA_NAME}[i]="
                         );
                         self.emit_expr_inline(init, state);
-                        write_de!(self.buffer, ";}}");
+                        writeln_de!(self.buffer, ";}}");
                     })
                 }
             }
@@ -1428,9 +1429,9 @@ impl<'a> Codegen<'a> {
                     for (i, expr) in args.into_iter().enumerate() {
                         write_de!(self.buffer, "{tmp}.ptr[{i}]=");
                         self.emit_expr_inline(expr, state);
-                        write_de!(self.buffer, ";");
+                        writeln_de!(self.buffer, ";");
                     }
-                    write_de!(self.buffer, "{tmp}.len={len};");
+                    writeln_de!(self.buffer, "{tmp}.len={len};");
                 });
             }
             &ExprData::VecWithInit { init, count } => {
@@ -1444,7 +1445,7 @@ impl<'a> Codegen<'a> {
                         self.emit_type(ut.first_type_arg().unwrap());
                         write_de!(self.buffer, "*){tmp}.ptr)[i]=");
                         self.emit_expr_inline(init, state);
-                        write_de!(self.buffer, ";}}{tmp}.len={len};");
+                        writeln_de!(self.buffer, ";}}{tmp}.len={len};");
                     });
                 });
             }
@@ -1475,7 +1476,7 @@ impl<'a> Codegen<'a> {
                         self.buffer.emit_fn_name(&insert.func, self.flags.minify);
                         write_de!(self.buffer, "(&{tmp},");
                         self.emit_expr_inline(val, state);
-                        write_de!(self.buffer, ");");
+                        writeln_de!(self.buffer, ");");
                     }
                     self.funcs.insert(insert);
                 });
@@ -1509,7 +1510,7 @@ impl<'a> Codegen<'a> {
                         self.emit_expr(key, state);
                         write_de!(self.buffer, ",");
                         self.emit_expr(val, state);
-                        write_de!(self.buffer, ");");
+                        writeln_de!(self.buffer, ");");
                     }
                     self.funcs.insert(insert);
                 });
@@ -1569,7 +1570,7 @@ impl<'a> Codegen<'a> {
                         self.emit_type(ptr);
                         write_de!(self.buffer, " {tmp}=&");
                         self.emit_expr_inline(source, state);
-                        write_de!(self.buffer, ";");
+                        writeln_de!(self.buffer, ";");
                         tmp
                     });
                     self.emit_bitfield_read(&format!("(*{tmp})"), id, member, expr.ty);
@@ -1583,9 +1584,9 @@ impl<'a> Codegen<'a> {
                 write_nm!(self, "{{");
                 self.emit_block(block.clone(), state);
                 if !yields {
-                    write_de!(self.buffer, "{name}={VOID_INSTANCE};");
+                    writeln_de!(self.buffer, "{name}={VOID_INSTANCE};");
                 } else {
-                    write_de!(self.buffer, "{name}:;");
+                    writeln_de!(self.buffer, "{name}:;");
                 }
                 write_nm!(self, "}}");
             }),
@@ -1603,7 +1604,7 @@ impl<'a> Codegen<'a> {
                         write_de!(self.buffer, "{name}=");
                         self.emit_expr_inline(else_branch, state);
                     });
-                    write_de!(self.buffer, ";}}");
+                    writeln_de!(self.buffer, ";}}");
                 })
             }
             &ExprData::Loop { cond, ref body, do_while, optional } => {
@@ -1658,7 +1659,7 @@ impl<'a> Codegen<'a> {
             &ExprData::Yield(expr, scope) => never_expr!(self, {
                 write_de!(self.buffer, "{SCOPE_VAR_PREFIX}{scope}=");
                 self.emit_expr_inline(expr, state);
-                write_de!(self.buffer, ";");
+                writeln_de!(self.buffer, ";");
 
                 // if scope != self.cur_block {
                 self.leave_scope(state, &format!("goto {SCOPE_VAR_PREFIX}{scope}"), scope);
@@ -1667,7 +1668,7 @@ impl<'a> Codegen<'a> {
             &ExprData::Break(expr, scope) => never_expr!(self, {
                 write_de!(self.buffer, "{SCOPE_VAR_PREFIX}{scope}=");
                 self.emit_expr_inline(expr, state);
-                write_de!(self.buffer, ";");
+                writeln_de!(self.buffer, ";");
                 if self.cur_loop == scope {
                     self.leave_scope(state, "break", scope);
                 } else {
@@ -1699,12 +1700,12 @@ impl<'a> Codegen<'a> {
                         hoist_point!(self, {
                             write_de!(self.buffer, "{name}=");
                             self.emit_expr_inline(expr, state);
-                            write_de!(self.buffer, ";}}");
+                            writeln_de!(self.buffer, ";}}");
                         });
                         self.emitted_never_in_this_block = false;
                     }
 
-                    write_de!(self.buffer, "else{{CTL_UNREACHABLE();}}");
+                    writeln_de!(self.buffer, "else{{CTL_UNREACHABLE();}}");
                 })
             }
             &ExprData::As(mut inner, _) => {
@@ -1778,7 +1779,7 @@ impl<'a> Codegen<'a> {
                         self.emit_type(expr.ty);
                         write_de!(self.buffer, " {tmp}={deref}");
                         self.emit_expr_inline(callee, state);
-                        write_de!(self.buffer, ";");
+                        writeln_de!(self.buffer, ";");
 
                         let expr = Expr::member_call(
                             self.proj
@@ -1836,7 +1837,7 @@ impl<'a> Codegen<'a> {
         if self.proj.scopes.get(ut_id).kind.is_packed_struct() {
             return tmpbuf_emit!(self, state, |tmp| {
                 self.emit_type(ty);
-                write_de!(self.buffer, " {tmp} = {{}};");
+                writeln_de!(self.buffer, " {tmp} = {{}};");
                 for (name, value) in members {
                     let ty = value.ty;
                     let expr = hoist!(self, self.emit_tmpvar(value, state));
@@ -1941,7 +1942,7 @@ impl<'a> Codegen<'a> {
                         self.emit_expr_inline(rhs, state);
                         self.emitted_never_in_this_block = prev;
                         if opt_type.can_omit_tag(&self.proj.scopes, &self.proj.types).is_none() {
-                            write_de!(self.buffer, ";");
+                            writeln_de!(self.buffer, ";");
                             let tag = self
                                 .proj
                                 .scopes
@@ -1953,7 +1954,7 @@ impl<'a> Codegen<'a> {
                                 .unwrap();
                             write_de!(self.buffer, "{left}.{UNION_TAG_NAME}={tag}");
                         }
-                        write_de!(self.buffer, ";}}");
+                        writeln_de!(self.buffer, ";}}");
                     });
                 });
 
@@ -1962,7 +1963,7 @@ impl<'a> Codegen<'a> {
             BinaryOp::NoneCoalesce => {
                 tmpbuf_emit!(self, state, |tmp| {
                     self.emit_type(ret);
-                    write_de!(self.buffer, " {tmp};");
+                    writeln_de!(self.buffer, " {tmp};");
 
                     let opt_type = lhs.ty;
                     let name = hoist!(self, self.emit_tmpvar(lhs, state));
@@ -1980,7 +1981,7 @@ impl<'a> Codegen<'a> {
                         } else {
                             ".Some.$0"
                         };
-                    write_de!(self.buffer, ";}}else{{{tmp}={name}{tag};}}");
+                    writeln_de!(self.buffer, ";}}else{{{tmp}={name}{tag};}}");
                 });
             }
             BinaryOp::Cmp => {
@@ -2023,7 +2024,7 @@ impl<'a> Codegen<'a> {
                     self.emit_type(TypeId::BOOL);
                     write_de!(self.buffer, " {tmp}=");
                     self.emit_expr_inline(lhs, state);
-                    write_de!(
+                    writeln_de!(
                         self.buffer,
                         ";if({}{tmp}){{goto {end_label};}}",
                         if lor { "" } else { "!" }
@@ -2031,7 +2032,7 @@ impl<'a> Codegen<'a> {
                     hoist_point!(self, {
                         write_de!(self.buffer, "{tmp}=");
                         self.emit_expr_inline(rhs, state);
-                        write_de!(self.buffer, ";{end_label}:;");
+                        writeln_de!(self.buffer, ";{end_label}:;");
                     });
                 });
             }
@@ -2043,7 +2044,7 @@ impl<'a> Codegen<'a> {
                     if lhs.ty.is_void_like() {
                         hoist!(self, {
                             self.emit_expr(lhs, state);
-                            write_de!(self.buffer, ";");
+                            writeln_de!(self.buffer, ";");
                         });
                         self.emit_expr(rhs, state);
                         return;
@@ -2141,7 +2142,7 @@ impl<'a> Codegen<'a> {
                     lhs.ty = lhs.ty.with_templates(&self.proj.types, &state.func.ty_args);
 
                     self.emit_type(ret);
-                    write_de!(self.buffer, " {tmp};");
+                    writeln_de!(self.buffer, " {tmp};");
 
                     let inner_ty = lhs.ty;
                     let inner_tmp = self.emit_tmpvar(lhs, state);
@@ -2164,9 +2165,9 @@ impl<'a> Codegen<'a> {
                     });
                     write_de!(self.buffer, "}}{tmp}=");
                     if inner_ty.can_omit_tag(&self.proj.scopes, &self.proj.types).is_some() {
-                        write_de!(self.buffer, "{inner_tmp};");
+                        writeln_de!(self.buffer, "{inner_tmp};");
                     } else {
-                        write_de!(self.buffer, "{inner_tmp}.Some.$0;");
+                        writeln_de!(self.buffer, "{inner_tmp}.Some.$0;");
                     }
                 });
             }
@@ -2221,7 +2222,7 @@ impl<'a> Codegen<'a> {
         } else {
             write_de!(self.buffer, "{SCOPE_VAR_PREFIX}{}={VOID_INSTANCE}", self.cur_loop);
         }
-        write_de!(self.buffer, ";break;");
+        writeln_de!(self.buffer, ";break;");
     }
 
     fn leave_scope(&mut self, state: &mut State, exit: &str, scope: ScopeId) {
@@ -2243,7 +2244,7 @@ impl<'a> Codegen<'a> {
         if emitted {
             write_nm!(self, "/* end defers {scope:?} */");
         }
-        write_de!(self.buffer, "{exit};");
+        writeln_de!(self.buffer, "{exit};");
     }
 
     fn emit_new(&mut self, ut: &GenericUserType) {
@@ -2292,7 +2293,7 @@ impl<'a> Codegen<'a> {
         );
 
         self.buffer.emit_fn_name(&state.func, self.flags.minify);
-        write_de!(self.buffer, "({len});");
+        writeln_de!(self.buffer, "({len});");
         self.funcs.insert(state);
     }
 
@@ -2362,7 +2363,7 @@ impl<'a> Codegen<'a> {
                 self.funcs.insert(panic);
             }
             "unreachable_unchecked" => {
-                hoist!(self, write_de!(self.buffer, "CTL_UNREACHABLE();"));
+                hoist!(self, writeln_de!(self.buffer, "CTL_UNREACHABLE();"));
                 self.buffer.emit(VOID_INSTANCE);
             }
             "binary_op" => {
@@ -2524,7 +2525,7 @@ impl<'a> Codegen<'a> {
             self.emit_type(expr.ty);
             write_de!(self.buffer, " {tmp}=");
             self.emit_expr_inner(expr, state);
-            write_de!(self.buffer, ";");
+            writeln_de!(self.buffer, ";");
         });
     }
 
@@ -2533,7 +2534,7 @@ impl<'a> Codegen<'a> {
         self.emit_type(expr.ty);
         write_de!(self.buffer, " {tmp}=");
         self.emit_expr_inner(expr, state);
-        write_de!(self.buffer, ";");
+        writeln_de!(self.buffer, ";");
         tmp
     }
 
@@ -2667,7 +2668,7 @@ impl<'a> Codegen<'a> {
                     if let Some(id) = id.filter(|&id| !self.proj.scopes.get(id).unused) {
                         usebuf!(self, bindings, {
                             self.emit_var_decl(id, state);
-                            write_de!(
+                            writeln_de!(
                                 self.buffer,
                                 "={{.ptr={src}.ptr+{pos},.len={src}.len-{}}};",
                                 patterns.len()
@@ -2724,7 +2725,7 @@ impl<'a> Codegen<'a> {
                                 let ty = self.emit_var_decl(id, state);
                                 write_de!(self.buffer, "=");
                                 self.emit_cast(ty);
-                                write_de!(self.buffer, "({src}+{pos});");
+                                writeln_de!(self.buffer, "({src}+{pos});");
                             } else {
                                 let var = self.proj.scopes.get(id);
                                 let ty =
@@ -2737,7 +2738,7 @@ impl<'a> Codegen<'a> {
                                 self.emit_var_name(id, state);
                                 write_de!(self.buffer, ";CTL_MEMCPY(&");
                                 self.emit_var_name(id, state);
-                                write_de!(self.buffer, ",{src}+{pos},{size});");
+                                writeln_de!(self.buffer, ",{src}+{pos},{size});");
                             }
                         });
                     }
@@ -2768,7 +2769,7 @@ impl<'a> Codegen<'a> {
 
                 usebuf!(self, bindings, {
                     self.emit_var_decl(id, state);
-                    write_de!(self.buffer, "={}{src};", if borrow { "&" } else { "" });
+                    writeln_de!(self.buffer, "={}{src};", if borrow { "&" } else { "" });
                 });
             }
             PatternData::Void => {}
@@ -3052,7 +3053,7 @@ impl<'a> Codegen<'a> {
             let (size, _) = ty.size_and_align(&self.proj.scopes, &self.proj.types);
             write_de!(self.buffer, "CTL_MEMCPY({tmp},&");
             self.emit_expr_inline(rhs, state);
-            write_de!(self.buffer, ",{size});");
+            writeln_de!(self.buffer, ",{size});");
         });
         self.buffer.emit(VOID_INSTANCE);
     }
@@ -3072,7 +3073,7 @@ impl<'a> Codegen<'a> {
             self.emit_type(ptr);
             write_de!(self.buffer, " {tmp}=&");
             self.emit_expr_inline(source, state);
-            write_de!(self.buffer, ";");
+            writeln_de!(self.buffer, ";");
             format!("(*{tmp})")
         });
 
@@ -3102,7 +3103,7 @@ impl<'a> Codegen<'a> {
             }
             self.emit_expr_inline(rhs, state);
 
-            write_de!(self.buffer, ";");
+            writeln_de!(self.buffer, ";");
             tmp
         });
         hoist!(self, self.emit_bitfield_write(&src, id, member, ty, &expr));
@@ -3168,7 +3169,7 @@ impl<'a> Codegen<'a> {
 
             write_de!(this.buffer, "{tmp}.{ARRAY_DATA_NAME}[{word}]&=");
             this.emit_cast(*word_ty);
-            write_de!(this.buffer, "{:#x};", !(mask << word_offset) & bit_mask(word_size_bits));
+            writeln_de!(this.buffer, "{:#x};", !(mask << word_offset) & bit_mask(word_size_bits));
 
             // negative signed bitints contain 1s in the inaccessible bits (ie -1i2 == 0b1111_1111,
             // not 0b0000_0011) so we need the mask even for a non-partial write
@@ -3185,7 +3186,7 @@ impl<'a> Codegen<'a> {
             write_if!(offset != 0, this.buffer, ">>{offset})");
             write_if!(needs_mask, this.buffer, "&{mask:#x})");
             write_if!(word_offset != 0, this.buffer, "<<{word_offset})");
-            write_de!(this.buffer, ";");
+            writeln_de!(this.buffer, ";");
         });
     }
 
@@ -3293,7 +3294,7 @@ impl<'a> Codegen<'a> {
             for part in strings.iter() {
                 write_de!(self.buffer, "{},", StringLiteral(strdata!(self, part)));
             }
-            write_de!(self.buffer, "}};");
+            writeln_de!(self.buffer, "}};");
         });
         write_de!(self.buffer, "}},.args={{.len={},.ptr=", args.len());
         tmpbuf_emit!(self, state, |tmp| {
@@ -3360,7 +3361,7 @@ impl<'a> Codegen<'a> {
                 self.emit_expr_inline(inst, state);
                 write_de!(self.buffer, "}},");
             }
-            write_de!(self.buffer, "}};");
+            writeln_de!(self.buffer, "}};");
         });
         write_de!(self.buffer, "}}}}");
     }
