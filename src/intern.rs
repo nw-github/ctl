@@ -60,6 +60,7 @@ impl Strings {
     pub const ATTR_COLD: StrId = invent_str_id(45);
     pub const TUPLE_NAME: StrId = invent_str_id(46);
     pub const FEAT_BACKTRACE: StrId = invent_str_id(47);
+    pub const ATTR_ALIGN: StrId = invent_str_id(48);
 
     pub fn new() -> Self {
         let mut rodeo = Rodeo::default();
@@ -110,6 +111,7 @@ impl Strings {
         assert_eq!(Self::ATTR_COLD, rodeo.get_or_intern_static("cold"));
         assert_eq!(Self::TUPLE_NAME, rodeo.get_or_intern_static("$tuple"));
         assert_eq!(Self::FEAT_BACKTRACE, rodeo.get_or_intern_static("backtrace"));
+        assert_eq!(Self::ATTR_ALIGN, rodeo.get_or_intern_static("align"));
         Self { rodeo }
     }
 }

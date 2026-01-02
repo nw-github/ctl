@@ -58,7 +58,7 @@ impl Configuration {
     pub fn is_disabled_by_attrs(&self, attrs: &Attributes) -> bool {
         attrs
             .iter()
-            .filter(|f| f.name.data == Strings::ATTR_FEATURE)
+            .filter(|f| f.name.data.is_str_eq(Strings::ATTR_FEATURE))
             .any(|v| v.props.iter().any(|v| !self.has_attr_features(v)))
     }
 
@@ -67,10 +67,11 @@ impl Configuration {
     }
 
     pub fn has_attr_features(&self, attr: &Attribute) -> bool {
-        if attr.name.data != Strings::ATTR_NOT || attr.props.is_empty() {
-            self.has_feature(attr.name.data)
+        if !attr.name.data.is_str_eq(Strings::ATTR_NOT) || attr.props.is_empty() {
+            let Some(name) = attr.name.data.as_str() else { return false; };
+            self.has_feature(*name)
         } else {
-            !attr.props.iter().any(|v| self.has_feature(v.name.data))
+            !attr.props.iter().flat_map(|v| v.name.data.as_str()).any(|v| self.has_feature(*v))
         }
     }
 

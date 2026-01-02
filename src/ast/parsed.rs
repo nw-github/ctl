@@ -275,7 +275,7 @@ pub struct Destructure {
     pub pattern: Located<Pattern>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct IntPattern {
     pub negative: bool,
     pub value: ComptimeInt,

@@ -13,8 +13,7 @@ use crate::{
         BitSizeResult, CInt, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, Type,
         TypeArgs, TypeId, Types,
     },
-    write_de,
-    writeln_de,
+    write_de, writeln_de,
 };
 
 #[macro_export]
@@ -3475,7 +3474,7 @@ struct BitfieldAccess {
     word: u32,
     /// The bit offset into the current word
     word_offset: u32,
-    /// The size in bits of each word in the bitfield (always <= MAX_ALIGN * 8)
+    /// The size in bits of each word in the bitfield (always <= MAX_SELF_ALIGN * 8)
     word_size_bits: u32,
 
     /// If reading a partial enum, this is the underlying integer tag type

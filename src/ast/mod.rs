@@ -1,5 +1,8 @@
+use std::borrow::Cow;
+
 use crate::{
-    intern::StrId,
+    ds::ComptimeInt,
+    intern::{StrId, Strings},
     lexer::{Located, Token},
 };
 use derive_more::{Deref, DerefMut, Display};
@@ -10,9 +13,28 @@ pub mod checked;
 pub mod declared;
 pub mod parsed;
 
+#[derive(Debug, Clone, enum_as_inner::EnumAsInner)]
+pub enum AttrName {
+    Str(StrId),
+    Int(ComptimeInt),
+}
+
+impl AttrName {
+    pub fn is_str_eq(&self, name: StrId) -> bool {
+        self.as_str().is_some_and(|&n| n == name)
+    }
+
+    pub fn as_str_data<'a>(&self, strings: &'a Strings) -> Cow<'a, str> {
+        match self {
+            AttrName::Str(id) => Cow::Borrowed(strings.resolve(id)),
+            AttrName::Int(int) => Cow::Owned(format!("{int}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Attribute {
-    pub name: Located<StrId>,
+    pub name: Located<AttrName>,
     pub props: Vec<Attribute>,
 }
 
@@ -29,13 +51,13 @@ impl Attributes {
     pub fn val(&self, name: StrId) -> Option<StrId> {
         self.attrs
             .iter()
-            .find(|attr| attr.name.data == name)
+            .find(|attr| attr.name.data.is_str_eq(name))
             .and_then(|attr| attr.props.first())
-            .map(|attr| attr.name.data)
+            .and_then(|attr| attr.name.data.as_str().copied())
     }
 
     pub fn has(&self, name: StrId) -> bool {
-        self.attrs.iter().any(|attr| attr.name.data == name)
+        self.attrs.iter().any(|attr| attr.name.data.is_str_eq(name))
     }
 }
 

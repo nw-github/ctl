@@ -1050,7 +1050,7 @@ impl<'a> TypeChecker<'a> {
 
                     let autouse_id = this.proj.strings.get_or_intern_static("autouse");
                     let std_id = this.proj.strings.get_or_intern_static("std");
-                    if stmt.attrs.iter().any(|attr| attr.name.data == autouse_id) {
+                    if stmt.attrs.iter().any(|attr| attr.name.data.is_str_eq(autouse_id)) {
                         let std = this.proj.scopes[ScopeId::ROOT]
                             .find_in_tns(std_id)
                             .and_then(|inner| inner.as_module().copied());
@@ -4576,9 +4576,19 @@ impl TypeChecker<'_> {
             return;
         }
 
+        let packed = self.proj.scopes.get(id).kind.is_packed_struct();
         for i in 0..self.proj.scopes.get(id).members.len() {
             let ty = resolve_type!(self, self.proj.scopes.get_mut(id).members[i].ty);
             set_interior_mutable(self, id, ty);
+            if packed
+                && matches!(
+                    ty.bit_size(&self.proj.scopes, &self.proj.types),
+                    BitSizeResult::NonEnum | BitSizeResult::Bad
+                )
+            {
+                let (name, mem) = self.proj.scopes.get(id).members.get_index(i).unwrap();
+                named_error!(self, Error::bitfield_member, name, mem.span)
+            }
         }
 
         if let Some(mut union) = self.proj.scopes.get(id).kind.as_union().cloned() {
@@ -4720,34 +4730,30 @@ impl TypeChecker<'_> {
                     check_ty!(ty, Error::recursive_type(strdata!(self, name), var.span, true));
                 }
             }
-        }
-
-        if let Some(mut kind) = self.proj.scopes.get(id).kind.as_packed_struct().cloned() {
+        } else if let Some(mut kind) = self.proj.scopes.get(id).kind.as_packed_struct().cloned() {
             let mut bits = 0;
+            let mut align = 1;
             for (&name, mem) in self.proj.scopes.get(id).members.iter() {
                 kind.bit_offsets.insert(name, bits);
                 // TODO:
                 // - allow ^mut
                 // - nested packed structs
                 match mem.ty.bit_size(&self.proj.scopes, &self.proj.types) {
-                    BitSizeResult::Tag(_, n) | BitSizeResult::Size(n) => bits += n,
-                    BitSizeResult::NonEnum => {
-                        named_error!(self, Error::bitfield_member, name, mem.span)
+                    BitSizeResult::Tag(_, n) | BitSizeResult::Size(n) => {
+                        bits += n;
+                        align =
+                            align.max(mem.ty.size_and_align(&self.proj.scopes, &self.proj.types).1);
                     }
-                    BitSizeResult::Bad => {
-                        named_error!(self, Error::bitfield_member, name, mem.span)
+                    BitSizeResult::NonEnum | BitSizeResult::Bad => {
+                        if canonical {
+                            named_error!(self, Error::bitfield_member, name, mem.span)
+                        }
                     }
                 }
             }
 
-            const MAX_ALIGN_BITS: u32 = crate::typeid::MAX_ALIGN as u32 * 8;
-            if bits <= MAX_ALIGN_BITS {
-                kind.size = crate::nearest_pow_of_two(bits) / 8;
-            } else {
-                kind.size = ((((bits / MAX_ALIGN_BITS) + 1) * MAX_ALIGN_BITS) / 8) as usize;
-            }
-            kind.align = kind.size.clamp(1, crate::typeid::MAX_ALIGN);
-
+            kind.align = self.proj.scopes.get(id).attrs.align.unwrap_or(align);
+            kind.size = crate::nearest_pow_of_two(bits) / 8;
             self.proj.scopes.get_mut(id).kind = UserTypeKind::PackedStruct(kind);
         }
 

@@ -2,7 +2,7 @@ use either::{Either, Either::*};
 
 use crate::{
     FormatLexer, FormatToken, Warning,
-    ast::{Alignment, Attribute, Attributes, Sign, UnaryOp, parsed::*},
+    ast::{Alignment, AttrName, Attribute, Attributes, Sign, UnaryOp, parsed::*},
     ds::ComptimeInt,
     error::{Diagnostics, Error, FileId},
     intern::{StrId, Strings},
@@ -390,8 +390,11 @@ impl<'a> Parser<'a> {
                     let name = Located::new(name.span, self.strings.get_or_intern(data));
                     let test = self.strings.get_or_intern_static("test");
                     attrs.push(Attribute {
-                        name: Located::nowhere(Strings::ATTR_FEATURE),
-                        props: vec![Attribute { name: Located::nowhere(test), props: vec![] }],
+                        name: Located::nowhere(AttrName::Str(Strings::ATTR_FEATURE)),
+                        props: vec![Attribute {
+                            name: Located::nowhere(AttrName::Str(test)),
+                            props: vec![],
+                        }],
                     });
                     name
                 } else {
@@ -1551,14 +1554,17 @@ impl<'a> Parser<'a> {
         let name = self.next();
         let span = name.span;
         let name = name.map(|data| match data {
-            Token::String(name) => self.strings.get_or_intern(name),
+            Token::String(name) => AttrName::Str(self.strings.get_or_intern(name)),
             Token::Ident(name) => {
                 props = true;
-                self.strings.get_or_intern(name)
+                AttrName::Str(self.strings.get_or_intern(name))
+            }
+            Token::Int { base, value, width: _ } => {
+                AttrName::Int(self.parse_int(base, value, span))
             }
             _ => {
                 self.error(Error::new("expected attribute name", span));
-                Strings::EMPTY
+                AttrName::Str(Strings::EMPTY)
             }
         });
 

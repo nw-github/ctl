@@ -407,8 +407,7 @@ impl Index<TypeId> for Types {
     }
 }
 
-// TODO
-pub const MAX_ALIGN: usize = core::mem::align_of::<usize>();
+pub const MAX_SELF_ALIGN: usize = core::mem::align_of::<u128>();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct TypeId(usize);
@@ -598,7 +597,7 @@ impl TypeId {
                     }
                 }
 
-                sa.next((0, sa.align));
+                sa.next((0, ut_data.attrs.align.unwrap_or(sa.align)));
                 return (sa.size, sa.align);
             }
             &Type::Array(ty, len) => {
@@ -608,8 +607,7 @@ impl TypeId {
             _ => 0,
         };
 
-        // assume self-alignment or 1 for 0 size types
-        (sz, sz.clamp(1, MAX_ALIGN))
+        (sz, sz.clamp(1, MAX_SELF_ALIGN))
     }
 
     pub fn bit_size(self, scopes: &Scopes, types: &Types) -> BitSizeResult {
