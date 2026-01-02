@@ -48,10 +48,12 @@ struct Arguments {
 
     /// View messages from the C compiler
     #[clap(action, short, long)]
+    #[arg(global = true)]
     verbose: bool,
 
     /// Minify the resulting C code
     #[clap(action, short, long)]
+    #[arg(global = true)]
     minify: bool,
 }
 
