@@ -6732,13 +6732,26 @@ impl TypeChecker<'_> {
                 res
             }
             PathOrigin::This(this_span) => {
-                if let Some(ty) = self.resolve_this_type(this_span)
-                    && !path.components.is_empty()
-                {
-                    return self.resolve_value_path_from_type(ty, &path.components, span);
+                let Some(this_ty) = self.resolve_this_type(this_span) else {
+                    return Default::default();
+                };
+
+                if !path.components.is_empty() {
+                    return self.resolve_value_path_from_type(this_ty, &path.components, span);
                 }
 
-                // TODO: allow This() to use struct/union constructor
+                if let Type::User(ut) = &self.proj.types[this_ty]
+                    && let UserTypeKind::Struct(cons) = self.proj.scopes.get(ut.id).kind
+                {
+                    let ut_id = ut.id;
+                    self.resolve_proto(cons);
+                    // Struct constructor never has type params of its own
+                    return ResolvedValue::Fn(GenericFn::new(
+                        cons,
+                        TypeArgs::unknown(&self.proj.scopes.get(ut_id).item),
+                    ));
+                }
+
                 named_error!(self, Error::no_symbol, Strings::THIS_TYPE, this_span)
             }
         }

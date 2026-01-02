@@ -500,12 +500,6 @@ impl<'a> Buffer<'a> {
             Type::FnPtr(_) => self.emit_mangled_name(id, min),
             Type::Fn(_) => self.emit_mangled_name(id, min),
             Type::User(ut) => {
-                if self.1.scopes.get(ut.id).kind.is_template() {
-                    eprintln!("ICE: Template type in emit_type");
-                    self.emit_str(self.1.scopes.get(ut.id).name.data);
-                    return;
-                }
-
                 if let Some(ty) = id.can_omit_tag(&self.1.scopes, &self.1.types) {
                     self.emit_type(ty, min);
                 } else {
