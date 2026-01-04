@@ -1100,7 +1100,6 @@ impl<'a> TypeChecker<'a> {
                 is_unsafe: _,
                 ref assoc_types,
             } => {
-                let lang_item = stmt.attrs.val(Strings::ATTR_LANG);
                 let (tr, fns, this_id) = self.enter(ScopeKind::None, |this| {
                     let impls = TraitImpls::Unchecked(
                         impls
@@ -1136,10 +1135,7 @@ impl<'a> TypeChecker<'a> {
                 });
 
                 let scope = tr.body_scope;
-                let id = self.insert::<UserTypeId>(tr, public, true);
-                if let Some(name) = lang_item {
-                    self.proj.scopes.lang_types.insert(name, id);
-                }
+                let id = self.insert_user_type(tr, public);
                 let imp = GenericTrait::from_type_params(&self.proj.scopes, &self.proj.types, id);
                 let impls = self.proj.scopes.get_mut(this_id).impls.as_unchecked_mut().unwrap();
                 impls.push(TraitImplData::Checked(imp));
@@ -1170,7 +1166,7 @@ impl<'a> TypeChecker<'a> {
                 });
 
                 let scope = ext.body_scope;
-                let id = self.insert::<UserTypeId>(ext, *public, true);
+                let id = self.insert_user_type(ext, *public);
                 self.proj.scopes[scope].kind = ScopeKind::UserType(id);
                 DStmt::Extension { id, impls: impl_blocks, fns }
             }
@@ -7284,6 +7280,20 @@ pub trait SharedStuff {
 
         exts.extend(get_tns_extensions(scopes, &self.proj().autouse_tns));
         exts.sort();
+
+        // TODO: this is a hack. ideally the order of extensions shouldn't matter but for now
+        // process this extension last so any other Debug impl will be recognized first
+        if let Some(dbg_idx) = self
+            .proj()
+            .scopes
+            .lang_types
+            .get(&Strings::FALLBACK_DBG)
+            .and_then(|id| exts.iter().position(|rhs| id == rhs))
+        {
+            let last = exts.len() - 1;
+            exts.swap(dbg_idx, last);
+        }
+
         exts
     }
 

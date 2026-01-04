@@ -42,6 +42,8 @@ pub extern fn ptr_sub_unsigned<T>(p: ^T, offs: uint): ^T;
 @(intrinsic)
 pub extern fn ptr_diff<T>(a: ^T, b: ^T): int;
 
+@(intrinsic)
+pub extern fn builtin_dbg<T>(self: *T, f: *mut std::fmt::Formatter);
 
 
 @(c_macro("CTL_MEMSET"))

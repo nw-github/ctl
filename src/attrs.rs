@@ -70,6 +70,7 @@ fn check_intrinsic(name: StrId, attr: &Attribute, proj: &mut Project) -> Option<
             | "max_value" | "min_value" | "unreachable_unchecked" | "type_id" | "type_name"
             | "read_volatile" | "write_volatile" | "source_location" | "ptr_add_signed"
             | "ptr_add_unsigned" | "ptr_sub_signed" | "ptr_sub_unsigned" | "ptr_diff"
+            | "builtin_dbg"
     ) {
         proj.diag.report(Error::new(format!("intrinsic '{data}' is not supported"), span));
         return None;

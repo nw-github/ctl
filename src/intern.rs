@@ -61,6 +61,8 @@ impl Strings {
     pub const TUPLE_NAME: StrId = invent_str_id(46);
     pub const FEAT_BACKTRACE: StrId = invent_str_id(47);
     pub const ATTR_ALIGN: StrId = invent_str_id(48);
+    pub const LANG_DEBUG: StrId = invent_str_id(49);
+    pub const FALLBACK_DBG: StrId = invent_str_id(50);
 
     pub fn new() -> Self {
         let mut rodeo = Rodeo::default();
@@ -112,6 +114,8 @@ impl Strings {
         assert_eq!(Self::TUPLE_NAME, rodeo.get_or_intern_static("$tuple"));
         assert_eq!(Self::FEAT_BACKTRACE, rodeo.get_or_intern_static("backtrace"));
         assert_eq!(Self::ATTR_ALIGN, rodeo.get_or_intern_static("align"));
+        assert_eq!(Self::LANG_DEBUG, rodeo.get_or_intern_static("fmt_debug"));
+        assert_eq!(Self::FALLBACK_DBG, rodeo.get_or_intern_static("fallback_debug"));
         Self { rodeo }
     }
 }

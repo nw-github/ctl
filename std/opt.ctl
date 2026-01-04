@@ -8,9 +8,7 @@ pub union Option<T> {
     pub fn as_ptr(this): ?*T => this is ?val then val;
     pub fn as_mut(mut this): ?*mut T => this is ?val then val;
 
-    pub fn get_or_insert(mut this, rhs: T): *mut T {
-        this is ?val then val else this.insert(rhs)
-    }
+    pub fn get_or_insert(mut this, rhs: T): *mut T => this is ?val then val else this.insert(rhs);
 
     pub fn insert(mut this, rhs: T): *mut T {
         // TODO: do this more efficiently without the unwrap
@@ -35,18 +33,6 @@ pub union Option<T> {
 }
 
 pub mod ext {
-    pub extension OptionDebug<T: std::fmt::Debug> for ?T {
-        impl std::fmt::Debug {
-            fn dbg(this, f: *mut std::fmt::Formatter) {
-                if this is ?rhs {
-                    write(f, "Some({rhs:?})");
-                } else {
-                    write(f, "null");
-                }
-            }
-        }
-    }
-
     pub extension OptionCopied<T /*: Copy */> for ?*T {
         pub fn copied(my this): ?T => this is ?val then *val;
     }
@@ -64,9 +50,7 @@ pub mod ext {
             }
         }
 
-        pub fn ==(this, rhs: *T): bool {
-            this is ?lhs and lhs == rhs
-        }
+        pub fn ==(this, rhs: *T): bool => this is ?lhs and lhs == rhs;
     }
 
     pub extension OptionFlatten<T> for ??T {

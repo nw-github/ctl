@@ -1,3 +1,4 @@
+@(lang(fmt_write))
 pub trait Write {
     fn write_str(mut this, data: str);
     fn write_char(mut this, data: char) => this.write_str(data.encode_utf8(&mut [0; 4]));
@@ -140,6 +141,7 @@ pub union Sign { None, Plus, Minus }
 
 pub union Align { None, Left, Right, Center }
 
+@(align(8))
 pub packed struct Options {
     pub width: u16   = 0,     // {val:10}     width    = 10
     pub prec:  u16   = 0,     // {val:.5}     prec     = 5
@@ -289,6 +291,13 @@ pub mod ext {
     pub extension FmtPointerMutPtr<T> for *mut T {
         impl Pointer {
             fn ptr(this, f: *mut Formatter) => (*this as ^T).dbg(f);
+        }
+    }
+
+    @(lang(fallback_debug))
+    pub extension FallbackDebug<T> for T {
+        impl Debug {
+            fn dbg(this, f: *mut Formatter) => std::intrin::builtin_dbg(this, f);
         }
     }
 }

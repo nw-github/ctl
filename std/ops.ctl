@@ -6,16 +6,6 @@ pub union Ordering: i8 {
 
     pub fn ==(this, rhs: *Ordering): bool => *this as i8 == *rhs as i8;
     pub fn <=>(this, rhs: *Ordering): Ordering => *this as i8 <=> *rhs as i8;
-
-    impl std::fmt::Debug {
-        fn dbg(this, f: *mut std::fmt::Formatter) {
-            match this {
-                :Less => "Less".fmt(f),
-                :Greater => "Greater".fmt(f),
-                :Equal => "Equal".fmt(f),
-            }
-        }
-    }
 }
 
 @(lang(op_cmp))
