@@ -195,3 +195,83 @@ pub fn s2d(buffer: [u8..]): Result<f64, ParseError> {
         << d2s::DOUBLE_MANTISSA_BITS) | ieee_m2;
     :Ok(f64::from_bits(ieee))
 }
+
+// https://github.com/dtolnay/ryu/blob/master/tests/s2d_test.rs
+mod test {
+    use super::ParseError;
+
+    unittest "bad input" {
+        assert_eq(ParseError::MalformedInput, super::s2d("x".as_bytes()).unwrap_err());
+        assert_eq(ParseError::MalformedInput, super::s2d("1..1".as_bytes()).unwrap_err());
+        assert_eq(ParseError::MalformedInput, super::s2d("..".as_bytes()).unwrap_err());
+        assert_eq(ParseError::MalformedInput, super::s2d("1..1".as_bytes()).unwrap_err());
+        assert_eq(ParseError::MalformedInput, super::s2d("1ee1".as_bytes()).unwrap_err());
+        assert_eq(ParseError::MalformedInput, super::s2d("1e.1".as_bytes()).unwrap_err());
+        assert_eq(ParseError::InputTooShort,  super::s2d("".as_bytes()).unwrap_err());
+        assert_eq(ParseError::InputTooLong,   super::s2d("123456789012345678".as_bytes()).unwrap_err());
+        assert_eq(ParseError::InputTooLong,   super::s2d("1e12345".as_bytes()).unwrap_err());
+    }
+
+    unittest "basic" {
+        assert_eq(0.0, f64::parse("0").unwrap());
+        assert_eq(-0.0, f64::parse("-0").unwrap());
+        assert_eq(1.0, f64::parse("1").unwrap());
+        assert_eq(2.0, f64::parse("2").unwrap());
+        assert_eq(123456789.0, f64::parse("123456789").unwrap());
+        assert_eq(123.456, f64::parse("123.456").unwrap());
+        assert_eq(123.456, f64::parse("123456e-3").unwrap());
+        assert_eq(123.456, f64::parse("1234.56e-1").unwrap());
+        assert_eq(1.453, f64::parse("1.453").unwrap());
+        assert_eq(1453.0, f64::parse("1.453e+3").unwrap());
+        assert_eq(0.0, f64::parse(".0").unwrap());
+        assert_eq(1.0, f64::parse("1e0").unwrap());
+        assert_eq(1.0, f64::parse("1E0").unwrap());
+        assert_eq(1.0, f64::parse("000001.000000").unwrap());
+        assert_eq(0.2316419, f64::parse("0.2316419").unwrap());
+    }
+
+    unittest "min max" {
+        assert_eq(1.7976931348623157e308, f64::parse("1.7976931348623157e308").unwrap());
+        assert_eq(5E-324, f64::parse("5E-324").unwrap());
+    }
+
+    unittest "mantissa rounding overflow" {
+        // This results in binary mantissa that is all ones and requires rounding up
+        // because it is closer to 1 than to the next smaller float. This is a
+        // regression test that the mantissa overflow is handled correctly by
+        // increasing the exponent.
+        assert_eq(1.0, f64::parse("0.99999999999999999").unwrap());
+        // This number overflows the mantissa *and* the IEEE exponent.
+        assert_eq(f64::inf(), f64::parse("1.7976931348623159e308").unwrap());
+    }
+
+    unittest "underflow" {
+        assert_eq(0.0, f64::parse("2.4e-324").unwrap());
+        assert_eq(0.0, f64::parse("1e-324").unwrap());
+        assert_eq(0.0, f64::parse("9.99999e-325").unwrap());
+        // These are just about halfway between 0 and the smallest float.
+        // The first is just below the halfway point, the second just above.
+        assert_eq(0.0, f64::parse("2.4703282292062327e-324").unwrap());
+        assert_eq(5e-324, f64::parse("2.4703282292062328e-324").unwrap());
+    }
+
+    unittest "overflow" {
+        assert_eq(f64::inf(), f64::parse("2e308").unwrap());
+        assert_eq(f64::inf(), f64::parse("1e309").unwrap());
+    }
+
+    unittest "table size denormal" {
+        assert_eq(5e-324, f64::parse("4.9406564584124654e-324").unwrap());
+    }
+
+    unittest "issue157" {
+        assert_eq(1.2999999999999999E+154, f64::parse("1.2999999999999999E+154").unwrap());
+    }
+
+    unittest "issue173" {
+        // Denormal boundary
+        assert_eq(2.2250738585072012e-308, f64::parse("2.2250738585072012e-308").unwrap());
+        assert_eq(2.2250738585072013e-308, f64::parse("2.2250738585072013e-308").unwrap());
+        assert_eq(2.2250738585072014e-308, f64::parse("2.2250738585072014e-308").unwrap());
+    }
+}

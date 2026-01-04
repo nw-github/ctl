@@ -329,3 +329,35 @@ pub extension U32Impl for u32 {
     pub fn from_ne_bytes(bytes: [u8; 4]): u32 => unsafe std::mem::bit_cast(bytes);
     pub fn from_be_bytes(bytes: [u8; 4]): u32 => unsafe std::mem::bit_cast::<[u8; 4], u32>(bytes).swap_bytes();
 }
+
+mod test {
+    unittest "format numeric bounds" {
+        assert_eq("{i32::min_value()}".to_str(), "-2147483648");
+        assert_eq("{i32::max_value()}".to_str(), "2147483647");
+        assert_eq("{u32::max_value()}".to_str(), "4294967295");
+
+        assert_eq("{i64::min_value()}".to_str(), "-9223372036854775808");
+        assert_eq("{i64::max_value()}".to_str(), "9223372036854775807");
+        assert_eq("{u64::max_value()}".to_str(), "18446744073709551615");
+
+        assert_eq("{i65::min_value()}".to_str(), "-18446744073709551616");
+        assert_eq("{i65::max_value()}".to_str(), "18446744073709551615");
+        assert_eq("{u65::max_value()}".to_str(), "36893488147419103231");
+
+        assert_eq("{-0x1_0000_0000_0000_0000i65}".to_str(), "-18446744073709551616");
+        assert_eq("{ 0x0_ffff_ffff_ffff_ffffi65}".to_str(), "18446744073709551615");
+        assert_eq("{ 0x1_ffff_ffff_ffff_ffffu65}".to_str(), "36893488147419103231");
+    }
+
+    unittest "div overflow" {
+        let [a, b] = [i2::min_value(), -1];
+        let x = a.checked_div(b);
+        let y = a.wrapping_div(b);
+        let z = a.overflowing_div(b);
+
+        assert_eq(x, null);
+        assert_eq(y, -2);
+        assert_eq(z.0, -2);
+        assert_eq(z.1, true);
+    }
+}

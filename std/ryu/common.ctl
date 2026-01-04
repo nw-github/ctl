@@ -2,6 +2,8 @@ pub union ParseError {
     InputTooShort,
     InputTooLong,
     MalformedInput,
+
+    pub fn ==(this, rhs: *ParseError): bool => *this as u2 == *rhs as u2;
 }
 
 // Returns e == 0 ? 1 : ceil(log_2(5^e)); requires 0 <= e <= 3528.
