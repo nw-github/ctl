@@ -229,13 +229,13 @@ pub struct StringBuilder {
     pub fn into_str(my this): str => unsafe str::from_utf8_unchecked(this.buffer[..]);
 }
 
-pub fn write<T: Write, U: Format>(write: *mut T, args: U) {
-    args.fmt(&mut Formatter::new(write))
+pub fn write<T: Write, U: Format>(f: *mut T, args: U) {
+    args.fmt(&mut Formatter::new(f))
 }
 
-pub fn writeln<T: Write, U: Format>(write: *mut T, args: U) {
-    args.fmt(&mut Formatter::new(write));
-    write.write_char('\n');
+pub fn writeln<T: Write, U: Format>(f: *mut T, args: U) {
+    args.fmt(&mut Formatter::new(f));
+    f.write_char('\n')
 }
 
 pub mod ext {

@@ -201,6 +201,10 @@ pub struct Vec<T> {
         }
     }
 
+    impl std::fmt::Debug {
+        fn dbg(this, f: *mut std::fmt::Formatter) => this[..].dbg(f);
+    }
+
     @(inline(always))
     pub fn []<I: Integral>(this, idx: I): *T => &this[..][idx];
 

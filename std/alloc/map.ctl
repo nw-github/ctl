@@ -125,7 +125,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         if this.get(key) is ?item {
             item
         } else {
-            panic("attempt to retrieve invalid key");
+            panic("attempt to retrieve invalid key '{key:?}'");
         }
     }
 
@@ -133,7 +133,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         if this.get_mut(key) is ?item {
             item
         } else {
-            panic("attempt to retrieve invalid key");
+            panic("attempt to retrieve invalid key '{key:?}'");
         }
     }
 
@@ -169,6 +169,19 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
 
     pub fn []=(mut this, key: K, val: V) {
         this.insert(key, val);
+    }
+
+    impl std::fmt::Debug {
+        fn dbg(this, f: *mut std::fmt::Formatter) {
+            f.write_str("[");
+            for (i, (key, value)) in this.iter().enumerate() {
+                if i > 0 {
+                    f.write_str(", ");
+                }
+                write(f, "{key:?}: {value:?}");
+            }
+            f.write_str("]");
+        }
     }
 }
 

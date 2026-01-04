@@ -40,8 +40,6 @@ mod prelude {
 
     @(feature(alloc))
     pub use super::alloc::collections::*;
-    @(feature(alloc))
-    pub use super::alloc::ext::*;
     @(feature(io))
     pub use super::io::*;
 }

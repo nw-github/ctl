@@ -1,5 +1,7 @@
 use std::range::RangeBounds;
 use std::reflect::*;
+use std::fmt::Debug;
+use std::fmt::Formatter;
 
 @(lang(span))
 pub struct Span<T> {
@@ -57,6 +59,19 @@ pub struct Span<T> {
         } else {
             let (start, end) = range_bounds(range, this.len);
             panic("invalid range {start}..{end} in span of len {this.len}");
+        }
+    }
+
+    impl Debug {
+        fn dbg(this, f: *mut Formatter) {
+            f.write_char('[');
+            for (i, item) in this.iter().enumerate() {
+                if i > 0 {
+                    f.write_str(", ");
+                }
+                write(f, "{item:?}");
+            }
+            f.write_char(']');
         }
     }
 }
@@ -167,6 +182,10 @@ pub struct SpanMut<T> {
             num: subspan.len(),
         );
     }
+
+    impl Debug {
+        fn dbg(this, f: *mut Formatter) => this.as_span().dbg(f);
+    }
 }
 
 pub struct Iter<T> {
@@ -226,10 +245,9 @@ fn range_bounds<R: RangeBounds<uint>>(range: R, len: uint): (uint, uint) {
 pub mod ext {
     use std::ops::Eq;
     use std::ops::Cmp;
+    use std::ops::Ordering;
     use std::hash::Hash;
     use std::hash::Hasher;
-    use std::fmt::Debug;
-    use std::fmt::Formatter;
 
     pub extension SpanEq<T: Eq<T>> for [T..] {
         pub fn ==(this, rhs: *[T..]): bool {
@@ -245,10 +263,12 @@ pub mod ext {
 
             true
         }
+
+        pub fn ==(this, rhs: *[mut T..]): bool => this == rhs.as_span();
     }
 
     pub extension SpanCmp<T: Cmp<T>> for [T..] {
-        pub fn <=>(this, rhs: *[T..]): std::ops::Ordering {
+        pub fn <=>(this, rhs: *[T..]): Ordering {
             for (l, r) in this.iter().zip(rhs.iter()) {
                 let ord = l <=> r;
                 if ord != :Equal {
@@ -258,6 +278,8 @@ pub mod ext {
 
             this.len().cmp(&rhs.len())
         }
+
+        pub fn <=>(this, rhs: *[mut T..]): Ordering => this <=> rhs.as_span();
     }
 
     pub extension SpanHash<T: Hash> for [T..] {
@@ -278,10 +300,12 @@ pub mod ext {
 
     pub extension SpanMutEq<T: Eq<T>> for [mut T..] {
         pub fn ==(this, rhs: *[T..]): bool => this.as_span() == rhs;
+        pub fn ==(this, rhs: *[mut T..]): bool => this.as_span() == rhs.as_span();
     }
 
     pub extension SpanMutCmp<T: Cmp<T>> for [mut T..] {
-        pub fn <=>(this, rhs: *[T..]): std::ops::Ordering => this.as_span().cmp(rhs);
+        pub fn <=>(this, rhs: *[T..]): Ordering => this.as_span() <=> rhs;
+        pub fn <=>(this, rhs: *[mut T..]): Ordering => this.as_span() <=> rhs.as_span();
 
         pub fn sort(this) {
             guard !this.is_empty() else {
@@ -301,29 +325,6 @@ pub mod ext {
             this.swap(part_idx, end);
             this[0u..part_idx].sort();
             this[part_idx + 1..].sort();
-        }
-    }
-
-    pub extension SpanDebug<T: Debug> for [T..] {
-        impl Debug {
-            fn dbg(this, f: *mut Formatter) {
-                f.write_char('[');
-                for (i, item) in this.iter().enumerate() {
-                    if i > 0 {
-                        f.write_str(", ");
-                    }
-                    write(f, "{item:?}");
-                }
-                f.write_char(']');
-            }
-        }
-    }
-
-    pub extension SpanMutDebug<T: Debug> for [mut T..] {
-        impl Debug {
-            fn dbg(this, f: *mut Formatter) {
-                this.as_span().dbg(f)
-            }
         }
     }
 }

@@ -65,9 +65,7 @@ pub extension ArrayImpl<A: Array<T>, T> for A {
 
     @(inline(always))
     pub fn []=<R: RangeBounds<uint>>(mut this, r: R, rhs: [T..]) => this.as_span_mut()[r] = rhs;
-}
 
-pub extension ArrayDebug<A: Array<T>, T: std::fmt::Debug> for A {
     impl std::fmt::Debug {
         @(inline(always))
         fn dbg(this, f: *mut std::fmt::Formatter) => this[..].dbg(f);

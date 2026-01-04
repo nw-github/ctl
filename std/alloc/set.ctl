@@ -7,40 +7,19 @@ use std::iter::FromIter;
 pub struct Set<T: Hash + Eq<T>> {
     inner: [T: void],
 
-    pub fn new(): This {
-        Set(inner: Map::new())
-    }
-
-    pub fn with_capacity(cap: uint): This {
-        Set(inner: Map::with_capacity(cap:))
-    }
+    pub fn new(): This => This(inner: Map::new());
+    pub fn with_capacity(cap: uint): This => This(inner: Map::with_capacity(cap:));
 
     /// Returns true if the key was not previously in the set
-    pub fn insert(mut this, key: T): bool {
-        this.inner.insert(key, {}) is null
-    }
+    pub fn insert(mut this, key: T): bool => this.inner.insert(key, {}) is null;
+    pub fn remove(mut this, key: *T): bool => this.inner.remove(key).is_some();
 
-    pub fn remove(mut this, key: *T): bool {
-        this.inner.remove(key).is_some()
-    }
+    pub fn clear(mut this) => this.inner.clear();
 
-    pub fn clear(mut this) {
-        this.inner.clear()
-    }
-
-    pub fn contains(this, key: *T): bool {
-        this.inner.contains(key)
-    }
-
-    pub fn len(this): uint {
-        this.inner.len()
-    }
-
-    pub fn is_empty(this): bool => this.inner.len() == 0;
-
-    pub fn iter(this): std::alloc::map::Keys<T, void> {
-        this.inner.keys()
-    }
+    pub fn contains(this, key: *T): bool => this.inner.contains(key);
+    pub fn len(this): uint => this.inner.len();
+    pub fn is_empty(this): bool => this.inner.is_empty();
+    pub fn iter(this): std::alloc::map::Keys<T, void> => this.inner.keys();
 
     impl FromIter<T> {
         fn from_iter<I: Iterator<T>>(iter: I): This {
@@ -49,6 +28,19 @@ pub struct Set<T: Hash + Eq<T>> {
                 self.insert(i);
             }
             self
+        }
+    }
+
+    impl std::fmt::Debug {
+        fn dbg(this, f: *mut std::fmt::Formatter) {
+            f.write_str("#[");
+            for (i, item) in this.iter().enumerate() {
+                if i > 0 {
+                    f.write_str(", ");
+                }
+                write(f, "{item:?}");
+            }
+            f.write_str("]");
         }
     }
 }
