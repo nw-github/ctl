@@ -31,6 +31,15 @@ extension Helpers for str {
         num
     }
 
+    fn is_all_digits(this): bool {
+        for ch in this.chars() {
+            if !ch.is_ascii_digit() {
+                return false;
+            }
+        }
+        true
+    }
+
     fn read_len_prefixed(mut this): ?str {
         let len = this.take_digits()?;
         let text = this.substr(..len)?;
@@ -75,7 +84,16 @@ pub struct MaybeMangledName {
                 mut wrote = false;
                 write(f, "(");
                 while !name.is_empty() {
-                    This::demangle_len_prefixed(name, f, ", ", &mut wrote, is_type: true)?;
+                    if wrote {
+                        write(f, ", ");
+                    }
+
+                    let member = name.read_len_prefixed()?.substr(1u..)?;
+                    if !member.is_all_digits() {
+                        write(f, "{member}: ");
+                    }
+
+                    This::demangle_len_prefixed(name, f, "", &mut wrote, is_type: true)?;
                 }
                 write(f, ")");
             }

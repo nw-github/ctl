@@ -564,8 +564,12 @@ impl<'a> Buffer<'a> {
             }
         } else if ty.kind.is_tuple() {
             write_de!(self, "L");
-            for (_name, member) in ty.members.iter() {
-                // TODO: tuple names
+            for (name, member) in ty.members.iter() {
+                self.write_len_prefixed(&Buffer::format(self.1, |data| {
+                    data.emit("_");
+                    data.emit(self.1.strings.resolve(name));
+                }));
+
                 self.write_len_prefixed(&Buffer::format(self.1, |data| {
                     data.emit_mangled_name(
                         member.ty.with_templates(&self.1.types, &ut.ty_args),
