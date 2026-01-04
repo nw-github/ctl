@@ -42,10 +42,12 @@ extension Helpers for str {
 pub struct MaybeMangledName {
     func: ?[u8..],
 
+    pub fn new(func: str): This => This(func: func.as_bytes());
+
     fn demangle_type_name(name: *mut str, f: *mut std::fmt::Formatter): ?void {
         match name.advance()? {
             'v' => write(f, "void"),
-            'n' => write(f, "never"),
+            'V' => write(f, "never"),
             'i' => write(f, "i{name}"),
             'u' => write(f, "u{name}"),
             'c' => write(f, "c_{name}"),
@@ -86,6 +88,7 @@ pub struct MaybeMangledName {
                 write(f, ") => ");
                 This::demangle_type_name(name, f)?;
             }
+            'n' => write(f, "{This(func: name.read_len_prefixed()?.as_bytes())}"),
             _ => null,
         }
     }

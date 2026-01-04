@@ -79,6 +79,40 @@ impl TypeGen {
         writeln_de!(buffer, ");");
     }
 
+    fn gen_fn(buffer: &mut Buffer, flags: &CodegenFlags, func: &GenericFn) {
+        let f = buffer.1.scopes.get(func.id);
+        let types = &buffer.1.types;
+        let ret = f.ret.with_templates(types, &func.ty_args);
+
+        write_de!(buffer, "typedef ");
+        if ret.is_void_like() {
+            write_de!(buffer, "void");
+        } else {
+            buffer.emit_type(ret, flags.minify);
+        }
+        write_de!(buffer, "(*");
+        buffer.emit_fn_type_name(func, flags.minify);
+        write_de!(buffer, ")(");
+
+        for (i, param) in f.params.iter().enumerate() {
+            if i > 0 {
+                write_de!(buffer, ",");
+            }
+
+            let param = param.ty.with_templates(types, &func.ty_args);
+            if i == 0 && !f.is_extern && types[param].is_safe_ptr() {
+                if types[param].is_ptr() {
+                    buffer.emit("void const*");
+                } else {
+                    buffer.emit("void*");
+                }
+            } else {
+                buffer.emit_type(param, flags.minify);
+            }
+        }
+        writeln_de!(buffer, ");");
+    }
+
     fn gen_vtable_info(flags: &CodegenFlags, buf: &mut Buffer, tr: UserTypeId) {
         // TODO: not sure if losing type information on the vtables will affect optimization in any
         // way. if it does, we can go back to emitting full vtable structs per trait.
@@ -199,12 +233,10 @@ impl TypeGen {
     }
 
     fn emit(&self, decls: &mut Buffer, flags: &CodegenFlags) {
-        let types = &decls.1.types;
-        let scopes = &decls.1.scopes;
         let mut traits = HashSet::new();
         let mut defs = Buffer::new(decls.1);
-        self.types.visit_all(|&id| match &types[id] {
-            Type::Fn(f) => Self::gen_fnptr(&mut defs, flags, &f.as_fn_ptr(scopes, types)),
+        self.types.visit_all(|&id| match &decls.1.types[id] {
+            Type::Fn(f) => Self::gen_fn(&mut defs, flags, f),
             Type::FnPtr(f) => Self::gen_fnptr(&mut defs, flags, f),
             Type::User(ut) => Self::gen_usertype(flags, decls, &mut defs, ut),
             Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
@@ -415,7 +447,7 @@ impl<'a> Buffer<'a> {
     fn emit_mangled_name(&mut self, id: TypeId, min: bool) {
         match &self.1.types[id] {
             Type::Void => write_de!(self, "v"),
-            Type::Never => write_de!(self, "n"),
+            Type::Never => write_de!(self, "V"),
             Type::Int(bits) => write_de!(self, "i{bits}"),
             Type::Uint(bits) => write_de!(self, "u{bits}"),
             Type::CInt(inner) => write_de!(self, "c{inner:#}"),
@@ -451,7 +483,7 @@ impl<'a> Buffer<'a> {
                 self.emit_type_name(tr, min);
             }
             Type::FnPtr(f) => self.emit_fnptr_name(f, min),
-            Type::Fn(f) => self.emit_fnptr_name(&f.as_fn_ptr(&self.1.scopes, &self.1.types), min),
+            Type::Fn(f) => self.emit_fn_type_name(f, min),
             Type::User(ut) => self.emit_type_name(ut, min),
             &Type::Array(ty, len) => self.emit_array_struct_name(ty, len, min),
             Type::Unknown => {
@@ -462,6 +494,11 @@ impl<'a> Buffer<'a> {
                 panic!("ICE: TypeId::Unresolved in emit_generic_mangled_name")
             }
         }
+    }
+
+    fn emit_fn_type_name(&mut self, f: &GenericFn, min: bool) {
+        self.emit("n");
+        self.write_len_prefixed(&Buffer::format(self.1, |buf| buf.emit_fn_name(f, min)));
     }
 
     fn emit_fnptr_name(&mut self, f: &FnPtr, min: bool) {
