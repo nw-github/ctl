@@ -4,11 +4,11 @@ use crate::{
     CodegenFlags, Diagnostics, Span,
     ast::{Attribute, Attributes},
     ds::{DependencyGraph, HashMap},
+    format::{FmtTy, FmtUt},
     intern::{StrId, Strings},
-    sym::{FunctionId, Scopes, TypeItem, UserTypeId, ValueItem, VariableId, Vis},
+    sym::{FunctionId, ScopeId, Scopes, TypeItem, UserTypeId, ValueItem, VariableId, Vis},
     typecheck::{Completions, LspItem},
     typeid::{GenericUserType, TypeId, Types},
-    format::{FmtTy, FmtUt},
 };
 
 #[derive(Default)]
@@ -19,6 +19,7 @@ pub struct Project {
     pub completions: Option<Completions>,
     pub lsp_items: Option<Vec<(LspItem, Span)>>,
     pub main: Option<FunctionId>,
+    pub main_module: Option<ScopeId>,
     pub panic_handler: Option<FunctionId>,
     pub test_runner: Option<FunctionId>,
     pub deps: DependencyGraph<TypeId>,
@@ -45,6 +46,12 @@ impl Project {
 }
 
 #[derive(Debug, Clone)]
+pub struct TestArgs {
+    pub test: Option<String>,
+    pub modules: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Configuration {
     features: HashSet<StrId>,
     pub flags: CodegenFlags,
@@ -52,6 +59,7 @@ pub struct Configuration {
     pub libs: Option<Vec<String>>,
     pub name: Option<String>,
     pub no_std: bool,
+    pub test_args: Option<TestArgs>,
 }
 
 impl Configuration {
@@ -68,7 +76,9 @@ impl Configuration {
 
     pub fn has_attr_features(&self, attr: &Attribute) -> bool {
         if !attr.name.data.is_str_eq(Strings::ATTR_NOT) || attr.props.is_empty() {
-            let Some(name) = attr.name.data.as_str() else { return false; };
+            let Some(name) = attr.name.data.as_str() else {
+                return false;
+            };
             self.has_feature(*name)
         } else {
             !attr.props.iter().flat_map(|v| v.name.data.as_str()).any(|v| self.has_feature(*v))
@@ -100,6 +110,7 @@ impl Default for Configuration {
             build: None,
             libs: None,
             name: None,
+            test_args: None,
             no_std: false,
         }
     }

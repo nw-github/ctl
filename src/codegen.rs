@@ -1105,10 +1105,15 @@ impl<'a> Codegen<'a> {
     }
 
     fn gen_test_main(&mut self) {
-        let dummy_state = &mut State::new(
-            GenericFn::from_id(&self.proj.scopes, FunctionId::RESERVED),
-            ScopeId::ROOT,
-        );
+        fn find_module(proj: &Project, wanted: &str) -> Option<ScopeId> {
+            let mut scope = ScopeId::ROOT;
+            for part in wanted.split("::") {
+                let part = proj.strings.get(part)?;
+                let child = proj.scopes[scope].find_in_tns(part)?;
+                scope = *child.id.as_module()?;
+            }
+            Some(scope)
+        }
 
         hoist_point!(self, {
             let test_info_id = self.proj.strings.get("test_info").unwrap();
@@ -1120,9 +1125,33 @@ impl<'a> Codegen<'a> {
             self.buffer.emit(" tests[]={");
 
             let runner = State::from_non_generic(self.proj.test_runner.unwrap(), &self.proj.scopes);
+
+            let mut modules = vec![];
+            if let Some(args) = &self.proj.conf.test_args
+                && let Some(wanted) = &args.modules
+            {
+                modules.extend(wanted.iter().flat_map(|m| find_module(self.proj, m)));
+            } else {
+                modules.push(self.proj.main_module.unwrap());
+            }
+
             let mut test_count = 0;
             for (id, func) in self.proj.scopes.functions().filter(|f| f.1.typ.is_test()) {
-                let state = State::from_non_generic(id, &self.proj.scopes);
+                if let Some(args) = &self.proj.conf.test_args
+                    && let Some(name) = &args.test
+                    && name != self.proj.strings.resolve(&func.name.data)
+                {
+                    continue;
+                } else if !self
+                    .proj
+                    .scopes
+                    .walk(func.scope)
+                    .any(|(scope, _)| modules.contains(&scope))
+                {
+                    continue;
+                }
+
+                let mut state = State::from_non_generic(id, &self.proj.scopes);
                 write_de!(
                     self.buffer,
                     "{{.skip={},.name={},.module={},.test=",
@@ -1148,7 +1177,7 @@ impl<'a> Codegen<'a> {
                 } else {
                     Expr::option_null(skip_reason_ty, &mut self.arena)
                 };
-                self.emit_expr_inline(opt, dummy_state);
+                self.emit_expr_inline(opt, &mut state);
                 write_de!(self.buffer, "}},");
 
                 self.funcs.insert(state);

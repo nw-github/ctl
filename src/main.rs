@@ -3,7 +3,7 @@ use clap::{Args, Parser, Subcommand, ValueHint};
 use colored::Colorize;
 use ctl::{
     CachingSourceProvider, Compiler, Configuration, Diagnostics, Error, FileId, LspBackend,
-    OffsetMode, SourceProvider, UnloadedProject, intern::Strings,
+    OffsetMode, SourceProvider, TestArgs, UnloadedProject, intern::Strings,
 };
 use std::{
     ffi::OsString,
@@ -50,11 +50,6 @@ struct Arguments {
     #[clap(action, short, long)]
     #[arg(global = true)]
     verbose: bool,
-
-    /// Minify the resulting C code
-    #[clap(action, short, long)]
-    #[arg(global = true)]
-    minify: bool,
 }
 
 #[derive(Args)]
@@ -119,6 +114,10 @@ enum SubCommand {
         /// Print the code in test mode
         #[clap(action, short, long)]
         test: bool,
+
+        /// Minify the resulting C code
+        #[clap(action, short, long)]
+        minify: bool,
     },
     #[clap(alias = "b")]
     Build {
@@ -149,6 +148,12 @@ enum SubCommand {
     Test {
         #[clap(flatten)]
         build: BuildOrRun,
+
+        #[clap(short, long)]
+        test: Option<String>,
+
+        #[clap(short, long)]
+        modules: Vec<String>,
     },
     Lsp,
 }
@@ -395,7 +400,7 @@ fn main() -> Result<()> {
     let mut conf = Configuration::default();
     conf.flags.no_bit_int = args.no_bit_int;
     conf.flags.lib = args.shared.unwrap_or(conf.flags.lib);
-    conf.flags.minify = args.minify;
+    conf.flags.minify = matches!(args.command, SubCommand::Print { minify: true, .. });
     conf.no_std = args.no_std;
     if args.leak {
         conf.remove_feature(Strings::FEAT_BOEHM);
@@ -408,6 +413,13 @@ fn main() -> Result<()> {
 
     if let SubCommand::Test { .. } | SubCommand::Print { test: true, .. } = &args.command {
         proj.conf.set_feature(Strings::FEAT_TEST);
+    }
+
+    if let SubCommand::Test { test, modules, .. } = &args.command {
+        proj.conf.test_args = Some(TestArgs {
+            test: test.clone(),
+            modules: (!modules.is_empty()).then(|| modules.clone()),
+        });
     }
 
     let result = Compiler::new().parse(proj)?.typecheck(None).build();
@@ -434,7 +446,7 @@ fn main() -> Result<()> {
             }
         }
         SubCommand::Build { build } => _ = compile_results(&result, build, conf, args.verbose)?,
-        SubCommand::Test { build } => {
+        SubCommand::Test { build, .. } => {
             execute_binary(
                 &compile_results(&result, build, conf, args.verbose)?,
                 None,

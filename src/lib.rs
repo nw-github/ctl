@@ -17,6 +17,7 @@ mod typeid;
 use std::path::{Path, PathBuf};
 
 pub use project::Configuration;
+pub use project::TestArgs;
 
 use crate::{
     ast::checked::ExprArena as CExprArena,

@@ -379,6 +379,7 @@ impl<'a> TypeChecker<'a> {
             this.check_stmt(stmt);
         }
 
+        this.proj.main_module = Some(last_scope);
         this.proj.main =
             this.proj.scopes[last_scope].vns.get(&Strings::MAIN).and_then(|id| id.as_fn()).copied();
         if !this.proj.conf.flags.lib && !this.proj.conf.has_feature(Strings::FEAT_TEST) {
