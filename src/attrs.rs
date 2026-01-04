@@ -199,6 +199,14 @@ impl UserTypeAttrs {
                         continue;
                     };
 
+                    if !ival.is_power_of_two() {
+                        proj.diag.report(Error::new(
+                            format!("alignment '{int}' is not a power of two"),
+                            attr.name.span,
+                        ));
+                        continue;
+                    }
+
                     this.align = Some(ival);
                 }
                 _ => unrecognized(attr, proj),
