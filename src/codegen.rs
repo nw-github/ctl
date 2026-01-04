@@ -2698,7 +2698,7 @@ impl<'a> Codegen<'a> {
                         }
                         writeln_de!(self.buffer, "break;}}");
                     }
-                    writeln_de!(self.buffer, "}}");
+                    writeln_de!(self.buffer, "default:CTL_UNREACHABLE();}}");
                     return;
                 }
 
