@@ -602,7 +602,7 @@ impl<'a> Buffer<'a> {
                 self.emit_mangled_name(ty, min);
             }
         } else {
-            write_de!(self, "_CTL");
+            write_de!(self, "CTL$");
             self.scope_emit_mangled_name(f.body_scope, &func.ty_args);
         }
     }

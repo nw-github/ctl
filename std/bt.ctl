@@ -167,7 +167,7 @@ pub struct MaybeMangledName {
                 return write(f, "??");
             }
 
-            guard base.strip_prefix("_CTL") is ?mut name else {
+            guard base.strip_prefix("CTL$") is ?mut name else {
                 return write(f, base);
             }
 
