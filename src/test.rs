@@ -105,7 +105,7 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
     };
     let output: Vec<_> = stdout.trim().split('\n').map(|s| s.trim()).collect();
     if output != expected {
-        Err(format!("expected '{}', got '{}'", expected.join("\n"), output.join("\n"),))?;
+        Err(format!("expected '{}', got '{}'", expected.join("\n"), output.join("\n")))?;
     }
     Ok(())
 }

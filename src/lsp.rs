@@ -1097,7 +1097,7 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
                     }
                     let label = strings.resolve(&param.label);
                     if param.keyword {
-                        write_de!(text, "{label}: ${{{}:{label}}}", i + 1,);
+                        write_de!(text, "{label}: ${{{}:{label}}}", i + 1);
                     } else {
                         write_de!(text, "${{{}:{label}}}", i + 1);
                     }

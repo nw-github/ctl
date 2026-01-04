@@ -1,4 +1,7 @@
-use std::{fmt::Display, path::{Path, PathBuf}};
+use std::{
+    fmt::Display,
+    path::{Path, PathBuf},
+};
 
 use tower_lsp::lsp_types::{Position, Range};
 
@@ -319,7 +322,7 @@ impl Warning {
 
     pub fn unnecessary_fallible_cast(src: impl Display, dst: impl Display, span: Span) -> Error {
         Self::new(
-            format!("cast from type '{src}' to '{dst}' is infallible and may use an `as` cast",),
+            format!("cast from type '{src}' to '{dst}' is infallible and may use an `as` cast"),
             span,
         )
     }

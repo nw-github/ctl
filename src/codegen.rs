@@ -114,8 +114,6 @@ impl TypeGen {
     }
 
     fn gen_vtable_info(flags: &CodegenFlags, buf: &mut Buffer, tr: UserTypeId) {
-        // TODO: not sure if losing type information on the vtables will affect optimization in any
-        // way. if it does, we can go back to emitting full vtable structs per trait.
         let Some(Dependencies::Resolved(deps)) = buf.1.trait_deps.get(&tr) else {
             panic!(
                 "ICE: Dyn pointer for trait '{}' has invalid dependencies",
@@ -247,17 +245,17 @@ impl TypeGen {
             &Type::Int(bits) if bits != 0 => {
                 let nearest = nearest_pow_of_two(bits);
                 if flags.no_bit_int || nearest == bits as usize {
-                    writeln_de!(decls, "typedef int{nearest}_t s{bits};",);
+                    writeln_de!(decls, "typedef int{nearest}_t s{bits};");
                 } else {
-                    writeln_de!(decls, "typedef _BitInt({bits}) s{bits};",);
+                    writeln_de!(decls, "typedef _BitInt({bits}) s{bits};");
                 }
             }
             &Type::Uint(bits) if bits != 0 => {
                 let nearest = nearest_pow_of_two(bits);
                 if flags.no_bit_int || nearest == bits as usize {
-                    write_de!(decls, "typedef uint{nearest}_t u{bits};");
+                    writeln_de!(decls, "typedef uint{nearest}_t u{bits};");
                 } else {
-                    write_de!(decls, "typedef unsigned _BitInt({bits}) u{bits};");
+                    writeln_de!(decls, "typedef unsigned _BitInt({bits}) u{bits};");
                 }
             }
             &Type::Array(ty, len) => {
@@ -504,9 +502,7 @@ impl<'a> Buffer<'a> {
     fn emit_fnptr_name(&mut self, f: &FnPtr, min: bool) {
         write_de!(self, "N");
         for &param in f.params.iter() {
-            let mut buf = Buffer::new(self.1);
-            buf.emit_mangled_name(param, min);
-            self.write_len_prefixed(&buf.finish());
+            self.write_len_prefixed(&Buffer::format(self.1, |b| b.emit_mangled_name(param, min)));
         }
         write_de!(self, "n");
         self.emit_mangled_name(f.ret, min);
@@ -570,9 +566,12 @@ impl<'a> Buffer<'a> {
             write_de!(self, "L");
             for (_name, member) in ty.members.iter() {
                 // TODO: tuple names
-                let mut data = Buffer::new(self.1);
-                data.emit_mangled_name(member.ty.with_templates(&self.1.types, &ut.ty_args), false);
-                self.write_len_prefixed(&data.finish());
+                self.write_len_prefixed(&Buffer::format(self.1, |data| {
+                    data.emit_mangled_name(
+                        member.ty.with_templates(&self.1.types, &ut.ty_args),
+                        false,
+                    );
+                }));
             }
         } else {
             write_de!(self, "T");
@@ -657,31 +656,29 @@ impl<'a> Buffer<'a> {
                 &ScopeKind::UserType(id) => {
                     let ut = self.1.scopes.get(id);
                     if let Some(imp) = imp.take().and_then(|i| ut.impls.get_checked(i)) {
-                        let mut name = Buffer::new(self.1);
-                        name.emit_type_name(&imp.with_templates(&self.1.types, ty_args), false);
-
-                        let mut data = Buffer::new(self.1);
-                        write_de!(data, "I");
-                        data.write_len_prefixed(&name.finish());
-                        parts.push(data.finish());
+                        let name = Buffer::format(self.1, |name| {
+                            name.emit_type_name(&imp.with_templates(&self.1.types, ty_args), false);
+                        });
+                        parts.push(Buffer::format(self.1, |data| {
+                            write_de!(data, "I");
+                            data.write_len_prefixed(&name);
+                        }));
                     } else if let Some(this) =
                         ut.kind.as_trait().and_then(|(this, _, _)| ty_args.get(this))
                     {
-                        let mut name = Buffer::new(self.1);
-                        name.emit_mangled_name(*this, false);
-
-                        let mut data = Buffer::new(self.1);
-                        write_de!(data, "S");
-                        data.write_len_prefixed(&name.finish());
-                        parts.push(data.finish());
+                        let name = Buffer::format(self.1, |b| b.emit_mangled_name(*this, false));
+                        parts.push(Buffer::format(self.1, |data| {
+                            write_de!(data, "S");
+                            data.write_len_prefixed(&name);
+                        }));
                     }
                     parts.push(self.raw_get_mangled_name(id, ty_args));
                 }
                 &ScopeKind::Impl(i) => imp = Some(i),
                 ScopeKind::Module(name) => {
-                    let mut data = Buffer::new(self.1);
-                    data.write_len_prefixed(self.1.strings.resolve(&name.data));
-                    parts.push(data.finish());
+                    parts.push(Buffer::format(self.1, |data| {
+                        data.write_len_prefixed(self.1.strings.resolve(&name.data));
+                    }));
                 }
                 _ => {}
             }
@@ -719,9 +716,7 @@ impl<'a> Buffer<'a> {
                 write_de!(buffer, "G");
             }
 
-            let mut data = Buffer::new(self.1);
-            data.emit_mangled_name(ty, false);
-            buffer.write_len_prefixed(&data.finish());
+            buffer.write_len_prefixed(&Buffer::format(self.1, |d| d.emit_mangled_name(ty, false)));
             wrote = true;
         }
 

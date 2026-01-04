@@ -2144,7 +2144,7 @@ impl TypeChecker<'_> {
 
     fn check_unary(&mut self, expr: CExpr, op: UnaryOp, span: Span) -> CExpr {
         let Some(&(trait_name, fn_name)) = self.tables.unary_op_traits.get(&op) else {
-            bail!(self, Error::invalid_operator(op, self.proj.fmt_ty(expr.ty), span,));
+            bail!(self, Error::invalid_operator(op, self.proj.fmt_ty(expr.ty), span));
         };
 
         let Some(tr_id) = self.proj.scopes.lang_types.get(&trait_name).copied() else {
@@ -2455,7 +2455,7 @@ impl TypeChecker<'_> {
                         } else {
                             bail!(
                                 self,
-                                Error::invalid_operator(op, self.proj.fmt_ty(expr.ty), span,)
+                                Error::invalid_operator(op, self.proj.fmt_ty(expr.ty), span)
                             );
                         }
                     }
@@ -5740,7 +5740,7 @@ impl TypeChecker<'_> {
                 UserTypeKind::Struct(_) | UserTypeKind::Union(_) | UserTypeKind::Tuple
             )
         }) else {
-            bail!(self, Error::bad_destructure(self.proj.fmt_ty(scrutinee), span,));
+            bail!(self, Error::bad_destructure(self.proj.fmt_ty(scrutinee), span));
         };
         let ut_id = ut.id;
         self.resolve_members(ut_id);
