@@ -12,6 +12,11 @@ pub extension RawImpl<T> for ^T {
 
     pub unsafe fn read(my this): T => unsafe *this;
     pub unsafe fn read_volatile(my this): T => unsafe std::ptr::read_volatile(this);
+    pub unsafe fn read_unaligned(my this): T {
+        mut buf: T;
+        unsafe std::mem::copy(dst: &raw mut buf, src: this, num: 1);
+        buf
+    }
 
     @(intrinsic(unary_op))
     pub fn ++(mut this) { (*this)++; }
@@ -46,10 +51,14 @@ pub extension RawMutImpl<T> for ^mut T {
     pub fn sub_ptr(my this, rhs: ^T): int => intrin::ptr_diff(this, rhs);
 
     pub unsafe fn read(my this): T => unsafe *this;
-    pub unsafe fn write(my this, val: T) => unsafe *this = val;
-
     pub unsafe fn read_volatile(my this): T => unsafe std::ptr::read_volatile(this);
+    pub unsafe fn read_unaligned(my this): T => unsafe (this as ^T).read_unaligned();
+
+    pub unsafe fn write(my this, val: T) => unsafe *this = val;
     pub unsafe fn write_volatile(my this, val: T) => unsafe std::ptr::write_volatile(this, val);
+    pub unsafe fn write_unaligned(my this, val: T) {
+        unsafe std::mem::copy(dst: this, src: &raw val, num: 1);
+    }
 
     pub unsafe fn replace(my this, val: T): T {
         unsafe {

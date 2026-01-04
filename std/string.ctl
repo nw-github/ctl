@@ -10,39 +10,15 @@ pub struct str {
 
     pub fn from_utf8(span: [u8..]): ?str {
         mut iter = span.iter();
-        while iter.next() is ?byte0 {
-            let len = utf8::sequence_length(*byte0)?;
-            mut cp = *byte0 as u32;
-            match len {
-                1 => {},
-                2 => {
-                    let byte1 = *iter.next()?;
-                    cp = ((cp << 6) & 0x7ff) + (byte1 as u32 & 0x3f);
-                }
-                3 => {
-                    let byte1 = *iter.next()?;
-                    let byte2 = *iter.next()?;
-                    cp = ((cp << 12) & 0xffff) + ((byte1 as u32 << 6) & 0xfff);
-                    cp += byte2 as u32 & 0x3f;
-                }
-                4 => {
-                    let byte1 = *iter.next()?;
-                    let byte2 = *iter.next()?;
-                    let byte3 = *iter.next()?;
-                    cp = ((cp << 18) & 0x1fffff) + ((byte1 as u32 << 12) & 0x3ffff);
-                    cp += (byte2 as u32 << 6) & 0xfff;
-                    cp += byte3 as u32 & 0x3f;
-                }
-                _ => unsafe std::hint::unreachable_unchecked(),
-            }
-
-            if char::from_u32(cp)?.len_utf8() != len {
-                // Overlong sequence
-                return null;
-            }
+        while iter.next() is ?lead {
+            utf8::next_char(&mut iter, *lead)?;
         }
-
         unsafe str::from_utf8_unchecked(span)
+    }
+
+    @(feature(alloc))
+    pub fn from_utf8_lossy(span: [u8..], replacement: char = char::replacement_marker()): str {
+        LossyChars(iter: span.iter(), replacement:).into_str()
     }
 
     pub unsafe fn from_utf8_unchecked(span: [u8..]): str => str(span:);
@@ -171,37 +147,8 @@ pub struct Chars {
 
     impl Iterator<char> {
         fn next(mut this): ?char {
-            unsafe if this.s.get(0) is ?lead {
-                mut cp = *lead as u32;
-                match utf8::sequence_length(*lead) {
-                    ?1 => {
-                        this.s = this.s.subspan_unchecked(1u..);
-                    }
-                    ?2 => {
-                        cp = ((cp << 6) & 0x7ff) + (*this.s.get_unchecked(1) as u32 & 0x3f);
-                        this.s = this.s.subspan_unchecked(2u..);
-                    }
-                    ?3 => {
-                        cp = (
-                            (cp << 12) & 0xffff) +
-                            ((*this.s.get_unchecked(1) as u32 << 6) & 0xfff
-                        );
-                        cp += *this.s.get_unchecked(2) as u32 & 0x3f;
-                        this.s = this.s.subspan_unchecked(3u..);
-                    }
-                    ?4 => {
-                        cp = (
-                            (cp << 18) & 0x1fffff) +
-                            ((*this.s.get_unchecked(1) as u32 << 12) & 0x3ffff
-                        );
-                        cp += (*this.s.get_unchecked(2) as u32 << 6) & 0xfff;
-                        cp += *this.s.get_unchecked(3) as u32 & 0x3f;
-                        this.s = this.s.subspan_unchecked(4u..);
-                    }
-                    _ => std::hint::unreachable_unchecked()
-                }
-
-                char::from_u32_unchecked(cp)
+            if this.s.get(0) is ?lead {
+                unsafe utf8::next_char_unchecked(&mut this.s, *lead)
             }
         }
     }
@@ -241,6 +188,27 @@ pub struct Utf16 {
     }
 }
 
+pub struct LossyChars {
+    iter: std::span::Iter<u8>,
+    replacement: char,
+
+    @(feature(alloc))
+    pub fn into_str(my this): str {
+        mut builder = std::fmt::StringBuilder::new();
+        for ch in this {
+            builder.write_str(ch.encode_utf8(&mut [0; 4]));
+        }
+        builder.into_str()
+    }
+
+    impl Iterator<char> {
+        fn next(mut this): ?char {
+            let lead = this.iter.next()?;
+            utf8::next_char(&mut this.iter, *lead) ?? this.replacement
+        }
+    }
+}
+
 mod utf8 {
     // From the Rust standard library:
     // This is bit magic equivalent to: b < 128 or b >= 192
@@ -259,9 +227,73 @@ mod utf8 {
             null
         }
     }
+
+    pub fn next_char<I: Iterator<*u8>>(iter: *mut I, byte0: u8): ?char {
+        let len = sequence_length(byte0)?;
+        mut cp = byte0 as u32;
+        match len {
+            1 => {}
+            2 => {
+                let byte1 = *iter.next()?;
+                cp = ((cp << 6) & 0x7ff) + (byte1 as u32 & 0x3f);
+            }
+            3 => {
+                let byte1 = *iter.next()?;
+                let byte2 = *iter.next()?;
+                cp = ((cp << 12) & 0xffff) + ((byte1 as u32 << 6) & 0xfff);
+                cp += byte2 as u32 & 0x3f;
+            }
+            4 => {
+                let byte1 = *iter.next()?;
+                let byte2 = *iter.next()?;
+                let byte3 = *iter.next()?;
+                cp = ((cp << 18) & 0x1fffff) + ((byte1 as u32 << 12) & 0x3ffff);
+                cp += (byte2 as u32 << 6) & 0xfff;
+                cp += byte3 as u32 & 0x3f;
+            }
+            _ => unsafe std::hint::unreachable_unchecked(),
+        }
+
+        let ch = char::from_u32(cp)?;
+        if ch.len_utf8() != len {
+            return null; // Overlong sequence
+        }
+        ch
+    }
+
+    pub unsafe fn next_char_unchecked(bytes: *mut [u8..], byte0: u8): char {
+        mut cp = byte0 as u32;
+        unsafe match sequence_length(byte0) {
+            ?1 => {
+                *bytes = bytes.subspan_unchecked(1u..);
+            }
+            ?2 => {
+                cp = ((cp << 6) & 0x7ff) + (*bytes.get_unchecked(1) as u32 & 0x3f);
+                *bytes = bytes.subspan_unchecked(2u..);
+            }
+            ?3 => {
+                cp = ((cp << 12) & 0xffff) + ((*bytes.get_unchecked(1) as u32 << 6) & 0xfff);
+                cp += *bytes.get_unchecked(2) as u32 & 0x3f;
+                *bytes = bytes.subspan_unchecked(3u..);
+            }
+            ?4 => {
+                cp = ((cp << 18) & 0x1fffff) + ((*bytes.get_unchecked(1) as u32 << 12) & 0x3ffff);
+                cp += (*bytes.get_unchecked(2) as u32 << 6) & 0xfff;
+                cp += *bytes.get_unchecked(3) as u32 & 0x3f;
+                *bytes = bytes.subspan_unchecked(4u..);
+            }
+            _ => std::hint::unreachable_unchecked()
+        }
+
+        unsafe char::from_u32_unchecked(cp)
+    }
 }
 
 unittest "from_utf8 overlong encoding" {
     assert_eq(str::from_utf8(b"\xc0\xaf\xc1\x81"[..]), null); // Overlong encoding of '/A'
     assert_eq(str::from_utf8(b"\x2f\x41"[..]), "/A");
+}
+
+unittest "from_utf8_lossy" {
+    assert_eq(str::from_utf8_lossy(b"AB\xc0\xafC\xc1\x81D"[..]), "AB�C�D");
 }
