@@ -80,6 +80,8 @@
 #  endif
 
 #  define CTL_DEINIT(f) static void f(void)
+
+#  define CTL_ALIGN(expr) __declspec(align(expr))
 #else
 #  define CTL_NONNULL(...) __attribute__((nonnull(__VA_ARGS__)))
 #  define CTL_DUMMY_INIT
@@ -115,6 +117,8 @@
 
 #  define CTL_INIT(f)   static __attribute__((constructor)) void f(void)
 #  define CTL_DEINIT(f) static __attribute__((destructor)) void f(void)
+
+#  define CTL_ALIGN(expr) __attribute__((aligned(expr)))
 
 #  if defined(__clang__) && __clang_major__ < 14
 #    define _BitInt(x) _ExtInt(x)

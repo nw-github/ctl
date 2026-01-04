@@ -407,8 +407,6 @@ impl Index<TypeId> for Types {
     }
 }
 
-pub const MAX_SELF_ALIGN: usize = core::mem::align_of::<u128>();
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct TypeId(usize);
 
@@ -532,6 +530,7 @@ impl TypeId {
     pub fn size_and_align(self, scopes: &Scopes, types: &Types) -> (usize, usize) {
         let sz = match &types[self] {
             Type::Int(0) | Type::Uint(0) => 0,
+            Type::Int(128) | Type::Uint(128) => return (16, core::mem::align_of::<u128>()),
             Type::Int(bits) | Type::Uint(bits) => nearest_pow_of_two(*bits) / 8,
             Type::CInt(inner) | Type::CUint(inner) => inner.size(),
             Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_) | Type::RawMutPtr(_) => {
@@ -607,7 +606,7 @@ impl TypeId {
             _ => 0,
         };
 
-        (sz, sz.clamp(1, MAX_SELF_ALIGN))
+        (sz, sz.clamp(1, core::mem::align_of::<*const ()>()))
     }
 
     pub fn bit_size(self, scopes: &Scopes, types: &Types) -> BitSizeResult {

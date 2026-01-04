@@ -199,9 +199,9 @@ impl UserTypeAttrs {
                         continue;
                     };
 
-                    if !ival.is_power_of_two() {
+                    if ival == 0 || !ival.is_power_of_two() {
                         proj.diag.report(Error::new(
-                            format!("alignment '{int}' is not a power of two"),
+                            format!("alignment '{int}' is not a non-zero power of two"),
                             attr.name.span,
                         ));
                         continue;

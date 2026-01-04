@@ -184,6 +184,10 @@ impl TypeGen {
         }
 
         write_de!(defs, "{decltype} ");
+        if let Some(align) = ut_data.attrs.align {
+            write_de!(defs, "CTL_ALIGN({align}) ");
+        }
+
         defs.emit_type_name(ut, flags.minify);
         write_de!(defs, "{{");
 
@@ -209,12 +213,8 @@ impl TypeGen {
                 }
             }
             UserTypeKind::PackedStruct(data) => {
-                writeln_de!(
-                    defs,
-                    "u{} {ARRAY_DATA_NAME}[{}];",
-                    data.align * 8,
-                    data.size / data.align
-                );
+                let align = data.align.min(8);
+                writeln_de!(defs, "u{} {ARRAY_DATA_NAME}[{}];", align * 8, data.size / align);
             }
             _ => {
                 if members.is_empty() {
@@ -352,7 +352,7 @@ impl TypeGen {
                         }
                     }
                     UserTypeKind::PackedStruct(data) => {
-                        dependency!(types.insert(Type::Uint(data.align as u32 * 8)))
+                        dependency!(types.insert(Type::Uint(data.align.min(8) as u32 * 8)))
                     }
                     _ => {}
                 }
@@ -3447,7 +3447,7 @@ impl<'a> Codegen<'a> {
         mut f: impl FnMut(&mut Self, BitfieldAccess),
     ) {
         let bf = self.proj.scopes.get(id).kind.as_packed_struct().unwrap();
-        let word_size_bits = (bf.align * 8) as u32;
+        let word_size_bits = (bf.align.min(8) * 8) as u32;
         let (bits, enum_tag) = match ty.bit_size(&self.proj.scopes, &self.proj.types) {
             BitSizeResult::Size(n) => (n, None),
             BitSizeResult::Tag(tag, n) => (n, Some(tag)),
