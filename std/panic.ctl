@@ -120,6 +120,7 @@ fn panic_handler(args: Arguments, loc: SourceLocation): never {
         let bt = std::bt::Backtrace::capture();
         for (i, addr) in bt.iter().enumerate() {
             if addr.symbolicate() is ?{func, file, line, col, offs} {
+                let func = func ?? std::bt::MaybeMangledName::new("??");
                 eprintln("{i:>5}: {func} + {offs:#x} [{addr.addr():#x}]\n{"":<8}at {file ?? "??"}:{line}:{col}");
             } else {
                 eprintln("{i:>5}: ?? [{addr.addr():#x}]");

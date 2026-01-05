@@ -36,6 +36,7 @@ pub struct str {
     pub fn as_raw(this): ^u8 => this.span.as_raw();
     pub fn as_bytes(this): [u8..] => this.span;
 
+    pub fn bytes(this): std::span::Iter<u8> => this.as_bytes().iter();
     pub fn chars(this): Chars => Chars(s: this.as_bytes());
     pub fn char_indices(this): CharIndices => CharIndices(chars: this.chars());
     pub fn utf16(this): Utf16 => Utf16(chars: this.chars(), trail: null);
@@ -296,4 +297,14 @@ unittest "from_utf8 overlong encoding" {
 
 unittest "from_utf8_lossy" {
     assert_eq(str::from_utf8_lossy(b"AB\xc0\xafC\xc1\x81D"[..]), "AB�C�D");
+}
+
+pub mod ext {
+    use super::LossyChars;
+
+    pub extension LossyCharIter for [u8..] {
+        pub fn iter_chars_lossy(this, replacement: char = char::replacement_marker()): LossyChars {
+            LossyChars(iter: this.iter(), replacement:)
+        }
+    }
 }

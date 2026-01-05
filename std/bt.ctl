@@ -49,7 +49,7 @@ extension Helpers for str {
 }
 
 pub struct MaybeMangledName {
-    func: ?[u8..],
+    func: [u8..],
 
     pub fn new(func: str): This => This(func: func.as_bytes());
 
@@ -106,7 +106,7 @@ pub struct MaybeMangledName {
                 write(f, ") => ");
                 This::demangle_type_name(name, f)?;
             }
-            'n' => write(f, "{This(func: name.read_len_prefixed()?.as_bytes())}"),
+            'n' => write(f, "{This::new(name.read_len_prefixed()?)}"),
             _ => null,
         }
     }
@@ -158,20 +158,22 @@ pub struct MaybeMangledName {
 
     impl std::fmt::Format {
         fn fmt(this, f: *mut std::fmt::Formatter) {
-            guard this.func is ?base else {
-                return write(f, "??");
-            }
+            use std::string::ext::*;
 
-            guard str::from_utf8(base) is ?base else {
-                // TODO: write lossy
-                return write(f, "??");
+            guard str::from_utf8(this.func) is ?base else {
+                for ch in this.func.iter_chars_lossy() {
+                    f.write_char(ch);
+                }
+                return;
             }
 
             guard base.strip_prefix("CTL$") is ?mut name else {
                 return write(f, base);
             }
 
-            _ = This::demangle_name(&mut name, f);
+            if This::demangle_name(&mut name, f) is null {
+                write(f, "??");
+            }
         }
     }
 }
@@ -180,7 +182,7 @@ pub struct SymbolInfo {
     pub file: ?str,
     pub line: u32,
     pub col:  u32,
-    pub func: MaybeMangledName,
+    pub func: ?MaybeMangledName,
     pub offs: uint, // Offset from the function start
 }
 
@@ -199,20 +201,20 @@ pub struct Call {
             let line = dwfl_getsrc(dwfl, addr)?;
             let file = dwfl_lineinfo(line, &mut addr, &mut lineno, &mut colno, null, null)?;
 
-            mut func: ?[u8..] = null;
+            mut func: ?MaybeMangledName = null;
             mut sym: Elf64_Sym;
             mut offs = 0u;
             if dwfl_addrmodule(dwfl, addr) is ?module and
                 dwfl_module_addrinfo(module, addr, &mut offs, &mut sym, null, null, null) is ?sym
             {
-                func = ?Span::new(sym.cast(), std::intrin::strlen(sym));
+                func = MaybeMangledName(func: Span::new(sym.cast(), std::intrin::strlen(sym)));
             }
 
             SymbolInfo(
                 file: str::from_cstr(file),
                 line: lineno as! u32,
                 col: colno as! u32,
-                func: MaybeMangledName(func:),
+                func:,
                 offs:
             )
         }
