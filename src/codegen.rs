@@ -3240,9 +3240,7 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit(full_name(self.proj, var.scope, var.name.data));
             }
         } else {
-            if is_c_reserved_ident(strdata!(self, var.name.data)) {
-                write_de!(self.buffer, "$");
-            }
+            write_de!(self.buffer, "$");
             self.buffer.emit_str(var.name.data);
             match state.emitted_names.entry(var.name.data) {
                 Entry::Occupied(entry) if *entry.get() == id => {}
