@@ -1208,8 +1208,10 @@ impl<'a> Parser<'a> {
             self.block_expr(token.span, None)
         };
 
-        self.arena
-            .expr(head.span.extended_to(body.span), ExprData::Lambda { params, ret, moves, body })
+        let span = head.span.extended_to(body.span);
+        let _expr = ExprData::Lambda { params, ret, moves, body };
+        self.error_no_sync(Error::new("closures are not yet supported", span));
+        self.arena.expr(head.span.extended_to(body.span), ExprData::Error)
     }
 
     //
