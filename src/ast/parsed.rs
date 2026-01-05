@@ -32,17 +32,26 @@ impl std::fmt::Display for PathOrigin {
 }
 
 #[derive(Clone)]
-pub enum UsePathTail {
-    All,
-    Ident(Located<StrId>),
+pub enum UsePathOrigin {
+    Root(Span),
+    Super(Span),
+    Here,
+}
+
+#[derive(Clone)]
+pub enum UsePathComponent {
+    Multi(Vec<UsePathComponent>),
+    Ident { ident: Located<StrId>, next: Option<Box<UsePathComponent>> },
+    Rename { ident: Located<StrId>, new_name: Located<StrId> },
+    All(Span),
+    Error,
 }
 
 #[derive(Clone)]
 pub struct UsePath {
     pub public: bool,
-    pub origin: PathOrigin,
-    pub components: Vec<Located<StrId>>,
-    pub tail: UsePathTail,
+    pub origin: UsePathOrigin,
+    pub component: UsePathComponent,
 }
 
 #[derive(Clone)]

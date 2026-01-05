@@ -4,9 +4,9 @@ use crate::{
     Located,
     ast::parsed::{
         Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path, Pattern,
-        Stmt, StmtData, Struct, TypeHint, UsePath, UsePathTail, Variant,
+        Stmt, StmtData, Struct, TypeHint, Variant,
     },
-    format::{FmtHint, FmtPath, FmtPatt},
+    format::{FmtHint, FmtPath, FmtPatt, FmtUsePath},
     intern::{StrId, Strings},
 };
 
@@ -190,29 +190,14 @@ impl Pretty<'_> {
                     &[str!(self, name, LOCATED), bool!(public), bool!(resolved)],
                 );
             }
-            StmtData::Use(UsePath { public, origin, components, tail }) => {
+            StmtData::Use(path) => {
                 self.print_header(
                     &tabs,
                     "Stmt::Use",
-                    &[
-                        bool!(public),
-                        HeaderVar::Named(
-                            "value",
-                            format!(
-                                "{origin}{}::{}",
-                                components
-                                    .iter()
-                                    .map(|x| self.strings.resolve(&x.data))
-                                    .collect::<Vec<_>>()
-                                    .join("::"),
-                                if let UsePathTail::Ident(ident) = tail {
-                                    self.strings.resolve(&ident.data)
-                                } else {
-                                    "*"
-                                }
-                            ),
-                        ),
-                    ],
+                    &[HeaderVar::Named(
+                        "value",
+                        format!("{}", FmtUsePath::new(self.strings, path)),
+                    )],
                 );
             }
             StmtData::Error => {}

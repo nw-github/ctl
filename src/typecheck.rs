@@ -9,7 +9,7 @@ use crate::{
             FormatOpts as CFormatSpec, Pattern as CPattern, PatternData, RestPattern,
             Stmt as CStmt,
         },
-        declared::{Fn as DFn, ImplBlock as DImplBlock, Stmt as DStmt},
+        declared::{Fn as DFn, ImplBlock as DImplBlock, Stmt as DStmt, UsePath as DUsePath},
         parsed::{
             Expr as PExpr, ExprArena as PExprArena, ExprData as PExprData, Pattern, Stmt as PStmt,
             StmtData as PStmtData, *,
@@ -1201,10 +1201,20 @@ impl<'a> TypeChecker<'a> {
                     value,
                 }
             }
-            PStmtData::Use(stmt) => {
-                if matches!(stmt.tail, UsePathTail::All) || self.resolve_use(stmt, true).is_err() {
-                    self.proj.scopes[self.current].use_stmts.push(stmt.clone());
-                }
+            PStmtData::Use(path) => {
+                let scope = match path.origin {
+                    UsePathOrigin::Root(_) => Some(ScopeId::ROOT),
+                    UsePathOrigin::Super(span) => {
+                        if let Some(scope) = self.get_super(span) {
+                            Some(scope)
+                        } else {
+                            return DStmt::None;
+                        }
+                    }
+                    UsePathOrigin::Here => None,
+                };
+
+                self.resolve_use(path.public, scope, &path.component, false, true);
                 DStmt::None
             }
             &PStmtData::Let { ty, value, ref patt } => DStmt::Let { ty, value, patt: patt.clone() },
@@ -1543,9 +1553,7 @@ impl TypeChecker<'_> {
             for id in this.proj.scopes.walk(this.current).map(|(id, _)| id).collect::<Vec<_>>() {
                 this.enter_id(id, |this| {
                     for stmt in std::mem::take(&mut this.proj.scopes[this.current].use_stmts) {
-                        if let Err(err) = this.resolve_use(&stmt, false) {
-                            named_error!(this, Error::no_symbol, err.data, err.span)
-                        }
+                        this.resolve_use(stmt.public, stmt.scope, &stmt.comp, stmt.in_type, false);
                     }
                 });
             }
@@ -6238,123 +6246,62 @@ impl TypeChecker<'_> {
         }
     }
 
-    fn resolve_use(&mut self, path: &UsePath, declaring: bool) -> Result<(), Located<StrId>> {
-        enum CheckResult {
-            NotFound,
-            BadType,
-            Next(ScopeId),
-        }
-
-        fn check(
-            this: &mut TypeChecker,
-            val: Option<&TypeItem>,
-            span: Span,
-            last: bool,
-            in_type: &mut bool,
-        ) -> CheckResult {
-            match val {
-                Some(&TypeItem::Module(next)) => {
-                    this.check_hover(span, next.into());
-                    CheckResult::Next(next)
-                }
-                Some(&TypeItem::Type(id)) => {
-                    *in_type = true;
-                    this.check_hover(span, id.into());
-                    if !last {
-                        this.proj.diag.report(Error::new("expected module name", span));
-                        CheckResult::BadType
-                    } else {
-                        CheckResult::Next(this.proj.scopes.get(id).body_scope)
-                    }
-                }
-                _ => CheckResult::NotFound,
-            }
-        }
-
-        fn can_import_value_item(this: &TypeChecker, item: ValueItem, in_type: bool) -> bool {
+    fn resolve_use(
+        &mut self,
+        public: bool,
+        scope: Option<ScopeId>,
+        comp: &UsePathComponent,
+        mut in_type: bool,
+        declaring: bool,
+    ) {
+        let can_import_value_item = |this: &Self, item: ValueItem| -> bool {
             !in_type
                 || item
                     .as_fn()
                     .and_then(|id| this.proj.scopes.get(*id).constructor)
                     .is_some_and(|ut| this.proj.scopes.get(ut).kind.is_union())
-        }
-
-        let mut components = &path.components[..];
-        let mut in_type = false;
-        let mut scope = match path.origin {
-            PathOrigin::Root(_) => ScopeId::ROOT,
-            PathOrigin::Super(span) => {
-                if let Some(scope) = self.get_super(span) {
-                    scope
-                } else {
-                    return Ok(());
-                }
-            }
-            PathOrigin::Normal => 'out: {
-                if let Some((first, rest)) = components.split_first() {
-                    let value = self.find_in_tns(first.data).map(|i| i.id);
-                    match check(self, value.as_ref(), first.span, rest.is_empty(), &mut in_type) {
-                        CheckResult::BadType => return Ok(()),
-                        CheckResult::NotFound => {}
-                        CheckResult::Next(next) => {
-                            components = rest;
-                            break 'out next;
-                        }
-                    }
-                }
-                ScopeId::ROOT
-            }
-            PathOrigin::Infer(_) => unreachable!("Infer origin in use path"),
-            PathOrigin::This(_) => unreachable!("This origin in use path"),
         };
 
-        for (i, comp) in components.iter().enumerate() {
-            if !declaring {
-                self.enter_id_and_resolve(scope, |_| {});
+        let resolve_later = |this: &mut Self, ident: Option<Located<StrId>>| {
+            if declaring {
+                this.proj.scopes[this.current].use_stmts.push(DUsePath {
+                    public,
+                    in_type,
+                    scope,
+                    comp: comp.clone(),
+                });
+            } else if let Some(ident) = ident {
+                named_error!(this, Error::no_symbol, ident.data, ident.span)
             }
+        };
 
-            let item = self.proj.scopes[scope].find_in_tns(comp.data);
-            if let Some(item) = item
-                && !item.public
-                && !self.can_access_privates(scope)
-            {
-                named_error!(self, Error::private, comp.data, comp.span)
-            }
+        let import = |this: &mut Self, name: Located<StrId>, new_name: Located<StrId>| {
+            let Some(scope) = scope else {
+                return this.error(Error::new("cannot import from the current scope", name.span));
+            };
 
-            match check(self, item.as_deref(), comp.span, i == components.len() - 1, &mut in_type) {
-                CheckResult::NotFound => return Err(*comp),
-                CheckResult::BadType => return Ok(()),
-                CheckResult::Next(next) => scope = next,
-            }
-        }
-
-        if !declaring {
-            self.enter_id_and_resolve(scope, |_| {});
-        }
-
-        if let UsePathTail::Ident(tail) = &path.tail {
-            // TODO: check privacy
             let mut found = false;
-            if let Some(item) = self.proj.scopes[scope].find_in_tns(tail.data) {
-                self.check_hover(tail.span, (*item).into());
-                if !item.public && !self.can_access_privates(scope) {
-                    named_error!(self, Error::private, tail.data, tail.span)
+            if let Some(item) = this.proj.scopes[scope].find_in_tns(name.data) {
+                this.check_hover(name.span, (*item).into());
+                if !item.public && !this.can_access_privates(scope) {
+                    named_error!(this, Error::private, name.data, name.span)
                 }
 
-                if self.proj.scopes[self.current]
+                if this.proj.scopes[this.current]
                     .tns
-                    .insert(tail.data, Vis::new(*item, path.public))
+                    .insert(new_name.data, Vis::new(*item, public))
                     .is_some()
                 {
-                    named_error!(self, Error::redefinition, tail.data, tail.span)
+                    named_error!(this, Error::redefinition, new_name.data, new_name.span)
                 }
                 found = true;
             }
-            if let Some(item) = self.proj.scopes[scope].find_in_vns(tail.data)
-                && can_import_value_item(self, *item, in_type)
+
+            if let Some(item) = this.proj.scopes[scope].find_in_vns(name.data)
+                && can_import_value_item(this, *item)
             {
-                self.check_hover(
-                    tail.span,
+                this.check_hover(
+                    name.span,
                     match item.id {
                         ValueItem::StructConstructor(id, _) => id.into(),
                         _ => (*item).into(),
@@ -6362,53 +6309,109 @@ impl TypeChecker<'_> {
                 );
 
                 let mut skip = false;
-                if !item.public && !self.can_access_privates(scope) {
+                if !item.public && !this.can_access_privates(scope) {
                     if !found {
-                        named_error!(self, Error::private, tail.data, tail.span)
+                        named_error!(this, Error::private, name.data, name.span)
                     }
                     skip = true;
                 }
 
                 if !skip
-                    && self.proj.scopes[self.current]
+                    && this.proj.scopes[this.current]
                         .vns
-                        .insert(tail.data, Vis::new(*item, path.public))
+                        .insert(new_name.data, Vis::new(*item, public))
                         .is_some()
                 {
-                    named_error!(self, Error::redefinition, tail.data, tail.span)
+                    named_error!(this, Error::redefinition, new_name.data, new_name.span)
                 }
                 found = true;
             }
 
             if !found {
-                return Err(*tail);
+                resolve_later(this, Some(name));
             }
-        } else {
-            let cap = self.can_access_privates(scope);
-            let mut tns = vec![];
-            let mut vns = vec![];
-            for (&name, &item) in self.proj.scopes[scope].tns.iter() {
-                if item.public || cap {
-                    tns.push((name, Vis::new(*item, path.public)));
-                }
-            }
+        };
 
-            for (&name, &item) in self.proj.scopes[scope].vns.iter() {
-                if (item.public || cap) && can_import_value_item(self, *item, in_type) {
-                    vns.push((name, Vis::new(*item, path.public)));
-                }
-            }
-
-            for (name, item) in tns {
-                self.proj.scopes[self.current].tns.entry(name).or_insert(item);
-            }
-
-            for (name, item) in vns {
-                self.proj.scopes[self.current].vns.entry(name).or_insert(item);
-            }
+        if !declaring && let Some(scope) = scope {
+            self.enter_id_and_resolve(scope, |_| {});
         }
 
-        Ok(())
+        match comp {
+            UsePathComponent::Multi(comps) => {
+                for comp in comps {
+                    self.resolve_use(public, scope, comp, in_type, declaring);
+                }
+            }
+            UsePathComponent::Ident { ident, next } => {
+                if let Some(next) = next {
+                    let value = if let Some(scope) = scope {
+                        let item = self.proj.scopes[scope].find_in_tns(ident.data);
+                        if let Some(item) = item
+                            && !item.public
+                            && !self.can_access_privates(scope)
+                        {
+                            named_error!(self, Error::private, ident.data, ident.span)
+                        }
+                        item
+                    } else if let Some(item) = self.find_in_tns(ident.data) {
+                        Some(item)
+                    } else {
+                        self.proj.scopes[ScopeId::ROOT].find_in_tns(ident.data)
+                    };
+
+                    let scope = match value.map(|v| v.id) {
+                        Some(TypeItem::Module(next)) => {
+                            self.check_hover(ident.span, next.into());
+                            next
+                        }
+                        Some(TypeItem::Type(id)) => {
+                            in_type = true;
+                            self.check_hover(ident.span, id.into());
+                            self.proj.scopes.get(id).body_scope
+                        }
+                        _ => return resolve_later(self, Some(*ident)),
+                    };
+
+                    return self.resolve_use(public, Some(scope), next, in_type, declaring);
+                }
+
+                import(self, *ident, *ident);
+            }
+            &UsePathComponent::Rename { ident, new_name } => import(self, ident, new_name),
+            &UsePathComponent::All(span) => {
+                let Some(scope) = scope else {
+                    return self.error(Error::new("use path cannot start with a '*'", span));
+                };
+
+                if declaring {
+                    return resolve_later(self, None);
+                }
+
+                let cap = self.can_access_privates(scope);
+                let mut tns = vec![];
+                let mut vns = vec![];
+                for (&name, &item) in self.proj.scopes[scope].tns.iter() {
+                    if item.public || cap {
+                        tns.push((name, Vis::new(*item, public)));
+                    }
+                }
+
+                for (&name, &item) in self.proj.scopes[scope].vns.iter() {
+                    if (item.public || cap) && can_import_value_item(self, *item) {
+                        vns.push((name, Vis::new(*item, public)));
+                    }
+                }
+
+                for (name, item) in tns {
+                    self.proj.scopes[self.current].tns.entry(name).or_insert(item);
+                }
+
+                for (name, item) in vns {
+                    self.proj.scopes[self.current].vns.entry(name).or_insert(item);
+                }
+            }
+            UsePathComponent::Error => {}
+        }
     }
 
     fn resolve_type_path(&mut self, path: &Path) -> ResolvedType {

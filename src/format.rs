@@ -1,5 +1,8 @@
 use crate::{
-    ast::parsed::{ExprArena, Path, PathOrigin, Pattern, TypeHint, TypeHintData},
+    ast::parsed::{
+        ExprArena, Path, PathOrigin, Pattern, TypeHint, TypeHintData, UsePath, UsePathComponent,
+        UsePathOrigin,
+    },
     intern::Strings,
     project::Project,
     typeid::{GenericUserType, Type, TypeId},
@@ -260,6 +263,68 @@ impl std::fmt::Display for FmtPatt<'_> {
                 write!(f, "?({})", FmtPatt::new(&v.data, self.strings, self.arena))
             }
             _ => write!(f, "<TODO: Pattern>"),
+        }
+    }
+}
+
+#[derive(derive_more::Constructor)]
+pub struct FmtUsePath<'a> {
+    strings: &'a Strings,
+    path: &'a UsePath,
+}
+
+impl std::fmt::Display for FmtUsePath<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.path.public {
+            write!(f, "pub ")?;
+        }
+
+        match self.path.origin {
+            UsePathOrigin::Root(_) => write!(f, "::")?,
+            UsePathOrigin::Super(_) => write!(f, "super::")?,
+            UsePathOrigin::Here => {}
+        }
+
+        write!(f, "{}", FmtUsePathComponent::new(self.strings, &self.path.component))
+    }
+}
+
+#[derive(derive_more::Constructor)]
+pub struct FmtUsePathComponent<'a> {
+    strings: &'a Strings,
+    comp: &'a UsePathComponent,
+}
+
+impl std::fmt::Display for FmtUsePathComponent<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.comp {
+            UsePathComponent::Multi(comps) => {
+                write!(f, "{{")?;
+                for (i, comp) in comps.iter().enumerate() {
+                    if i != 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", FmtUsePathComponent::new(self.strings, comp))?;
+                }
+                write!(f, "}}")
+            }
+            UsePathComponent::Ident { ident, next } => {
+                write!(f, "{}", self.strings.resolve(&ident.data))?;
+                if let Some(next) = next {
+                    write!(f, "::{}", FmtUsePathComponent::new(self.strings, next))?;
+                }
+                Ok(())
+            }
+            UsePathComponent::Rename { ident, new_name } => {
+                write!(
+                    f,
+                    "{} as {}",
+                    self.strings.resolve(&ident.data),
+                    self.strings.resolve(&new_name.data),
+                )
+            }
+            UsePathComponent::All(_) => write!(f, "*"),
+            UsePathComponent::Error => write!(f, "<error>"),
         }
     }
 }

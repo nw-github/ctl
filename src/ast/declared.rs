@@ -1,5 +1,5 @@
 use crate::{
-    ast::parsed::{Expr, Pattern, TypeHint},
+    ast::parsed::{Expr, Pattern, TypeHint, UsePathComponent},
     intern::StrId,
     lexer::{Located, Span},
     sym::{ExtensionId, FunctionId, ScopeId, TraitId, UserTypeId, VariableId},
@@ -30,4 +30,11 @@ pub enum Stmt {
     Module { id: ScopeId, body: Vec<Stmt> },
     ModuleOOL { name: Located<StrId> },
     None,
+}
+
+pub struct UsePath {
+    pub public: bool,
+    pub in_type: bool,
+    pub scope: Option<ScopeId>,
+    pub comp: UsePathComponent,
 }

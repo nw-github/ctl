@@ -248,88 +248,21 @@ impl<'a> Parser<'a> {
                     self.error_no_sync(Error::not_valid_here(&token));
                 }
 
-                let mut components = Vec::new();
                 let origin = if let Some(token) = self.next_if(Token::ScopeRes) {
-                    let ident = self.expect_ident("expected path component");
-                    if self.next_if(Token::ScopeRes).is_none() {
-                        let end = self.expect(Token::Semicolon);
-                        return Ok(Stmt {
-                            data: Located::new(
-                                earliest_span.extended_to(end.span),
-                                StmtData::Use(UsePath {
-                                    components,
-                                    origin: PathOrigin::Root(token.span),
-                                    public: is_public.is_some(),
-                                    tail: UsePathTail::Ident(ident),
-                                }),
-                            ),
-                            attrs,
-                        });
-                    }
-
-                    components.push(ident);
-                    PathOrigin::Root(token.span)
+                    UsePathOrigin::Root(token.span)
                 } else if let Some(token) = self.next_if(Token::Super) {
                     self.expect(Token::ScopeRes);
-                    PathOrigin::Super(token.span)
+                    UsePathOrigin::Super(token.span)
                 } else {
-                    let ident = self.expect_ident("expected path component");
-                    if self.next_if(Token::ScopeRes).is_none() {
-                        let end = self.expect(Token::Semicolon);
-                        return Ok(Stmt {
-                            data: Located::new(
-                                earliest_span.extended_to(end.span),
-                                StmtData::Use(UsePath {
-                                    components,
-                                    origin: PathOrigin::Normal,
-                                    public: is_public.is_some(),
-                                    tail: UsePathTail::Ident(ident),
-                                }),
-                            ),
-                            attrs,
-                        });
-                    }
-
-                    components.push(ident);
-                    PathOrigin::Normal
+                    UsePathOrigin::Here
                 };
-
-                loop {
-                    if self.next_if(Token::Asterisk).is_some() {
-                        let end = self.expect(Token::Semicolon);
-                        return Ok(Stmt {
-                            data: Located::new(
-                                earliest_span.extended_to(end.span),
-                                StmtData::Use(UsePath {
-                                    components,
-                                    origin,
-                                    public: is_public.is_some(),
-                                    tail: UsePathTail::All,
-                                }),
-                            ),
-                            attrs,
-                        });
-                    }
-
-                    let ident = self.expect_ident("expected path component or '*'");
-                    if self.next_if(Token::ScopeRes).is_none() {
-                        let end = self.expect(Token::Semicolon);
-                        return Ok(Stmt {
-                            data: Located::new(
-                                earliest_span.extended_to(end.span),
-                                StmtData::Use(UsePath {
-                                    components,
-                                    origin,
-                                    public: is_public.is_some(),
-                                    tail: UsePathTail::Ident(ident),
-                                }),
-                            ),
-                            attrs,
-                        });
-                    }
-
-                    components.push(ident);
-                }
+                let public = is_public.is_some();
+                let path = UsePath { public, origin, component: self.use_path_component() };
+                let end = self.expect(Token::Semicolon);
+                Ok(Stmt {
+                    data: Located::new(earliest_span.extended_to(end.span), StmtData::Use(path)),
+                    attrs,
+                })
             }
             Token::Static | Token::Const => {
                 let token = self.next();
@@ -1215,6 +1148,33 @@ impl<'a> Parser<'a> {
     }
 
     //
+
+    fn use_path_component(&mut self) -> UsePathComponent {
+        let token = self.next();
+        match token.data {
+            Token::Ident(ident) => {
+                let ident = Located::new(token.span, self.strings.get_or_intern(ident));
+                if self.next_if(Token::As).is_some() {
+                    let new_name = self.expect_ident("expected identifier");
+                    return UsePathComponent::Rename { ident, new_name };
+                }
+
+                UsePathComponent::Ident {
+                    ident,
+                    next: self.next_if(Token::ScopeRes).map(|_| self.use_path_component().into()),
+                }
+            }
+            Token::Asterisk => UsePathComponent::All(token.span),
+            Token::LCurly => {
+                let inner = self.csv(vec![], Token::RCurly, token.span, Self::use_path_component);
+                UsePathComponent::Multi(inner.data)
+            }
+            _ => {
+                self.error(Error::new("expected path component", token.span));
+                UsePathComponent::Error
+            }
+        }
+    }
 
     fn path_components(
         &mut self,

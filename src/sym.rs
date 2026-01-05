@@ -4,7 +4,8 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     ast::{
         checked::{Expr as CheckedExpr, Pattern as CheckedPattern},
-        parsed::{Expr, FunctionType, Path, Pattern, TypeHint, UsePath},
+        parsed::{Expr, FunctionType, Path, Pattern, TypeHint},
+        declared::UsePath,
     },
     ds::{ComptimeInt, HashMap, HashSet, IndexMap},
     intern::{StrId, Strings},
