@@ -5243,8 +5243,8 @@ impl TypeChecker<'_> {
             }
             (Type::Fn(lhs), Type::FnPtr(rhs)) => {
                 let fptr = lhs.as_fn_ptr(&self.proj.scopes, &self.proj.types);
-                if &fptr == rhs {
-                    Ok(CExpr::new(self.proj.types.insert(Type::FnPtr(fptr)), expr.data))
+                if &fptr == rhs || rhs.is_unsafe_version_of(&fptr) {
+                    Ok(CExpr::new(target, expr.data))
                 } else {
                     Err(expr)
                 }

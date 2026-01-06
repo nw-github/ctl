@@ -59,6 +59,14 @@ impl std::fmt::Display for FmtTy<'_> {
             }
             Type::Fn(ofn) => {
                 let func = p.scopes.get(ofn.id);
+                if func.is_extern {
+                    write!(f, "extern ")?;
+                }
+
+                if func.is_unsafe {
+                    write!(f, "unsafe ")?;
+                }
+
                 write!(f, "fn {}(", p.strings.resolve(&func.name.data))?;
                 for (i, param) in func.params.iter().enumerate() {
                     if i > 0 {
