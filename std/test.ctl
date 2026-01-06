@@ -64,5 +64,7 @@ fn test_runner(tests: [TestInfo..]) {
         for test in failed.iter() {
             eprintln("    {test.module}::'{test.name}': {test.panic_msg}");
         }
+
+        std::proc::exit(1);
     }
 }

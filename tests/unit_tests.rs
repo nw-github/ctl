@@ -9,7 +9,7 @@ use anyhow::Context;
 use tempfile::NamedTempFile;
 use wait_timeout::ChildExt as _;
 
-use crate::{Compiler, TestArgs, UnloadedProject, intern::Strings};
+use ctl::{Compiler, TestArgs, UnloadedProject, intern::Strings};
 
 #[test]
 fn run_unit_tests() -> anyhow::Result<()> {

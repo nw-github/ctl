@@ -14,9 +14,6 @@ mod sym;
 mod typecheck;
 mod typeid;
 
-#[cfg(test)]
-mod testlib;
-
 use std::path::{Path, PathBuf};
 
 pub use project::Configuration;
