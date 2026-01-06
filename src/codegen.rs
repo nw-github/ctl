@@ -118,7 +118,7 @@ impl TypeGen {
         let Some(Dependencies::Resolved(deps)) = buf.1.trait_deps.get(&tr) else {
             panic!(
                 "ICE: Dyn pointer for trait '{}' has invalid dependencies",
-                buf.1.strings.resolve(&tr.name(&buf.1.scopes).data),
+                buf.1.str(tr.name(&buf.1.scopes).data),
             );
         };
 
@@ -426,7 +426,7 @@ impl<'a> Buffer<'a> {
     }
 
     fn emit_str(&mut self, source: StrId) {
-        _ = self.write_str(self.1.strings.resolve(&source));
+        _ = self.write_str(self.1.str(source));
     }
 
     fn emit_mangled_name(&mut self, id: TypeId, min: bool) {
@@ -551,10 +551,10 @@ impl<'a> Buffer<'a> {
             }
         } else if ty.kind.is_tuple() {
             write_de!(self, "L");
-            for (name, member) in ty.members.iter() {
+            for (&name, member) in ty.members.iter() {
                 self.write_len_prefixed(&Buffer::format(self.1, |data| {
                     data.emit("_");
-                    data.emit(self.1.strings.resolve(name));
+                    data.emit(self.1.str(name));
                 }));
 
                 self.write_len_prefixed(&Buffer::format(self.1, |data| {
@@ -668,7 +668,7 @@ impl<'a> Buffer<'a> {
                 &ScopeKind::Impl(i) => imp = Some(i),
                 ScopeKind::Module(name) => {
                     parts.push(Buffer::format(self.1, |data| {
-                        data.write_len_prefixed(self.1.strings.resolve(&name.data));
+                        data.write_len_prefixed(self.1.str(name.data));
                     }));
                 }
                 _ => {}
@@ -693,7 +693,7 @@ impl<'a> Buffer<'a> {
         let name = id.name(&self.1.scopes);
         let item = id.get(&self.1.scopes);
 
-        let data = self.1.strings.resolve(&name.data);
+        let data = self.1.str(name.data);
         if !data.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
             let name = format!("{id}");
             buffer.write_len_prefixed(&name);
@@ -861,10 +861,6 @@ macro_rules! usebuf {
         $body;
         std::mem::swap(&mut $self.buffer, $buf);
     }};
-}
-
-macro_rules! strdata {
-    ($self: expr, $key: expr) => {{ $self.proj.strings.resolve(&$key) }};
 }
 
 macro_rules! emit_cast {
@@ -1126,7 +1122,7 @@ impl<'a> Codegen<'a> {
             for (id, func) in self.proj.scopes.functions().filter(|f| f.1.typ.is_test()) {
                 if let Some(args) = &self.proj.conf.test_args
                     && let Some(name) = &args.test
-                    && name != self.proj.strings.resolve(&func.name.data)
+                    && name != self.proj.str(func.name.data)
                 {
                     continue;
                 } else if !self
@@ -1143,7 +1139,7 @@ impl<'a> Codegen<'a> {
                     self.buffer,
                     "{{.skip={},.name={},.module={},.test=",
                     func.attrs.test_skip.is_some() as usize,
-                    StringLiteral(strdata!(self, func.name.data)),
+                    StringLiteral(self.proj.str(func.name.data)),
                     StringLiteral(&full_name_pretty(self.proj, func.scope, true))
                 );
                 self.buffer.emit_fn_name(&state.func, self.flags.minify);
@@ -1203,7 +1199,7 @@ impl<'a> Codegen<'a> {
             match thisptr {
                 FirstParam::OverriddenLabel { tmp, label, ty } => {
                     self.emit_type(ty);
-                    writeln_de!(self.buffer, " {}={tmp};", strdata!(self, label));
+                    writeln_de!(self.buffer, " {}={tmp};", self.proj.str(label));
                 }
                 FirstParam::OverriddenVar { tmp, id } => {
                     self.emit_var_decl(id, state);
@@ -1222,7 +1218,7 @@ impl<'a> Codegen<'a> {
                 };
 
                 let ty = param.ty.with_templates(&self.proj.types, &state.func.ty_args);
-                self.emit_pattern_bindings(state, &patt.data, strdata!(self, param.label), ty);
+                self.emit_pattern_bindings(state, &patt.data, self.proj.str(param.label), ty);
             }
 
             hoist_point!(self, {
@@ -1573,7 +1569,7 @@ impl<'a> Codegen<'a> {
                     panic!("ICE: attempt to generate float of type {}", self.proj.fmt_ty(expr.ty))
                 }
             }
-            &ExprData::String(v) => write_de!(self.buffer, "{}", StringLiteral(strdata!(self, v))),
+            &ExprData::String(v) => write_de!(self.buffer, "{}", StringLiteral(self.proj.str(v))),
             ExprData::GeneratedString(v) => write_de!(self.buffer, "{}", StringLiteral(v)),
             ExprData::ByteString(value) => {
                 emit_cast!(self, expr.ty);
@@ -2354,7 +2350,7 @@ impl<'a> Codegen<'a> {
         state: &mut State,
         (scope, span): (ScopeId, Span),
     ) {
-        match strdata!(self, name) {
+        match self.proj.str(name) {
             "numeric_abs" => {
                 let (_, mut expr) = args.shift_remove_index(0).unwrap();
                 expr.ty = expr.ty.with_templates(&self.proj.types, &state.func.ty_args);
@@ -2429,7 +2425,7 @@ impl<'a> Codegen<'a> {
                 let op = self.proj.scopes.get(func.id).name.data;
                 self.emit_binary(
                     state,
-                    match strdata!(self, op) {
+                    match self.proj.str(op) {
                         "cmp" => BinaryOp::Cmp,
                         "gt" => BinaryOp::Gt,
                         "ge" => BinaryOp::GtEqual,
@@ -2474,7 +2470,7 @@ impl<'a> Codegen<'a> {
                     .auto_deref(&self.proj.types, TypeId::UNKNOWN, &mut self.arena);
                 self.emit_unary(
                     state,
-                    match strdata!(self, op) {
+                    match self.proj.str(op) {
                         "neg" => UnaryOp::Neg,
                         "not" => UnaryOp::Not,
                         "inc" => UnaryOp::PostIncrement,
@@ -2559,7 +2555,7 @@ impl<'a> Codegen<'a> {
                 self.emit_cast(ret);
                 self.buffer.emit("(");
                 self.emit_expr(lhs, state);
-                let plus = matches!(strdata!(self, name), "ptr_add_signed" | "ptr_add_unsigned");
+                let plus = matches!(self.proj.str(name), "ptr_add_signed" | "ptr_add_unsigned");
                 self.buffer.emit(["-", "+"][plus as usize]);
                 self.emit_expr(rhs, state);
                 self.buffer.emit(")");
@@ -2674,14 +2670,14 @@ impl<'a> Codegen<'a> {
 
                     // TODO: shared members
                     write_de!(self.buffer, "switch({arg}.{UNION_TAG_NAME}){{");
-                    for (name, variant) in union.variants.iter() {
+                    for (&name, variant) in union.variants.iter() {
                         let discrim = variant.discrim.as_checked().unwrap();
                         writeln_de!(self.buffer, "case {discrim}:{{");
-                        write_str!(self.proj.strings.resolve(name));
+                        write_str!(self.proj.str(name));
                         if let Some(ty) = variant.ty {
                             let ty = ty.with_templates(&self.proj.types, &ut.ty_args);
                             let buf =
-                                format!("{arg}.{}", member_name(self.proj, Some(ut.id), *name));
+                                format!("{arg}.{}", member_name(self.proj, Some(ut.id), name));
                             self.emit_builtin_dbg(args, ty, &buf, fmt, state, scope, span, lvl + 1);
                         }
                         writeln_de!(self.buffer, "break;}}");
@@ -2692,11 +2688,11 @@ impl<'a> Codegen<'a> {
 
                 let is_tuple = ut_data.kind.is_tuple();
                 if !is_tuple {
-                    write_str!(self.proj.strings.resolve(&ut_data.name.data));
+                    write_str!(self.proj.str(ut_data.name.data));
                 }
 
                 write_str!("(");
-                for (i, (name, member)) in ut_data.members.iter().enumerate() {
+                for (i, (&name, member)) in ut_data.members.iter().enumerate() {
                     if i != 0 {
                         write_str!(", ");
                     }
@@ -2708,7 +2704,7 @@ impl<'a> Codegen<'a> {
                         write_de!(self.buffer, "}}");
                     }
 
-                    let name_data = self.proj.strings.resolve(name);
+                    let name_data = self.proj.str(name);
                     if !is_tuple || !name_data.starts_with(|ch: char| ch.is_ascii_digit()) {
                         write_str_fmt!("{name_data}: ");
                     }
@@ -2718,12 +2714,12 @@ impl<'a> Codegen<'a> {
                         tmpbuf!(self, state, |tmp| {
                             self.emit_type(ty);
                             write_de!(self.buffer, " {tmp}=");
-                            self.emit_bitfield_read(arg, ut, *name, ty);
+                            self.emit_bitfield_read(arg, ut, name, ty);
                             writeln_de!(self.buffer, ";");
                             tmp
                         })
                     } else {
-                        format!("{arg}.{}", member_name(self.proj, Some(ut.id), *name))
+                        format!("{arg}.{}", member_name(self.proj, Some(ut.id), name))
                     };
                     self.emit_builtin_dbg(args, ty, &buf, fmt, state, scope, span, lvl + 1);
                 }
@@ -2824,10 +2820,10 @@ impl<'a> Codegen<'a> {
                     });
                 });
             }
-            PatternData::String(value) => {
+            &PatternData::String(value) => {
                 conditions.next(|buffer| {
                     usebuf!(self, buffer, {
-                        let value = strdata!(self, value);
+                        let value = self.proj.str(value);
                         write_de!(
                             self.buffer,
                             "{0}.span.len=={1}&&CTL_MEMCMP({0}.span.ptr,\"",
@@ -3194,7 +3190,7 @@ impl<'a> Codegen<'a> {
                     thisptr = FirstParam::OverriddenLabel { tmp, label: param.label, ty };
                 } else {
                     self.emit_type(ty);
-                    write_de!(self.buffer, " {}", strdata!(self, param.label));
+                    write_de!(self.buffer, " {}", self.proj.str(param.label));
                 }
             }
         }
@@ -3527,8 +3523,8 @@ impl<'a> Codegen<'a> {
 
             self.buffer.emit_type_name(string_ut, self.flags.minify);
             write_de!(self.buffer, " {tmp}[{}]={{", strings.len());
-            for part in strings.iter() {
-                write_de!(self.buffer, "{},", StringLiteral(strdata!(self, part)));
+            for &part in strings.iter() {
+                write_de!(self.buffer, "{},", StringLiteral(self.proj.str(part)));
             }
             writeln_de!(self.buffer, "}};");
         });
@@ -3630,7 +3626,7 @@ impl<'a> Codegen<'a> {
                 "searching from scope: '{}', cannot find implementation for method '{}::{}' for type '{}'",
                 full_name_pretty(self.proj, scope, false),
                 self.proj.fmt_ut(tr),
-                strdata!(self, method),
+                self.proj.str(method),
                 self.proj.fmt_ty(inst)
             )
         };
@@ -3641,10 +3637,10 @@ impl<'a> Codegen<'a> {
                 "searching from scope: '{}', get_member_fn_ex picked invalid function for implementation for method '{}::{}' for type '{}' (picked {}::{})",
                 full_name_pretty(self.proj, scope, false),
                 self.proj.fmt_ut(tr),
-                strdata!(self, method),
+                self.proj.str(method),
                 self.proj.fmt_ty(inst),
                 full_name_pretty(self.proj, picked.scope, false),
-                strdata!(self, picked.name.data),
+                self.proj.str(picked.name.data),
             )
         }
 
@@ -3672,7 +3668,7 @@ impl<'a> Codegen<'a> {
                     if let Some(real) = state.func.ty_args.get(&id) {
                         write_de!(result, "{}", self.proj.fmt_ty(*real));
                     } else {
-                        result.push_str(strdata!(self, self.proj.scopes.get(id).name.data));
+                        result.push_str(self.proj.str(self.proj.scopes.get(id).name.data));
                     }
                 }
                 result.push('>');
@@ -3684,12 +3680,12 @@ impl<'a> Codegen<'a> {
         let mut res = String::new();
         if let Some(parent) = parent {
             let parent = self.proj.scopes.get(*parent);
-            res += strdata!(self, parent.name.data);
+            res += self.proj.str(parent.name.data);
             print_type_params(&mut res, &parent.type_params);
             res += "::";
         }
 
-        res += strdata!(self, func.name.data);
+        res += self.proj.str(func.name.data);
         print_type_params(&mut res, &func.type_params);
         self.arena.typed(self.str_interp.string_ty.unwrap(), ExprData::GeneratedString(res))
     }
@@ -3782,7 +3778,7 @@ fn vtable_methods(scopes: &Scopes, types: &Types, tr: UserTypeId) -> Vec<Vis<Fun
 }
 
 fn member_name(proj: &Project, _id: Option<UserTypeId>, name: StrId) -> String {
-    let data = proj.strings.resolve(&name);
+    let data = proj.str(name);
     if !is_c_reserved_ident(data) { data.into() } else { format!("${data}") }
 }
 
@@ -3810,7 +3806,7 @@ fn is_c_reserved_ident(name: &str) -> bool {
 fn full_name(proj: &Project, id: ScopeId, ident: StrId) -> String {
     use std::borrow::Cow;
 
-    let mut parts = vec![Cow::Borrowed(proj.strings.resolve(&ident))];
+    let mut parts = vec![Cow::Borrowed(proj.str(ident))];
     for (id, scope) in proj.scopes.walk(id) {
         if scope.kind.is_impl() {
             parts.push(Cow::Owned(format!("{id}")));
@@ -3825,7 +3821,7 @@ fn full_name(proj: &Project, id: ScopeId, ident: StrId) -> String {
         {
             parts.push(Cow::Owned(format!("test_{id}")));
         } else {
-            parts.push(Cow::Borrowed(proj.strings.resolve(&scope_name.data)));
+            parts.push(Cow::Borrowed(proj.str(scope_name.data)));
         }
     }
     parts.reverse();
@@ -3842,7 +3838,7 @@ fn full_name_pretty(proj: &Project, id: ScopeId, modonly: bool) -> String {
             continue;
         }
 
-        parts.push(proj.strings.resolve(&scope_name.data));
+        parts.push(proj.str(scope_name.data));
     }
     parts.reverse();
     parts.join("::")
