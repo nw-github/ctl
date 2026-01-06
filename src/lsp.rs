@@ -259,7 +259,7 @@ impl LanguageServer for LspBackend {
             let span = match hover {
                 &LspItem::Var(id) => scopes.get(id).name.span,
                 &LspItem::Type(id) => scopes.get(id).name.span,
-                &LspItem::Module(id) => scopes[id].kind.name(scopes).unwrap().span,
+                &LspItem::Module(id, _) => scopes[id].kind.name(scopes).unwrap().span,
                 &LspItem::Fn(id, _) => scopes.get(id).name.span,
                 LspItem::Property(_, id, member) => {
                     let ut = scopes.get(*id);
@@ -348,7 +348,7 @@ impl LanguageServer for LspBackend {
                         ))
                     }
                 }
-                &LspItem::Module(id) => {
+                &LspItem::Module(id, _) => {
                     let scope = &proj.scopes[id];
                     let mut res = String::new();
                     if let Some(parent) = scope.parent.filter(|parent| *parent != ScopeId::ROOT) {
@@ -414,7 +414,7 @@ impl LanguageServer for LspBackend {
         debug!(self, "references: {uri}");
         self.find_lsp_item(&uri, pos, async |src, proj| {
             let mut locations = vec![];
-            self.find_references(proj, src, |_, _, loc| locations.push(loc));
+            self.find_references(proj, src, false, |_, _, loc| locations.push(loc));
             Some(locations)
         })
         .await
@@ -434,7 +434,7 @@ impl LanguageServer for LspBackend {
             }
 
             let mut changes = HashMap::<Url, Vec<TextEdit>>::new();
-            self.find_references(proj, item, |src, span, loc| {
+            self.find_references(proj, item, true, |src, span, loc| {
                 if span.len as usize == crate::intern::THIS_TYPE.len()
                     && get_span_text(src, span).is_some_and(|text| text == crate::intern::THIS_TYPE)
                 {
@@ -732,6 +732,7 @@ impl LspBackend {
         &self,
         proj: &Project,
         src: &LspItem,
+        rename: bool,
         mut next_range: impl FnMut(&str, Span, Location),
     ) {
         let is_constructor_for = |lhs: FunctionId, rhs: UserTypeId| {
@@ -747,7 +748,8 @@ impl LspBackend {
 
         for (item, span) in lsp_items.iter() {
             match (src, item) {
-                (LspItem::Module(lhs), LspItem::Module(rhs)) if lhs == rhs => {}
+                (LspItem::Module(lhs, _), LspItem::Module(rhs, is_super))
+                    if lhs == rhs && (!is_super || !rename) => {}
 
                 (LspItem::Type(lhs), LspItem::Type(rhs)) if lhs == rhs => {}
                 (LspItem::Fn(lhs, _), LspItem::Fn(rhs, _)) if lhs == rhs => {}
@@ -867,7 +869,8 @@ fn get_semantic_token(
 ) -> Option<SemanticToken> {
     let mut mods = token::mods::NONE;
     let token_type = match item {
-        LspItem::Module(_) => token::NAMESPACE,
+        LspItem::Module(_, true) => token::KEYWORD,
+        LspItem::Module(_, false) => token::NAMESPACE,
         LspItem::Property(_, _, _) => token::VARIABLE,
         LspItem::FnParamLabel(_, _) => token::VARIABLE,
         &LspItem::Var(id) => {
@@ -1141,7 +1144,7 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
                 ..Default::default()
             }
         }
-        &LspItem::Module(id) => {
+        &LspItem::Module(id, _) => {
             let name = strings.resolve(&scopes[id].kind.name(scopes).unwrap().data).to_string();
             CompletionItem {
                 label: name.clone(),

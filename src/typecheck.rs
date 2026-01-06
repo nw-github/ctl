@@ -153,10 +153,10 @@ pub enum Safety {
     Unsafe(bool),
 }
 
-#[derive(Clone, derive_more::From)]
+#[derive(Clone, Copy, derive_more::From)]
 pub enum LspItem {
     Type(UserTypeId),
-    Module(ScopeId),
+    Module(ScopeId, bool),
     Literal(CExpr),
     Fn(FunctionId, Option<UserTypeId>),
     Var(VariableId),
@@ -168,11 +168,17 @@ pub enum LspItem {
     BuiltinType(&'static str),
 }
 
+impl From<ScopeId> for LspItem {
+    fn from(value: ScopeId) -> Self {
+        Self::Module(value, false)
+    }
+}
+
 impl From<TypeItem> for LspItem {
     fn from(value: TypeItem) -> Self {
         match value {
             TypeItem::Type(item) => Self::Type(item),
-            TypeItem::Module(item) => Self::Module(item),
+            TypeItem::Module(item) => Self::Module(item, false),
         }
     }
 }
@@ -1569,7 +1575,7 @@ impl TypeChecker<'_> {
             DStmt::ModuleOOL { name } => {
                 let item = self.proj.scopes[self.current].find_in_tns(name.data);
                 if let Some(scope) = item.and_then(|item| item.id.into_module().ok()) {
-                    self.check_hover(name.span, LspItem::Module(scope));
+                    self.check_hover(name.span, LspItem::Module(scope, false));
                 }
             }
             DStmt::Struct { init, id, impls, fns } => {
@@ -6209,6 +6215,7 @@ impl TypeChecker<'_> {
         if let Some(module) = self.proj.scopes.module_of(
             self.proj.scopes[self.proj.scopes.module_of(self.current).unwrap()].parent.unwrap(),
         ) {
+            self.check_hover(span, LspItem::Module(module, true));
             Some(module)
         } else {
             self.error(Error::new("cannot use super here", span))
@@ -6249,9 +6256,16 @@ impl TypeChecker<'_> {
                 return this.error(Error::new("cannot import from the current scope", name.span));
             };
 
+            let check_hover_both = |this: &mut Self, item: LspItem| {
+                this.check_hover(name.span, item);
+                if name.span != new_name.span {
+                    this.check_hover(new_name.span, item);
+                }
+            };
+
             let mut found = false;
             if let Some(item) = this.proj.scopes[scope].find_in_tns(name.data) {
-                this.check_hover(name.span, (*item).into());
+                check_hover_both(this, (*item).into());
                 if !item.public && !this.can_access_privates(scope) {
                     named_error!(this, Error::private, name.data, name.span)
                 }
@@ -6269,8 +6283,8 @@ impl TypeChecker<'_> {
             if let Some(item) = this.proj.scopes[scope].find_in_vns(name.data)
                 && can_import_value_item(this, *item)
             {
-                this.check_hover(
-                    name.span,
+                check_hover_both(
+                    this,
                     match item.id {
                         ValueItem::StructConstructor(id, _) => id.into(),
                         _ => (*item).into(),
