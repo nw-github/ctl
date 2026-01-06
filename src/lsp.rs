@@ -9,6 +9,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 use crate::sym::VariableKind;
+use crate::typeid::BitSizeResult;
 use crate::{
     CachingSourceProvider, Compiler, FileSourceProvider, Located, SourceProvider, UnloadedProject,
     error::{Diagnostics, FileId, OffsetMode},
@@ -322,9 +323,9 @@ impl LanguageServer for LspBackend {
                 &LspItem::Var(id) | &LspItem::FnParamLabel(id, _) => Some(visualize_var(id, proj)),
                 &LspItem::Fn(id, _) => Some(visualize_func(id, false, proj)),
                 &LspItem::Type(id) => Some(visualize_type(id, proj)),
-                LspItem::Property(src_ty, id, name) => {
-                    let ut = proj.scopes.get(*id);
-                    let mem = ut.members.get(name);
+                &LspItem::Property(src_ty, id, name) => {
+                    let ut = proj.scopes.get(id);
+                    let mem = ut.members.get(&name);
                     let public = if ut.kind.is_union() {
                         "shared "
                     } else if mem.is_some_and(|m| m.public) {
@@ -336,33 +337,14 @@ impl LanguageServer for LspBackend {
                     if matches!(ut.kind, UserTypeKind::Tuple) {
                         let real =
                             src_ty.map(|src| ty.with_ut_templates(&proj.types, src)).unwrap_or(ty);
-                        Some(format!(
-                            "{public}{}: {}",
-                            proj.strings.resolve(name),
-                            proj.fmt_ty(real)
-                        ))
+                        Some(format!("{public}{}: {}", proj.str(name), proj.fmt_ty(real)))
                     } else {
-                        // let offs = if ut.kind.is_packed_struct() {
-                        //     let size = match ty.bit_size(&proj.scopes, &proj.types) {
-                        //         BitSizeResult::Size(n) => n,
-                        //         BitSizeResult::Tag(_, n) => n,
-                        //         _ => unreachable!(),
-                        //     };
-                        //     format!(
-                        //         "// bit size: {size}, bit offset: {}\n",
-                        //         data.bit_offsets[name],
-                        //     )
-                        // } else {
-                        //     // TODO: normal offset
-                        //     "".to_string()
-                        // };
-                        let offs = "";
-
+                        let offs = hover_property_text(proj, id, src_ty, ty, name);
                         Some(format!(
                             "{}{offs}{public}{}: {}",
                             visualize_location(ut.body_scope, proj),
-                            proj.strings.resolve(name),
-                            proj.fmt_ty(ty)
+                            proj.str(name),
+                            proj.fmt_ty(ty),
                         ))
                     }
                 }
@@ -1508,4 +1490,36 @@ fn visualize_variant_body(
 
 fn get_span_text(s: &str, span: Span) -> Option<&str> {
     s.get(span.pos as usize..span.pos as usize + span.len as usize)
+}
+
+fn hover_property_text(
+    proj: &Project,
+    id: UserTypeId,
+    _inst: Option<TypeId>,
+    ty: TypeId,
+    name: StrId,
+) -> String {
+    let ut_data = proj.scopes.get(id);
+    if !ut_data.type_params.is_empty() {
+        return "".into();
+    }
+
+    let ut = GenericUserType::from_id(&proj.scopes, &proj.types, id);
+    if ut_data.kind.is_packed_struct() {
+        let s = match ty.bit_size(&proj.scopes, &proj.types) {
+            BitSizeResult::Size(n) => n,
+            BitSizeResult::Tag(_, n) => n,
+            _ => unreachable!(),
+        };
+        if let Some(o) = ut.bit_offset_of(&proj.scopes, &proj.types, name) {
+            return format!("// bit size = {s} ({s:#x}), bit offset = {o} ({o:#x})\n");
+        }
+    } else {
+        let (s, a) = ty.size_and_align(&proj.scopes, &proj.types);
+        if let Some(o) = ut.offset_of(&proj.scopes, &proj.types, name) {
+            return format!("// size = {s} ({s:#x}), align = {a:#x}, offset = {o} ({o:#x})\n");
+        }
+    }
+
+    "".into()
 }
