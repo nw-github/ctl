@@ -314,10 +314,7 @@ mod test {
             ptr,
             *ptr,
         ) as! uint;
-
-        let ctl = "Cool: {ptr:p} {ptr}!".to_str();
-        assert_eq(ctl.len(), len);
-        assert_eq(ctl.as_bytes(), buf[..len]);
+        assert_eq("Cool: {ptr:p} {ptr}!".to_str(), str::from_utf8(buf[..len])!);
     }
 
     unittest "format pointer to non-format type" {
@@ -327,12 +324,9 @@ mod test {
         mut buf = [0u8; 1024];
         let len = unsafe sprintf(
             dst: buf.as_raw_mut().cast(),
-            fmt: "%p\0".as_raw().cast(),
+            fmt: "Cool: %p!\0".as_raw().cast(),
             ptr,
         ) as! uint;
-
-        let ctl = "{ptr:p}".to_str();
-        assert_eq(ctl.len(), len);
-        assert_eq(ctl.as_bytes(), buf[..len]);
+        assert_eq("Cool: {ptr:p}!".to_str(), str::from_utf8(buf[..len])!);
     }
 }

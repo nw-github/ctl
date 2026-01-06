@@ -4581,19 +4581,9 @@ impl TypeChecker<'_> {
             return;
         }
 
-        let packed = self.proj.scopes.get(id).kind.is_packed_struct();
         for i in 0..self.proj.scopes.get(id).members.len() {
             let ty = resolve_type!(self, self.proj.scopes.get_mut(id).members[i].ty);
             set_interior_mutable(self, id, ty);
-            if packed
-                && matches!(
-                    ty.bit_size(&self.proj.scopes, &self.proj.types),
-                    BitSizeResult::NonEnum | BitSizeResult::Bad
-                )
-            {
-                let (name, mem) = self.proj.scopes.get(id).members.get_index(i).unwrap();
-                named_error!(self, Error::bitfield_member, name, mem.span)
-            }
         }
 
         if let Some(mut union) = self.proj.scopes.get(id).kind.as_union().cloned() {
@@ -4694,7 +4684,7 @@ impl TypeChecker<'_> {
         }
 
         macro_rules! check_ty {
-            ($ty: expr, $err: expr) => {
+            ($ty: expr, $err: expr) => {{
                 let ty = $ty.with_ut_templates(&self.proj.types, this);
                 if self.check_member_dep(ty, this, &mut deps) {
                     failed = true;
@@ -4708,11 +4698,13 @@ impl TypeChecker<'_> {
                 {
                     self.proj.scopes.get_mut(id).interior_mutable = true;
                 }
-            };
+                ty
+            }};
         }
 
+        let mut bits = 0;
         for i in 0..self.proj.scopes.get(id).members.len() {
-            check_ty!(
+            let ty = check_ty!(
                 self.proj.scopes.get(id).members[i].ty,
                 Error::recursive_type(
                     strdata!(self, self.proj.scopes.get(id).members.get_index(i).unwrap().0),
@@ -4720,6 +4712,19 @@ impl TypeChecker<'_> {
                     false,
                 )
             );
+            let (&name, mem) = self.proj.scopes.get(id).members.get_index(i).unwrap();
+            let span = mem.span;
+            if let Some(kind) = self.proj.scopes.get_mut(id).kind.as_packed_struct_mut() {
+                kind.bit_offsets.insert(name, bits);
+                match ty.bit_size(&self.proj.scopes, &self.proj.types) {
+                    BitSizeResult::Tag(_, n) | BitSizeResult::Size(n) => bits += n,
+                    BitSizeResult::NonEnum | BitSizeResult::Bad => {
+                        if canonical {
+                            named_error!(self, Error::bitfield_member, name, span)
+                        }
+                    }
+                }
+            }
         }
 
         if let Some(union) = self.proj.scopes.get(id).kind.as_union().cloned() {
@@ -4735,31 +4740,6 @@ impl TypeChecker<'_> {
                     check_ty!(ty, Error::recursive_type(strdata!(self, name), var.span, true));
                 }
             }
-        } else if let Some(mut kind) = self.proj.scopes.get(id).kind.as_packed_struct().cloned() {
-            let mut bits = 0;
-            let mut align = 1;
-            for (&name, mem) in self.proj.scopes.get(id).members.iter() {
-                kind.bit_offsets.insert(name, bits);
-                // TODO:
-                // - allow ^mut
-                // - nested packed structs
-                match mem.ty.bit_size(&self.proj.scopes, &self.proj.types) {
-                    BitSizeResult::Tag(_, n) | BitSizeResult::Size(n) => {
-                        bits += n;
-                        align =
-                            align.max(mem.ty.size_and_align(&self.proj.scopes, &self.proj.types).1);
-                    }
-                    BitSizeResult::NonEnum | BitSizeResult::Bad => {
-                        if canonical {
-                            named_error!(self, Error::bitfield_member, name, mem.span)
-                        }
-                    }
-                }
-            }
-
-            kind.align = self.proj.scopes.get(id).attrs.align.unwrap_or(align);
-            kind.size = crate::nearest_pow_of_two(bits) / 8;
-            self.proj.scopes.get_mut(id).kind = UserTypeKind::PackedStruct(kind);
         }
 
         if failed {

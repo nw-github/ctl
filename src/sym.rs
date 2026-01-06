@@ -325,8 +325,6 @@ impl Union {
 #[derive(Debug, Clone, Default)]
 pub struct PackedStruct {
     pub bit_offsets: HashMap<StrId, u32>,
-    pub size: usize,
-    pub align: usize,
 }
 
 #[derive(EnumAsInner)]

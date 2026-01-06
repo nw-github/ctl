@@ -212,9 +212,10 @@ impl TypeGen {
                     writeln_de!(defs, "}};");
                 }
             }
-            UserTypeKind::PackedStruct(data) => {
-                let align = data.align.min(8);
-                writeln_de!(defs, "u{} {ARRAY_DATA_NAME}[{}];", align * 8, data.size / align);
+            UserTypeKind::PackedStruct(_) => {
+                let (size, align) = ut.size_and_align(scopes, types);
+                let align = align.min(8);
+                writeln_de!(defs, "u{} {ARRAY_DATA_NAME}[{}];", align * 8, size / align);
             }
             _ => {
                 if members.is_empty() {
@@ -351,8 +352,9 @@ impl TypeGen {
                             dependency!(ty.with_templates(types, &ut.ty_args));
                         }
                     }
-                    UserTypeKind::PackedStruct(data) => {
-                        dependency!(types.insert(Type::Uint(data.align.min(8) as u32 * 8)))
+                    UserTypeKind::PackedStruct(_) => {
+                        let (_, align) = ut.size_and_align(scopes, types);
+                        dependency!(types.insert(Type::Uint(align.min(8) as u32 * 8)))
                     }
                     _ => {}
                 }
@@ -1622,8 +1624,9 @@ impl<'a> Codegen<'a> {
                 self.emit_variant_instance(state, expr.ty, *name, members.clone())
             }
             &ExprData::Member { source, member } => {
-                let id = self.proj.types[source.ty].as_user().map(|ut| ut.id);
-                if let Some(id) = id.filter(|&id| self.proj.scopes.get(id).kind.is_packed_struct())
+                let ut = self.proj.types[source.ty].as_user();
+                if let Some(id) =
+                    ut.filter(|&ut| self.proj.scopes.get(ut.id).kind.is_packed_struct())
                 {
                     let tmp = tmpbuf!(self, state, |tmp| {
                         let ptr = self.proj.types.insert(Type::Ptr(source.ty));
@@ -1636,7 +1639,7 @@ impl<'a> Codegen<'a> {
                     self.emit_bitfield_read(&format!("(*{tmp})"), id, member, expr.ty);
                 } else {
                     self.emit_expr(source, state);
-                    write_de!(self.buffer, ".{}", member_name(self.proj, id, member));
+                    write_de!(self.buffer, ".{}", member_name(self.proj, ut.map(|u| u.id), member));
                 }
             }
             ExprData::Block(block) => enter_block!(self, block.scope, expr.ty, |name| {
@@ -1893,15 +1896,15 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_instance(&mut self, state: &mut State, ty: TypeId, members: IndexMap<StrId, Expr>) {
-        let ut_id = self.proj.types[ty].as_user().unwrap().id;
-        if self.proj.scopes.get(ut_id).kind.is_packed_struct() {
+        let ut = self.proj.types[ty].as_user().unwrap();
+        if self.proj.scopes.get(ut.id).kind.is_packed_struct() {
             return tmpbuf_emit!(self, state, |tmp| {
                 self.emit_type(ty);
                 writeln_de!(self.buffer, " {tmp} = {{}};");
                 for (name, value) in members {
                     let ty = value.ty;
                     let expr = hoist!(self, self.emit_tmpvar(value, state));
-                    self.emit_bitfield_write(&tmp, ut_id, name, ty, &expr);
+                    self.emit_bitfield_write(&tmp, ut, name, ty, &expr);
                 }
             });
         }
@@ -1914,7 +1917,7 @@ impl<'a> Codegen<'a> {
 
         for (name, mut value) in members {
             value.ty = value.ty.with_templates(&self.proj.types, &state.func.ty_args);
-            write_de!(self.buffer, ".{}=", member_name(self.proj, Some(ut_id), name));
+            write_de!(self.buffer, ".{}=", member_name(self.proj, Some(ut.id), name));
             self.emit_expr(value, state);
             write_de!(self.buffer, ",");
         }
@@ -2730,7 +2733,7 @@ impl<'a> Codegen<'a> {
                         tmpbuf!(self, state, |tmp| {
                             self.emit_type(ty);
                             write_de!(self.buffer, " {tmp}=");
-                            self.emit_bitfield_read(arg, ut.id, *name, ty);
+                            self.emit_bitfield_read(arg, ut, *name, ty);
                             writeln_de!(self.buffer, ";");
                             tmp
                         })
@@ -3314,7 +3317,7 @@ impl<'a> Codegen<'a> {
         rhs: Expr,
         op: BinaryOp,
     ) {
-        let id = self.proj.types.get(source.ty).as_user().map(|ut| ut.id).unwrap();
+        let ut = self.proj.types.get(source.ty).as_user().unwrap();
         let src = tmpbuf!(self, state, |tmp| {
             let ptr = self.proj.types.insert(Type::MutPtr(source.ty));
             self.emit_type(ptr);
@@ -3329,7 +3332,7 @@ impl<'a> Codegen<'a> {
             write_de!(self.buffer, " {tmp}=");
             if op != BinaryOp::Assign {
                 write_de!(self.buffer, "(");
-                self.emit_bitfield_read(&src, id, member, ty);
+                self.emit_bitfield_read(&src, ut, member, ty);
                 write_de!(
                     self.buffer,
                     "){}",
@@ -3353,13 +3356,13 @@ impl<'a> Codegen<'a> {
             writeln_de!(self.buffer, ";");
             tmp
         });
-        hoist!(self, self.emit_bitfield_write(&src, id, member, ty, &expr));
+        hoist!(self, self.emit_bitfield_write(&src, ut, member, ty, &expr));
         self.buffer.emit(VOID_INSTANCE);
     }
 
-    fn emit_bitfield_read(&mut self, tmp: &str, id: UserTypeId, member: StrId, ty: TypeId) {
+    fn emit_bitfield_read(&mut self, tmp: &str, ut: &GenericUserType, member: StrId, ty: TypeId) {
         let mut result = JoiningBuilder::new(self.proj, "|", "0");
-        self.bitfield_access(id, member, ty, |this, access| {
+        self.bitfield_access(ut, member, ty, |this, access| {
             let BitfieldAccess {
                 word,
                 word_offset,
@@ -3394,13 +3397,13 @@ impl<'a> Codegen<'a> {
     fn emit_bitfield_write(
         &mut self,
         tmp: &str,
-        id: UserTypeId,
+        ut: &GenericUserType,
         member: StrId,
         ty: TypeId,
         expr: &str,
     ) {
         let mut word_type = None;
-        self.bitfield_access(id, member, ty, |this, access| {
+        self.bitfield_access(ut, member, ty, |this, access| {
             let BitfieldAccess {
                 word,
                 word_offset,
@@ -3439,19 +3442,19 @@ impl<'a> Codegen<'a> {
 
     fn bitfield_access(
         &mut self,
-        id: UserTypeId,
+        ut: &GenericUserType,
         member: StrId,
         ty: TypeId,
         mut f: impl FnMut(&mut Self, BitfieldAccess),
     ) {
-        let bf = self.proj.scopes.get(id).kind.as_packed_struct().unwrap();
-        let word_size_bits = (bf.align.min(8) * 8) as u32;
+        let bf = self.proj.scopes.get(ut.id).kind.as_packed_struct().unwrap();
+        let (_, align) = ut.size_and_align(&self.proj.scopes, &self.proj.types);
+        let word_size_bits = (align.min(8) * 8) as u32;
         let (bits, enum_tag) = match ty.bit_size(&self.proj.scopes, &self.proj.types) {
             BitSizeResult::Size(n) => (n, None),
             BitSizeResult::Tag(tag, n) => (n, Some(tag)),
             _ => unreachable!(),
         };
-
         let mut word = bf.bit_offsets[&member] / word_size_bits;
         let mut word_offset = bf.bit_offsets[&member] % word_size_bits;
         let mut needed_bits = bits;

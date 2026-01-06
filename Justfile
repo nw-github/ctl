@@ -7,8 +7,7 @@ VSCODE_HOME := if path_exists(home_directory() / ".vscode-server") == "true" {
 }
 
 clean:
-    rm main.c
-    rm a.out
+    rm -rf build
     rm perf.data*
     rm flamegraph.svg
 

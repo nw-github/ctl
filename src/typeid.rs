@@ -146,6 +146,77 @@ impl GenericUserType {
             )
         })
     }
+
+    pub fn size_and_align(&self, scopes: &Scopes, types: &Types) -> (usize, usize) {
+        struct SizeAndAlign {
+            size: usize,
+            align: usize,
+        }
+
+        impl SizeAndAlign {
+            fn next(&mut self, (s, a): (usize, usize)) {
+                self.size += (a - self.size % a) % a + s;
+                self.align = self.align.max(a);
+            }
+        }
+
+        let ut_data = scopes.get(self.id);
+        if ut_data.recursive {
+            return (0, 1);
+        }
+
+        let mut sa = SizeAndAlign { size: 0, align: ut_data.attrs.align.unwrap_or(1) };
+        match &ut_data.kind {
+            UserTypeKind::Union(union) => {
+                if self.can_omit_tag(scopes, types).is_none() {
+                    sa.next(union.tag.size_and_align(scopes, types));
+                }
+                for member in ut_data.members.values() {
+                    let ty = member.ty.with_templates(types, &self.ty_args);
+                    sa.next(ty.size_and_align(scopes, types));
+                }
+
+                sa.next(union.variants.values().flat_map(|v| v.ty).fold(
+                    (0, 1),
+                    |(sz, align), ty| {
+                        let (s, a) =
+                            ty.with_templates(types, &self.ty_args).size_and_align(scopes, types);
+                        (sz.max(s), align.max(a))
+                    },
+                ));
+            }
+            UserTypeKind::UnsafeUnion => {
+                sa.next(ut_data.members.values().fold((0, 1), |(sz, align), m| {
+                    let (s, a) =
+                        m.ty.with_templates(types, &self.ty_args).size_and_align(scopes, types);
+                    (sz.max(s), align.max(a))
+                }));
+            }
+            UserTypeKind::PackedStruct(_) => {
+                let mut bits = 0;
+                for member in ut_data.members.values() {
+                    let ty = member.ty.with_templates(types, &self.ty_args);
+                    match ty.bit_size(scopes, types) {
+                        BitSizeResult::Tag(_, n) | BitSizeResult::Size(n) => {
+                            bits += n;
+                            sa.align = sa.align.max(ty.size_and_align(scopes, types).1);
+                        }
+                        BitSizeResult::NonEnum | BitSizeResult::Bad => {}
+                    }
+                }
+                sa.next((nearest_pow_of_two(bits) / 8, sa.align));
+            }
+            _ => {
+                for member in ut_data.members.values() {
+                    let ty = member.ty.with_templates(types, &self.ty_args);
+                    sa.next(ty.size_and_align(scopes, types));
+                }
+            }
+        }
+
+        sa.next((0, sa.align));
+        (sa.size, sa.align)
+    }
 }
 
 pub type GenericTrait = WithTypeArgs<TraitId>;
@@ -544,61 +615,7 @@ impl TypeId {
             Type::Bool => std::mem::size_of::<bool>(),
             Type::Char => std::mem::size_of::<char>(),
             Type::FnPtr(_) => std::mem::size_of::<fn()>(),
-            Type::User(ut) if !scopes.get(ut.id).recursive => {
-                struct SizeAndAlign {
-                    size: usize,
-                    align: usize,
-                }
-
-                impl SizeAndAlign {
-                    fn next(&mut self, (s, a): (usize, usize)) {
-                        self.size += (a - self.size % a) % a + s;
-                        self.align = self.align.max(a);
-                    }
-                }
-
-                let mut sa = SizeAndAlign { size: 0, align: 1 };
-                let ut_data = scopes.get(ut.id);
-                match &ut_data.kind {
-                    UserTypeKind::Union(union) => {
-                        if self.can_omit_tag(scopes, types).is_none() {
-                            sa.next(union.tag.size_and_align(scopes, types));
-                        }
-                        for member in ut_data.members.values() {
-                            let ty = member.ty.with_templates(types, &ut.ty_args);
-                            sa.next(ty.size_and_align(scopes, types));
-                        }
-
-                        sa.next(union.variants.values().flat_map(|v| v.ty).fold(
-                            (0, 1),
-                            |(sz, align), ty| {
-                                let (s, a) = ty
-                                    .with_templates(types, &ut.ty_args)
-                                    .size_and_align(scopes, types);
-                                (sz.max(s), align.max(a))
-                            },
-                        ));
-                    }
-                    UserTypeKind::UnsafeUnion => {
-                        sa.next(ut_data.members.values().fold((0, 1), |(sz, align), m| {
-                            let (s, a) =
-                                m.ty.with_templates(types, &ut.ty_args)
-                                    .size_and_align(scopes, types);
-                            (sz.max(s), align.max(a))
-                        }));
-                    }
-                    UserTypeKind::PackedStruct(data) => sa.next((data.size, data.align)),
-                    _ => {
-                        for member in ut_data.members.values() {
-                            let ty = member.ty.with_templates(types, &ut.ty_args);
-                            sa.next(ty.size_and_align(scopes, types));
-                        }
-                    }
-                }
-
-                sa.next((0, ut_data.attrs.align.unwrap_or(sa.align)));
-                return (sa.size, sa.align);
-            }
+            Type::User(ut) => return ut.size_and_align(scopes, types),
             &Type::Array(ty, len) => {
                 let (s, a) = ty.size_and_align(scopes, types);
                 return (s * len, a);
