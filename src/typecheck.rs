@@ -3363,6 +3363,9 @@ impl TypeChecker<'_> {
 
                 expr
             }
+            &PExprData::Grouping(expr) => {
+                self.check_expr_ex(expr, target, Listen::Passthrough, true).0
+            }
         }
     }
 

@@ -208,6 +208,7 @@ pub enum ExprData {
     Tail(Expr),
     Break(Option<Expr>, Option<Located<StrId>>),
     Unsafe(Expr),
+    Grouping(Expr),
     Range {
         start: Option<Expr>,
         end: Option<Expr>,

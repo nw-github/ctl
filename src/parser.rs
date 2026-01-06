@@ -632,6 +632,10 @@ impl<'a> Parser<'a> {
             }
             // complex expressions
             Token::LParen => {
+                if let Some(end) = self.next_if(Token::RParen) {
+                    return self.arena.expr(span.extended_to(end.span), ExprData::Tuple(vec![]));
+                }
+
                 let (label, mut expr) = self.maybe_labeled_expr();
                 if label.is_some() || self.matches(Token::Comma) {
                     let mut next = 0;
@@ -649,7 +653,11 @@ impl<'a> Parser<'a> {
                 } else {
                     let end = self.expect(Token::RParen);
                     expr.span = span.extended_to(end.span);
-                    expr
+                    if self.matches_pred(|t| matches!(t, Token::LParen | Token::LBrace)) {
+                        self.arena.expr(span, ExprData::Grouping(expr))
+                    } else {
+                        expr
+                    }
                 }
             }
             Token::Range => {

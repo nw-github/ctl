@@ -474,6 +474,10 @@ impl Pretty<'_> {
                 self.print_header(&tabs, "Expr::Unsafe", &[]);
                 self.print_expr(expr, indent + 1);
             }
+            ExprData::Grouping(expr) => {
+                self.print_header(&tabs, "Expr::Grouping", &[]);
+                self.print_expr(expr, indent + 1);
+            }
             ExprData::StringInterpolation { strings: parts, args } => {
                 self.print_header(&tabs, "Expr::StringInterpolation", &[]);
                 let plus_1 = INDENT.repeat(indent + 1);

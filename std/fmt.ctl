@@ -191,7 +191,7 @@ pub struct Arguments {
         fn fmt(this, f: *mut Formatter) {
             for (part, arg) in this.parts.iter().zip(this.args.iter()) {
                 f.write_str(*part);
-                ({arg.format}(arg.value, &mut f.with_options(arg.opts)));
+                (arg.format)(arg.value, &mut f.with_options(arg.opts));
             }
 
             if this.parts.len() > this.args.len() {
