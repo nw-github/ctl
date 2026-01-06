@@ -129,6 +129,14 @@
 #define COERCE(ty, expr) (expr, *(ty *)0)
 #define VOID(expr)       (expr, CTL_VOID)
 
+#define CTL_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
+
+#ifdef CTL_EXPLICIT_PADDING
+#  define CTL_PAD(name, len) char name[len]
+#else
+#  define CTL_PAD(name, len)
+#endif
+
 static void $ctl_static_init(void);
 static void $ctl_static_deinit(void);
 

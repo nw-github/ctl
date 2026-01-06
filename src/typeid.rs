@@ -3,11 +3,12 @@ use std::{fmt::Display, ops::Index};
 use crate::{
     ast::{BinaryOp, UnaryOp, parsed::TypeHint},
     ds::{ComptimeInt, HashArena, IndexMap},
+    intern::StrId,
     nearest_pow_of_two,
     project::Project,
     sym::{
-        ExtensionId, FunctionId, HasTypeParams, ItemId, ScopeId, Scopes, TraitId, UserTypeId,
-        UserTypeKind,
+        ExtensionId, FunctionId, HasTypeParams, ItemId, Layout, ScopeId, Scopes, TraitId,
+        UserTypeId, UserTypeKind,
     },
 };
 use derive_more::{Constructor, Deref, DerefMut};
@@ -123,6 +124,64 @@ impl GenericFn {
     }
 }
 
+pub enum LayoutItemKind {
+    Tag(TypeId),
+    Member(TypeId, StrId),
+    Union(Vec<(TypeId, StrId)>),
+    BitData,
+    Pad,
+}
+
+pub struct LayoutItem {
+    pub kind: LayoutItemKind,
+    pub size: usize,
+    pub align: usize,
+}
+
+pub struct TypeLayout {
+    pub size: usize,
+    pub align: usize,
+    pub items: Vec<LayoutItem>,
+}
+
+impl TypeLayout {
+    fn add(&mut self, item: LayoutItem) {
+        self.align = self.align.max(item.align);
+        self.items.push(item);
+    }
+
+    fn finish(mut self, layout: Layout) -> Self {
+        if layout == Layout::Auto {
+            self.items.sort_unstable_by_key(|it| (usize::MAX - it.align, usize::MAX - it.size));
+        }
+
+        let mut items = Vec::with_capacity(self.items.len());
+        let mut size = 0;
+        for item in self.items {
+            let add = (item.align - size % item.align) % item.align + item.size;
+            size += add;
+            if add > item.size {
+                items.push(LayoutItem {
+                    kind: LayoutItemKind::Pad,
+                    size: add - item.size,
+                    align: 1,
+                });
+            }
+            items.push(item);
+        }
+
+        let tail = (self.align - size % self.align) % self.align;
+        if tail != 0 {
+            size += tail;
+            items.push(LayoutItem { kind: LayoutItemKind::Pad, size: tail, align: 1 });
+        }
+
+        self.items = items;
+        self.size = size;
+        self
+    }
+}
+
 pub type GenericUserType = WithTypeArgs<UserTypeId>;
 
 impl GenericUserType {
@@ -147,50 +206,54 @@ impl GenericUserType {
         })
     }
 
-    pub fn size_and_align(&self, scopes: &Scopes, types: &Types) -> (usize, usize) {
-        struct SizeAndAlign {
-            size: usize,
-            align: usize,
-        }
-
-        impl SizeAndAlign {
-            fn next(&mut self, (s, a): (usize, usize)) {
-                self.size += (a - self.size % a) % a + s;
-                self.align = self.align.max(a);
-            }
-        }
-
+    pub fn calc_layout(&self, scopes: &Scopes, types: &Types) -> TypeLayout {
         let ut_data = scopes.get(self.id);
+        let mut layout =
+            TypeLayout { size: 0, align: ut_data.attrs.align.unwrap_or(1), items: vec![] };
         if ut_data.recursive {
-            return (0, 1);
+            return layout;
         }
 
-        let mut sa = SizeAndAlign { size: 0, align: ut_data.attrs.align.unwrap_or(1) };
+        let next_ty = |layout: &mut TypeLayout, ty: TypeId, name: StrId| {
+            let ty = ty.with_templates(types, &self.ty_args);
+            let (size, align) = ty.size_and_align(scopes, types);
+            layout.add(LayoutItem { kind: LayoutItemKind::Member(ty, name), size, align });
+        };
+
+        let next_union = |layout: &mut TypeLayout, mut ty: Vec<(TypeId, StrId)>| {
+            let (size, align) = ty.iter_mut().fold((0, 1), |(sz, align), (ty, _)| {
+                *ty = ty.with_templates(types, &self.ty_args);
+                let (s, a) = ty.size_and_align(scopes, types);
+                (sz.max(s), align.max(a))
+            });
+            layout.add(LayoutItem { kind: LayoutItemKind::Union(ty), size, align });
+        };
+
         match &ut_data.kind {
             UserTypeKind::Union(union) => {
                 if self.can_omit_tag(scopes, types).is_none() {
-                    sa.next(union.tag.size_and_align(scopes, types));
-                }
-                for member in ut_data.members.values() {
-                    let ty = member.ty.with_templates(types, &self.ty_args);
-                    sa.next(ty.size_and_align(scopes, types));
+                    let (size, align) = union.tag.size_and_align(scopes, types);
+                    layout.add(LayoutItem { kind: LayoutItemKind::Tag(union.tag), size, align });
                 }
 
-                sa.next(union.variants.values().flat_map(|v| v.ty).fold(
-                    (0, 1),
-                    |(sz, align), ty| {
-                        let (s, a) =
-                            ty.with_templates(types, &self.ty_args).size_and_align(scopes, types);
-                        (sz.max(s), align.max(a))
-                    },
-                ));
+                for (name, m) in ut_data.members.iter() {
+                    next_ty(&mut layout, m.ty, *name);
+                }
+
+                next_union(
+                    &mut layout,
+                    union
+                        .variants
+                        .iter()
+                        .flat_map(|(name, v)| v.ty.map(|ty| (ty, *name)))
+                        .collect(),
+                );
             }
             UserTypeKind::UnsafeUnion => {
-                sa.next(ut_data.members.values().fold((0, 1), |(sz, align), m| {
-                    let (s, a) =
-                        m.ty.with_templates(types, &self.ty_args).size_and_align(scopes, types);
-                    (sz.max(s), align.max(a))
-                }));
+                next_union(
+                    &mut layout,
+                    ut_data.members.iter().map(|(name, m)| (m.ty, *name)).collect(),
+                );
             }
             UserTypeKind::PackedStruct(_) => {
                 let mut bits = 0;
@@ -199,23 +262,28 @@ impl GenericUserType {
                     match ty.bit_size(scopes, types) {
                         BitSizeResult::Tag(_, n) | BitSizeResult::Size(n) => {
                             bits += n;
-                            sa.align = sa.align.max(ty.size_and_align(scopes, types).1);
+                            layout.align = layout.align.max(ty.size_and_align(scopes, types).1);
                         }
                         BitSizeResult::NonEnum | BitSizeResult::Bad => {}
                     }
                 }
-                sa.next((nearest_pow_of_two(bits) / 8, sa.align));
+
+                let size = nearest_pow_of_two(bits) / 8;
+                layout.add(LayoutItem { kind: LayoutItemKind::BitData, size, align: layout.align });
             }
             _ => {
-                for member in ut_data.members.values() {
-                    let ty = member.ty.with_templates(types, &self.ty_args);
-                    sa.next(ty.size_and_align(scopes, types));
+                for (name, m) in ut_data.members.iter() {
+                    next_ty(&mut layout, m.ty, *name);
                 }
             }
         }
 
-        sa.next((0, sa.align));
-        (sa.size, sa.align)
+        layout.finish(ut_data.attrs.layout)
+    }
+
+    pub fn size_and_align(&self, scopes: &Scopes, types: &Types) -> (usize, usize) {
+        let layout = self.calc_layout(scopes, types);
+        (layout.size, layout.align)
     }
 }
 
@@ -614,6 +682,7 @@ impl TypeId {
             Type::F64 => std::mem::size_of::<f64>(),
             Type::Bool => std::mem::size_of::<bool>(),
             Type::Char => std::mem::size_of::<char>(),
+            Type::Fn(_) => std::mem::size_of::<fn()>(), // TODO: should be size 0
             Type::FnPtr(_) => std::mem::size_of::<fn()>(),
             Type::User(ut) => return ut.size_and_align(scopes, types),
             &Type::Array(ty, len) => {

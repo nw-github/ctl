@@ -63,6 +63,7 @@ impl Strings {
     pub const ATTR_ALIGN: StrId = invent_str_id(48);
     pub const LANG_DEBUG: StrId = invent_str_id(49);
     pub const FALLBACK_DBG: StrId = invent_str_id(50);
+    pub const ATTR_LAYOUT: StrId = invent_str_id(51);
 
     pub fn new() -> Self {
         let mut rodeo = Rodeo::default();
@@ -116,6 +117,7 @@ impl Strings {
         assert_eq!(Self::ATTR_ALIGN, rodeo.get_or_intern_static("align"));
         assert_eq!(Self::LANG_DEBUG, rodeo.get_or_intern_static("fmt_debug"));
         assert_eq!(Self::FALLBACK_DBG, rodeo.get_or_intern_static("fallback_debug"));
+        assert_eq!(Self::ATTR_LAYOUT, rodeo.get_or_intern_static("layout"));
         Self { rodeo }
     }
 }

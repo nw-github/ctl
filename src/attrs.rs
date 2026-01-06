@@ -11,7 +11,7 @@ pub struct VariableAttrs {
     pub thread_local: bool,
 }
 
-fn one_str_arg(attr: &Attribute, name: StrId, proj: &mut Project) -> Option<StrId> {
+fn one_str_arg_l(attr: &Attribute, name: StrId, proj: &mut Project) -> Option<Located<StrId>> {
     let Some(prop) = attr.props.first() else {
         proj.diag.report(Error::new(
             format!("attribute '{}' requires an argument", proj.strings.resolve(&name)),
@@ -28,7 +28,11 @@ fn one_str_arg(attr: &Attribute, name: StrId, proj: &mut Project) -> Option<StrI
         return None;
     };
 
-    Some(id)
+    Some(Located::new(prop.name.span, id))
+}
+
+fn one_str_arg(attr: &Attribute, name: StrId, proj: &mut Project) -> Option<StrId> {
+    one_str_arg_l(attr, name, proj).map(|l| l.data)
 }
 
 fn opt_str_arg(attr: &Attribute, name: StrId, proj: &mut Project) -> Option<Located<StrId>> {
@@ -163,10 +167,18 @@ impl FunctionAttrs {
     }
 }
 
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum Layout {
+    #[default]
+    Auto,
+    C,
+}
+
 #[derive(Default)]
 pub struct UserTypeAttrs {
     pub lang: Option<StrId>,
     pub align: Option<usize>,
+    pub layout: Layout,
 }
 
 impl UserTypeAttrs {
@@ -208,6 +220,23 @@ impl UserTypeAttrs {
                     }
 
                     this.align = Some(ival);
+                }
+                AN::Str(id @ Strings::ATTR_LAYOUT) => {
+                    let Some(arg) = one_str_arg_l(attr, id, proj) else {
+                        continue;
+                    };
+
+                    this.layout = match proj.strings.resolve(&arg.data) {
+                        "C" => Layout::C,
+                        "auto" => Layout::Auto,
+                        other => {
+                            proj.diag.report(Error::new(
+                                format!("invalid layout '{other}', expected 'C' or 'auto'"),
+                                arg.span,
+                            ));
+                            continue;
+                        }
+                    };
                 }
                 _ => unrecognized(attr, proj),
             }

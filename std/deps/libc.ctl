@@ -1,3 +1,4 @@
+@(layout(C))
 pub struct JmpBuf {
     pad: [u8; 0xc8],
 }
@@ -14,6 +15,7 @@ pub extern fn longjmp(env: *mut JmpBuf, val: c_int): never;
 
 pub extern fn write(fd: c_int, buf: ^void, count: uint): int;
 
+@(layout(C))
 pub struct Timespec {
     pub tv_sec: c_long,
     pub tv_nsec: c_long,

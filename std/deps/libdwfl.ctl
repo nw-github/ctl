@@ -3,9 +3,13 @@ pub union Dwfl_Line {}
 pub union Elf {}
 pub union Dwfl {}
 
+@(layout(C))
 pub unsafe union GElf_Shdr { _pad: [u8; 64], _align: u64 }
+
+@(layout(C))
 pub unsafe union Elf64_Sym { _pad: [u8; 24], _align: u64 }
 
+@(layout(C))
 pub struct Dwfl_Callbacks {
     pub find_elf: ?extern unsafe fn(
         module:   ?*mut Dwfl_Module,

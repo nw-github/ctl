@@ -10,8 +10,8 @@ use crate::{
     sym::*,
     typecheck::{ExtensionCache, MemberFn, MemberFnType, SharedStuff},
     typeid::{
-        BitSizeResult, CInt, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, Type,
-        TypeArgs, TypeId, Types,
+        BitSizeResult, CInt, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer,
+        LayoutItemKind, Type, TypeArgs, TypeId, Types,
     },
     write_de, writeln_de,
 };
@@ -34,7 +34,7 @@ macro_rules! write_nm {
     };
 }
 
-const UNION_TAG_NAME: &str = "tag";
+const UNION_TAG_NAME: &str = "$tag";
 const ARRAY_DATA_NAME: &str = "data";
 const VOID_INSTANCE: &str = "CTL_VOID";
 const NULLPTR: &str = "((void*)0)";
@@ -147,88 +147,79 @@ impl TypeGen {
         defs: &mut Buffer,
         ut: &GenericUserType,
     ) {
-        fn emit_member(
-            ut: &GenericUserType,
-            name: StrId,
-            ty: TypeId,
-            buffer: &mut Buffer,
-            min: bool,
-        ) {
-            let types = &buffer.1.types;
-            let scopes = &buffer.1.scopes;
-
-            let ty = ty.with_templates(types, &ut.ty_args);
-            if ty.size_and_align(scopes, types).0 == 0 {
+        let emit_member = |name: StrId, ty: TypeId, size: usize, buffer: &mut Buffer| {
+            if size == 0 {
                 write_de!(buffer, "CTL_ZST ");
             }
 
-            buffer.emit_type(ty, min);
+            buffer.emit_type(ty, flags.minify);
             writeln_de!(buffer, " {};", member_name(buffer.1, Some(ut.id), name));
-        }
+        };
 
-        let types = &decls.1.types;
-        let scopes = &decls.1.scopes;
+        let type_name = Buffer::format(defs.1, |buf| buf.emit_type_name(ut, flags.minify));
+        writeln_de!(decls, "typedef struct {type_name} {type_name};");
 
-        let ut_data = scopes.get(ut.id);
-        let decltype = if ut_data.kind.is_unsafe_union() { "union" } else { "struct" };
-
-        write_de!(decls, "typedef {decltype} ");
-        decls.emit_type_name(ut, flags.minify);
-        write_de!(decls, " ");
-        decls.emit_type_name(ut, flags.minify);
-        writeln_de!(decls, ";");
-
-        let members = &ut_data.members;
-        if members.is_empty() && ut_data.kind.as_union().is_some_and(|u| u.variants.is_empty()) {
+        let ut_data = decls.1.scopes.get(ut.id);
+        if ut_data.members.is_empty()
+            && ut_data.kind.as_union().is_some_and(|u| u.variants.is_empty())
+        {
             return;
         }
 
-        write_de!(defs, "{decltype} ");
+        let layout = ut.calc_layout(&decls.1.scopes, &decls.1.types);
+        write_de!(defs, "struct ");
         if let Some(align) = ut_data.attrs.align {
             write_de!(defs, "CTL_ALIGN({align}) ");
         }
+        writeln_de!(defs, "{type_name} {{");
 
-        defs.emit_type_name(ut, flags.minify);
-        write_de!(defs, "{{");
+        let mut pad = 0;
+        let mut wrote = false;
+        for item in layout.items {
+            match item.kind {
+                LayoutItemKind::Tag(ty) => {
+                    if item.size == 0 {
+                        continue;
+                    }
 
-        match &ut_data.kind {
-            UserTypeKind::Union(union) => {
-                if !matches!(types[union.tag], Type::Uint(0) | Type::Int(0)) {
-                    defs.emit_type(union.tag, flags.minify);
+                    defs.emit_type(ty, flags.minify);
                     writeln_de!(defs, " {UNION_TAG_NAME};");
                 }
+                LayoutItemKind::Member(ty, name) => emit_member(name, ty, item.size, defs),
+                LayoutItemKind::Union(variants) => {
+                    if variants.is_empty() {
+                        continue;
+                    }
 
-                for (&name, member) in members {
-                    emit_member(ut, name, member.ty, defs, flags.minify);
-                }
-
-                if union.variants.iter().any(|v| v.1.ty.is_some()) {
                     write_de!(defs, "union{{");
-                    for (&name, variant) in union.variants.iter() {
-                        if let Some(ty) = variant.ty {
-                            emit_member(ut, name, ty, defs, flags.minify);
-                        }
+                    for (ty, name) in variants {
+                        emit_member(name, ty, item.size, defs);
                     }
                     writeln_de!(defs, "}};");
                 }
-            }
-            UserTypeKind::PackedStruct(_) => {
-                let (size, align) = ut.size_and_align(scopes, types);
-                let align = align.min(8);
-                writeln_de!(defs, "u{} {ARRAY_DATA_NAME}[{}];", align * 8, size / align);
-            }
-            _ => {
-                if members.is_empty() {
-                    writeln_de!(defs, "CTL_DUMMY_MEMBER;");
+                LayoutItemKind::BitData => {
+                    let align = item.align.min(8);
+                    writeln_de!(defs, "u{} {ARRAY_DATA_NAME}[{}];", align * 8, item.size / align);
                 }
+                LayoutItemKind::Pad => {
+                    writeln_de!(defs, "CTL_PAD(pad{pad}, {});", item.size);
+                    pad += 1;
+                }
+            }
 
-                for (&name, member) in members {
-                    emit_member(ut, name, member.ty, defs, flags.minify);
-                }
-            }
+            wrote = true;
         }
-
+        if !wrote {
+            writeln_de!(defs, "CTL_DUMMY_MEMBER;");
+        }
         writeln_de!(defs, "}};");
+        writeln_de!(
+            defs,
+            "CTL_STATIC_ASSERT(sizeof(struct {type_name}) == {} && _Alignof(struct {type_name}) == {}, \"Disagreement between C compiler and CTL about alignment of type {}\");",
+            layout.size,
+            layout.align,
+            defs.1.fmt_ut(ut),
+        );
     }
 
     fn emit(&self, decls: &mut Buffer, flags: &CodegenFlags) {
