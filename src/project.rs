@@ -43,6 +43,10 @@ impl Project {
     pub fn fmt_ut<'b>(&self, ty: &'b GenericUserType) -> FmtUt<'b, '_> {
         FmtUt::new(ty, self)
     }
+
+    pub fn str(&self, id: StrId) -> &str {
+        self.strings.resolve(&id)
+    }
 }
 
 #[derive(Debug, Clone)]

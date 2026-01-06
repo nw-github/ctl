@@ -4,8 +4,8 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     ast::{
         checked::{Expr as CheckedExpr, Pattern as CheckedPattern},
-        parsed::{Expr, FunctionType, Path, Pattern, TypeHint},
         declared::UsePath,
+        parsed::{Expr, FunctionType, Path, Pattern, TypeHint},
     },
     ds::{ComptimeInt, HashMap, HashSet, IndexMap},
     intern::{StrId, Strings},
@@ -322,21 +322,21 @@ impl Union {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct PackedStruct {
-    pub bit_offsets: HashMap<StrId, u32>,
-}
-
 #[derive(EnumAsInner)]
 pub enum UserTypeKind {
-    Struct(FunctionId),
-    PackedStruct(PackedStruct),
+    Struct(FunctionId, bool),
     Union(Union),
     UnsafeUnion,
     Template,
     Tuple,
     Trait { this: UserTypeId, sealed: bool, assoc_types: HashMap<StrId, UserTypeId> },
     Extension(TypeId),
+}
+
+impl UserTypeKind {
+    pub fn is_packed_struct(&self) -> bool {
+        matches!(self, Self::Struct(_, true))
+    }
 }
 
 #[derive(Clone)]

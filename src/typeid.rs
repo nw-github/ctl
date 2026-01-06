@@ -255,7 +255,7 @@ impl GenericUserType {
                     ut_data.members.iter().map(|(name, m)| (m.ty, *name)).collect(),
                 );
             }
-            UserTypeKind::PackedStruct(_) => {
+            UserTypeKind::Struct(_, true) => {
                 let mut bits = 0;
                 for member in ut_data.members.values() {
                     let ty = member.ty.with_templates(types, &self.ty_args);
@@ -264,7 +264,7 @@ impl GenericUserType {
                             bits += n;
                             layout.align = layout.align.max(ty.size_and_align(scopes, types).1);
                         }
-                        BitSizeResult::NonEnum | BitSizeResult::Bad => {}
+                        BitSizeResult::Bad => {}
                     }
                 }
 
@@ -284,6 +284,35 @@ impl GenericUserType {
     pub fn size_and_align(&self, scopes: &Scopes, types: &Types) -> (usize, usize) {
         let layout = self.calc_layout(scopes, types);
         (layout.size, layout.align)
+    }
+
+    pub fn offset_of(&self, scopes: &Scopes, types: &Types, member: StrId) -> Option<usize> {
+        let mut offs = 0;
+        for item in self.calc_layout(scopes, types).items.iter() {
+            if matches!(item.kind, LayoutItemKind::Member(_, name) if name == member) {
+                return Some(offs);
+            }
+            offs += item.size;
+        }
+        None
+    }
+
+    pub fn bit_offset_of(&self, scopes: &Scopes, types: &Types, member: StrId) -> Option<u32> {
+        let mut offs = 0;
+        for (&name, mem) in scopes.get(self.id).members.iter() {
+            if member == name {
+                return Some(offs);
+            }
+
+            match mem.ty.with_templates(types, &self.ty_args).bit_size(scopes, types) {
+                BitSizeResult::Tag(_, n) | BitSizeResult::Size(n) => {
+                    offs += n;
+                }
+                BitSizeResult::Bad => {}
+            }
+        }
+
+        None
     }
 }
 
@@ -559,7 +588,6 @@ impl TypeId {
 pub enum BitSizeResult {
     Size(u32),
     Tag(TypeId, u32),
-    NonEnum,
     Bad,
 }
 
@@ -705,12 +733,12 @@ impl TypeId {
                     let ut = scopes.get(ut.id);
                     if let Some(u) = ut.kind.as_union().filter(|u| u.enum_union) {
                         match u.tag.bit_size(scopes, types) {
-                            BitSizeResult::NonEnum | BitSizeResult::Bad => BitSizeResult::Size(0),
+                            BitSizeResult::Bad => BitSizeResult::Size(0),
                             BitSizeResult::Size(n) => BitSizeResult::Tag(u.tag, n),
                             res => res,
                         }
                     } else {
-                        BitSizeResult::NonEnum
+                        BitSizeResult::Bad
                     }
                 }
                 _ => BitSizeResult::Bad,

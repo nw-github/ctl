@@ -199,8 +199,8 @@ impl TypeGen {
                     writeln_de!(defs, "}};");
                 }
                 LayoutItemKind::BitData => {
-                    let align = item.align.min(8);
-                    writeln_de!(defs, "u{} {ARRAY_DATA_NAME}[{}];", align * 8, item.size / align);
+                    let a = item.align.min(8);
+                    writeln_de!(defs, "uint{}_t {ARRAY_DATA_NAME}[{}];", a * 8, item.size / a);
                 }
                 LayoutItemKind::Pad => {
                     writeln_de!(defs, "CTL_PAD(pad{pad}, {});", item.size);
@@ -337,18 +337,11 @@ impl TypeGen {
                     dependency!(m.ty.with_templates(types, &ut.ty_args));
                 }
 
-                match &scopes.get(ut.id).kind {
-                    UserTypeKind::Union(union) => {
-                        dependency!(union.tag);
-                        for ty in union.variants.values().flat_map(|v| v.ty) {
-                            dependency!(ty.with_templates(types, &ut.ty_args));
-                        }
+                if let UserTypeKind::Union(union) = &scopes.get(ut.id).kind {
+                    dependency!(union.tag);
+                    for ty in union.variants.values().flat_map(|v| v.ty) {
+                        dependency!(ty.with_templates(types, &ut.ty_args));
                     }
-                    UserTypeKind::PackedStruct(_) => {
-                        let (_, align) = ut.size_and_align(scopes, types);
-                        dependency!(types.insert(Type::Uint(align.min(8) as u32 * 8)))
-                    }
-                    _ => {}
                 }
             }
             Type::Ptr(id) | Type::MutPtr(id) | Type::RawPtr(id) | Type::RawMutPtr(id) => {
@@ -3440,7 +3433,6 @@ impl<'a> Codegen<'a> {
         ty: TypeId,
         mut f: impl FnMut(&mut Self, BitfieldAccess),
     ) {
-        let bf = self.proj.scopes.get(ut.id).kind.as_packed_struct().unwrap();
         let (_, align) = ut.size_and_align(&self.proj.scopes, &self.proj.types);
         let word_size_bits = (align.min(8) * 8) as u32;
         let (bits, enum_tag) = match ty.bit_size(&self.proj.scopes, &self.proj.types) {
@@ -3448,8 +3440,9 @@ impl<'a> Codegen<'a> {
             BitSizeResult::Tag(tag, n) => (n, Some(tag)),
             _ => unreachable!(),
         };
-        let mut word = bf.bit_offsets[&member] / word_size_bits;
-        let mut word_offset = bf.bit_offsets[&member] % word_size_bits;
+        let offs = ut.bit_offset_of(&self.proj.scopes, &self.proj.types, member).unwrap();
+        let mut word = offs / word_size_bits;
+        let mut word_offset = offs % word_size_bits;
         let mut needed_bits = bits;
         while needed_bits != 0 {
             let reading = needed_bits.min(word_size_bits - word_offset);

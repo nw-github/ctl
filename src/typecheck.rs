@@ -811,17 +811,12 @@ impl<'a> TypeChecker<'a> {
             let (impls, blocks, block_data, subscripts) =
                 this.declare_impl_blocks(&base.impls, &base.operators);
             let mut fns = this.declare_fns(&base.functions);
-            let kind = if packed {
-                UserTypeKind::PackedStruct(PackedStruct::default())
-            } else {
-                UserTypeKind::Struct(init.id)
-            };
             let ut = this.ut_from_stuff(
                 attrs,
                 base.name,
                 base.public,
                 members,
-                kind,
+                UserTypeKind::Struct(init.id, packed),
                 &base.type_params,
                 &fns,
                 impls,
@@ -2692,7 +2687,7 @@ impl TypeChecker<'_> {
                     return Default::default();
                 };
 
-                let &constructor = self.proj.scopes.get(ut_id).kind.as_struct().unwrap();
+                let (&constructor, _) = self.proj.scopes.get(ut_id).kind.as_struct().unwrap();
                 // Put them nowhere or else the LSP will use argument label semantic tokens
                 let call_args = [
                     start.map(|v| (Some(Located::nowhere(start_id)), v)),
@@ -4584,6 +4579,12 @@ impl TypeChecker<'_> {
         for i in 0..self.proj.scopes.get(id).members.len() {
             let ty = resolve_type!(self, self.proj.scopes.get_mut(id).members[i].ty);
             set_interior_mutable(self, id, ty);
+            if self.proj.scopes.get(id).kind.is_packed_struct()
+                && let BitSizeResult::Bad = ty.bit_size(&self.proj.scopes, &self.proj.types)
+            {
+                let (&name, mem) = self.proj.scopes.get(id).members.get_index(i).unwrap();
+                named_error!(self, Error::bitfield_member, name, mem.span)
+            }
         }
 
         if let Some(mut union) = self.proj.scopes.get(id).kind.as_union().cloned() {
@@ -4698,13 +4699,11 @@ impl TypeChecker<'_> {
                 {
                     self.proj.scopes.get_mut(id).interior_mutable = true;
                 }
-                ty
             }};
         }
 
-        let mut bits = 0;
         for i in 0..self.proj.scopes.get(id).members.len() {
-            let ty = check_ty!(
+            check_ty!(
                 self.proj.scopes.get(id).members[i].ty,
                 Error::recursive_type(
                     strdata!(self, self.proj.scopes.get(id).members.get_index(i).unwrap().0),
@@ -4712,19 +4711,6 @@ impl TypeChecker<'_> {
                     false,
                 )
             );
-            let (&name, mem) = self.proj.scopes.get(id).members.get_index(i).unwrap();
-            let span = mem.span;
-            if let Some(kind) = self.proj.scopes.get_mut(id).kind.as_packed_struct_mut() {
-                kind.bit_offsets.insert(name, bits);
-                match ty.bit_size(&self.proj.scopes, &self.proj.types) {
-                    BitSizeResult::Tag(_, n) | BitSizeResult::Size(n) => bits += n,
-                    BitSizeResult::NonEnum | BitSizeResult::Bad => {
-                        if canonical {
-                            named_error!(self, Error::bitfield_member, name, span)
-                        }
-                    }
-                }
-            }
         }
 
         if let Some(union) = self.proj.scopes.get(id).kind.as_union().cloned() {
@@ -5726,7 +5712,7 @@ impl TypeChecker<'_> {
         let Some(ut) = self.proj.types[stripped].as_user().filter(|ut| {
             matches!(
                 self.proj.scopes.get(ut.id).kind,
-                UserTypeKind::Struct(_) | UserTypeKind::Union(_) | UserTypeKind::Tuple
+                UserTypeKind::Struct(_, _) | UserTypeKind::Union(_) | UserTypeKind::Tuple
             )
         }) else {
             bail!(self, Error::bad_destructure(self.proj.fmt_ty(scrutinee), span));
@@ -6727,7 +6713,7 @@ impl TypeChecker<'_> {
                 }
 
                 if let Type::User(ut) = &self.proj.types[this_ty]
-                    && let UserTypeKind::Struct(cons) = self.proj.scopes.get(ut.id).kind
+                    && let UserTypeKind::Struct(cons, _) = self.proj.scopes.get(ut.id).kind
                 {
                     let ut_id = ut.id;
                     self.resolve_proto(cons);

@@ -19,7 +19,7 @@ use crate::{
         Function, FunctionId, ScopeId, Scoped, Scopes, Union, UserTypeId, UserTypeKind, VariableId,
     },
     typecheck::{LspInput, LspItem},
-    typeid::{BitSizeResult, GenericUserType, Type, TypeId, Types},
+    typeid::{GenericUserType, Type, TypeId, Types},
 };
 
 #[macro_export]
@@ -319,9 +319,7 @@ impl LanguageServer for LspBackend {
         let pos = params.text_document_position_params.position;
         self.find_lsp_item(uri, pos, async |item, proj| {
             let str = match item {
-                &LspItem::Var(id) | &LspItem::FnParamLabel(id, _) => {
-                    Some(visualize_var(id, proj))
-                }
+                &LspItem::Var(id) | &LspItem::FnParamLabel(id, _) => Some(visualize_var(id, proj)),
                 &LspItem::Fn(id, _) => Some(visualize_func(id, false, proj)),
                 &LspItem::Type(id) => Some(visualize_type(id, proj)),
                 LspItem::Property(src_ty, id, name) => {
@@ -336,23 +334,29 @@ impl LanguageServer for LspBackend {
                     };
                     let ty = mem.map_or(TypeId::UNKNOWN, |m| m.ty);
                     if matches!(ut.kind, UserTypeKind::Tuple) {
-                        let real = src_ty.map(|src| ty.with_ut_templates(&proj.types, src)).unwrap_or(ty);
-                        Some(format!("{public}{}: {}", proj.strings.resolve(name), proj.fmt_ty(real)))
+                        let real =
+                            src_ty.map(|src| ty.with_ut_templates(&proj.types, src)).unwrap_or(ty);
+                        Some(format!(
+                            "{public}{}: {}",
+                            proj.strings.resolve(name),
+                            proj.fmt_ty(real)
+                        ))
                     } else {
-                        let offs = if let UserTypeKind::PackedStruct(data) = &ut.kind {
-                            let size = match ty.bit_size(&proj.scopes, &proj.types) {
-                                BitSizeResult::Size(n) => n,
-                                BitSizeResult::Tag(_, n) => n,
-                                _ => unreachable!(),
-                            };
-                            format!(
-                                "// bit size: {size}, bit offset: {}\n",
-                                data.bit_offsets[name],
-                            )
-                        } else {
-                            // TODO: normal offset
-                            "".to_string()
-                        };
+                        // let offs = if ut.kind.is_packed_struct() {
+                        //     let size = match ty.bit_size(&proj.scopes, &proj.types) {
+                        //         BitSizeResult::Size(n) => n,
+                        //         BitSizeResult::Tag(_, n) => n,
+                        //         _ => unreachable!(),
+                        //     };
+                        //     format!(
+                        //         "// bit size: {size}, bit offset: {}\n",
+                        //         data.bit_offsets[name],
+                        //     )
+                        // } else {
+                        //     // TODO: normal offset
+                        //     "".to_string()
+                        // };
+                        let offs = "";
 
                         Some(format!(
                             "{}{offs}{public}{}: {}",
@@ -1385,10 +1389,7 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
     if ut.type_params.is_empty()
         && matches!(
             ut.kind,
-            UserTypeKind::Struct(_)
-                | UserTypeKind::PackedStruct(_)
-                | UserTypeKind::Union(_)
-                | UserTypeKind::UnsafeUnion
+            UserTypeKind::Struct(_, _) | UserTypeKind::Union(_) | UserTypeKind::UnsafeUnion
         )
         && !ut.recursive
     {
@@ -1402,8 +1403,8 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
         res += "pub ";
     }
     match &ut.kind {
-        UserTypeKind::PackedStruct(_) | UserTypeKind::Struct(_) => {
-            if ut.kind.is_packed_struct() {
+        &UserTypeKind::Struct(_, packed) => {
+            if packed {
                 write_de!(res, "packed ");
             }
 
