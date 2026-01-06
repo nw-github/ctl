@@ -69,14 +69,14 @@
 // courtesy of: https://stackoverflow.com/questions/1113409/attribute-constructor-equivalent-in-vc
 // TODO: testing is required to see if or on what versions this gets optimized away
 #  pragma section(".CRT$XCU", read)
-#  define INIT_(f, p)                                        \
+#  define CTL_INIT_(f, p)                                        \
     static void f(void);                                     \
     __declspec(allocate(".CRT$XCU")) void (*f##_)(void) = f; \
     __pragma(comment(linker, "/include:" p #f "_")) static void f(void)
 #  if defined(_WIN64)
-#    define CTL_INIT(f) INIT_(f, "")
+#    define CTL_INIT(f) CTL_INIT_(f, "")
 #  else
-#    define CTL_INIT(f) INIT_(f, "_")
+#    define CTL_INIT(f) CTL_INIT_(f, "_")
 #  endif
 
 #  define CTL_DEINIT(f) static void f(void)
@@ -126,8 +126,8 @@
 
 #endif
 
-#define COERCE(ty, expr) (expr, *(ty *)0)
-#define VOID(expr)       (expr, CTL_VOID)
+#define CTL_COERCE(ty, expr) (expr, *(ty *)0)
+#define CTL_VOID(expr)       (expr, CTL_VOID_INST)
 
 #define CTL_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
 
@@ -175,9 +175,9 @@ typedef struct {
   CTL_DUMMY_MEMBER;
 } $void;
 
-#define CTL_VOID   \
-  ($void) {        \
-    CTL_DUMMY_INIT \
+#define CTL_VOID_INST \
+  ($void) {           \
+    CTL_DUMMY_INIT    \
   }
 
 typedef void (*VirtualFn)(void);

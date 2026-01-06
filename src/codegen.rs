@@ -36,7 +36,8 @@ macro_rules! write_nm {
 
 const UNION_TAG_NAME: &str = "$tag";
 const ARRAY_DATA_NAME: &str = "data";
-const VOID_INSTANCE: &str = "CTL_VOID";
+const VOID_INSTANCE: &str = "CTL_VOID_INST";
+const VOID: &str = "CTL_VOID";
 const NULLPTR: &str = "((void*)0)";
 const VTABLE_TRAIT_START: &str = "$Start";
 const VTABLE_TRAIT_LEN: &str = "$Len";
@@ -1314,7 +1315,7 @@ impl<'a> Codegen<'a> {
                     });
                 }
                 Type::Void => {
-                    write_de!(self.buffer, "VOID(");
+                    write_de!(self.buffer, "{VOID}(");
                     self.emit_expr(inner, state);
                     write_de!(self.buffer, ")");
                 }
@@ -1380,7 +1381,7 @@ impl<'a> Codegen<'a> {
                 }
 
                 if expr.ty.is_void_like() {
-                    write_de!(self.buffer, "VOID(");
+                    write_de!(self.buffer, "{VOID}(");
                 }
                 self.emit_expr(*callee, state);
                 write_de!(self.buffer, "(");
@@ -1392,7 +1393,7 @@ impl<'a> Codegen<'a> {
             ExprData::CallDyn(func, args) => {
                 let mut args = args.clone();
                 if expr.ty.is_void_like() {
-                    write_de!(self.buffer, "VOID(");
+                    write_de!(self.buffer, "{VOID}(");
                 }
                 let (_, recv) = args.shift_remove_index(0).unwrap();
                 let tr = self.proj.types[recv.ty].as_dyn_pointee().unwrap().id;
@@ -1418,7 +1419,7 @@ impl<'a> Codegen<'a> {
             ExprData::CallFnPtr(inner, args) => {
                 let args = args.clone();
                 if expr.ty.is_void_like() {
-                    write_de!(self.buffer, "VOID(");
+                    write_de!(self.buffer, "{VOID}(");
                 }
                 write_de!(self.buffer, "(");
                 self.emit_expr(*inner, state);
@@ -1789,7 +1790,7 @@ impl<'a> Codegen<'a> {
                 if matches!(expr.ty, TypeId::VOID) {
                     self.emit_expr_inline(inner, state);
                 } else {
-                    write_de!(self.buffer, "COERCE(");
+                    write_de!(self.buffer, "CTL_COERCE(");
                     self.emit_type(expr.ty);
                     write_de!(self.buffer, ", ");
                     self.emit_expr_inline(inner, state);
@@ -1853,7 +1854,7 @@ impl<'a> Codegen<'a> {
                 }
             }
             &ExprData::Discard(inner) => {
-                self.buffer.emit("VOID(");
+                write_de!(self.buffer, "{VOID}(");
                 self.emit_expr(inner, state);
                 self.buffer.emit(")");
             }
@@ -2114,7 +2115,7 @@ impl<'a> Codegen<'a> {
                         return self.emit_bitfield_assign(*source, state, *member, lhs.ty, rhs, op);
                     }
 
-                    write_de!(self.buffer, "VOID(");
+                    write_de!(self.buffer, "{VOID}(");
                 }
                 write_de!(self.buffer, "(");
                 self.emit_expr(lhs, state);
@@ -2403,7 +2404,7 @@ impl<'a> Codegen<'a> {
                     &self.proj.scopes,
                 );
 
-                write_de!(self.buffer, "VOID(");
+                write_de!(self.buffer, "{VOID}(");
                 self.buffer.emit_fn_name(&panic.func, self.flags.minify);
                 write_de!(self.buffer, "(");
                 for (i, (_, expr)) in args.into_iter().enumerate() {
@@ -2512,7 +2513,7 @@ impl<'a> Codegen<'a> {
                 let mut args = args.into_iter();
                 let mut arg0 = args.next().expect(COMPLAINT).1;
                 arg0.ty = arg0.ty.with_templates(&self.proj.types, &state.func.ty_args);
-                write_de!(self.buffer, "VOID(*(volatile ");
+                write_de!(self.buffer, "{VOID}(*(volatile ");
                 self.emit_type(arg0.ty);
                 write_de!(self.buffer, ")(");
                 self.emit_expr_inline(arg0, state);
@@ -2806,8 +2807,9 @@ impl<'a> Codegen<'a> {
             PatternData::Int(value) => {
                 conditions.next(|buffer| {
                     usebuf!(self, buffer, {
-                        write_de!(self.buffer, "{}==", Self::deref(&self.proj.types, src, ty));
-                        self.emit_literal(value.clone(), ty.strip_references(&self.proj.types));
+                        let (inner, count) = ty.strip_references_ex(&self.proj.types);
+                        write_de!(self.buffer, "{}==", Self::apply_deref(src, count));
+                        self.emit_literal(value.clone(), inner);
                     });
                 });
             }
@@ -3798,6 +3800,8 @@ fn is_c_reserved_ident(name: &str) -> bool {
         || name.starts_with("atomic_")
         || name.starts_with("ATOMIC_")
         || name.starts_with("memory_order")
+        || name.starts_with("CTL")
+        || name.starts_with("ctl")
     {
         return true;
     }
