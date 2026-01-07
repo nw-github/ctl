@@ -1,5 +1,5 @@
 use anyhow::Context;
-use ctl::{Compiler, Diagnostics, FileId, Lexer, Token, UnloadedProject, intern::Strings};
+use ctl::{Compiler, Configuration, Diagnostics, FileId, Lexer, Token, intern::Strings};
 use std::{
     io::{Read, Write},
     path::Path,
@@ -54,10 +54,10 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
         return Err("no requirements specified!".into());
     }
 
-    let mut proj = UnloadedProject::new(path)?;
-    proj.conf.remove_feature(Strings::FEAT_BACKTRACE);
+    let mut conf = Configuration::default();
+    conf.remove_feature(Strings::FEAT_BACKTRACE);
 
-    let (code, _, diag) = Compiler::new().parse(proj)?.typecheck(None).build();
+    let (code, _, diag) = Compiler::new().parse(path, conf)?.typecheck(None).build();
     test_diagnostics(diag, &errors)?;
     let Some(code) = code else {
         if !expected.is_empty() {

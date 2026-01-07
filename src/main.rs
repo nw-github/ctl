@@ -3,7 +3,7 @@ use clap::{Args, Parser, Subcommand, ValueHint};
 use colored::Colorize;
 use ctl::{
     CachingSourceProvider, Compiler, Configuration, Diagnostics, Error, FileId, LspBackend,
-    OffsetMode, SourceProvider, TestArgs, UnloadedProject, intern::Strings,
+    OffsetMode, SourceProvider, TestArgs, intern::Strings,
 };
 use std::{
     ffi::OsString,
@@ -336,8 +336,8 @@ fn display_diagnostics(diag: &Diagnostics) {
     }
 }
 
-fn dump(proj: UnloadedProject, mods: &[String]) -> Result<()> {
-    let result = Compiler::new().parse(proj)?;
+fn dump(path: &Path, conf: Configuration, mods: &[String]) -> Result<()> {
+    let result = Compiler::new().parse(path, conf)?;
     result.dump(mods);
     Ok(())
 }
@@ -406,23 +406,23 @@ fn main() -> Result<()> {
         conf.remove_feature(Strings::FEAT_BOEHM);
     }
 
-    let mut proj = UnloadedProject::with_conf(input.as_deref().unwrap_or(Path::new(".")), conf)?;
+    let path = input.as_deref().unwrap_or(Path::new("."));
     if let SubCommand::Dump { modules, .. } = &args.command {
-        return dump(proj, modules);
+        return dump(path, conf, modules);
     }
 
     if let SubCommand::Test { .. } | SubCommand::Print { test: true, .. } = &args.command {
-        proj.conf.set_feature(Strings::FEAT_TEST);
+        conf.set_feature(Strings::FEAT_TEST);
     }
 
     if let SubCommand::Test { test, modules, .. } = &args.command {
-        proj.conf.test_args = Some(TestArgs {
+        conf.test_args = Some(TestArgs {
             test: test.clone(),
             modules: (!modules.is_empty()).then(|| modules.clone()),
         });
     }
 
-    let result = Compiler::new().parse(proj)?.typecheck(None).build();
+    let result = Compiler::new().parse(path, conf)?.typecheck(None).build();
     let (conf, result) = match result {
         (Some(code), conf, diag) => {
             if !args.quiet {

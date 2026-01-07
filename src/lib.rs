@@ -80,7 +80,8 @@ impl<T: SourceProvider> Compiler<Source<T>> {
         Self { state: Source(provider) }
     }
 
-    pub fn parse(mut self, project: UnloadedProject) -> Result<Compiler<Parsed>> {
+    pub fn parse(mut self, project: &Path, conf: Configuration) -> Result<Compiler<Parsed>> {
+        let project = UnloadedProject::new(project, conf)?;
         let mut diag = Diagnostics::default();
         let mut strings = Strings::new();
         let mut arena = PExprArena::new();
@@ -215,48 +216,20 @@ pub struct CodegenFlags {
     pub minify: bool,
 }
 
-/*
-    std/
-        alloc/
-            main.ctl
-            vec.ctl
-        span.ctl
-        main.ctl
-
-    "~/std/main.ctl": Module {
-        name: "std",
-        mods: {
-            "~/std/span.ctl": Module {
-                name: "span",
-                mods: {}
-            },
-            "~/std/alloc/main.ctl": Module {
-                name: "alloc",
-                mods: {
-                    "~/std/alloc/vec.ctl": Module {
-                        name: "vec",
-                        mods: []
-                    }
-                }
-            }
-        }
-    }
-*/
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Module {
-    pub name: String,
-    pub mods: IndexMap<PathBuf, Module>,
+struct Module {
+    name: String,
+    mods: IndexMap<PathBuf, Module>,
 }
 
 #[derive(Debug, Clone)]
-pub struct UnloadedProject {
-    pub mods: IndexMap<PathBuf, Module>,
-    pub conf: Configuration,
+struct UnloadedProject {
+    mods: IndexMap<PathBuf, Module>,
+    conf: Configuration,
 }
 
 impl UnloadedProject {
-    pub fn with_conf(path: &Path, mut conf: Configuration) -> Result<Self> {
+    fn new(path: &Path, mut conf: Configuration) -> Result<Self> {
         let mut mods = IndexMap::new();
         let path = path.canonicalize()?;
 
@@ -279,10 +252,6 @@ impl UnloadedProject {
         // TODO: actual dependency ordering
         mods.reverse();
         Ok(Self { mods, conf })
-    }
-
-    pub fn new(path: &Path) -> Result<Self> {
-        Self::with_conf(path, Configuration::default())
     }
 
     fn load_module(
@@ -381,12 +350,13 @@ impl UnloadedProject {
                 r.push('_');
             }
 
-            if Lexer::is_identifier_char(ch) {
-                r.push(ch);
-            } else {
-                r.push('_');
-            }
+            r.push(if Lexer::is_identifier_char(ch) { ch } else { '_' });
         }
+
+        if !Lexer::make_ident(&r).is_ident() {
+            r.insert(0, '_');
+        }
+
         r
     }
 }

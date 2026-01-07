@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use dashmap::DashMap;
 use tokio::sync::MutexGuard;
@@ -8,10 +8,11 @@ use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
+use crate::Configuration;
 use crate::sym::VariableKind;
 use crate::typeid::BitSizeResult;
 use crate::{
-    CachingSourceProvider, Compiler, FileSourceProvider, Located, SourceProvider, UnloadedProject,
+    CachingSourceProvider, Compiler, FileSourceProvider, Located, SourceProvider,
     error::{Diagnostics, FileId, OffsetMode},
     intern::{StrId, Strings},
     lexer::Span,
@@ -57,14 +58,14 @@ macro_rules! debug {
 }
 
 #[derive(serde::Deserialize, Clone, Copy, Debug)]
-struct Configuration {
+struct LspConfiguration {
     #[serde(rename = "debounceMs")]
     _debounce_ms: u32,
     #[serde(rename = "maxNumberOfProblems")]
     _max_problems: usize,
 }
 
-impl Default for Configuration {
+impl Default for LspConfiguration {
     fn default() -> Self {
         Self { _debounce_ms: 250, _max_problems: 100 }
     }
@@ -96,8 +97,8 @@ struct FileInfoCache {
 }
 
 struct LastChecked {
-    data: UnloadedProject,
-    checked: Project,
+    root: PathBuf,
+    proj: Project,
     diagnostics: HashSet<Url>,
 }
 
@@ -114,7 +115,7 @@ pub struct LspBackend {
     /// Files that the client has ownership of
     open_files: DashMap<Url, String>,
     documents: DashMap<Url, FileInfoCache>,
-    config: tokio::sync::Mutex<Configuration>,
+    config: tokio::sync::Mutex<LspConfiguration>,
     project: tokio::sync::Mutex<Option<LastChecked>>,
 }
 
@@ -299,10 +300,10 @@ impl LanguageServer for LspBackend {
         }
 
         let mut guard = self.check_project(uri, Some(pos), true).await?;
-        let Some(proj) = guard.as_mut() else {
+        let Some(checked) = guard.as_mut() else {
             return Ok(None);
         };
-        let proj = &mut proj.checked;
+        let proj = &mut checked.proj;
 
         let Some(completions) = proj.completions.as_ref() else {
             return Ok(None);
@@ -530,36 +531,28 @@ impl LspBackend {
     ) -> Result<MutexGuard<'_, Option<LastChecked>>> {
         debug!(self, "Checking project: '{}'", uri);
         let path = Self::uri_to_path(uri);
-        let mut unloaded = match UnloadedProject::new(get_file_project(path)) {
-            Ok(proj) => proj,
-            Err(err) => {
-                error!(self, "{err}");
-                return Err(Error::internal_error());
-            }
-        };
-
-        // Always show tests in the LSP
-        unloaded.conf.set_feature(Strings::FEAT_TEST);
-
+        let mut root = get_file_project(path);
         let mut proj_lock_guard = self.project.lock().await;
         if let Some(prev) = proj_lock_guard.as_ref()
-            && unloaded
-                .mods
-                .iter()
-                .all(|(path, module)| prev.data.mods.get(path).is_some_and(|m| m == module))
+            && prev.proj.diag.paths().any(|(_, other)| path == *other)
         {
             if !change {
                 debug!(self, " -> Checking file in submodule of previous project, skip");
                 return Ok(proj_lock_guard);
             }
 
-            unloaded = prev.data.clone();
+            root = &prev.root;
             debug!(self, " -> Checking file in submodule of previous project, using prev data");
         }
 
+        let root = root.to_owned();
+        let mut conf = Configuration::default();
+        // Always show tests in the LSP
+        conf.set_feature(Strings::FEAT_TEST);
+
         self.documents.clear();
         let parsed = match Compiler::with_provider(LspFileProvider::new(&self.open_files))
-            .parse(unloaded.clone())
+            .parse(&root, conf)
         {
             Ok(parsed) => parsed,
             Err(err) => {
@@ -653,7 +646,7 @@ impl LspBackend {
             prev.clear_diagnostics(&self.client).await;
         }
 
-        *proj_lock_guard = Some(LastChecked { data: unloaded, checked: proj, diagnostics: sent });
+        *proj_lock_guard = Some(LastChecked { root, proj, diagnostics: sent });
 
         debug!(self, " -> done check_project");
         Ok(proj_lock_guard)
@@ -673,12 +666,12 @@ impl LspBackend {
             self.project.lock().await
         };
 
-        let Some(proj) = lock.as_mut() else {
+        let Some(checked) = lock.as_mut() else {
             return Ok(None);
         };
 
         let path = Self::uri_to_path(uri);
-        let Some(file) = proj.checked.diag.get_file_id(path) else {
+        let Some(file) = checked.proj.diag.get_file_id(path) else {
             return Ok(None);
         };
 
@@ -686,7 +679,7 @@ impl LspBackend {
             return Ok(None);
         };
 
-        Ok(func(&mut doc, path, file, &mut proj.checked).await)
+        Ok(func(&mut doc, path, file, &mut checked.proj).await)
     }
 
     async fn find_lsp_item<T>(
