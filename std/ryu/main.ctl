@@ -41,7 +41,7 @@ pub extension Float32Ext for f32 {
             bits & EXP_MASK == EXP_MASK
         }
 
-        @(cold)
+        $[cold]
         fn format_nonfinite(my this): str {
             let bits = this.to_bits();
             if bits & 0x007fffff != 0 {
@@ -67,7 +67,7 @@ pub extension Float64Ext for f64 {
             bits & EXP_MASK == EXP_MASK
         }
 
-        @(cold)
+        $[cold]
         fn format_nonfinite(my this): str {
             let bits = this.to_bits();
             if bits & 0x000fffffffffffff != 0 {

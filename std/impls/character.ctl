@@ -8,27 +8,27 @@ pub extension CharImpl for char {
     }
 
     impl Eq<This> {
-        @(intrinsic(binary_op))
+        $[intrinsic(binary_op)]
         fn eq(this, rhs: *This): bool => this == rhs;
 
-        @(intrinsic(binary_op))
+        $[intrinsic(binary_op)]
         fn ne(this, rhs: *This): bool => this != rhs;
     }
 
     impl Cmp<This> {
-        @(intrinsic(binary_op))
+        $[intrinsic(binary_op)]
         fn cmp(this, rhs: *This): Ordering => this <=> rhs;
 
-        @(intrinsic(binary_op))
+        $[intrinsic(binary_op)]
         fn ge(this, rhs: *This): bool => this >= rhs;
 
-        @(intrinsic(binary_op))
+        $[intrinsic(binary_op)]
         fn gt(this, rhs: *This): bool => this > rhs;
 
-        @(intrinsic(binary_op))
+        $[intrinsic(binary_op)]
         fn le(this, rhs: *This): bool => this <= rhs;
 
-        @(intrinsic(binary_op))
+        $[intrinsic(binary_op)]
         fn lt(this, rhs: *This): bool => this < rhs;
     }
 

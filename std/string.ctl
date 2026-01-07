@@ -4,7 +4,7 @@ use std::range::RangeBounds;
 use std::fmt::*;
 use std::reflect::*;
 
-@(lang(string))
+$[lang(string)]
 pub struct str {
     span: [u8..],
 
@@ -16,7 +16,7 @@ pub struct str {
         unsafe str::from_utf8_unchecked(span)
     }
 
-    @(feature(alloc))
+    $[feature(alloc)]
     pub fn from_utf8_lossy(span: [u8..], replacement: char = char::replacement_marker()): str {
         LossyChars(iter: span.iter(), replacement:).into_str()
     }
@@ -107,7 +107,7 @@ pub struct str {
     pub fn []<I: Integral>(this, idx: I): *u8 => &this.span[idx];
     pub fn []<R: RangeBounds<uint>>(this, range: R): str => this.substr(range).unwrap();
 
-    @(feature(alloc))
+    $[feature(alloc)]
     pub fn repeat(this, n: uint): str {
         let num = this.len();
         mut buf: [u8] = Vec::with_capacity(num * n);
@@ -124,7 +124,7 @@ pub struct str {
         }
     }
 
-    @(feature(alloc))
+    $[feature(alloc)]
     pub fn +(this, rhs: str): str {
         let llen = this.len();
         let rlen = rhs.len();
@@ -137,7 +137,7 @@ pub struct str {
         }
     }
 
-    @(feature(alloc))
+    $[feature(alloc)]
     pub fn +=(mut this, rhs: str) {
         *this = this + rhs;
     }
@@ -193,7 +193,7 @@ pub struct LossyChars {
     iter: std::span::Iter<u8>,
     replacement: char,
 
-    @(feature(alloc))
+    $[feature(alloc)]
     pub fn into_str(my this): str {
         mut builder = std::fmt::StringBuilder::new();
         for ch in this {

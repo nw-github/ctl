@@ -15,14 +15,14 @@ unittest "ptrs" {
 unittest "c layout" {
     struct T {}
 
-    @(layout(C))
+    $[layout(C)]
     struct MidPadding {
         x: i32,
         y: u8,
         z: i32,
     }
 
-    @(layout(C))
+    $[layout(C)]
     union TailPadding {
         shared x: i32,
 

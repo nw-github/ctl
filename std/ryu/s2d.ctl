@@ -7,7 +7,7 @@ const DOUBLE_EXPONENT_BIAS: uint = 1023;
 
 fn floor_log2(value: u64): u32 => 63u32.wrapping_sub(value.leading_zeros());
 
-@(inline(always))
+$[inline(always)]
 fn infinity(signed: bool): f64 {
     let ieee = ((signed as u64) << (d2s::DOUBLE_EXPONENT_BITS + d2s::DOUBLE_MANTISSA_BITS))
         | (0x7ff << d2s::DOUBLE_MANTISSA_BITS);

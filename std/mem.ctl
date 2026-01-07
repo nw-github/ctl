@@ -38,7 +38,7 @@ pub unsafe fn bit_cast<In, Out>(from: In): Out {
     unsafe Transmuter::<In, Out>(from:).to
 }
 
-@(lang(mutable))
+$[lang(mutable)]
 pub struct Mutable<T> {
     value: T,
 

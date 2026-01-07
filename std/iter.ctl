@@ -1,4 +1,4 @@
-@(lang(iter))
+$[lang(iter)]
 pub trait Iterator<T> {
     fn next(mut this): ?T;
 
@@ -124,7 +124,7 @@ pub struct Peekable<T, I: Iterator<T>> {
         }
     }
 
-    @(inline(always))
+    $[inline(always)]
     fn prime(mut this) {
         if this.item is null {
             this.item = this.iter.next();

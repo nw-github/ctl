@@ -18,10 +18,10 @@ pub extension RawImpl<T> for ^T {
         buf
     }
 
-    @(intrinsic(unary_op))
+    $[intrinsic(unary_op)]
     pub fn ++(mut this) { (*this)++; }
 
-    @(intrinsic(unary_op))
+    $[intrinsic(unary_op)]
     pub fn --(mut this) { (*this)--; }
 
     impl Debug {
@@ -76,10 +76,10 @@ pub extension RawMutImpl<T> for ^mut T {
         }
     }
 
-    @(intrinsic(unary_op))
+    $[intrinsic(unary_op)]
     pub fn ++(mut this) { (*this)++; }
 
-    @(intrinsic(unary_op))
+    $[intrinsic(unary_op)]
     pub fn --(mut this) { (*this)--; }
 
     impl Debug {

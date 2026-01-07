@@ -2,8 +2,8 @@ use std::mem;
 use std::range::RangeBounds;
 use std::reflect::*;
 
-@(feature(alloc))
-@(lang(vec))
+$[feature(alloc)]
+$[lang(vec)]
 pub struct Vec<T> {
     ptr: ^mut T,
     len: uint,
@@ -205,22 +205,22 @@ pub struct Vec<T> {
         fn dbg(this, f: *mut std::fmt::Formatter) => this[..].dbg(f);
     }
 
-    @(inline(always))
+    $[inline(always)]
     pub fn []<I: Integral>(this, idx: I): *T => &this[..][idx];
 
-    @(inline(always))
+    $[inline(always)]
     pub fn []<I: Integral>(mut this, idx: I): *mut T => &mut this[..][idx];
 
-    @(inline(always))
+    $[inline(always)]
     pub fn []=<I: Integral>(mut this, idx: I, val: T) => this[..][idx] = val;
 
-    @(inline(always))
+    $[inline(always)]
     pub fn []<R: RangeBounds<uint>>(this, r: R): [T..] => this.as_span()[r];
 
-    @(inline(always))
+    $[inline(always)]
     pub fn []<R: RangeBounds<uint>>(mut this, r: R): [mut T..] => this.as_span_mut()[r];
 
-    @(inline(always))
+    $[inline(always)]
     pub fn []=<R: RangeBounds<uint>>(mut this, r: R, rhs: [T..]) => this.as_span_mut()[r] = rhs;
 }
 

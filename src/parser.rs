@@ -1552,8 +1552,9 @@ impl<'a> Parser<'a> {
 
     fn attributes(&mut self) -> Attributes {
         let mut attrs = vec![];
-        while let Some(token) = self.next_if(Token::AtLParen) {
-            attrs.extend(self.csv_one(Token::RParen, token.span, Self::attribute).data);
+        while let Some(token) = self.next_if(Token::Dollar) {
+            self.expect(Token::LBrace);
+            attrs.extend(self.csv_one(Token::RBrace, token.span, Self::attribute).data);
         }
         Attributes::new(attrs)
     }

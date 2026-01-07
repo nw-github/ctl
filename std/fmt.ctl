@@ -1,4 +1,4 @@
-@(lang(fmt_write))
+$[lang(fmt_write)]
 pub trait Write {
     fn write_str(mut this, data: str);
     fn write_char(mut this, data: char) => this.write_str(data.encode_utf8(&mut [0; 4]));
@@ -141,7 +141,7 @@ pub union Sign { None, Plus, Minus }
 
 pub union Align { None, Left, Right, Center }
 
-@(align(8))
+$[align(8)]
 pub packed struct Options {
     pub width: u16   = 0,     // {val:10}     width    = 10
     pub prec:  u16   = 0,     // {val:.5}     prec     = 5
@@ -153,17 +153,17 @@ pub packed struct Options {
     pub zero:  bool  = false, // {val:05}     zero     = true
 }
 
-@(lang(fmt_debug))
+$[lang(fmt_debug)]
 pub trait Debug {
     fn dbg(this, f: *mut Formatter); // {:?}
 }
 
-@(lang(fmt_pointer))
+$[lang(fmt_pointer)]
 pub trait Pointer {
     fn ptr(this, f: *mut Formatter); // {:p}
 }
 
-@(lang(fmt_format))
+$[lang(fmt_format)]
 pub trait Format {
     fn fmt(this, f: *mut Formatter);
 
@@ -173,14 +173,14 @@ pub trait Format {
     fn exp(this, f: *mut Formatter) => this.fmt(f); // {:e}
 }
 
-@(lang(fmt_arg))
+$[lang(fmt_arg)]
 struct Argument {
     value:  ^void,
     format: fn(^void, *mut Formatter),
     opts:   Options,
 }
 
-@(lang(fmt_args))
+$[lang(fmt_args)]
 pub struct Arguments {
     parts: [str..],
     args:  [Argument..],
@@ -201,7 +201,7 @@ pub struct Arguments {
     }
 }
 
-@(feature(alloc))
+$[feature(alloc)]
 pub struct StringBuilder {
     buffer: [u8] = @[],
 
@@ -241,7 +241,7 @@ pub fn writeln<T: Write, U: Format>(f: *mut T, args: U) {
 pub mod ext {
     use super::*;
 
-    @(feature(alloc))
+    $[feature(alloc)]
     pub extension ToStrExt<T: Format> for T {
         pub fn to_str(this): str {
             mut builder = StringBuilder::new();
@@ -294,7 +294,7 @@ pub mod ext {
         }
     }
 
-    @(lang(fallback_debug))
+    $[lang(fallback_debug)]
     pub extension FallbackDebug<T> for T {
         impl Debug {
             fn dbg(this, f: *mut Formatter) => std::intrin::builtin_dbg(this, f);

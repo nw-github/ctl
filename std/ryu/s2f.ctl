@@ -6,7 +6,7 @@ const FLOAT_EXPONENT_BIAS: uint = 127;
 
 fn floor_log2(value: u32): u32 => 31u32.wrapping_sub(value.leading_zeros());
 
-@(inline(always))
+$[inline(always)]
 fn infinity(signed: bool): f32 {
     let ieee = ((signed as u32) << (f2s::FLOAT_EXPONENT_BITS + f2s::FLOAT_MANTISSA_BITS))
         | (0xff << f2s::FLOAT_MANTISSA_BITS);

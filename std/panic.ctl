@@ -7,7 +7,7 @@ pub struct SourceLocation {
     pub col:  u32,
     pub func: ?str,
 
-    @(intrinsic(source_location))
+    $[intrinsic(source_location)]
     pub fn here(): This => SourceLocation::here();
 
     impl Format {
@@ -57,13 +57,13 @@ pub fn assert_ne<Lhs: Debug + std::ops::Eq<Rhs>, Rhs: Debug>(
 }
 
 // TODO: this should take <T: Format>, but there is currently no way to default that
-@(inline(always))
+$[inline(always)]
 pub fn debug_assert(
     _cond: bool,
     _msg: ?Arguments = null,
     _loc: SourceLocation = SourceLocation::here(),
 ) {
-    @(feature(debug))
+    $[feature(debug)]
     if !_cond {
         if _msg is ?msg {
             panic("debug assertion failed: {msg}", loc: _loc);
@@ -73,13 +73,13 @@ pub fn debug_assert(
     }
 }
 
-@(thread_local, feature(hosted))
+$[thread_local, feature(hosted)]
 static mut CTL_PANIC_JMPBUF: ?libc::JmpBuf = null;
 
-@(thread_local, feature(hosted))
+$[thread_local, feature(hosted)]
 static mut CTL_PANIC_INFO: str = "";
 
-@(thread_local, feature(hosted))
+$[thread_local, feature(hosted)]
 static mut IS_PANICKING: bool = false;
 
 pub struct PanicInfo {
@@ -97,7 +97,7 @@ pub struct PanicInfo {
     }
 }
 
-@(panic_handler, feature(hosted, io))
+$[panic_handler, feature(hosted, io)]
 fn panic_handler(args: Arguments, loc: SourceLocation): never {
     let info = PanicInfo(args:, loc:);
     if unsafe IS_PANICKING {
@@ -115,7 +115,7 @@ fn panic_handler(args: Arguments, loc: SourceLocation): never {
 
     eprintln(info);
 
-    @(feature(backtrace))
+    $[feature(backtrace)]
     {
         let bt = std::bt::Backtrace::capture();
         for (i, addr) in bt.iter().enumerate() {
@@ -131,7 +131,7 @@ fn panic_handler(args: Arguments, loc: SourceLocation): never {
     unsafe libc::abort();
 }
 
-@(feature(hosted))
+$[feature(hosted)]
 pub fn catch_panic<R, A>(func: fn(A) => R, arg: A): Result<R, str> {
     let buf = unsafe CTL_PANIC_JMPBUF.insert(std::mem::zeroed());
     // TODO: Make this an intrinsic so that we use the macro and follow the very specific semantics

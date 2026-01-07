@@ -1,20 +1,20 @@
-@(feature(hosted))
+$[feature(hosted)]
 pub mod proc;
 
-@(feature(io))
+$[feature(io)]
 pub mod io;
 
-@(feature(hosted))
+$[feature(hosted)]
 pub mod env;
 
-@(feature(alloc))
+$[feature(alloc)]
 pub mod alloc;
 
 mod deps;
 mod runtime;
 mod ryu;
 
-@(autouse)
+$[autouse]
 mod prelude {
     pub use super::panic::panic;
     pub use super::panic::unreachable;
@@ -38,8 +38,8 @@ mod prelude {
     pub use super::err::Result;
     pub use super::err::Result::*;
 
-    @(feature(alloc))
+    $[feature(alloc)]
     pub use super::alloc::collections::*;
-    @(feature(io))
+    $[feature(io)]
     pub use super::io::*;
 }

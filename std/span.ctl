@@ -3,7 +3,7 @@ use std::reflect::*;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 
-@(lang(span))
+$[lang(span)]
 pub struct Span<T> {
     ptr: ^T,
     len: uint,
@@ -47,12 +47,12 @@ pub struct Span<T> {
         }
     }
 
-    @(inline)
+    $[inline]
     pub fn []<I: Integral>(my this, idx: I): *T {
         unsafe raw_subscript_checked(this.ptr as ^mut T, this.len, idx) as *T
     }
 
-    @(inline(always))
+    $[inline(always)]
     pub fn []<R: RangeBounds<uint>>(my this, range: R): This {
         if this.subspan(range) is ?span {
             span
@@ -76,7 +76,7 @@ pub struct Span<T> {
     }
 }
 
-@(lang(span_mut))
+$[lang(span_mut)]
 pub struct SpanMut<T> {
     ptr: ^mut T,
     len: uint,
@@ -146,19 +146,19 @@ pub struct SpanMut<T> {
         }
     }
 
-    @(inline)
+    $[inline]
     pub fn []<I: Integral>(my this, idx: I): *mut T {
         unsafe &mut *raw_subscript_checked(this.ptr, this.len, idx)
     }
 
-    @(inline)
+    $[inline]
     pub fn []=<I: Integral>(my this, idx: I, val: T) {
         unsafe {
             *raw_subscript_checked(this.ptr, this.len, idx) = val;
         }
     }
 
-    @(inline(always))
+    $[inline(always)]
     pub fn []<R: RangeBounds<uint>>(my this, range: R): This {
         if this.subspan(range) is ?span {
             span
@@ -168,7 +168,7 @@ pub struct SpanMut<T> {
         }
     }
 
-    @(inline(always))
+    $[inline(always)]
     pub fn []=<R: RangeBounds<uint>>(my this, range: R, rhs: Span<T>) {
         let subspan = this[range];
         if subspan.len() != rhs.len() {
@@ -214,7 +214,7 @@ pub struct IterMut<T> {
     }
 }
 
-@(inline(always))
+$[inline(always)]
 fn raw_subscript_checked<T, I: Integral>(ptr: ^mut T, len: uint, idx: I): ^mut T {
     if idx.try_cast::<uint>() is ?idx and (0u..len).contains(&idx) {
         ptr.add(idx)
@@ -223,7 +223,7 @@ fn raw_subscript_checked<T, I: Integral>(ptr: ^mut T, len: uint, idx: I): ^mut T
     }
 }
 
-@(inline(always))
+$[inline(always)]
 fn range_bounds<R: RangeBounds<uint>>(range: R, len: uint): (uint, uint) {
     let start = match range.begin() {
         :Inclusive(start) => start,

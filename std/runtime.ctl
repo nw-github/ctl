@@ -2,24 +2,24 @@ use std::deps::libgc;
 use std::deps::libc;
 use std::deps::libdwfl::*;
 
-@(feature(backtrace))
+$[feature(backtrace)]
 pub static mut DWFL: ?*mut Dwfl = null;
 
-@(link_name("$ctl_stdlib_init"))
+$[link_name("$ctl_stdlib_init")]
 extern fn init() {
-    @(feature(boehm))
+    $[feature(boehm)]
     unsafe libgc::GC_init();
 
-    @(feature(backtrace))
+    $[feature(backtrace)]
     unsafe DWFL = init_dwfl();
 }
 
-@(link_name("$ctl_stdlib_deinit"))
+$[link_name("$ctl_stdlib_deinit")]
 extern fn deinit() {
-    @(feature(boehm))
+    $[feature(boehm)]
     unsafe libgc::GC_deinit();
 
-    @(feature(backtrace))
+    $[feature(backtrace)]
     unsafe {
         if DWFL.take() is ?dwfl {
             dwfl_end(dwfl);
@@ -27,7 +27,7 @@ extern fn deinit() {
     }
 }
 
-@(feature(backtrace))
+$[feature(backtrace)]
 fn init_dwfl(): ?*mut Dwfl {
     static CALLBACKS: Dwfl_Callbacks = Dwfl_Callbacks(
         find_elf: dwfl_linux_proc_find_elf,

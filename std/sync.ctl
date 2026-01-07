@@ -8,23 +8,23 @@ pub struct Atomic<T> {
 
     pub fn new(val: T): This => Atomic(val: Mutable::new(val));
 
-    @(inline(always))
+    $[inline(always)]
     pub fn store(this, val: T, order: MemoryOrder = :SeqCst) {
         unsafe atomic_store_explicit(this.val.get(), val, order as u32);
     }
 
-    @(inline(always))
+    $[inline(always)]
     pub fn load(this, order: MemoryOrder = :SeqCst): T {
         unsafe atomic_load_explicit(this.val.get(), order as u32)
     }
 
-    @(inline(always))
+    $[inline(always)]
     pub fn replace(this, val: T, order: MemoryOrder = :SeqCst): T {
         unsafe atomic_exchange_explicit(this.val.get(), val, order as u32)
     }
 
     // On success, this function returns null. On error, it returns Some(actual value)
-    @(inline(always))
+    $[inline(always)]
     pub fn compare_exchange(
         this,
         kw mut expected: T,
@@ -43,7 +43,7 @@ pub struct Atomic<T> {
         }
     }
 
-    @(inline(always))
+    $[inline(always)]
     pub fn compare_exchange_weak(
         this,
         kw mut expected: T,
@@ -62,36 +62,36 @@ pub struct Atomic<T> {
         }
     }
 
-    @(inline(always))
+    $[inline(always)]
     pub fn is_lock_free(this): bool => unsafe atomic_is_lock_free(this.val.get());
 
-    @(inline(always))
+    $[inline(always)]
     pub fn as_raw(this): ^T => this.val.get();
 
-    @(inline(always))
+    $[inline(always)]
     pub fn as_raw_mut(this): ^mut T => this.val.get();
 
-    @(inline(always))
+    $[inline(always)]
     pub fn fetch_add(this, val: T, order: MemoryOrder = :SeqCst): T {
         unsafe atomic_fetch_add_explicit(this.val.get(), val, order as u32)
     }
 
-    @(inline(always))
+    $[inline(always)]
     pub fn fetch_sub(this, val: T, order: MemoryOrder = :SeqCst): T {
         unsafe atomic_fetch_sub_explicit(this.val.get(), val, order as u32)
     }
 
-    @(inline(always))
+    $[inline(always)]
     pub fn fetch_and(this, val: T, order: MemoryOrder = :SeqCst): T {
         unsafe atomic_fetch_and_explicit(this.val.get(), val, order as u32)
     }
 
-    @(inline(always))
+    $[inline(always)]
     pub fn fetch_or(this, val: T, order: MemoryOrder = :SeqCst): T {
         unsafe atomic_fetch_or_explicit(this.val.get(), val, order as u32)
     }
 
-    @(inline(always))
+    $[inline(always)]
     pub fn fetch_xor(this, val: T, order: MemoryOrder = :SeqCst): T {
         unsafe atomic_fetch_xor_explicit(this.val.get(), val, order as u32)
     }

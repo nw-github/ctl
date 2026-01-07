@@ -2,18 +2,18 @@ use std::mem::*;
 use std::deps::*;
 
 fn _malloc(size: uint): ?^mut void {
-    @(feature(boehm))
+    $[feature(boehm)]
     return unsafe libgc::GC_malloc(size);
 
-    @(feature(not(boehm)))
+    $[feature(not(boehm))]
     return unsafe libc::malloc(size);
 }
 
 fn _realloc(ptr: ^mut void, size: uint): ?^mut void {
-    @(feature(boehm))
+    $[feature(boehm)]
     return unsafe libgc::GC_realloc(ptr, size);
 
-    @(feature(not(boehm)))
+    $[feature(not(boehm))]
     return unsafe libc::realloc(ptr, size);
 }
 

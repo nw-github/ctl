@@ -1,68 +1,68 @@
 use std::reflect::*;
 
-@(intrinsic)
+$[intrinsic]
 pub extern fn numeric_abs<T: Signed>(_: T): T;
 
-@(intrinsic)
+$[intrinsic]
 pub extern fn size_of<T>(): uint;
 
-@(intrinsic)
+$[intrinsic]
 pub extern fn align_of<T>(): uint;
 
-@(intrinsic)
+$[intrinsic]
 pub extern fn panic(args: std::fmt::Arguments, loc: std::panic::SourceLocation): never;
 
-@(intrinsic)
+$[intrinsic]
 pub extern unsafe fn unreachable_unchecked(): never;
 
-@(intrinsic)
+$[intrinsic]
 pub extern fn type_id<T>(): TypeId;
 
-@(intrinsic)
+$[intrinsic]
 pub extern fn type_name<T>(): str;
 
-@(intrinsic)
+$[intrinsic]
 pub extern unsafe fn read_volatile<T>(p: ^T): T;
 
-@(intrinsic)
+$[intrinsic]
 pub extern unsafe fn write_volatile<T>(p: ^mut T, val: T);
 
-@(intrinsic)
+$[intrinsic]
 pub extern fn ptr_add_signed<T>(p: ^T, offs: int): ^T;
 
-@(intrinsic)
+$[intrinsic]
 pub extern fn ptr_sub_signed<T>(p: ^T, offs: int): ^T;
 
-@(intrinsic)
+$[intrinsic]
 pub extern fn ptr_add_unsigned<T>(p: ^T, offs: uint): ^T;
 
-@(intrinsic)
+$[intrinsic]
 pub extern fn ptr_sub_unsigned<T>(p: ^T, offs: uint): ^T;
 
-@(intrinsic)
+$[intrinsic]
 pub extern fn ptr_diff<T>(a: ^T, b: ^T): int;
 
-@(intrinsic)
+$[intrinsic]
 pub extern fn builtin_dbg<T>(self: *T, f: *mut std::fmt::Formatter);
 
 
-@(c_macro("CTL_MEMSET"))
+$[c_macro("CTL_MEMSET")]
 pub extern fn memset(dst: ^mut void, c: c_int, len: uint): ^mut void;
 
-@(c_macro("CTL_MEMCPY"))
+$[c_macro("CTL_MEMCPY")]
 pub extern fn memcpy(dst: ^mut void, src: ^void, len: uint): ^mut void;
 
-@(c_macro("CTL_MEMMOVE"))
+$[c_macro("CTL_MEMMOVE")]
 pub extern fn memmove(dst: ^mut void, src: ^void, len: uint): ^mut void;
 
-@(c_macro("CTL_MEMCMP"))
+$[c_macro("CTL_MEMCMP")]
 pub extern fn memcmp(dst: ^void, src: ^void, len: uint): c_int;
 
-@(c_macro("CTL_STRLEN"))
+$[c_macro("CTL_STRLEN")]
 pub extern fn strlen(ptr: ^c_char): uint;
 
-@(safe, c_macro("CTL_LIKELY"))
+$[safe, c_macro("CTL_LIKELY")]
 pub extern fn likely(val: bool): bool;
 
-@(safe, c_macro("CTL_UNLIKELY"))
+$[safe, c_macro("CTL_UNLIKELY")]
 pub extern fn unlikely(val: bool): bool;

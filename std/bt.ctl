@@ -191,7 +191,7 @@ pub struct Call {
 
     pub fn addr(my this): uint => this.addr;
 
-    @(feature(backtrace))
+    $[feature(backtrace)]
     pub fn symbolicate(my this): ?SymbolInfo {
         let dwfl = unsafe DWFL?;
 
@@ -220,7 +220,7 @@ pub struct Call {
         }
     }
 
-    @(feature(not(backtrace)))
+    $[feature(not(backtrace))]
     pub fn symbolicate(my this): ?SymbolInfo => null;
 }
 
@@ -228,7 +228,7 @@ pub struct Backtrace {
     addrs: [?^mut void; 1024],
     count: uint,
 
-    @(inline(never))
+    $[inline(never)]
     pub fn capture(): This {
         mut addrs: [?^mut void; 1024] = [null; 1024];
         let count = unsafe libc::backtrace(addrs.as_raw_mut(), addrs.len() as! c_int);

@@ -24,110 +24,110 @@ mod gcc_intrin {
     use super::Unsigned;
 
     // TODO: compiler independent fallback for these functions
-    @(c_macro)
+    $[c_macro]
     pub extern fn __builtin_add_overflow<T: Integral>(x: T, y: T, res: ^mut T): bool;
 
-    @(c_macro)
+    $[c_macro]
     pub extern fn __builtin_sub_overflow<T: Integral>(x: T, y: T, res: ^mut T): bool;
 
-    @(c_macro)
+    $[c_macro]
     pub extern fn __builtin_mul_overflow<T: Integral>(x: T, y: T, res: ^mut T): bool;
 
-    @(c_macro)
+    $[c_macro]
     pub extern fn __builtin_popcountg<T: Unsigned>(u: T): c_int;
 
-    @(c_macro)
+    $[c_macro]
     pub extern fn __builtin_clzg<T: Unsigned>(u: T): c_int;
 
-    @(c_macro)
+    $[c_macro]
     pub extern fn __builtin_ctzg<T: Unsigned>(u: T): c_int;
 }
 
 pub extension IntegralImpl<T: Integral> for T {
     impl TotallyOrdered { }
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn &(this, rhs: T): T => this & rhs;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn |(this, rhs: T): T => this | rhs;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn ^(this, rhs: T): T => this ^ rhs;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn <<(this, rhs: u32): T => this << rhs;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn >>(this, rhs: u32): T => this >> rhs;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn &=(mut this, rhs: T) => *this &= rhs;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn |=(mut this, rhs: T) => *this |= rhs;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn ^=(mut this, rhs: T) => *this ^= rhs;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn <<=(mut this, rhs: u32) => *this <<= rhs;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn >>=(mut this, rhs: u32) => *this >>= rhs;
 
-    @(intrinsic(unary_op))
+    $[intrinsic(unary_op)]
     pub fn !(this): T => !this;
 
-    @(intrinsic(unary_op))
+    $[intrinsic(unary_op)]
     pub fn ++(mut this) { (*this)++; }
 
-    @(intrinsic(unary_op))
+    $[intrinsic(unary_op)]
     pub fn --(mut this) { (*this)--; }
 
-    @(inline)
+    $[inline]
     pub fn wrapping_add(this, rhs: T): T => this + rhs;
 
-    @(inline)
+    $[inline]
     pub fn wrapping_sub(this, rhs: T): T => this - rhs;
 
-    @(inline)
+    $[inline]
     pub fn wrapping_mul(this, rhs: T): T => this * rhs;
 
-    @(inline)
+    $[inline]
     pub fn wrapping_div(this, rhs: T): T => this / rhs;
 
-    @(inline)
+    $[inline]
     pub fn overflowing_add(this, rhs: T): (T, bool) {
         mut out: T;
         let res = unsafe gcc_intrin::__builtin_add_overflow(*this, rhs, &raw mut out);
         (out, res)
     }
 
-    @(inline)
+    $[inline]
     pub fn overflowing_sub(this, rhs: T): (T, bool) {
         mut out: T;
         let res = unsafe gcc_intrin::__builtin_sub_overflow(*this, rhs, &raw mut out);
         (out, res)
     }
 
-    @(inline)
+    $[inline]
     pub fn overflowing_mul(this, rhs: T): (T, bool) {
         mut out: T;
         let res = unsafe gcc_intrin::__builtin_mul_overflow(*this, rhs, &raw mut out);
         (out, res)
     }
 
-    @(inline)
+    $[inline]
     pub fn checked_add(this, rhs: T): ?T => this.overflowing_add(rhs) is (out, false) then out;
 
-    @(inline)
+    $[inline]
     pub fn checked_sub(this, rhs: T): ?T => this.overflowing_sub(rhs) is (out, false) then out;
 
-    @(inline)
+    $[inline]
     pub fn checked_mul(this, rhs: T): ?T => this.overflowing_mul(rhs) is (out, false) then out;
 
-    @(inline)
+    $[inline]
     pub fn saturating_add(this, rhs: T): T {
         if this.checked_add(rhs) is ?out {
             out
@@ -138,24 +138,24 @@ pub extension IntegralImpl<T: Integral> for T {
         }
     }
 
-    @(intrinsic)
+    $[intrinsic]
     pub fn max_value(): T => T::max_value();
 
-    @(intrinsic)
+    $[intrinsic]
     pub fn min_value(): T => T::min_value();
 
     /// C-style cast from `this` to type U with overflow/truncation.
-    @(intrinsic(numeric_cast))
+    $[intrinsic(numeric_cast)]
     pub fn cast<U: Integral>(my this): U => this.cast();
 
     /// Cast `this` to type `U` if the value of this is exactly representable in U
-    @(inline)
+    $[inline]
     pub fn try_cast<U: Integral>(my this): ?U {
         let rhs: U = this.cast();
         this == rhs.cast() then rhs
     }
 
-    @(inline)
+    $[inline]
     pub fn swap_bytes(my mut this): T {
         // TODO: make calls to compiler intrinsics when possible
         //  GCC & clang are smart enough to optimize this as-is to a bswap instruction
@@ -167,7 +167,7 @@ pub extension IntegralImpl<T: Integral> for T {
         this
     }
 
-    @(feature(alloc))
+    $[feature(alloc)]
     pub fn to_str_radix(this, radix: u32): str {
         guard radix is 2..=36 else {
             panic("invalid radix {radix}: must be in range 2..=36");
@@ -256,10 +256,10 @@ pub extension IntegralImpl<T: Integral> for T {
 pub extension SignedImpl<T: Signed> for T {
     pub fn abs(this): T => std::intrin::numeric_abs(*this);
 
-    @(intrinsic(unary_op))
+    $[intrinsic(unary_op)]
     pub fn -(this): T => -this;
 
-    @(inline)
+    $[inline]
     pub fn overflowing_div(this, rhs: T): (T, bool) {
         if this == T::min_value() and rhs == (-1).cast() {
             (*this, true)
@@ -268,7 +268,7 @@ pub extension SignedImpl<T: Signed> for T {
         }
     }
 
-    @(inline)
+    $[inline]
     pub fn checked_div(this, rhs: T): ?T => this.overflowing_div(rhs) is (out, false) then out;
 
     pub fn from_str_radix(s: str, radix: u32): ?T {
@@ -290,10 +290,10 @@ pub extension SignedImpl<T: Signed> for T {
 pub extension UnsignedImpl<T: Unsigned> for T {
     /// This exists for parity with SignedImpl::overflowing_div. Unsigned division cannot overflow,
     /// and as such this function always returns false.
-    @(inline)
+    $[inline]
     pub fn overflowing_div(this, rhs: T): (T, bool) => (this / rhs, false);
 
-    @(inline)
+    $[inline]
     pub fn checked_div(this, rhs: T): ?T => this / rhs;
 
     pub fn from_str_radix(s: str, radix: u32): ?T {

@@ -9,32 +9,32 @@ pub extension BoolImpl for bool {
     }
 
     impl Eq<This> {
-        @(intrinsic(binary_op))
+        $[intrinsic(binary_op)]
         fn eq(this, rhs: *This): bool => this == rhs;
 
-        @(intrinsic(binary_op))
+        $[intrinsic(binary_op)]
         fn ne(this, rhs: *This): bool => this != rhs;
     }
 
-    @(intrinsic(unary_op))
+    $[intrinsic(unary_op)]
     pub fn !(this): This => !*this;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn &(this, rhs: This): This => this & rhs;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn |(this, rhs: This): This => this | rhs;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn ^(this, rhs: This): This => this ^ rhs;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn &=(mut this, rhs: This) => *this &= rhs;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn |=(mut this, rhs: This) => *this |= rhs;
 
-    @(intrinsic(binary_op))
+    $[intrinsic(binary_op)]
     pub fn ^=(mut this, rhs: This) => *this ^= rhs;
 
     impl Debug {
