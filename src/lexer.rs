@@ -629,6 +629,7 @@ impl<'a> Lexer<'a> {
                 }
             }
             Some('u') => {
+                let start = self.pos;
                 self.expect(diag, '{');
                 let chars = self.advance_while(|ch| ch.is_ascii_hexdigit());
                 if chars.is_empty() {
@@ -638,7 +639,19 @@ impl<'a> Lexer<'a> {
                     u32::from_str_radix(chars, 16).ok().and_then(char::from_u32)
                 {
                     self.expect(diag, '}');
-                    ch
+                    if byte {
+                        diag.report(Error::new(
+                            "cannot include unicode escape in byte string",
+                            Span {
+                                pos: start as u32,
+                                file: self.file,
+                                len: (self.pos - start) as u32,
+                            },
+                        ));
+                        '\0'
+                    } else {
+                        ch
+                    }
                 } else {
                     diag.report(Error::new(
                         "invalid unicode literal",
@@ -657,7 +670,7 @@ impl<'a> Lexer<'a> {
                 if let Some(ch) = ch {
                     span.pos -= ch.len_utf8() as u32;
                 }
-                diag.report(Error::new("invalid escape sequence",span));
+                diag.report(Error::new("invalid escape sequence", span));
                 '\0'
             }
         }
