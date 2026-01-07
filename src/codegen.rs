@@ -3127,6 +3127,10 @@ impl<'a> Codegen<'a> {
             }
         }
 
+        if !is_prototype && f.attrs.cold {
+            write_de!(self.buffer, "CTL_COLD ");
+        }
+
         if ret == TypeId::NEVER {
             // && real
             write_de!(self.buffer, "CTL_NORETURN ");

@@ -51,11 +51,12 @@
 
 #  define CTL_NONNULL(...)
 #  define CTL_NONSTR
-#  define CTL_DUMMY_INIT     0
-#  define CTL_DUMMY_MEMBER   CTL_ZST char dummy
-#  define CTL_NORETURN       __declspec(noreturn)
-#  define CTL_FORCEINLINE    __forceinline inline
-#  define CTL_NEVERINLINE    __declspec(noinline)
+#  define CTL_DUMMY_INIT   0
+#  define CTL_DUMMY_MEMBER CTL_ZST char dummy
+#  define CTL_NORETURN     __declspec(noreturn)
+#  define CTL_FORCEINLINE  __forceinline inline
+#  define CTL_NEVERINLINE  __declspec(noinline)
+#  define CTL_COLD
 #  define CTL_INLINE         inline
 #  define CTL_MEMCPY         memcpy
 #  define CTL_MEMSET         memset
@@ -85,13 +86,14 @@
 #  define CTL_ALIGN(expr) __declspec(align(expr))
 #else
 #  define CTL_NONNULL(...) __attribute__((nonnull(__VA_ARGS__)))
-#  define CTL_NONSTR         __attribute__((nonstring))
+#  define CTL_NONSTR       __attribute__((nonstring))
 #  define CTL_DUMMY_INIT
 #  define CTL_DUMMY_MEMBER
 #  define CTL_ZST
 #  define CTL_NORETURN       _Noreturn
 #  define CTL_FORCEINLINE    __attribute__((always_inline)) inline
 #  define CTL_NEVERINLINE    __attribute__((noinline))
+#  define CTL_COLD           __attribute__((cold))
 #  define CTL_INLINE         inline
 #  define CTL_MEMCPY         __builtin_memcpy
 #  define CTL_MEMSET         __builtin_memset
