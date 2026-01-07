@@ -271,7 +271,7 @@ impl Cast {
                     _ => {
                         if let Some(b) = dst.as_integral(false) {
                             if (a.signed == b.signed && a.bits <= b.bits)
-                                || (a.signed != b.signed && a.bits < b.bits)
+                                || (!a.signed && b.signed && a.bits < b.bits)
                             {
                                 Cast::Infallible
                             } else {
