@@ -2116,12 +2116,13 @@ impl TypeChecker<'_> {
             return named_error!(self, Error::no_lang_item, trait_name, lhs_span);
         };
 
-        let stripped = lhs.ty.strip_references(&self.proj.types);
-        let Some(mfn) = self.lookup_unk_trait_fn(stripped, tr_id, fn_name) else {
+        let ty =
+            if op.is_assignment() { lhs.ty } else { lhs.ty.strip_references(&self.proj.types) };
+        let Some(mfn) = self.lookup_unk_trait_fn(ty, tr_id, fn_name) else {
             bail!(
                 self,
                 Error::doesnt_implement(
-                    self.proj.fmt_ty(stripped),
+                    self.proj.fmt_ty(ty),
                     strdata!(self, self.proj.scopes.get(tr_id).name.data),
                     lhs_span,
                 )
@@ -2161,12 +2162,20 @@ impl TypeChecker<'_> {
             return named_error!(self, Error::no_lang_item, trait_name, span);
         };
 
-        let stripped = expr.ty.strip_references(&self.proj.types);
-        let Some(mfn) = self.lookup_unk_trait_fn(stripped, tr_id, fn_name) else {
+        let affix = matches!(
+            op,
+            UnaryOp::PreDecrement
+                | UnaryOp::PreIncrement
+                | UnaryOp::PostDecrement
+                | UnaryOp::PostIncrement
+        );
+
+        let ty = if affix { expr.ty } else { expr.ty.strip_references(&self.proj.types) };
+        let Some(mfn) = self.lookup_unk_trait_fn(ty, tr_id, fn_name) else {
             bail!(
                 self,
                 Error::doesnt_implement(
-                    self.proj.fmt_ty(stripped),
+                    self.proj.fmt_ty(ty),
                     strdata!(self, self.proj.scopes.get(tr_id).name.data),
                     span,
                 )
@@ -2177,16 +2186,10 @@ impl TypeChecker<'_> {
         let [p0, ..] = &f.params[..] else {
             return Default::default();
         };
-        if matches!(
-            op,
-            UnaryOp::PreDecrement
-                | UnaryOp::PreIncrement
-                | UnaryOp::PostDecrement
-                | UnaryOp::PostIncrement
-        ) {
+        if affix {
             let callee = expr.auto_deref(&self.proj.types, p0.ty, &mut self.arena);
             self.arena.typed(
-                stripped,
+                ty,
                 CExprData::AffixOperator {
                     callee,
                     mfn,
