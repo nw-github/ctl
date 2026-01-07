@@ -8,6 +8,10 @@ impl<T> Id<T> {
     pub const fn new(id: usize) -> Self {
         Self(id, PhantomData)
     }
+
+    pub fn as_raw(self) -> usize {
+        self.0
+    }
 }
 
 impl<T> Copy for Id<T> {}

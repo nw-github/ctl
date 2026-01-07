@@ -262,7 +262,9 @@ impl TypeGen {
                 defs.emit_array_struct_name(ty, len, flags.minify);
                 write_de!(defs, "{{");
                 defs.emit_type(ty, flags.minify);
-                writeln_de!(defs, " {ARRAY_DATA_NAME}[{len}];\n}};");
+
+                let nonstr = if ty == TypeId::U8 { "CTL_NONSTR" } else { "" };
+                writeln_de!(defs, " {ARRAY_DATA_NAME}[{len}]{nonstr};\n}};");
             }
             _ => {}
         });
@@ -863,21 +865,14 @@ macro_rules! usebuf {
     }};
 }
 
-macro_rules! emit_cast {
-    ($self: expr, $id: expr) => {{
-        let id = $id;
-        write_de!($self.buffer, "(");
-        $self.tg.add_type(&$self.proj.scopes, &$self.proj.types, id);
-        $self.buffer.emit_type(id, $self.flags.minify);
-        write_de!($self.buffer, ")");
-    }};
-}
-
 macro_rules! emit_type {
-    ($self: expr, $id: expr) => {{
+    ($self: expr, $id: expr) => {
+        emit_type!($self, $id, $self.buffer)
+    };
+    ($self: expr, $id: expr, $buf: expr) => {{
         let id = $id;
         $self.tg.add_type(&$self.proj.scopes, &$self.proj.types, id);
-        $self.buffer.emit_type(id, $self.flags.minify);
+        $buf.emit_type(id, $self.flags.minify);
     }};
 }
 
@@ -899,6 +894,7 @@ pub struct Codegen<'a> {
     cur_loop: ScopeId,
     flags: CodegenFlags,
     vtables: Buffer<'a>,
+    arrays: Buffer<'a>,
     emitted_vtables: HashSet<Vtable>,
     defers: Vec<(ScopeId, Vec<Expr>)>,
     tg: TypeGen,
@@ -931,6 +927,7 @@ impl<'a> Codegen<'a> {
             buffer: Buffer::new(proj),
             temporaries: Buffer::new(proj),
             vtables: Buffer::new(proj),
+            arrays: Buffer::new(proj),
             cur_block: Default::default(),
             cur_loop: Default::default(),
             emitted_vtables: Default::default(),
@@ -1015,6 +1012,7 @@ impl<'a> Codegen<'a> {
         this.tg.emit(&mut this.buffer, &this.flags);
         this.buffer.emit(prototypes.finish());
         this.buffer.emit(this.vtables.finish());
+        this.buffer.emit(this.arrays.finish());
         this.buffer.emit(static_defs.finish());
         this.buffer.emit(functions.finish());
         this.buffer.emit("static void $ctl_static_init(void){");
@@ -1572,12 +1570,15 @@ impl<'a> Codegen<'a> {
             &ExprData::String(v) => write_de!(self.buffer, "{}", StringLiteral(self.proj.str(v))),
             ExprData::GeneratedString(v) => write_de!(self.buffer, "{}", StringLiteral(v)),
             ExprData::ByteString(value) => {
-                emit_cast!(self, expr.ty);
-                write_de!(self.buffer, "\"");
+                write_de!(self.arrays, "static const ");
+                emit_type!(self, expr.ty.as_pointee(&self.proj.types).unwrap(), self.arrays);
+                write_de!(self.arrays, " $BSTR{}={{.{ARRAY_DATA_NAME}=\"", expr.data.as_raw());
                 for byte in value {
-                    write_de!(self.buffer, "\\x{byte:x}");
+                    write_de!(self.arrays, "\\x{byte:x}");
                 }
-                write_de!(self.buffer, "\"");
+                write_de!(self.arrays, "\"}};");
+
+                write_de!(self.buffer, "&$BSTR{}", expr.data.as_raw());
             }
             ExprData::Void => self.buffer.emit(VOID_INSTANCE),
             &ExprData::Fn(ref func, scope) => {

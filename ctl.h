@@ -50,6 +50,7 @@
 #  endif
 
 #  define CTL_NONNULL(...)
+#  define CTL_NONSTR
 #  define CTL_DUMMY_INIT     0
 #  define CTL_DUMMY_MEMBER   CTL_ZST char dummy
 #  define CTL_NORETURN       __declspec(noreturn)
@@ -69,7 +70,7 @@
 // courtesy of: https://stackoverflow.com/questions/1113409/attribute-constructor-equivalent-in-vc
 // TODO: testing is required to see if or on what versions this gets optimized away
 #  pragma section(".CRT$XCU", read)
-#  define CTL_INIT_(f, p)                                        \
+#  define CTL_INIT_(f, p)                                    \
     static void f(void);                                     \
     __declspec(allocate(".CRT$XCU")) void (*f##_)(void) = f; \
     __pragma(comment(linker, "/include:" p #f "_")) static void f(void)
@@ -84,6 +85,7 @@
 #  define CTL_ALIGN(expr) __declspec(align(expr))
 #else
 #  define CTL_NONNULL(...) __attribute__((nonnull(__VA_ARGS__)))
+#  define CTL_NONSTR         __attribute__((nonstring))
 #  define CTL_DUMMY_INIT
 #  define CTL_DUMMY_MEMBER
 #  define CTL_ZST
