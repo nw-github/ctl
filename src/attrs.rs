@@ -140,7 +140,9 @@ impl FunctionAttrs {
                 }
                 Strings::ATTR_COLD => this.cold = true,
                 Strings::ATTR_LINKNAME => this.link_name = one_str_arg(attr, id, proj),
-                Strings::SKIP => this.test_skip = Some(opt_str_arg(attr, id, proj).map(|s| s.data)),
+                Strings::ATTR_SKIP => {
+                    this.test_skip = Some(opt_str_arg(attr, id, proj).map(|s| s.data))
+                }
                 Strings::ATTR_SAFE => this.safe_extern = true,
                 Strings::ATTR_INLINE => {
                     if let Some(arg) = opt_str_arg(attr, id, proj) {
@@ -176,7 +178,7 @@ pub enum Layout {
 
 #[derive(Default)]
 pub struct UserTypeAttrs {
-    pub lang: Option<StrId>,
+    pub lang: Option<LangType>,
     pub align: Option<usize>,
     pub layout: Layout,
 }
@@ -186,7 +188,21 @@ impl UserTypeAttrs {
         let mut this = Self::default();
         for attr in attrs.iter() {
             match attr.name.data {
-                AN::Str(id @ Strings::ATTR_LANG) => this.lang = one_str_arg(attr, id, proj),
+                AN::Str(id @ Strings::ATTR_LANG) => {
+                    let Some(arg) = one_str_arg_l(attr, id, proj) else {
+                        continue;
+                    };
+
+                    let Some(ty) = LangType::from_str(proj.str(arg.data)) else {
+                        proj.diag.report(Error::new(
+                            format!("unknown lang type '{}'", proj.str(arg.data)),
+                            arg.span,
+                        ));
+                        continue;
+                    };
+
+                    this.lang = Some(ty);
+                }
                 AN::Str(id @ Strings::ATTR_ALIGN) => {
                     let mut span = attr.name.span;
                     let Some(int) = attr.props.first().and_then(|prop| {
@@ -242,5 +258,139 @@ impl UserTypeAttrs {
             }
         }
         this
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LangType {
+    Span,
+    SpanMut,
+    Vec,
+    Set,
+    Map,
+    String,
+    Option,
+    FmtArg,
+    FmtArgs,
+    TestInfo,
+    Mutable,
+    Ordering,
+
+    Range,
+    RangeFull,
+    RangeTo,
+    RangeToInclusive,
+    RangeFrom,
+    RangeInclusive,
+
+    Numeric,
+    Integral,
+    Signed,
+    Unsigned,
+    Array,
+    Debug,
+    Format,
+    Pointer,
+    Write,
+    Iterator,
+
+    OpCmp,
+    OpEq,
+    OpAdd,
+    OpSub,
+    OpMul,
+    OpDiv,
+    OpRem,
+    OpAnd,
+    OpOr,
+    OpXor,
+    OpShl,
+    OpShr,
+    OpAddAssign,
+    OpSubAssign,
+    OpMulAssign,
+    OpDivAssign,
+    OpRemAssign,
+    OpAndAssign,
+    OpOrAssign,
+    OpXorAssign,
+    OpShlAssign,
+    OpShrAssign,
+    OpNeg,
+    OpNot,
+    OpUnwrap,
+    OpDec,
+    OpInc,
+
+    FallbackDebug,
+}
+
+impl LangType {
+    fn from_str(s: &str) -> Option<LangType> {
+        match s {
+            "span" => Some(Self::Span),
+            "span_mut" => Some(Self::SpanMut),
+            "vec" => Some(Self::Vec),
+            "set" => Some(Self::Set),
+            "map" => Some(Self::Map),
+            "string" => Some(Self::String),
+            "option" => Some(Self::Option),
+            "fmt_arg" => Some(Self::FmtArg),
+            "fmt_args" => Some(Self::FmtArgs),
+            "test_info" => Some(Self::TestInfo),
+            "mutable" => Some(Self::Mutable),
+            "ordering" => Some(Self::Ordering),
+            "range" => Some(Self::Range),
+            "range_full" => Some(Self::RangeFull),
+            "range_to" => Some(Self::RangeTo),
+            "range_to_inclusive" => Some(Self::RangeToInclusive),
+            "range_from" => Some(Self::RangeFrom),
+            "range_inclusive" => Some(Self::RangeInclusive),
+            "numeric" => Some(Self::Numeric),
+            "integral" => Some(Self::Integral),
+            "signed" => Some(Self::Signed),
+            "unsigned" => Some(Self::Unsigned),
+            "array" => Some(Self::Array),
+            "fmt_debug" => Some(Self::Debug),
+            "fmt_format" => Some(Self::Format),
+            "fmt_pointer" => Some(Self::Pointer),
+            "fmt_write" => Some(Self::Write),
+            "iter" => Some(Self::Iterator),
+            "op_cmp" => Some(Self::OpCmp),
+            "op_eq" => Some(Self::OpEq),
+            "op_add" => Some(Self::OpAdd),
+            "op_sub" => Some(Self::OpSub),
+            "op_mul" => Some(Self::OpMul),
+            "op_div" => Some(Self::OpDiv),
+            "op_rem" => Some(Self::OpRem),
+            "op_and" => Some(Self::OpAnd),
+            "op_or" => Some(Self::OpOr),
+            "op_xor" => Some(Self::OpXor),
+            "op_shl" => Some(Self::OpShl),
+            "op_shr" => Some(Self::OpShr),
+            "op_add_assign" => Some(Self::OpAddAssign),
+            "op_sub_assign" => Some(Self::OpSubAssign),
+            "op_mul_assign" => Some(Self::OpMulAssign),
+            "op_div_assign" => Some(Self::OpDivAssign),
+            "op_rem_assign" => Some(Self::OpRemAssign),
+            "op_and_assign" => Some(Self::OpAndAssign),
+            "op_or_assign" => Some(Self::OpOrAssign),
+            "op_xor_assign" => Some(Self::OpXorAssign),
+            "op_shl_assign" => Some(Self::OpShlAssign),
+            "op_shr_assign" => Some(Self::OpShrAssign),
+            "op_neg" => Some(Self::OpNeg),
+            "op_not" => Some(Self::OpNot),
+            "op_unwrap" => Some(Self::OpUnwrap),
+            "op_dec" => Some(Self::OpDec),
+            "op_inc" => Some(Self::OpInc),
+            "fallback_debug" => Some(Self::FallbackDebug),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for LangType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
     }
 }

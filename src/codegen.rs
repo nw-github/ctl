@@ -1096,10 +1096,9 @@ impl<'a> Codegen<'a> {
         }
 
         hoist_point!(self, {
-            let test_info_id = self.proj.strings.get("test_info").unwrap();
-            let test_info_ty = self.proj.scopes.lang_types.get(&test_info_id).unwrap();
+            let test_info_ty = self.proj.scopes.lang_types[&LangType::TestInfo];
             self.buffer.emit_type_name(
-                &GenericUserType::new(*test_info_ty, TypeArgs::default()),
+                &GenericUserType::new(test_info_ty, TypeArgs::default()),
                 self.flags.minify,
             );
             self.buffer.emit(" tests[]={");
@@ -1145,7 +1144,7 @@ impl<'a> Codegen<'a> {
                 let skip_reason_ty = self
                     .proj
                     .scopes
-                    .get(*test_info_ty)
+                    .get(test_info_ty)
                     .members
                     .get(&Strings::SKIP_REASON)
                     .unwrap()
@@ -2300,7 +2299,7 @@ impl<'a> Codegen<'a> {
                 self.proj
                     .scopes
                     .get(ut.id)
-                    .find_associated_fn(&self.proj.scopes, Strings::NEW)
+                    .find_associated_fn(&self.proj.scopes, Strings::FN_NEW)
                     .unwrap(),
                 ut.ty_args.clone(),
             ),
@@ -3701,15 +3700,14 @@ impl<'a> Codegen<'a> {
         scope: ScopeId,
     ) -> BuiltinDbgArgs {
         let dbg_fn = self.proj.strings.get("dbg").unwrap();
-        let dbg = self.proj.scopes.lang_types.get(&Strings::LANG_DEBUG).unwrap();
-        let dbg_tr = GenericUserType::new(*dbg, TypeArgs::default());
+        let dbg = self.proj.scopes.lang_types[&LangType::Debug];
+        let dbg_tr = GenericUserType::new(dbg, TypeArgs::default());
 
-        let write_tr_id = self.proj.strings.get("fmt_write").unwrap();
         let write_str_fn = self.proj.strings.get("write_str").unwrap();
-        let write = self.proj.scopes.lang_types.get(&write_tr_id).unwrap();
-        let write_tr = GenericUserType::new(*write, TypeArgs::default());
+        let write = self.proj.scopes.lang_types[&LangType::Write];
+        let write_tr = GenericUserType::new(write, TypeArgs::default());
 
-        let fallback_dbg_ext = self.proj.scopes.lang_types.get(&Strings::FALLBACK_DBG).copied();
+        let fallback_dbg_ext = self.proj.scopes.lang_types.get(&LangType::FallbackDebug).copied();
 
         let real_formatter = formatter_ty.as_pointee(&self.proj.types).unwrap();
         let mut formatter_write_str = self
@@ -3885,13 +3883,13 @@ impl StrInterp {
         let string = proj
             .scopes
             .lang_types
-            .get(&Strings::LANG_STRING)
+            .get(&LangType::String)
             .map(|&ut| GenericUserType::from_id(&proj.scopes, &proj.types, ut));
         Self {
             fmt_arg: proj
                 .scopes
                 .lang_types
-                .get(&Strings::LANG_FMT_ARG)
+                .get(&LangType::FmtArg)
                 .map(|&ut| GenericUserType::from_id(&proj.scopes, &proj.types, ut)),
             string_ty: string.as_ref().map(|s| proj.types.insert(Type::User(s.clone()))),
             string,

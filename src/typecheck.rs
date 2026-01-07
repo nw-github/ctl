@@ -329,7 +329,6 @@ pub struct TypeChecker<'a> {
     proj: Project,
     listening_vars: Option<Vec<VariableId>>,
     current_static: Option<(VariableId, Vec<VariableId>)>,
-    tables: Tables,
     cache: ExtensionCache,
     arena: ExprArena,
     parsed: &'a PExprArena,
@@ -342,10 +341,9 @@ impl<'a> TypeChecker<'a> {
         lsp: Option<LspInput>,
         conf: Configuration,
         arena: &'a PExprArena,
-        mut strings: Strings,
+        strings: Strings,
     ) -> (Project, ExprArena) {
         let mut this = Self {
-            tables: Tables::new(&mut strings),
             safety: Safety::Safe,
             current: ScopeId::ROOT,
             proj: Project::new(conf, diag, strings, lsp.is_some()),
@@ -386,8 +384,11 @@ impl<'a> TypeChecker<'a> {
         }
 
         this.proj.main_module = Some(last_scope);
-        this.proj.main =
-            this.proj.scopes[last_scope].vns.get(&Strings::MAIN).and_then(|id| id.as_fn()).copied();
+        this.proj.main = this.proj.scopes[last_scope]
+            .vns
+            .get(&Strings::FN_MAIN)
+            .and_then(|id| id.as_fn())
+            .copied();
         if !this.proj.conf.flags.lib && !this.proj.conf.has_feature(Strings::FEAT_TEST) {
             if let Some(id) = this.proj.main {
                 let func = this.proj.scopes.get(id);
@@ -1327,7 +1328,7 @@ impl<'a> TypeChecker<'a> {
         let (tr_name, fn_name, ty_args) = match f.name.data {
             O::Minus if f.params.len() > 1 => {
                 let op = BinaryOp::try_from(f.name.data).unwrap();
-                let (tr_name, fn_name) = self.tables.binary_op_traits.get(&op).copied().unwrap();
+                let (tr_name, fn_name) = self.get_binary_op(op).unwrap();
                 (
                     tr_name,
                     fn_name,
@@ -1342,12 +1343,12 @@ impl<'a> TypeChecker<'a> {
             }
             O::Minus | O::Bang => {
                 let op = UnaryOp::try_from_postfix_fn(f.name.data).unwrap();
-                let (tr_name, fn_name) = self.tables.unary_op_traits.get(&op).copied().unwrap();
+                let (tr_name, fn_name) = self.get_unary_op(op).unwrap();
                 (tr_name, fn_name, vec![f.ret.unwrap_or(PExprArena::HINT_VOID)])
             }
             O::Increment | O::Decrement => {
                 let op = UnaryOp::try_from_postfix_fn(f.name.data).unwrap();
-                let (tr_name, fn_name) = self.tables.unary_op_traits.get(&op).copied().unwrap();
+                let (tr_name, fn_name) = self.get_unary_op(op).unwrap();
                 (tr_name, fn_name, vec![])
             }
             O::Subscript | O::SubscriptAssign => {
@@ -1357,7 +1358,7 @@ impl<'a> TypeChecker<'a> {
             }
             _ => {
                 let op = BinaryOp::try_from(f.name.data).unwrap();
-                let (tr_name, fn_name) = self.tables.binary_op_traits.get(&op).copied().unwrap();
+                let (tr_name, fn_name) = self.get_binary_op(op).unwrap();
                 if let Some(p) =
                     f.params.get(1).filter(|_| matches!(f.name.data, O::Cmp | O::Eq)).cloned()
                 {
@@ -2108,12 +2109,12 @@ impl TypeChecker<'_> {
         op: BinaryOp,
         span: Span,
     ) -> CExpr {
-        let Some(&(trait_name, fn_name)) = self.tables.binary_op_traits.get(&op) else {
+        let Some((trait_name, fn_name)) = self.get_binary_op(op) else {
             bail!(self, Error::invalid_operator(op, self.proj.fmt_ty(lhs.ty), span));
         };
 
         let Some(tr_id) = self.proj.scopes.lang_types.get(&trait_name).copied() else {
-            return named_error!(self, Error::no_lang_item, trait_name, lhs_span);
+            return self.error(Error::no_lang_item(trait_name, lhs_span));
         };
 
         let ty =
@@ -2154,12 +2155,12 @@ impl TypeChecker<'_> {
     }
 
     fn check_unary(&mut self, expr: CExpr, op: UnaryOp, span: Span) -> CExpr {
-        let Some(&(trait_name, fn_name)) = self.tables.unary_op_traits.get(&op) else {
+        let Some((trait_name, fn_name)) = self.get_unary_op(op) else {
             bail!(self, Error::invalid_operator(op, self.proj.fmt_ty(expr.ty), span));
         };
 
         let Some(tr_id) = self.proj.scopes.lang_types.get(&trait_name).copied() else {
-            return named_error!(self, Error::no_lang_item, trait_name, span);
+            return self.error(Error::no_lang_item(trait_name, span));
         };
 
         let affix = matches!(
@@ -2398,7 +2399,9 @@ impl TypeChecker<'_> {
                         let right = self.type_check(right, left.ty);
                         let ty = match op {
                             BinaryOp::NoneCoalesce => unreachable!(),
-                            BinaryOp::Cmp => self.make_lang_type_by_name("ordering", [], span),
+                            BinaryOp::Cmp => {
+                                self.make_lang_type_by_name(LangType::Ordering, [], span)
+                            }
                             BinaryOp::Gt
                             | BinaryOp::GtEqual
                             | BinaryOp::Lt
@@ -2475,7 +2478,7 @@ impl TypeChecker<'_> {
                     UnaryOp::Option => {
                         let expr = self
                             .check_expr(expr, target.and_then(|t| t.as_option_inner(&self.proj)));
-                        let ty = self.make_lang_type_by_name("option", [expr.ty], span);
+                        let ty = self.make_lang_type_by_name(LangType::Option, [expr.ty], span);
                         (ty, self.try_coerce(expr, ty))
                     }
                     _ => {
@@ -2538,7 +2541,7 @@ impl TypeChecker<'_> {
                 }
             }
             &PExprData::VecWithInit { init, count } => {
-                let Some(vec) = self.get_lang_type_or_err("vec", span) else {
+                let Some(vec) = self.get_lang_type_or_err(LangType::Vec, span) else {
                     return Default::default();
                 };
 
@@ -2597,7 +2600,7 @@ impl TypeChecker<'_> {
             PExprData::Vec(elements) => {
                 let mut checked = Vec::with_capacity(elements.len());
                 let mut elements = elements.iter().copied();
-                let Some(vec) = self.get_lang_type_or_err("vec", span) else {
+                let Some(vec) = self.get_lang_type_or_err(LangType::Vec, span) else {
                     return Default::default();
                 };
 
@@ -2625,7 +2628,7 @@ impl TypeChecker<'_> {
             PExprData::Set(elements) => {
                 let mut checked = Vec::with_capacity(elements.len());
                 let mut elements = elements.iter().copied();
-                let Some(set) = self.get_lang_type_or_err("set", span) else {
+                let Some(set) = self.get_lang_type_or_err(LangType::Set, span) else {
                     return Default::default();
                 };
 
@@ -2651,7 +2654,7 @@ impl TypeChecker<'_> {
                 )
             }
             PExprData::Map(elements) => {
-                let Some(map) = self.get_lang_type_or_err("map", expr.span) else {
+                let Some(map) = self.get_lang_type_or_err(LangType::Map, expr.span) else {
                     return Default::default();
                 };
 
@@ -2683,14 +2686,14 @@ impl TypeChecker<'_> {
                     self.arena.alloc(CExprData::Map(result, self.current)),
                 )
             }
-            &PExprData::Range { start, end, inclusive } => {
+            &PExprData::Range { start, end, inclusive: incl } => {
                 let start_id = self.proj.strings.get_or_intern_static("start");
                 let end_id = self.proj.strings.get_or_intern_static("end");
                 let name = match (start.is_some(), end.is_some()) {
-                    (false, false) => "range_full",
-                    (true, false) => "range_from",
-                    (false, true) => ["range_to", "range_to_inclusive"][inclusive as usize],
-                    (true, true) => ["range", "range_inclusive"][inclusive as usize],
+                    (false, false) => LangType::RangeFull,
+                    (true, false) => LangType::RangeFrom,
+                    (false, true) => [LangType::RangeTo, LangType::RangeToInclusive][incl as usize],
+                    (true, true) => [LangType::Range, LangType::RangeInclusive][incl as usize],
                 };
                 let Some(ut_id) = self.get_lang_type_or_err(name, span) else {
                     return Default::default();
@@ -2718,7 +2721,7 @@ impl TypeChecker<'_> {
                 CExpr::new(ret, self.arena.alloc(CExprData::Instance(args)))
             }
             &PExprData::String(s) => CExpr::new(
-                self.make_lang_type_by_name("string", [], span),
+                self.make_lang_type_by_name(LangType::String, [], span),
                 self.arena.alloc(CExprData::String(s)),
             ),
             PExprData::StringInterpolation { strings, args } => {
@@ -2730,7 +2733,7 @@ impl TypeChecker<'_> {
                         continue;
                     }
 
-                    let mut target_tr = "fmt_format";
+                    let mut target_tr = LangType::Format;
                     let mut target_fn = "fmt";
                     let mut upper = false;
                     match opts.as_ref().and_then(|opts| opts.typ) {
@@ -2742,7 +2745,7 @@ impl TypeChecker<'_> {
                                 "b" | "B" => "bin",
                                 "e" | "E" => "exp",
                                 "p" | "P" => {
-                                    target_tr = "fmt_pointer";
+                                    target_tr = LangType::Pointer;
                                     "ptr"
                                 }
                                 typ => {
@@ -2756,7 +2759,7 @@ impl TypeChecker<'_> {
                             upper = typ.chars().next().is_some_and(|ch| ch.is_ascii_uppercase());
                         }
                         Some(FormatType::Debug) => {
-                            target_tr = "fmt_debug";
+                            target_tr = LangType::Debug;
                             target_fn = "dbg";
                         }
                         None => {}
@@ -2813,7 +2816,7 @@ impl TypeChecker<'_> {
                 }
 
                 CExpr::new(
-                    self.make_lang_type_by_name("fmt_args", [], span),
+                    self.make_lang_type_by_name(LangType::FmtArgs, [], span),
                     self.arena.alloc(CExprData::StringInterp {
                         strings: strings.clone(),
                         args: out,
@@ -3075,7 +3078,7 @@ impl TypeChecker<'_> {
                         .unwrap_or(true)
                         && !matches!(out_type, TypeId::NEVER | TypeId::VOID | TypeId::UNKNOWN)
                     {
-                        out_type = self.make_lang_type_by_name("option", [out_type], span);
+                        out_type = self.make_lang_type_by_name(LangType::Option, [out_type], span);
                         if_branch = self.try_coerce(if_branch, out_type);
                         CExpr::option_null(out_type, &mut self.arena)
                     } else {
@@ -3717,7 +3720,7 @@ impl TypeChecker<'_> {
     ) -> CExpr {
         let iter_span = iter.span;
         let iter = self.check_expr(iter, None);
-        let Some(iter_tr_id) = self.get_lang_type_or_err("iter", iter_span) else {
+        let Some(iter_tr_id) = self.get_lang_type_or_err(LangType::Iterator, iter_span) else {
             return Default::default();
         };
 
@@ -4396,9 +4399,8 @@ impl TypeChecker<'_> {
         }
     }
 
-    fn resolve_lang_type(&mut self, name: &'static str, args: &[TypeHint], span: Span) -> TypeId {
-        let name_id = self.proj.strings.get_or_intern_static(name);
-        if let Some(id) = self.proj.scopes.lang_types.get(&name_id).copied() {
+    fn resolve_lang_type(&mut self, name: LangType, args: &[TypeHint], span: Span) -> TypeId {
+        if let Some(id) = self.proj.scopes.lang_types.get(&name).copied() {
             let ty_args = self.resolve_type_args(id, args, true, span);
             self.proj.types.insert(Type::User(GenericUserType::new(id, ty_args)))
         } else {
@@ -4421,12 +4423,11 @@ impl TypeChecker<'_> {
 
     fn make_lang_type_by_name(
         &mut self,
-        name: &'static str,
+        name: LangType,
         args: impl IntoIterator<Item = TypeId>,
         span: Span,
     ) -> TypeId {
-        let id = self.proj.strings.get_or_intern_static(name);
-        let Some(id) = self.proj.scopes.lang_types.get(&id).copied() else {
+        let Some(id) = self.proj.scopes.lang_types.get(&name).copied() else {
             return self.error(Error::no_lang_item(name, span));
         };
 
@@ -4437,9 +4438,8 @@ impl TypeChecker<'_> {
         )))
     }
 
-    fn get_lang_type_or_err(&mut self, name: &'static str, span: Span) -> Option<UserTypeId> {
-        let id = self.proj.strings.get_or_intern_static(name);
-        let Some(id) = self.proj.scopes.lang_types.get(&id).copied() else {
+    fn get_lang_type_or_err(&mut self, name: LangType, span: Span) -> Option<UserTypeId> {
+        let Some(id) = self.proj.scopes.lang_types.get(&name).copied() else {
             return self.error(Error::no_lang_item(name, span));
         };
 
@@ -4525,16 +4525,20 @@ impl TypeChecker<'_> {
                 self.proj.types.insert(Type::Array(id, n.val.try_into().unwrap()))
             }
             TypeHintData::Option(ty) => {
-                self.resolve_lang_type("option", std::slice::from_ref(ty), span)
+                self.resolve_lang_type(LangType::Option, std::slice::from_ref(ty), span)
             }
-            TypeHintData::Vec(ty) => self.resolve_lang_type("vec", std::slice::from_ref(ty), span),
-            TypeHintData::Map(kv) => self.resolve_lang_type("map", &kv[..], span),
-            TypeHintData::Set(ty) => self.resolve_lang_type("set", std::slice::from_ref(ty), span),
+            TypeHintData::Vec(ty) => {
+                self.resolve_lang_type(LangType::Vec, std::slice::from_ref(ty), span)
+            }
+            TypeHintData::Map(kv) => self.resolve_lang_type(LangType::Map, &kv[..], span),
+            TypeHintData::Set(ty) => {
+                self.resolve_lang_type(LangType::Set, std::slice::from_ref(ty), span)
+            }
             TypeHintData::Slice(ty) => {
-                self.resolve_lang_type("span", std::slice::from_ref(ty), span)
+                self.resolve_lang_type(LangType::Span, std::slice::from_ref(ty), span)
             }
             TypeHintData::SliceMut(ty) => {
-                self.resolve_lang_type("span_mut", std::slice::from_ref(ty), span)
+                self.resolve_lang_type(LangType::SpanMut, std::slice::from_ref(ty), span)
             }
             TypeHintData::Tuple(params) => {
                 let mut types = Vec::with_capacity(params.len());
@@ -4570,16 +4574,11 @@ impl TypeChecker<'_> {
 
     fn resolve_members(&mut self, id: UserTypeId) {
         fn set_interior_mutable(this: &mut TypeChecker, id: UserTypeId, ty: TypeId) {
-            let Some(&typ) = this
-                .proj
-                .strings
-                .get("mutable")
-                .and_then(|id| this.proj.scopes.lang_types.get(&id))
-            else {
-                return;
+            let is_mutable = |id: UserTypeId| {
+                matches!(this.proj.scopes.get(id).attrs.lang, Some(LangType::Mutable))
             };
 
-            if id == typ || this.proj.types[ty].as_user().is_some_and(|ut| ut.id == typ) {
+            if is_mutable(id) || this.proj.types[ty].as_user().is_some_and(|ut| is_mutable(ut.id)) {
                 this.proj.scopes.get_mut(id).interior_mutable = true;
             }
         }
@@ -4840,8 +4839,7 @@ impl TypeChecker<'_> {
                 TraitImplData::Operator { tr, ty_args, span, scope } => {
                     this.enter_id_and_resolve(scope, |this| {
                         let Some(tr_id) = this.proj.scopes.lang_types.get(&tr).copied() else {
-                            let data = strdata!(this, tr);
-                            return this.error(Error::no_lang_item(data, span));
+                            return this.error(Error::no_lang_item(tr, span));
                         };
 
                         Some(GenericTrait::new(
@@ -5195,9 +5193,10 @@ impl TypeChecker<'_> {
             }
         } else {
             match kind.breaks {
-                LoopBreak::WithValue => {
-                    (self.make_lang_type_by_name("option", [(kind.target).unwrap()], span), true)
-                }
+                LoopBreak::WithValue => (
+                    self.make_lang_type_by_name(LangType::Option, [(kind.target).unwrap()], span),
+                    true,
+                ),
                 _ => (TypeId::VOID, false),
             }
         }
@@ -5288,8 +5287,8 @@ impl TypeChecker<'_> {
     }
 
     fn can_span_coerce(&self, lhs: TypeId, rhs: TypeId) -> Option<()> {
-        let span = *self.proj.scopes.lang_types.get(&Strings::LANG_SPAN)?;
-        let span_mut = *self.proj.scopes.lang_types.get(&Strings::LANG_SPAN_MUT)?;
+        let span = *self.proj.scopes.lang_types.get(&LangType::Span)?;
+        let span_mut = *self.proj.scopes.lang_types.get(&LangType::SpanMut)?;
         let lhs = self.proj.types[lhs].as_user()?;
         let rhs = self.proj.types[rhs].as_user()?;
         if lhs.id == span_mut
@@ -5387,14 +5386,16 @@ impl TypeChecker<'_> {
                 return self.error(Error::match_statement("", span));
             }
         } else if ty.as_user().is_some_and(|ut| {
-            Some(&ut.id) == self.proj.scopes.lang_types.get(&Strings::LANG_STRING)
+            matches!(self.proj.scopes.get(ut.id).attrs.lang, Some(LangType::String))
         }) {
             if !patterns.any(|patt| patt.irrefutable) {
                 self.error(Error::match_statement("", span))
             }
         } else if ty.as_user().is_some_and(|ut| {
-            Some(&ut.id) == self.proj.scopes.lang_types.get(&Strings::LANG_SPAN)
-                || Some(&ut.id) == self.proj.scopes.lang_types.get(&Strings::LANG_SPAN_MUT)
+            matches!(
+                self.proj.scopes.get(ut.id).attrs.lang,
+                Some(LangType::Span | LangType::SpanMut)
+            )
         }) {
             if !patterns.any(|patt| {
                 patt.irrefutable
@@ -5612,8 +5613,8 @@ impl TypeChecker<'_> {
         span: Span,
         typ: PatternType,
     ) -> CPattern {
-        let span_id = self.proj.scopes.lang_types.get(&Strings::LANG_SPAN).copied();
-        let span_mut_id = self.proj.scopes.lang_types.get(&Strings::LANG_SPAN_MUT).copied();
+        let span_id = self.proj.scopes.lang_types.get(&LangType::Span).copied();
+        let span_mut_id = self.proj.scopes.lang_types.get(&LangType::SpanMut).copied();
         let (real_inner, arr_len) =
             match self.proj.types.get(target.strip_references(&self.proj.types)) {
                 &Type::Array(ty, len) => (ty, len),
@@ -6076,7 +6077,7 @@ impl TypeChecker<'_> {
             }
             Pattern::Struct(sub) => self.check_struct_pattern(scrutinee, mutable, sub, span, typ),
             &Pattern::String(value) => {
-                let string = self.make_lang_type_by_name("string", [], span);
+                let string = self.make_lang_type_by_name(LangType::String, [], span);
                 if scrutinee.strip_references(&self.proj.types) != string {
                     bail!(self, type_mismatch_err!(self, scrutinee, string, span));
                 }
@@ -7273,13 +7274,9 @@ pub trait SharedStuff {
 
         // TODO: this is a hack. ideally the order of extensions shouldn't matter but for now
         // process this extension last so any other Debug impl will be recognized first
-        if let Some(dbg_idx) = self
-            .proj()
-            .scopes
-            .lang_types
-            .get(&Strings::FALLBACK_DBG)
-            .and_then(|id| exts.iter().position(|rhs| id == rhs))
-        {
+        if let Some(dbg_idx) = exts.iter().position(|id| {
+            matches!(self.proj().scopes.get(*id).attrs.lang, Some(LangType::FallbackDebug))
+        }) {
             let last = exts.len() - 1;
             exts.swap(dbg_idx, last);
         }
@@ -7551,27 +7548,14 @@ pub trait SharedStuff {
     fn has_builtin_impl(&self, id: TypeId, bound: &GenericTrait) -> bool {
         let scopes = &self.proj().scopes;
         let ty = &self.proj().types[id];
-        if ty.is_numeric() && Some(&bound.id) == scopes.lang_types.get(&Strings::LANG_NUMERIC) {
-            return true;
+        match scopes.get(bound.id).attrs.lang {
+            Some(LangType::Numeric) => ty.is_numeric(),
+            Some(LangType::Array) => ty.is_array(),
+            Some(LangType::Integral) => ty.is_integral(),
+            Some(LangType::Signed) => ty.as_integral(false).is_some_and(|i| i.signed),
+            Some(LangType::Unsigned) => ty.as_integral(false).is_some_and(|i| !i.signed),
+            _ => false,
         }
-
-        if ty.is_array() && Some(&bound.id) == scopes.lang_types.get(&Strings::LANG_ARRAY) {
-            return true;
-        }
-
-        if let Some(int) = ty.as_integral(false) {
-            if Some(&bound.id) == scopes.lang_types.get(&Strings::LANG_INTEGRAL) {
-                return true;
-            }
-            if int.signed && Some(&bound.id) == scopes.lang_types.get(&Strings::LANG_SIGNED) {
-                return true;
-            }
-            if !int.signed && Some(&bound.id) == scopes.lang_types.get(&Strings::LANG_UNSIGNED) {
-                return true;
-            }
-        }
-
-        false
     }
 
     fn find_trait_impl(
@@ -7580,7 +7564,7 @@ pub trait SharedStuff {
         wanted_tr: TraitId,
         ty: TypeId,
     ) -> Option<GenericTrait> {
-        if Some(&wanted_tr) == self.proj().scopes.lang_types.get(&Strings::LANG_ARRAY)
+        if matches!(self.proj().scopes.get(wanted_tr).attrs.lang, Some(LangType::Array))
             && let Type::Array(inner, _) = self.proj().types[ty]
         {
             return Some(GenericTrait::from_type_args(&self.proj().scopes, wanted_tr, [inner]));
@@ -7608,57 +7592,51 @@ pub trait SharedStuff {
     }
 }
 
-struct Tables {
-    binary_op_traits: HashMap<BinaryOp, (StrId, StrId)>,
-    unary_op_traits: HashMap<UnaryOp, (StrId, StrId)>,
-}
+impl TypeChecker<'_> {
+    fn get_binary_op(&self, op: BinaryOp) -> Option<(LangType, StrId)> {
+        let strings = &self.proj.strings;
+        match op {
+            BinaryOp::Cmp => Some((LangType::OpCmp, strings.get("cmp")?)),
+            BinaryOp::Gt => Some((LangType::OpCmp, strings.get("gt")?)),
+            BinaryOp::GtEqual => Some((LangType::OpCmp, strings.get("ge")?)),
+            BinaryOp::Lt => Some((LangType::OpCmp, strings.get("lt")?)),
+            BinaryOp::LtEqual => Some((LangType::OpCmp, strings.get("le")?)),
+            BinaryOp::Equal => Some((LangType::OpEq, strings.get("eq")?)),
+            BinaryOp::NotEqual => Some((LangType::OpEq, strings.get("ne")?)),
+            BinaryOp::Add => Some((LangType::OpAdd, strings.get("add")?)),
+            BinaryOp::Sub => Some((LangType::OpSub, strings.get("sub")?)),
+            BinaryOp::Mul => Some((LangType::OpMul, strings.get("mul")?)),
+            BinaryOp::Div => Some((LangType::OpDiv, strings.get("div")?)),
+            BinaryOp::Rem => Some((LangType::OpRem, strings.get("rem")?)),
+            BinaryOp::BitAnd => Some((LangType::OpAnd, strings.get("bit_and")?)),
+            BinaryOp::BitOr => Some((LangType::OpOr, strings.get("bit_or")?)),
+            BinaryOp::Xor => Some((LangType::OpXor, strings.get("xor")?)),
+            BinaryOp::Shl => Some((LangType::OpShl, strings.get("shl")?)),
+            BinaryOp::Shr => Some((LangType::OpShr, strings.get("shr")?)),
+            BinaryOp::AddAssign => Some((LangType::OpAddAssign, strings.get("add_assign")?)),
+            BinaryOp::SubAssign => Some((LangType::OpSubAssign, strings.get("sub_assign")?)),
+            BinaryOp::MulAssign => Some((LangType::OpMulAssign, strings.get("mul_assign")?)),
+            BinaryOp::DivAssign => Some((LangType::OpDivAssign, strings.get("div_assign")?)),
+            BinaryOp::RemAssign => Some((LangType::OpRemAssign, strings.get("rem_assign")?)),
+            BinaryOp::BitAndAssign => Some((LangType::OpAndAssign, strings.get("and_assign")?)),
+            BinaryOp::BitOrAssign => Some((LangType::OpOrAssign, strings.get("or_assign")?)),
+            BinaryOp::XorAssign => Some((LangType::OpXorAssign, strings.get("xor_assign")?)),
+            BinaryOp::ShlAssign => Some((LangType::OpShlAssign, strings.get("shl_assign")?)),
+            BinaryOp::ShrAssign => Some((LangType::OpShrAssign, strings.get("shr_assign")?)),
+            _ => None,
+        }
+    }
 
-impl Tables {
-    #[rustfmt::skip]
-    pub fn new(strings: &mut Strings) -> Self {
-        let op_cmp = strings.get_or_intern_static("op_cmp");
-        let op_eq = strings.get_or_intern_static("op_eq");
-        Self {
-            binary_op_traits: [
-                (BinaryOp::Cmp, (op_cmp, strings.get_or_intern_static("cmp"))),
-                (BinaryOp::Gt, (op_cmp, strings.get_or_intern_static("gt"))),
-                (BinaryOp::GtEqual, (op_cmp, strings.get_or_intern_static("ge"))),
-                (BinaryOp::Lt, (op_cmp, strings.get_or_intern_static("lt"))),
-                (BinaryOp::LtEqual, (op_cmp, strings.get_or_intern_static("le"))),
-                (BinaryOp::Equal, (op_eq, strings.get_or_intern_static("eq"))),
-                (BinaryOp::NotEqual, (op_eq, strings.get_or_intern_static("ne"))),
-                (BinaryOp::Add, (strings.get_or_intern_static("op_add"), strings.get_or_intern_static("add"))),
-                (BinaryOp::Sub, (strings.get_or_intern_static("op_sub"), strings.get_or_intern_static("sub"))),
-                (BinaryOp::Mul, (strings.get_or_intern_static("op_mul"), strings.get_or_intern_static("mul"))),
-                (BinaryOp::Div, (strings.get_or_intern_static("op_div"), strings.get_or_intern_static("div"))),
-                (BinaryOp::Rem, (strings.get_or_intern_static("op_rem"), strings.get_or_intern_static("rem"))),
-                (BinaryOp::BitAnd, (strings.get_or_intern_static("op_and"), strings.get_or_intern_static("bit_and"))),
-                (BinaryOp::BitOr, (strings.get_or_intern_static("op_or"), strings.get_or_intern_static("bit_or"))),
-                (BinaryOp::Xor, (strings.get_or_intern_static("op_xor"), strings.get_or_intern_static("xor"))),
-                (BinaryOp::Shl, (strings.get_or_intern_static("op_shl"), strings.get_or_intern_static("shl"))),
-                (BinaryOp::Shr, (strings.get_or_intern_static("op_shr"), strings.get_or_intern_static("shr"))),
-                (BinaryOp::AddAssign, (strings.get_or_intern_static("op_add_assign"), strings.get_or_intern_static("add_assign"))),
-                (BinaryOp::SubAssign, (strings.get_or_intern_static("op_sub_assign"), strings.get_or_intern_static("sub_assign"))),
-                (BinaryOp::MulAssign, (strings.get_or_intern_static("op_mul_assign"), strings.get_or_intern_static("mul_assign"))),
-                (BinaryOp::DivAssign, (strings.get_or_intern_static("op_div_assign"), strings.get_or_intern_static("div_assign"))),
-                (BinaryOp::RemAssign, (strings.get_or_intern_static("op_rem_assign"), strings.get_or_intern_static("rem_assign"))),
-                (BinaryOp::BitAndAssign, (strings.get_or_intern_static("op_and_assign"), strings.get_or_intern_static("and_assign"))),
-                (BinaryOp::BitOrAssign, (strings.get_or_intern_static("op_or_assign"), strings.get_or_intern_static("or_assign"))),
-                (BinaryOp::XorAssign, (strings.get_or_intern_static("op_xor_assign"), strings.get_or_intern_static("xor_assign"))),
-                (BinaryOp::ShlAssign, (strings.get_or_intern_static("op_shl_assign"), strings.get_or_intern_static("shl_assign"))),
-                (BinaryOp::ShrAssign, (strings.get_or_intern_static("op_shr_assign"), strings.get_or_intern_static("shr_assign"))),
-            ]
-            .into(),
-            unary_op_traits: [
-                (UnaryOp::Neg, (strings.get_or_intern_static("op_neg"), strings.get_or_intern_static("neg"))),
-                (UnaryOp::Not, (strings.get_or_intern_static("op_not"), strings.get_or_intern_static("not"))),
-                (UnaryOp::Unwrap, (strings.get_or_intern_static("op_unwrap"), strings.get_or_intern_static("unwrap"))),
-                (UnaryOp::PostDecrement, (strings.get_or_intern_static("op_dec"), strings.get_or_intern_static("dec"))),
-                (UnaryOp::PreDecrement, (strings.get_or_intern_static("op_dec"), strings.get_or_intern_static("dec"))),
-                (UnaryOp::PostIncrement, (strings.get_or_intern_static("op_inc"), strings.get_or_intern_static("inc"))),
-                (UnaryOp::PreIncrement, (strings.get_or_intern_static("op_inc"), strings.get_or_intern_static("inc"))),
-            ]
-            .into(),
+    fn get_unary_op(&self, op: UnaryOp) -> Option<(LangType, StrId)> {
+        match op {
+            UnaryOp::Neg => Some((LangType::OpNeg, self.proj.strings.get("neg")?)),
+            UnaryOp::Not => Some((LangType::OpNot, self.proj.strings.get("not")?)),
+            UnaryOp::Unwrap => Some((LangType::OpUnwrap, self.proj.strings.get("unwrap")?)),
+            UnaryOp::PostDecrement => Some((LangType::OpDec, self.proj.strings.get("dec")?)),
+            UnaryOp::PreDecrement => Some((LangType::OpDec, self.proj.strings.get("dec")?)),
+            UnaryOp::PostIncrement => Some((LangType::OpInc, self.proj.strings.get("inc")?)),
+            UnaryOp::PreIncrement => Some((LangType::OpInc, self.proj.strings.get("inc")?)),
+            _ => None,
         }
     }
 }

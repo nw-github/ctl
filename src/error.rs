@@ -200,7 +200,7 @@ impl Error {
         Self::new(format!("no symbol '{symbol}' found in this module"), span)
     }
 
-    pub fn no_lang_item(name: &str, span: Span) -> Self {
+    pub fn no_lang_item(name: impl Display, span: Span) -> Self {
         Self::new(format!("missing language item: '{name}'"), span)
     }
 

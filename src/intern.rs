@@ -13,57 +13,50 @@ pub struct Strings {
 }
 
 impl Strings {
-    pub const EMPTY: StrId = invent_str_id(1);
-    pub const THIS_PARAM: StrId = invent_str_id(2);
-    pub const THIS_TYPE: StrId = invent_str_id(3);
-    pub const NULL: StrId = invent_str_id(4);
-    pub const NEW: StrId = invent_str_id(5);
-    pub const ATTR_LANG: StrId = invent_str_id(6);
-    pub const ATTR_INTRINSIC: StrId = invent_str_id(7);
-    pub const ATTR_SAFE: StrId = invent_str_id(8);
-    pub const LANG_SPAN: StrId = invent_str_id(9);
-    pub const LANG_SPAN_MUT: StrId = invent_str_id(10);
-    pub const MAIN: StrId = invent_str_id(11);
-    pub const UNDERSCORE: StrId = invent_str_id(12);
-    pub const SOME: StrId = invent_str_id(13);
-    pub const TUPLE_ZERO: StrId = invent_str_id(14);
-    pub const LANG_STRING: StrId = invent_str_id(15);
-    pub const LANG_OPTION: StrId = invent_str_id(16);
-    pub const LANG_NUMERIC: StrId = invent_str_id(17);
-    pub const LANG_INTEGRAL: StrId = invent_str_id(18);
-    pub const LANG_SIGNED: StrId = invent_str_id(19);
-    pub const LANG_UNSIGNED: StrId = invent_str_id(20);
-    pub const ATTR_MACRO: StrId = invent_str_id(21);
-    pub const ATTR_LINKNAME: StrId = invent_str_id(22);
-    pub const LANG_FMT_ARG: StrId = invent_str_id(23);
-    pub const FN_WRITTEN: StrId = invent_str_id(24);
-    pub const FN_INSERT: StrId = invent_str_id(25);
-    pub const LANG_ARRAY: StrId = invent_str_id(26);
-    pub const VAR_LESS: StrId = invent_str_id(27);
-    pub const VAR_GREATER: StrId = invent_str_id(28);
-    pub const VAR_EQUAL: StrId = invent_str_id(29);
-    pub const ATTR_PANIC_HANDLER: StrId = invent_str_id(30);
-    pub const ATTR_INLINE: StrId = invent_str_id(31);
-    pub const FN_WITH_CAPACITY: StrId = invent_str_id(32);
-    pub const ATTR_FEATURE: StrId = invent_str_id(33);
-    pub const ATTR_NOT: StrId = invent_str_id(34);
-    pub const FEAT_ALLOC: StrId = invent_str_id(35);
-    pub const FEAT_IO: StrId = invent_str_id(36);
-    pub const FEAT_HOSTED: StrId = invent_str_id(37);
-    pub const FEAT_BOEHM: StrId = invent_str_id(38);
-    pub const ITER_VAR_NAME: StrId = invent_str_id(39);
-    pub const FEAT_TEST: StrId = invent_str_id(40);
-    pub const ATTR_TEST_RUNNER: StrId = invent_str_id(41);
-    pub const SKIP: StrId = invent_str_id(42);
-    pub const SKIP_REASON: StrId = invent_str_id(43);
-    pub const ATTR_THREAD_LOCAL: StrId = invent_str_id(44);
-    pub const ATTR_COLD: StrId = invent_str_id(45);
-    pub const TUPLE_NAME: StrId = invent_str_id(46);
-    pub const FEAT_BACKTRACE: StrId = invent_str_id(47);
-    pub const ATTR_ALIGN: StrId = invent_str_id(48);
-    pub const LANG_DEBUG: StrId = invent_str_id(49);
-    pub const FALLBACK_DBG: StrId = invent_str_id(50);
-    pub const ATTR_LAYOUT: StrId = invent_str_id(51);
+    pub(crate) const EMPTY: StrId = str_id(SID::EMPTY);
+    pub(crate) const UNDERSCORE: StrId = str_id(SID::UNDERSCORE);
+    pub(crate) const THIS_PARAM: StrId = str_id(SID::THIS_PARAM);
+    pub(crate) const THIS_TYPE: StrId = str_id(SID::THIS_TYPE);
+    pub(crate) const TUPLE_ZERO: StrId = str_id(SID::TUPLE_ZERO);
+    pub(crate) const TUPLE_NAME: StrId = str_id(SID::TUPLE_NAME);
+    pub(crate) const ITER_VAR_NAME: StrId = str_id(SID::ITER_VAR_NAME);
+    pub(crate) const SKIP_REASON: StrId = str_id(SID::SKIP_REASON);
+
+    pub(crate) const NULL: StrId = str_id(SID::NULL);
+    pub(crate) const SOME: StrId = str_id(SID::SOME);
+
+    pub(crate) const FN_MAIN: StrId = str_id(SID::MAIN);
+    pub(crate) const FN_NEW: StrId = str_id(SID::FN_NEW);
+    pub(crate) const FN_WRITTEN: StrId = str_id(SID::FN_WRITTEN);
+    pub(crate) const FN_INSERT: StrId = str_id(SID::FN_INSERT);
+    pub(crate) const FN_WITH_CAPACITY: StrId = str_id(SID::FN_WITH_CAPACITY);
+
+    pub(crate) const VAR_LESS: StrId = str_id(SID::VAR_LESS);
+    pub(crate) const VAR_GREATER: StrId = str_id(SID::VAR_GREATER);
+    pub(crate) const VAR_EQUAL: StrId = str_id(SID::VAR_EQUAL);
+
+    pub const FEAT_ALLOC: StrId = str_id(SID::FEAT_ALLOC);
+    pub const FEAT_IO: StrId = str_id(SID::FEAT_IO);
+    pub const FEAT_HOSTED: StrId = str_id(SID::FEAT_HOSTED);
+    pub const FEAT_BOEHM: StrId = str_id(SID::FEAT_BOEHM);
+    pub const FEAT_TEST: StrId = str_id(SID::FEAT_TEST);
+    pub const FEAT_BACKTRACE: StrId = str_id(SID::FEAT_BACKTRACE);
+
+    pub(crate) const ATTR_LANG: StrId = str_id(SID::ATTR_LANG);
+    pub(crate) const ATTR_INTRINSIC: StrId = str_id(SID::ATTR_INTRINSIC);
+    pub(crate) const ATTR_SAFE: StrId = str_id(SID::ATTR_SAFE);
+    pub(crate) const ATTR_MACRO: StrId = str_id(SID::ATTR_MACRO);
+    pub(crate) const ATTR_LINKNAME: StrId = str_id(SID::ATTR_LINKNAME);
+    pub(crate) const ATTR_PANIC_HANDLER: StrId = str_id(SID::ATTR_PANIC_HANDLER);
+    pub(crate) const ATTR_INLINE: StrId = str_id(SID::ATTR_INLINE);
+    pub(crate) const ATTR_FEATURE: StrId = str_id(SID::ATTR_FEATURE);
+    pub(crate) const ATTR_NOT: StrId = str_id(SID::ATTR_NOT);
+    pub(crate) const ATTR_THREAD_LOCAL: StrId = str_id(SID::ATTR_THREAD_LOCAL);
+    pub(crate) const ATTR_COLD: StrId = str_id(SID::ATTR_COLD);
+    pub(crate) const ATTR_LAYOUT: StrId = str_id(SID::ATTR_LAYOUT);
+    pub(crate) const ATTR_ALIGN: StrId = str_id(SID::ATTR_ALIGN);
+    pub(crate) const ATTR_TEST_RUNNER: StrId = str_id(SID::ATTR_TEST_RUNNER);
+    pub(crate) const ATTR_SKIP: StrId = str_id(SID::SKIP);
 
     pub fn new() -> Self {
         let mut rodeo = Rodeo::default();
@@ -71,28 +64,18 @@ impl Strings {
         assert_eq!(Self::THIS_PARAM, rodeo.get_or_intern_static(THIS_PARAM));
         assert_eq!(Self::THIS_TYPE, rodeo.get_or_intern_static(THIS_TYPE));
         assert_eq!(Self::NULL, rodeo.get_or_intern_static("null"));
-        assert_eq!(Self::NEW, rodeo.get_or_intern_static("new"));
+        assert_eq!(Self::FN_NEW, rodeo.get_or_intern_static("new"));
         assert_eq!(Self::ATTR_LANG, rodeo.get_or_intern_static("lang"));
         assert_eq!(Self::ATTR_INTRINSIC, rodeo.get_or_intern_static("intrinsic"));
         assert_eq!(Self::ATTR_SAFE, rodeo.get_or_intern_static("safe"));
-        assert_eq!(Self::LANG_SPAN, rodeo.get_or_intern_static("span"));
-        assert_eq!(Self::LANG_SPAN_MUT, rodeo.get_or_intern_static("span_mut"));
-        assert_eq!(Self::MAIN, rodeo.get_or_intern_static("main"));
+        assert_eq!(Self::FN_MAIN, rodeo.get_or_intern_static("main"));
         assert_eq!(Self::UNDERSCORE, rodeo.get_or_intern_static("_"));
         assert_eq!(Self::SOME, rodeo.get_or_intern_static("Some"));
         assert_eq!(Self::TUPLE_ZERO, rodeo.get_or_intern_static("0"));
-        assert_eq!(Self::LANG_STRING, rodeo.get_or_intern_static("string"));
-        assert_eq!(Self::LANG_OPTION, rodeo.get_or_intern_static("option"));
-        assert_eq!(Self::LANG_NUMERIC, rodeo.get_or_intern_static("numeric"));
-        assert_eq!(Self::LANG_INTEGRAL, rodeo.get_or_intern_static("integral"));
-        assert_eq!(Self::LANG_SIGNED, rodeo.get_or_intern_static("signed"));
-        assert_eq!(Self::LANG_UNSIGNED, rodeo.get_or_intern_static("unsigned"));
         assert_eq!(Self::ATTR_MACRO, rodeo.get_or_intern_static("c_macro"));
         assert_eq!(Self::ATTR_LINKNAME, rodeo.get_or_intern_static("link_name"));
-        assert_eq!(Self::LANG_FMT_ARG, rodeo.get_or_intern_static("fmt_arg"));
         assert_eq!(Self::FN_WRITTEN, rodeo.get_or_intern_static("written"));
         assert_eq!(Self::FN_INSERT, rodeo.get_or_intern_static("insert"));
-        assert_eq!(Self::LANG_ARRAY, rodeo.get_or_intern_static("array"));
         assert_eq!(Self::VAR_LESS, rodeo.get_or_intern_static("Less"));
         assert_eq!(Self::VAR_GREATER, rodeo.get_or_intern_static("Greater"));
         assert_eq!(Self::VAR_EQUAL, rodeo.get_or_intern_static("Equal"));
@@ -108,15 +91,13 @@ impl Strings {
         assert_eq!(Self::ITER_VAR_NAME, rodeo.get_or_intern_static("$iter"));
         assert_eq!(Self::FEAT_TEST, rodeo.get_or_intern_static("test"));
         assert_eq!(Self::ATTR_TEST_RUNNER, rodeo.get_or_intern_static("test_runner"));
-        assert_eq!(Self::SKIP, rodeo.get_or_intern_static("skip"));
+        assert_eq!(Self::ATTR_SKIP, rodeo.get_or_intern_static("skip"));
         assert_eq!(Self::SKIP_REASON, rodeo.get_or_intern_static("skip_reason"));
         assert_eq!(Self::ATTR_THREAD_LOCAL, rodeo.get_or_intern_static("thread_local"));
         assert_eq!(Self::ATTR_COLD, rodeo.get_or_intern_static("cold"));
         assert_eq!(Self::TUPLE_NAME, rodeo.get_or_intern_static("$tuple"));
         assert_eq!(Self::FEAT_BACKTRACE, rodeo.get_or_intern_static("backtrace"));
         assert_eq!(Self::ATTR_ALIGN, rodeo.get_or_intern_static("align"));
-        assert_eq!(Self::LANG_DEBUG, rodeo.get_or_intern_static("fmt_debug"));
-        assert_eq!(Self::FALLBACK_DBG, rodeo.get_or_intern_static("fallback_debug"));
         assert_eq!(Self::ATTR_LAYOUT, rodeo.get_or_intern_static("layout"));
         Self { rodeo }
     }
@@ -128,6 +109,49 @@ impl Default for Strings {
     }
 }
 
-const fn invent_str_id(value: u32) -> StrId {
-    unsafe { std::mem::transmute(NonZeroU32::new_unchecked(value)) }
+const fn str_id(value: SID) -> StrId {
+    unsafe { std::mem::transmute(NonZeroU32::new_unchecked(value as u32)) }
+}
+
+#[allow(non_camel_case_types, clippy::upper_case_acronyms)]
+enum SID {
+    EMPTY = 1,
+    THIS_PARAM,
+    THIS_TYPE,
+    NULL,
+    FN_NEW,
+    ATTR_LANG,
+    ATTR_INTRINSIC,
+    ATTR_SAFE,
+    MAIN,
+    UNDERSCORE,
+    SOME,
+    TUPLE_ZERO,
+    ATTR_MACRO,
+    ATTR_LINKNAME,
+    FN_WRITTEN,
+    FN_INSERT,
+    VAR_LESS,
+    VAR_GREATER,
+    VAR_EQUAL,
+    ATTR_PANIC_HANDLER,
+    ATTR_INLINE,
+    FN_WITH_CAPACITY,
+    ATTR_FEATURE,
+    ATTR_NOT,
+    FEAT_ALLOC,
+    FEAT_IO,
+    FEAT_HOSTED,
+    FEAT_BOEHM,
+    ITER_VAR_NAME,
+    FEAT_TEST,
+    ATTR_TEST_RUNNER,
+    SKIP,
+    SKIP_REASON,
+    ATTR_THREAD_LOCAL,
+    ATTR_COLD,
+    TUPLE_NAME,
+    FEAT_BACKTRACE,
+    ATTR_ALIGN,
+    ATTR_LAYOUT,
 }

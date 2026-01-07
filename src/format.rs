@@ -5,6 +5,7 @@ use crate::{
     },
     intern::Strings,
     project::Project,
+    sym::LangType,
     typeid::{GenericUserType, Type, TypeId},
 };
 
@@ -99,21 +100,19 @@ impl std::fmt::Display for FmtUt<'_, '_> {
                 write!(f, ")")
             }
             _ => {
-                let is_lang_type = |name: &str| {
-                    let key = p.strings.get(name);
-                    key.and_then(|key| p.scopes.lang_types.get(&key)).is_some_and(|&id| id == ut.id)
-                };
-                if is_lang_type("option") {
+                let is_lang_type =
+                    |name: LangType| p.scopes.lang_types.get(&name).is_some_and(|&id| id == ut.id);
+                if is_lang_type(LangType::Option) {
                     return write!(f, "?{}", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type("span") {
+                } else if is_lang_type(LangType::Span) {
                     return write!(f, "[{}..]", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type("span_mut") {
+                } else if is_lang_type(LangType::SpanMut) {
                     return write!(f, "[mut {}..]", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type("vec") {
+                } else if is_lang_type(LangType::Vec) {
                     return write!(f, "[{}]", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type("set") {
+                } else if is_lang_type(LangType::Set) {
                     return write!(f, "#[{}]", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type("map") {
+                } else if is_lang_type(LangType::Map) {
                     return write!(f, "[{}: {}]", p.fmt_ty(ut.ty_args[0]), p.fmt_ty(ut.ty_args[1]));
                 }
 

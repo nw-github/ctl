@@ -157,7 +157,7 @@ pub enum ParamPattern {
 #[derive(Clone)]
 pub enum TraitImplData {
     Path(ScopeId, Path),
-    Operator { tr: StrId, ty_args: Vec<TypeHint>, span: Span, scope: ScopeId },
+    Operator { tr: LangType, ty_args: Vec<TypeHint>, span: Span, scope: ScopeId },
     Checked(GenericTrait),
 }
 
@@ -489,7 +489,7 @@ pub struct Scopes {
     types: Vec<Scoped<UserType>>,
     vars: Vec<Scoped<Variable>>,
     tuples: HashMap<Vec<StrId>, UserTypeId>,
-    pub lang_types: HashMap<StrId, UserTypeId>,
+    pub lang_types: HashMap<LangType, UserTypeId>,
     pub intrinsics: HashMap<FunctionId, StrId>,
 }
 
@@ -537,7 +537,7 @@ impl Scopes {
     }
 
     pub fn get_option_id(&self) -> Option<UserTypeId> {
-        self.lang_types.get(&Strings::LANG_OPTION).copied()
+        self.lang_types.get(&LangType::Option).copied()
     }
 
     pub fn intrinsic_name(&self, id: FunctionId) -> Option<StrId> {

@@ -1,6 +1,5 @@
 use std::reflect::*;
 
-$[lang(range_bounds)]
 pub trait RangeBounds<T> {
     fn begin(this): Bound<T>;
     fn end(this): Bound<T>;
