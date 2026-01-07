@@ -158,6 +158,13 @@ impl TypeGen {
         };
 
         let type_name = Buffer::format(defs.1, |buf| buf.emit_type_name(ut, flags.minify));
+        if let Some(inner) = ut.can_omit_tag(&defs.1.scopes, &defs.1.types) {
+            write_de!(defs, "typedef ");
+            defs.emit_type(inner, flags.minify);
+            writeln_de!(defs, " {type_name};");
+            return;
+        }
+
         writeln_de!(decls, "typedef struct {type_name} {type_name};");
 
         let ut_data = decls.1.scopes.get(ut.id);
@@ -179,10 +186,6 @@ impl TypeGen {
         for item in layout.items {
             match item.kind {
                 LayoutItemKind::Tag(ty) => {
-                    if item.size == 0 {
-                        continue;
-                    }
-
                     defs.emit_type(ty, flags.minify);
                     writeln_de!(defs, " {UNION_TAG_NAME};");
                 }
@@ -210,9 +213,7 @@ impl TypeGen {
 
             wrote = true;
         }
-        if !wrote {
-            writeln_de!(defs, "CTL_DUMMY_MEMBER;");
-        }
+        write_if!(!wrote, defs, "CTL_DUMMY_MEMBER;\n");
         writeln_de!(defs, "}};");
         writeln_de!(
             defs,
@@ -284,7 +285,9 @@ impl TypeGen {
                 while let Some(id) = inner.as_pointee(types) {
                     inner = id;
                 }
-                if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_)) {
+                if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_))
+                    || inner.can_omit_tag(scopes, types).is_some()
+                {
                     deps.push(inner);
                 } else if matches!(
                     types[dep],
@@ -309,7 +312,9 @@ impl TypeGen {
                 while let Some(id) = inner.as_pointee(types) {
                     inner = id;
                 }
-                if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_)) {
+                if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_))
+                    || inner.can_omit_tag(scopes, types).is_some()
+                {
                     deps.push(inner);
                 }
 
@@ -522,13 +527,7 @@ impl<'a> Buffer<'a> {
             }
             Type::FnPtr(_) => self.emit_mangled_name(id, min),
             Type::Fn(_) => self.emit_mangled_name(id, min),
-            Type::User(ut) => {
-                if let Some(ty) = id.can_omit_tag(&self.1.scopes, &self.1.types) {
-                    self.emit_type(ty, min);
-                } else {
-                    self.emit_type_name(ut, min);
-                }
-            }
+            Type::User(ut) => self.emit_type_name(ut, min),
             &Type::Array(_, _) => self.emit_mangled_name(id, min),
             Type::DynPtr(_) => write_de!(self, "DynPtr"),
             Type::DynMutPtr(_) => write_de!(self, "DynMutPtr"),
@@ -994,7 +993,7 @@ impl<'a> Codegen<'a> {
         this.buffer.emit("#ifdef __clang__\n");
         let warnings = include_str!("../compile_flags.txt");
         for warning in warnings.split("\n").flat_map(|s| s.strip_prefix("-Wno-")) {
-            write_de!(this.buffer, "#pragma clang diagnostic ignored \"-W{warning}\"\n");
+            writeln_de!(this.buffer, "#pragma clang diagnostic ignored \"-W{warning}\"");
         }
         this.buffer.emit("#endif\n");
         this.buffer.emit(include_str!("../ctl.h"));

@@ -233,7 +233,13 @@ impl GenericUserType {
             UserTypeKind::Union(union) => {
                 if self.can_omit_tag(scopes, types).is_none() {
                     let (size, align) = union.tag.size_and_align(scopes, types);
-                    layout.add(LayoutItem { kind: LayoutItemKind::Tag(union.tag), size, align });
+                    if size != 0 {
+                        layout.add(LayoutItem {
+                            kind: LayoutItemKind::Tag(union.tag),
+                            size,
+                            align,
+                        });
+                    }
                 }
 
                 for (name, m) in ut_data.members.iter() {

@@ -40,14 +40,8 @@ impl std::fmt::Display for FmtTy<'_> {
             Type::DynPtr(id) => write!(f, "*dyn {}", p.fmt_ut(id)),
             Type::DynMutPtr(id) => write!(f, "*dyn mut {}", p.fmt_ut(id)),
             Type::FnPtr(func) => {
-                if func.is_extern {
-                    write!(f, "extern ")?;
-                }
-
-                if func.is_unsafe {
-                    write!(f, "unsafe ")?;
-                }
-
+                crate::write_if!(func.is_extern, f, "extern ");
+                crate::write_if!(func.is_unsafe, f, "unsafe ");
                 write!(f, "fn(")?;
                 for (i, &param) in func.params.iter().enumerate() {
                     if i > 0 {
@@ -59,13 +53,8 @@ impl std::fmt::Display for FmtTy<'_> {
             }
             Type::Fn(ofn) => {
                 let func = p.scopes.get(ofn.id);
-                if func.is_extern {
-                    write!(f, "extern ")?;
-                }
-
-                if func.is_unsafe {
-                    write!(f, "unsafe ")?;
-                }
+                crate::write_if!(func.is_extern, f, "extern ");
+                crate::write_if!(func.is_unsafe, f, "unsafe ");
 
                 write!(f, "fn {}(", p.strings.resolve(&func.name.data))?;
                 for (i, param) in func.params.iter().enumerate() {
