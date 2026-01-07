@@ -1256,12 +1256,8 @@ impl<'a> TypeChecker<'a> {
             true,
         );
 
-        let mut allow_safe_extern = self.proj.scopes.get(id).attrs.safe_extern;
-        if let Some(name) = self.proj.scopes.get(id).attrs.intrinsic {
-            self.proj.scopes.intrinsics.insert(id, name);
-            allow_safe_extern = true;
-        }
-
+        let allow_safe_extern = self.proj.scopes.get(id).attrs.safe_extern
+            || self.proj.scopes.get(id).attrs.intrinsic.is_some();
         self.enter(ScopeKind::Function(id), |this| {
             if !allow_safe_extern && f.is_extern && f.body.is_none() {
                 this.proj.scopes.get_mut(id).is_unsafe = true;
@@ -1985,7 +1981,11 @@ impl TypeChecker<'_> {
                     this.proj.diag.report(Error::new("a panic handler already exists", func.name.span));
                 }
 
-                if let Some((&panic, _)) = this.proj.scopes.intrinsics.iter().find(|(_, v)| strdata!(this, v) == "panic") {
+                let panic = this.proj.scopes
+                    .functions()
+                    .find(|(_, f)| f.attrs.intrinsic.is_some_and(|d| this.proj.str(d) == "panic"))
+                    .map(|p| p.0);
+                if let Some(panic) = panic {
                     let fn_name = func.name;
                     this.resolve_proto(panic);
                     if let Err(why) = this.check_signature_match(None, id, panic, &TypeArgs::default()) {
@@ -7063,11 +7063,12 @@ impl TypeChecker<'_> {
                     return self.error(Error::no_consteval(span));
                 };
 
-                if !self.proj.scopes.intrinsics.contains_key(&func.id) {
+                let f = self.proj.scopes.get(func.id);
+                if f.attrs.intrinsic.is_none() {
                     return self.error(Error::no_consteval(span));
                 }
 
-                match strdata!(self, self.proj.scopes.get(func.id).name.data) {
+                match strdata!(self, f.name.data) {
                     "size_of" => {
                         let ty = func.first_type_arg().unwrap();
                         // TODO: make sure the ty has had resolve_members()

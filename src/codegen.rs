@@ -1349,7 +1349,7 @@ impl<'a> Codegen<'a> {
             ExprData::Call { callee, args, scope, span } => {
                 let func = self.proj.types[callee.ty].as_fn().unwrap();
                 let args = args.clone();
-                if let Some(name) = self.proj.scopes.intrinsic_name(func.id) {
+                if let Some(name) = self.proj.scopes.get(func.id).attrs.intrinsic {
                     let func = func.with_templates(&self.proj.types, &state.func.ty_args);
                     return self.emit_intrinsic(name, expr.ty, &func, args, state, (*scope, *span));
                 } else if let Some(id) = self.proj.scopes.get(func.id).constructor {

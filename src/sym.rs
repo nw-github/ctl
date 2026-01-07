@@ -490,7 +490,6 @@ pub struct Scopes {
     vars: Vec<Scoped<Variable>>,
     tuples: HashMap<Vec<StrId>, UserTypeId>,
     pub lang_types: HashMap<LangType, UserTypeId>,
-    pub intrinsics: HashMap<FunctionId, StrId>,
 }
 
 impl Scopes {
@@ -502,7 +501,6 @@ impl Scopes {
             vars: Vec::new(),
             tuples: HashMap::new(),
             lang_types: HashMap::new(),
-            intrinsics: HashMap::new(),
         }
     }
 
@@ -538,10 +536,6 @@ impl Scopes {
 
     pub fn get_option_id(&self) -> Option<UserTypeId> {
         self.lang_types.get(&LangType::Option).copied()
-    }
-
-    pub fn intrinsic_name(&self, id: FunctionId) -> Option<StrId> {
-        self.intrinsics.get(&id).copied()
     }
 
     pub fn get<T: ItemId>(&self, id: T) -> &Scoped<T::Value> {
