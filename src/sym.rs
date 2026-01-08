@@ -230,6 +230,13 @@ pub enum VariableKind {
     Normal,
     Static,
     Const,
+    Capture,
+}
+
+impl VariableKind {
+    pub fn is_local(&self) -> bool {
+        matches!(self, VariableKind::Capture | VariableKind::Normal)
+    }
 }
 
 #[derive(Default)]
@@ -245,7 +252,6 @@ pub struct Variable {
     pub unused: bool,
     pub has_hint: bool,
     pub param: bool,
-    pub capture: bool,
 }
 
 #[derive(Default)]

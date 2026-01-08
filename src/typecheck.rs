@@ -624,7 +624,7 @@ impl TypeChecker<'_> {
                     }
                     ValueItem::Var(id) => {
                         let var = self.proj.scopes.get(id);
-                        if var.kind.is_normal()
+                        if var.kind.is_local()
                             && current_func != self.proj.scopes.function_of(var.scope)
                         {
                             return;
@@ -718,7 +718,7 @@ impl TypeChecker<'_> {
                     }
                     ValueItem::Var(id) => {
                         let var = self.proj.scopes.get(id);
-                        if var.kind.is_normal() {
+                        if var.kind.is_local() {
                             continue;
                         }
                         completions.push(LspItem::Var(id));
@@ -2306,7 +2306,7 @@ impl TypeChecker<'_> {
             };
 
             let var = self.proj.scopes.get(o_var_id);
-            if !var.kind.is_normal() {
+            if !var.kind.is_local() {
                 self.proj.diag.report(Error::new(
                     format!("invalid capture of non-local variable '{}'", self.proj.str(name.data)),
                     capture.span,
@@ -2348,7 +2348,7 @@ impl TypeChecker<'_> {
                 unused: true,
                 param: false,
                 has_hint: false,
-                capture: true,
+                kind: VariableKind::Capture,
                 ..Default::default()
             };
             self.insert::<VariableId>(var, false, true);
@@ -2423,53 +2423,56 @@ impl TypeChecker<'_> {
             .types
             .insert(Type::User(GenericUserType::new(closure_id, TypeArgs::default())));
         let fns = self.enter(ScopeKind::Impl(0), |this| {
-            let this_ptr_ty = this.proj.types.insert(Type::Ptr(closure_ty));
-            let this_ptr_var = this.insert::<VariableId>(
-                Variable {
-                    name: Located::nowhere(Strings::THIS_PARAM),
-                    ty: this_ptr_ty,
-                    ..Default::default()
-                },
-                false,
-                false,
-            );
+            let this_ptr_mut_ty = this.proj.types.insert(Type::MutPtr(closure_ty));
+            let do_invoke_id = {
+                let this_ptr_var = this.insert::<VariableId>(
+                    Variable {
+                        name: Located::nowhere(Strings::THIS_PARAM),
+                        ty: this_ptr_mut_ty,
+                        ..Default::default()
+                    },
+                    false,
+                    false,
+                );
 
-            checked_params.insert(
-                0,
-                CheckedParam {
-                    keyword: false,
-                    label: Strings::THIS_PARAM,
-                    patt: ParamPattern::Checked(CPattern {
-                        irrefutable: true,
-                        data: PatternData::Variable(this_ptr_var),
-                    }),
-                    ty: this_ptr_ty,
-                    default: None,
-                },
-            );
-            let do_invoke_scope = this.enter(ScopeKind::None, |this| this.current);
-            let func = Function {
-                public: false,
-                attrs: Default::default(),
-                name: Located::nowhere(this.proj.strings.get_or_intern("do_invoke")),
-                is_extern: false,
-                is_async: false,
-                is_unsafe: false,
-                variadic: false,
-                has_body: true,
-                typ: FunctionType::Normal,
-                type_params: vec![],
-                params: checked_params,
-                ret,
-                body: Some(body),
-                body_scope: do_invoke_scope,
-                constructor: None,
+                checked_params.insert(
+                    0,
+                    CheckedParam {
+                        keyword: false,
+                        label: Strings::THIS_PARAM,
+                        patt: ParamPattern::Checked(CPattern {
+                            irrefutable: true,
+                            data: PatternData::Variable(this_ptr_var),
+                        }),
+                        ty: this_ptr_mut_ty,
+                        default: None,
+                    },
+                );
+                let do_invoke_scope = this.enter(ScopeKind::None, |this| this.current);
+                let func = Function {
+                    public: false,
+                    attrs: Default::default(),
+                    name: Located::nowhere(this.proj.strings.get_or_intern("do_invoke")),
+                    is_extern: false,
+                    is_async: false,
+                    is_unsafe: false,
+                    variadic: false,
+                    has_body: true,
+                    typ: FunctionType::Normal,
+                    type_params: vec![],
+                    params: checked_params,
+                    ret,
+                    body: Some(body),
+                    body_scope: do_invoke_scope,
+                    constructor: None,
+                };
+                let do_invoke_id = this.insert::<FunctionId>(func, false, false);
+                this.proj.scopes[do_invoke_scope].kind = ScopeKind::Function(do_invoke_id);
+                do_invoke_id
             };
-            let do_invoke_id = this.insert::<FunctionId>(func, false, false);
-            this.proj.scopes[do_invoke_scope].kind = ScopeKind::Function(do_invoke_id);
 
-            let (args_id, invoke_body, invoke_scope) = this.enter(ScopeKind::None, |this| {
-                let args = this.insert::<VariableId>(
+            let (params, invoke_body, invoke_scope) = this.enter(ScopeKind::None, |this| {
+                let args_var = this.insert::<VariableId>(
                     Variable {
                         name: Located::nowhere(Strings::FN_TR_ARGS_NAME),
                         ty: args_tuple,
@@ -2479,13 +2482,25 @@ impl TypeChecker<'_> {
                     false,
                 );
 
-                let mut call_args = IndexMap::new();
-                call_args.insert(
-                    Strings::THIS_PARAM,
-                    this.arena.typed(this_ptr_ty, CExprData::Var(this_ptr_var)),
+                let this_ptr_ty = this.proj.types.insert(Type::Ptr(closure_ty));
+                let this_ptr_var = this.insert::<VariableId>(
+                    Variable {
+                        name: Located::nowhere(Strings::THIS_PARAM),
+                        ty: this_ptr_ty,
+                        ..Default::default()
+                    },
+                    false,
+                    false,
                 );
 
-                let source = this.arena.typed(args_tuple, CExprData::Var(args));
+                let mut call_args = IndexMap::new();
+                let this_ptr_expr = this.arena.typed(this_ptr_ty, CExprData::Var(this_ptr_var));
+                call_args.insert(
+                    Strings::THIS_PARAM,
+                    this.arena.typed(this_ptr_mut_ty, CExprData::As(this_ptr_expr, false)),
+                );
+
+                let source = this.arena.typed(args_tuple, CExprData::Var(args_var));
                 let tpl_ut = this.proj.types.get(args_tuple).as_user().unwrap();
                 for (&member, m) in this.proj.scopes.get(tpl_ut.id).members.iter() {
                     let ty = m.ty.with_templates(&this.proj.types, &tpl_ut.ty_args);
@@ -2502,21 +2517,8 @@ impl TypeChecker<'_> {
                     Span::nowhere(),
                     &mut this.arena,
                 );
-                (args, body, this.current)
-            });
 
-            let func = Function {
-                public: true,
-                attrs: Default::default(),
-                name: Located::nowhere(this.proj.strings.get_or_intern("invoke")),
-                is_extern: false,
-                is_async: false,
-                is_unsafe: false,
-                variadic: false,
-                has_body: true,
-                typ: FunctionType::Normal,
-                type_params: vec![],
-                params: vec![
+                let params = vec![
                     CheckedParam {
                         keyword: false,
                         label: Strings::THIS_PARAM,
@@ -2532,12 +2534,28 @@ impl TypeChecker<'_> {
                         label: Strings::FN_TR_ARGS_NAME,
                         patt: ParamPattern::Checked(CPattern {
                             irrefutable: true,
-                            data: PatternData::Variable(args_id),
+                            data: PatternData::Variable(args_var),
                         }),
                         ty: args_tuple,
                         default: None,
                     },
-                ],
+                ];
+
+                (params, body, this.current)
+            });
+
+            let func = Function {
+                public: true,
+                attrs: Default::default(),
+                name: Located::nowhere(this.proj.strings.get_or_intern("invoke")),
+                is_extern: false,
+                is_async: false,
+                is_unsafe: false,
+                variadic: false,
+                has_body: true,
+                typ: FunctionType::Normal,
+                type_params: vec![],
+                params,
                 ret,
                 body: Some(invoke_body),
                 body_scope: invoke_scope,
@@ -3147,7 +3165,7 @@ impl TypeChecker<'_> {
             PExprData::Path(path) => match self.resolve_value_path(path, target) {
                 ResolvedValue::Var(id) => {
                     let var = self.proj.scopes.get(id);
-                    if var.kind.is_normal() {
+                    if var.kind.is_local() {
                         if self.current_function() != self.proj.scopes.function_of(var.scope) {
                             self.proj.diag.report(Error::access_enclosing_local(span));
                         }

@@ -541,7 +541,7 @@ impl<'a> Buffer<'a> {
         if ty.kind.is_template() {
             eprintln!("ICE: Template type in emit_type_name_ex");
         }
-        if ty.name.data == Strings::EMPTY {
+        if ty.name.data == Strings::EMPTY && !ty.kind.is_closure() {
             eprintln!("ty is empty");
         }
 
@@ -565,6 +565,11 @@ impl<'a> Buffer<'a> {
                     );
                 }));
             }
+        } else if ty.kind.is_closure() {
+            write_de!(self, "T");
+            self.write_len_prefixed(&Buffer::format(self.1, |data| {
+                write_de!(data, "Closure{}", ut.id)
+            }));
         } else {
             write_de!(self, "T");
             self.scope_emit_mangled_name(ty.body_scope, &ut.ty_args);
@@ -1596,6 +1601,14 @@ impl<'a> Codegen<'a> {
                         );
                     }
                     VariableKind::Normal => {}
+                    VariableKind::Capture => {
+                        // TODO: use the actual VariableId for the current `this`
+                        return write_de!(
+                            self.buffer,
+                            "$this->{}",
+                            member_name(self.proj, None, var.name.data)
+                        );
+                    }
                 }
                 self.emit_var_name(id, state);
             }
