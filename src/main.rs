@@ -339,6 +339,7 @@ fn display_diagnostics(diag: &Diagnostics) {
 fn dump(path: &Path, conf: Configuration, mods: &[String]) -> Result<()> {
     let result = Compiler::new().parse(path, conf)?;
     result.dump(mods);
+    display_diagnostics(result.diagnostics());
     Ok(())
 }
 
