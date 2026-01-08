@@ -164,3 +164,8 @@ $[lang(op_shr_assign)]
 pub trait ShrAssign<T> {
     fn shr_assign(mut this, rhs: T);
 }
+
+$[lang(op_fn)]
+pub trait Fn<Args: std::reflect::Tuple, R> {
+    fn invoke(this, args: Args): R;
+}

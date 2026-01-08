@@ -293,6 +293,7 @@ pub enum LangType {
     Pointer,
     Write,
     Iterator,
+    Tuple,
 
     OpCmp,
     OpEq,
@@ -321,6 +322,7 @@ pub enum LangType {
     OpUnwrap,
     OpDec,
     OpInc,
+    OpFn,
 
     FallbackDebug,
 }
@@ -351,6 +353,7 @@ impl LangType {
             "signed" => Some(Self::Signed),
             "unsigned" => Some(Self::Unsigned),
             "array" => Some(Self::Array),
+            "tuple" => Some(Self::Tuple),
             "fmt_debug" => Some(Self::Debug),
             "fmt_format" => Some(Self::Format),
             "fmt_pointer" => Some(Self::Pointer),
@@ -383,6 +386,7 @@ impl LangType {
             "op_unwrap" => Some(Self::OpUnwrap),
             "op_dec" => Some(Self::OpDec),
             "op_inc" => Some(Self::OpInc),
+            "op_fn" => Some(Self::OpFn),
             "fallback_debug" => Some(Self::FallbackDebug),
             _ => None,
         }

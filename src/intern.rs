@@ -19,6 +19,8 @@ impl Strings {
     pub(crate) const THIS_TYPE: StrId = str_id(SID::THIS_TYPE);
     pub(crate) const TUPLE_ZERO: StrId = str_id(SID::TUPLE_ZERO);
     pub(crate) const TUPLE_NAME: StrId = str_id(SID::TUPLE_NAME);
+    pub(crate) const CLOSURE_NAME: StrId = str_id(SID::CLOSURE_NAME);
+    pub(crate) const FN_TR_ARGS_NAME: StrId = str_id(SID::FN_TR_ARGS_NAME);
     pub(crate) const ITER_VAR_NAME: StrId = str_id(SID::ITER_VAR_NAME);
     pub(crate) const SKIP_REASON: StrId = str_id(SID::SKIP_REASON);
 
@@ -96,9 +98,11 @@ impl Strings {
         assert_eq!(Self::ATTR_THREAD_LOCAL, rodeo.get_or_intern_static("thread_local"));
         assert_eq!(Self::ATTR_COLD, rodeo.get_or_intern_static("cold"));
         assert_eq!(Self::TUPLE_NAME, rodeo.get_or_intern_static("$tuple"));
+        assert_eq!(Self::CLOSURE_NAME, rodeo.get_or_intern_static("{closure}"));
         assert_eq!(Self::FEAT_BACKTRACE, rodeo.get_or_intern_static("backtrace"));
         assert_eq!(Self::ATTR_ALIGN, rodeo.get_or_intern_static("align"));
         assert_eq!(Self::ATTR_LAYOUT, rodeo.get_or_intern_static("layout"));
+        assert_eq!(Self::FN_TR_ARGS_NAME, rodeo.get_or_intern_static("args"));
         Self { rodeo }
     }
 }
@@ -151,7 +155,9 @@ enum SID {
     ATTR_THREAD_LOCAL,
     ATTR_COLD,
     TUPLE_NAME,
+    CLOSURE_NAME,
     FEAT_BACKTRACE,
     ATTR_ALIGN,
     ATTR_LAYOUT,
+    FN_TR_ARGS_NAME,
 }

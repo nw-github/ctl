@@ -2278,109 +2278,135 @@ impl TypeChecker<'_> {
         self.arena.typed(out_ty, CExprData::Unary(op, inner))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn check_lambda(
         &mut self,
+        span: Span,
         target: Option<TypeId>,
         policy: Option<DefaultCapturePolicy>,
         captures: &[Located<Capture>],
         params: &[(Located<Pattern>, Option<TypeHint>)],
-        ret: Option<TypeHint>,
+        ret: Option<TypeId>,
         body: Expr,
     ) -> CExpr {
+        let Some(&fn_tr) = self.proj.scopes.lang_types.get(&LangType::OpFn) else {
+            return self.error(Error::no_lang_item(LangType::OpFn, span));
+        };
+
         let mut members = IndexMap::new();
         let mut instance = IndexMap::new();
-        let ret = ret.map(|ret| self.resolve_typehint(ret));
-        let (id, body) = self.enter(ScopeKind::Lambda(ret), |this| {
-            for capture in captures {
-                let name = Located::new(capture.span, capture.data.data());
-                let path = Path::from(name);
-                let ResolvedValue::Var(o_var_id) = this.resolve_value_path(&path, None) else {
-                    this.proj.diag.report(Error::no_symbol(this.proj.str(name.data), capture.span));
-                    continue;
-                };
+        let mut names = vec![];
+        let mut ty_args = vec![];
+        for capture in captures {
+            let name = Located::new(capture.span, capture.data.data());
+            let path = Path::from(name);
+            let ResolvedValue::Var(o_var_id) = self.resolve_value_path(&path, None) else {
+                self.proj.diag.report(Error::no_symbol(self.proj.str(name.data), capture.span));
+                continue;
+            };
 
-                let var = this.proj.scopes.get(o_var_id);
-                if !var.kind.is_normal() {
-                    this.proj.diag.report(Error::new(
-                        format!(
-                            "invalid capture of non-local variable '{}'",
-                            this.proj.str(name.data)
-                        ),
-                        capture.span,
-                    ));
-                    continue;
-                } else if this.current_function() != this.proj.scopes.function_of(var.scope) {
-                    this.proj.diag.report(Error::access_enclosing_local(capture.span));
-                    continue;
-                }
-
-                let (ty, mutable) = match capture.data {
-                    Capture::ByVal(_) => (var.ty, false),
-                    Capture::ByValMut(_) => (var.ty, true),
-                    Capture::ByPtr(_) => (this.proj.types.insert(Type::Ptr(var.ty)), false),
-                    Capture::ByMutPtr(_) => {
-                        if !var.mutable {
-                            this.proj.diag.report(Error::no_mut_ptr(capture.span));
-                        }
-
-                        (this.proj.types.insert(Type::MutPtr(var.ty)), false)
-                    }
-                };
-
-                if matches!(capture.data, Capture::ByVal(_) | Capture::ByValMut(_)) {
-                    instance.insert(name.data, this.arena.typed(ty, CExprData::Var(o_var_id)));
-                } else {
-                    let inner = this.arena.typed(var.ty, CExprData::Var(o_var_id));
-                    // We use AddrMut, but all UnaryOp::Addr* get compiled the same way
-                    instance.insert(
-                        name.data,
-                        this.arena.typed(ty, CExprData::Unary(UnaryOp::AddrMut, inner)),
-                    );
-                }
-
-                let var = Variable {
-                    name,
-                    ty,
-                    mutable,
-                    unused: true,
-                    param: false,
-                    has_hint: false,
-                    capture: true,
-                    ..Default::default()
-                };
-                this.insert::<VariableId>(var, false, true);
-                members.insert(name.data, CheckedMember::new(false, ty, Span::nowhere()));
-                this.proj.scopes.get_mut(o_var_id).unused = false;
+            let var = self.proj.scopes.get(o_var_id);
+            if !var.kind.is_normal() {
+                self.proj.diag.report(Error::new(
+                    format!("invalid capture of non-local variable '{}'", self.proj.str(name.data)),
+                    capture.span,
+                ));
+                continue;
+            } else if self.current_function() != self.proj.scopes.function_of(var.scope) {
+                self.proj.diag.report(Error::access_enclosing_local(capture.span));
+                continue;
             }
 
-            for (patt, hint) in params {
-                let ty = if let Some(hint) = hint {
-                    this.resolve_typehint(*hint)
-                } else {
-                    this.error(Error::new(
-                        "type inference for lambda parameters is not currently supported",
-                        patt.span,
-                    ))
-                };
+            let (ty, mutable) = match capture.data {
+                Capture::ByVal(_) => (var.ty, false),
+                Capture::ByValMut(_) => (var.ty, true),
+                Capture::ByPtr(_) => (self.proj.types.insert(Type::Ptr(var.ty)), false),
+                Capture::ByMutPtr(_) => {
+                    if !var.mutable {
+                        self.proj.diag.report(Error::no_mut_ptr(capture.span));
+                    }
 
-                let patt = this.check_pattern(PatternParams {
+                    (self.proj.types.insert(Type::MutPtr(var.ty)), false)
+                }
+            };
+
+            if matches!(capture.data, Capture::ByVal(_) | Capture::ByValMut(_)) {
+                instance.insert(name.data, self.arena.typed(ty, CExprData::Var(o_var_id)));
+            } else {
+                let inner = self.arena.typed(var.ty, CExprData::Var(o_var_id));
+                // We use AddrMut, but all UnaryOp::Addr* get compiled the same way
+                instance.insert(
+                    name.data,
+                    self.arena.typed(ty, CExprData::Unary(UnaryOp::AddrMut, inner)),
+                );
+            }
+
+            let var = Variable {
+                name,
+                ty,
+                mutable,
+                unused: true,
+                param: false,
+                has_hint: false,
+                capture: true,
+                ..Default::default()
+            };
+            self.insert::<VariableId>(var, false, true);
+            members.insert(name.data, CheckedMember::new(false, ty, Span::nowhere()));
+            self.proj.scopes.get_mut(o_var_id).unused = false;
+        }
+
+        let mut checked_params = vec![];
+        for (i, (patt, hint)) in params.iter().enumerate() {
+            let ty = if let Some(hint) = hint {
+                self.resolve_typehint(*hint)
+            } else {
+                self.error(Error::new(
+                    "type inference for lambda parameters is not currently supported",
+                    patt.span,
+                ))
+            };
+
+            let name = self.proj.strings.get_or_intern(format!("{i}"));
+            checked_params.push(CheckedParam {
+                keyword: false,
+                label: name,
+                ty,
+                patt: ParamPattern::Checked(self.check_pattern(PatternParams {
                     scrutinee: ty,
                     mutable: false,
                     pattern: patt,
                     typ: PatternType::Fn,
                     has_hint: hint.is_some(),
-                });
-            }
+                })),
+                default: None,
+            });
 
-            let policy = policy.unwrap_or(DefaultCapturePolicy::None);
-            let typ = UserType {
+            names.push(name);
+            ty_args.push(ty);
+        }
+
+        let span = body.span;
+        let body = self.check_expr(body, ret);
+        let ret = self.proj.scopes[self.current].kind.as_lambda().unwrap().unwrap_or(body.ty);
+        let body = self.type_check_checked(body, ret, span);
+
+        let args_tuple = self.proj.scopes.get_tuple(names, ty_args, &self.proj.types);
+        let fn_tr_inst = GenericTrait::from_type_args(&self.proj.scopes, fn_tr, [args_tuple, ret]);
+
+        let policy = policy.unwrap_or(DefaultCapturePolicy::None);
+        let closure_id = self.insert::<UserTypeId>(
+            UserType {
                 attrs: Default::default(),
                 public: false,
-                name: Located::nowhere(Strings::EMPTY),
-                body_scope: this.current,
+                name: Located::nowhere(Strings::CLOSURE_NAME),
+                body_scope: self.current,
                 kind: UserTypeKind::Closure { policy },
-                impls: TraitImpls::Checked(vec![]),
-                impl_blocks: vec![],
+                impls: TraitImpls::Checked(vec![Some(fn_tr_inst)]),
+                impl_blocks: vec![ImplBlockData {
+                    type_params: vec![],
+                    assoc_types: Default::default(),
+                }],
                 type_params: vec![],
                 fns: vec![],
                 subscripts: vec![],
@@ -2388,18 +2414,144 @@ impl TypeChecker<'_> {
                 members_resolved: true,
                 recursive: false,
                 interior_mutable: true,
-            };
+            },
+            false,
+            false,
+        );
+        let closure_ty = self
+            .proj
+            .types
+            .insert(Type::User(GenericUserType::new(closure_id, TypeArgs::default())));
+        let fns = self.enter(ScopeKind::Impl(0), |this| {
+            let this_ptr_ty = this.proj.types.insert(Type::Ptr(closure_ty));
+            let this_ptr_var = this.insert::<VariableId>(
+                Variable {
+                    name: Located::nowhere(Strings::THIS_PARAM),
+                    ty: this_ptr_ty,
+                    ..Default::default()
+                },
+                false,
+                false,
+            );
 
-            let id = this.insert::<UserTypeId>(typ, false, false);
-            let span = body.span;
-            let body = this.check_expr(body, ret);
-            let ret  = *this.proj.scopes[this.current].kind.as_lambda().unwrap();
-            let body = this.type_check_checked(body, ret.unwrap_or(body.ty), span);
-            (id, body)
+            checked_params.insert(
+                0,
+                CheckedParam {
+                    keyword: false,
+                    label: Strings::THIS_PARAM,
+                    patt: ParamPattern::Checked(CPattern {
+                        irrefutable: true,
+                        data: PatternData::Variable(this_ptr_var),
+                    }),
+                    ty: this_ptr_ty,
+                    default: None,
+                },
+            );
+            let do_invoke_scope = this.enter(ScopeKind::None, |this| this.current);
+            let func = Function {
+                public: false,
+                attrs: Default::default(),
+                name: Located::nowhere(this.proj.strings.get_or_intern("do_invoke")),
+                is_extern: false,
+                is_async: false,
+                is_unsafe: false,
+                variadic: false,
+                has_body: true,
+                typ: FunctionType::Normal,
+                type_params: vec![],
+                params: checked_params,
+                ret,
+                body: Some(body),
+                body_scope: do_invoke_scope,
+                constructor: None,
+            };
+            let do_invoke_id = this.insert::<FunctionId>(func, false, false);
+            this.proj.scopes[do_invoke_scope].kind = ScopeKind::Function(do_invoke_id);
+
+            let (args_id, invoke_body, invoke_scope) = this.enter(ScopeKind::None, |this| {
+                let args = this.insert::<VariableId>(
+                    Variable {
+                        name: Located::nowhere(Strings::FN_TR_ARGS_NAME),
+                        ty: args_tuple,
+                        ..Default::default()
+                    },
+                    false,
+                    false,
+                );
+
+                let mut call_args = IndexMap::new();
+                call_args.insert(
+                    Strings::THIS_PARAM,
+                    this.arena.typed(this_ptr_ty, CExprData::Var(this_ptr_var)),
+                );
+
+                let source = this.arena.typed(args_tuple, CExprData::Var(args));
+                let tpl_ut = this.proj.types.get(args_tuple).as_user().unwrap();
+                for (&member, m) in this.proj.scopes.get(tpl_ut.id).members.iter() {
+                    let ty = m.ty.with_templates(&this.proj.types, &tpl_ut.ty_args);
+                    call_args
+                        .insert(member, this.arena.typed(ty, CExprData::Member { source, member }));
+                }
+
+                let body = CExpr::call(
+                    ret,
+                    &this.proj.types,
+                    GenericFn::new(do_invoke_id, TypeArgs::default()),
+                    call_args,
+                    this.current,
+                    Span::nowhere(),
+                    &mut this.arena,
+                );
+                (args, body, this.current)
+            });
+
+            let func = Function {
+                public: true,
+                attrs: Default::default(),
+                name: Located::nowhere(this.proj.strings.get_or_intern("invoke")),
+                is_extern: false,
+                is_async: false,
+                is_unsafe: false,
+                variadic: false,
+                has_body: true,
+                typ: FunctionType::Normal,
+                type_params: vec![],
+                params: vec![
+                    CheckedParam {
+                        keyword: false,
+                        label: Strings::THIS_PARAM,
+                        patt: ParamPattern::Checked(CPattern {
+                            irrefutable: true,
+                            data: PatternData::Variable(this_ptr_var),
+                        }),
+                        ty: this_ptr_ty,
+                        default: None,
+                    },
+                    CheckedParam {
+                        keyword: false,
+                        label: Strings::FN_TR_ARGS_NAME,
+                        patt: ParamPattern::Checked(CPattern {
+                            irrefutable: true,
+                            data: PatternData::Variable(args_id),
+                        }),
+                        ty: args_tuple,
+                        default: None,
+                    },
+                ],
+                ret,
+                body: Some(invoke_body),
+                body_scope: invoke_scope,
+                constructor: None,
+            };
+            let invoke_id = this.insert::<FunctionId>(func, false, false);
+            this.proj.scopes[invoke_scope].kind = ScopeKind::Function(invoke_id);
+
+            [Vis::new(do_invoke_id, false), Vis::new(invoke_id, true)]
         });
 
-        let ty = self.proj.types.insert(Type::User(GenericUserType::new(id, TypeArgs::default())));
-        self.arena.typed(ty, CExprData::Instance(instance))
+        self.proj.scopes.get_mut(closure_id).fns.extend(fns);
+
+        self.arena.typed(closure_ty, CExprData::Instance(instance))
     }
 
     /// Do not call this function directly
@@ -3476,7 +3628,10 @@ impl TypeChecker<'_> {
             }
             PExprData::Error => CExpr::default(),
             &PExprData::Lambda { policy, ref captures, ref params, ret, body } => {
-                self.check_lambda(target, policy, captures, params, ret, body)
+                let ret = ret.map(|ret| self.resolve_typehint(ret));
+                self.enter(ScopeKind::Lambda(ret), |this| {
+                    this.check_lambda(span, target, policy, captures, params, ret, body)
+                })
             }
             &PExprData::Unsafe(expr) => {
                 let mut span = span;
@@ -7671,6 +7826,9 @@ pub trait SharedStuff {
         match scopes.get(bound.id).attrs.lang {
             Some(LangType::Numeric) => ty.is_numeric(),
             Some(LangType::Array) => ty.is_array(),
+            Some(LangType::Tuple) => {
+                ty.as_user().is_some_and(|ut| scopes.get(ut.id).kind.is_tuple())
+            }
             Some(LangType::Integral) => ty.is_integral(),
             Some(LangType::Signed) => ty.as_integral(false).is_some_and(|i| i.signed),
             Some(LangType::Unsigned) => ty.as_integral(false).is_some_and(|i| !i.signed),

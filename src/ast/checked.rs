@@ -322,7 +322,7 @@ impl Expr {
     }
 
     pub fn member_call(
-        ty: TypeId,
+        ret: TypeId,
         types: &Types,
         mfn: MemberFn,
         args: IndexMap<StrId, Expr>,
@@ -333,7 +333,7 @@ impl Expr {
         let func = mfn.func.clone();
         let callee = arena.alloc(ExprData::MemFn(mfn, scope));
         Self {
-            ty,
+            ty: ret,
             data: arena.alloc(ExprData::Call {
                 callee: Expr::new(types.insert(Type::Fn(func)), callee),
                 args,
@@ -344,7 +344,7 @@ impl Expr {
     }
 
     pub fn call(
-        ty: TypeId,
+        ret: TypeId,
         types: &Types,
         func: GenericFn,
         args: IndexMap<StrId, Expr>,
@@ -354,7 +354,7 @@ impl Expr {
     ) -> Self {
         let callee = arena.alloc(ExprData::Fn(func.clone(), scope));
         Expr {
-            ty,
+            ty: ret,
             data: arena.alloc(ExprData::Call {
                 callee: Expr::new(types.insert(Type::Fn(func)), callee),
                 args,
