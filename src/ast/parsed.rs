@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Alignment, Sign},
+    ast::{Alignment, Capture, DefaultCapturePolicy, Sign},
     ds::{
         ComptimeInt,
         arena::{Arena, Id},
@@ -216,7 +216,7 @@ pub enum ExprData {
     },
     Continue(Option<Located<StrId>>),
     Lambda {
-        policy: DefaultCapturePolicy,
+        policy: Option<DefaultCapturePolicy>,
         captures: Vec<Located<Capture>>,
         params: Vec<(Located<Pattern>, Option<TypeHint>)>,
         ret: Option<TypeHint>,
@@ -277,25 +277,6 @@ impl From<Located<StrId>> for Path {
     fn from(value: Located<StrId>) -> Self {
         Self::new(PathOrigin::Normal, vec![(value, Vec::new())])
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DefaultCapturePolicy {
-    None,
-    ByVal,
-    ByValMut,
-    ByPtr,
-    ByMutPtr,
-    Auto,
-}
-
-#[derive(Clone)]
-#[allow(clippy::enum_variant_names)]
-pub enum Capture {
-    ByVal(StrId),
-    ByValMut(StrId),
-    ByPtr(StrId),
-    ByMutPtr(StrId),
 }
 
 #[derive(Clone)]

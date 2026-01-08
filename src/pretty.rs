@@ -2,9 +2,12 @@ use colored::Colorize;
 
 use crate::{
     Located,
-    ast::parsed::{
-        Capture, Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path,
-        Pattern, Stmt, StmtData, Struct, TypeHint, Variant,
+    ast::{
+        Capture,
+        parsed::{
+            Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path, Pattern,
+            Stmt, StmtData, Struct, TypeHint, Variant,
+        },
     },
     format::{FmtHint, FmtPath, FmtPatt, FmtUsePath},
     intern::{StrId, Strings},

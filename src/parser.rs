@@ -2,7 +2,10 @@ use either::{Either, Either::*};
 
 use crate::{
     FormatLexer, FormatToken, Warning,
-    ast::{Alignment, AttrName, Attribute, Attributes, Sign, UnaryOp, parsed::*},
+    ast::{
+        Alignment, AttrName, Attribute, Attributes, Capture, DefaultCapturePolicy, Sign, UnaryOp,
+        parsed::*,
+    },
     ds::ComptimeInt,
     error::{Diagnostics, Error, FileId},
     intern::{StrId, Strings},
@@ -1199,7 +1202,6 @@ impl<'a> Parser<'a> {
             self.block_expr(token.span, None)
         };
 
-        let policy = policy.unwrap_or(DefaultCapturePolicy::None);
         self.arena.expr(
             head.extended_to(body.span),
             ExprData::Lambda { policy, captures, params, ret, body },
