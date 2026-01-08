@@ -479,15 +479,11 @@ impl Pretty<'_> {
                 if !params.is_empty() {
                     eprintln!("{tabs}{}:", "Params".yellow());
                     let tabs = INDENT.repeat(indent + 2);
-                    for (name, ty) in params {
+                    for (patt, ty) in params {
                         if let Some(ty) = ty {
-                            eprintln!(
-                                "{tabs}{}: {}",
-                                self.strings.resolve(&name.data),
-                                self.typ(*ty)
-                            );
+                            eprintln!("{tabs}{}: {}", self.patt(&patt.data), self.typ(*ty));
                         } else {
-                            eprintln!("{tabs}{}", self.strings.resolve(&name.data));
+                            eprintln!("{tabs}{}", self.patt(&patt.data));
                         }
                     }
                 }

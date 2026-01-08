@@ -218,7 +218,7 @@ pub enum ExprData {
     Lambda {
         policy: DefaultCapturePolicy,
         captures: Vec<Located<Capture>>,
-        params: Vec<(Located<StrId>, Option<TypeHint>)>,
+        params: Vec<(Located<Pattern>, Option<TypeHint>)>,
         ret: Option<TypeHint>,
         body: Expr,
     },

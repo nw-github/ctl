@@ -1139,7 +1139,10 @@ impl<'a> Parser<'a> {
                         .map(|ident| Located::new(next.span, this.strings.get_or_intern(ident)))
                 });
                 let span = start.span.extended_to(
-                    ident.map(|m| m.span).or(mutable.as_ref().map(|m| m.span)).unwrap_or(start.span),
+                    ident
+                        .map(|m| m.span)
+                        .or(mutable.as_ref().map(|m| m.span))
+                        .unwrap_or(start.span),
                 );
 
                 match (mutable.is_some(), ident) {
@@ -1181,10 +1184,7 @@ impl<'a> Parser<'a> {
 
         let params = if let Some(head) = self.next_if(Token::LParen) {
             self.csv(Vec::new(), Token::RParen, head.span, |this| {
-                (
-                    this.expect_ident("expected parameter name"),
-                    this.next_if(Token::Colon).map(|_| this.type_hint()),
-                )
+                (this.pattern(false), this.next_if(Token::Colon).map(|_| this.type_hint()))
             })
             .data
         } else {
