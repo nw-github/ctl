@@ -189,7 +189,6 @@ pub enum ExprData {
     Return(Expr),
     Yield(Expr, ScopeId),
     Break(Expr, ScopeId),
-    Lambda(Vec<Stmt>),
     NeverCoerce(Expr),
     Discard(Expr),
     Continue(ScopeId),

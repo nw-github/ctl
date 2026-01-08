@@ -1773,7 +1773,6 @@ impl<'a> Codegen<'a> {
                 hoist!(self, self.buffer.emit(bindings.finish()));
                 write_de!(self.buffer, "({})", conditions.finish());
             }
-            ExprData::Lambda(_) => todo!(),
             &ExprData::NeverCoerce(inner) => {
                 if matches!(expr.ty, TypeId::VOID) {
                     self.emit_expr_inline(inner, state);

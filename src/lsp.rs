@@ -1439,6 +1439,7 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
             visualize_type_params(&mut res, &ut.type_params, proj);
             write_de!(res, " for {}", proj.fmt_ty(ty));
         }
+        UserTypeKind::Closure { .. } => {}
         UserTypeKind::Tuple => {}
     }
 

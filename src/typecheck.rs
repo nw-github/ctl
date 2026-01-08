@@ -3,7 +3,7 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     Warning,
     ast::{
-        Attributes, BinaryOp, UnaryOp,
+        Attributes, BinaryOp, Capture, DefaultCapturePolicy, UnaryOp,
         checked::{
             ArrayPattern, Block, Expr as CExpr, ExprArena, ExprData as CExprData,
             FormatOpts as CFormatSpec, Pattern as CPattern, PatternData, RestPattern,
@@ -2236,10 +2236,7 @@ impl TypeChecker<'_> {
             {
                 self.proj.diag.report(Warning::mut_ptr_to_const(span));
             } else if !inner.can_addrmut(&self.proj, &self.arena) {
-                self.error(Error::new(
-                    "cannot create mutable pointer to immutable memory location",
-                    span,
-                ))
+                self.error(Error::no_mut_ptr(span))
             }
         }
 
@@ -2279,6 +2276,130 @@ impl TypeChecker<'_> {
             _ => unreachable!(),
         }));
         self.arena.typed(out_ty, CExprData::Unary(op, inner))
+    }
+
+    fn check_lambda(
+        &mut self,
+        target: Option<TypeId>,
+        policy: Option<DefaultCapturePolicy>,
+        captures: &[Located<Capture>],
+        params: &[(Located<Pattern>, Option<TypeHint>)],
+        ret: Option<TypeHint>,
+        body: Expr,
+    ) -> CExpr {
+        let mut members = IndexMap::new();
+        let mut instance = IndexMap::new();
+        let ret = ret.map(|ret| self.resolve_typehint(ret));
+        let (id, body) = self.enter(ScopeKind::Lambda(ret), |this| {
+            for capture in captures {
+                let name = Located::new(capture.span, capture.data.data());
+                let path = Path::from(name);
+                let ResolvedValue::Var(o_var_id) = this.resolve_value_path(&path, None) else {
+                    this.proj.diag.report(Error::no_symbol(this.proj.str(name.data), capture.span));
+                    continue;
+                };
+
+                let var = this.proj.scopes.get(o_var_id);
+                if !var.kind.is_normal() {
+                    this.proj.diag.report(Error::new(
+                        format!(
+                            "invalid capture of non-local variable '{}'",
+                            this.proj.str(name.data)
+                        ),
+                        capture.span,
+                    ));
+                    continue;
+                } else if this.current_function() != this.proj.scopes.function_of(var.scope) {
+                    this.proj.diag.report(Error::access_enclosing_local(capture.span));
+                    continue;
+                }
+
+                let (ty, mutable) = match capture.data {
+                    Capture::ByVal(_) => (var.ty, false),
+                    Capture::ByValMut(_) => (var.ty, true),
+                    Capture::ByPtr(_) => (this.proj.types.insert(Type::Ptr(var.ty)), false),
+                    Capture::ByMutPtr(_) => {
+                        if !var.mutable {
+                            this.proj.diag.report(Error::no_mut_ptr(capture.span));
+                        }
+
+                        (this.proj.types.insert(Type::MutPtr(var.ty)), false)
+                    }
+                };
+
+                if matches!(capture.data, Capture::ByVal(_) | Capture::ByValMut(_)) {
+                    instance.insert(name.data, this.arena.typed(ty, CExprData::Var(o_var_id)));
+                } else {
+                    let inner = this.arena.typed(var.ty, CExprData::Var(o_var_id));
+                    // We use AddrMut, but all UnaryOp::Addr* get compiled the same way
+                    instance.insert(
+                        name.data,
+                        this.arena.typed(ty, CExprData::Unary(UnaryOp::AddrMut, inner)),
+                    );
+                }
+
+                let var = Variable {
+                    name,
+                    ty,
+                    mutable,
+                    unused: true,
+                    param: false,
+                    has_hint: false,
+                    capture: true,
+                    ..Default::default()
+                };
+                this.insert::<VariableId>(var, false, true);
+                members.insert(name.data, CheckedMember::new(false, ty, Span::nowhere()));
+                this.proj.scopes.get_mut(o_var_id).unused = false;
+            }
+
+            for (patt, hint) in params {
+                let ty = if let Some(hint) = hint {
+                    this.resolve_typehint(*hint)
+                } else {
+                    this.error(Error::new(
+                        "type inference for lambda parameters is not currently supported",
+                        patt.span,
+                    ))
+                };
+
+                let patt = this.check_pattern(PatternParams {
+                    scrutinee: ty,
+                    mutable: false,
+                    pattern: patt,
+                    typ: PatternType::Fn,
+                    has_hint: hint.is_some(),
+                });
+            }
+
+            let policy = policy.unwrap_or(DefaultCapturePolicy::None);
+            let typ = UserType {
+                attrs: Default::default(),
+                public: false,
+                name: Located::nowhere(Strings::EMPTY),
+                body_scope: this.current,
+                kind: UserTypeKind::Closure { policy },
+                impls: TraitImpls::Checked(vec![]),
+                impl_blocks: vec![],
+                type_params: vec![],
+                fns: vec![],
+                subscripts: vec![],
+                members,
+                members_resolved: true,
+                recursive: false,
+                interior_mutable: true,
+            };
+
+            let id = this.insert::<UserTypeId>(typ, false, false);
+            let span = body.span;
+            let body = this.check_expr(body, ret);
+            let ret  = *this.proj.scopes[this.current].kind.as_lambda().unwrap();
+            let body = this.type_check_checked(body, ret.unwrap_or(body.ty), span);
+            (id, body)
+        });
+
+        let ty = self.proj.types.insert(Type::User(GenericUserType::new(id, TypeArgs::default())));
+        self.arena.typed(ty, CExprData::Instance(instance))
     }
 
     /// Do not call this function directly
@@ -2876,10 +2997,7 @@ impl TypeChecker<'_> {
                     let var = self.proj.scopes.get(id);
                     if var.kind.is_normal() {
                         if self.current_function() != self.proj.scopes.function_of(var.scope) {
-                            self.proj.diag.report(Error::new(
-                                "cannot reference local variable of enclosing function",
-                                span,
-                            ));
+                            self.proj.diag.report(Error::access_enclosing_local(span));
                         }
                         if self
                             .current_static
@@ -3183,7 +3301,7 @@ impl TypeChecker<'_> {
             }
             &PExprData::Return(expr) => self.check_return(expr, span),
             &PExprData::Tail(expr) => match &self.proj.scopes[self.current].kind {
-                ScopeKind::Function(_) | ScopeKind::Lambda(_, _) => self.check_return(expr, span),
+                ScopeKind::Function(_) | ScopeKind::Lambda(_) => self.check_return(expr, span),
                 ScopeKind::Loop { .. } => self.type_check(expr, TypeId::VOID),
                 ScopeKind::Block(data) => self.check_yield(Some(expr), *data, self.current, span),
                 _ => self.error(Error::new("yield outside of block", expr.span)),
@@ -3357,7 +3475,9 @@ impl TypeChecker<'_> {
                 self.arena.typed(to_id, CExprData::As(expr, throwing))
             }
             PExprData::Error => CExpr::default(),
-            PExprData::Lambda { .. } => todo!("typecheck lambda"),
+            &PExprData::Lambda { policy, ref captures, ref params, ret, body } => {
+                self.check_lambda(target, policy, captures, params, ret, body)
+            }
             &PExprData::Unsafe(expr) => {
                 let mut span = span;
                 span.len = "unsafe".len() as u32;
@@ -3613,14 +3733,14 @@ impl TypeChecker<'_> {
     fn check_return(&mut self, expr: PExpr, span: Span) -> CExpr {
         for (id, scope) in self.proj.scopes.walk(self.current) {
             match &scope.kind {
-                &ScopeKind::Lambda(target, _) => {
+                &ScopeKind::Lambda(target) => {
                     let span = expr.span;
                     let mut expr = self.check_expr(expr, target);
                     self.proj.scopes[id].kind = if let Some(target) = target {
                         expr = self.type_check_checked(expr, target, span);
-                        ScopeKind::Lambda(Some(target), true)
+                        ScopeKind::Lambda(Some(target))
                     } else {
-                        ScopeKind::Lambda(Some(expr.ty), true)
+                        ScopeKind::Lambda(Some(expr.ty))
                     };
                     return self.arena.typed(TypeId::NEVER, CExprData::Return(expr));
                 }

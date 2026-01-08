@@ -176,6 +176,14 @@ impl Error {
         Self::new(format!("'{}' is not valid here", token.data), token.span)
     }
 
+    pub fn access_enclosing_local(span: Span) -> Self {
+        Self::new("cannot reference local variable of enclosing function", span)
+    }
+
+    pub fn no_mut_ptr(span: Span) -> Self {
+        Self::new("cannot create mutable pointer to immutable memory location", span)
+    }
+
     pub fn type_mismatch(expected: impl Display, received: impl Display, span: Span) -> Self {
         Self::new(format!("type mismatch: expected type '{expected}', found '{received}'"), span)
     }

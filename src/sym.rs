@@ -3,6 +3,7 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{
+        DefaultCapturePolicy,
         checked::{Expr as CheckedExpr, Pattern as CheckedPattern},
         declared::UsePath,
         parsed::{Expr, FunctionType, Path, Pattern, TypeHint},
@@ -117,7 +118,7 @@ pub struct BlockScopeKind {
 pub enum ScopeKind {
     Block(BlockScopeKind),
     Loop(LoopScopeKind),
-    Lambda(Option<TypeId>, bool),
+    Lambda(Option<TypeId>),
     Function(FunctionId),
     UserType(UserTypeId),
     Impl(usize),
@@ -244,6 +245,7 @@ pub struct Variable {
     pub unused: bool,
     pub has_hint: bool,
     pub param: bool,
+    pub capture: bool,
 }
 
 #[derive(Default)]
@@ -329,6 +331,7 @@ pub enum UserTypeKind {
     UnsafeUnion,
     Template,
     Tuple,
+    Closure { policy: DefaultCapturePolicy },
     Trait { this: UserTypeId, sealed: bool, assoc_types: HashMap<StrId, UserTypeId> },
     Extension(TypeId),
 }
