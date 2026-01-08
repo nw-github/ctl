@@ -3,8 +3,8 @@ use colored::Colorize;
 use crate::{
     Located,
     ast::parsed::{
-        Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path, Pattern,
-        Stmt, StmtData, Struct, TypeHint, Variant,
+        Capture, Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path,
+        Pattern, Stmt, StmtData, Struct, TypeHint, Variant,
     },
     format::{FmtHint, FmtPath, FmtPatt, FmtUsePath},
     intern::{StrId, Strings},
@@ -447,9 +447,32 @@ impl Pretty<'_> {
                 }
             }
             ExprData::Error => {}
-            ExprData::Lambda { params, ret, body, moves } => {
-                self.print_header(&tabs, "Expr::Lambda", &[bool!(moves)]);
+            ExprData::Lambda { policy, captures, params, ret, body } => {
+                self.print_header(&tabs, "Expr::Lambda", &[]);
                 let tabs = INDENT.repeat(indent + 1);
+                eprintln!("{tabs}{}: {policy:?}", "Policy".yellow());
+
+                if !captures.is_empty() {
+                    eprintln!("{tabs}{}:", "Captures".yellow());
+                }
+                for capture in captures {
+                    let tabs = INDENT.repeat(indent + 2);
+                    match &capture.data {
+                        Capture::ByVal(id) => {
+                            eprintln!("{tabs}ByVal: {}", self.strings.resolve(id))
+                        }
+                        Capture::ByValMut(id) => {
+                            eprintln!("{tabs}ByValMut: {}", self.strings.resolve(id))
+                        }
+                        Capture::ByPtr(id) => {
+                            eprintln!("{tabs}ByPtr: {}", self.strings.resolve(id))
+                        }
+                        Capture::ByMutPtr(id) => {
+                            eprintln!("{tabs}ByMutPtr: {}", self.strings.resolve(id))
+                        }
+                    }
+                }
+
                 if let Some(ret) = ret {
                     eprintln!("{tabs}{}: {}", "Return".yellow(), self.typ(*ret));
                 }

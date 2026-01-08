@@ -33,7 +33,6 @@ pub enum Token<'a> {
     AtLParen,
     AtLBrace,
     At,
-    Move,
     Dollar,
 
     Plus,
@@ -346,7 +345,6 @@ impl<'a> Lexer<'a> {
             "loop" => Token::Loop,
             "match" => Token::Match,
             "mod" => Token::Mod,
-            "move" => Token::Move,
             "mut" => Token::Mut,
             "my" => Token::My,
             "or" => Token::Or,

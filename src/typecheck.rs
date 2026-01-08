@@ -5202,7 +5202,6 @@ impl TypeChecker<'_> {
         }
     }
 
-    #[allow(clippy::result_large_err)]
     fn coerce(&mut self, expr: CExpr, target: TypeId) -> Result<CExpr, CExpr> {
         // TODO: This is cacheable by TypeId
         fn may_ptr_coerce(types: &Types, from: &Type, to: &Type) -> bool {
