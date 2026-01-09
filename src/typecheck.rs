@@ -2028,7 +2028,7 @@ impl TypeChecker<'_> {
 
                 let panic = this.proj.scopes
                     .functions()
-                    .find(|(_, f)| f.attrs.intrinsic.is_some_and(|d| this.proj.str(d) == "panic"))
+                    .find(|(_, f)| f.attrs.intrinsic == Some(Intrinsic::Panic))
                     .map(|p| p.0);
                 if let Some(panic) = panic {
                     let fn_name = func.name;

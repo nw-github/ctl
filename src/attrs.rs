@@ -57,7 +57,7 @@ fn unrecognized(attr: &Attribute, proj: &mut Project) {
         .report(Error::invalid_attr(attr.name.data.as_str_data(&proj.strings), attr.name.span));
 }
 
-fn check_intrinsic(name: StrId, attr: &Attribute, proj: &mut Project) -> Option<StrId> {
+fn check_intrinsic(name: StrId, attr: &Attribute, proj: &mut Project) -> Option<Intrinsic> {
     let (name, span) = if let Some(attr) = attr.props.first()
         && let Some(id) = attr.name.data.as_str()
     {
@@ -67,20 +67,12 @@ fn check_intrinsic(name: StrId, attr: &Attribute, proj: &mut Project) -> Option<
     };
 
     let data = proj.strings.resolve(&name);
-    #[rustfmt::skip]
-    if !matches!(
-        data,
-        "size_of" | "align_of" | "panic" | "binary_op" | "unary_op" | "numeric_cast" | "numeric_abs"
-            | "max_value" | "min_value" | "unreachable_unchecked" | "type_id" | "type_name"
-            | "read_volatile" | "write_volatile" | "source_location" | "ptr_add_signed"
-            | "ptr_add_unsigned" | "ptr_sub_signed" | "ptr_sub_unsigned" | "ptr_diff"
-            | "builtin_dbg"
-    ) {
-        proj.diag.report(Error::new(format!("intrinsic '{data}' is not supported"), span));
-        return None;
-    };
+    if let Some(intrinsic) = Intrinsic::from_str(data) {
+        return Some(intrinsic);
+    }
 
-    Some(name)
+    proj.diag.report(Error::new(format!("intrinsic '{data}' is not supported"), span));
+    None
 }
 
 impl VariableAttrs {
@@ -115,7 +107,7 @@ pub struct FunctionAttrs {
     pub link_name: Option<StrId>,
     pub test_skip: Option<Option<StrId>>,
     pub inline: Option<FunctionInline>,
-    pub intrinsic: Option<StrId>,
+    pub intrinsic: Option<Intrinsic>,
     pub macro_name: Option<StrId>,
 }
 
@@ -394,6 +386,66 @@ impl LangType {
 }
 
 impl std::fmt::Display for LangType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Intrinsic {
+    NumericAbs,
+    NumericCast,
+    MaxValue,
+    MinValue,
+    SizeOf,
+    AlignOf,
+    Panic,
+    UnreachableUnchecked,
+    BinaryOp,
+    UnaryOp,
+    TypeId,
+    TypeName,
+    ReadVolatile,
+    WriteVolatile,
+    SourceLocation,
+    PtrAddSigned,
+    PtrAddUnsigned,
+    PtrSubSigned,
+    PtrSubUnsigned,
+    PtrDiff,
+    BuiltinDbg,
+}
+
+impl Intrinsic {
+    fn from_str(s: &str) -> Option<Intrinsic> {
+        match s {
+            "numeric_abs" => Some(Self::NumericAbs),
+            "numeric_cast" => Some(Self::NumericCast),
+            "max_value" => Some(Self::MaxValue),
+            "min_value" => Some(Self::MinValue),
+            "size_of" => Some(Self::SizeOf),
+            "align_of" => Some(Self::AlignOf),
+            "panic" => Some(Self::Panic),
+            "unreachable_unchecked" => Some(Self::UnreachableUnchecked),
+            "binary_op" => Some(Self::BinaryOp),
+            "unary_op" => Some(Self::UnaryOp),
+            "type_id" => Some(Self::TypeId),
+            "type_name" => Some(Self::TypeName),
+            "read_volatile" => Some(Self::ReadVolatile),
+            "write_volatile" => Some(Self::WriteVolatile),
+            "source_location" => Some(Self::SourceLocation),
+            "ptr_add_signed" => Some(Self::PtrAddSigned),
+            "ptr_add_unsigned" => Some(Self::PtrAddUnsigned),
+            "ptr_sub_signed" => Some(Self::PtrSubSigned),
+            "ptr_sub_unsigned" => Some(Self::PtrSubUnsigned),
+            "ptr_diff" => Some(Self::PtrDiff),
+            "builtin_dbg" => Some(Self::BuiltinDbg),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Intrinsic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
     }

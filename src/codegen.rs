@@ -2352,31 +2352,31 @@ impl<'a> Codegen<'a> {
 
     fn emit_intrinsic(
         &mut self,
-        name: StrId,
+        name: Intrinsic,
         ret: TypeId,
         func: &GenericFn,
         mut args: IndexMap<StrId, Expr>,
         state: &mut State,
         (scope, span): (ScopeId, Span),
     ) {
-        match self.proj.str(name) {
-            "numeric_abs" => {
+        match name {
+            Intrinsic::NumericAbs => {
                 let (_, mut expr) = args.shift_remove_index(0).unwrap();
                 expr.ty = expr.ty.with_templates(&self.proj.types, &state.func.ty_args);
                 let tmp = hoist!(self, self.emit_tmpvar(expr, state));
                 write_de!(self.buffer, "({tmp}<0?-{tmp}:{tmp})");
             }
-            "numeric_cast" => {
+            Intrinsic::NumericCast => {
                 self.emit_cast(ret);
                 self.emit_expr(args.shift_remove_index(0).unwrap().1, state);
             }
-            "max_value" => {
+            Intrinsic::MaxValue => {
                 self.emit_literal(ret.as_integral(&self.proj.types, true).unwrap().max(), ret)
             }
-            "min_value" => {
+            Intrinsic::MinValue => {
                 self.emit_literal(ret.as_integral(&self.proj.types, true).unwrap().min(), ret)
             }
-            "size_of" => {
+            Intrinsic::SizeOf => {
                 write_de!(
                     self.buffer,
                     "(usize){}",
@@ -2386,7 +2386,7 @@ impl<'a> Codegen<'a> {
                         .0
                 );
             }
-            "align_of" => {
+            Intrinsic::AlignOf => {
                 write_de!(
                     self.buffer,
                     "(usize){}",
@@ -2396,7 +2396,7 @@ impl<'a> Codegen<'a> {
                         .1
                 );
             }
-            "panic" => {
+            Intrinsic::Panic => {
                 let panic = State::from_non_generic(
                     self.proj.panic_handler.expect("a panic handler should exist"),
                     &self.proj.scopes,
@@ -2415,11 +2415,11 @@ impl<'a> Codegen<'a> {
 
                 self.funcs.insert(panic);
             }
-            "unreachable_unchecked" => {
+            Intrinsic::UnreachableUnchecked => {
                 hoist!(self, writeln_de!(self.buffer, "CTL_UNREACHABLE();"));
                 self.buffer.emit(VOID_INSTANCE);
             }
-            "binary_op" => {
+            Intrinsic::BinaryOp => {
                 let mut args = args.into_iter();
                 let arg0 = args
                     .next()
@@ -2469,7 +2469,7 @@ impl<'a> Codegen<'a> {
                     arg1,
                 );
             }
-            "unary_op" => {
+            Intrinsic::UnaryOp => {
                 let op = self.proj.scopes.get(func.id).name.data;
                 let arg0 = args
                     .into_iter()
@@ -2490,15 +2490,15 @@ impl<'a> Codegen<'a> {
                     arg0,
                 );
             }
-            "type_id" => {
+            Intrinsic::TypeId => {
                 self.emit_cast(ret);
                 write_de!(self.buffer, "{{.tag={}}}", func.first_type_arg().unwrap().as_raw());
             }
-            "type_name" => {
+            Intrinsic::TypeName => {
                 let name = self.proj.fmt_ty(func.first_type_arg().unwrap()).to_string();
                 write_de!(self.buffer, "{}", StringLiteral(&name))
             }
-            "read_volatile" => {
+            Intrinsic::ReadVolatile => {
                 const COMPLAINT: &str = "ICE: read_volatile should receive one argument";
                 write_de!(self.buffer, "*(volatile ");
                 self.emit_type(ret);
@@ -2506,7 +2506,7 @@ impl<'a> Codegen<'a> {
                 self.emit_expr_inline(args.into_iter().next().expect(COMPLAINT).1, state);
                 write_de!(self.buffer, ")");
             }
-            "write_volatile" => {
+            Intrinsic::WriteVolatile => {
                 const COMPLAINT: &str = "ICE: write_volatile should receive two arguments";
                 let mut args = args.into_iter();
                 let mut arg0 = args.next().expect(COMPLAINT).1;
@@ -2519,7 +2519,7 @@ impl<'a> Codegen<'a> {
                 self.emit_expr_inline(args.next().expect(COMPLAINT).1, state);
                 write_de!(self.buffer, ")");
             }
-            "source_location" => {
+            Intrinsic::SourceLocation => {
                 let func =
                     self.proj.scopes.walk(scope).find_map(|s| s.1.kind.as_function().copied());
                 let sl_typ = self.proj.types[ret].as_user().unwrap().id;
@@ -2554,8 +2554,11 @@ impl<'a> Codegen<'a> {
                 self.emit_expr_inline(opt, state);
                 self.buffer.emit("})");
             }
-            "ptr_add_signed" | "ptr_add_unsigned" | "ptr_sub_signed" | "ptr_sub_unsigned"
-            | "ptr_diff" => {
+            Intrinsic::PtrAddSigned
+            | Intrinsic::PtrAddUnsigned
+            | Intrinsic::PtrSubSigned
+            | Intrinsic::PtrSubUnsigned
+            | Intrinsic::PtrDiff => {
                 const COMPLAINT: &str = "ICE: ptr intrinsic should receive two arguments";
                 let mut args = args.into_iter();
                 let lhs = args.next().expect(COMPLAINT).1;
@@ -2564,12 +2567,12 @@ impl<'a> Codegen<'a> {
                 self.emit_cast(ret);
                 self.buffer.emit("(");
                 self.emit_expr(lhs, state);
-                let plus = matches!(self.proj.str(name), "ptr_add_signed" | "ptr_add_unsigned");
+                let plus = matches!(name, Intrinsic::PtrAddSigned | Intrinsic::PtrAddUnsigned);
                 self.buffer.emit(["-", "+"][plus as usize]);
                 self.emit_expr(rhs, state);
                 self.buffer.emit(")");
             }
-            "builtin_dbg" => {
+            Intrinsic::BuiltinDbg => {
                 let mut args = args.into_iter();
                 let (_, mut arg) = args.next().unwrap();
                 arg.ty = arg.ty.with_templates(&self.proj.types, &state.func.ty_args);
@@ -2597,7 +2600,6 @@ impl<'a> Codegen<'a> {
                 });
                 self.buffer.emit(VOID_INSTANCE);
             }
-            name => unreachable!("ICE: Attempt to codegen unsupported intrinsic: '{name}'"),
         }
     }
 
