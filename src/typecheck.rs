@@ -2436,46 +2436,37 @@ impl TypeChecker<'_> {
         let args_tuple = self.proj.scopes.get_tuple(names, ty_args, &self.proj.types);
         let fn_tr_inst = GenericTrait::from_type_args(&self.proj.scopes, fn_tr, [args_tuple, ret]);
 
-        let closure_id = self.insert::<UserTypeId>(
-            UserType {
-                attrs: Default::default(),
-                public: false,
-                name: Located::nowhere(Strings::CLOSURE_NAME),
-                body_scope: self.current,
-                kind: UserTypeKind::Closure,
-                impls: TraitImpls::Checked(vec![Some(fn_tr_inst)]),
-                impl_blocks: vec![ImplBlockData {
+        let (closure_id, closure_ut_scope, closure_ty) = self.enter(ScopeKind::None, |this| {
+            let closure_id = this.insert::<UserTypeId>(
+                UserType {
+                    attrs: Default::default(),
+                    public: false,
+                    name: Located::nowhere(Strings::CLOSURE_NAME),
+                    body_scope: this.current,
+                    kind: UserTypeKind::Closure,
+                    impls: TraitImpls::Checked(vec![Some(fn_tr_inst)]),
+                    impl_blocks: vec![ImplBlockData {
+                        type_params: vec![],
+                        assoc_types: Default::default(),
+                    }],
                     type_params: vec![],
-                    assoc_types: Default::default(),
-                }],
-                type_params: vec![],
-                fns: vec![],
-                subscripts: vec![],
-                members,
-                members_resolved: true,
-                recursive: false,
-                interior_mutable: true,
-            },
-            false,
-            false,
-        );
-        let closure_ty = self
-            .proj
-            .types
-            .insert(Type::User(GenericUserType::new(closure_id, TypeArgs::default())));
-        let fns = self.enter(ScopeKind::Impl(0), |this| {
+                    fns: vec![],
+                    subscripts: vec![],
+                    members,
+                    members_resolved: true,
+                    recursive: false,
+                    interior_mutable: true,
+                },
+                false,
+                false,
+            );
+
+            let closure_ty = this
+                .proj
+                .types
+                .insert(Type::User(GenericUserType::new(closure_id, TypeArgs::default())));
             let this_ptr_mut_ty = this.proj.types.insert(Type::MutPtr(closure_ty));
             let do_invoke_id = {
-                let this_ptr_var = this.insert::<VariableId>(
-                    Variable {
-                        name: Located::nowhere(Strings::THIS_PARAM),
-                        ty: this_ptr_mut_ty,
-                        ..Default::default()
-                    },
-                    false,
-                    false,
-                );
-
                 checked_params.insert(
                     0,
                     CheckedParam {
@@ -2483,7 +2474,15 @@ impl TypeChecker<'_> {
                         label: Strings::THIS_PARAM,
                         patt: ParamPattern::Checked(CPattern {
                             irrefutable: true,
-                            data: PatternData::Variable(this_ptr_var),
+                            data: PatternData::Variable(this.insert::<VariableId>(
+                                Variable {
+                                    name: Located::nowhere(Strings::THIS_PARAM),
+                                    ty: this_ptr_mut_ty,
+                                    ..Default::default()
+                                },
+                                false,
+                                false,
+                            )),
                         }),
                         ty: this_ptr_mut_ty,
                         default: None,
@@ -2512,104 +2511,110 @@ impl TypeChecker<'_> {
                 do_invoke_id
             };
 
-            let (params, invoke_body, invoke_scope) = this.enter(ScopeKind::None, |this| {
-                let args_var = this.insert::<VariableId>(
-                    Variable {
-                        name: Located::nowhere(Strings::FN_TR_ARGS_NAME),
-                        ty: args_tuple,
-                        ..Default::default()
-                    },
-                    false,
-                    false,
-                );
+            let fns = this.enter(ScopeKind::Impl(0), |this| {
+                let (params, invoke_body, invoke_scope) = this.enter(ScopeKind::None, |this| {
+                    let args_var = this.insert::<VariableId>(
+                        Variable {
+                            name: Located::nowhere(Strings::FN_TR_ARGS_NAME),
+                            ty: args_tuple,
+                            ..Default::default()
+                        },
+                        false,
+                        false,
+                    );
 
-                let this_ptr_ty = this.proj.types.insert(Type::Ptr(closure_ty));
-                let this_ptr_var = this.insert::<VariableId>(
-                    Variable {
-                        name: Located::nowhere(Strings::THIS_PARAM),
-                        ty: this_ptr_ty,
-                        ..Default::default()
-                    },
-                    false,
-                    false,
-                );
+                    let this_ptr_ty = this.proj.types.insert(Type::Ptr(closure_ty));
+                    let this_ptr_var = this.insert::<VariableId>(
+                        Variable {
+                            name: Located::nowhere(Strings::THIS_PARAM),
+                            ty: this_ptr_ty,
+                            ..Default::default()
+                        },
+                        false,
+                        false,
+                    );
 
-                let mut call_args = IndexMap::new();
-                let this_ptr_expr = this.arena.typed(this_ptr_ty, CExprData::Var(this_ptr_var));
-                call_args.insert(
-                    Strings::THIS_PARAM,
-                    this.arena.typed(this_ptr_mut_ty, CExprData::As(this_ptr_expr, false)),
-                );
+                    let mut call_args = IndexMap::new();
+                    let this_ptr_expr = this.arena.typed(this_ptr_ty, CExprData::Var(this_ptr_var));
+                    call_args.insert(
+                        Strings::THIS_PARAM,
+                        this.arena.typed(this_ptr_mut_ty, CExprData::As(this_ptr_expr, false)),
+                    );
 
-                let source = this.arena.typed(args_tuple, CExprData::Var(args_var));
-                let tpl_ut = this.proj.types.get(args_tuple).as_user().unwrap();
-                for (&member, m) in this.proj.scopes.get(tpl_ut.id).members.iter() {
-                    let ty = m.ty.with_templates(&this.proj.types, &tpl_ut.ty_args);
-                    call_args
-                        .insert(member, this.arena.typed(ty, CExprData::Member { source, member }));
-                }
+                    let source = this.arena.typed(args_tuple, CExprData::Var(args_var));
+                    let tpl_ut = this.proj.types.get(args_tuple).as_user().unwrap();
+                    for (&member, m) in this.proj.scopes.get(tpl_ut.id).members.iter() {
+                        let ty = m.ty.with_templates(&this.proj.types, &tpl_ut.ty_args);
+                        call_args.insert(
+                            member,
+                            this.arena.typed(ty, CExprData::Member { source, member }),
+                        );
+                    }
 
-                let body = CExpr::call(
+                    let body = CExpr::call(
+                        ret,
+                        &this.proj.types,
+                        GenericFn::new(do_invoke_id, TypeArgs::default()),
+                        call_args,
+                        this.current,
+                        Span::nowhere(),
+                        &mut this.arena,
+                    );
+
+                    let params = vec![
+                        CheckedParam {
+                            keyword: false,
+                            label: Strings::THIS_PARAM,
+                            patt: ParamPattern::Checked(CPattern {
+                                irrefutable: true,
+                                data: PatternData::Variable(this_ptr_var),
+                            }),
+                            ty: this_ptr_ty,
+                            default: None,
+                        },
+                        CheckedParam {
+                            keyword: false,
+                            label: Strings::FN_TR_ARGS_NAME,
+                            patt: ParamPattern::Checked(CPattern {
+                                irrefutable: true,
+                                data: PatternData::Variable(args_var),
+                            }),
+                            ty: args_tuple,
+                            default: None,
+                        },
+                    ];
+
+                    (params, body, this.current)
+                });
+
+                let func = Function {
+                    public: true,
+                    attrs: Default::default(),
+                    name: Located::nowhere(this.proj.strings.get_or_intern("invoke")),
+                    is_extern: false,
+                    is_async: false,
+                    is_unsafe: false,
+                    variadic: false,
+                    has_body: true,
+                    typ: FunctionType::Normal,
+                    type_params: vec![],
+                    params,
                     ret,
-                    &this.proj.types,
-                    GenericFn::new(do_invoke_id, TypeArgs::default()),
-                    call_args,
-                    this.current,
-                    Span::nowhere(),
-                    &mut this.arena,
-                );
+                    body: Some(invoke_body),
+                    body_scope: invoke_scope,
+                    constructor: None,
+                };
+                let invoke_id = this.insert::<FunctionId>(func, false, false);
+                this.proj.scopes[invoke_scope].kind = ScopeKind::Function(invoke_id);
 
-                let params = vec![
-                    CheckedParam {
-                        keyword: false,
-                        label: Strings::THIS_PARAM,
-                        patt: ParamPattern::Checked(CPattern {
-                            irrefutable: true,
-                            data: PatternData::Variable(this_ptr_var),
-                        }),
-                        ty: this_ptr_ty,
-                        default: None,
-                    },
-                    CheckedParam {
-                        keyword: false,
-                        label: Strings::FN_TR_ARGS_NAME,
-                        patt: ParamPattern::Checked(CPattern {
-                            irrefutable: true,
-                            data: PatternData::Variable(args_var),
-                        }),
-                        ty: args_tuple,
-                        default: None,
-                    },
-                ];
-
-                (params, body, this.current)
+                [Vis::new(do_invoke_id, false), Vis::new(invoke_id, true)]
             });
 
-            let func = Function {
-                public: true,
-                attrs: Default::default(),
-                name: Located::nowhere(this.proj.strings.get_or_intern("invoke")),
-                is_extern: false,
-                is_async: false,
-                is_unsafe: false,
-                variadic: false,
-                has_body: true,
-                typ: FunctionType::Normal,
-                type_params: vec![],
-                params,
-                ret,
-                body: Some(invoke_body),
-                body_scope: invoke_scope,
-                constructor: None,
-            };
-            let invoke_id = this.insert::<FunctionId>(func, false, false);
-            this.proj.scopes[invoke_scope].kind = ScopeKind::Function(invoke_id);
-
-            [Vis::new(do_invoke_id, false), Vis::new(invoke_id, true)]
+            this.proj.scopes.get_mut(closure_id).fns.extend(fns);
+            (closure_id, this.current, closure_ty)
         });
 
-        self.proj.scopes.get_mut(closure_id).fns.extend(fns);
-
+        self.proj.scopes[closure_ut_scope].kind = ScopeKind::UserType(closure_id);
         self.arena.typed(closure_ty, CExprData::Instance(instance))
     }
 

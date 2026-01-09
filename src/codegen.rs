@@ -565,11 +565,6 @@ impl<'a> Buffer<'a> {
                     );
                 }));
             }
-        } else if ty.kind.is_closure() {
-            write_de!(self, "T");
-            self.write_len_prefixed(&Buffer::format(self.1, |data| {
-                write_de!(data, "Closure{}", ut.id)
-            }));
         } else {
             write_de!(self, "T");
             self.scope_emit_mangled_name(ty.body_scope, &ut.ty_args);
@@ -701,7 +696,10 @@ impl<'a> Buffer<'a> {
 
         let data = self.1.str(name.data);
         if !data.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$') {
-            let name = format!("{id}");
+            // TODO: punycode
+            let name = std::any::type_name::<T>();
+            let name = name.rsplit_once("::").map(|n| n.1).unwrap_or(name);
+            let name = format!("{name}{id}");
             buffer.write_len_prefixed(&name);
         } else if name.data != Strings::TUPLE_NAME {
             buffer.write_len_prefixed(data);
