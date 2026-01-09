@@ -2360,12 +2360,6 @@ impl<'a> Codegen<'a> {
         (scope, span): (ScopeId, Span),
     ) {
         match name {
-            Intrinsic::NumericAbs => {
-                let (_, mut expr) = args.shift_remove_index(0).unwrap();
-                expr.ty = expr.ty.with_templates(&self.proj.types, &state.func.ty_args);
-                let tmp = hoist!(self, self.emit_tmpvar(expr, state));
-                write_de!(self.buffer, "({tmp}<0?-{tmp}:{tmp})");
-            }
             Intrinsic::NumericCast => {
                 self.emit_cast(ret);
                 self.emit_expr(args.shift_remove_index(0).unwrap().1, state);

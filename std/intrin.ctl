@@ -1,9 +1,6 @@
 use std::reflect::*;
 
 $[intrinsic]
-pub extern fn numeric_abs<T: Signed>(_: T): T;
-
-$[intrinsic]
 pub extern fn size_of<T>(): uint;
 
 $[intrinsic]

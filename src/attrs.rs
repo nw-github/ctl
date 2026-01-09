@@ -393,7 +393,6 @@ impl std::fmt::Display for LangType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Intrinsic {
-    NumericAbs,
     NumericCast,
     MaxValue,
     MinValue,
@@ -419,7 +418,6 @@ pub enum Intrinsic {
 impl Intrinsic {
     fn from_str(s: &str) -> Option<Intrinsic> {
         match s {
-            "numeric_abs" => Some(Self::NumericAbs),
             "numeric_cast" => Some(Self::NumericCast),
             "max_value" => Some(Self::MaxValue),
             "min_value" => Some(Self::MinValue),

@@ -254,7 +254,8 @@ pub extension IntegralImpl<T: Integral> for T {
 }
 
 pub extension SignedImpl<T: Signed> for T {
-    pub fn abs(this): T => std::intrin::numeric_abs(*this);
+    // TODO: complain if -this == this (overflow) in debug mode
+    pub fn abs(my this): T => this < 0.cast() then -this else this;
 
     $[intrinsic(unary_op)]
     pub fn -(this): T => -this;
