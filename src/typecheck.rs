@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use enum_as_inner::EnumAsInner;
 
 use crate::{
@@ -331,7 +333,8 @@ pub struct TypeChecker<'a> {
     current_static: Option<(VariableId, Vec<VariableId>)>,
     cache: ExtensionCache,
     arena: ExprArena,
-    parsed: &'a PExprArena,
+    parsed: PExprArena,
+    _none: PhantomData<&'a ()>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -340,7 +343,7 @@ impl<'a> TypeChecker<'a> {
         diag: Diagnostics,
         lsp: Option<LspInput>,
         conf: Configuration,
-        arena: &'a PExprArena,
+        arena: PExprArena,
         strings: Strings,
     ) -> (Project, ExprArena) {
         let mut this = Self {
@@ -353,6 +356,7 @@ impl<'a> TypeChecker<'a> {
             cache: Default::default(),
             arena: ExprArena::with_capacity(arena.len()),
             parsed: arena,
+            _none: Default::default(),
         };
 
         let mut autouse = vec![];
@@ -2265,7 +2269,7 @@ impl TypeChecker<'_> {
         let target = target.and_then(|id| id.as_pointee(&self.proj.types));
         // allow &raw mut FOO to not be unsafe even if FOO is a static mut
         let inner = if matches!(op, UnaryOp::AddrRaw | UnaryOp::AddrRawMut)
-            && matches!(self.parsed.get(inner.data), ExprData::Path(_))
+            && matches!(self.parsed.cget(inner.data), ExprData::Path(_))
         {
             self.in_unsafe_context(|this| this.check_expr(inner, target)).1
         } else {
@@ -2612,23 +2616,23 @@ impl TypeChecker<'_> {
     /// Do not call this function directly
     fn check_expr_inner(&mut self, expr: PExpr, target: Option<TypeId>) -> CExpr {
         let span = expr.span;
-        match self.parsed.get(expr.data) {
+        match &self.parsed.cget(expr.data) {
             &PExprData::Binary { op, left, right } => {
                 let left_span = left.span;
                 let assignment = op.is_assignment();
                 match op {
                     BinaryOp::Assign => {
-                        if let PExprData::Path(path) = self.parsed.get(left.data)
+                        if let PExprData::Path(path) = self.parsed.cget(left.data)
                             && let Some(ident) = path.as_identifier()
                             && ident.data == Strings::UNDERSCORE
                         {
                             let right = self.check_expr(right, None);
                             return self.arena.typed(TypeId::VOID, CExprData::Discard(right));
                         } else if let PExprData::Subscript { callee, args } =
-                            self.parsed.get(left.data)
+                            self.parsed.cget(left.data)
                         {
                             let span = left.span;
-                            return self.check_subscript(*callee, args, target, Some(right), span);
+                            return self.check_subscript(callee, &args, target, Some(right), span);
                         }
                     }
                     BinaryOp::NoneCoalesce | BinaryOp::NoneCoalesceAssign => {
@@ -4246,9 +4250,9 @@ impl TypeChecker<'_> {
         args: &CallArgs,
         span: Span,
     ) -> CExpr {
-        match self.parsed.get(callee.data) {
+        match self.parsed.cget(callee.data) {
             PExprData::Member { source, member, generics } => {
-                let recv = self.check_expr(*source, None);
+                let recv = self.check_expr(source, None);
                 let id = recv.ty.strip_references(&self.proj.types);
                 if id == TypeId::UNKNOWN {
                     return Default::default();
@@ -4258,7 +4262,7 @@ impl TypeChecker<'_> {
                 // however, if you start editing a function call, it is possible for the span
                 // to end up here
                 self.check_dot_completions(member.span, id, true);
-                let Some(mut mfn) = self.lookup_member_fn(id, member.data, generics, span) else {
+                let Some(mut mfn) = self.lookup_member_fn(id, member.data, &generics, span) else {
                     bail!(
                         self,
                         Error::no_method(self.proj.fmt_ty(id), strdata!(self, member.data), span)
@@ -4355,7 +4359,7 @@ impl TypeChecker<'_> {
                     );
                 }
             }
-            PExprData::Path(path) => match self.resolve_value_path(path, target) {
+            PExprData::Path(path) => match self.resolve_value_path(&path, target) {
                 ResolvedValue::UnionConstructor(ut) => {
                     return self.check_unsafe_union_constructor(target, ut, args, span);
                 }
@@ -4404,8 +4408,7 @@ impl TypeChecker<'_> {
 
         let callee_span = callee.span;
         let callee = self.check_expr(callee, None);
-        match &self.proj.types[callee.ty] {
-            Type::Unknown => return Default::default(),
+        match &self.proj.types[callee.ty.strip_references(&self.proj.types)] {
             Type::Fn(func) => {
                 return self.check_known_fn_call(func.clone(), args, target, callee_span);
             }
@@ -4438,6 +4441,7 @@ impl TypeChecker<'_> {
                     check_unsafe!(self, Error::is_unsafe(callee_span));
                 }
 
+                let callee = callee.auto_deref(&self.proj.types, TypeId::UNKNOWN, &mut self.arena);
                 return self.arena.typed(f.ret, CExprData::CallFnPtr(callee, result));
             }
             _ => {}
@@ -4461,7 +4465,7 @@ impl TypeChecker<'_> {
                     .collect(),
             ),
         );
-        self.check_binary(callee_span, callee, rhs, BinaryOp::Call, callee_span)
+        self.check_binary(callee_span, callee, rhs, BinaryOp::Call, span)
     }
 
     fn check_known_fn_call(
@@ -4817,7 +4821,7 @@ impl TypeChecker<'_> {
         }
 
         let span = hint.span;
-        match self.parsed.hints.get(hint.data) {
+        match &self.parsed.hints.cget(hint.data) {
             TypeHintData::Path(path) => match self.resolve_type_path(path) {
                 ResolvedType::Builtin(ty) => ty,
                 ResolvedType::UserType(ut) => {
