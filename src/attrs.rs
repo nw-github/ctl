@@ -413,6 +413,7 @@ pub enum Intrinsic {
     PtrSubUnsigned,
     PtrDiff,
     BuiltinDbg,
+    InvokeWithTuple,
 }
 
 impl Intrinsic {
@@ -438,6 +439,7 @@ impl Intrinsic {
             "ptr_sub_unsigned" => Some(Self::PtrSubUnsigned),
             "ptr_diff" => Some(Self::PtrDiff),
             "builtin_dbg" => Some(Self::BuiltinDbg),
+            "invoke_with_tuple" => Some(Self::InvokeWithTuple),
             _ => None,
         }
     }

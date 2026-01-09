@@ -166,6 +166,6 @@ pub trait ShrAssign<T> {
 }
 
 $[lang(op_fn)]
-pub trait Fn<Args: std::reflect::Tuple, R> {
-    fn invoke(this, args: Args): R;
+pub sealed trait Fn<Args: std::reflect::Tuple, R> {
+    fn invoke(this, args: Args): R => std::intrin::invoke_with_tuple(this, args);
 }

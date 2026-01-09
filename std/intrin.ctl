@@ -42,6 +42,9 @@ pub extern fn ptr_diff<T>(a: ^T, b: ^T): int;
 $[intrinsic]
 pub extern fn builtin_dbg<T>(self: *T, f: *mut std::fmt::Formatter);
 
+$[intrinsic]
+pub extern fn invoke_with_tuple<F, Args: Tuple, R>(self: *F, args: Args): R;
+
 
 $[c_macro("CTL_MEMSET")]
 pub extern fn memset(dst: ^mut void, c: c_int, len: uint): ^mut void;

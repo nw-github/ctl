@@ -2594,6 +2594,35 @@ impl<'a> Codegen<'a> {
                 });
                 self.buffer.emit(VOID_INSTANCE);
             }
+            Intrinsic::InvokeWithTuple => {
+                let mut args = args.into_iter();
+                let mut callee = args
+                    .next()
+                    .expect("ICE: InvokeWithTuple should receive two arguments")
+                    .1
+                    .auto_deref(&self.proj.types, TypeId::UNKNOWN, &mut self.arena);
+                let mut args =
+                    args.next().expect("ICE: InvokeWithTuple should receive two arguments").1;
+                callee.ty = callee.ty.with_templates(&self.proj.types, &state.func.ty_args);
+                args.ty = args.ty.with_templates(&self.proj.types, &state.func.ty_args);
+
+                let args_tmpvar = hoist!(self, self.emit_tmpvar(args, state));
+
+                self.emit_expr_inline(callee, state);
+                write_de!(self.buffer, "(");
+                let ut = self.proj.types[args.ty]
+                    .as_user()
+                    .expect("ICE: InvokeWithTuple second argument should be a tuple");
+                for (i, member) in self.proj.scopes.get(ut.id).members.keys().enumerate() {
+                    write_if!(i != 0, self.buffer, ", ");
+                    write_de!(
+                        self.buffer,
+                        "{args_tmpvar}.{}",
+                        member_name(self.proj, None, *member)
+                    );
+                }
+                write_de!(self.buffer, ")");
+            }
         }
     }
 
@@ -3746,6 +3775,18 @@ impl SharedStuff for Codegen<'_> {
 
     fn extension_cache(&mut self) -> &mut crate::typecheck::ExtensionCache {
         &mut self.ext_cache
+    }
+
+    fn get_tuple(&mut self, ty_args: Vec<TypeId>) -> TypeId {
+        // XXX: we should be able to create a new tuple but get_tuple requires &mut Scopes.
+        //      Our only caller is lookup_trait_fn, who would only call this function to generate 
+        //      the trait impls for a Fn/FnPtr type. TypeChecker::check_fn creates a new tuple with
+        //      the same number of members as fn parameters so we dont crash here.
+        let names: Vec<_> =
+            (0..ty_args.len()).map(|i| self.proj.strings.get(format!("{i}")).unwrap()).collect();
+        let id = self.proj.scopes.find_tuple(&names).unwrap();
+        let ut = GenericUserType::from_type_args(&self.proj.scopes, id, ty_args);
+        self.proj.types.insert(Type::User(ut))
     }
 }
 
