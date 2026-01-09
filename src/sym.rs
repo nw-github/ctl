@@ -118,7 +118,7 @@ pub struct BlockScopeKind {
 pub enum ScopeKind {
     Block(BlockScopeKind),
     Loop(LoopScopeKind),
-    Lambda(Option<TypeId>),
+    Lambda(Option<TypeId>, DefaultCapturePolicy),
     Function(FunctionId),
     UserType(UserTypeId),
     Impl(usize),
@@ -337,7 +337,7 @@ pub enum UserTypeKind {
     UnsafeUnion,
     Template,
     Tuple,
-    Closure { policy: DefaultCapturePolicy },
+    Closure,
     Trait { this: UserTypeId, sealed: bool, assoc_types: HashMap<StrId, UserTypeId> },
     Extension(TypeId),
 }

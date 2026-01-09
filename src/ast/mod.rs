@@ -311,8 +311,9 @@ pub enum Sign {
     Negative,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DefaultCapturePolicy {
+    #[default]
     None,
     ByVal,
     ByValMut,

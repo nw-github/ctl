@@ -3,7 +3,7 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     Warning,
     ast::{
-        Attributes, BinaryOp, Capture, DefaultCapturePolicy, UnaryOp,
+        Attributes, BinaryOp, Capture, UnaryOp,
         checked::{
             ArrayPattern, Block, Expr as CExpr, ExprArena, ExprData as CExprData,
             FormatOpts as CFormatSpec, Pattern as CPattern, PatternData, RestPattern,
@@ -491,6 +491,43 @@ impl<'a> TypeChecker<'a> {
             .module_of(scope)
             .map(|target| self.proj.scopes.walk(self.current).any(|(id, _)| id == target))
             .unwrap_or_default()
+    }
+
+    fn check_local(&mut self, id: VariableId, span: Span, mut in_closure: bool) {
+        let var = self.proj.scopes.get(id);
+        if self.current_function() != self.proj.scopes.function_of(var.scope) {
+            self.proj.diag.report(Error::new("cannot reference local of enclosing function", span));
+        }
+
+        if self.current_static.as_ref().is_some_and(|v| !self.is_var_accessible(v.0, var.scope)) {
+            self.proj.diag.report(Error::new(
+                "cannot reference local from outside of static initializer",
+                span,
+            ));
+        }
+
+        // TODO: actually respect the policy, nested closure capture
+        let mut closure_policy = None;
+        for (sid, scope) in self.proj.scopes.walk(self.current) {
+            if sid == var.scope {
+                if closure_policy.is_some() {
+                    self.proj.diag.report(Error::new(
+                        "cannot access non-captured local from inside a closure",
+                        span,
+                    ));
+                }
+                return;
+            }
+
+            if let ScopeKind::Lambda(_, policy) = scope.kind {
+                if !in_closure {
+                    closure_policy = Some(policy);
+                } else {
+                    // Skip the first closure if we are checking closure captures
+                    in_closure = false;
+                }
+            }
+        }
     }
 }
 
@@ -2282,12 +2319,10 @@ impl TypeChecker<'_> {
         self.arena.typed(out_ty, CExprData::Unary(op, inner))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn check_lambda(
         &mut self,
         span: Span,
         target: Option<TypeId>,
-        policy: Option<DefaultCapturePolicy>,
         captures: &[Located<Capture>],
         params: &[(Located<Pattern>, Option<TypeHint>)],
         ret: Option<TypeId>,
@@ -2299,8 +2334,6 @@ impl TypeChecker<'_> {
 
         let mut members = IndexMap::new();
         let mut instance = IndexMap::new();
-        let mut names = vec![];
-        let mut ty_args = vec![];
         for capture in captures {
             let name = Located::new(capture.span, capture.data.data());
             let path = Path::from(name);
@@ -2309,18 +2342,18 @@ impl TypeChecker<'_> {
                 continue;
             };
 
-            let var = self.proj.scopes.get(o_var_id);
-            if !var.kind.is_local() {
+            if !self.proj.scopes.get(o_var_id).kind.is_local() {
                 self.proj.diag.report(Error::new(
                     format!("invalid capture of non-local variable '{}'", self.proj.str(name.data)),
                     capture.span,
                 ));
                 continue;
-            } else if self.current_function() != self.proj.scopes.function_of(var.scope) {
-                self.proj.diag.report(Error::access_enclosing_local(capture.span));
-                continue;
             }
 
+            self.check_local(o_var_id, capture.span, true);
+            self.proj.scopes.get_mut(o_var_id).unused = false;
+
+            let var = self.proj.scopes.get(o_var_id);
             let (ty, mutable) = match capture.data {
                 Capture::ByVal(_) => (var.ty, false),
                 Capture::ByValMut(_) => (var.ty, true),
@@ -2357,9 +2390,10 @@ impl TypeChecker<'_> {
             };
             self.insert::<VariableId>(var, false, true);
             members.insert(name.data, CheckedMember::new(false, ty, Span::nowhere()));
-            self.proj.scopes.get_mut(o_var_id).unused = false;
         }
 
+        let mut names = vec![];
+        let mut ty_args = vec![];
         let mut checked_params = vec![];
         for (i, (patt, hint)) in params.iter().enumerate() {
             let ty = if let Some(hint) = hint {
@@ -2391,21 +2425,20 @@ impl TypeChecker<'_> {
         }
 
         let span = body.span;
-        let body = self.check_expr(body, ret);
-        let ret = self.proj.scopes[self.current].kind.as_lambda().unwrap().unwrap_or(body.ty);
+        let body = self.check_expr_no_never_propagation(body, ret);
+        let ret = self.proj.scopes[self.current].kind.as_lambda().unwrap().0.unwrap_or(body.ty);
         let body = self.type_check_checked(body, ret, span);
 
         let args_tuple = self.proj.scopes.get_tuple(names, ty_args, &self.proj.types);
         let fn_tr_inst = GenericTrait::from_type_args(&self.proj.scopes, fn_tr, [args_tuple, ret]);
 
-        let policy = policy.unwrap_or(DefaultCapturePolicy::None);
         let closure_id = self.insert::<UserTypeId>(
             UserType {
                 attrs: Default::default(),
                 public: false,
                 name: Located::nowhere(Strings::CLOSURE_NAME),
                 body_scope: self.current,
-                kind: UserTypeKind::Closure { policy },
+                kind: UserTypeKind::Closure,
                 impls: TraitImpls::Checked(vec![Some(fn_tr_inst)]),
                 impl_blocks: vec![ImplBlockData {
                     type_params: vec![],
@@ -3168,21 +3201,8 @@ impl TypeChecker<'_> {
             }
             PExprData::Path(path) => match self.resolve_value_path(path, target) {
                 ResolvedValue::Var(id) => {
-                    let var = self.proj.scopes.get(id);
-                    if var.kind.is_local() {
-                        if self.current_function() != self.proj.scopes.function_of(var.scope) {
-                            self.proj.diag.report(Error::access_enclosing_local(span));
-                        }
-                        if self
-                            .current_static
-                            .as_ref()
-                            .is_some_and(|v| !self.is_var_accessible(v.0, var.scope))
-                        {
-                            self.proj.diag.report(Error::new(
-                                "cannot reference local variable from outside of static initializer",
-                                span,
-                            ));
-                        }
+                    if self.proj.scopes.get(id).kind.is_local() {
+                        self.check_local(id, span, false);
                     } else if let Some((cur, deps)) = &mut self.current_static {
                         deps.push(id);
                         let recursive = match self.proj.static_deps.get(&id) {
@@ -3198,6 +3218,7 @@ impl TypeChecker<'_> {
                         }
                     }
 
+                    let var = self.proj.scopes.get(id);
                     if var.kind.is_static() && var.is_extern {
                         check_unsafe!(
                             self,
@@ -3475,7 +3496,7 @@ impl TypeChecker<'_> {
             }
             &PExprData::Return(expr) => self.check_return(expr, span),
             &PExprData::Tail(expr) => match &self.proj.scopes[self.current].kind {
-                ScopeKind::Function(_) | ScopeKind::Lambda(_) => self.check_return(expr, span),
+                ScopeKind::Function(_) | ScopeKind::Lambda(_, _) => self.check_return(expr, span),
                 ScopeKind::Loop { .. } => self.type_check(expr, TypeId::VOID),
                 ScopeKind::Block(data) => self.check_yield(Some(expr), *data, self.current, span),
                 _ => self.error(Error::new("yield outside of block", expr.span)),
@@ -3651,8 +3672,8 @@ impl TypeChecker<'_> {
             PExprData::Error => CExpr::default(),
             &PExprData::Lambda { policy, ref captures, ref params, ret, body } => {
                 let ret = ret.map(|ret| self.resolve_typehint(ret));
-                self.enter(ScopeKind::Lambda(ret), |this| {
-                    this.check_lambda(span, target, policy, captures, params, ret, body)
+                self.enter(ScopeKind::Lambda(ret, policy.unwrap_or_default()), |this| {
+                    this.check_lambda(span, target, captures, params, ret, body)
                 })
             }
             &PExprData::Unsafe(expr) => {
@@ -3709,13 +3730,10 @@ impl TypeChecker<'_> {
         if propagate_never
             && expr.ty == TypeId::NEVER
             && !matches!(self.arena.get(expr.data), &CExprData::Yield(_, scope) if scope == self.current)
-        {
-            // TODO: lambdas
-            if let ScopeKind::Block(BlockScopeKind { branches, .. }) =
+            && let ScopeKind::Block(BlockScopeKind { branches, .. }) =
                 &mut self.proj.scopes[self.current].kind
-            {
-                *branches = true;
-            }
+        {
+            *branches = true;
         }
         (expr, res)
     }
@@ -3910,14 +3928,14 @@ impl TypeChecker<'_> {
     fn check_return(&mut self, expr: PExpr, span: Span) -> CExpr {
         for (id, scope) in self.proj.scopes.walk(self.current) {
             match &scope.kind {
-                &ScopeKind::Lambda(target) => {
+                &ScopeKind::Lambda(target, policy) => {
                     let span = expr.span;
                     let mut expr = self.check_expr(expr, target);
                     self.proj.scopes[id].kind = if let Some(target) = target {
                         expr = self.type_check_checked(expr, target, span);
-                        ScopeKind::Lambda(Some(target))
+                        ScopeKind::Lambda(Some(target), policy)
                     } else {
-                        ScopeKind::Lambda(Some(expr.ty))
+                        ScopeKind::Lambda(Some(expr.ty), policy)
                     };
                     return self.arena.typed(TypeId::NEVER, CExprData::Return(expr));
                 }

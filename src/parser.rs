@@ -1136,10 +1136,10 @@ impl<'a> Parser<'a> {
             Token::Ampersand => {
                 let start = this.next();
                 let mutable = this.next_if(Token::Mut);
-                let ident = this.next_if_map(|this, next| {
-                    next.data
-                        .as_ident()
-                        .map(|ident| Located::new(next.span, this.strings.get_or_intern(ident)))
+                let ident = this.next_if_map(|this, next| match next.data {
+                    Token::Ident(i) => Some(Located::new(next.span, this.strings.get_or_intern(i))),
+                    Token::This => Some(Located::new(next.span, Strings::THIS_PARAM)),
+                    _ => None,
                 });
                 let span = start.span.extended_to(
                     ident
@@ -1167,6 +1167,10 @@ impl<'a> Parser<'a> {
                     Capture::ByVal(this.strings.get_or_intern(ident)),
                 ))
             }
+            Token::This => {
+                let start = this.next();
+                captures.push(Located::new(start.span, Capture::ByVal(Strings::THIS_PARAM)))
+            }
             Token::Assign => {
                 let start = this.next();
                 let mutable = this.next_if(Token::Mut);
@@ -1178,6 +1182,10 @@ impl<'a> Parser<'a> {
                     ),
                     None => set_policy(this, DefaultCapturePolicy::ByVal, start.span),
                 }
+            }
+            Token::Exclamation => {
+                let start = this.next();
+                set_policy(this, DefaultCapturePolicy::Auto, start.span);
             }
             _ => {
                 let span = this.peek().span;
