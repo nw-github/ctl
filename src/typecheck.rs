@@ -4797,7 +4797,12 @@ impl TypeChecker<'_> {
     fn resolve_dyn_ptr(&mut self, path: &Path) -> Option<GenericTrait> {
         match self.resolve_type_path(path) {
             ResolvedType::UserType(ut) => {
-                if self.proj.scopes.get(ut.id).kind.is_trait() {
+                let data = self.proj.scopes.get(ut.id);
+                if data.kind.is_trait() {
+                    if path.fn_like && data.attrs.lang != Some(LangType::OpFn) {
+                        self.error(Error::function_like_tr(path.span()))
+                    }
+
                     Some(ut)
                 } else {
                     bail!(
@@ -5166,7 +5171,12 @@ impl TypeChecker<'_> {
                 TraitImplData::Path(scope, path) => {
                     this.enter_id_and_resolve(scope, |this| match this.resolve_type_path(&path) {
                         ResolvedType::UserType(ut) => {
-                            if this.proj.scopes.get(ut.id).kind.is_trait() {
+                            let data = this.proj.scopes.get(ut.id);
+                            if data.kind.is_trait() {
+                                if path.fn_like && data.attrs.lang != Some(LangType::OpFn) {
+                                    this.error(Error::function_like_tr(path.span()))
+                                }
+
                                 Some(ut)
                             } else {
                                 this.error(Error::expected_found(

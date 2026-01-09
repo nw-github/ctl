@@ -1,6 +1,6 @@
 // Output: PASS!
 
-fn foo<F: Fn<(int), int>>(f: F): int => f(10);
+fn foo<F: Fn(int) => int>(f: F): int => f(10);
 
 fn identity(x: int): int => x;
 

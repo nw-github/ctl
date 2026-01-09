@@ -231,15 +231,20 @@ pub enum ExprData {
 
 pub type PathComponent = (Located<StrId>, Vec<TypeHint>);
 
-#[derive(Clone, derive_more::Constructor)]
+#[derive(Clone)]
 pub struct Path {
     pub origin: PathOrigin,
     pub components: Vec<PathComponent>,
+    pub fn_like: bool,
 }
 
 impl Path {
+    pub fn new(origin: PathOrigin, components: Vec<PathComponent>) -> Self {
+        Self { origin, components, fn_like: false }
+    }
+
     pub fn this_type(span: Span) -> Self {
-        Self { origin: PathOrigin::This(span), components: vec![] }
+        Self::new(PathOrigin::This(span), vec![])
     }
 
     pub fn as_identifier(&self) -> Option<Located<StrId>> {
@@ -573,7 +578,7 @@ impl ExprArena {
         this.exprs.alloc(ExprData::Error);
         this.hints.alloc(TypeHintData::Error);
         this.hints.alloc(TypeHintData::Void);
-        this.hints.alloc(TypeHintData::Path(Path::new(PathOrigin::This(Span::default()), vec![])));
+        this.hints.alloc(TypeHintData::Path(Path::this_type(Span::default())));
         this
     }
 

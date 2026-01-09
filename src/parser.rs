@@ -1266,7 +1266,7 @@ impl<'a> Parser<'a> {
         data
     }
 
-    fn type_path(&mut self) -> Path {
+    fn type_or_trait_path(&mut self, tr: bool) -> Path {
         let origin = match self.peek().data {
             Token::ScopeRes => PathOrigin::Root(self.next().span),
             Token::Super => {
@@ -1284,9 +1284,23 @@ impl<'a> Parser<'a> {
             _ => PathOrigin::Normal,
         };
         let mut data = Vec::new();
-        loop {
+        let fn_like = loop {
             let ident = self.expect_ident("expected type name");
-            if self.next_if(Token::LAngle).is_some() {
+            if tr && let Some(start) = self.next_if(Token::LParen) {
+                let mut next = 0;
+                let hints = self
+                    .csv(vec![], Token::RParen, start.span, |this| {
+                        let item = this.maybe_labeled_type_hint();
+                        this.label_or_positional(item, &mut next)
+                    })
+                    .map(|args| self.arena.hints.alloc(TypeHintData::Tuple(args)));
+                let ret = self
+                    .next_if(Token::FatArrow)
+                    .map(|_| self.type_hint())
+                    .unwrap_or(ExprArena::hint_void(hints.span));
+                data.push((ident, vec![hints, ret]));
+                break true;
+            } else if self.next_if(Token::LAngle).is_some() {
                 let params = self.rangle_csv_one(ident.span, Self::type_hint);
                 data.push((ident, params.data));
             } else {
@@ -1294,11 +1308,15 @@ impl<'a> Parser<'a> {
             }
 
             if self.next_if(Token::ScopeRes).is_none() {
-                break;
+                break false;
             }
-        }
+        };
 
-        Path::new(origin, data)
+        Path { origin, components: data, fn_like }
+    }
+
+    fn type_path(&mut self) -> Path {
+        self.type_or_trait_path(false)
     }
 
     //
@@ -1637,7 +1655,7 @@ impl<'a> Parser<'a> {
         let mut impls = Vec::new();
         if self.next_if(Token::Colon).is_some() {
             loop {
-                impls.push(self.type_path());
+                impls.push(self.type_or_trait_path(true));
                 if self.next_if(Token::Plus).is_none() {
                     break;
                 }
@@ -1664,7 +1682,7 @@ impl<'a> Parser<'a> {
                 let begin = self.next().span;
                 if self.next_if(Token::Dyn).is_some() {
                     let mutable = self.next_if(Token::Mut).is_some();
-                    let path = self.type_path();
+                    let path = self.type_or_trait_path(true);
                     let span = begin.extended_to(path.span());
                     if mutable {
                         self.arena.hint(span, TypeHintData::DynMutPtr(path))
@@ -2041,7 +2059,7 @@ impl<'a> Parser<'a> {
 
     fn impl_block(&mut self, attrs: Attributes, span: Span) -> Located<ImplBlock> {
         let type_params = self.type_params();
-        let path = self.type_path();
+        let path = self.type_or_trait_path(true);
         self.expect(Token::LCurly);
 
         let mut functions = Vec::new();

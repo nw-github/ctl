@@ -100,26 +100,29 @@ impl std::fmt::Display for FmtUt<'_, '_> {
                 write!(f, ")")
             }
             _ => {
-                let is_lang_type =
-                    |name: LangType| p.scopes.lang_types.get(&name).is_some_and(|&id| id == ut.id);
-                if is_lang_type(LangType::Option) {
-                    return write!(f, "?{}", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type(LangType::Span) {
-                    return write!(f, "[{}..]", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type(LangType::SpanMut) {
-                    return write!(f, "[mut {}..]", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type(LangType::Vec) {
-                    return write!(f, "[{}]", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type(LangType::Set) {
-                    return write!(f, "#[{}]", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type(LangType::Map) {
-                    return write!(f, "[{}: {}]", p.fmt_ty(ut.ty_args[0]), p.fmt_ty(ut.ty_args[1]));
+                let args = &ut.ty_args;
+                match p.scopes.get(ut.id).attrs.lang {
+                    Some(LangType::Option) => return write!(f, "?{}", p.fmt_ty(args[0])),
+                    Some(LangType::Span) => return write!(f, "[{}..]", p.fmt_ty(args[0])),
+                    Some(LangType::SpanMut) => {
+                        return write!(f, "[mut {}..]", p.fmt_ty(args[0]));
+                    }
+                    Some(LangType::Vec) => return write!(f, "[{}]", p.fmt_ty(args[0])),
+                    Some(LangType::Set) => return write!(f, "#[{}]", p.fmt_ty(args[0])),
+                    Some(LangType::Map) => {
+                        return write!(f, "[{}: {}]", p.fmt_ty(args[0]), p.fmt_ty(args[1]));
+                    }
+                    _ => {}
                 }
 
                 write!(f, "{}", p.strings.resolve(&p.scopes.get(ut.id).name.data))?;
-                if !ut.ty_args.is_empty() {
+                if p.scopes.get(ut.id).attrs.lang == Some(LangType::OpFn) {
+                    return write!(f, "{} => {}", p.fmt_ty(args[0]), p.fmt_ty(args[1]));
+                }
+
+                if !args.is_empty() {
                     write!(f, "<")?;
-                    for (i, concrete) in ut.ty_args.values().enumerate() {
+                    for (i, concrete) in args.values().enumerate() {
                         if i > 0 {
                             write!(f, ", ")?;
                         }

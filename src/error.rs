@@ -286,6 +286,10 @@ impl Error {
     pub fn invalid_attr(name: impl Display, span: Span) -> Self {
         Self::new(format!("invalid attribute '{name}'"), span)
     }
+
+    pub fn function_like_tr(span: Span) -> Self {
+        Self::new("function-like trait syntax is only valid with the `Fn` trait", span)
+    }
 }
 
 pub struct Warning;
