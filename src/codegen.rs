@@ -700,7 +700,7 @@ impl<'a> Buffer<'a> {
         let item = id.get(&self.1.scopes);
 
         let data = self.1.str(name.data);
-        if !data.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+        if !data.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$') {
             let name = format!("{id}");
             buffer.write_len_prefixed(&name);
         } else if name.data != Strings::TUPLE_NAME {

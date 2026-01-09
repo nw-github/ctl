@@ -528,6 +528,10 @@ impl TypeChecker<'_> {
                     continue;
                 }
 
+                if proj.str(f.name.data).contains('$') {
+                    continue;
+                }
+
                 if (f.public || cap)
                     && (!method || f.params.first().is_some_and(|p| p.label == Strings::THIS_PARAM))
                 {
@@ -2452,7 +2456,7 @@ impl TypeChecker<'_> {
                 let func = Function {
                     public: false,
                     attrs: Default::default(),
-                    name: Located::nowhere(this.proj.strings.get_or_intern("do_invoke")),
+                    name: Located::nowhere(this.proj.strings.get_or_intern("$do_invoke")),
                     is_extern: false,
                     is_async: false,
                     is_unsafe: false,
