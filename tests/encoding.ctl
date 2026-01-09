@@ -23,9 +23,7 @@ fn main() {
 }
 
 fn print_stuff(data: char) {
-    let s = data.encode_utf8(&mut [0u8; 4]);
-    let (lead, trail) = data.encode_utf16();
     println("code point: {data as u32:#x}");
-    println("utf8:       {s.as_bytes():?}");
-    println("utf16:      ({lead}, {trail:?})");
+    println("utf8:       {data.encode_utf8(&mut [0u8; 4]).as_bytes():?}");
+    println("utf16:      {data.encode_utf16():?}");
 }

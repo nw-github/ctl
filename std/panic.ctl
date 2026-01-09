@@ -132,19 +132,20 @@ fn panic_handler(args: Arguments, loc: SourceLocation): never {
 }
 
 $[feature(hosted)]
-pub fn catch_panic<R, A>(func: fn(A) => R, arg: A): Result<R, str> {
+pub fn catch_panic<F: Fn<(), R>, R>(func: F): Result<R, str> {
+    let (prev_buf, was_panicking) = unsafe (CTL_PANIC_JMPBUF.take(), IS_PANICKING);
     let buf = unsafe CTL_PANIC_JMPBUF.insert(std::mem::zeroed());
     // TODO: Make this an intrinsic so that we use the macro and follow the very specific semantics
     // of setjmp
     let res: Result<R, str> = match unsafe libc::_setjmp(buf) {
-        0 => Ok(func(arg)),
+        0 => Ok(func()),
         _ => Err(unsafe CTL_PANIC_INFO),
     };
 
     unsafe {
-        IS_PANICKING = false;
+        IS_PANICKING = was_panicking;
         CTL_PANIC_INFO = "";
-        CTL_PANIC_JMPBUF.take();
+        CTL_PANIC_JMPBUF = prev_buf;
     }
 
     res

@@ -173,3 +173,16 @@ pub struct Repeat<T> {
 
 pub fn once<T>(val: T): Once<T> => Once::new(val);
 pub fn repeat<T>(val: T): Repeat<T> => Repeat::new(val);
+
+mod tests {
+    unittest "zip even" {
+        let a = [1, 2, 3];
+        let b = [3, 2, 1];
+        mut iter = a.iter().zip(b.iter());
+
+        assert_eq("{iter.next():?}".to_str(), "Some((1, 3))");
+        assert_eq("{iter.next():?}".to_str(), "Some((2, 2))");
+        assert_eq("{iter.next():?}".to_str(), "Some((3, 1))");
+        assert(iter.next().is_null());
+    }
+}
