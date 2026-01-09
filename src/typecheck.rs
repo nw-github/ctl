@@ -4402,11 +4402,13 @@ impl TypeChecker<'_> {
             _ => {}
         }
 
-        let span = callee.span;
+        let callee_span = callee.span;
         let callee = self.check_expr(callee, None);
         match &self.proj.types[callee.ty] {
-            Type::Unknown => Default::default(),
-            Type::Fn(func) => self.check_known_fn_call(func.clone(), args, target, span),
+            Type::Unknown => return Default::default(),
+            Type::Fn(func) => {
+                return self.check_known_fn_call(func.clone(), args, target, callee_span);
+            }
             Type::FnPtr(f) => {
                 let f = f.clone();
                 let mut result = vec![];
@@ -4421,30 +4423,45 @@ impl TypeChecker<'_> {
 
                         result.push(self.type_check(arg, param));
                     } else {
-                        self.proj.diag.report(Error::new("too many positional arguments", span));
+                        self.proj
+                            .diag
+                            .report(Error::new("too many positional arguments", callee_span));
                         break;
                     }
                 }
 
                 if result.len() < f.params.len() {
-                    self.error(Error::new("too few positional arguments", span))
+                    self.error(Error::new("too few positional arguments", callee_span))
                 }
 
                 if f.is_unsafe {
-                    check_unsafe!(self, Error::is_unsafe(span));
+                    check_unsafe!(self, Error::is_unsafe(callee_span));
                 }
 
-                self.arena.typed(f.ret, CExprData::CallFnPtr(callee, result))
+                return self.arena.typed(f.ret, CExprData::CallFnPtr(callee, result));
             }
-            _ => bail!(
-                self,
-                Error::expected_found(
-                    "callable item",
-                    format_args!("'{}'", self.proj.fmt_ty(callee.ty)),
-                    span,
-                )
-            ),
+            _ => {}
         }
+
+        let mut i = 0;
+        let rhs = self.parsed.expr(
+            span,
+            ExprData::Tuple(
+                args.iter()
+                    .map(|&(label, arg)| {
+                        (
+                            label.unwrap_or_else(|| {
+                                let label = self.proj.strings.get_or_intern(format!("{i}"));
+                                i += 1;
+                                Located::nowhere(label)
+                            }),
+                            arg,
+                        )
+                    })
+                    .collect(),
+            ),
+        );
+        self.check_binary(callee_span, callee, rhs, BinaryOp::Call, callee_span)
     }
 
     fn check_known_fn_call(
@@ -7941,6 +7958,7 @@ impl TypeChecker<'_> {
             BinaryOp::XorAssign => Some((LangType::OpXorAssign, strings.get("xor_assign")?)),
             BinaryOp::ShlAssign => Some((LangType::OpShlAssign, strings.get("shl_assign")?)),
             BinaryOp::ShrAssign => Some((LangType::OpShrAssign, strings.get("shr_assign")?)),
+            BinaryOp::Call => Some((LangType::OpFn, strings.get("invoke")?)),
             _ => None,
         }
     }

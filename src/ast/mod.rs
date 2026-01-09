@@ -127,6 +127,7 @@ pub enum BinaryOp {
     ShrAssign,
     #[display(fmt = "??=")]
     NoneCoalesceAssign,
+    Call,
 }
 
 impl TryFrom<Token<'_>> for BinaryOp {

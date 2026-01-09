@@ -666,7 +666,7 @@ impl TypeId {
                 )
             }
             LogicalOr | LogicalAnd => this.is_bool(),
-            NoneCoalesce | NoneCoalesceAssign => false,
+            NoneCoalesce | NoneCoalesceAssign | Call => false,
         }
     }
 
