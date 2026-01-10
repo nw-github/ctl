@@ -932,7 +932,7 @@ impl<'a> Parser<'a> {
             Token::Then => {
                 let if_branch = self.expression();
                 let else_branch =
-                    self.next_if(Token::Else).map(|_| self.precedence(op.data.precedence(), ctx)); /* EvalContext::IfWhile? */
+                    self.next_if(Token::Else).map(|_| self.precedence(Precedence::Min, ctx)); /* EvalContext::IfWhile? */
                 self.arena.expr(
                     left.span.extended_to(else_branch.as_ref().map_or(if_branch.span, |e| e.span)),
                     ExprData::If { cond: left, if_branch, else_branch },
