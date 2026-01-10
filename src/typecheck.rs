@@ -3259,7 +3259,7 @@ impl TypeChecker<'_> {
                         .collect();
                     if let Some(target) = target {
                         let src = self.proj.scopes.get(func.id).ret;
-                        self.infer_type_args(&mut func, src, target);
+                        self.infer_type_args(&mut func.ty_args, src, target);
                     }
                     self.check_bounds_filtered(&func, &unknowns, path.final_component_span());
 
@@ -3295,7 +3295,7 @@ impl TypeChecker<'_> {
                         .collect();
                     if let Some(target) = target {
                         let src = self.proj.scopes.get(mfn.func.id).ret;
-                        self.infer_type_args(&mut mfn.func, src, target);
+                        self.infer_type_args(&mut mfn.func.ty_args, src, target);
                     }
                     self.check_bounds_filtered(&mfn.func, &unknowns, path.final_component_span());
 
@@ -4513,7 +4513,7 @@ impl TypeChecker<'_> {
         let span = expr.span;
         let expr = self.check_expr(expr, Some(target));
         if !func.ty_args.is_empty() {
-            self.infer_type_args(func, ty, expr.ty);
+            self.infer_type_args(&mut func.ty_args, ty, expr.ty);
             target = target.with_templates(&self.proj.types, &func.ty_args);
         }
 
@@ -4542,7 +4542,7 @@ impl TypeChecker<'_> {
             .filter_map(|(&id, &ty)| (ty == TypeId::UNKNOWN).then_some(id))
             .collect();
         if let Some(target) = target {
-            self.infer_type_args(func, self.proj.scopes.get(func.id).ret, target);
+            self.infer_type_args(&mut func.ty_args, self.proj.scopes.get(func.id).ret, target);
         }
 
         let mut result = IndexMap::with_capacity(args.len());
@@ -7246,9 +7246,10 @@ impl TypeChecker<'_> {
         }
 
         let mut ty_args = TypeArgs::unknown(&self.proj.scopes.get(id).item);
+        let in_scope = &self.extensions_in_scope(self.current);
         for (i, arg) in params.iter().enumerate().take(args.len()) {
             let id = self.resolve_typehint(args[i]);
-            self.insert_ty_arg(&mut ty_args, *arg, id);
+            self.do_insert_ty_arg(in_scope, &mut ty_args, *arg, id);
         }
 
         for (&id, &ty) in ty_args.iter() {
@@ -7461,14 +7462,9 @@ impl TypeChecker<'_> {
         self.do_has_direct_impl(&exts, ut, bound)
     }
 
-    fn infer_type_args<T>(&mut self, item: &mut WithTypeArgs<T>, src: TypeId, target: TypeId) {
+    fn infer_type_args(&mut self, item: &mut TypeArgs, src: TypeId, target: TypeId) {
         let exts = self.extensions_in_scope(self.current);
         self.do_infer_type_args(&exts, item, src, target)
-    }
-
-    fn insert_ty_arg(&mut self, ty_args: &mut TypeArgs, key: UserTypeId, val: TypeId) {
-        let exts = self.extensions_in_scope(self.current);
-        self.do_insert_ty_arg(&exts, ty_args, key, val)
     }
 }
 
@@ -7678,7 +7674,7 @@ pub trait SharedStuff {
         self.do_resolve_impls(ext);
 
         let mut ext = GenericExtension::from_id_unknown(&self.proj().scopes, ext);
-        self.do_infer_type_args(in_scope, &mut ext, ext_ty_id, ty);
+        self.do_infer_type_args(in_scope, &mut ext.ty_args, ext_ty_id, ty);
         if ext_ty_id.with_templates(&self.proj().types, &ext.ty_args) != ty {
             return None;
         }
@@ -7831,10 +7827,10 @@ pub trait SharedStuff {
         true
     }
 
-    fn do_infer_type_args<T>(
+    fn do_infer_type_args(
         &mut self,
         in_scope: &[ExtensionId],
-        item: &mut WithTypeArgs<T>,
+        ty_args: &mut TypeArgs,
         mut src: TypeId,
         mut target: TypeId,
     ) {
@@ -7857,10 +7853,10 @@ pub trait SharedStuff {
                     let src = src.clone();
                     let target = target.clone();
                     for (&src, &target) in src.params.iter().zip(target.params.iter()) {
-                        self.do_infer_type_args(in_scope, item, src, target);
+                        self.do_infer_type_args(in_scope, ty_args, src, target);
                     }
 
-                    self.do_infer_type_args(in_scope, item, src.ret, target.ret);
+                    self.do_infer_type_args(in_scope, ty_args, src.ret, target.ret);
                     break;
                 }
                 (
@@ -7874,25 +7870,25 @@ pub trait SharedStuff {
                     let src = src.clone();
                     let target = target.clone();
                     for (&src, &target) in src.ty_args.values().zip(target.ty_args.values()) {
-                        self.do_infer_type_args(in_scope, item, src, target);
+                        self.do_infer_type_args(in_scope, ty_args, src, target);
                     }
                     break;
                 }
                 (Type::User(src), target_ty) => {
                     // TODO: T => ?T
-                    if let Entry::Occupied(entry) = item.ty_args.entry(src.id) {
+                    if let Entry::Occupied(entry) = ty_args.entry(src.id) {
                         if entry.get() != &TypeId::UNKNOWN {
                             return;
                         }
 
-                        self.do_insert_ty_arg(in_scope, &mut item.ty_args, src.id, target);
+                        self.do_insert_ty_arg(in_scope, ty_args, src.id, target);
                     } else if let Type::User(target) = target_ty
                         && src.id == target.id
                     {
                         let src = src.clone();
                         let target = target.clone();
                         for (&src, &target) in src.ty_args.values().zip(target.ty_args.values()) {
-                            self.do_infer_type_args(in_scope, item, src, target);
+                            self.do_infer_type_args(in_scope, ty_args, src, target);
                         }
                     }
 
@@ -7919,14 +7915,8 @@ pub trait SharedStuff {
             }
 
             if let Some(mine) = self.find_trait_impl(in_scope, tr.id, val) {
-                for (ut, ty) in tr.ty_args.iter() {
-                    if let Some(real_key) = self.proj().types[*ty]
-                        .as_user()
-                        .filter(|ut| ty_args.get(&ut.id).is_some_and(|v| v == &TypeId::UNKNOWN))
-                        && let Some(v) = mine.ty_args.get(ut)
-                    {
-                        ty_args.insert(real_key.id, *v);
-                    }
+                for (&src, &target) in tr.ty_args.values().zip(mine.ty_args.values()) {
+                    self.do_infer_type_args(in_scope, ty_args, src, target);
                 }
             }
         }
