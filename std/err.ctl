@@ -7,20 +7,20 @@ pub union Result<T, E> {
     pub fn is_ok(this): bool => this is Ok(_);
     pub fn is_err(this): bool => this is Err(_);
 
-    pub fn unwrap_err(this): E {
+    pub fn unwrap_err(my this): E {
         if this is Err(inner) {
-            *inner
+            inner
         } else {
-            panic("attempt to unwrap_err Ok Result");
+            panic("attempt to unwrap_err Result with value {this:?}");
         }
     }
 
     impl std::ops::Unwrap<T> {
-        fn unwrap(this): T {
+        fn unwrap(my this): T {
             if this is Ok(inner) {
-                *inner
+                inner
             } else {
-                panic("attempt to unwrap null Result");
+                panic("attempt to unwrap Result with value {this:?}");
             }
         }
     }

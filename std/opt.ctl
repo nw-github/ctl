@@ -21,10 +21,12 @@ pub union Option<T> {
     pub fn is_some(this): bool => this is ?_;
     pub fn is_null(this): bool => this is null;
 
+    pub fn map<U, F: Fn(T) => U>(my this, f: F): ?U => this is ?val then f(val);
+
     impl std::ops::Unwrap<T> {
-        fn unwrap(this): T {
+        fn unwrap(my this): T {
             if this is ?inner {
-                *inner
+                inner
             } else {
                 panic("attempt to unwrap null Option");
             }

@@ -102,7 +102,7 @@ pub trait Not<R> {
 
 $[lang(op_unwrap)]
 pub trait Unwrap<R> {
-    fn unwrap(this): R;
+    fn unwrap(my this): R;
 }
 
 $[lang(op_inc)]
