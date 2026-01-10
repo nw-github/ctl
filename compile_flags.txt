@@ -7,3 +7,4 @@
 -Wno-parentheses-equality
 -Wno-unused-variable
 -Wno-unused-value
+-Wno-null-dereference
