@@ -2791,34 +2791,7 @@ impl TypeChecker<'_> {
                     UnaryOp::Addr | UnaryOp::AddrMut | UnaryOp::AddrRaw | UnaryOp::AddrRawMut => {
                         return self.check_addr(op, expr, span, target);
                     }
-                    UnaryOp::Try => {
-                        let expr = self
-                            .check_expr(expr, target.and_then(|t| t.as_option_inner(&self.proj)));
-                        if let Some(inner) = expr.ty.as_option_inner(&self.proj) {
-                            // TODO: lambdas
-                            if self
-                                .current_function()
-                                .and_then(|id| {
-                                    self.proj.scopes.get(id).ret.as_option_inner(&self.proj)
-                                })
-                                .is_none()
-                            {
-                                self.error(Error::new(
-                                    "operator '?' is only valid in functions that return Option",
-                                    span,
-                                ))
-                            }
-
-                            (inner, expr)
-                        } else if expr.ty == TypeId::UNKNOWN {
-                            return Default::default();
-                        } else {
-                            bail!(
-                                self,
-                                Error::invalid_operator(op, self.proj.fmt_ty(expr.ty), span)
-                            );
-                        }
-                    }
+                    UnaryOp::Try => self.check_try(expr, span, target),
                     UnaryOp::Option => {
                         let expr = self
                             .check_expr(expr, target.and_then(|t| t.as_option_inner(&self.proj)));
@@ -3941,6 +3914,58 @@ impl TypeChecker<'_> {
         false
     }
 
+    fn check_try(&mut self, expr: PExpr, span: Span, target: Option<TypeId>) -> (TypeId, CExpr) {
+        let expr = self.check_expr(expr, target.and_then(|t| t.as_option_inner(&self.proj)));
+        let Some(inner) = expr.ty.as_option_inner(&self.proj) else {
+            if expr.ty == TypeId::UNKNOWN {
+                return Default::default();
+            } else {
+                bail!(self, Error::invalid_operator(UnaryOp::Try, self.proj.fmt_ty(expr.ty), span));
+            }
+        };
+
+        for (_, scope) in self.proj.scopes.walk(self.current) {
+            match &scope.kind {
+                &ScopeKind::Lambda(target, _) => {
+                    if let Some(target) = target
+                        && target.as_option_inner(&self.proj).is_none()
+                    {
+                        self.error(Error::new(
+                            "operator '?' is only valid in functions that return Option",
+                            span,
+                        ))
+                    } else if target.is_none() {
+                        self.error(Error::new(
+                            "closure return value must be known at this point",
+                            span,
+                        ))
+                    }
+
+                    return (inner, expr);
+                }
+                &ScopeKind::Function(id) => {
+                    if self.proj.scopes.get(id).ret.as_option_inner(&self.proj).is_none() {
+                        self.error(Error::new(
+                            "operator '?' is only valid in functions that return Option",
+                            span,
+                        ))
+                    }
+
+                    return (inner, expr);
+                }
+                ScopeKind::Defer => {
+                    self.proj
+                        .diag
+                        .report(Error::new("operator '?' cannot be used in a defer block", span));
+                    return (inner, expr);
+                }
+                _ => {}
+            }
+        }
+
+        self.error(Error::new("'?' expression outside of function", span))
+    }
+
     fn check_return(&mut self, expr: PExpr, span: Span) -> CExpr {
         for (id, scope) in self.proj.scopes.walk(self.current) {
             match &scope.kind {
@@ -3968,7 +3993,6 @@ impl TypeChecker<'_> {
             }
         }
 
-        // this should never be possible, but report error instead of crashing for LSP reasons
         self.error(Error::new("return expression outside of function", expr.span))
     }
 
