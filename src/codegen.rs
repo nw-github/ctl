@@ -1106,7 +1106,7 @@ impl<'a> Codegen<'a> {
             );
             self.buffer.emit(" tests[]={");
 
-            let runner = State::from_non_generic(self.proj.test_runner.unwrap(), &self.proj.scopes);
+            let mut runner = State::from_non_generic(self.proj.test_runner.unwrap(), &self.proj.scopes);
 
             let mut modules = vec![];
             if let Some(args) = &self.proj.conf.test_args
@@ -1133,7 +1133,7 @@ impl<'a> Codegen<'a> {
                     continue;
                 }
 
-                let mut state = State::from_non_generic(id, &self.proj.scopes);
+                let state = State::from_non_generic(id, &self.proj.scopes);
                 write_de!(
                     self.buffer,
                     "{{.skip={},.name={},.module={},.test=",
@@ -1159,7 +1159,7 @@ impl<'a> Codegen<'a> {
                 } else {
                     Expr::option_null(skip_reason_ty, &mut self.arena)
                 };
-                self.emit_expr_inline(opt, &mut state);
+                self.emit_expr_inline(opt, &mut runner);
                 write_de!(self.buffer, "}},");
 
                 self.funcs.insert(state);
@@ -1353,7 +1353,14 @@ impl<'a> Codegen<'a> {
                 let func = self.proj.types[callee.ty].as_fn().unwrap();
                 let args = args.clone();
                 if let Some(data) = self.can_emit_bitfield_call(&args) {
-                    return self.emit_bitfield_call(data, callee, args.clone(), state, expr.ty, func.id);
+                    return self.emit_bitfield_call(
+                        data,
+                        callee,
+                        args.clone(),
+                        state,
+                        expr.ty,
+                        func.id,
+                    );
                 }
 
                 if let Some(name) = self.proj.scopes.get(func.id).attrs.intrinsic {
@@ -1361,14 +1368,14 @@ impl<'a> Codegen<'a> {
                     return self.emit_intrinsic(name, expr.ty, &func, args, state, (scope, span));
                 } else if let Some(id) = self.proj.scopes.get(func.id).constructor {
                     if self.proj.scopes.get(id).kind.is_union() {
-                        return self.emit_variant_instance(
+                        return self.emit_union_instance(
                             state,
                             expr.ty,
                             self.proj.scopes.get(func.id).name.data,
-                            args,
+                            &args,
                         );
                     } else {
-                        return self.emit_instance(state, expr.ty, args);
+                        return self.emit_instance(state, expr.ty, &args);
                     }
                 }
 
@@ -1614,9 +1621,9 @@ impl<'a> Codegen<'a> {
                 }
                 self.emit_var_name(id, state);
             }
-            ExprData::Instance(members) => self.emit_instance(state, expr.ty, members.clone()),
+            ExprData::Instance(members) => self.emit_instance(state, expr.ty, &members.clone()),
             ExprData::VariantInstance(name, members) => {
-                self.emit_variant_instance(state, expr.ty, *name, members.clone())
+                self.emit_union_instance(state, expr.ty, *name, &members.clone())
             }
             &ExprData::Member { source, member } => {
                 let ut = self.proj.types[source.ty].as_user();
@@ -1889,13 +1896,13 @@ impl<'a> Codegen<'a> {
         self.funcs.insert(State::new(mfn.func, scope));
     }
 
-    fn emit_instance(&mut self, state: &mut State, ty: TypeId, members: IndexMap<StrId, Expr>) {
+    fn emit_instance(&mut self, state: &mut State, ty: TypeId, members: &IndexMap<StrId, Expr>) {
         let ut = self.proj.types[ty].as_user().unwrap();
         if self.proj.scopes.get(ut.id).kind.is_packed_struct() {
             return tmpbuf_emit!(self, state, |tmp| {
                 self.emit_type(ty);
                 writeln_de!(self.buffer, " {tmp} = {{}};");
-                for (name, value) in members {
+                for (&name, &value) in members {
                     let ty = value.ty;
                     let expr = hoist!(self, self.emit_tmpvar(value, state));
                     self.emit_bitfield_write(&tmp, ut, name, ty, &expr);
@@ -1909,7 +1916,8 @@ impl<'a> Codegen<'a> {
             write_de!(self.buffer, "CTL_DUMMY_INIT");
         }
 
-        for (name, mut value) in members {
+        for (&name, value) in members {
+            let mut value = *value;
             value.ty = value.ty.with_templates(&self.proj.types, &state.func.ty_args);
             write_de!(self.buffer, ".{}=", member_name(self.proj, Some(ut.id), name));
             self.emit_expr(value, state);
@@ -1918,56 +1926,51 @@ impl<'a> Codegen<'a> {
         write_de!(self.buffer, "}}");
     }
 
-    fn emit_variant_instance(
+    fn emit_union_instance(
         &mut self,
         state: &mut State,
         ty: TypeId,
         variant: StrId,
-        mut members: IndexMap<StrId, Expr>,
+        members: &IndexMap<StrId, Expr>,
     ) {
         if ty.can_omit_tag(&self.proj.scopes, &self.proj.types).is_some() {
-            if let Some(some) = members.swap_remove(&Strings::TUPLE_ZERO) {
+            if let Some(&some) = members.get(&Strings::TUPLE_ZERO) {
                 self.emit_expr(some, state);
             } else {
                 self.buffer.emit(NULLPTR);
             }
-        } else {
-            self.emit_cast(ty);
-            let members: Vec<_> = members
-                .into_iter()
-                .map(|(name, mut expr)| {
-                    expr.ty = expr.ty.with_templates(&self.proj.types, &state.func.ty_args);
-                    // TODO: dont emit temporaries for expressions that cant have side effects
-                    (name, hoist!(self, self.emit_tmpvar(expr, state)))
-                })
-                .collect();
+            return;
+        }
 
-            let ut_id = self.proj.types[ty].as_user().unwrap().id;
-            write_de!(self.buffer, "{{");
-            let ut = self.proj.scopes.get(ut_id);
-            let union = ut.kind.as_union().unwrap();
-            for (name, value) in members.iter().filter(|(name, _)| ut.members.contains_key(name)) {
-                write_de!(self.buffer, ".{}={value},", member_name(self.proj, Some(ut_id), *name));
+        let ut_id = self.proj.types[ty].as_user().unwrap().id;
+        let ut = self.proj.scopes.get(ut_id);
+        let union = ut.kind.as_union().unwrap();
+
+        tmpbuf_emit!(self, state, |tmp| {
+            self.emit_type(ty);
+            writeln_de!(self.buffer, " {tmp};");
+
+            if union.tag.size_and_align(&self.proj.scopes, &self.proj.types).0 != 0 {
+                write_de!(self.buffer, "{tmp}.{UNION_TAG_NAME}=");
+                self.emit_literal(union.discriminant(variant).unwrap().clone(), union.tag);
+                writeln_de!(self.buffer, ";");
             }
 
-            if union.variants.get(&variant).is_some_and(|v| v.ty.is_some()) {
-                write_de!(self.buffer, ".{}={{", member_name(self.proj, Some(ut_id), variant));
-                for (name, value) in
-                    members.iter().filter(|(name, _)| !ut.members.contains_key(name))
-                {
+            for (&name, &expr) in members.iter() {
+                if !ut.members.contains_key(&name) {
                     write_de!(
                         self.buffer,
-                        ".{}={value},",
-                        member_name(self.proj, Some(ut_id), *name)
+                        "{tmp}.{}.{}=",
+                        member_name(self.proj, Some(ut_id), variant),
+                        member_name(self.proj, Some(ut_id), name),
                     );
+                } else {
+                    write_de!(self.buffer, "{tmp}.{}=", member_name(self.proj, Some(ut_id), name));
                 }
-                write_de!(self.buffer, "}},");
+                self.emit_expr_inline(expr, state);
+                writeln_de!(self.buffer, ";");
             }
-
-            write_de!(self.buffer, ".{UNION_TAG_NAME}=");
-            self.emit_literal(union.discriminant(variant).unwrap().clone(), union.tag);
-            write_de!(self.buffer, "}}");
-        }
+        });
     }
 
     fn emit_binary(
