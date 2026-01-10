@@ -1,9 +1,8 @@
-use std::reflect::Numeric;
 use std::hash::*;
 use std::ops::*;
 use super::ByteSpanExt;
 
-pub extension NumericImpl<T: Numeric> for T {
+pub extension NumericImpl<T: std::reflect::Numeric> for T {
     impl Hash {
         fn hash<H: Hasher>(this, h: *mut H) => h.hash(this.as_byte_span());
     }
@@ -32,34 +31,4 @@ pub extension NumericImpl<T: Numeric> for T {
         $[intrinsic(binary_op)]
         fn ne(this, rhs: *T): bool => this != rhs;
     }
-
-    $[intrinsic(binary_op)]
-    pub fn +(this, rhs: T): T => this + rhs;
-
-    $[intrinsic(binary_op)]
-    pub fn -(this, rhs: T): T => this - rhs;
-
-    $[intrinsic(binary_op)]
-    pub fn *(this, rhs: T): T => this * rhs;
-
-    $[intrinsic(binary_op)]
-    pub fn /(this, rhs: T): T => this / rhs;
-
-    $[intrinsic(binary_op)]
-    pub fn %(this, rhs: T): T => this % rhs;
-
-    $[intrinsic(binary_op)]
-    pub fn +=(mut this, rhs: T) => *this += rhs;
-
-    $[intrinsic(binary_op)]
-    pub fn -=(mut this, rhs: T) => *this -= rhs;
-
-    $[intrinsic(binary_op)]
-    pub fn *=(mut this, rhs: T) => *this *= rhs;
-
-    $[intrinsic(binary_op)]
-    pub fn /=(mut this, rhs: T) => *this /= rhs;
-
-    $[intrinsic(binary_op)]
-    pub fn %=(mut this, rhs: T) => *this %= rhs;
 }

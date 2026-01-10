@@ -46,6 +46,56 @@ mod gcc_intrin {
 pub extension IntegralImpl<T: Integral> for T {
     impl TotallyOrdered { }
 
+    pub fn +(this, rhs: T): T {
+        let (val, _overflow) = this.overflowing_add(rhs);
+        $[feature(overflow_checks)]
+        if _overflow {
+            panic("integer overflow adding values {val} and {rhs}");
+        }
+        val
+    }
+
+    pub fn -(this, rhs: T): T {
+        let (val, _overflow) = this.overflowing_sub(rhs);
+        $[feature(overflow_checks)]
+        if _overflow {
+            panic("integer overflow subtracting values {val} and {rhs}");
+        }
+        val
+    }
+
+    pub fn *(this, rhs: T): T {
+        let (val, _overflow) = this.overflowing_mul(rhs);
+        $[feature(overflow_checks)]
+        if _overflow {
+            panic("integer overflow multiplying values {val} and {rhs}");
+        }
+        val
+    }
+
+    pub fn /(this, rhs: T): T {
+        let (val, _overflow) = this.overflowing_div(rhs);
+        $[feature(overflow_checks)]
+        if _overflow {
+            panic("integer overflow dividing values {val} and {rhs}");
+        }
+        val
+    }
+
+    $[intrinsic(binary_op)]
+    pub fn %(this, rhs: T): T => this % rhs;
+
+    pub fn +=(mut this, rhs: T) => *this = *this + rhs;
+
+    pub fn -=(mut this, rhs: T) => *this = *this - rhs;
+
+    pub fn *=(mut this, rhs: T) => *this = *this * rhs;
+
+    pub fn /=(mut this, rhs: T) => *this = *this / rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn %=(mut this, rhs: T) => *this %= rhs;
+
     $[intrinsic(binary_op)]
     pub fn &(this, rhs: T): T => this & rhs;
 
@@ -86,16 +136,16 @@ pub extension IntegralImpl<T: Integral> for T {
     pub fn --(mut this) { (*this)--; }
 
     $[inline]
-    pub fn wrapping_add(this, rhs: T): T => this + rhs;
+    pub fn wrapping_add(this, rhs: T): T => this.overflowing_add(rhs).0;
 
     $[inline]
-    pub fn wrapping_sub(this, rhs: T): T => this - rhs;
+    pub fn wrapping_sub(this, rhs: T): T => this.overflowing_sub(rhs).0;
 
     $[inline]
-    pub fn wrapping_mul(this, rhs: T): T => this * rhs;
+    pub fn wrapping_mul(this, rhs: T): T => this.overflowing_mul(rhs).0;
 
     $[inline]
-    pub fn wrapping_div(this, rhs: T): T => this / rhs;
+    pub fn wrapping_div(this, rhs: T): T => this.overflowing_div(rhs).0;
 
     $[inline]
     pub fn overflowing_add(this, rhs: T): (T, bool) {
@@ -119,6 +169,17 @@ pub extension IntegralImpl<T: Integral> for T {
     }
 
     $[inline]
+    pub fn overflowing_div(this, rhs: T): (T, bool) {
+        // Only signed division can overflow
+        if T::min_value() != 0.cast() {
+            if this == T::min_value() and rhs == (-1).cast() {
+                return (*this, true);
+            }
+        }
+        (unsafe this.unchecked_div(rhs), false)
+    }
+
+    $[inline]
     pub fn checked_add(this, rhs: T): ?T => this.overflowing_add(rhs) is (out, false) then out;
 
     $[inline]
@@ -126,6 +187,21 @@ pub extension IntegralImpl<T: Integral> for T {
 
     $[inline]
     pub fn checked_mul(this, rhs: T): ?T => this.overflowing_mul(rhs) is (out, false) then out;
+
+    $[inline]
+    pub fn checked_div(this, rhs: T): ?T => this.overflowing_div(rhs) is (out, false) then out;
+
+    $[intrinsic(binary_op)]
+    pub unsafe fn unchecked_add(this, rhs: T): T => this + rhs;
+
+    $[intrinsic(binary_op)]
+    pub unsafe fn unchecked_sub(this, rhs: T): T => this - rhs;
+
+    $[intrinsic(binary_op)]
+    pub unsafe fn unchecked_mul(this, rhs: T): T => this * rhs;
+
+    $[intrinsic(binary_op)]
+    pub unsafe fn unchecked_div(this, rhs: T): T => this / rhs;
 
     $[inline]
     pub fn saturating_add(this, rhs: T): T {
@@ -167,24 +243,6 @@ pub extension IntegralImpl<T: Integral> for T {
         this
     }
 
-    $[feature(alloc)]
-    pub fn to_str_radix(this, radix: u32): str {
-        guard radix is 2..=36 else {
-            panic("invalid radix {radix}: must be in range 2..=36");
-        }
-
-        let neg = this < 0u.cast();
-        mut buf = @[b'0'; std::mem::size_of::<T>() * 8 + 2 + neg as uint][..];
-        unsafe {
-            mut pos = this.write_digits(buf, radix, upper: false);
-            if neg {
-                *buf.get_mut_unchecked(--pos) = b'-';
-            }
-
-            str::from_utf8_unchecked(buf[pos..])
-        }
-    }
-
     fn from_str_radix_common(chars: std::string::Chars, radix: u32): ?T {
         mut value: ?T = null;
         for ch in chars {
@@ -204,7 +262,7 @@ pub extension IntegralImpl<T: Integral> for T {
     /// `buf`   must have a length of at least size_of::<T> * 8
     ///
     /// Returns the position of the start of the digits within `buf`
-    pub unsafe fn write_digits(my mut this, buf: [mut u8..], radix: u32, upper: bool): uint {
+    unsafe fn write_digits(my mut this, buf: [mut u8..], radix: u32, upper: bool): uint {
         static UPPER_DIGITS: *[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         static LOWER_DIGITS: *[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
 
@@ -243,7 +301,7 @@ pub extension IntegralImpl<T: Integral> for T {
 
     fn format_into(my mut this, f: *mut Formatter, radix: u32, prefix: ?str) {
         if std::mem::size_of::<T>() <= std::mem::size_of::<u128>() {
-            mut buf: [u8; std::mem::size_of::<u128>() * 8];
+            mut buf: [u8; /* std::mem::size_of::<u128>() * 8 */ 128];
             let start = unsafe this.write_digits(buf.subspan_mut_unchecked(..), radix, f.options().upper);
             let digits = unsafe str::from_utf8_unchecked(buf.subspan_unchecked(start..));
             f.pad_integral(negative: this < 0.cast(), digits:, prefix:);
@@ -259,18 +317,6 @@ pub extension SignedImpl<T: Signed> for T {
 
     $[intrinsic(unary_op)]
     pub fn -(this): T => -this;
-
-    $[inline]
-    pub fn overflowing_div(this, rhs: T): (T, bool) {
-        if this == T::min_value() and rhs == (-1).cast() {
-            (*this, true)
-        } else {
-            (this / rhs, false)
-        }
-    }
-
-    $[inline]
-    pub fn checked_div(this, rhs: T): ?T => this.overflowing_div(rhs) is (out, false) then out;
 
     pub fn from_str_radix(s: str, radix: u32): ?T {
         mut chars = s.chars();
@@ -289,14 +335,6 @@ pub extension SignedImpl<T: Signed> for T {
 }
 
 pub extension UnsignedImpl<T: Unsigned> for T {
-    /// This exists for parity with SignedImpl::overflowing_div. Unsigned division cannot overflow,
-    /// and as such this function always returns false.
-    $[inline]
-    pub fn overflowing_div(this, rhs: T): (T, bool) => (this / rhs, false);
-
-    $[inline]
-    pub fn checked_div(this, rhs: T): ?T => this / rhs;
-
     pub fn from_str_radix(s: str, radix: u32): ?T {
         mut chars = s.chars();
         if !(chars.next()? is '+') {

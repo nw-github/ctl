@@ -43,6 +43,7 @@ impl Strings {
     pub const FEAT_BOEHM: StrId = str_id(SID::FEAT_BOEHM);
     pub const FEAT_TEST: StrId = str_id(SID::FEAT_TEST);
     pub const FEAT_BACKTRACE: StrId = str_id(SID::FEAT_BACKTRACE);
+    pub const FEAT_OVERFLOW_CHECKS: StrId = str_id(SID::FEAT_OVERFLOW_CHECKS);
 
     pub(crate) const ATTR_LANG: StrId = str_id(SID::ATTR_LANG);
     pub(crate) const ATTR_INTRINSIC: StrId = str_id(SID::ATTR_INTRINSIC);
@@ -103,6 +104,7 @@ impl Strings {
         assert_eq!(Self::ATTR_ALIGN, rodeo.get_or_intern_static("align"));
         assert_eq!(Self::ATTR_LAYOUT, rodeo.get_or_intern_static("layout"));
         assert_eq!(Self::FN_TR_ARGS_NAME, rodeo.get_or_intern_static("args"));
+        assert_eq!(Self::FEAT_OVERFLOW_CHECKS, rodeo.get_or_intern_static("overflow_checks"));
         Self { rodeo }
     }
 }
@@ -160,4 +162,5 @@ enum SID {
     ATTR_ALIGN,
     ATTR_LAYOUT,
     FN_TR_ARGS_NAME,
+    FEAT_OVERFLOW_CHECKS,
 }

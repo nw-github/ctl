@@ -2440,6 +2440,10 @@ impl<'a> Codegen<'a> {
                         "sub" => BinaryOp::Sub,
                         "mul" => BinaryOp::Mul,
                         "div" => BinaryOp::Div,
+                        "unchecked_add" => BinaryOp::Add,
+                        "unchecked_sub" => BinaryOp::Sub,
+                        "unchecked_mul" => BinaryOp::Mul,
+                        "unchecked_div" => BinaryOp::Div,
                         "rem" => BinaryOp::Rem,
                         "bit_and" => BinaryOp::BitAnd,
                         "bit_or" => BinaryOp::BitOr,
@@ -3779,7 +3783,7 @@ impl SharedStuff for Codegen<'_> {
 
     fn get_tuple(&mut self, ty_args: Vec<TypeId>) -> TypeId {
         // XXX: we should be able to create a new tuple but get_tuple requires &mut Scopes.
-        //      Our only caller is lookup_trait_fn, who would only call this function to generate 
+        //      Our only caller is lookup_trait_fn, who would only call this function to generate
         //      the trait impls for a Fn/FnPtr type. TypeChecker::check_fn creates a new tuple with
         //      the same number of members as fn parameters so we dont crash here.
         let names: Vec<_> =

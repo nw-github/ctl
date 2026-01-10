@@ -239,16 +239,16 @@ pub struct ValuesMut<K, V> {
     }
 }
 
+const FNV1A_BASIS: u64 = 0xcbf29ce484222325;
+const FNV1A_PRIME: u64 = 0x00000100000001b3;
+
 struct Fnv1a {
-    val: u64 = 0,
+    val: u64 = FNV1A_BASIS,
 
     impl Hasher {
         fn hash(mut this, data: [u8..]) {
             for byte in data.iter() {
-                this.val *= 0x100000001b3;
-                this.val += (this.val << 1) + (this.val << 4) + (this.val << 5) +
-                            (this.val << 7) + (this.val << 8) + (this.val << 40);
-                this.val ^= *byte as u64;
+                this.val = (this.val ^ *byte as u64).wrapping_mul(FNV1A_PRIME);
             }
         }
 

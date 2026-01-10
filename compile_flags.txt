@@ -1,5 +1,4 @@
 -std=c11
--fwrapv
 -Wall
 -Wextra
 -Wno-undefined-internal

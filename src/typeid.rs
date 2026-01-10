@@ -643,7 +643,7 @@ impl TypeId {
         match op {
             Assign => true,
             Add | Sub | Mul | Div | Rem | AddAssign | SubAssign | MulAssign | DivAssign
-            | RemAssign => this.is_numeric(),
+            | RemAssign => this.is_f32() || this.is_f64(),
             BitAnd | Xor | BitOr | BitAndAssign | XorAssign | BitOrAssign => {
                 this.is_integral() || this.is_bool()
             }
