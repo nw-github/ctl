@@ -1869,6 +1869,32 @@ impl<'a> Codegen<'a> {
                 self.emit_expr(inner, state);
                 self.buffer.emit(")");
             }
+            &ExprData::ClosureCoerce(inner, scope) => {
+                hoist!(self, {
+                    write_de!(self.buffer, "(void)");
+                    self.emit_expr_inline(inner, state);
+                    self.buffer.emit(";\n");
+                });
+
+                let closure = self.proj.types[inner.ty]
+                    .as_user()
+                    .unwrap()
+                    .with_templates(&self.proj.types, &state.func.ty_args);
+                // TODO: if the function pointer is extern, use/generate a wrapper
+                let f = self
+                    .proj
+                    .scopes
+                    .get(closure.id)
+                    .fns
+                    .iter()
+                    .find(|f| self.proj.scopes.get(f.id).name.data == Strings::FN_CLOSURE_DO_INVOKE)
+                    .unwrap();
+
+                let mut func = GenericFn::new(f.id, TypeArgs::default());
+                func.fill_templates(&self.proj.types, &closure.ty_args);
+                self.buffer.emit_fn_name(&func, self.flags.minify);
+                self.funcs.insert(State::new(func, scope));
+            }
             ExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }
     }

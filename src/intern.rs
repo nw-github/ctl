@@ -32,6 +32,7 @@ impl Strings {
     pub(crate) const FN_WRITTEN: StrId = str_id(SID::FN_WRITTEN);
     pub(crate) const FN_INSERT: StrId = str_id(SID::FN_INSERT);
     pub(crate) const FN_WITH_CAPACITY: StrId = str_id(SID::FN_WITH_CAPACITY);
+    pub(crate) const FN_CLOSURE_DO_INVOKE: StrId = str_id(SID::FN_CLOSURE_DO_INVOKE);
 
     pub(crate) const VAR_LESS: StrId = str_id(SID::VAR_LESS);
     pub(crate) const VAR_GREATER: StrId = str_id(SID::VAR_GREATER);
@@ -105,6 +106,7 @@ impl Strings {
         assert_eq!(Self::ATTR_LAYOUT, rodeo.get_or_intern_static("layout"));
         assert_eq!(Self::FN_TR_ARGS_NAME, rodeo.get_or_intern_static("args"));
         assert_eq!(Self::FEAT_OVERFLOW_CHECKS, rodeo.get_or_intern_static("overflow_checks"));
+        assert_eq!(Self::FN_CLOSURE_DO_INVOKE, rodeo.get_or_intern_static("$do_invoke"));
         Self { rodeo }
     }
 }
@@ -163,4 +165,5 @@ enum SID {
     ATTR_LAYOUT,
     FN_TR_ARGS_NAME,
     FEAT_OVERFLOW_CHECKS,
+    FN_CLOSURE_DO_INVOKE,
 }

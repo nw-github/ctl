@@ -2444,6 +2444,7 @@ impl TypeChecker<'_> {
         let fn_tr_inst = GenericTrait::from_type_args(&self.proj.scopes, fn_tr, [args_tuple, ret]);
 
         let (closure_id, closure_ut_scope, closure_ty) = self.enter(ScopeKind::None, |this| {
+            let no_captures = members.is_empty();
             let closure_id = this.insert::<UserTypeId>(
                 UserType {
                     attrs: Default::default(),
@@ -2474,32 +2475,34 @@ impl TypeChecker<'_> {
                 .insert(Type::User(GenericUserType::new(closure_id, TypeArgs::default())));
             let this_ptr_mut_ty = this.proj.types.insert(Type::MutPtr(closure_ty));
             let do_invoke_id = {
-                checked_params.insert(
-                    0,
-                    CheckedParam {
-                        keyword: false,
-                        label: Strings::THIS_PARAM,
-                        patt: ParamPattern::Checked(CPattern {
-                            irrefutable: true,
-                            data: PatternData::Variable(this.insert::<VariableId>(
-                                Variable {
-                                    name: Located::nowhere(Strings::THIS_PARAM),
-                                    ty: this_ptr_mut_ty,
-                                    ..Default::default()
-                                },
-                                false,
-                                false,
-                            )),
-                        }),
-                        ty: this_ptr_mut_ty,
-                        default: None,
-                    },
-                );
+                if !no_captures {
+                    checked_params.insert(
+                        0,
+                        CheckedParam {
+                            keyword: false,
+                            label: Strings::THIS_PARAM,
+                            patt: ParamPattern::Checked(CPattern {
+                                irrefutable: true,
+                                data: PatternData::Variable(this.insert::<VariableId>(
+                                    Variable {
+                                        name: Located::nowhere(Strings::THIS_PARAM),
+                                        ty: this_ptr_mut_ty,
+                                        ..Default::default()
+                                    },
+                                    false,
+                                    false,
+                                )),
+                            }),
+                            ty: this_ptr_mut_ty,
+                            default: None,
+                        },
+                    );
+                }
                 let do_invoke_scope = this.enter(ScopeKind::None, |this| this.current);
                 let func = Function {
                     public: false,
                     attrs: Default::default(),
-                    name: Located::nowhere(this.proj.strings.get_or_intern("$do_invoke")),
+                    name: Located::nowhere(Strings::FN_CLOSURE_DO_INVOKE),
                     is_extern: false,
                     is_async: false,
                     is_unsafe: false,
@@ -2542,11 +2545,14 @@ impl TypeChecker<'_> {
                     );
 
                     let mut call_args = IndexMap::new();
-                    let this_ptr_expr = this.arena.typed(this_ptr_ty, CExprData::Var(this_ptr_var));
-                    call_args.insert(
-                        Strings::THIS_PARAM,
-                        this.arena.typed(this_ptr_mut_ty, CExprData::As(this_ptr_expr, false)),
-                    );
+                    if !no_captures {
+                        let this_ptr_expr =
+                            this.arena.typed(this_ptr_ty, CExprData::Var(this_ptr_var));
+                        call_args.insert(
+                            Strings::THIS_PARAM,
+                            this.arena.typed(this_ptr_mut_ty, CExprData::As(this_ptr_expr, false)),
+                        );
+                    }
 
                     let source = this.arena.typed(args_tuple, CExprData::Var(args_var));
                     let tpl_ut = this.proj.types.get(args_tuple).as_user().unwrap();
@@ -5602,6 +5608,31 @@ impl TypeChecker<'_> {
             }
         }
 
+        fn can_closure_to_fn_ptr(this: &TypeChecker, ut: &GenericUserType, f: &FnPtr) -> bool {
+            let ut_data = this.proj.scopes.get(ut.id);
+            if !ut_data.kind.is_closure() || !ut_data.members.is_empty() {
+                return false;
+            }
+
+            let tr = ut_data
+                .impls
+                .iter_checked()
+                .find(|tr| this.proj.scopes.get(tr.id).attrs.lang == Some(LangType::OpFn))
+                .unwrap();
+
+            let args = this.proj.types[tr.ty_args[0]].as_user().unwrap();
+            let ret = tr.ty_args[1].with_templates(&this.proj.types, &ut.ty_args);
+            if args.ty_args.len() != f.params.len() || ret != f.ret {
+                return false;
+            }
+
+            args.ty_args
+                .values()
+                .map(|v| v.with_templates(&this.proj.types, &ut.ty_args))
+                .zip(f.params.iter())
+                .all(|(l, &r)| l == r)
+        }
+
         match (&self.proj.types[expr.ty], &self.proj.types[target]) {
             (Type::Never, Type::Never) => Ok(expr),
             (Type::Never, _) => Ok(self.arena.typed(target, CExprData::NeverCoerce(expr))),
@@ -5635,6 +5666,9 @@ impl TypeChecker<'_> {
                 } else {
                     Err(expr)
                 }
+            }
+            (Type::User(lhs), Type::FnPtr(rhs)) if can_closure_to_fn_ptr(self, lhs, rhs) => {
+                Ok(self.arena.typed(target, CExprData::ClosureCoerce(expr, self.current)))
             }
             (lhs, rhs) if may_ptr_coerce(&self.proj.types, lhs, rhs) => {
                 Ok(CExpr::new(target, expr.data))
