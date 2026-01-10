@@ -4347,11 +4347,6 @@ impl TypeChecker<'_> {
                             strdata!(self, member.data)
                         )
                     }
-
-                    if matches!(self.arena.get(recv.data), CExprData::Member { source, .. } if source.ty.is_packed_struct(&self.proj))
-                    {
-                        self.proj.diag.report(Warning::call_mutating_on_bitfield(span))
-                    }
                 }
 
                 let recv = recv.auto_deref(&self.proj.types, this_param_ty, &mut self.arena);

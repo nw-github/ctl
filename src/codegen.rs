@@ -1349,12 +1349,16 @@ impl<'a> Codegen<'a> {
                     panic!("ICE: DynCoerce from non-pointer");
                 };
             }
-            ExprData::Call { callee, args, scope, span } => {
+            &ExprData::Call { callee, ref args, scope, span } => {
                 let func = self.proj.types[callee.ty].as_fn().unwrap();
                 let args = args.clone();
+                if let Some(data) = self.can_emit_bitfield_call(&args) {
+                    return self.emit_bitfield_call(data, callee, args.clone(), state, expr.ty, func.id);
+                }
+
                 if let Some(name) = self.proj.scopes.get(func.id).attrs.intrinsic {
                     let func = func.with_templates(&self.proj.types, &state.func.ty_args);
-                    return self.emit_intrinsic(name, expr.ty, &func, args, state, (*scope, *span));
+                    return self.emit_intrinsic(name, expr.ty, &func, args, state, (scope, span));
                 } else if let Some(id) = self.proj.scopes.get(func.id).constructor {
                     if self.proj.scopes.get(id).kind.is_union() {
                         return self.emit_variant_instance(
@@ -1371,7 +1375,7 @@ impl<'a> Codegen<'a> {
                 if expr.ty.is_void_like() {
                     write_de!(self.buffer, "{VOID}(");
                 }
-                self.emit_expr(*callee, state);
+                self.emit_expr(callee, state);
                 write_de!(self.buffer, "(");
                 self.finish_emit_fn_args(state, func.id, args);
                 if expr.ty.is_void_like() {
@@ -3763,6 +3767,72 @@ impl<'a> Codegen<'a> {
         self.funcs.insert(State::new(formatter_write_str, scope));
 
         BuiltinDbgArgs { dbg_fn, dbg_tr, formatter_write_str: fn_name, fallback_dbg_ext }
+    }
+
+    fn can_emit_bitfield_call(
+        &self,
+        args: &IndexMap<StrId, Expr>,
+    ) -> Option<(TypeId, Expr, StrId)> {
+        let source = args.get(&Strings::THIS_PARAM)?;
+        let ExprData::Unary(UnaryOp::AddrMut, inner) = self.arena.get(source.data) else {
+            return None;
+        };
+
+        let &ExprData::Member { source, member } = self.arena.get(inner.data) else {
+            return None;
+        };
+
+        if !source.ty.is_packed_struct(self.proj) {
+            return None;
+        }
+
+        Some((inner.ty, source, member))
+    }
+
+    fn emit_bitfield_call(
+        &mut self,
+        (member_ty, source, member): (TypeId, Expr, StrId),
+        callee: Expr,
+        mut args: IndexMap<StrId, Expr>,
+        state: &mut State,
+        ret_ty: TypeId,
+        fid: FunctionId,
+    ) {
+        let ut = self.proj.types[source.ty].as_user().unwrap();
+
+        let mut_ptr_ty = self.proj.types.insert(Type::MutPtr(TypeId::UNKNOWN));
+        let source = source.auto_deref(&self.proj.types, mut_ptr_ty, &mut self.arena);
+        let source = hoist!(self, self.emit_tmpvar(source, state));
+        let source = format!("(*{source})");
+        let copy = tmpbuf!(self, state, |tmp| {
+            self.emit_type(member_ty);
+            write_de!(self.buffer, " {tmp}=");
+            self.emit_bitfield_read(&source, ut, member, member_ty);
+            writeln_de!(self.buffer, ";");
+            tmp
+        });
+        let result = tmpbuf!(self, state, |tmp| {
+            self.emit_type(ret_ty);
+            write_de!(self.buffer, " {tmp}=");
+
+            if ret_ty.is_void_like() {
+                write_de!(self.buffer, "{VOID}(");
+            }
+            self.emit_expr(callee, state);
+            write_de!(self.buffer, "(&{copy}");
+            args.shift_remove(&Strings::THIS_PARAM);
+            write_if!(!args.is_empty(), self.buffer, ",");
+            self.finish_emit_fn_args(state, fid, args);
+
+            if ret_ty.is_void_like() {
+                write_de!(self.buffer, ")");
+            }
+            writeln_de!(self.buffer, ";");
+            tmp
+        });
+        hoist!(self, self.emit_bitfield_write(&source, ut, member, member_ty, &copy));
+
+        self.buffer.emit(result);
     }
 }
 
