@@ -1417,17 +1417,7 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
                     res += ": ";
                 }
 
-                res += proj.strings.resolve(&proj.scopes.get(tr.id).name.data);
-                if !tr.ty_args.is_empty() {
-                    res += "<";
-                    for (i, id) in tr.ty_args.iter().enumerate() {
-                        if i > 0 {
-                            res.push_str(", ");
-                        }
-                        write_de!(res, "{}", proj.fmt_ty(*id.1));
-                    }
-                    res += ">";
-                }
+                write_de!(res, "{}", proj.fmt_ut(tr));
             }
         }
         UserTypeKind::Trait { .. } => {
