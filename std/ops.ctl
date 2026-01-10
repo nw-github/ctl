@@ -166,6 +166,16 @@ pub trait ShrAssign<T> {
 }
 
 $[lang(op_fn)]
-pub sealed trait Fn<Args: std::reflect::Tuple, R> {
-    fn invoke(this, args: Args): R => std::intrin::invoke_with_tuple(this, args);
+pub trait Fn<Args: std::reflect::Tuple, R> {
+    fn invoke(this, args: Args): R;
+}
+
+pub mod ext {
+    use std::reflect::{Tuple, SafeFnPtr};
+
+    pub extension FnPtrImpl<Args: Tuple, R, F: SafeFnPtr<Args, R>> for F {
+        impl super::Fn<Args, R> {
+            fn invoke(this, args: Args): R => std::intrin::invoke_with_tuple(this, args);
+        }
+    }
 }

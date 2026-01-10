@@ -7945,7 +7945,7 @@ pub trait SharedStuff {
             && let Some(&tr_id) = scopes.lang_types.get(&LangType::Array)
         {
             trs.push(Some(GenericTrait::from_type_args(scopes, tr_id, [*id])));
-        } else if let Some(&tr_id) = scopes.lang_types.get(&LangType::OpFn) {
+        } else if let Some(&tr_id) = scopes.lang_types.get(&LangType::FnPtr) {
             match ty {
                 Type::Fn(f) => 'out: {
                     let data = scopes.get(f.id);

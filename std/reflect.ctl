@@ -20,6 +20,9 @@ pub sealed trait Array<T> {}
 $[lang(tuple)]
 pub sealed trait Tuple {}
 
+$[lang(fn_ptr)]
+pub sealed trait SafeFnPtr<Args: Tuple, R> {}
+
 /// A unique numeric identifier for each type. This value is not stable and may change between
 /// compilations of even identical source code, and thus should only be used for comparisons within
 /// the same compilation unit and never serialized or read directly.

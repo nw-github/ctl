@@ -286,6 +286,7 @@ pub enum LangType {
     Write,
     Iterator,
     Tuple,
+    FnPtr,
 
     OpCmp,
     OpEq,
@@ -346,6 +347,7 @@ impl LangType {
             "unsigned" => Some(Self::Unsigned),
             "array" => Some(Self::Array),
             "tuple" => Some(Self::Tuple),
+            "fn_ptr" => Some(Self::FnPtr),
             "fmt_debug" => Some(Self::Debug),
             "fmt_format" => Some(Self::Format),
             "fmt_pointer" => Some(Self::Pointer),

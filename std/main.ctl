@@ -29,7 +29,7 @@ mod prelude {
     pub use super::any::ext::*;
     pub use super::fmt::ext::*;
     pub use super::fmt::{write, writeln};
-    pub use super::ops::Fn;
+    pub use super::ops::{Fn, ext::*};
 
     $[feature(alloc)]
     pub use super::alloc::collections::*;
