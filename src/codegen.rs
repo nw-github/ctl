@@ -1398,6 +1398,8 @@ impl<'a> Codegen<'a> {
                 let (_, recv) = args.shift_remove_index(0).unwrap();
                 let tr = self.proj.types[recv.ty].as_dyn_pointee().unwrap().id;
 
+                let func = &func.with_templates(&self.proj.types, &state.func.ty_args);
+
                 write_de!(self.buffer, "((");
                 self.buffer.emit_dyn_fn_type(func, self.flags.minify);
                 let id = func.id;

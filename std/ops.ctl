@@ -178,4 +178,18 @@ pub mod ext {
             fn invoke(this, args: Args): R => std::intrin::invoke_with_tuple(this, args);
         }
     }
+
+    pub extension DynFnImpl<Args: Tuple, R> for *dyn super::Fn<Args, R> {
+        impl super::Fn<Args, R> {
+            // TODO: This call is not recursive because the . operator will check dynamic calls
+            // before checking extensions, but this syntax seems ambiguous
+            fn invoke(this, args: Args): R => (*this).invoke(args);
+        }
+    }
+
+    pub extension DynMutFnImpl<Args: Tuple, R> for *dyn mut super::Fn<Args, R> {
+        impl super::Fn<Args, R> {
+            fn invoke(this, args: Args): R => (*this).invoke(args);
+        }
+    }
 }

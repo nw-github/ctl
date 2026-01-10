@@ -2186,7 +2186,7 @@ impl TypeChecker<'_> {
         let [p0, p1, ..] = &f.params[..] else {
             return Default::default();
         };
-        let arg0 = (p0.label, lhs.auto_deref(&self.proj.types, p0.ty, &mut self.arena));
+        let arg0 = (p0.label, lhs.auto_deref_ex(&self.proj.types, p0.ty, &mut self.arena, false));
         let p1_ty = p1.ty.with_templates(&self.proj.types, &mfn.func.ty_args);
         let ret = f.ret.with_templates(&self.proj.types, &mfn.func.ty_args);
         let rhs_span = rhs.span;
@@ -7861,6 +7861,21 @@ pub trait SharedStuff {
                     }
 
                     self.do_infer_type_args(in_scope, item, src.ret, target.ret);
+                    break;
+                }
+                (
+                    Type::DynPtr(src) | Type::DynMutPtr(src),
+                    Type::DynPtr(target) | Type::DynMutPtr(target),
+                ) => {
+                    if src.id != target.id {
+                        break;
+                    }
+
+                    let src = src.clone();
+                    let target = target.clone();
+                    for (&src, &target) in src.ty_args.values().zip(target.ty_args.values()) {
+                        self.do_infer_type_args(in_scope, item, src, target);
+                    }
                     break;
                 }
                 (Type::User(src), target_ty) => {

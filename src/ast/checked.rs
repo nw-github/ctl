@@ -237,7 +237,13 @@ impl Expr {
         }
     }
 
-    pub fn auto_deref(self, types: &Types, target: TypeId, arena: &mut ExprArena) -> Self {
+    pub fn auto_deref_ex(
+        self,
+        types: &Types,
+        target: TypeId,
+        arena: &mut ExprArena,
+        adjust_dyn: bool,
+    ) -> Self {
         let mut needed = 0;
         let mut current = target;
         while let Type::Ptr(inner) | Type::MutPtr(inner) = &types[current] {
@@ -254,7 +260,8 @@ impl Expr {
             indirection += 1;
         }
 
-        if let Type::DynMutPtr(_) | Type::DynPtr(_) = types[ty]
+        if adjust_dyn
+            && let Type::DynMutPtr(_) | Type::DynPtr(_) = types[ty]
             && !matches!(types[target], Type::DynMutPtr(_) | Type::DynPtr(_))
         {
             indirection += 1;
@@ -281,6 +288,10 @@ impl Expr {
                 arena.alloc(ExprData::Deref(self, indirection - needed)),
             ),
         }
+    }
+
+    pub fn auto_deref(self, types: &Types, target: TypeId, arena: &mut ExprArena) -> Self {
+        self.auto_deref_ex(types, target, arena, true)
     }
 
     pub fn option_some(opt: TypeId, val: Expr, arena: &mut ExprArena) -> Self {
