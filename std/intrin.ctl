@@ -7,7 +7,7 @@ $[intrinsic]
 pub extern fn align_of<T>(): uint;
 
 $[intrinsic]
-pub extern fn panic(args: std::fmt::Arguments, loc: std::panic::SourceLocation): never;
+pub extern fn panic(args: *std::panic::PanicInfo): never;
 
 $[intrinsic]
 pub extern unsafe fn unreachable_unchecked(): never;

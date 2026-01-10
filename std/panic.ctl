@@ -21,8 +21,9 @@ pub fn unreachable(loc: SourceLocation = SourceLocation::here()): never {
     panic("entered unreachable code", loc:);
 }
 
+$[cold]
 pub fn panic<T: Format>(args: T, loc: SourceLocation = SourceLocation::here()): never {
-    std::intrin::panic("{args}", loc)
+    std::intrin::panic(&PanicInfo(args: "{args}", loc:))
 }
 
 // TODO: this should take <T: Format>, but there is currently no way to default that
@@ -56,7 +57,6 @@ pub fn assert_ne<Lhs: Debug + std::ops::Eq<Rhs>, Rhs: Debug>(
     }
 }
 
-// TODO: this should take <T: Format>, but there is currently no way to default that
 $[inline(always)]
 pub fn debug_assert(
     _cond: bool,
@@ -64,13 +64,7 @@ pub fn debug_assert(
     _loc: SourceLocation = SourceLocation::here(),
 ) {
     $[feature(debug)]
-    if !_cond {
-        if _msg is ?msg {
-            panic("debug assertion failed: {msg}", loc: _loc);
-        } else {
-            panic("debug assertion failed", loc: _loc);
-        }
-    }
+    assert(_cond, _msg, _loc);
 }
 
 $[thread_local, feature(hosted)]
@@ -98,8 +92,7 @@ pub struct PanicInfo {
 }
 
 $[panic_handler, feature(hosted, io)]
-fn panic_handler(args: Arguments, loc: SourceLocation): never {
-    let info = PanicInfo(args:, loc:);
+fn panic_handler(info: *PanicInfo): never {
     if unsafe IS_PANICKING {
         eprintln("During the execution of the panic_handler, this panic occured:\n{info}");
         unsafe libc::abort();

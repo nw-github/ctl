@@ -7416,19 +7416,15 @@ impl TypeChecker<'_> {
                 };
 
                 let f = self.proj.scopes.get(func.id);
-                if f.attrs.intrinsic.is_none() {
-                    return self.error(Error::no_consteval(span));
-                }
-
-                match strdata!(self, f.name.data) {
-                    "size_of" => {
+                match f.attrs.intrinsic {
+                    Some(Intrinsic::SizeOf) => {
                         let ty = func.first_type_arg().unwrap();
                         // TODO: make sure the ty has had resolve_members()
                         // and resolve_dependencies() called on it and doesn't have any template args
                         let (sz, _) = ty.size_and_align(&self.proj.scopes, &self.proj.types);
                         Some(ConstValue { ty: TypeId::USIZE, val: ComptimeInt::from(sz) })
                     }
-                    "align_of" => {
+                    Some(Intrinsic::AlignOf) => {
                         let ty = func.first_type_arg().unwrap();
                         // TODO: make sure the ty has had resolve_members()
                         // and resolve_dependencies() called on it and doesn't have any template args
