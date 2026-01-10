@@ -154,7 +154,7 @@ impl TypeGen {
             }
 
             buffer.emit_type(ty, flags.minify);
-            writeln_de!(buffer, " {};", member_name(buffer.1, Some(ut.id), name));
+            writeln_de!(buffer, " {};", member_name(buffer.1, name));
         };
 
         let type_name = Buffer::format(defs.1, |buf| buf.emit_type_name(ut, flags.minify));
@@ -1106,7 +1106,8 @@ impl<'a> Codegen<'a> {
             );
             self.buffer.emit(" tests[]={");
 
-            let mut runner = State::from_non_generic(self.proj.test_runner.unwrap(), &self.proj.scopes);
+            let mut runner =
+                State::from_non_generic(self.proj.test_runner.unwrap(), &self.proj.scopes);
 
             let mut modules = vec![];
             if let Some(args) = &self.proj.conf.test_args
@@ -1615,7 +1616,7 @@ impl<'a> Codegen<'a> {
                         return write_de!(
                             self.buffer,
                             "$this->{}",
-                            member_name(self.proj, None, var.name.data)
+                            member_name(self.proj, var.name.data)
                         );
                     }
                 }
@@ -1626,9 +1627,8 @@ impl<'a> Codegen<'a> {
                 self.emit_union_instance(state, expr.ty, *name, &members.clone())
             }
             &ExprData::Member { source, member } => {
-                let ut = self.proj.types[source.ty].as_user();
-                if let Some(id) =
-                    ut.filter(|&ut| self.proj.scopes.get(ut.id).kind.is_packed_struct())
+                if let Some(ut) = self.proj.types[source.ty].as_user()
+                    && self.proj.scopes.get(ut.id).kind.is_packed_struct()
                 {
                     let tmp = tmpbuf!(self, state, |tmp| {
                         let ptr = self.proj.types.insert(Type::Ptr(source.ty));
@@ -1638,10 +1638,10 @@ impl<'a> Codegen<'a> {
                         writeln_de!(self.buffer, ";");
                         tmp
                     });
-                    self.emit_bitfield_read(&format!("(*{tmp})"), id, member, expr.ty);
+                    self.emit_bitfield_read(&format!("(*{tmp})"), ut, member, expr.ty);
                 } else {
                     self.emit_expr(source, state);
-                    write_de!(self.buffer, ".{}", member_name(self.proj, ut.map(|u| u.id), member));
+                    write_de!(self.buffer, ".{}", member_name(self.proj, member));
                 }
             }
             ExprData::Block(block) => enter_block!(self, block.scope, expr.ty, |name| {
@@ -1901,11 +1901,10 @@ impl<'a> Codegen<'a> {
         if self.proj.scopes.get(ut.id).kind.is_packed_struct() {
             return tmpbuf_emit!(self, state, |tmp| {
                 self.emit_type(ty);
-                writeln_de!(self.buffer, " {tmp} = {{}};");
+                writeln_de!(self.buffer, " {tmp};");
                 for (&name, &value) in members {
-                    let ty = value.ty;
                     let expr = hoist!(self, self.emit_tmpvar(value, state));
-                    self.emit_bitfield_write(&tmp, ut, name, ty, &expr);
+                    self.emit_bitfield_write(&tmp, ut, name, value.ty, &expr);
                 }
             });
         }
@@ -1919,7 +1918,7 @@ impl<'a> Codegen<'a> {
         for (&name, value) in members {
             let mut value = *value;
             value.ty = value.ty.with_templates(&self.proj.types, &state.func.ty_args);
-            write_de!(self.buffer, ".{}=", member_name(self.proj, Some(ut.id), name));
+            write_de!(self.buffer, ".{}=", member_name(self.proj, name));
             self.emit_expr(value, state);
             write_de!(self.buffer, ",");
         }
@@ -1942,14 +1941,12 @@ impl<'a> Codegen<'a> {
             return;
         }
 
-        let ut_id = self.proj.types[ty].as_user().unwrap().id;
-        let ut = self.proj.scopes.get(ut_id);
-        let union = ut.kind.as_union().unwrap();
-
         tmpbuf_emit!(self, state, |tmp| {
             self.emit_type(ty);
             writeln_de!(self.buffer, " {tmp};");
 
+            let ut = self.proj.scopes.get(self.proj.types[ty].as_user().unwrap().id);
+            let union = ut.kind.as_union().unwrap();
             if union.tag.size_and_align(&self.proj.scopes, &self.proj.types).0 != 0 {
                 write_de!(self.buffer, "{tmp}.{UNION_TAG_NAME}=");
                 self.emit_literal(union.discriminant(variant).unwrap().clone(), union.tag);
@@ -1961,11 +1958,11 @@ impl<'a> Codegen<'a> {
                     write_de!(
                         self.buffer,
                         "{tmp}.{}.{}=",
-                        member_name(self.proj, Some(ut_id), variant),
-                        member_name(self.proj, Some(ut_id), name),
+                        member_name(self.proj, variant),
+                        member_name(self.proj, name),
                     );
                 } else {
-                    write_de!(self.buffer, "{tmp}.{}=", member_name(self.proj, Some(ut_id), name));
+                    write_de!(self.buffer, "{tmp}.{}=", member_name(self.proj, name));
                 }
                 self.emit_expr_inline(expr, state);
                 writeln_de!(self.buffer, ";");
@@ -2626,11 +2623,7 @@ impl<'a> Codegen<'a> {
                     .expect("ICE: InvokeWithTuple second argument should be a tuple");
                 for (i, member) in self.proj.scopes.get(ut.id).members.keys().enumerate() {
                     write_if!(i != 0, self.buffer, ", ");
-                    write_de!(
-                        self.buffer,
-                        "{args_tmpvar}.{}",
-                        member_name(self.proj, None, *member)
-                    );
+                    write_de!(self.buffer, "{args_tmpvar}.{}", member_name(self.proj, *member));
                 }
                 write_de!(self.buffer, ")");
             }
@@ -2721,8 +2714,7 @@ impl<'a> Codegen<'a> {
                         write_str!(self.proj.str(name));
                         if let Some(ty) = variant.ty {
                             let ty = ty.with_templates(&self.proj.types, &ut.ty_args);
-                            let buf =
-                                format!("{arg}.{}", member_name(self.proj, Some(ut.id), name));
+                            let buf = format!("{arg}.{}", member_name(self.proj, name));
                             self.emit_builtin_dbg(args, ty, &buf, fmt, state, scope, span, lvl + 1);
                         }
                         writeln_de!(self.buffer, "break;}}");
@@ -2764,7 +2756,7 @@ impl<'a> Codegen<'a> {
                             tmp
                         })
                     } else {
-                        format!("{arg}.{}", member_name(self.proj, Some(ut.id), name))
+                        format!("{arg}.{}", member_name(self.proj, name))
                     };
                     self.emit_builtin_dbg(args, ty, &buf, fmt, state, scope, span, lvl + 1);
                 }
@@ -2905,9 +2897,12 @@ impl<'a> Codegen<'a> {
                         conditions.next_str(format!("{src}=={NULLPTR}"));
                     }
                 } else {
-                    let ut_id = self.proj.types.get(base).as_user().map(|ut| ut.id);
-                    let (tag, ty) = ut_id
-                        .and_then(|id| self.proj.scopes.get(id).kind.as_union())
+                    let (tag, ty) = self
+                        .proj
+                        .types
+                        .get(base)
+                        .as_user()
+                        .and_then(|ut| self.proj.scopes.get(ut.id).kind.as_union())
                         .and_then(|union| union.discriminant(variant).cloned().zip(Some(union.tag)))
                         .unwrap();
                     conditions.next(|buf| {
@@ -2921,7 +2916,7 @@ impl<'a> Codegen<'a> {
                         self.emit_pattern_inner(
                             state,
                             &pattern.data,
-                            &format!("{src}.{}", member_name(self.proj, ut_id, variant)),
+                            &format!("{src}.{}", member_name(self.proj, variant)),
                             inner,
                             borrow || borrows,
                             bindings,
@@ -2974,15 +2969,13 @@ impl<'a> Codegen<'a> {
                 }
             }
             PatternData::Destructure { patterns, borrows } => {
-                let (ty, ind) = ty.strip_references_ex(&self.proj.types);
-                let src = Self::apply_deref(src, ind);
-                let ut_id = self.proj.types[ty].as_user().map(|ut| ut.id);
+                let src = Self::deref(&self.proj.types, src, ty);
                 for (member, inner, patt) in patterns {
                     let inner = inner.with_templates(&self.proj.types, &state.func.ty_args);
                     self.emit_pattern_inner(
                         state,
                         &patt.data,
-                        &format!("{src}.{}", member_name(self.proj, ut_id, *member)),
+                        &format!("{src}.{}", member_name(self.proj, *member)),
                         inner,
                         borrow || *borrows,
                         bindings,
@@ -3903,7 +3896,7 @@ fn vtable_methods(scopes: &Scopes, types: &Types, tr: UserTypeId) -> Vec<Vis<Fun
         .collect()
 }
 
-fn member_name(proj: &Project, _id: Option<UserTypeId>, name: StrId) -> String {
+fn member_name(proj: &Project, name: StrId) -> String {
     let data = proj.str(name);
     if !is_c_reserved_ident(data) { data.into() } else { format!("${data}") }
 }
