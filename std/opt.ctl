@@ -22,6 +22,8 @@ pub union Option<T> {
     pub fn is_null(this): bool => this is null;
 
     pub fn map<U, F: Fn(T) => U>(my this, f: F): ?U => this is ?val then f(val);
+    pub fn and_then<U, F: Fn(T) => ?U>(my this, f: F): ?U => this is ?val then f(val) else null;
+    pub fn filter<F: Fn(T) => bool>(my this, f: F): ?T => this is ?val and f(val) then val;
 
     impl std::ops::Unwrap<T> {
         fn unwrap(my this): T {
