@@ -398,7 +398,13 @@ impl<'a> Lexer<'a> {
             ')' => Token::RParen,
             ',' => Token::Comma,
             ';' => Token::Semicolon,
-            '#' => Token::Hash,
+            '#' => {
+                if self.advance_if('"') {
+                    Token::String(Cow::Borrowed(self.raw_string_literal(diag, start + 1)))
+                } else {
+                    Token::Hash
+                }
+            }
             '$' => Token::Dollar,
             '@' => {
                 if self.advance_if('(') {
@@ -800,6 +806,20 @@ impl<'a> Lexer<'a> {
         ch
     }
 
+    fn raw_string_literal(&mut self, diag: &mut Diagnostics, start: usize) -> &'a str {
+        let mut result = "";
+        loop {
+            match self.advance() {
+                Some('"') if self.advance_if('#') => break result,
+                Some(_) => result = &self.src[start + 1..self.pos],
+                None => {
+                    diag.report(Error::new("unterminated string literal", self.here(1)));
+                    break result;
+                }
+            }
+        }
+    }
+
     fn numeric_suffix(&mut self) -> Option<&'a str> {
         let suffix = self.advance_while(|s| s.is_ascii_alphanumeric());
         if !suffix.is_empty() { Some(suffix) } else { None }
@@ -883,6 +903,11 @@ impl<'a> Lexer<'a> {
         }
 
         match self.peek() {
+            Some('#') => {
+                self.advance();
+                self.expect(diag, '"');
+                Token::ByteString(self.raw_string_literal(diag, start).as_bytes().to_vec())
+            }
             Some('\'') => {
                 self.advance();
                 let prev = self.here(0);

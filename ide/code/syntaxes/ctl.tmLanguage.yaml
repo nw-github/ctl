@@ -24,7 +24,7 @@ patterns:
   -
     comment: attributes
     name: meta.attribute.ctl
-    begin: '(@)(\!?)(\()'
+    begin: '(\$)(\!?)(\[)'
     beginCaptures:
       1:
         name: punctuation.definition.attribute.ctl
@@ -32,7 +32,7 @@ patterns:
         name: keyword.operator.attribute.inner.ctl
       3:
         name: punctuation.brackets.attribute.ctl
-    end: '\)'
+    end: '\]'
     endCaptures:
       0:
         name: punctuation.brackets.attribute.ctl
@@ -592,9 +592,9 @@ repository:
   strings:
     patterns:
       -
-        comment: double-quoted strings and byte strings
+        comment: byte strings
         name: string.quoted.double.ctl
-        begin: '(b?)(")'
+        begin: '(b)(")'
         beginCaptures:
           1:
             name: string.quoted.byte.raw.ctl
@@ -606,11 +606,24 @@ repository:
             name: punctuation.definition.string.ctl
         patterns:
           - include: '#escapes'
+      -
+        comment: double-quoted strings
+        name: string.quoted.double.ctl
+        begin: '(?<!b)(")'
+        beginCaptures:
+          1:
+            name: punctuation.definition.string.ctl
+        end: '"'
+        endCaptures:
+          0:
+            name: punctuation.definition.string.ctl
+        patterns:
+          - include: '#escapes'
           - include: '#interpolations'
       -
         comment: double-quoted raw strings and raw byte strings
         name: string.quoted.double.ctl
-        begin: '(b?r)(#*)(")'
+        begin: '(b?)(#*)(")'
         beginCaptures:
           1:
             name: string.quoted.byte.raw.ctl
