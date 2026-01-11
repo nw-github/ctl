@@ -25,7 +25,7 @@ use crate::{
     sym::*,
     typeid::{
         BitSizeResult, CInt, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType,
-        Type, TypeArgs, TypeId, Types, WithTypeArgs,
+        Type, TypeArgs, TypeId, Types,
     },
 };
 
@@ -331,6 +331,7 @@ pub struct TypeChecker<'a> {
     proj: Project,
     listening_vars: Option<Vec<VariableId>>,
     current_static: Option<(VariableId, Vec<VariableId>)>,
+    current_call_ty_args: Option<TypeArgs>,
     cache: ExtensionCache,
     arena: ExprArena,
     parsed: PExprArena,
@@ -353,6 +354,7 @@ impl<'a> TypeChecker<'a> {
             lsp_input: lsp.unwrap_or_default(),
             listening_vars: None,
             current_static: None,
+            current_call_ty_args: None,
             cache: Default::default(),
             arena: ExprArena::with_capacity(arena.len()),
             parsed: arena,
@@ -788,17 +790,20 @@ impl TypeChecker<'_> {
         self.proj.completions = Some(Completions { items: completions, method: false });
     }
 
-    fn check_arg_label_hover(&mut self, span: Span, param: CheckedParam, func: &GenericFn) {
-        let f = self.proj.scopes.get(func.id);
+    fn check_arg_label_hover(&mut self, span: Span, param: CheckedParam, fid: FunctionId) {
+        let Some(ty_args) = &self.current_call_ty_args else {
+            return;
+        };
+        let f = self.proj.scopes.get(fid);
         if let Some(owner) = f.constructor {
-            let ty = param.ty.with_templates(&self.proj.types, &func.ty_args);
+            let ty = param.ty.with_templates(&self.proj.types, ty_args);
             return self.check_hover(span, LspItem::Property(Some(ty), owner, param.label));
         }
 
         if let ParamPattern::Checked(patt) = param.patt
             && let PatternData::Variable(id) = patt.data
         {
-            self.check_hover(span, LspItem::FnParamLabel(id, func.id));
+            self.check_hover(span, LspItem::FnParamLabel(id, fid));
         }
     }
 }
@@ -3065,8 +3070,8 @@ impl TypeChecker<'_> {
                     std::iter::repeat(TypeId::UNKNOWN),
                 ));
 
-                let (args, ret, _failed) =
-                    self.check_fn_args(&mut func, None, &call_args, target, span);
+                let (_, args, ret, _failed) =
+                    self.check_fn_args(func, None, &call_args, target, span);
                 CExpr::new(ret, self.arena.alloc(CExprData::Instance(args)))
             }
             &PExprData::String(s) => CExpr::new(
@@ -3865,7 +3870,7 @@ impl TypeChecker<'_> {
             right.cmp(&left)
         });
 
-        for mut func in candidates {
+        for func in candidates {
             let args = args.clone();
             let recv = callee.auto_deref(
                 &self.proj.types,
@@ -3873,8 +3878,8 @@ impl TypeChecker<'_> {
                 &mut self.arena,
             );
             let err_idx = self.proj.diag.capture_errors();
-            let (args, ret, failed) =
-                self.check_fn_args(&mut func, Some(recv), &args, target, span);
+            let (func, args, ret, failed) =
+                self.check_fn_args(func, Some(recv), &args, target, span);
             // TODO: if the arguments have non overload related errors, just stop overload
             // resolution
             if failed || args.iter().any(|arg| arg.1.data == ExprArena::ERROR.data) {
@@ -4290,7 +4295,9 @@ impl TypeChecker<'_> {
 
             self.check_hover(name.span, LspItem::Property(Some(ty), ut.id, name.data));
 
-            members.insert(name.data, self.check_arg(&mut ut, expr, ty).0);
+            let old = self.current_call_ty_args.replace(ut.ty_args);
+            members.insert(name.data, self.check_arg(expr, ty).0);
+            ut.ty_args = std::mem::replace(&mut self.current_call_ty_args, old).unwrap();
         }
 
         if !self.proj.scopes.get(ut.id).members.is_empty() && members.is_empty() {
@@ -4408,8 +4415,9 @@ impl TypeChecker<'_> {
                 }
 
                 let recv = recv.auto_deref(&self.proj.types, this_param_ty, &mut self.arena);
-                let (args, ret, _) =
-                    self.check_fn_args(&mut mfn.func, Some(recv), args, target, span);
+                let (func, args, ret, _) =
+                    self.check_fn_args(mfn.func, Some(recv), args, target, span);
+                mfn.func = func;
                 if mfn.typ.is_dynamic() {
                     return self.arena.typed(ret, CExprData::CallDyn(mfn.func, args));
                 } else {
@@ -4450,8 +4458,9 @@ impl TypeChecker<'_> {
                         }
                     }
 
-                    let (args, ret, _) =
-                        self.check_fn_args(&mut mfn.func, None, args, target, span);
+                    let (func, args, ret, _) =
+                        self.check_fn_args(mfn.func, None, args, target, span);
+                    mfn.func = func;
                     return CExpr::member_call(
                         ret,
                         &self.proj.types,
@@ -4557,41 +4566,27 @@ impl TypeChecker<'_> {
             }
         }
 
-        let (args, ret, _) = self.check_fn_args(&mut func, None, args, target, span);
+        let (func, args, ret, _) = self.check_fn_args(func, None, args, target, span);
         CExpr::call(ret, &self.proj.types, func, args, self.current, span, &mut self.arena)
     }
 
-    fn check_arg<T>(
-        &mut self,
-        func: &mut WithTypeArgs<T>,
-        expr: PExpr,
-        ty: TypeId,
-    ) -> (CExpr, bool) {
-        let mut target = ty.with_templates(&self.proj.types, &func.ty_args);
+    /// `self.current_call_args` must be non-null
+    fn check_arg(&mut self, expr: PExpr, ty: TypeId) -> (CExpr, bool) {
+        let ty_args = self.current_call_ty_args.as_mut().unwrap();
+        let target = ty.with_templates(&self.proj.types, ty_args);
         let span = expr.span;
         let expr = self.check_expr(expr, Some(target));
-        if !func.ty_args.is_empty() {
-            self.infer_type_args(&mut func.ty_args, ty, expr.ty);
-            target = target.with_templates(&self.proj.types, &func.ty_args);
-        }
-
-        match self.coerce(expr, target) {
-            Ok(expr) => (expr, false),
-            Err(expr) => {
-                self.proj.diag.report(type_mismatch_err!(self, target, expr.ty, span));
-                (Default::default(), true)
-            }
-        }
+        self.do_type_check_checked(expr, ty, span)
     }
 
     fn check_fn_args(
         &mut self,
-        func: &mut GenericFn,
+        mut func: GenericFn,
         recv: Option<CExpr>,
         args: &CallArgs,
         target: Option<TypeId>,
         span: Span,
-    ) -> (IndexMap<StrId, CExpr>, TypeId, bool) {
+    ) -> (GenericFn, IndexMap<StrId, CExpr>, TypeId, bool) {
         self.resolve_proto(func.id);
 
         let unknowns: HashSet<_> = func
@@ -4600,8 +4595,16 @@ impl TypeChecker<'_> {
             .filter_map(|(&id, &ty)| (ty == TypeId::UNKNOWN).then_some(id))
             .collect();
         if let Some(target) = target {
-            self.infer_type_args(&mut func.ty_args, self.proj.scopes.get(func.id).ret, target);
+            self.infer_call_type_args(
+                &mut func.ty_args,
+                self.proj.scopes.get(func.id).ret,
+                target,
+                true,
+            );
         }
+
+        let func_id = func.id;
+        let prev_call = self.current_call_ty_args.replace(func.ty_args);
 
         let mut result = IndexMap::with_capacity(args.len());
         let mut last_pos = 0;
@@ -4610,7 +4613,7 @@ impl TypeChecker<'_> {
             last_pos += 1;
         }
 
-        let variadic = self.proj.scopes.get(func.id).variadic;
+        let variadic = self.proj.scopes.get(func_id).variadic;
         let mut num = 0;
         let mut failed = false;
         for (name, expr) in args.iter().copied() {
@@ -4626,12 +4629,12 @@ impl TypeChecker<'_> {
                 }
 
                 if let Some(param) =
-                    self.proj.scopes.get(func.id).params.iter().find(|p| p.label == name.data)
+                    self.proj.scopes.get(func_id).params.iter().find(|p| p.label == name.data)
                 {
                     let ty = param.ty;
-                    self.check_arg_label_hover(name.span, param.clone(), func);
+                    self.check_arg_label_hover(name.span, param.clone(), func_id);
 
-                    let (expr, f) = self.check_arg(func, expr, ty);
+                    let (expr, f) = self.check_arg(expr, ty);
                     result.insert(name.data, expr);
                     failed = failed || f;
                 } else {
@@ -4647,7 +4650,7 @@ impl TypeChecker<'_> {
             } else if let Some((i, param)) = self
                 .proj
                 .scopes
-                .get(func.id)
+                .get(func_id)
                 .params
                 .iter()
                 .enumerate()
@@ -4655,7 +4658,7 @@ impl TypeChecker<'_> {
                 .find(|(_, param)| !param.keyword && !result.contains_key(&param.label))
             {
                 let name = param.label;
-                let (expr, f) = self.check_arg(func, expr, param.ty);
+                let (expr, f) = self.check_arg(expr, param.ty);
                 result.insert(name, expr);
                 failed = failed || f;
                 last_pos = i + 1;
@@ -4669,7 +4672,8 @@ impl TypeChecker<'_> {
             }
         }
 
-        for param in self.proj.scopes.get(func.id).params.iter() {
+        let params = &self.proj.scopes.get(func_id).params;
+        for param in params.iter() {
             if result.contains_key(&param.label) {
                 continue;
             }
@@ -4679,16 +4683,9 @@ impl TypeChecker<'_> {
             }
         }
 
-        if self.proj.scopes.get(func.id).params.len() > result.len() {
+        if params.len() > result.len() {
             let mut missing = String::new();
-            for param in self
-                .proj
-                .scopes
-                .get(func.id)
-                .params
-                .iter()
-                .filter(|p| !result.contains_key(&p.label))
-            {
+            for param in params.iter().filter(|p| !result.contains_key(&p.label)) {
                 if !missing.is_empty() {
                     missing.push_str(", ");
                 }
@@ -4700,24 +4697,23 @@ impl TypeChecker<'_> {
             self.error(Error::new(
                 format!(
                     "expected {} argument(s), found {} (missing {missing})",
-                    self.proj.scopes.get(func.id).params.len(),
+                    params.len(),
                     result.len()
                 ),
                 span,
             ))
         }
 
-        let f = self.check_bounds_filtered(func, &unknowns, span);
+        let ty_args = std::mem::replace(&mut self.current_call_ty_args, prev_call).unwrap();
+        let func = GenericFn::new(func_id, ty_args);
+        let f = self.check_bounds_filtered(&func, &unknowns, span);
         failed = failed || f;
         if self.proj.scopes.get(func.id).is_unsafe {
             check_unsafe!(self, Error::is_unsafe(span));
         }
 
-        (
-            result,
-            self.proj.scopes.get(func.id).ret.with_templates(&self.proj.types, &func.ty_args),
-            failed,
-        )
+        let ret = self.proj.scopes.get(func.id).ret.with_templates(&self.proj.types, &func.ty_args);
+        (func, result, ret, failed)
     }
 
     fn check_bounds_filtered(
@@ -4794,9 +4790,28 @@ impl TypeChecker<'_> {
     }
 
     fn type_check_checked(&mut self, source: CExpr, target: TypeId, span: Span) -> CExpr {
-        match self.coerce(source, target) {
-            Ok(expr) => expr,
-            Err(expr) => bail!(self, type_mismatch_err!(self, target, expr.ty, span)),
+        self.do_type_check_checked(source, target, span).0
+    }
+
+    fn do_type_check_checked(
+        &mut self,
+        expr: CExpr,
+        mut target: TypeId,
+        span: Span,
+    ) -> (CExpr, bool) {
+        if let Some(ty_args) = self.current_call_ty_args.as_mut().filter(|args| !args.is_empty()) {
+            let mut ty_args = std::mem::take(ty_args);
+            self.infer_call_type_args(&mut ty_args, target, expr.ty, false);
+            target = target.with_templates(&self.proj.types, &ty_args);
+            self.current_call_ty_args = Some(ty_args);
+        }
+
+        match self.coerce(expr, target) {
+            Ok(expr) => (expr, false),
+            Err(expr) => {
+                self.proj.diag.report(type_mismatch_err!(self, target, expr.ty, span));
+                (Default::default(), true)
+            }
         }
     }
 
@@ -7552,6 +7567,27 @@ impl TypeChecker<'_> {
         let exts = self.extensions_in_scope(self.current);
         self.do_infer_type_args(&exts, item, src, target)
     }
+
+    fn infer_call_type_args(
+        &mut self,
+        item: &mut TypeArgs,
+        src: TypeId,
+        target: TypeId,
+        use_current_call_args: bool,
+    ) {
+        if !use_current_call_args || self.current_call_ty_args.is_some() {
+            let exts = self.extensions_in_scope(self.current);
+            self.do_infer_type_args_ex(&exts, item, src, target, |this, ty_args, target| {
+                !is_any_part_unknown_in(
+                    &this.proj,
+                    this.current_call_ty_args.as_ref().unwrap_or(ty_args),
+                    target,
+                )
+            })
+        } else {
+            self.infer_type_args(item, src, target)
+        }
+    }
 }
 
 impl SharedStuff for TypeChecker<'_> {
@@ -7917,8 +7953,19 @@ pub trait SharedStuff {
         &mut self,
         in_scope: &[ExtensionId],
         ty_args: &mut TypeArgs,
+        src: TypeId,
+        target: TypeId,
+    ) {
+        self.do_infer_type_args_ex(in_scope, ty_args, src, target, |_, _, _| true);
+    }
+
+    fn do_infer_type_args_ex(
+        &mut self,
+        in_scope: &[ExtensionId],
+        ty_args: &mut TypeArgs,
         mut src: TypeId,
         mut target: TypeId,
+        mut is_valid: impl FnMut(&Self, &TypeArgs, TypeId) -> bool + Copy,
     ) {
         use indexmap::map::Entry;
 
@@ -7939,10 +7986,10 @@ pub trait SharedStuff {
                     let src = src.clone();
                     let target = target.clone();
                     for (&src, &target) in src.params.iter().zip(target.params.iter()) {
-                        self.do_infer_type_args(in_scope, ty_args, src, target);
+                        self.do_infer_type_args_ex(in_scope, ty_args, src, target, is_valid);
                     }
 
-                    self.do_infer_type_args(in_scope, ty_args, src.ret, target.ret);
+                    self.do_infer_type_args_ex(in_scope, ty_args, src.ret, target.ret, is_valid);
                     break;
                 }
                 (
@@ -7956,14 +8003,14 @@ pub trait SharedStuff {
                     let src = src.clone();
                     let target = target.clone();
                     for (&src, &target) in src.ty_args.values().zip(target.ty_args.values()) {
-                        self.do_infer_type_args(in_scope, ty_args, src, target);
+                        self.do_infer_type_args_ex(in_scope, ty_args, src, target, is_valid);
                     }
                     break;
                 }
                 (Type::User(src), target_ty) => {
                     // TODO: T => ?T
                     if let Entry::Occupied(entry) = ty_args.entry(src.id) {
-                        if entry.get() != &TypeId::UNKNOWN {
+                        if entry.get() != &TypeId::UNKNOWN || !is_valid(self, ty_args, target) {
                             return;
                         }
 
@@ -7974,7 +8021,7 @@ pub trait SharedStuff {
                         let src = src.clone();
                         let target = target.clone();
                         for (&src, &target) in src.ty_args.values().zip(target.ty_args.values()) {
-                            self.do_infer_type_args(in_scope, ty_args, src, target);
+                            self.do_infer_type_args_ex(in_scope, ty_args, src, target, is_valid);
                         }
                     }
 
@@ -8156,4 +8203,18 @@ impl TypeChecker<'_> {
 fn nowhere<T>(name: StrId, cons: impl FnOnce(Path) -> T) -> Located<T> {
     // uses default span so hover ignore it
     Located::nowhere(cons(Path::from(Located::nowhere(name))))
+}
+
+/// Returns `true` if `ty` is/contains a user type where any parameter is an unresolved
+/// (T => TypeId::UNKNOWN) member of `ty_args`
+fn is_any_part_unknown_in(proj: &Project, ty_args: &TypeArgs, ty: TypeId) -> bool {
+    let Some(ut) = proj.types[ty.strip_references(&proj.types)].as_user() else {
+        return false;
+    };
+
+    if ty_args.get(&ut.id).is_some_and(|ty| ty == &TypeId::UNKNOWN) {
+        return true;
+    }
+
+    ut.ty_args.values().any(|ty| is_any_part_unknown_in(proj, ty_args, *ty))
 }
