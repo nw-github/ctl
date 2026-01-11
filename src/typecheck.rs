@@ -2354,9 +2354,41 @@ impl TypeChecker<'_> {
                 }
             }
             Type::User(ut) if self.proj.scopes.get(ut.id).kind.is_template() => {
-                // TODO: we need a reference to the current GenericFn in order to do inference
-                // here
-                None
+                let op_fn_tr = self.proj.scopes.lang_types.get(&LangType::OpFn).copied()?;
+                let ut_id = ut.id;
+                self.resolve_impls(ut_id);
+
+                let mut tr = self
+                    .proj
+                    .scopes
+                    .get(ut_id)
+                    .impls
+                    .iter_checked()
+                    .find(|tr| tr.id == op_fn_tr)
+                    .cloned()?;
+                if let Some(ty_args) = &self.current_call_ty_args
+                    && ty_args.contains_key(&ut_id)
+                {
+                    tr.fill_templates(&self.proj.types, ty_args);
+                }
+
+                // tr = Fn<Tuple, Ret>
+                let ty = if let Some(i) = i {
+                    let args = self.proj.types[*tr.ty_args.get_index(0)?.1].as_user()?;
+                    args.ty_args
+                        .get_index(i)
+                        .map(|v| v.1.with_templates(&self.proj.types, &tr.ty_args))?
+                } else {
+                    tr.ty_args.get_index(1)?.1.with_templates(&self.proj.types, &tr.ty_args)
+                };
+
+                if let Some(ty_args) = &self.current_call_ty_args
+                    && shouldnt_infer_with(&self.proj, ty_args, ty)
+                {
+                    return None;
+                }
+
+                Some(ty)
             }
             _ => None,
         }
@@ -7578,7 +7610,7 @@ impl TypeChecker<'_> {
         if !use_current_call_args || self.current_call_ty_args.is_some() {
             let exts = self.extensions_in_scope(self.current);
             self.do_infer_type_args_ex(&exts, item, src, target, |this, ty_args, target| {
-                !is_any_part_unknown_in(
+                !shouldnt_infer_with(
                     &this.proj,
                     this.current_call_ty_args.as_ref().unwrap_or(ty_args),
                     target,
@@ -8207,7 +8239,7 @@ fn nowhere<T>(name: StrId, cons: impl FnOnce(Path) -> T) -> Located<T> {
 
 /// Returns `true` if `ty` is/contains a user type where any parameter is an unresolved
 /// (T => TypeId::UNKNOWN) member of `ty_args`
-fn is_any_part_unknown_in(proj: &Project, ty_args: &TypeArgs, ty: TypeId) -> bool {
+fn shouldnt_infer_with(proj: &Project, ty_args: &TypeArgs, ty: TypeId) -> bool {
     let Some(ut) = proj.types[ty.strip_references(&proj.types)].as_user() else {
         return false;
     };
@@ -8216,5 +8248,5 @@ fn is_any_part_unknown_in(proj: &Project, ty_args: &TypeArgs, ty: TypeId) -> boo
         return true;
     }
 
-    ut.ty_args.values().any(|ty| is_any_part_unknown_in(proj, ty_args, *ty))
+    ut.ty_args.values().any(|ty| shouldnt_infer_with(proj, ty_args, *ty))
 }
