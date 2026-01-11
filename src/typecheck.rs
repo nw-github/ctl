@@ -2251,7 +2251,6 @@ impl TypeChecker<'_> {
                 CExprData::AffixOperator {
                     callee,
                     mfn,
-                    param: p0.label,
                     scope: self.current,
                     postfix: matches!(op, UnaryOp::PostDecrement | UnaryOp::PostIncrement),
                     span, // TODO: use the span of the operator itself

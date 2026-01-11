@@ -1817,7 +1817,7 @@ impl<'a> Codegen<'a> {
             &ExprData::StringInterp { ref strings, ref args, scope } => {
                 self.emit_string_interp(expr.ty, state, strings.clone(), args.clone(), scope)
             }
-            &ExprData::AffixOperator { callee, ref mfn, param, scope, postfix, span } => {
+            &ExprData::AffixOperator { callee, ref mfn, scope, postfix, span } => {
                 let mfn = mfn.clone();
                 let deref = "*".repeat(callee.ty.strip_references_ex(&self.proj.types).1);
                 if !postfix {
@@ -1830,7 +1830,7 @@ impl<'a> Codegen<'a> {
                                 .with_templates(&self.proj.types, &state.func.ty_args),
                             &self.proj.types,
                             mfn,
-                            [(param, callee)].into(),
+                            [(Strings::THIS_PARAM, callee)].into(),
                             scope,
                             span,
                             &mut self.arena,
@@ -1855,7 +1855,7 @@ impl<'a> Codegen<'a> {
                                 .with_templates(&self.proj.types, &state.func.ty_args),
                             &self.proj.types,
                             mfn,
-                            [(param, callee)].into(),
+                            [(Strings::THIS_PARAM, callee)].into(),
                             scope,
                             span,
                             &mut self.arena,

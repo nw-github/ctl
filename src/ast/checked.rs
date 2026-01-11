@@ -159,7 +159,6 @@ pub enum ExprData {
     AffixOperator {
         callee: Expr,
         mfn: MemberFn,
-        param: StrId,
         scope: ScopeId,
         postfix: bool,
         span: Span,
