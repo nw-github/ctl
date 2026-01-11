@@ -2330,10 +2330,37 @@ impl TypeChecker<'_> {
         self.arena.typed(out_ty, CExprData::Unary(op, inner))
     }
 
+    fn infer_closure_type(&mut self, target: TypeId, i: Option<usize>) -> Option<TypeId> {
+        let target = target.strip_references(&self.proj.types);
+        match &self.proj.types[target] {
+            Type::Fn(func) => {
+                let f = self.proj.scopes.get(func.id);
+                if let Some(i) = i {
+                    f.params.get(i).map(|p| p.ty.with_templates(&self.proj.types, &func.ty_args))
+                } else {
+                    Some(f.ret.with_templates(&self.proj.types, &func.ty_args))
+                }
+            }
+            Type::FnPtr(fn_ptr) => {
+                if let Some(i) = i {
+                    fn_ptr.params.get(i).copied()
+                } else {
+                    Some(fn_ptr.ret)
+                }
+            }
+            Type::User(ut) if self.proj.scopes.get(ut.id).kind.is_template() => {
+                // TODO: we need a reference to the current GenericFn in order to do inference
+                // here
+                None
+            }
+            _ => None,
+        }
+    }
+
     fn check_lambda(
         &mut self,
         span: Span,
-        target: Option<TypeId>,
+        t: Option<TypeId>,
         captures: &[Located<Capture>],
         params: &[(Located<Pattern>, Option<TypeHint>)],
         ret: Option<TypeId>,
@@ -2409,11 +2436,10 @@ impl TypeChecker<'_> {
         for (i, (patt, hint)) in params.iter().enumerate() {
             let ty = if let Some(hint) = hint {
                 self.resolve_typehint(*hint)
+            } else if let Some(ty) = t.and_then(|target| self.infer_closure_type(target, Some(i))) {
+                ty
             } else {
-                self.error(Error::new(
-                    "type inference for lambda parameters is not currently supported",
-                    patt.span,
-                ))
+                self.error(Error::new("cannot infer type for this parameter", patt.span))
             };
 
             let name = self.proj.strings.get_or_intern(format!("{i}"));
@@ -3666,7 +3692,9 @@ impl TypeChecker<'_> {
             }
             PExprData::Error => CExpr::default(),
             &PExprData::Lambda { policy, ref captures, ref params, ret, body } => {
-                let ret = ret.map(|ret| self.resolve_typehint(ret));
+                let ret = ret
+                    .map(|ret| self.resolve_typehint(ret))
+                    .or_else(|| target.and_then(|t| self.infer_closure_type(t, None)));
                 self.enter(ScopeKind::Lambda(ret, policy.unwrap_or_default()), |this| {
                     this.check_lambda(span, target, captures, params, ret, body)
                 })
