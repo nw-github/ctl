@@ -5,7 +5,7 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     Warning,
     ast::{
-        Attributes, BinaryOp, Capture, UnaryOp,
+        Attributes, BinaryOp, UnaryOp,
         checked::{
             ArrayPattern, Block, Expr as CExpr, ExprArena, ExprData as CExprData,
             FormatOpts as CFormatSpec, Pattern as CPattern, PatternData, RestPattern,
@@ -2398,7 +2398,7 @@ impl TypeChecker<'_> {
         &mut self,
         span: Span,
         t: Option<TypeId>,
-        captures: &[Located<Capture>],
+        captures: &[Capture],
         params: &[(Located<Pattern>, Option<TypeHint>)],
         ret: Option<TypeId>,
         body: Expr,
@@ -2410,39 +2410,58 @@ impl TypeChecker<'_> {
         let mut members = IndexMap::new();
         let mut instance = IndexMap::new();
         for capture in captures {
-            let name = Located::new(capture.span, capture.data.data());
+            if let &Capture::New { mutable, ident: name, expr } = capture {
+                let expr = self.check_expr(expr, None);
+                let var = Variable {
+                    name,
+                    ty: expr.ty,
+                    mutable,
+                    unused: true,
+                    param: false,
+                    has_hint: false,
+                    kind: VariableKind::Capture,
+                    ..Default::default()
+                };
+                self.insert::<VariableId>(var, false, true);
+                instance.insert(name.data, expr);
+                members.insert(name.data, CheckedMember::new(false, expr.ty, Span::nowhere()));
+                continue;
+            }
+
+            let name = capture.ident();
             let path = Path::from(name);
             let ResolvedValue::Var(o_var_id) = self.resolve_value_path(&path, None) else {
-                self.proj.diag.report(Error::no_symbol(self.proj.str(name.data), capture.span));
+                self.proj.diag.report(Error::no_symbol(self.proj.str(name.data), name.span));
                 continue;
             };
 
             if !self.proj.scopes.get(o_var_id).kind.is_local() {
                 self.proj.diag.report(Error::new(
                     format!("invalid capture of non-local variable '{}'", self.proj.str(name.data)),
-                    capture.span,
+                    name.span,
                 ));
                 continue;
             }
 
-            self.check_local(o_var_id, capture.span, true);
+            self.check_local(o_var_id, name.span, true);
             self.proj.scopes.get_mut(o_var_id).unused = false;
 
             let var = self.proj.scopes.get(o_var_id);
-            let (ty, mutable) = match capture.data {
+            let (ty, mutable) = match capture {
                 Capture::ByVal(_) => (var.ty, false),
                 Capture::ByValMut(_) => (var.ty, true),
                 Capture::ByPtr(_) => (self.proj.types.insert(Type::Ptr(var.ty)), false),
                 Capture::ByMutPtr(_) => {
                     if !var.mutable {
-                        self.proj.diag.report(Error::no_mut_ptr(capture.span));
+                        self.proj.diag.report(Error::no_mut_ptr(name.span));
                     }
 
                     (self.proj.types.insert(Type::MutPtr(var.ty)), false)
                 }
+                _ => unreachable!(),
             };
 
-            if matches!(capture.data, Capture::ByVal(_) | Capture::ByValMut(_)) {
+            if matches!(capture, Capture::ByVal(_) | Capture::ByValMut(_)) {
                 instance.insert(name.data, self.arena.typed(ty, CExprData::Var(o_var_id)));
             } else {
                 let inner = self.arena.typed(var.ty, CExprData::Var(o_var_id));

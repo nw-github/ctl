@@ -322,23 +322,3 @@ pub enum DefaultCapturePolicy {
     ByMutPtr,
     Auto,
 }
-
-#[derive(Clone, Copy)]
-#[allow(clippy::enum_variant_names)]
-pub enum Capture {
-    ByVal(StrId),
-    ByValMut(StrId),
-    ByPtr(StrId),
-    ByMutPtr(StrId),
-}
-
-impl Capture {
-    pub fn data(self) -> StrId {
-        match self {
-            Capture::ByVal(id) => id,
-            Capture::ByValMut(id) => id,
-            Capture::ByPtr(id) => id,
-            Capture::ByMutPtr(id) => id,
-        }
-    }
-}

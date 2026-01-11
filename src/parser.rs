@@ -3,8 +3,7 @@ use either::{Either, Either::*};
 use crate::{
     FormatLexer, FormatToken, Warning,
     ast::{
-        Alignment, AttrName, Attribute, Attributes, Capture, DefaultCapturePolicy, Sign, UnaryOp,
-        parsed::*,
+        Alignment, AttrName, Attribute, Attributes, DefaultCapturePolicy, Sign, UnaryOp, parsed::*,
     },
     ds::ComptimeInt,
     error::{Diagnostics, Error, FileId},
@@ -1150,25 +1149,31 @@ impl<'a> Parser<'a> {
                 match (mutable.is_some(), ident) {
                     (true, None) => set_policy(this, DefaultCapturePolicy::ByMutPtr, span),
                     (false, None) => set_policy(this, DefaultCapturePolicy::ByPtr, span),
-                    (true, Some(ident)) => captures.push(ident.map(Capture::ByMutPtr)),
-                    (false, Some(ident)) => captures.push(ident.map(Capture::ByPtr)),
+                    (true, Some(ident)) => captures.push(Capture::ByMutPtr(ident)),
+                    (false, Some(ident)) => captures.push(Capture::ByPtr(ident)),
                 }
             }
             Token::Mut => {
                 this.next();
                 let ident = this.expect_ident("expected capture name");
-                captures.push(ident.map(Capture::ByValMut))
+                if this.next_if(Token::Assign).is_some() {
+                    captures.push(Capture::New { mutable: true, ident, expr: this.expression() });
+                } else {
+                    captures.push(Capture::ByValMut(ident))
+                }
             }
             Token::Ident(ident) => {
                 let start = this.next();
-                captures.push(Located::new(
-                    start.span,
-                    Capture::ByVal(this.strings.get_or_intern(ident)),
-                ))
+                let ident = Located::new(start.span, this.strings.get_or_intern(ident));
+                if this.next_if(Token::Assign).is_some() {
+                    captures.push(Capture::New { mutable: false, ident, expr: this.expression() });
+                } else {
+                    captures.push(Capture::ByVal(ident))
+                }
             }
             Token::This => {
                 let start = this.next();
-                captures.push(Located::new(start.span, Capture::ByVal(Strings::THIS_PARAM)))
+                captures.push(Capture::ByVal(Located::new(start.span, Strings::THIS_PARAM)))
             }
             Token::Assign => {
                 let start = this.next();

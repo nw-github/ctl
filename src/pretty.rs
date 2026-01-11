@@ -2,12 +2,9 @@ use colored::Colorize;
 
 use crate::{
     Located,
-    ast::{
-        Capture,
-        parsed::{
-            Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path, Pattern,
-            Stmt, StmtData, Struct, TypeHint, Variant,
-        },
+    ast::parsed::{
+        Capture, Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path,
+        Pattern, Stmt, StmtData, Struct, TypeHint, Variant,
     },
     format::{FmtHint, FmtPath, FmtPatt, FmtUsePath},
     intern::{StrId, Strings},
@@ -460,18 +457,25 @@ impl Pretty<'_> {
                 }
                 for capture in captures {
                     let tabs = INDENT.repeat(indent + 2);
-                    match &capture.data {
+                    match &capture {
                         Capture::ByVal(id) => {
-                            eprintln!("{tabs}ByVal: {}", self.strings.resolve(id))
+                            eprintln!("{tabs}ByVal: {}", self.strings.resolve(&id.data))
                         }
                         Capture::ByValMut(id) => {
-                            eprintln!("{tabs}ByValMut: {}", self.strings.resolve(id))
+                            eprintln!("{tabs}ByValMut: {}", self.strings.resolve(&id.data))
                         }
                         Capture::ByPtr(id) => {
-                            eprintln!("{tabs}ByPtr: {}", self.strings.resolve(id))
+                            eprintln!("{tabs}ByPtr: {}", self.strings.resolve(&id.data))
                         }
                         Capture::ByMutPtr(id) => {
-                            eprintln!("{tabs}ByMutPtr: {}", self.strings.resolve(id))
+                            eprintln!("{tabs}ByMutPtr: {}", self.strings.resolve(&id.data))
+                        }
+                        Capture::New { mutable, ident, expr } => {
+                            eprintln!(
+                                "{tabs}New: {} (mutable = {mutable})",
+                                self.strings.resolve(&ident.data)
+                            );
+                            self.print_expr(expr, indent + 3);
                         }
                     }
                 }

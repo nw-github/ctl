@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Alignment, Capture, DefaultCapturePolicy, Sign},
+    ast::{Alignment, DefaultCapturePolicy, Sign},
     ds::{
         ComptimeInt,
         arena::{Arena, Id},
@@ -217,7 +217,7 @@ pub enum ExprData {
     Continue(Option<Located<StrId>>),
     Lambda {
         policy: Option<DefaultCapturePolicy>,
-        captures: Vec<Located<Capture>>,
+        captures: Vec<Capture>,
         params: Vec<(Located<Pattern>, Option<TypeHint>)>,
         ret: Option<TypeHint>,
         body: Expr,
@@ -532,6 +532,32 @@ pub struct ImplBlock {
     pub path: Path,
     pub assoc_types: Vec<(Located<StrId>, TypeHint)>,
     pub functions: Vec<Located<Fn>>,
+}
+
+#[derive(Clone, Copy)]
+#[allow(clippy::enum_variant_names)]
+pub enum Capture {
+    ByVal(Located<StrId>),
+    ByValMut(Located<StrId>),
+    ByPtr(Located<StrId>),
+    ByMutPtr(Located<StrId>),
+    New { mutable: bool, ident: Located<StrId>, expr: Expr },
+}
+
+impl Capture {
+    pub fn ident(self) -> Located<StrId> {
+        match self {
+            Capture::ByVal(id) => id,
+            Capture::ByValMut(id) => id,
+            Capture::ByPtr(id) => id,
+            Capture::ByMutPtr(id) => id,
+            Capture::New { ident, .. } => ident,
+        }
+    }
+
+    pub fn span(self) -> Span {
+        self.ident().span
+    }
 }
 
 pub type TypeParams = Vec<(Located<StrId>, Vec<Path>)>;
