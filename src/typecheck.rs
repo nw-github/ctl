@@ -2406,6 +2406,9 @@ impl TypeChecker<'_> {
             return self.error(Error::no_lang_item(LangType::OpFn, span));
         };
 
+        let closure_ut_scope =
+            self.enter_id(ScopeId::ROOT, |this| this.enter(ScopeKind::None, |this| this.current));
+
         let mut members = IndexMap::new();
         let mut instance = IndexMap::new();
         for capture in captures {
@@ -2524,7 +2527,7 @@ impl TypeChecker<'_> {
         let args_tuple = self.proj.scopes.get_tuple(names, ty_args, &self.proj.types);
         let fn_tr_inst = GenericTrait::from_type_args(&self.proj.scopes, fn_tr, [args_tuple, ret]);
 
-        let (closure_id, closure_ut_scope, closure_ty) = self.enter(ScopeKind::None, |this| {
+        let (closure_id, closure_ty) = self.enter_id(closure_ut_scope, |this| {
             let no_captures = members.is_empty();
             let closure_id = this.insert::<UserTypeId>(
                 UserType {
@@ -2705,7 +2708,7 @@ impl TypeChecker<'_> {
             });
 
             this.proj.scopes.get_mut(closure_id).fns.extend(fns);
-            (closure_id, this.current, closure_ty)
+            (closure_id, closure_ty)
         });
 
         self.proj.scopes[closure_ut_scope].kind = ScopeKind::UserType(closure_id);
