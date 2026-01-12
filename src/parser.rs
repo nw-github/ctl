@@ -2584,17 +2584,20 @@ impl<'a> Parser<'a> {
     }
 
     fn next_until(&mut self, token: Token, mut span: Span, mut f: impl FnMut(&mut Self)) -> Span {
-        while match self.next_if_pred(|t| t == &token || t == &Token::Eof) {
-            Some(c) => {
-                span.extend_to(c.span);
-                false
+        loop {
+            let peek = self.peek();
+            span.extend_to(peek.span);
+            if peek.data == Token::Eof {
+                let pspan = peek.span;
+                self.error_no_sync(Error::expected_found(token, Token::Eof, pspan));
+                return span;
+            } else if peek.data == token {
+                self.next();
+                return span;
             }
-            None => true,
-        } {
+
             f(self);
         }
-
-        span
     }
 
     fn matches_pred(&mut self, pred: impl FnOnce(&Token) -> bool) -> bool {

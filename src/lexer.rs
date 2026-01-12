@@ -179,6 +179,7 @@ impl std::fmt::Display for Token<'_> {
             Token::Else => write!(f, "else"),
             Token::For => write!(f, "for"),
             Token::In => write!(f, "in"),
+            Token::Eof => write!(f, "EOF"),
             _ => write!(f, "FIXME: {self:?}"),
         }
     }
