@@ -44,15 +44,13 @@ unittest "automatic debug impl" {
     let ptrs = Pointers(dynptr: &10, dynmutptr: &mut 20, fnptr: &cool, fnobj: cool);
     let data = "{ptrs:?}".to_str();
 
-    let templ = "Pointers(dynptr: *dyn Any \{self: %p, vtable: %p\}, dynmutptr: *dyn mut Any \{self: %p, vtable: %p\}, fnptr: %p, fnobj: %p)";
-
     let [self0, vtable0] = addrs(ptrs.dynptr);
     let [self1, vtable1] = addrs(ptrs.dynmutptr);
 
     mut buffer = [0u8; 2048];
     let len = unsafe sprintf(
         dst: buffer.as_raw_mut().cast(),
-        templ.as_raw().cast(),
+        fmt: b"Pointers(dynptr: *dyn Any {self: %p, vtable: %p}, dynmutptr: *dyn mut Any {self: %p, vtable: %p}, fnptr: %p, fnobj: %p)\0".as_raw().cast(),
         self0,
         vtable0,
         self1,
