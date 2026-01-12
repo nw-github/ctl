@@ -2435,25 +2435,13 @@ impl<'a> Parser<'a> {
 
     fn csv_expr<T>(
         &mut self,
-        mut res: Vec<T>,
+        res: Vec<T>,
         end: Token,
         span: Span,
-        mut f: impl FnMut(&mut Self) -> T,
+        f: impl FnMut(&mut Self) -> T,
         map: impl FnOnce(Vec<T>) -> ExprData,
     ) -> Expr {
-        if !res.is_empty() && !self.matches(end.clone()) {
-            self.expect(Token::Comma);
-        }
-
-        let span = self.next_until(end.clone(), span, |this| {
-            res.push(f(this));
-
-            if !this.matches(end.clone()) {
-                this.expect(Token::Comma);
-            }
-        });
-
-        Located::new(span, self.arena.alloc(map(res)))
+        self.csv(res, end, span, f).map(|data| self.arena.alloc(map(data)))
     }
 
     fn csv_one<T>(

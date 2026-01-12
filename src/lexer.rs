@@ -30,7 +30,6 @@ pub enum Token<'a> {
     Colon,
     Semicolon,
     Hash,
-    AtLParen,
     AtLBrace,
     At,
     Dollar,
@@ -77,8 +76,6 @@ pub enum Token<'a> {
     Struct,
     Union,
     Enum,
-    Export,
-    Import,
     Trait,
     UnitTest,
     Dyn,
@@ -160,17 +157,13 @@ impl std::fmt::Display for Token<'_> {
             Token::Colon => write!(f, ":"),
             Token::Semicolon => write!(f, ";"),
             Token::Hash => write!(f, "#"),
-            Token::AtLParen => write!(f, "@("),
             Token::AtLBrace => write!(f, "@["),
             Token::Assign => write!(f, "="),
             Token::Fn => write!(f, "fn"),
-            Token::Import => write!(f, "import"),
-            Token::Export => write!(f, "export"),
             Token::Extern => write!(f, "extern"),
             Token::Unsafe => write!(f, "unsafe"),
             Token::Pub => write!(f, "pub"),
             Token::Mut => write!(f, "mut"),
-            Token::Raw => write!(f, "raw"),
             Token::Keyword => write!(f, "kw"),
             Token::My => write!(f, "my"),
             Token::This => write!(f, "This"),
@@ -329,7 +322,6 @@ impl<'a> Lexer<'a> {
             "dyn" => Token::Dyn,
             "else" => Token::Else,
             "enum" => Token::Enum,
-            "export" => Token::Export,
             "extension" => Token::Extension,
             "extern" => Token::Extern,
             "false" => Token::False,
@@ -338,7 +330,6 @@ impl<'a> Lexer<'a> {
             "guard" => Token::Guard,
             "if" => Token::If,
             "impl" => Token::Impl,
-            "import" => Token::Import,
             "in" => Token::In,
             "is" => Token::Is,
             "kw" => Token::Keyword,
@@ -408,9 +399,7 @@ impl<'a> Lexer<'a> {
             }
             '$' => Token::Dollar,
             '@' => {
-                if self.advance_if('(') {
-                    Token::AtLParen
-                } else if self.advance_if('[') {
+                if self.advance_if('[') {
                     Token::AtLBrace
                 } else {
                     Token::At
