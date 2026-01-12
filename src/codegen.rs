@@ -916,7 +916,7 @@ impl<'a> Codegen<'a> {
             funcs: proj
                 .scopes
                 .functions()
-                .filter(|(_, f)| f.is_extern && f.type_params.is_empty() && f.body.is_some())
+                .filter(|(_, f)| f.attrs.export && f.type_params.is_empty())
                 .map(|(id, _)| State::from_non_generic(id, &proj.scopes))
                 .collect(),
             statics: proj

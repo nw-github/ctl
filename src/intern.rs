@@ -61,6 +61,7 @@ impl Strings {
     pub(crate) const ATTR_ALIGN: StrId = str_id(SID::ATTR_ALIGN);
     pub(crate) const ATTR_TEST_RUNNER: StrId = str_id(SID::ATTR_TEST_RUNNER);
     pub(crate) const ATTR_SKIP: StrId = str_id(SID::SKIP);
+    pub(crate) const ATTR_EXPORT: StrId = str_id(SID::ATTR_EXPORT);
 
     pub fn new() -> Self {
         let mut rodeo = Rodeo::default();
@@ -107,6 +108,7 @@ impl Strings {
         assert_eq!(Self::FN_TR_ARGS_NAME, rodeo.get_or_intern_static("args"));
         assert_eq!(Self::FEAT_OVERFLOW_CHECKS, rodeo.get_or_intern_static("overflow_checks"));
         assert_eq!(Self::FN_CLOSURE_DO_INVOKE, rodeo.get_or_intern_static("do_invoke"));
+        assert_eq!(Self::ATTR_EXPORT, rodeo.get_or_intern_static("export"));
         Self { rodeo }
     }
 }
@@ -166,4 +168,5 @@ enum SID {
     FN_TR_ARGS_NAME,
     FEAT_OVERFLOW_CHECKS,
     FN_CLOSURE_DO_INVOKE,
+    ATTR_EXPORT,
 }
