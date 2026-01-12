@@ -1,45 +1,59 @@
 use std::mem::*;
-use std::deps::*;
+use std::deps::{libgc, libc};
 
-fn _malloc(size: uint): ?^mut void {
-    $[feature(boehm)]
-    return unsafe libgc::GC_malloc(size);
+fn ptr_cast<T, U>(ptr: ?^mut T): ?^mut U => unsafe std::mem::bit_cast(ptr);
 
-    $[feature(not(boehm))]
-    return unsafe libc::malloc(size);
+pub unsafe trait Allocator {
+    fn alloc(this, layout: Layout): ?^mut u8;
+    unsafe fn resize(this, ptr: ^mut u8, layout: Layout): ?^mut u8;
+    unsafe fn free(this, ptr: ^mut u8, layout: Layout);
 }
 
-fn _realloc(ptr: ^mut void, size: uint): ?^mut void {
-    $[feature(boehm)]
-    return unsafe libgc::GC_realloc(ptr, size);
+$[feature(boehm)]
+pub struct DefaultAllocator {
+    impl Allocator {
+        fn alloc(this, layout: Layout): ?^mut u8 {
+            // TODO: alignment
+            ptr_cast(unsafe libgc::GC_malloc(layout.size()))
+        }
 
-    $[feature(not(boehm))]
-    return unsafe libc::realloc(ptr, size);
-}
+        unsafe fn resize(this, ptr: ^mut u8, layout: Layout): ?^mut u8 {
+            ptr_cast(unsafe libgc::GC_realloc(ptr.cast(), layout.size()))
+        }
 
-pub fn alloc<T>(count: uint): ?^mut T {
-    // TODO: alignment
-    let size = size_of::<T>().checked_mul(count)?;
-    if _malloc(size) is ?ptr {
-        ptr.cast()
+        unsafe fn free(this, _ptr: ^mut u8, _layout: Layout) {}
     }
 }
 
-pub fn realloc<T>(addr: ^mut T, count: uint): ?^mut T {
-    let size = size_of::<T>().checked_mul(count)?;
-    if _realloc(addr.cast(), size) is ?ptr {
-        ptr.cast()
+$[feature(hosted, not(boehm))]
+pub struct DefaultAllocator {
+    impl Allocator {
+        fn alloc(this, layout: Layout): ?^mut u8 {
+            // TODO: alignment
+            ptr_cast(unsafe libc::malloc(layout.size()))
+        }
+
+        unsafe fn resize(this, ptr: ^mut u8, layout: Layout): ?^mut u8 {
+            ptr_cast(unsafe libc::realloc(ptr.cast(), layout.size()))
+        }
+
+        unsafe fn free(this, ptr: ^mut u8, _layout: Layout) {
+            unsafe libc::free(?ptr.cast())
+        }
     }
 }
 
 pub fn new<T>(val: T): *mut T {
-    if alloc::<T>(1) is ?ptr {
-        unsafe {
-            ptr.write(val);
-            &mut *ptr
-        }
-    } else {
-        panic("out of memory attempting to allocate {std::mem::size_of::<T>()} byte object");
+    let layout = Layout::of_val(&val);
+    guard DefaultAllocator().alloc(layout) is ?ptr else {
+        panic("out of memory attempting to allocate object of type {
+            std::reflect::type_name_of_val(&val)} with layout {layout:?}");
+    }
+
+    let ptr = ptr.cast::<T>();
+    unsafe {
+        ptr.write(val);
+        &mut *ptr
     }
 }
 

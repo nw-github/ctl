@@ -3,8 +3,8 @@ use colored::Colorize;
 use crate::{
     Located,
     ast::parsed::{
-        Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path, Pattern,
-        Stmt, StmtData, Struct, TypeHint, Variant,
+        Capture, Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path,
+        Pattern, Stmt, StmtData, Struct, TypeHint, Variant,
     },
     format::{FmtHint, FmtPath, FmtPatt, FmtUsePath},
     intern::{StrId, Strings},
@@ -447,24 +447,50 @@ impl Pretty<'_> {
                 }
             }
             ExprData::Error => {}
-            ExprData::Lambda { params, ret, body, moves } => {
-                self.print_header(&tabs, "Expr::Lambda", &[bool!(moves)]);
+            ExprData::Lambda { policy, captures, params, ret, body } => {
+                self.print_header(&tabs, "Expr::Lambda", &[]);
                 let tabs = INDENT.repeat(indent + 1);
+                eprintln!("{tabs}{}: {policy:?}", "Policy".yellow());
+
+                if !captures.is_empty() {
+                    eprintln!("{tabs}{}:", "Captures".yellow());
+                }
+                for capture in captures {
+                    let tabs = INDENT.repeat(indent + 2);
+                    match &capture {
+                        Capture::ByVal(id) => {
+                            eprintln!("{tabs}ByVal: {}", self.strings.resolve(&id.data))
+                        }
+                        Capture::ByValMut(id) => {
+                            eprintln!("{tabs}ByValMut: {}", self.strings.resolve(&id.data))
+                        }
+                        Capture::ByPtr(id) => {
+                            eprintln!("{tabs}ByPtr: {}", self.strings.resolve(&id.data))
+                        }
+                        Capture::ByMutPtr(id) => {
+                            eprintln!("{tabs}ByMutPtr: {}", self.strings.resolve(&id.data))
+                        }
+                        Capture::New { mutable, ident, expr } => {
+                            eprintln!(
+                                "{tabs}New: {} (mutable = {mutable})",
+                                self.strings.resolve(&ident.data)
+                            );
+                            self.print_expr(expr, indent + 3);
+                        }
+                    }
+                }
+
                 if let Some(ret) = ret {
                     eprintln!("{tabs}{}: {}", "Return".yellow(), self.typ(*ret));
                 }
                 if !params.is_empty() {
                     eprintln!("{tabs}{}:", "Params".yellow());
                     let tabs = INDENT.repeat(indent + 2);
-                    for (name, ty) in params {
+                    for (patt, ty) in params {
                         if let Some(ty) = ty {
-                            eprintln!(
-                                "{tabs}{}: {}",
-                                self.strings.resolve(&name.data),
-                                self.typ(*ty)
-                            );
+                            eprintln!("{tabs}{}: {}", self.patt(&patt.data), self.typ(*ty));
                         } else {
-                            eprintln!("{tabs}{}", self.strings.resolve(&name.data));
+                            eprintln!("{tabs}{}", self.patt(&patt.data));
                         }
                     }
                 }

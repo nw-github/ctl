@@ -127,6 +127,7 @@ pub enum BinaryOp {
     ShrAssign,
     #[display(fmt = "??=")]
     NoneCoalesceAssign,
+    Call,
 }
 
 impl TryFrom<Token<'_>> for BinaryOp {
@@ -309,4 +310,15 @@ pub enum Alignment {
 pub enum Sign {
     Positive,
     Negative,
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultCapturePolicy {
+    #[default]
+    None,
+    ByVal,
+    ByValMut,
+    ByPtr,
+    ByMutPtr,
+    Auto,
 }

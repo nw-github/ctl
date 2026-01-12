@@ -106,6 +106,7 @@ impl Default for Configuration {
                 Strings::FEAT_IO,
                 Strings::FEAT_HOSTED,
                 Strings::FEAT_BOEHM,
+                Strings::FEAT_OVERFLOW_CHECKS,
                 #[cfg(target_os = "linux")]
                 Strings::FEAT_BACKTRACE,
             ]

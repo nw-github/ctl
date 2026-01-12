@@ -186,7 +186,7 @@ impl Compiler<Parsed> {
             self.state.diag,
             lsp,
             self.state.conf,
-            &self.state.arena,
+            self.state.arena,
             self.state.strings,
         );
         Compiler { state: Checked(proj, arena) }

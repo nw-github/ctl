@@ -1,16 +1,13 @@
 use std::reflect::*;
 
 $[intrinsic]
-pub extern fn numeric_abs<T: Signed>(_: T): T;
-
-$[intrinsic]
 pub extern fn size_of<T>(): uint;
 
 $[intrinsic]
 pub extern fn align_of<T>(): uint;
 
 $[intrinsic]
-pub extern fn panic(args: std::fmt::Arguments, loc: std::panic::SourceLocation): never;
+pub extern fn panic(args: *std::panic::PanicInfo): never;
 
 $[intrinsic]
 pub extern unsafe fn unreachable_unchecked(): never;
@@ -44,6 +41,9 @@ pub extern fn ptr_diff<T>(a: ^T, b: ^T): int;
 
 $[intrinsic]
 pub extern fn builtin_dbg<T>(self: *T, f: *mut std::fmt::Formatter);
+
+$[intrinsic]
+pub extern fn invoke_with_tuple<F, Args: Tuple, R>(self: *F, args: Args): R;
 
 
 $[c_macro("CTL_MEMSET")]

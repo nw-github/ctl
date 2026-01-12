@@ -154,7 +154,7 @@ impl TypeGen {
             }
 
             buffer.emit_type(ty, flags.minify);
-            writeln_de!(buffer, " {};", member_name(buffer.1, Some(ut.id), name));
+            writeln_de!(buffer, " {};", member_name(buffer.1, name));
         };
 
         let type_name = Buffer::format(defs.1, |buf| buf.emit_type_name(ut, flags.minify));
@@ -541,7 +541,7 @@ impl<'a> Buffer<'a> {
         if ty.kind.is_template() {
             eprintln!("ICE: Template type in emit_type_name_ex");
         }
-        if ty.name.data == Strings::EMPTY {
+        if ty.name.data == Strings::EMPTY && !ty.kind.is_closure() {
             eprintln!("ty is empty");
         }
 
@@ -695,8 +695,11 @@ impl<'a> Buffer<'a> {
         let item = id.get(&self.1.scopes);
 
         let data = self.1.str(name.data);
-        if !data.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
-            let name = format!("{id}");
+        if !data.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$') {
+            // TODO: punycode
+            let name = std::any::type_name::<T>();
+            let name = name.rsplit_once("::").map(|n| n.1).unwrap_or(name);
+            let name = format!("{name}{id}");
             buffer.write_len_prefixed(&name);
         } else if name.data != Strings::TUPLE_NAME {
             buffer.write_len_prefixed(data);
@@ -913,7 +916,7 @@ impl<'a> Codegen<'a> {
             funcs: proj
                 .scopes
                 .functions()
-                .filter(|(_, f)| f.is_extern && f.type_params.is_empty() && f.body.is_some())
+                .filter(|(_, f)| f.attrs.export && f.type_params.is_empty())
                 .map(|(id, _)| State::from_non_generic(id, &proj.scopes))
                 .collect(),
             statics: proj
@@ -1103,7 +1106,8 @@ impl<'a> Codegen<'a> {
             );
             self.buffer.emit(" tests[]={");
 
-            let runner = State::from_non_generic(self.proj.test_runner.unwrap(), &self.proj.scopes);
+            let mut runner =
+                State::from_non_generic(self.proj.test_runner.unwrap(), &self.proj.scopes);
 
             let mut modules = vec![];
             if let Some(args) = &self.proj.conf.test_args
@@ -1130,7 +1134,7 @@ impl<'a> Codegen<'a> {
                     continue;
                 }
 
-                let mut state = State::from_non_generic(id, &self.proj.scopes);
+                let state = State::from_non_generic(id, &self.proj.scopes);
                 write_de!(
                     self.buffer,
                     "{{.skip={},.name={},.module={},.test=",
@@ -1156,7 +1160,7 @@ impl<'a> Codegen<'a> {
                 } else {
                     Expr::option_null(skip_reason_ty, &mut self.arena)
                 };
-                self.emit_expr_inline(opt, &mut state);
+                self.emit_expr_inline(opt, &mut runner);
                 write_de!(self.buffer, "}},");
 
                 self.funcs.insert(state);
@@ -1346,29 +1350,40 @@ impl<'a> Codegen<'a> {
                     panic!("ICE: DynCoerce from non-pointer");
                 };
             }
-            ExprData::Call { callee, args, scope, span } => {
+            &ExprData::Call { callee, ref args, scope, span } => {
                 let func = self.proj.types[callee.ty].as_fn().unwrap();
                 let args = args.clone();
+                if let Some(data) = self.can_emit_bitfield_call(&args) {
+                    return self.emit_bitfield_call(
+                        data,
+                        callee,
+                        args.clone(),
+                        state,
+                        expr.ty,
+                        func.id,
+                    );
+                }
+
                 if let Some(name) = self.proj.scopes.get(func.id).attrs.intrinsic {
                     let func = func.with_templates(&self.proj.types, &state.func.ty_args);
-                    return self.emit_intrinsic(name, expr.ty, &func, args, state, (*scope, *span));
+                    return self.emit_intrinsic(name, expr.ty, &func, args, state, (scope, span));
                 } else if let Some(id) = self.proj.scopes.get(func.id).constructor {
                     if self.proj.scopes.get(id).kind.is_union() {
-                        return self.emit_variant_instance(
+                        return self.emit_union_instance(
                             state,
                             expr.ty,
                             self.proj.scopes.get(func.id).name.data,
-                            args,
+                            &args,
                         );
                     } else {
-                        return self.emit_instance(state, expr.ty, args);
+                        return self.emit_instance(state, expr.ty, &args);
                     }
                 }
 
                 if expr.ty.is_void_like() {
                     write_de!(self.buffer, "{VOID}(");
                 }
-                self.emit_expr(*callee, state);
+                self.emit_expr(callee, state);
                 write_de!(self.buffer, "(");
                 self.finish_emit_fn_args(state, func.id, args);
                 if expr.ty.is_void_like() {
@@ -1382,6 +1397,8 @@ impl<'a> Codegen<'a> {
                 }
                 let (_, recv) = args.shift_remove_index(0).unwrap();
                 let tr = self.proj.types[recv.ty].as_dyn_pointee().unwrap().id;
+
+                let func = &func.with_templates(&self.proj.types, &state.func.ty_args);
 
                 write_de!(self.buffer, "((");
                 self.buffer.emit_dyn_fn_type(func, self.flags.minify);
@@ -1596,17 +1613,24 @@ impl<'a> Codegen<'a> {
                         );
                     }
                     VariableKind::Normal => {}
+                    VariableKind::Capture => {
+                        // TODO: use the actual VariableId for the current `this`
+                        return write_de!(
+                            self.buffer,
+                            "$this->{}",
+                            member_name(self.proj, var.name.data)
+                        );
+                    }
                 }
                 self.emit_var_name(id, state);
             }
-            ExprData::Instance(members) => self.emit_instance(state, expr.ty, members.clone()),
+            ExprData::Instance(members) => self.emit_instance(state, expr.ty, &members.clone()),
             ExprData::VariantInstance(name, members) => {
-                self.emit_variant_instance(state, expr.ty, *name, members.clone())
+                self.emit_union_instance(state, expr.ty, *name, &members.clone())
             }
             &ExprData::Member { source, member } => {
-                let ut = self.proj.types[source.ty].as_user();
-                if let Some(id) =
-                    ut.filter(|&ut| self.proj.scopes.get(ut.id).kind.is_packed_struct())
+                if let Some(ut) = self.proj.types[source.ty].as_user()
+                    && self.proj.scopes.get(ut.id).kind.is_packed_struct()
                 {
                     let tmp = tmpbuf!(self, state, |tmp| {
                         let ptr = self.proj.types.insert(Type::Ptr(source.ty));
@@ -1616,10 +1640,10 @@ impl<'a> Codegen<'a> {
                         writeln_de!(self.buffer, ";");
                         tmp
                     });
-                    self.emit_bitfield_read(&format!("(*{tmp})"), id, member, expr.ty);
+                    self.emit_bitfield_read(&format!("(*{tmp})"), ut, member, expr.ty);
                 } else {
                     self.emit_expr(source, state);
-                    write_de!(self.buffer, ".{}", member_name(self.proj, ut.map(|u| u.id), member));
+                    write_de!(self.buffer, ".{}", member_name(self.proj, member));
                 }
             }
             ExprData::Block(block) => enter_block!(self, block.scope, expr.ty, |name| {
@@ -1773,7 +1797,6 @@ impl<'a> Codegen<'a> {
                 hoist!(self, self.buffer.emit(bindings.finish()));
                 write_de!(self.buffer, "({})", conditions.finish());
             }
-            ExprData::Lambda(_) => todo!(),
             &ExprData::NeverCoerce(inner) => {
                 if matches!(expr.ty, TypeId::VOID) {
                     self.emit_expr_inline(inner, state);
@@ -1794,7 +1817,7 @@ impl<'a> Codegen<'a> {
             &ExprData::StringInterp { ref strings, ref args, scope } => {
                 self.emit_string_interp(expr.ty, state, strings.clone(), args.clone(), scope)
             }
-            &ExprData::AffixOperator { callee, ref mfn, param, scope, postfix, span } => {
+            &ExprData::AffixOperator { callee, ref mfn, scope, postfix, span } => {
                 let mfn = mfn.clone();
                 let deref = "*".repeat(callee.ty.strip_references_ex(&self.proj.types).1);
                 if !postfix {
@@ -1807,7 +1830,7 @@ impl<'a> Codegen<'a> {
                                 .with_templates(&self.proj.types, &state.func.ty_args),
                             &self.proj.types,
                             mfn,
-                            [(param, callee)].into(),
+                            [(Strings::THIS_PARAM, callee)].into(),
                             scope,
                             span,
                             &mut self.arena,
@@ -1832,7 +1855,7 @@ impl<'a> Codegen<'a> {
                                 .with_templates(&self.proj.types, &state.func.ty_args),
                             &self.proj.types,
                             mfn,
-                            [(param, callee)].into(),
+                            [(Strings::THIS_PARAM, callee)].into(),
                             scope,
                             span,
                             &mut self.arena,
@@ -1845,6 +1868,32 @@ impl<'a> Codegen<'a> {
                 write_de!(self.buffer, "{VOID}(");
                 self.emit_expr(inner, state);
                 self.buffer.emit(")");
+            }
+            &ExprData::ClosureCoerce(inner, scope) => {
+                hoist!(self, {
+                    write_de!(self.buffer, "(void)");
+                    self.emit_expr_inline(inner, state);
+                    self.buffer.emit(";\n");
+                });
+
+                let closure = self.proj.types[inner.ty]
+                    .as_user()
+                    .unwrap()
+                    .with_templates(&self.proj.types, &state.func.ty_args);
+                // TODO: if the function pointer is extern, use/generate a wrapper
+                let f = self
+                    .proj
+                    .scopes
+                    .get(closure.id)
+                    .fns
+                    .iter()
+                    .find(|f| self.proj.scopes.get(f.id).name.data == Strings::FN_CLOSURE_DO_INVOKE)
+                    .unwrap();
+
+                let mut func = GenericFn::new(f.id, TypeArgs::default());
+                func.fill_templates(&self.proj.types, &closure.ty_args);
+                self.buffer.emit_fn_name(&func, self.flags.minify);
+                self.funcs.insert(State::new(func, scope));
             }
             ExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }
@@ -1875,16 +1924,15 @@ impl<'a> Codegen<'a> {
         self.funcs.insert(State::new(mfn.func, scope));
     }
 
-    fn emit_instance(&mut self, state: &mut State, ty: TypeId, members: IndexMap<StrId, Expr>) {
+    fn emit_instance(&mut self, state: &mut State, ty: TypeId, members: &IndexMap<StrId, Expr>) {
         let ut = self.proj.types[ty].as_user().unwrap();
         if self.proj.scopes.get(ut.id).kind.is_packed_struct() {
             return tmpbuf_emit!(self, state, |tmp| {
                 self.emit_type(ty);
-                writeln_de!(self.buffer, " {tmp} = {{}};");
-                for (name, value) in members {
-                    let ty = value.ty;
+                writeln_de!(self.buffer, " {tmp};");
+                for (&name, &value) in members {
                     let expr = hoist!(self, self.emit_tmpvar(value, state));
-                    self.emit_bitfield_write(&tmp, ut, name, ty, &expr);
+                    self.emit_bitfield_write(&tmp, ut, name, value.ty, &expr);
                 }
             });
         }
@@ -1895,65 +1943,59 @@ impl<'a> Codegen<'a> {
             write_de!(self.buffer, "CTL_DUMMY_INIT");
         }
 
-        for (name, mut value) in members {
+        for (&name, value) in members {
+            let mut value = *value;
             value.ty = value.ty.with_templates(&self.proj.types, &state.func.ty_args);
-            write_de!(self.buffer, ".{}=", member_name(self.proj, Some(ut.id), name));
+            write_de!(self.buffer, ".{}=", member_name(self.proj, name));
             self.emit_expr(value, state);
             write_de!(self.buffer, ",");
         }
         write_de!(self.buffer, "}}");
     }
 
-    fn emit_variant_instance(
+    fn emit_union_instance(
         &mut self,
         state: &mut State,
         ty: TypeId,
         variant: StrId,
-        mut members: IndexMap<StrId, Expr>,
+        members: &IndexMap<StrId, Expr>,
     ) {
         if ty.can_omit_tag(&self.proj.scopes, &self.proj.types).is_some() {
-            if let Some(some) = members.swap_remove(&Strings::TUPLE_ZERO) {
+            if let Some(&some) = members.get(&Strings::TUPLE_ZERO) {
                 self.emit_expr(some, state);
             } else {
                 self.buffer.emit(NULLPTR);
             }
-        } else {
-            self.emit_cast(ty);
-            let members: Vec<_> = members
-                .into_iter()
-                .map(|(name, mut expr)| {
-                    expr.ty = expr.ty.with_templates(&self.proj.types, &state.func.ty_args);
-                    // TODO: dont emit temporaries for expressions that cant have side effects
-                    (name, hoist!(self, self.emit_tmpvar(expr, state)))
-                })
-                .collect();
+            return;
+        }
 
-            let ut_id = self.proj.types[ty].as_user().unwrap().id;
-            write_de!(self.buffer, "{{");
-            let ut = self.proj.scopes.get(ut_id);
+        tmpbuf_emit!(self, state, |tmp| {
+            self.emit_type(ty);
+            writeln_de!(self.buffer, " {tmp};");
+
+            let ut = self.proj.scopes.get(self.proj.types[ty].as_user().unwrap().id);
             let union = ut.kind.as_union().unwrap();
-            for (name, value) in members.iter().filter(|(name, _)| ut.members.contains_key(name)) {
-                write_de!(self.buffer, ".{}={value},", member_name(self.proj, Some(ut_id), *name));
+            if union.tag.size_and_align(&self.proj.scopes, &self.proj.types).0 != 0 {
+                write_de!(self.buffer, "{tmp}.{UNION_TAG_NAME}=");
+                self.emit_literal(union.discriminant(variant).unwrap().clone(), union.tag);
+                writeln_de!(self.buffer, ";");
             }
 
-            if union.variants.get(&variant).is_some_and(|v| v.ty.is_some()) {
-                write_de!(self.buffer, ".{}={{", member_name(self.proj, Some(ut_id), variant));
-                for (name, value) in
-                    members.iter().filter(|(name, _)| !ut.members.contains_key(name))
-                {
+            for (&name, &expr) in members.iter() {
+                if !ut.members.contains_key(&name) {
                     write_de!(
                         self.buffer,
-                        ".{}={value},",
-                        member_name(self.proj, Some(ut_id), *name)
+                        "{tmp}.{}.{}=",
+                        member_name(self.proj, variant),
+                        member_name(self.proj, name),
                     );
+                } else {
+                    write_de!(self.buffer, "{tmp}.{}=", member_name(self.proj, name));
                 }
-                write_de!(self.buffer, "}},");
+                self.emit_expr_inline(expr, state);
+                writeln_de!(self.buffer, ";");
             }
-
-            write_de!(self.buffer, ".{UNION_TAG_NAME}=");
-            self.emit_literal(union.discriminant(variant).unwrap().clone(), union.tag);
-            write_de!(self.buffer, "}}");
-        }
+        });
     }
 
     fn emit_binary(
@@ -2342,31 +2384,25 @@ impl<'a> Codegen<'a> {
 
     fn emit_intrinsic(
         &mut self,
-        name: StrId,
+        name: Intrinsic,
         ret: TypeId,
         func: &GenericFn,
         mut args: IndexMap<StrId, Expr>,
         state: &mut State,
         (scope, span): (ScopeId, Span),
     ) {
-        match self.proj.str(name) {
-            "numeric_abs" => {
-                let (_, mut expr) = args.shift_remove_index(0).unwrap();
-                expr.ty = expr.ty.with_templates(&self.proj.types, &state.func.ty_args);
-                let tmp = hoist!(self, self.emit_tmpvar(expr, state));
-                write_de!(self.buffer, "({tmp}<0?-{tmp}:{tmp})");
-            }
-            "numeric_cast" => {
+        match name {
+            Intrinsic::NumericCast => {
                 self.emit_cast(ret);
                 self.emit_expr(args.shift_remove_index(0).unwrap().1, state);
             }
-            "max_value" => {
+            Intrinsic::MaxValue => {
                 self.emit_literal(ret.as_integral(&self.proj.types, true).unwrap().max(), ret)
             }
-            "min_value" => {
+            Intrinsic::MinValue => {
                 self.emit_literal(ret.as_integral(&self.proj.types, true).unwrap().min(), ret)
             }
-            "size_of" => {
+            Intrinsic::SizeOf => {
                 write_de!(
                     self.buffer,
                     "(usize){}",
@@ -2376,7 +2412,7 @@ impl<'a> Codegen<'a> {
                         .0
                 );
             }
-            "align_of" => {
+            Intrinsic::AlignOf => {
                 write_de!(
                     self.buffer,
                     "(usize){}",
@@ -2386,7 +2422,7 @@ impl<'a> Codegen<'a> {
                         .1
                 );
             }
-            "panic" => {
+            Intrinsic::Panic => {
                 let panic = State::from_non_generic(
                     self.proj.panic_handler.expect("a panic handler should exist"),
                     &self.proj.scopes,
@@ -2405,11 +2441,11 @@ impl<'a> Codegen<'a> {
 
                 self.funcs.insert(panic);
             }
-            "unreachable_unchecked" => {
+            Intrinsic::UnreachableUnchecked => {
                 hoist!(self, writeln_de!(self.buffer, "CTL_UNREACHABLE();"));
                 self.buffer.emit(VOID_INSTANCE);
             }
-            "binary_op" => {
+            Intrinsic::BinaryOp => {
                 let mut args = args.into_iter();
                 let arg0 = args
                     .next()
@@ -2436,6 +2472,10 @@ impl<'a> Codegen<'a> {
                         "sub" => BinaryOp::Sub,
                         "mul" => BinaryOp::Mul,
                         "div" => BinaryOp::Div,
+                        "unchecked_add" => BinaryOp::Add,
+                        "unchecked_sub" => BinaryOp::Sub,
+                        "unchecked_mul" => BinaryOp::Mul,
+                        "unchecked_div" => BinaryOp::Div,
                         "rem" => BinaryOp::Rem,
                         "bit_and" => BinaryOp::BitAnd,
                         "bit_or" => BinaryOp::BitOr,
@@ -2459,7 +2499,7 @@ impl<'a> Codegen<'a> {
                     arg1,
                 );
             }
-            "unary_op" => {
+            Intrinsic::UnaryOp => {
                 let op = self.proj.scopes.get(func.id).name.data;
                 let arg0 = args
                     .into_iter()
@@ -2480,15 +2520,15 @@ impl<'a> Codegen<'a> {
                     arg0,
                 );
             }
-            "type_id" => {
+            Intrinsic::TypeId => {
                 self.emit_cast(ret);
                 write_de!(self.buffer, "{{.tag={}}}", func.first_type_arg().unwrap().as_raw());
             }
-            "type_name" => {
+            Intrinsic::TypeName => {
                 let name = self.proj.fmt_ty(func.first_type_arg().unwrap()).to_string();
                 write_de!(self.buffer, "{}", StringLiteral(&name))
             }
-            "read_volatile" => {
+            Intrinsic::ReadVolatile => {
                 const COMPLAINT: &str = "ICE: read_volatile should receive one argument";
                 write_de!(self.buffer, "*(volatile ");
                 self.emit_type(ret);
@@ -2496,7 +2536,7 @@ impl<'a> Codegen<'a> {
                 self.emit_expr_inline(args.into_iter().next().expect(COMPLAINT).1, state);
                 write_de!(self.buffer, ")");
             }
-            "write_volatile" => {
+            Intrinsic::WriteVolatile => {
                 const COMPLAINT: &str = "ICE: write_volatile should receive two arguments";
                 let mut args = args.into_iter();
                 let mut arg0 = args.next().expect(COMPLAINT).1;
@@ -2509,7 +2549,7 @@ impl<'a> Codegen<'a> {
                 self.emit_expr_inline(args.next().expect(COMPLAINT).1, state);
                 write_de!(self.buffer, ")");
             }
-            "source_location" => {
+            Intrinsic::SourceLocation => {
                 let func =
                     self.proj.scopes.walk(scope).find_map(|s| s.1.kind.as_function().copied());
                 let sl_typ = self.proj.types[ret].as_user().unwrap().id;
@@ -2544,8 +2584,11 @@ impl<'a> Codegen<'a> {
                 self.emit_expr_inline(opt, state);
                 self.buffer.emit("})");
             }
-            "ptr_add_signed" | "ptr_add_unsigned" | "ptr_sub_signed" | "ptr_sub_unsigned"
-            | "ptr_diff" => {
+            Intrinsic::PtrAddSigned
+            | Intrinsic::PtrAddUnsigned
+            | Intrinsic::PtrSubSigned
+            | Intrinsic::PtrSubUnsigned
+            | Intrinsic::PtrDiff => {
                 const COMPLAINT: &str = "ICE: ptr intrinsic should receive two arguments";
                 let mut args = args.into_iter();
                 let lhs = args.next().expect(COMPLAINT).1;
@@ -2554,12 +2597,12 @@ impl<'a> Codegen<'a> {
                 self.emit_cast(ret);
                 self.buffer.emit("(");
                 self.emit_expr(lhs, state);
-                let plus = matches!(self.proj.str(name), "ptr_add_signed" | "ptr_add_unsigned");
+                let plus = matches!(name, Intrinsic::PtrAddSigned | Intrinsic::PtrAddUnsigned);
                 self.buffer.emit(["-", "+"][plus as usize]);
                 self.emit_expr(rhs, state);
                 self.buffer.emit(")");
             }
-            "builtin_dbg" => {
+            Intrinsic::BuiltinDbg => {
                 let mut args = args.into_iter();
                 let (_, mut arg) = args.next().unwrap();
                 arg.ty = arg.ty.with_templates(&self.proj.types, &state.func.ty_args);
@@ -2587,7 +2630,31 @@ impl<'a> Codegen<'a> {
                 });
                 self.buffer.emit(VOID_INSTANCE);
             }
-            name => unreachable!("ICE: Attempt to codegen unsupported intrinsic: '{name}'"),
+            Intrinsic::InvokeWithTuple => {
+                let mut args = args.into_iter();
+                let mut callee = args
+                    .next()
+                    .expect("ICE: InvokeWithTuple should receive two arguments")
+                    .1
+                    .auto_deref(&self.proj.types, TypeId::UNKNOWN, &mut self.arena);
+                let mut args =
+                    args.next().expect("ICE: InvokeWithTuple should receive two arguments").1;
+                callee.ty = callee.ty.with_templates(&self.proj.types, &state.func.ty_args);
+                args.ty = args.ty.with_templates(&self.proj.types, &state.func.ty_args);
+
+                let args_tmpvar = hoist!(self, self.emit_tmpvar(args, state));
+
+                self.emit_expr_inline(callee, state);
+                write_de!(self.buffer, "(");
+                let ut = self.proj.types[args.ty]
+                    .as_user()
+                    .expect("ICE: InvokeWithTuple second argument should be a tuple");
+                for (i, member) in self.proj.scopes.get(ut.id).members.keys().enumerate() {
+                    write_if!(i != 0, self.buffer, ", ");
+                    write_de!(self.buffer, "{args_tmpvar}.{}", member_name(self.proj, *member));
+                }
+                write_de!(self.buffer, ")");
+            }
         }
     }
 
@@ -2675,8 +2742,7 @@ impl<'a> Codegen<'a> {
                         write_str!(self.proj.str(name));
                         if let Some(ty) = variant.ty {
                             let ty = ty.with_templates(&self.proj.types, &ut.ty_args);
-                            let buf =
-                                format!("{arg}.{}", member_name(self.proj, Some(ut.id), name));
+                            let buf = format!("{arg}.{}", member_name(self.proj, name));
                             self.emit_builtin_dbg(args, ty, &buf, fmt, state, scope, span, lvl + 1);
                         }
                         writeln_de!(self.buffer, "break;}}");
@@ -2718,7 +2784,7 @@ impl<'a> Codegen<'a> {
                             tmp
                         })
                     } else {
-                        format!("{arg}.{}", member_name(self.proj, Some(ut.id), name))
+                        format!("{arg}.{}", member_name(self.proj, name))
                     };
                     self.emit_builtin_dbg(args, ty, &buf, fmt, state, scope, span, lvl + 1);
                 }
@@ -2859,9 +2925,12 @@ impl<'a> Codegen<'a> {
                         conditions.next_str(format!("{src}=={NULLPTR}"));
                     }
                 } else {
-                    let ut_id = self.proj.types.get(base).as_user().map(|ut| ut.id);
-                    let (tag, ty) = ut_id
-                        .and_then(|id| self.proj.scopes.get(id).kind.as_union())
+                    let (tag, ty) = self
+                        .proj
+                        .types
+                        .get(base)
+                        .as_user()
+                        .and_then(|ut| self.proj.scopes.get(ut.id).kind.as_union())
                         .and_then(|union| union.discriminant(variant).cloned().zip(Some(union.tag)))
                         .unwrap();
                     conditions.next(|buf| {
@@ -2875,7 +2944,7 @@ impl<'a> Codegen<'a> {
                         self.emit_pattern_inner(
                             state,
                             &pattern.data,
-                            &format!("{src}.{}", member_name(self.proj, ut_id, variant)),
+                            &format!("{src}.{}", member_name(self.proj, variant)),
                             inner,
                             borrow || borrows,
                             bindings,
@@ -2928,15 +2997,13 @@ impl<'a> Codegen<'a> {
                 }
             }
             PatternData::Destructure { patterns, borrows } => {
-                let (ty, ind) = ty.strip_references_ex(&self.proj.types);
-                let src = Self::apply_deref(src, ind);
-                let ut_id = self.proj.types[ty].as_user().map(|ut| ut.id);
+                let src = Self::deref(&self.proj.types, src, ty);
                 for (member, inner, patt) in patterns {
                     let inner = inner.with_templates(&self.proj.types, &state.func.ty_args);
                     self.emit_pattern_inner(
                         state,
                         &patt.data,
-                        &format!("{src}.{}", member_name(self.proj, ut_id, *member)),
+                        &format!("{src}.{}", member_name(self.proj, *member)),
                         inner,
                         borrow || *borrows,
                         bindings,
@@ -3725,6 +3792,72 @@ impl<'a> Codegen<'a> {
 
         BuiltinDbgArgs { dbg_fn, dbg_tr, formatter_write_str: fn_name, fallback_dbg_ext }
     }
+
+    fn can_emit_bitfield_call(
+        &self,
+        args: &IndexMap<StrId, Expr>,
+    ) -> Option<(TypeId, Expr, StrId)> {
+        let source = args.get(&Strings::THIS_PARAM)?;
+        let ExprData::Unary(UnaryOp::AddrMut, inner) = self.arena.get(source.data) else {
+            return None;
+        };
+
+        let &ExprData::Member { source, member } = self.arena.get(inner.data) else {
+            return None;
+        };
+
+        if !source.ty.is_packed_struct(self.proj) {
+            return None;
+        }
+
+        Some((inner.ty, source, member))
+    }
+
+    fn emit_bitfield_call(
+        &mut self,
+        (member_ty, source, member): (TypeId, Expr, StrId),
+        callee: Expr,
+        mut args: IndexMap<StrId, Expr>,
+        state: &mut State,
+        ret_ty: TypeId,
+        fid: FunctionId,
+    ) {
+        let ut = self.proj.types[source.ty].as_user().unwrap();
+
+        let mut_ptr_ty = self.proj.types.insert(Type::MutPtr(TypeId::UNKNOWN));
+        let source = source.auto_deref(&self.proj.types, mut_ptr_ty, &mut self.arena);
+        let source = hoist!(self, self.emit_tmpvar(source, state));
+        let source = format!("(*{source})");
+        let copy = tmpbuf!(self, state, |tmp| {
+            self.emit_type(member_ty);
+            write_de!(self.buffer, " {tmp}=");
+            self.emit_bitfield_read(&source, ut, member, member_ty);
+            writeln_de!(self.buffer, ";");
+            tmp
+        });
+        let result = tmpbuf!(self, state, |tmp| {
+            self.emit_type(ret_ty);
+            write_de!(self.buffer, " {tmp}=");
+
+            if ret_ty.is_void_like() {
+                write_de!(self.buffer, "{VOID}(");
+            }
+            self.emit_expr(callee, state);
+            write_de!(self.buffer, "(&{copy}");
+            args.shift_remove(&Strings::THIS_PARAM);
+            write_if!(!args.is_empty(), self.buffer, ",");
+            self.finish_emit_fn_args(state, fid, args);
+
+            if ret_ty.is_void_like() {
+                write_de!(self.buffer, ")");
+            }
+            writeln_de!(self.buffer, ";");
+            tmp
+        });
+        hoist!(self, self.emit_bitfield_write(&source, ut, member, member_ty, &copy));
+
+        self.buffer.emit(result);
+    }
 }
 
 impl SharedStuff for Codegen<'_> {
@@ -3740,6 +3873,18 @@ impl SharedStuff for Codegen<'_> {
 
     fn extension_cache(&mut self) -> &mut crate::typecheck::ExtensionCache {
         &mut self.ext_cache
+    }
+
+    fn get_tuple(&mut self, ty_args: Vec<TypeId>) -> TypeId {
+        // XXX: we should be able to create a new tuple but get_tuple requires &mut Scopes.
+        //      Our only caller is lookup_trait_fn, who would only call this function to generate
+        //      the trait impls for a Fn/FnPtr type. TypeChecker::check_fn creates a new tuple with
+        //      the same number of members as fn parameters so we dont crash here.
+        let names: Vec<_> =
+            (0..ty_args.len()).map(|i| self.proj.strings.get(format!("{i}")).unwrap()).collect();
+        let id = self.proj.scopes.find_tuple(&names).unwrap();
+        let ut = GenericUserType::from_type_args(&self.proj.scopes, id, ty_args);
+        self.proj.types.insert(Type::User(ut))
     }
 }
 
@@ -3779,7 +3924,7 @@ fn vtable_methods(scopes: &Scopes, types: &Types, tr: UserTypeId) -> Vec<Vis<Fun
         .collect()
 }
 
-fn member_name(proj: &Project, _id: Option<UserTypeId>, name: StrId) -> String {
+fn member_name(proj: &Project, name: StrId) -> String {
     let data = proj.str(name);
     if !is_c_reserved_ident(data) { data.into() } else { format!("${data}") }
 }

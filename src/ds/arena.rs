@@ -77,6 +77,13 @@ impl<T> Arena<T> {
     pub fn get_mut(&mut self, item: Id<T>) -> &mut T {
         &mut self.data[item.0]
     }
+
+    pub fn cget(&self, item: Id<T>) -> T
+    where
+        T: Clone,
+    {
+        self.data[item.0].clone()
+    }
 }
 
 impl<T> Default for Arena<T> {

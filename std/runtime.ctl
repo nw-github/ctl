@@ -1,11 +1,9 @@
-use std::deps::libgc;
-use std::deps::libc;
-use std::deps::libdwfl::*;
+use std::deps::{libgc, libc, libdwfl::*};
 
 $[feature(backtrace)]
 pub static mut DWFL: ?*mut Dwfl = null;
 
-$[link_name("$ctl_stdlib_init")]
+$[export, link_name("$ctl_stdlib_init")]
 extern fn init() {
     $[feature(boehm)]
     unsafe libgc::GC_init();
@@ -14,16 +12,14 @@ extern fn init() {
     unsafe DWFL = init_dwfl();
 }
 
-$[link_name("$ctl_stdlib_deinit")]
+$[export, link_name("$ctl_stdlib_deinit")]
 extern fn deinit() {
     $[feature(boehm)]
     unsafe libgc::GC_deinit();
 
     $[feature(backtrace)]
-    unsafe {
-        if DWFL.take() is ?dwfl {
-            dwfl_end(dwfl);
-        }
+    unsafe if DWFL.take() is ?dwfl {
+        dwfl_end(dwfl);
     }
 }
 

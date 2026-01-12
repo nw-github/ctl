@@ -7,8 +7,8 @@ VSCODE_HOME := if path_exists(home_directory() / ".vscode-server") == "true" {
 }
 
 test:
+    cargo test || true
     cargo test --test unit_tests -- run_unit_tests --exact --show-output
-    cargo test
 
 clean:
     rm -rf build

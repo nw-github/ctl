@@ -2,7 +2,9 @@ use either::{Either, Either::*};
 
 use crate::{
     FormatLexer, FormatToken, Warning,
-    ast::{Alignment, AttrName, Attribute, Attributes, Sign, UnaryOp, parsed::*},
+    ast::{
+        Alignment, AttrName, Attribute, Attributes, DefaultCapturePolicy, Sign, UnaryOp, parsed::*,
+    },
     ds::ComptimeInt,
     error::{Diagnostics, Error, FileId},
     intern::{StrId, Strings},
@@ -636,7 +638,7 @@ impl<'a> Parser<'a> {
                     return self.arena.expr(span.extended_to(end.span), ExprData::Tuple(vec![]));
                 }
 
-                let (label, mut expr) = self.maybe_labeled_expr();
+                let (label, expr) = self.maybe_labeled_expr();
                 if label.is_some() || self.matches(Token::Comma) {
                     let mut next = 0;
                     let first = self.label_or_positional((label, expr), &mut next);
@@ -652,9 +654,8 @@ impl<'a> Parser<'a> {
                     )
                 } else {
                     let end = self.expect(Token::RParen);
-                    expr.span = span.extended_to(end.span);
                     if self.matches_pred(|t| matches!(t, Token::LParen | Token::LBrace)) {
-                        self.arena.expr(span, ExprData::Grouping(expr))
+                        self.arena.expr(span.extended_to(end.span), ExprData::Grouping(expr))
                     } else {
                         expr
                     }
@@ -758,15 +759,7 @@ impl<'a> Parser<'a> {
                 self.expect(Token::LBrace);
                 self.csv_expr(Vec::new(), Token::RBrace, span, Self::expression, ExprData::Set)
             }
-            Token::Move => {
-                let token = self.next();
-                if !matches!(token.data, Token::BitOr) {
-                    self.error_no_sync(Error::new("expected '|'", token.span));
-                }
-
-                self.lambda_expr(token, true)
-            }
-            Token::BitOr => self.lambda_expr(Located::new(span, data), false),
+            Token::BitOr => self.lambda_expr(span),
             Token::Return => {
                 let (span, expr) = if !self.is_range_end(EvalContext::Normal) {
                     let expr = self.expression();
@@ -937,7 +930,7 @@ impl<'a> Parser<'a> {
             Token::Then => {
                 let if_branch = self.expression();
                 let else_branch =
-                    self.next_if(Token::Else).map(|_| self.precedence(op.data.precedence(), ctx)); /* EvalContext::IfWhile? */
+                    self.next_if(Token::Else).map(|_| self.precedence(Precedence::Min, ctx)); /* EvalContext::IfWhile? */
                 self.arena.expr(
                     left.span.extended_to(else_branch.as_ref().map_or(if_branch.span, |e| e.span)),
                     ExprData::If { cond: left, if_branch, else_branch },
@@ -1128,31 +1121,103 @@ impl<'a> Parser<'a> {
         self.arena.expr(block.span, ExprData::Block(block.data, label))
     }
 
-    fn lambda_expr(&mut self, head: Located<Token>, moves: bool) -> Expr {
-        let params = if head.data == Token::BitOr {
-            self.csv(Vec::new(), Token::BitOr, head.span, |this| {
-                (
-                    this.expect_ident("expected parameter name"),
-                    this.next_if(Token::Colon).map(|_| this.type_hint()),
-                )
+    fn lambda_expr(&mut self, head: Span) -> Expr {
+        let mut captures = vec![];
+        let mut policy = None;
+        let mut set_policy = |this: &mut Self, new_policy: DefaultCapturePolicy, span: Span| {
+            if policy.replace(new_policy).is_some() {
+                this.error_no_sync(Error::new("duplicate capture policy", span));
+            }
+        };
+
+        self.csv(vec![], Token::BitOr, head, |this| match this.peek().data {
+            Token::Ampersand => {
+                let start = this.next();
+                let mutable = this.next_if(Token::Mut);
+                let ident = this.next_if_map(|this, next| match next.data {
+                    Token::Ident(i) => Some(Located::new(next.span, this.strings.get_or_intern(i))),
+                    Token::This => Some(Located::new(next.span, Strings::THIS_PARAM)),
+                    _ => None,
+                });
+                let span = start.span.extended_to(
+                    ident
+                        .map(|m| m.span)
+                        .or(mutable.as_ref().map(|m| m.span))
+                        .unwrap_or(start.span),
+                );
+
+                match (mutable.is_some(), ident) {
+                    (true, None) => set_policy(this, DefaultCapturePolicy::ByMutPtr, span),
+                    (false, None) => set_policy(this, DefaultCapturePolicy::ByPtr, span),
+                    (true, Some(ident)) => captures.push(Capture::ByMutPtr(ident)),
+                    (false, Some(ident)) => captures.push(Capture::ByPtr(ident)),
+                }
+            }
+            Token::Mut => {
+                this.next();
+                let ident = this.expect_ident("expected capture name");
+                if this.next_if(Token::Assign).is_some() {
+                    captures.push(Capture::New { mutable: true, ident, expr: this.expression() });
+                } else {
+                    captures.push(Capture::ByValMut(ident))
+                }
+            }
+            Token::Ident(ident) => {
+                let start = this.next();
+                let ident = Located::new(start.span, this.strings.get_or_intern(ident));
+                if this.next_if(Token::Assign).is_some() {
+                    captures.push(Capture::New { mutable: false, ident, expr: this.expression() });
+                } else {
+                    captures.push(Capture::ByVal(ident))
+                }
+            }
+            Token::This => {
+                let start = this.next();
+                captures.push(Capture::ByVal(Located::new(start.span, Strings::THIS_PARAM)))
+            }
+            Token::Assign => {
+                let start = this.next();
+                let mutable = this.next_if(Token::Mut);
+                match mutable {
+                    Some(token) => set_policy(
+                        this,
+                        DefaultCapturePolicy::ByValMut,
+                        start.span.extended_to(token.span),
+                    ),
+                    None => set_policy(this, DefaultCapturePolicy::ByVal, start.span),
+                }
+            }
+            Token::Exclamation => {
+                let start = this.next();
+                set_policy(this, DefaultCapturePolicy::Auto, start.span);
+            }
+            _ => {
+                let span = this.peek().span;
+                this.error(Error::new("expected capture or capture policy", span));
+            }
+        });
+
+        let params = if let Some(head) = self.next_if(Token::LParen) {
+            self.csv(Vec::new(), Token::RParen, head.span, |this| {
+                (this.pattern(false), this.next_if(Token::Colon).map(|_| this.type_hint()))
             })
             .data
         } else {
-            Vec::new()
+            vec![]
         };
 
         let ret = self.next_if(Token::Colon).map(|_| self.type_hint());
-        let body = if ret.is_none() {
+        let body = if self.next_if(Token::FatArrow).is_some() {
             self.expression()
         } else {
             let token = self.expect(Token::LCurly);
             self.block_expr(token.span, None)
         };
 
-        let span = head.span.extended_to(body.span);
-        let _expr = ExprData::Lambda { params, ret, moves, body };
-        self.error_no_sync(Error::new("closures are not yet supported", span));
-        self.arena.expr(head.span.extended_to(body.span), ExprData::Error)
+        self.arena.expr(
+            head.extended_to(body.span),
+            ExprData::Lambda { policy, captures, params, ret, body },
+        )
     }
 
     //
@@ -1205,7 +1270,7 @@ impl<'a> Parser<'a> {
         data
     }
 
-    fn type_path(&mut self) -> Path {
+    fn type_or_trait_path(&mut self, tr: bool) -> Path {
         let origin = match self.peek().data {
             Token::ScopeRes => PathOrigin::Root(self.next().span),
             Token::Super => {
@@ -1223,9 +1288,23 @@ impl<'a> Parser<'a> {
             _ => PathOrigin::Normal,
         };
         let mut data = Vec::new();
-        loop {
+        let fn_like = loop {
             let ident = self.expect_ident("expected type name");
-            if self.next_if(Token::LAngle).is_some() {
+            if tr && let Some(start) = self.next_if(Token::LParen) {
+                let mut next = 0;
+                let hints = self
+                    .csv(vec![], Token::RParen, start.span, |this| {
+                        let item = this.maybe_labeled_type_hint();
+                        this.label_or_positional(item, &mut next)
+                    })
+                    .map(|args| self.arena.hints.alloc(TypeHintData::Tuple(args)));
+                let ret = self
+                    .next_if(Token::FatArrow)
+                    .map(|_| self.type_hint())
+                    .unwrap_or(ExprArena::hint_void(hints.span));
+                data.push((ident, vec![hints, ret]));
+                break true;
+            } else if self.next_if(Token::LAngle).is_some() {
                 let params = self.rangle_csv_one(ident.span, Self::type_hint);
                 data.push((ident, params.data));
             } else {
@@ -1233,11 +1312,15 @@ impl<'a> Parser<'a> {
             }
 
             if self.next_if(Token::ScopeRes).is_none() {
-                break;
+                break false;
             }
-        }
+        };
 
-        Path::new(origin, data)
+        Path { origin, components: data, fn_like }
+    }
+
+    fn type_path(&mut self) -> Path {
+        self.type_or_trait_path(false)
     }
 
     //
@@ -1576,7 +1659,7 @@ impl<'a> Parser<'a> {
         let mut impls = Vec::new();
         if self.next_if(Token::Colon).is_some() {
             loop {
-                impls.push(self.type_path());
+                impls.push(self.type_or_trait_path(true));
                 if self.next_if(Token::Plus).is_none() {
                     break;
                 }
@@ -1603,7 +1686,7 @@ impl<'a> Parser<'a> {
                 let begin = self.next().span;
                 if self.next_if(Token::Dyn).is_some() {
                     let mutable = self.next_if(Token::Mut).is_some();
-                    let path = self.type_path();
+                    let path = self.type_or_trait_path(true);
                     let span = begin.extended_to(path.span());
                     if mutable {
                         self.arena.hint(span, TypeHintData::DynMutPtr(path))
@@ -1980,7 +2063,7 @@ impl<'a> Parser<'a> {
 
     fn impl_block(&mut self, attrs: Attributes, span: Span) -> Located<ImplBlock> {
         let type_params = self.type_params();
-        let path = self.type_path();
+        let path = self.type_or_trait_path(true);
         self.expect(Token::LCurly);
 
         let mut functions = Vec::new();
@@ -2352,25 +2435,13 @@ impl<'a> Parser<'a> {
 
     fn csv_expr<T>(
         &mut self,
-        mut res: Vec<T>,
+        res: Vec<T>,
         end: Token,
         span: Span,
-        mut f: impl FnMut(&mut Self) -> T,
+        f: impl FnMut(&mut Self) -> T,
         map: impl FnOnce(Vec<T>) -> ExprData,
     ) -> Expr {
-        if !res.is_empty() && !self.matches(end.clone()) {
-            self.expect(Token::Comma);
-        }
-
-        let span = self.next_until(end.clone(), span, |this| {
-            res.push(f(this));
-
-            if !this.matches(end.clone()) {
-                this.expect(Token::Comma);
-            }
-        });
-
-        Located::new(span, self.arena.alloc(map(res)))
+        self.csv(res, end, span, f).map(|data| self.arena.alloc(map(data)))
     }
 
     fn csv_one<T>(
@@ -2501,17 +2572,20 @@ impl<'a> Parser<'a> {
     }
 
     fn next_until(&mut self, token: Token, mut span: Span, mut f: impl FnMut(&mut Self)) -> Span {
-        while match self.next_if_pred(|t| t == &token || t == &Token::Eof) {
-            Some(c) => {
-                span.extend_to(c.span);
-                false
+        loop {
+            let peek = self.peek();
+            span.extend_to(peek.span);
+            if peek.data == Token::Eof {
+                let pspan = peek.span;
+                self.error_no_sync(Error::expected_found(token, Token::Eof, pspan));
+                return span;
+            } else if peek.data == token {
+                self.next();
+                return span;
             }
-            None => true,
-        } {
+
             f(self);
         }
-
-        span
     }
 
     fn matches_pred(&mut self, pred: impl FnOnce(&Token) -> bool) -> bool {

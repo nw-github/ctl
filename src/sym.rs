@@ -3,6 +3,7 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{
+        DefaultCapturePolicy,
         checked::{Expr as CheckedExpr, Pattern as CheckedPattern},
         declared::UsePath,
         parsed::{Expr, FunctionType, Path, Pattern, TypeHint},
@@ -117,7 +118,7 @@ pub struct BlockScopeKind {
 pub enum ScopeKind {
     Block(BlockScopeKind),
     Loop(LoopScopeKind),
-    Lambda(Option<TypeId>, bool),
+    Lambda(Option<TypeId>, DefaultCapturePolicy),
     Function(FunctionId),
     UserType(UserTypeId),
     Impl(usize),
@@ -229,6 +230,13 @@ pub enum VariableKind {
     Normal,
     Static,
     Const,
+    Capture,
+}
+
+impl VariableKind {
+    pub fn is_local(&self) -> bool {
+        matches!(self, VariableKind::Capture | VariableKind::Normal)
+    }
 }
 
 #[derive(Default)]
@@ -329,6 +337,7 @@ pub enum UserTypeKind {
     UnsafeUnion,
     Template,
     Tuple,
+    Closure,
     Trait { this: UserTypeId, sealed: bool, assoc_types: HashMap<StrId, UserTypeId> },
     Extension(TypeId),
 }
@@ -546,8 +555,8 @@ impl Scopes {
         id.get_mut(self)
     }
 
-    pub fn get_tuple(&mut self, names: Vec<StrId>, ty_args: Vec<TypeId>, types: &Types) -> TypeId {
-        let id = if let Some(id) = self.tuples.get(&names) {
+    pub fn create_tuple_user_type(&mut self, names: Vec<StrId>, types: &Types) -> UserTypeId {
+        if let Some(id) = self.tuples.get(&names) {
             *id
         } else {
             let type_params: Vec<_> = (0..names.len())
@@ -576,6 +585,8 @@ impl Scopes {
                     .id
                 })
                 .collect();
+
+            let lang_tpl = self.lang_types.get(&LangType::Tuple).copied();
             let res = UserTypeId::insert_in(
                 self,
                 UserType {
@@ -593,7 +604,9 @@ impl Scopes {
                     kind: UserTypeKind::Tuple,
                     type_params,
                     attrs: Default::default(),
-                    impls: Default::default(),
+                    impls: TraitImpls::Checked(vec![
+                        lang_tpl.map(|id| GenericTrait::new(id, Default::default())),
+                    ]),
                     impl_blocks: Vec::new(),
                     fns: Vec::new(),
                     subscripts: Vec::new(),
@@ -607,8 +620,21 @@ impl Scopes {
 
             self.tuples.insert(names, res.id);
             res.id
-        };
+        }
+    }
+
+    pub fn get_tuple(
+        &mut self,
+        names: Vec<StrId>,
+        ty_args: impl IntoIterator<Item = TypeId>,
+        types: &Types,
+    ) -> TypeId {
+        let id = self.create_tuple_user_type(names, types);
         types.insert(Type::User(GenericUserType::from_type_args(self, id, ty_args)))
+    }
+
+    pub fn find_tuple(&self, names: &[StrId]) -> Option<UserTypeId> {
+        self.tuples.get(names).copied()
     }
 
     pub fn walk_super_traits(&self, tr: TraitId) -> HashSet<TraitId> {

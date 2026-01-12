@@ -30,10 +30,8 @@ pub enum Token<'a> {
     Colon,
     Semicolon,
     Hash,
-    AtLParen,
     AtLBrace,
     At,
-    Move,
     Dollar,
 
     Plus,
@@ -78,8 +76,6 @@ pub enum Token<'a> {
     Struct,
     Union,
     Enum,
-    Export,
-    Import,
     Trait,
     UnitTest,
     Dyn,
@@ -161,17 +157,13 @@ impl std::fmt::Display for Token<'_> {
             Token::Colon => write!(f, ":"),
             Token::Semicolon => write!(f, ";"),
             Token::Hash => write!(f, "#"),
-            Token::AtLParen => write!(f, "@("),
             Token::AtLBrace => write!(f, "@["),
             Token::Assign => write!(f, "="),
             Token::Fn => write!(f, "fn"),
-            Token::Import => write!(f, "import"),
-            Token::Export => write!(f, "export"),
             Token::Extern => write!(f, "extern"),
             Token::Unsafe => write!(f, "unsafe"),
             Token::Pub => write!(f, "pub"),
             Token::Mut => write!(f, "mut"),
-            Token::Raw => write!(f, "raw"),
             Token::Keyword => write!(f, "kw"),
             Token::My => write!(f, "my"),
             Token::This => write!(f, "This"),
@@ -180,6 +172,7 @@ impl std::fmt::Display for Token<'_> {
             Token::Else => write!(f, "else"),
             Token::For => write!(f, "for"),
             Token::In => write!(f, "in"),
+            Token::Eof => write!(f, "EOF"),
             _ => write!(f, "FIXME: {self:?}"),
         }
     }
@@ -329,7 +322,6 @@ impl<'a> Lexer<'a> {
             "dyn" => Token::Dyn,
             "else" => Token::Else,
             "enum" => Token::Enum,
-            "export" => Token::Export,
             "extension" => Token::Extension,
             "extern" => Token::Extern,
             "false" => Token::False,
@@ -338,7 +330,6 @@ impl<'a> Lexer<'a> {
             "guard" => Token::Guard,
             "if" => Token::If,
             "impl" => Token::Impl,
-            "import" => Token::Import,
             "in" => Token::In,
             "is" => Token::Is,
             "kw" => Token::Keyword,
@@ -346,7 +337,6 @@ impl<'a> Lexer<'a> {
             "loop" => Token::Loop,
             "match" => Token::Match,
             "mod" => Token::Mod,
-            "move" => Token::Move,
             "mut" => Token::Mut,
             "my" => Token::My,
             "or" => Token::Or,
@@ -400,12 +390,16 @@ impl<'a> Lexer<'a> {
             ')' => Token::RParen,
             ',' => Token::Comma,
             ';' => Token::Semicolon,
-            '#' => Token::Hash,
+            '#' => {
+                if self.advance_if('"') {
+                    Token::String(Cow::Borrowed(self.raw_string_literal(diag, start + 1)))
+                } else {
+                    Token::Hash
+                }
+            }
             '$' => Token::Dollar,
             '@' => {
-                if self.advance_if('(') {
-                    Token::AtLParen
-                } else if self.advance_if('[') {
+                if self.advance_if('[') {
                     Token::AtLBrace
                 } else {
                     Token::At
@@ -802,6 +796,20 @@ impl<'a> Lexer<'a> {
         ch
     }
 
+    fn raw_string_literal(&mut self, diag: &mut Diagnostics, start: usize) -> &'a str {
+        let mut result = "";
+        loop {
+            match self.advance() {
+                Some('"') if self.advance_if('#') => break result,
+                Some(_) => result = &self.src[start + 1..self.pos],
+                None => {
+                    diag.report(Error::new("unterminated string literal", self.here(1)));
+                    break result;
+                }
+            }
+        }
+    }
+
     fn numeric_suffix(&mut self) -> Option<&'a str> {
         let suffix = self.advance_while(|s| s.is_ascii_alphanumeric());
         if !suffix.is_empty() { Some(suffix) } else { None }
@@ -885,6 +893,11 @@ impl<'a> Lexer<'a> {
         }
 
         match self.peek() {
+            Some('#') => {
+                self.advance();
+                self.expect(diag, '"');
+                Token::ByteString(self.raw_string_literal(diag, start).as_bytes().to_vec())
+            }
             Some('\'') => {
                 self.advance();
                 let prev = self.here(0);

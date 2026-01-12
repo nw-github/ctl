@@ -1021,7 +1021,7 @@ fn get_document_symbols(proj: &Project, src: &str, file: FileId) -> Vec<Document
     }
 
     for (_, var) in proj.scopes.vars() {
-        if var.kind.is_normal() || !valid_name(var.name) {
+        if var.kind.is_local() || !valid_name(var.name) {
             continue;
         }
 
@@ -1155,7 +1155,7 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
             let name = strings.resolve(&var.name.data).to_string();
             CompletionItem {
                 label: name.clone(),
-                kind: Some(if var.kind.is_normal() {
+                kind: Some(if var.kind.is_local() {
                     CompletionItemKind::VARIABLE
                 } else {
                     CompletionItemKind::CONSTANT
@@ -1309,7 +1309,7 @@ fn visualize_func(id: FunctionId, small: bool, proj: &Project) -> String {
 fn visualize_var(id: VariableId, proj: &Project) -> String {
     let var = proj.scopes.get(id);
     let mut res = String::new();
-    if !var.kind.is_normal() {
+    if !var.kind.is_local() {
         res += &visualize_location(var.scope, proj);
     }
     if var.public {
@@ -1319,8 +1319,8 @@ fn visualize_var(id: VariableId, proj: &Project) -> String {
         (VariableKind::Const, _) => "const",
         (VariableKind::Static, true) => "static mut",
         (VariableKind::Static, false) => "static",
-        (VariableKind::Normal, true) => "mut",
-        (VariableKind::Normal, false) => "let",
+        (VariableKind::Normal | VariableKind::Capture, true) => "mut",
+        (VariableKind::Normal | VariableKind::Capture, false) => "let",
     };
     let name =
         if var.name.data == Strings::EMPTY { "_" } else { proj.strings.resolve(&var.name.data) };
@@ -1417,17 +1417,7 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
                     res += ": ";
                 }
 
-                res += proj.strings.resolve(&proj.scopes.get(tr.id).name.data);
-                if !tr.ty_args.is_empty() {
-                    res += "<";
-                    for (i, id) in tr.ty_args.iter().enumerate() {
-                        if i > 0 {
-                            res.push_str(", ");
-                        }
-                        write_de!(res, "{}", proj.fmt_ty(*id.1));
-                    }
-                    res += ">";
-                }
+                write_de!(res, "{}", proj.fmt_ut(tr));
             }
         }
         UserTypeKind::Trait { .. } => {
@@ -1439,7 +1429,7 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
             visualize_type_params(&mut res, &ut.type_params, proj);
             write_de!(res, " for {}", proj.fmt_ty(ty));
         }
-        UserTypeKind::Tuple => {}
+        UserTypeKind::Closure | UserTypeKind::Tuple => {}
     }
 
     res

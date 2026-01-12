@@ -176,6 +176,10 @@ impl Error {
         Self::new(format!("'{}' is not valid here", token.data), token.span)
     }
 
+    pub fn no_mut_ptr(span: Span) -> Self {
+        Self::new("cannot create mutable pointer to immutable memory location", span)
+    }
+
     pub fn type_mismatch(expected: impl Display, received: impl Display, span: Span) -> Self {
         Self::new(format!("type mismatch: expected type '{expected}', found '{received}'"), span)
     }
@@ -282,6 +286,10 @@ impl Error {
     pub fn invalid_attr(name: impl Display, span: Span) -> Self {
         Self::new(format!("invalid attribute '{name}'"), span)
     }
+
+    pub fn function_like_tr(span: Span) -> Self {
+        Self::new("function-like trait syntax is only valid with the `Fn` trait", span)
+    }
 }
 
 pub struct Warning;
@@ -325,10 +333,6 @@ impl Warning {
             format!("cast from type '{src}' to '{dst}' is infallible and may use an `as` cast"),
             span,
         )
-    }
-
-    pub fn call_mutating_on_bitfield(span: Span) -> Error {
-        Self::new("call to mutating method with bitfield receiver operates on a copy", span)
     }
 
     pub fn mut_ptr_to_const(span: Span) -> Error {

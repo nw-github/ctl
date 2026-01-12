@@ -40,6 +40,7 @@ impl std::fmt::Display for FmtTy<'_> {
             &Type::RawMutPtr(id) => write!(f, "^mut {}", p.fmt_ty(id)),
             Type::DynPtr(id) => write!(f, "*dyn {}", p.fmt_ut(id)),
             Type::DynMutPtr(id) => write!(f, "*dyn mut {}", p.fmt_ut(id)),
+            Type::User(ut) => write!(f, "{}", p.fmt_ut(ut)),
             Type::FnPtr(func) => {
                 crate::write_if!(func.is_extern, f, "extern ");
                 crate::write_if!(func.is_unsafe, f, "unsafe ");
@@ -66,7 +67,6 @@ impl std::fmt::Display for FmtTy<'_> {
                 }
                 write!(f, "): {}", p.fmt_ty(func.ret.with_templates(&p.types, &ofn.ty_args)))
             }
-            Type::User(ty) => write!(f, "{}", p.fmt_ut(ty)),
             &Type::Array(ty, count) => write!(f, "[{}; {count}]", p.fmt_ty(ty)),
         }
     }
@@ -82,10 +82,11 @@ impl std::fmt::Display for FmtUt<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let p = self.p;
         let ut = self.ut;
-        match &p.scopes.get(ut.id).kind {
+        let ut_data = p.scopes.get(ut.id);
+        match &ut_data.kind {
             crate::sym::UserTypeKind::Tuple => {
                 write!(f, "(")?;
-                for (i, (name, member)) in p.scopes.get(ut.id).members.iter().enumerate() {
+                for (i, (name, member)) in ut_data.members.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
@@ -99,27 +100,42 @@ impl std::fmt::Display for FmtUt<'_, '_> {
                 }
                 write!(f, ")")
             }
+            crate::sym::UserTypeKind::Closure => {
+                let tr = ut_data
+                    .impls
+                    .iter_checked()
+                    .find(|tr| p.scopes.get(tr.id).attrs.lang == Some(LangType::OpFn))
+                    .unwrap();
+                write!(f, "{{closure {}}}", p.fmt_ut(tr))
+            }
             _ => {
-                let is_lang_type =
-                    |name: LangType| p.scopes.lang_types.get(&name).is_some_and(|&id| id == ut.id);
-                if is_lang_type(LangType::Option) {
-                    return write!(f, "?{}", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type(LangType::Span) {
-                    return write!(f, "[{}..]", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type(LangType::SpanMut) {
-                    return write!(f, "[mut {}..]", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type(LangType::Vec) {
-                    return write!(f, "[{}]", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type(LangType::Set) {
-                    return write!(f, "#[{}]", p.fmt_ty(ut.ty_args[0]));
-                } else if is_lang_type(LangType::Map) {
-                    return write!(f, "[{}: {}]", p.fmt_ty(ut.ty_args[0]), p.fmt_ty(ut.ty_args[1]));
+                let args = &ut.ty_args;
+                match ut_data.attrs.lang {
+                    Some(LangType::Option) => return write!(f, "?{}", p.fmt_ty(args[0])),
+                    Some(LangType::Span) => return write!(f, "[{}..]", p.fmt_ty(args[0])),
+                    Some(LangType::SpanMut) => {
+                        return write!(f, "[mut {}..]", p.fmt_ty(args[0]));
+                    }
+                    Some(LangType::Vec) => return write!(f, "[{}]", p.fmt_ty(args[0])),
+                    Some(LangType::Set) => return write!(f, "#[{}]", p.fmt_ty(args[0])),
+                    Some(LangType::Map) => {
+                        return write!(f, "[{}: {}]", p.fmt_ty(args[0]), p.fmt_ty(args[1]));
+                    }
+                    _ => {}
                 }
 
-                write!(f, "{}", p.strings.resolve(&p.scopes.get(ut.id).name.data))?;
-                if !ut.ty_args.is_empty() {
+                write!(f, "{}", p.strings.resolve(&ut_data.name.data))?;
+                if ut_data.attrs.lang == Some(LangType::OpFn)
+                    && p.types[args[0]]
+                        .as_user()
+                        .is_some_and(|ut| p.scopes.get(ut.id).kind.is_tuple())
+                {
+                    return write!(f, "{} => {}", p.fmt_ty(args[0]), p.fmt_ty(args[1]));
+                }
+
+                if !args.is_empty() {
                     write!(f, "<")?;
-                    for (i, concrete) in ut.ty_args.values().enumerate() {
+                    for (i, concrete) in args.values().enumerate() {
                         if i > 0 {
                             write!(f, ", ")?;
                         }

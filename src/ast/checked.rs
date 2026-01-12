@@ -127,6 +127,7 @@ pub enum ExprData {
     DynCoerce(Expr, ScopeId),
     VariantInstance(StrId, IndexMap<StrId, Expr>),
     SpanMutCoerce(Expr),
+    ClosureCoerce(Expr, ScopeId),
     Instance(IndexMap<StrId, Expr>),
     Array(Vec<Expr>),
     ArrayWithInit {
@@ -158,7 +159,6 @@ pub enum ExprData {
     AffixOperator {
         callee: Expr,
         mfn: MemberFn,
-        param: StrId,
         scope: ScopeId,
         postfix: bool,
         span: Span,
@@ -189,7 +189,6 @@ pub enum ExprData {
     Return(Expr),
     Yield(Expr, ScopeId),
     Break(Expr, ScopeId),
-    Lambda(Vec<Stmt>),
     NeverCoerce(Expr),
     Discard(Expr),
     Continue(ScopeId),
@@ -238,7 +237,13 @@ impl Expr {
         }
     }
 
-    pub fn auto_deref(self, types: &Types, target: TypeId, arena: &mut ExprArena) -> Self {
+    pub fn auto_deref_ex(
+        self,
+        types: &Types,
+        target: TypeId,
+        arena: &mut ExprArena,
+        adjust_dyn: bool,
+    ) -> Self {
         let mut needed = 0;
         let mut current = target;
         while let Type::Ptr(inner) | Type::MutPtr(inner) = &types[current] {
@@ -255,7 +260,8 @@ impl Expr {
             indirection += 1;
         }
 
-        if let Type::DynMutPtr(_) | Type::DynPtr(_) = types[ty]
+        if adjust_dyn
+            && let Type::DynMutPtr(_) | Type::DynPtr(_) = types[ty]
             && !matches!(types[target], Type::DynMutPtr(_) | Type::DynPtr(_))
         {
             indirection += 1;
@@ -282,6 +288,10 @@ impl Expr {
                 arena.alloc(ExprData::Deref(self, indirection - needed)),
             ),
         }
+    }
+
+    pub fn auto_deref(self, types: &Types, target: TypeId, arena: &mut ExprArena) -> Self {
+        self.auto_deref_ex(types, target, arena, true)
     }
 
     pub fn option_some(opt: TypeId, val: Expr, arena: &mut ExprArena) -> Self {
@@ -323,7 +333,7 @@ impl Expr {
     }
 
     pub fn member_call(
-        ty: TypeId,
+        ret: TypeId,
         types: &Types,
         mfn: MemberFn,
         args: IndexMap<StrId, Expr>,
@@ -334,7 +344,7 @@ impl Expr {
         let func = mfn.func.clone();
         let callee = arena.alloc(ExprData::MemFn(mfn, scope));
         Self {
-            ty,
+            ty: ret,
             data: arena.alloc(ExprData::Call {
                 callee: Expr::new(types.insert(Type::Fn(func)), callee),
                 args,
@@ -345,7 +355,7 @@ impl Expr {
     }
 
     pub fn call(
-        ty: TypeId,
+        ret: TypeId,
         types: &Types,
         func: GenericFn,
         args: IndexMap<StrId, Expr>,
@@ -355,7 +365,7 @@ impl Expr {
     ) -> Self {
         let callee = arena.alloc(ExprData::Fn(func.clone(), scope));
         Expr {
-            ty,
+            ty: ret,
             data: arena.alloc(ExprData::Call {
                 callee: Expr::new(types.insert(Type::Fn(func)), callee),
                 args,

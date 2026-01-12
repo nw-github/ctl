@@ -19,6 +19,8 @@ impl Strings {
     pub(crate) const THIS_TYPE: StrId = str_id(SID::THIS_TYPE);
     pub(crate) const TUPLE_ZERO: StrId = str_id(SID::TUPLE_ZERO);
     pub(crate) const TUPLE_NAME: StrId = str_id(SID::TUPLE_NAME);
+    pub(crate) const CLOSURE_NAME: StrId = str_id(SID::CLOSURE_NAME);
+    pub(crate) const FN_TR_ARGS_NAME: StrId = str_id(SID::FN_TR_ARGS_NAME);
     pub(crate) const ITER_VAR_NAME: StrId = str_id(SID::ITER_VAR_NAME);
     pub(crate) const SKIP_REASON: StrId = str_id(SID::SKIP_REASON);
 
@@ -30,6 +32,7 @@ impl Strings {
     pub(crate) const FN_WRITTEN: StrId = str_id(SID::FN_WRITTEN);
     pub(crate) const FN_INSERT: StrId = str_id(SID::FN_INSERT);
     pub(crate) const FN_WITH_CAPACITY: StrId = str_id(SID::FN_WITH_CAPACITY);
+    pub(crate) const FN_CLOSURE_DO_INVOKE: StrId = str_id(SID::FN_CLOSURE_DO_INVOKE);
 
     pub(crate) const VAR_LESS: StrId = str_id(SID::VAR_LESS);
     pub(crate) const VAR_GREATER: StrId = str_id(SID::VAR_GREATER);
@@ -41,6 +44,7 @@ impl Strings {
     pub const FEAT_BOEHM: StrId = str_id(SID::FEAT_BOEHM);
     pub const FEAT_TEST: StrId = str_id(SID::FEAT_TEST);
     pub const FEAT_BACKTRACE: StrId = str_id(SID::FEAT_BACKTRACE);
+    pub const FEAT_OVERFLOW_CHECKS: StrId = str_id(SID::FEAT_OVERFLOW_CHECKS);
 
     pub(crate) const ATTR_LANG: StrId = str_id(SID::ATTR_LANG);
     pub(crate) const ATTR_INTRINSIC: StrId = str_id(SID::ATTR_INTRINSIC);
@@ -57,6 +61,7 @@ impl Strings {
     pub(crate) const ATTR_ALIGN: StrId = str_id(SID::ATTR_ALIGN);
     pub(crate) const ATTR_TEST_RUNNER: StrId = str_id(SID::ATTR_TEST_RUNNER);
     pub(crate) const ATTR_SKIP: StrId = str_id(SID::SKIP);
+    pub(crate) const ATTR_EXPORT: StrId = str_id(SID::ATTR_EXPORT);
 
     pub fn new() -> Self {
         let mut rodeo = Rodeo::default();
@@ -96,9 +101,14 @@ impl Strings {
         assert_eq!(Self::ATTR_THREAD_LOCAL, rodeo.get_or_intern_static("thread_local"));
         assert_eq!(Self::ATTR_COLD, rodeo.get_or_intern_static("cold"));
         assert_eq!(Self::TUPLE_NAME, rodeo.get_or_intern_static("$tuple"));
+        assert_eq!(Self::CLOSURE_NAME, rodeo.get_or_intern_static("{closure}"));
         assert_eq!(Self::FEAT_BACKTRACE, rodeo.get_or_intern_static("backtrace"));
         assert_eq!(Self::ATTR_ALIGN, rodeo.get_or_intern_static("align"));
         assert_eq!(Self::ATTR_LAYOUT, rodeo.get_or_intern_static("layout"));
+        assert_eq!(Self::FN_TR_ARGS_NAME, rodeo.get_or_intern_static("args"));
+        assert_eq!(Self::FEAT_OVERFLOW_CHECKS, rodeo.get_or_intern_static("overflow_checks"));
+        assert_eq!(Self::FN_CLOSURE_DO_INVOKE, rodeo.get_or_intern_static("do_invoke"));
+        assert_eq!(Self::ATTR_EXPORT, rodeo.get_or_intern_static("export"));
         Self { rodeo }
     }
 }
@@ -151,7 +161,12 @@ enum SID {
     ATTR_THREAD_LOCAL,
     ATTR_COLD,
     TUPLE_NAME,
+    CLOSURE_NAME,
     FEAT_BACKTRACE,
     ATTR_ALIGN,
     ATTR_LAYOUT,
+    FN_TR_ARGS_NAME,
+    FEAT_OVERFLOW_CHECKS,
+    FN_CLOSURE_DO_INVOKE,
+    ATTR_EXPORT,
 }

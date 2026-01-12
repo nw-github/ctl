@@ -8,6 +8,7 @@ pub extern fn exit(code: c_int): never;
 
 pub extern fn malloc(size: uint): ?^mut void;
 pub extern fn realloc(addr: ^mut void, size: uint): ?^mut void;
+pub extern fn free(addr: ?^mut void);
 
 // The C macro `setjmp` calls _setjmp, which does not save the signal mask
 pub extern fn _setjmp(env: *mut JmpBuf): c_int;

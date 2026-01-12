@@ -3,6 +3,36 @@ use std::ryu::*;
 use std::deps::libc::math;
 
 pub extension F32Impl for f32 {
+    $[intrinsic(binary_op)]
+    pub fn +(this, rhs: This): This => this + rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn -(this, rhs: This): This => this - rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn *(this, rhs: This): This => this * rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn /(this, rhs: This): This => this / rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn %(this, rhs: This): This => this % rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn +=(mut this, rhs: This) => *this += rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn -=(mut this, rhs: This) => *this -= rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn *=(mut this, rhs: This) => *this *= rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn /=(mut this, rhs: This) => *this /= rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn %=(mut this, rhs: This) => *this %= rhs;
+
     pub fn parse(s: str): ?f32 => s2f::s2f(s.as_bytes()) is :Ok(v) then v;
 
     pub fn to_bits(my this): u32 => unsafe std::mem::bit_cast(this);
@@ -89,6 +119,36 @@ pub extension F32Impl for f32 {
 }
 
 pub extension F64Impl for f64 {
+    $[intrinsic(binary_op)]
+    pub fn +(this, rhs: This): This => this + rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn -(this, rhs: This): This => this - rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn *(this, rhs: This): This => this * rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn /(this, rhs: This): This => this / rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn %(this, rhs: This): This => this % rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn +=(mut this, rhs: This) => *this += rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn -=(mut this, rhs: This) => *this -= rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn *=(mut this, rhs: This) => *this *= rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn /=(mut this, rhs: This) => *this /= rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn %=(mut this, rhs: This) => *this %= rhs;
+
     pub fn parse(s: str): ?f64 => s2d::s2d(s.as_bytes()) is :Ok(v) then v;
 
     pub fn to_bits(my this): u64 => unsafe std::mem::bit_cast(this);

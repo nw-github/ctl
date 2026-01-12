@@ -13,8 +13,7 @@ struct FailedTest {
     panic_msg: str,
 }
 
-$[test_runner]
-$[feature(test)]
+$[test_runner, feature(test)]
 fn test_runner(tests: [TestInfo..]) {
     fn run_test(func: fn()) => func();
 
@@ -43,7 +42,7 @@ fn test_runner(tests: [TestInfo..]) {
             continue;
         }
 
-        match std::panic::catch_panic(&run_test, *test) {
+        match std::panic::catch_panic(*test) {
             :Ok(_) => {
                 eprintln("{GREEN}OK{CLEAR}");
                 passed++;
