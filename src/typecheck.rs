@@ -7579,6 +7579,13 @@ impl TypeChecker<'_> {
                     _ => self.error(Error::no_consteval(span)),
                 }
             }
+            &CExprData::Var(id) => {
+                let var = self.proj.scopes.get(id);
+                if !var.kind.is_const() {
+                    return self.error(Error::no_consteval(span));
+                }
+                self.consteval(var.value?, span)
+            }
             CExprData::Error => None,
             _ => self.error(Error::no_consteval(span)),
         }
