@@ -10,6 +10,10 @@ pub struct Set<T: Hash + Eq<T>> {
     pub fn new(): This => This(inner: Map::new());
     pub fn with_capacity(cap: uint): This => This(inner: Map::with_capacity(cap:));
 
+    pub fn deinit(mut this) {
+        this.inner.deinit();
+    }
+
     /// Returns true if the key was not previously in the set
     pub fn insert(mut this, key: T): bool => this.inner.insert(key, {}) is null;
     pub fn remove(mut this, key: *T): bool => this.inner.remove(key).is_some();

@@ -50,3 +50,23 @@ pub struct Mutable<T> {
 
     pub fn into_inner(my this): T => this.value;
 }
+
+pub struct Layout {
+    size:  uint,
+    align: uint,
+
+    pub fn of<T>(): This => This(size: size_of::<T>(), align: align_of::<T>());
+    pub fn of_val<T>(_: *T): This => This::of::<T>();
+
+    pub unsafe fn new_unchecked(kw size: uint, kw align: uint): ?This => This(size:, align:);
+
+    pub fn new(kw size: uint, kw align: uint): ?This {
+        if align != 0 and align.is_power_of_two() {
+            This(size:, align:)
+        }
+    }
+
+    pub fn size(this): uint => this.size;
+    pub fn align(this): uint => this.align;
+    pub fn array(this, n: uint): ?This => This(size: this.size.checked_mul(n)?, align: this.align);
+}

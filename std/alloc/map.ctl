@@ -10,15 +10,20 @@ union Bucket<K, V> {
 $[feature(alloc)]
 $[lang(map)]
 pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
-    buckets: [mut Bucket<K, V>..],
+    buckets: [Bucket<K, V>],
     len:     uint,
 
-    pub fn new(): Map<K, V> => Map(buckets: SpanMut::empty(), len: 0);
+    pub fn new(): Map<K, V> => Map(buckets: Vec::new(), len: 0);
 
     pub fn with_capacity(cap: uint): Map<K, V> {
         mut self: Map<K, V> = Map::new();
         self.adjust_cap(cap);
         self
+    }
+
+    pub fn deinit(mut this) {
+        this.buckets.deinit();
+        this.len = 0;
     }
 
     pub fn get(this, key: *K): ?*V {
@@ -64,7 +69,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
 
     pub fn clear(mut this) {
         if this.len > 0 {
-            this.buckets.fill(:None);
+            this.buckets[..].fill(:None);
             this.len = 0;
         }
     }
@@ -76,8 +81,8 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
     pub fn is_empty(this): bool => this.len == 0;
     pub fn capacity(this): uint => this.buckets.len();
 
-    pub fn iter(this): Iter<K, V> => Iter(buckets: this.buckets);
-    pub fn iter_mut(mut this): IterMut<K, V> => IterMut(buckets: this.buckets);
+    pub fn iter(this): Iter<K, V> => Iter(buckets: this.buckets[..]);
+    pub fn iter_mut(mut this): IterMut<K, V> => IterMut(buckets: this.buckets[..]);
     pub fn keys(this): Keys<K, V> => Keys(iter: this.iter());
     pub fn values(this): Values<K, V> => Values(iter: this.iter());
     pub fn values_mut(mut this): ValuesMut<K, V> => ValuesMut(iter: this.iter_mut());
@@ -112,7 +117,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         }
 
         this.len = 0;
-        let old = std::mem::replace(&mut this.buckets, @[Bucket::<K, V>::None; cap][..]);
+        let old = std::mem::replace(&mut this.buckets, @[Bucket::<K, V>::None; cap]);
         for val in old.iter() {
             if val is :Some(key, _) {
                 this.len++;

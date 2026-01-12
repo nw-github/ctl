@@ -1,4 +1,5 @@
 use std::mem;
+use std::mem::Layout;
 use std::range::RangeBounds;
 use std::reflect::*;
 
@@ -8,8 +9,11 @@ pub struct Vec<T> {
     ptr: ^mut T,
     len: uint,
     cap: uint,
+    allocator: super::DefaultAllocator,
 
-    pub fn new(): This => Vec(ptr: std::ptr::raw_dangling(), len: 0, cap: 0);
+    pub fn new(): This {
+        Vec(ptr: std::ptr::raw_dangling(), len: 0, cap: 0, allocator: super::DefaultAllocator())
+    }
 
     pub fn with_capacity(cap: uint): This {
         mut self: This = Vec::new();
@@ -28,6 +32,14 @@ pub struct Vec<T> {
             self.set_len(span.len());
         }
         self
+    }
+
+    pub fn deinit(mut this) {
+        if this.cap != 0 {
+            unsafe this.allocator.free(this.ptr.cast(), Layout::of::<T>().array(this.len)!);
+            this.cap = 0;
+            this.len = 0;
+        }
     }
 
     pub fn len(this): uint => this.len;
@@ -177,13 +189,17 @@ pub struct Vec<T> {
             return;
         }
 
+        guard Layout::of::<T>().array(cap) is ?layout else {
+            panic("trying to make an allocation larger than the max size possible");
+        }
+
         let ptr = if this.cap == 0 {
-            std::alloc::alloc::<T>(cap)
+            this.allocator.alloc(layout)
         } else {
-            std::alloc::realloc(this.ptr, cap)
+            unsafe this.allocator.resize(this.ptr.cast(), layout)
         };
         if ptr is ?ptr {
-            this.ptr = ptr;
+            this.ptr = ptr.cast();
             this.cap = cap;
         } else {
             let bytes = cap * std::mem::size_of::<T>();

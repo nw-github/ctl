@@ -361,6 +361,7 @@ pub extension UnsignedImpl<T: Unsigned> for T {
     pub fn count_zeros(my this): u32 => unsafe gcc_intrin::__builtin_popcountg(!this) as! u32;
     pub fn leading_zeros(my this): u32 => unsafe gcc_intrin::__builtin_clzg(this) as! u32;
     pub fn trailing_zeros(my this): u32 => unsafe gcc_intrin::__builtin_ctzg(this) as! u32;
+    pub fn is_power_of_two(my this): bool => this.count_ones() == 1;
 }
 
 pub extension U32Impl for u32 {
