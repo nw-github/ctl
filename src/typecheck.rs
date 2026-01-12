@@ -242,18 +242,20 @@ enum Cast {
 
 impl Cast {
     fn get(src: &Type, dst: &Type) -> Cast {
+        use Type as T;
         match src {
-            Type::Usize | Type::Isize => match dst {
-                Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) => Cast::Unsafe,
-                Type::Uint(_) | Type::Int(_) | Type::CInt(_) | Type::CUint(_) => Cast::Fallible,
-                Type::Usize | Type::Isize => Cast::Fallible,
-                Type::RawPtr(_) | Type::RawMutPtr(_) | Type::F32 | Type::F64 => Cast::Infallible,
+            T::Usize | T::Isize => match dst {
+                T::Ptr(_) | T::MutPtr(_) | T::FnPtr(_) => Cast::Unsafe,
+                T::Uint(_) | T::Int(_) | T::CInt(_) | T::CUint(_) => Cast::Fallible,
+                T::Usize | T::Isize => Cast::Fallible,
+                T::RawPtr(_) | T::RawMutPtr(_) | T::F32 | T::F64 => Cast::Infallible,
                 _ => Cast::None,
             },
-            Type::CInt(_) | Type::CUint(_) => match dst {
-                Type::Uint(_) | Type::Int(_) | Type::CInt(_) | Type::CUint(_) => Cast::Fallible,
-                Type::Usize | Type::Isize => Cast::Fallible,
-                Type::F32 | Type::F64 => Cast::Infallible,
+            T::CInt(_) | T::CUint(_) => match dst {
+                T::Usize | T::Isize | T::Uint(_) | T::Int(_) | T::CInt(_) | T::CUint(_) => {
+                    Cast::Fallible
+                }
+                T::F32 | T::F64 => Cast::Infallible,
                 _ => Cast::None,
             },
             src if src.as_integral(true).is_some() => {
@@ -261,15 +263,12 @@ impl Cast {
                 // from can only be Uint(n) | Int(n) | Char | Bool now
                 match dst {
                     // we definitely don't support any targets with < 16 bit pointers
-                    Type::Usize | Type::Isize if !src.is_bool() && a.bits > 16 => Cast::Fallible,
+                    T::Usize | T::Isize if !src.is_bool() && a.bits > 16 => Cast::Fallible,
                     // C types should never be < 8 bits? at least we won't support anything like that
-                    Type::CInt(_) | Type::CUint(_) if !src.is_bool() && a.bits > 8 => {
-                        Cast::Fallible
-                    }
-                    Type::F32 | Type::F64 => Cast::Infallible,
+                    T::CInt(_) | T::CUint(_) if !src.is_bool() && a.bits > 8 => Cast::Fallible,
+                    T::F32 | T::F64 => Cast::Infallible,
                     // d800-e000 is invalid for a char, u15::MAX is 0x7fff
-                    Type::Char if matches!(src, Type::Uint(n) if *n <= 15) => Cast::Infallible,
-                    Type::Char => Cast::Fallible,
+                    T::Char if matches!(src, T::Uint(n) if *n <= 15) => Cast::Infallible,
                     _ => {
                         if let Some(b) = dst.as_integral(false) {
                             if (a.signed == b.signed && a.bits <= b.bits)
@@ -285,27 +284,15 @@ impl Cast {
                     }
                 }
             }
-            Type::F32 | Type::F64 => match dst {
-                Type::Uint(_)
-                | Type::Int(_)
-                | Type::CInt(_)
-                | Type::CUint(_)
-                | Type::Isize
-                | Type::Usize
-                | Type::F32
-                | Type::F64 => Cast::Infallible,
+            T::F32 | T::F64 => match dst {
+                T::Int(_) | T::CInt(_) | T::Isize | T::F32 | T::F64 => Cast::Infallible,
+                T::Uint(_) | T::CUint(_) | T::Usize => Cast::Fallible,
                 _ => Cast::None,
             },
-            Type::Ptr(_)
-            | Type::MutPtr(_)
-            | Type::FnPtr(_)
-            | Type::RawPtr(_)
-            | Type::RawMutPtr(_) => {
+            T::Ptr(_) | T::MutPtr(_) | T::FnPtr(_) | T::RawPtr(_) | T::RawMutPtr(_) => {
                 match dst {
-                    Type::Ptr(_) | Type::MutPtr(_) | Type::FnPtr(_) => Cast::Unsafe,
-                    Type::Usize | Type::Isize | Type::RawPtr(_) | Type::RawMutPtr(_) => {
-                        Cast::Infallible
-                    } // maybe only *T to ^mut T should be infallible
+                    T::Ptr(_) | T::MutPtr(_) | T::FnPtr(_) => Cast::Unsafe,
+                    T::Usize | T::Isize | T::RawPtr(_) | T::RawMutPtr(_) => Cast::Infallible, // maybe only *T to ^mut T should be infallible
                     _ => Cast::None,
                 }
             }
@@ -3714,6 +3701,9 @@ impl TypeChecker<'_> {
                         .map(|u| u.tag)
                     {
                         from_id = tag;
+                        if from_id == to_id {
+                            return self.arena.typed(to_id, CExprData::As(expr, throwing));
+                        }
                     }
                 }
 
