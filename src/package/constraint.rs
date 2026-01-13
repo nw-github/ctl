@@ -1,6 +1,8 @@
 use serde::de::{self, Deserialize, Deserializer};
 
-use super::*;
+pub struct ConstraintArgs {
+    pub release: bool,
+}
 
 #[derive(serde::Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -79,7 +81,7 @@ impl<'de> Deserialize<'de> for Constraint {
 
 impl Constraint {
     #[allow(clippy::only_used_in_recursion)]
-    pub fn applies(&self, arg: ()) -> bool {
+    pub fn applies(&self, arg: &ConstraintArgs) -> bool {
         match self {
             Constraint::Not(inner) => !inner.applies(arg),
             Constraint::And(lhs, rhs) => lhs.applies(arg) && rhs.applies(arg),

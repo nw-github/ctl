@@ -5,7 +5,7 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::package::Constraint;
+use super::constraint::Constraint;
 
 #[derive(Deserialize, Default, Debug)]
 #[serde(deny_unknown_fields)]
