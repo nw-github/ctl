@@ -1,0 +1,270 @@
+#![allow(unused)]
+
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+};
+
+use crate::{Lexer, ds::DependencyGraph};
+
+mod constraint;
+mod raw;
+
+pub use constraint::Constraint;
+
+#[derive(Debug)]
+pub struct LinkLib {
+    pub name: String,
+    pub path: Option<PathBuf>,
+    pub features: HashSet<String>,
+}
+
+#[derive(Debug)]
+pub struct Dependency {
+    pub path: PathBuf,
+    pub features: HashSet<String>,
+    pub requires: HashSet<String>,
+}
+
+#[derive(Debug)]
+pub struct Build {
+    pub overflow_checks: bool,
+    pub dir: PathBuf,
+    pub opt_level: usize,
+    pub debug_info: bool,
+    pub no_gc: bool,
+    pub no_bit_int: bool,
+}
+
+#[derive(Debug)]
+pub struct Feature {
+    pub available: bool,
+    pub enabled: bool,
+    pub deps: HashSet<String>,
+}
+
+#[derive(Debug)]
+pub struct Module {
+    pub name: String,
+    pub root: PathBuf,
+    pub no_std: bool,
+    pub lib: bool,
+    pub features: HashMap<String, Feature>,
+}
+
+#[derive(Debug)]
+pub struct Config {
+    pub module: Module,
+    pub libs: Vec<LinkLib>,
+    pub deps: Vec<Dependency>,
+    pub debug: Build,
+    pub release: Build,
+}
+
+macro_rules! build_prop {
+    ($cfg: expr, $v: ident, $property: ident, $default: expr) => {
+        $cfg.build.$v.$property.or($cfg.build.default.$property.clone()).unwrap_or($default)
+    };
+}
+
+impl Config {
+    pub fn parse(dir: impl AsRef<Path>, data: &str, arg: ()) -> anyhow::Result<Self> {
+        let dir = dir.as_ref();
+        let config = toml::from_str::<raw::Config>(data)?;
+        let dir_relative = |path: PathBuf| {
+            if path.is_absolute() { path.to_owned() } else { dir.join(path) }
+        };
+
+        let mut module = Module {
+            name: config
+                .package
+                .name
+                .unwrap_or_else(|| dir.file_name().unwrap().to_string_lossy().into_owned()),
+            root: config.package.root.map(dir_relative).unwrap_or(dir.into()),
+            no_std: config.package.no_std,
+            lib: config.package.lib,
+            features: HashMap::new(),
+        };
+        let mut libs = Vec::with_capacity(config.link_libs.len());
+        let mut deps = Vec::with_capacity(config.dependencies.len());
+        for (name, feat) in config.features {
+            if feat.constraint.is_some_and(|c| !c.applies(arg)) {
+                module.features.insert(
+                    name,
+                    Feature { available: false, enabled: false, deps: feat.requires },
+                );
+                continue;
+            }
+
+            module.features.insert(
+                name,
+                Feature { available: true, enabled: feat.default, deps: feat.requires },
+            );
+        }
+
+        Self::check_features(&module)?;
+
+        for (name, lib) in config.link_libs {
+            if lib.constraint.is_some_and(|c| !c.applies(arg)) {
+                continue;
+            }
+
+            libs.push(LinkLib {
+                features: Self::validate_features(&module, lib.requires, || {
+                    format!("link library '{name}'")
+                })?,
+                name,
+                path: lib.path.map(dir_relative),
+            });
+        }
+
+        for (name, dep) in config.dependencies {
+            match dep {
+                raw::Dependency::Path(path) => deps.push(Dependency {
+                    path: dir_relative(path),
+                    features: HashSet::new(),
+                    requires: HashSet::new(),
+                }),
+                raw::Dependency::Full { constraint, path, features, no_default, requires } => {
+                    if constraint.is_some_and(|c| !c.applies(arg)) {
+                        continue;
+                    }
+
+                    let path = if let Some(path) = path {
+                        dir_relative(path)
+                    } else if name == "std" {
+                        Self::default_std_location()?
+                    } else {
+                        anyhow::bail!("in declaration of dependency '{name}': a path is required");
+                    };
+
+                    let requires = Self::validate_features(&module, requires, || {
+                        format!("declaration of dependency '{name}'")
+                    })?;
+
+                    match features {
+                        raw::FeatureReq::List(features) => {
+                            deps.push(Dependency { path, features, requires })
+                        }
+                        raw::FeatureReq::WithConstraints(features) => {
+                            deps.push(Dependency {
+                                path,
+                                features: features
+                                    .into_iter()
+                                    .filter_map(|(feat, c)| c.applies(arg).then_some(feat))
+                                    .collect(),
+                                requires,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        let debug = Build {
+            overflow_checks: build_prop!(config, debug, overflow_checks, true),
+            dir: dir_relative(build_prop!(config, debug, dir, PathBuf::from("build"))),
+            opt_level: build_prop!(config, debug, opt_level, 0),
+            debug_info: build_prop!(config, debug, debug_info, true),
+            no_gc: build_prop!(config, debug, no_gc, false),
+            no_bit_int: build_prop!(config, debug, no_bit_int, false),
+        };
+
+        let release = Build {
+            overflow_checks: build_prop!(config, release, overflow_checks, true),
+            dir: dir_relative(build_prop!(config, release, dir, PathBuf::from("build/release"))),
+            opt_level: build_prop!(config, release, opt_level, 3),
+            debug_info: build_prop!(config, release, debug_info, false),
+            no_gc: build_prop!(config, release, no_gc, false),
+            no_bit_int: build_prop!(config, release, no_bit_int, false),
+        };
+
+        Ok(Self { module, libs, deps, debug, release })
+    }
+
+    pub fn check_features(module: &Module) -> anyhow::Result<()> {
+        // TODO: check for recursive dependencies
+        for (name, feat) in module.features.iter() {
+            for dep in feat.deps.iter() {
+                if !module.features.contains_key(dep) {
+                    anyhow::bail!(
+                        "in declaration of feature '{name}': requiring undeclared feature '{dep}'"
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn default_std_location() -> std::io::Result<PathBuf> {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("std").canonicalize()
+    }
+
+    fn validate_features(
+        module: &Module,
+        features: HashSet<String>,
+        name: impl FnOnce() -> String,
+    ) -> anyhow::Result<HashSet<String>> {
+        for feat in &features {
+            if !module.features.contains_key(feat) {
+                anyhow::bail!("in {}: requiring undeclared feature '{feat}'", name());
+            }
+        }
+
+        Ok(features)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_config() -> anyhow::Result<()> {
+        let dir = Path::new("~/test/project");
+        let config = Config::parse(dir, SAMPLE, ())?;
+        // println!("{config:#?}");
+
+        Ok(())
+    }
+
+    const SAMPLE: &str = r#"
+[package]
+name = "test"
+root = "."
+no_std = true
+lib = true
+version = "0"
+
+[features]
+foo = { default = true, available = "os:linux+arch:x86-64" }
+bar = { default = true }
+baz = { default = true, requires = ["bar"] }
+
+[link-libs]
+c = { requires = ["bar"] }
+dw = { requires = ["foo"], available = "os:linux+arch:x86-64" }
+gc = { available = "!ctl:no-gc" }
+raylib = { path = "..." }
+curl = {}
+
+[build]
+overflow-checks = false
+dir = "./build"
+opt-level = 2
+debug-info = true
+no-gc = true
+
+[build.debug]
+opt-level = 1
+
+[build.release]
+dir = "./build-release"
+
+[dependencies]
+std = { features = ["alloc"], no-default = true }
+whatever = "../../Path"
+net = { features = { winsock = "os:windows", other = "" }, path = "../" }
+    "#;
+}

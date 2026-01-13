@@ -6,6 +6,7 @@ mod format;
 pub mod intern;
 mod lexer;
 mod lsp;
+mod package;
 mod parser;
 mod pretty;
 mod project;
