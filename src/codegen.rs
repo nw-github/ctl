@@ -1053,15 +1053,18 @@ impl<'a> Codegen<'a> {
     }
 
     fn gen_c_main(&mut self) -> Option<String> {
-        self.buffer.emit("int main(int argc, char **argv){CTL_ARGV=argv;CTL_ARGC=argc;");
+        const MAIN: &str = "int main(int argc, char **argv){CTL_ARGV=argv;CTL_ARGC=argc;";
+
         if self.proj.conf.in_test_mode() {
+            self.buffer.emit(MAIN);
             self.gen_test_main();
             return Some(self.buffer.take().finish());
         }
 
         let main = State::from_non_generic(self.proj.main?, &self.proj.scopes);
-
         let returns = self.proj.types[self.proj.scopes.get(main.func.id).ret].is_integral();
+
+        self.buffer.emit(MAIN);
         if returns {
             self.buffer.emit("return ");
         }
