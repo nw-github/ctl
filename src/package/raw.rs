@@ -90,7 +90,9 @@ pub struct Build {
 pub struct FullBuild {
     #[serde(flatten)]
     pub default: Build,
+    #[serde(default)]
     pub debug: Build,
+    #[serde(default)]
     pub release: Build,
 }
 

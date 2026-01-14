@@ -213,12 +213,11 @@ fn compile_results(
 
     let output = output.join(conf.name);
     let debug_flags = ["-fno-omit-frame-pointer", "-rdynamic", "-g"];
-    let debug_info = conf.build.debug_info || build.opt_level.is_none_or(|l| l == 0);
     let mut cc = Command::new(build.cc)
         .args(include_str!("../compile_flags.txt").split("\n").filter(|f| !f.is_empty()))
         .args(build.ccargs.unwrap_or_default().split(' ').filter(|f| !f.is_empty()))
         .arg(format!("-O{}", build.opt_level.unwrap_or_default()))
-        .args(debug_info.then_some(debug_flags).into_iter().flatten())
+        .args(conf.build.debug_info.then_some(debug_flags).into_iter().flatten())
         .args(conf.libs.into_iter().map(|lib| match lib {
             ctl::package::Lib::Name(name) => OsString::from(format!("-l{name}")),
             ctl::package::Lib::Path(path) => path.into_os_string(),
@@ -420,7 +419,7 @@ fn main() -> Result<()> {
         }
 
         if let Some(args) = args.command.as_build_args() {
-            conf.build.debug_info = args.debug;
+            conf.build.debug_info = args.debug || args.opt_level.is_none_or(|l| l == 0);
             for lib in args.libs.iter() {
                 conf.libs.insert(ctl::package::Lib::Name(lib.clone()));
             }

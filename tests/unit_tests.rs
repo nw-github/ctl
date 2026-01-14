@@ -1,8 +1,5 @@
 use std::{
-    io::Write,
-    path::Path,
-    process::{Command, Stdio},
-    time::Duration,
+    ffi::OsString, io::Write, path::Path, process::{Command, Stdio}, time::Duration
 };
 
 use anyhow::Context;
@@ -14,7 +11,7 @@ use ctl::{Compiler, TestArgs};
 #[test]
 fn run_unit_tests() -> anyhow::Result<()> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("unit_tests");
-    let (code, _, _) = Compiler::new()
+    let (code, conf, _) = Compiler::new()
         .parse(&path, Default::default())?
         .modify_conf(|conf| {
             conf.test_args = Some(TestArgs {
@@ -33,9 +30,13 @@ fn run_unit_tests() -> anyhow::Result<()> {
         .arg("-o")
         .arg(&tmpfile)
         .args(["-std=c11", "-x", "c", "-"])
+        .args(conf.libs.into_iter().map(|lib| match lib {
+            ctl::package::Lib::Name(name) => OsString::from(format!("-l{name}")),
+            ctl::package::Lib::Path(path) => path.into_os_string(),
+        }))
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .context("Couldn't invoke the compiler")?;
     cc.stdin.as_mut().context("The C compiler closed stdin")?.write_all(code.as_bytes())?;

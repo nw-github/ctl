@@ -1,5 +1,6 @@
-# [package]
+[package]
 lib = true
 
 [build]
 no-gc = true
+dir = "../build"
