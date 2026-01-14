@@ -317,7 +317,7 @@ pub struct TypeChecker<'a> {
     lsp_input: LspInput,
     proj: Project,
     listening_vars: Option<Vec<VariableId>>,
-    current_static: Option<(VariableId, Vec<VariableId>)>,
+    current_static: Option<(VariableId, HashSet<VariableId>)>,
     current_call_ty_args: Option<TypeArgs>,
     cache: ExtensionCache,
     arena: ExprArena,
@@ -1769,7 +1769,7 @@ impl TypeChecker<'_> {
                 let ty = resolve_type!(self, self.proj.scopes.get_mut(id).ty);
 
                 self.proj.static_deps.insert(id, Dependencies::Resolving);
-                let prev = self.current_static.replace((id, Vec::new()));
+                let prev = self.current_static.replace((id, HashSet::new()));
                 let value = value.map(|value| {
                     self.enter(ScopeKind::Static(id), |this| this.type_check(value, ty))
                 });
@@ -3284,7 +3284,7 @@ impl TypeChecker<'_> {
                     if self.proj.scopes.get(id).kind.is_local() {
                         self.check_local(id, span, false);
                     } else if let Some((cur, deps)) = &mut self.current_static {
-                        deps.push(id);
+                        deps.insert(id);
                         let recursive = match self.proj.static_deps.get(&id) {
                             Some(Dependencies::Resolved(v_deps)) => v_deps.contains(cur),
                             Some(Dependencies::Resolving) => true,
@@ -5164,7 +5164,7 @@ impl TypeChecker<'_> {
         }
 
         self.proj.deps.insert(this, Dependencies::Resolving);
-        let mut deps = Vec::new();
+        let mut deps = HashSet::new();
         let mut failed = false;
 
         if !canonical {
@@ -5229,7 +5229,7 @@ impl TypeChecker<'_> {
         failed
     }
 
-    fn check_member_dep(&mut self, mut this: TypeId, ut: TypeId, deps: &mut Vec<TypeId>) -> bool {
+    fn check_member_dep(&mut self, mut this: TypeId, ut: TypeId, deps: &mut HashSet<TypeId>) -> bool {
         while let &Type::Array(inner, _) = &self.proj.types[this] {
             this = inner;
         }
@@ -5238,7 +5238,7 @@ impl TypeChecker<'_> {
         }
 
         if let Type::User(dep) = &self.proj.types[this] {
-            deps.push(this);
+            deps.insert(this);
 
             let dep_id = dep.id;
             self.resolve_members(dep_id);
@@ -5250,7 +5250,7 @@ impl TypeChecker<'_> {
                     return true;
                 }
 
-                deps.extend(member_deps);
+                deps.extend(member_deps.iter().cloned());
             }
         }
 
@@ -5268,11 +5268,11 @@ impl TypeChecker<'_> {
 
         self.proj.trait_deps.insert(id, Dependencies::Resolving);
 
-        let mut deps = Vec::new();
+        let mut deps = HashSet::new();
         let mut failed = false;
         let ids: Vec<_> = self.proj.scopes.get(id).impls.iter_checked().map(|i| i.id).collect();
         for id in ids {
-            deps.push(id);
+            deps.insert(id);
             if self.check_trait_dependencies(id) {
                 failed = true;
             }

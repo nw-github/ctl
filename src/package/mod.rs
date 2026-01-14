@@ -133,7 +133,7 @@ impl Project {
             args.no_overflow_checks.set(!build.overflow_checks);
         }
 
-        let deps = match graph.remove(&path) {
+        let mut deps = match graph.insert(path.clone(), Dependencies::Resolving) {
             Some(Dependencies::Resolved(deps)) => deps,
             Some(_) => {
                 anyhow::bail!(
@@ -142,11 +142,8 @@ impl Project {
                     parent.unwrap().display()
                 );
             }
-            None => vec![],
+            None => Default::default(),
         };
-        let mut deps: HashSet<PathBuf> = HashSet::from_iter(deps);
-
-        graph.insert(path.clone(), Dependencies::Resolving);
 
         if !no_default {
             for feat in config.module.features.values_mut() {
@@ -197,7 +194,7 @@ impl Project {
             )?;
         }
 
-        *graph.get_mut(&path).unwrap() = Dependencies::Resolved(Vec::from_iter(deps));
+        *graph.get_mut(&path).unwrap() = Dependencies::Resolved(deps);
 
         Ok(build)
     }

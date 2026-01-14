@@ -270,7 +270,7 @@ impl TypeGen {
             return;
         }
 
-        let mut deps = Vec::new();
+        let mut deps = HashSet::new();
         macro_rules! dependency {
             ($ty: expr) => {{
                 let dep = $ty;
@@ -281,7 +281,7 @@ impl TypeGen {
                 if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_))
                     || inner.can_omit_tag(scopes, types).is_some()
                 {
-                    deps.push(inner);
+                    deps.insert(inner);
                 } else if matches!(
                     types[dep],
                     Type::User(_)
@@ -291,7 +291,7 @@ impl TypeGen {
                         | Type::DynMutPtr(_)
                         | Type::DynPtr(_)
                 ) {
-                    deps.push(dep);
+                    deps.insert(dep);
                 }
 
                 self.add_type(scopes, types, dep);
@@ -308,7 +308,7 @@ impl TypeGen {
                 if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_))
                     || inner.can_omit_tag(scopes, types).is_some()
                 {
-                    deps.push(inner);
+                    deps.insert(inner);
                 }
 
                 self.add_type(scopes, types, dep);
