@@ -96,7 +96,7 @@ impl Project {
             let config = loaded.entry(path.clone()).or_insert(Config {
                 module: Module {
                     name: Self::default_package_name(&path)?,
-                    root: path.clone(),
+                    path: path.clone(),
                     lib: false,
                     features: HashMap::new(),
                 },

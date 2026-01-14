@@ -76,9 +76,9 @@ impl<T: SourceProvider> Compiler<Source<T>> {
         let mut arena = PExprArena::new();
         let mut modules = Vec::with_capacity(packages.len());
         let mut feature_sets = Vec::with_capacity(packages.len());
-        for (path, package) in packages {
+        for package in packages {
             let ast =
-                self.load_module(&mut diag, &mut strings, &mut arena, path, package.module, None)?;
+                self.parse_module(&mut diag, &mut strings, &mut arena, package.module, None)?;
             modules.push(ast);
             feature_sets.push(package.feature_set);
         }
@@ -90,18 +90,17 @@ impl<T: SourceProvider> Compiler<Source<T>> {
         self.parse_project(package::Project::load(path, input)?)
     }
 
-    fn load_module(
+    fn parse_module(
         &mut self,
         diag: &mut Diagnostics,
         strings: &mut Strings,
         arena: &mut PExprArena,
-        path: PathBuf,
         module: Module,
         attrs: Option<ModuleAttributes>,
     ) -> Result<Stmt> {
         let name = strings.get_or_intern(module.name);
-        let mut parsed = self.state.0.get_source(&path, |src| {
-            let file_id = diag.add_file(path.clone());
+        let mut parsed = self.state.0.get_source(&module.path, |src| {
+            let file_id = diag.add_file(module.path.clone());
             Parser::parse(src, name, diag, strings, arena, file_id, attrs.unwrap_or_default())
         })?;
 
@@ -109,7 +108,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
             unreachable!();
         };
 
-        for (path, module) in module.mods {
+        for module in module.mods {
             let mod_name = strings.get_or_intern(&module.name);
             let attrs = body.iter_mut().find_map(|stmt| {
                 if let StmtData::ModuleOOL { public, name, resolved } = &mut stmt.data.data
@@ -122,7 +121,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
                 }
             });
 
-            body.push(self.load_module(diag, strings, arena, path, module, attrs)?);
+            body.push(self.parse_module(diag, strings, arena, module, attrs)?);
         }
 
         Ok(parsed)
@@ -215,7 +214,8 @@ pub type FeatureSet = HashMap<String, bool>;
 #[derive(Debug, Clone)]
 struct Module {
     name: String,
-    mods: HashMap<PathBuf, Module>,
+    path: PathBuf,
+    mods: Vec<Module>,
 }
 
 #[derive(Debug, Clone)]
@@ -224,30 +224,24 @@ struct Package {
     feature_set: FeatureSet,
 }
 
-fn load_packages(proj: package::Project) -> Result<(HashMap<PathBuf, Package>, Configuration)> {
-    let mut packages = HashMap::new();
+fn load_packages(proj: package::Project) -> Result<(Vec<Package>, Configuration)> {
+    let mut packages = Vec::new();
     let main_module = proj.mods.last().unwrap();
     let is_library = main_module.lib;
     let name = safe_name(&main_module.name);
-
     for package in proj.mods {
-        match load_module(&package.name, &package.root).with_context(|| {
-            format!("Loading module '{}' failed (root '{}')", package.name, package.root.display())
+        match load_module(&package.name, &package.path).with_context(|| {
+            format!("Loading module '{}' failed (root '{}')", package.name, package.path.display())
         })? {
-            Some((path, module)) => {
-                _ = packages.insert(
-                    path,
-                    Package {
-                        module,
-                        feature_set: package
-                            .features
-                            .into_iter()
-                            .map(|(name, feat)| (name, feat.enabled))
-                            .collect(),
-                    },
-                )
-            }
-            None => anyhow::bail!("Couldn't load package: '{}'", package.root.display()),
+            Some(module) => packages.push(Package {
+                module,
+                feature_set: package
+                    .features
+                    .into_iter()
+                    .map(|(name, feat)| (name, feat.enabled))
+                    .collect(),
+            }),
+            None => anyhow::bail!("Couldn't load package: '{}'", package.path.display()),
         }
     }
 
@@ -264,10 +258,10 @@ fn load_packages(proj: package::Project) -> Result<(HashMap<PathBuf, Package>, C
     ))
 }
 
-fn load_module(name: &str, path: &Path) -> Result<Option<(PathBuf, Module)>> {
+fn load_module(name: &str, path: &Path) -> Result<Option<Module>> {
     let name = safe_name(name);
     if path.is_file() && path.extension().is_some_and(|ext| ext == "ctl") {
-        return Ok(Some((path.to_path_buf(), Module { name, mods: HashMap::new() })));
+        return Ok(Some(Module { path: path.to_path_buf(), name, mods: Vec::new() }));
     } else if !path.is_dir() {
         return Ok(None);
     }
@@ -277,7 +271,7 @@ fn load_module(name: &str, path: &Path) -> Result<Option<(PathBuf, Module)>> {
         return Ok(None);
     }
 
-    let mut mods = HashMap::new();
+    let mut mods = Vec::new();
     for entry in path.read_dir().with_context(|| format!("loading path {}", path.display()))? {
         let entry = entry?;
         if entry.file_name() == "main.ctl" {
@@ -286,14 +280,14 @@ fn load_module(name: &str, path: &Path) -> Result<Option<(PathBuf, Module)>> {
 
         let path = entry.path();
         let mod_name = package::Project::default_package_name(&path)?;
-        if let Some((path, module)) = load_module(&safe_name(&mod_name), &path)
+        if let Some(module) = load_module(&safe_name(&mod_name), &path)
             .with_context(|| format!("loading path {}", path.display()))?
         {
-            mods.insert(path, module);
+            mods.push(module);
         }
     }
 
-    Ok(Some((main, Module { name, mods })))
+    Ok(Some(Module { path: main, name, mods }))
 }
 
 fn safe_name(s: &str) -> String {

@@ -75,7 +75,7 @@ impl Feature {
 #[derive(Debug)]
 pub struct Module {
     pub name: String,
-    pub root: PathBuf,
+    pub path: PathBuf,
     pub lib: bool,
     pub features: HashMap<String, Feature>,
 }
@@ -110,7 +110,7 @@ impl Config {
                 .package
                 .name
                 .unwrap_or_else(|| dir.file_name().unwrap().to_string_lossy().into_owned()),
-            root: config.package.root.map(dir_relative).unwrap_or(dir.into()),
+            path: config.package.root.map(dir_relative).unwrap_or(dir.into()),
             lib: config.package.lib,
             features: HashMap::new(),
         };

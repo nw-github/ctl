@@ -16,6 +16,7 @@ pub struct Package {
     pub no_std: bool,
     #[serde(default)]
     pub lib: bool,
+    #[allow(unused)]
     pub version: Option<String>, /* semver */
 }
 
