@@ -12,7 +12,7 @@ pub struct LinkLib {
     pub features: HashSet<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Dependency {
     pub path: PathBuf,
     pub features: HashSet<String>,
@@ -30,18 +30,48 @@ pub struct Build {
     pub no_bit_int: bool,
 }
 
+impl Build {
+    pub fn default_debug() -> Self {
+        Build {
+            overflow_checks: true,
+            dir: PathBuf::from("./build"),
+            opt_level: 0,
+            debug_info: true,
+            no_gc: false,
+            no_bit_int: false,
+        }
+    }
+
+    pub fn default_release() -> Self {
+        Build {
+            overflow_checks: true,
+            dir: PathBuf::from("./build"),
+            opt_level: 3,
+            debug_info: false,
+            no_gc: false,
+            no_bit_int: false,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Feature {
-    pub available: bool,
     pub enabled: bool,
+    pub available: bool,
+    pub default: bool,
     pub deps: HashSet<String>,
+}
+
+impl Feature {
+    pub fn is_enabled(&self) -> bool {
+        self.enabled && self.available
+    }
 }
 
 #[derive(Debug)]
 pub struct Module {
     pub name: String,
     pub root: PathBuf,
-    pub no_std: bool,
     pub lib: bool,
     pub features: HashMap<String, Feature>,
 }
@@ -51,8 +81,6 @@ pub struct Config {
     pub module: Module,
     pub libs: Vec<LinkLib>,
     pub deps: Vec<Dependency>,
-    pub debug: Build,
-    pub release: Build,
 }
 
 macro_rules! build_prop {
@@ -62,7 +90,11 @@ macro_rules! build_prop {
 }
 
 impl Config {
-    pub fn parse(dir: impl AsRef<Path>, data: &str, args: &ConstraintArgs) -> anyhow::Result<Self> {
+    pub fn parse(
+        dir: impl AsRef<Path>,
+        data: &str,
+        args: &ConstraintArgs,
+    ) -> anyhow::Result<(Self, Build)> {
         let dir = dir.as_ref();
         let config = toml::from_str::<raw::Config>(data)?;
         let dir_relative = |path: PathBuf| {
@@ -75,25 +107,18 @@ impl Config {
                 .name
                 .unwrap_or_else(|| dir.file_name().unwrap().to_string_lossy().into_owned()),
             root: config.package.root.map(dir_relative).unwrap_or(dir.into()),
-            no_std: config.package.no_std,
             lib: config.package.lib,
             features: HashMap::new(),
         };
         let mut libs = Vec::with_capacity(config.link_libs.len());
         let mut deps = Vec::with_capacity(config.dependencies.len());
         for (name, feat) in config.features {
-            if feat.constraint.is_some_and(|c| !c.applies(args)) {
-                module.features.insert(
-                    name,
-                    Feature { available: false, enabled: false, deps: feat.requires },
-                );
-                continue;
-            }
-
-            module.features.insert(
-                name,
-                Feature { available: true, enabled: feat.default, deps: feat.requires },
-            );
+            module.features.insert(name, Feature {
+                available: feat.constraint.is_none_or(|c| c.applies(args)),
+                enabled: feat.default,
+                default: feat.default,
+                deps: feat.requires,
+            });
         }
 
         Self::check_features(&module)?;
@@ -112,6 +137,7 @@ impl Config {
             });
         }
 
+        let mut included_std = false;
         for (name, dep) in config.dependencies {
             match dep {
                 raw::Dependency::Path(path) => deps.push(Dependency {
@@ -128,6 +154,7 @@ impl Config {
                     let path = if let Some(path) = path {
                         dir_relative(path)
                     } else if name == "std" {
+                        included_std = true;
                         Self::default_std_location()?
                     } else {
                         anyhow::bail!("in declaration of dependency '{name}': a path is required");
@@ -157,25 +184,41 @@ impl Config {
             }
         }
 
-        let debug = Build {
-            overflow_checks: build_prop!(config, debug, overflow_checks, true),
-            dir: dir_relative(build_prop!(config, debug, dir, PathBuf::from("build"))),
-            opt_level: build_prop!(config, debug, opt_level, 0),
-            debug_info: build_prop!(config, debug, debug_info, true),
-            no_gc: build_prop!(config, debug, no_gc, false),
-            no_bit_int: build_prop!(config, debug, no_bit_int, false),
+        if !included_std && !config.package.no_std {
+            deps.push(Dependency {
+                path: Self::default_std_location()?,
+                features: Default::default(),
+                requires: Default::default(),
+                no_default: false,
+            });
+        }
+
+        let build = if args.release {
+            Build {
+                overflow_checks: build_prop!(config, release, overflow_checks, true),
+                dir: dir_relative(build_prop!(
+                    config,
+                    release,
+                    dir,
+                    PathBuf::from("./build/release")
+                )),
+                opt_level: build_prop!(config, release, opt_level, 3),
+                debug_info: build_prop!(config, release, debug_info, false),
+                no_gc: build_prop!(config, release, no_gc, false),
+                no_bit_int: build_prop!(config, release, no_bit_int, false),
+            }
+        } else {
+            Build {
+                overflow_checks: build_prop!(config, debug, overflow_checks, true),
+                dir: dir_relative(build_prop!(config, debug, dir, PathBuf::from("./build"))),
+                opt_level: build_prop!(config, debug, opt_level, 0),
+                debug_info: build_prop!(config, debug, debug_info, true),
+                no_gc: build_prop!(config, debug, no_gc, false),
+                no_bit_int: build_prop!(config, debug, no_bit_int, false),
+            }
         };
 
-        let release = Build {
-            overflow_checks: build_prop!(config, release, overflow_checks, true),
-            dir: dir_relative(build_prop!(config, release, dir, PathBuf::from("build/release"))),
-            opt_level: build_prop!(config, release, opt_level, 3),
-            debug_info: build_prop!(config, release, debug_info, false),
-            no_gc: build_prop!(config, release, no_gc, false),
-            no_bit_int: build_prop!(config, release, no_bit_int, false),
-        };
-
-        Ok(Self { module, libs, deps, debug, release })
+        Ok((Self { module, libs, deps }, build))
     }
 
     pub fn check_features(module: &Module) -> anyhow::Result<()> {
@@ -193,7 +236,7 @@ impl Config {
         Ok(())
     }
 
-    fn default_std_location() -> std::io::Result<PathBuf> {
+    pub fn default_std_location() -> std::io::Result<PathBuf> {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("std").canonicalize()
     }
 
@@ -219,7 +262,7 @@ mod tests {
     #[test]
     fn to_config() -> anyhow::Result<()> {
         let dir = Path::new("~/test/project");
-        let _config = Config::parse(dir, SAMPLE, &ConstraintArgs { release: false })?;
+        let _config = Config::parse(dir, SAMPLE, &ConstraintArgs::default())?;
         // println!("{config:#?}");
 
         Ok(())

@@ -1,7 +1,11 @@
+use std::cell::Cell;
+
 use serde::de::{self, Deserialize, Deserializer};
 
+#[derive(Default)]
 pub struct ConstraintArgs {
     pub release: bool,
+    pub no_gc: Cell<bool>,
 }
 
 #[derive(serde::Deserialize, Debug, PartialEq, Eq)]
@@ -87,6 +91,9 @@ impl Constraint {
             Constraint::And(lhs, rhs) => lhs.applies(arg) && rhs.applies(arg),
             Constraint::Or(lhs, rhs) => lhs.applies(arg) || rhs.applies(arg),
             Constraint::None => true,
+            Constraint::CompilerOption(opt) => match opt {
+                CompilerOption::NoGc => arg.no_gc.get(),
+            },
             // TODO: above constraints
             _ => true,
         }

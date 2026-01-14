@@ -1,1 +1,5 @@
+# [package]
 lib = true
+
+[build]
+no-gc = true
