@@ -5,6 +5,7 @@ use crate::{
     ds::{DependencyGraph, HashMap},
     format::{FmtTy, FmtUt},
     intern::{StrId, Strings},
+    package::ConstraintArgs,
     sym::{FunctionId, ScopeId, Scopes, TypeItem, UserTypeId, ValueItem, VariableId, Vis},
     typecheck::{Completions, LspItem},
     typeid::{GenericUserType, TypeId, Types},
@@ -77,6 +78,7 @@ pub struct Configuration {
     pub name: String,
     pub test_args: Option<TestArgs>,
     pub is_library: bool,
+    pub args: ConstraintArgs,
 }
 
 impl Configuration {

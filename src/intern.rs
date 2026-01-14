@@ -46,6 +46,7 @@ impl Strings {
     pub const ATTR_PANIC_HANDLER: StrId = str_id(SID::ATTR_PANIC_HANDLER);
     pub const ATTR_INLINE: StrId = str_id(SID::ATTR_INLINE);
     pub const ATTR_FEATURE: StrId = str_id(SID::ATTR_FEATURE);
+    pub const ATTR_CFG: StrId = str_id(SID::ATTR_CFG);
     pub const ATTR_NOT: StrId = str_id(SID::ATTR_NOT);
     pub const ATTR_THREAD_LOCAL: StrId = str_id(SID::ATTR_THREAD_LOCAL);
     pub const ATTR_COLD: StrId = str_id(SID::ATTR_COLD);
@@ -94,6 +95,7 @@ impl Strings {
         assert_eq!(Self::FN_TR_ARGS_NAME, rodeo.get_or_intern_static("args"));
         assert_eq!(Self::FN_CLOSURE_DO_INVOKE, rodeo.get_or_intern_static("do_invoke"));
         assert_eq!(Self::ATTR_EXPORT, rodeo.get_or_intern_static("export"));
+        assert_eq!(Self::ATTR_CFG, rodeo.get_or_intern_static("cfg"));
         Self { rodeo }
     }
 }
@@ -147,4 +149,5 @@ enum SID {
     FN_TR_ARGS_NAME,
     FN_CLOSURE_DO_INVOKE,
     ATTR_EXPORT,
+    ATTR_CFG,
 }

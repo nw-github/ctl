@@ -1072,7 +1072,19 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn declare_stmt(&mut self, autouse: &mut Vec<ScopeId>, stmt: &PStmt) -> DStmt {
-        if self.check_disabled(&stmt.attrs, stmt.data.span) {
+        let has_attr_check = matches!(
+            stmt.data.data,
+            PStmtData::Struct { .. }
+                | PStmtData::Union { .. }
+                | PStmtData::UnsafeUnion { .. }
+                | PStmtData::Trait { .. }
+                | PStmtData::Extension { .. }
+                | PStmtData::Fn { .. }
+                | PStmtData::Module { .. }
+                | PStmtData::Binding { .. }
+        );
+
+        if self.check_disabled(&stmt.attrs, stmt.data.span, !has_attr_check) {
             return DStmt::None;
         }
 
@@ -1337,7 +1349,7 @@ impl<'a> TypeChecker<'a> {
         fns: &'b [Located<Fn>],
     ) -> impl Iterator<Item = DFn> + use<'_, 'a, 'b> {
         fns.iter().flat_map(|f| {
-            if !self.check_disabled(&f.data.attrs, f.span) {
+            if !self.check_disabled(&f.data.attrs, f.span, false) {
                 Some(self.declare_fn(&f.data))
             } else {
                 None
@@ -1353,7 +1365,7 @@ impl<'a> TypeChecker<'a> {
         data: &mut Vec<ImplBlockData>,
         subscripts: &mut Vec<DFn>,
     ) {
-        if self.check_disabled(&f.data.attrs, f.span) {
+        if self.check_disabled(&f.data.attrs, f.span, false) {
             return;
         }
 
@@ -1487,7 +1499,7 @@ impl<'a> TypeChecker<'a> {
         let mut data = Vec::new();
         for block in blocks {
             let ImplBlock { path, functions, type_params, attrs, assoc_types } = &block.data;
-            if self.check_disabled(attrs, block.span) {
+            if self.check_disabled(attrs, block.span, true) {
                 continue;
             }
 
@@ -1565,8 +1577,8 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn check_disabled(&mut self, attrs: &Attributes, span: Span) -> bool {
-        if self.is_disabled_by_attrs(attrs) {
+    fn check_disabled(&mut self, attrs: &Attributes, span: Span, check_attrs: bool) -> bool {
+        if self.is_disabled_by_attrs(attrs, check_attrs) {
             self.proj.diag.add_inactive(span);
             return true;
         }
@@ -8253,25 +8265,103 @@ impl TypeChecker<'_> {
 }
 
 impl TypeChecker<'_> {
-    pub fn is_disabled_by_attrs(&self, attrs: &Attributes) -> bool {
-        attrs
-            .iter()
-            .filter(|f| f.name.data.is_str_eq(Strings::ATTR_FEATURE))
-            .any(|v| v.props.iter().any(|v| !self.has_attr_features(v)))
+    fn is_disabled_by_attrs(&mut self, attrs: &Attributes, check_attrs: bool) -> bool {
+        use crate::package::Constraint;
+
+        for attr in attrs.iter() {
+            if attr.name.data.is_str_eq(Strings::ATTR_FEATURE) {
+                let Some(prop) = attr.props.first() else {
+                    self.proj.diag.report(Error::new(
+                        format!(
+                            "attribute '{}' must include a feature name",
+                            self.proj.str(Strings::ATTR_FEATURE)
+                        ),
+                        attr.name.span,
+                    ));
+                    continue;
+                };
+
+                if !self.is_feature_enabled(prop) {
+                    return true;
+                }
+            } else if attr.name.data.is_str_eq(Strings::ATTR_CFG) {
+                let Some((prop, span)) = attr.props.first().and_then(|p| match p.name.data {
+                    crate::ast::AttrName::Str(str) => Some((str, p.name.span)),
+                    _ => None,
+                }) else {
+                    self.proj.diag.report(Error::new(
+                        format!(
+                            "attribute '{}' requires one string argument",
+                            self.proj.str(Strings::ATTR_CFG)
+                        ),
+                        attr.name.span,
+                    ));
+                    continue;
+                };
+
+                if self.proj.str(prop) == "test" {
+                    return !self.proj.conf.in_test_mode();
+                }
+
+                let constraint = match Constraint::parse(self.proj.str(prop)) {
+                    Ok(constraint) => constraint,
+                    Err(err) => {
+                        self.proj
+                            .diag
+                            .report(Error::new(format!("invalid constraint: {err}"), span));
+                        continue;
+                    }
+                };
+
+                if !constraint.applies(&self.proj.conf.args) {
+                    return true;
+                }
+            } else if check_attrs {
+                self.proj.diag.report(Error::new(
+                    match &attr.name.data {
+                        &crate::ast::AttrName::Str(id) => {
+                            format!("unknown statement attribute '{}'", self.proj.str(id))
+                        }
+                        crate::ast::AttrName::Int(name) => {
+                            format!("unknown statement attribute '{name}'")
+                        }
+                    },
+                    attr.name.span,
+                ));
+            }
+        }
+
+        false
     }
 
-    pub fn has_feature(&self, feat: StrId) -> bool {
-        self.feature_set.get(self.proj.str(feat)).is_some_and(|v| *v)
-    }
+    fn is_feature_enabled(&mut self, attr: &Attribute) -> bool {
+        let Some(str) = attr.name.data.as_str() else {
+            self.proj.diag.report(Error::new("feature name must be a string", attr.name.span));
+            return true;
+        };
 
-    pub fn has_attr_features(&self, attr: &Attribute) -> bool {
-        if !attr.name.data.is_str_eq(Strings::ATTR_NOT) || attr.props.is_empty() {
-            let Some(name) = attr.name.data.as_str() else {
-                return false;
-            };
-            self.has_feature(*name)
-        } else {
-            !attr.props.iter().flat_map(|v| v.name.data.as_str()).any(|v| self.has_feature(*v))
+        match self.proj.str(*str) {
+            "not" => {
+                let Some(param) = attr.props.first() else {
+                    self.proj.diag.report(Error::new("not requires one argument", attr.name.span));
+                    return true;
+                };
+
+                !self.is_feature_enabled(param)
+            }
+            // "and" =>
+            // "or" =>
+            name => {
+                let Some(enabled) = self.feature_set.get(name) else {
+                    self.proj.diag.report(Error::new(
+                        format!("checking undeclared feature '{name}'"),
+                        attr.name.span,
+                    ));
+                    return true;
+                };
+
+                *enabled
+            }
         }
     }
 }

@@ -2,10 +2,12 @@ use std::cell::Cell;
 
 use serde::de::{self, Deserialize, Deserializer};
 
-#[derive(Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ConstraintArgs {
     pub release: bool,
     pub no_gc: Cell<bool>,
+    pub no_overflow_checks: Cell<bool>,
+    pub no_std: bool,
 }
 
 #[derive(serde::Deserialize, Debug, PartialEq, Eq)]
@@ -42,6 +44,9 @@ pub enum Cap {
 #[serde(rename_all = "kebab-case")]
 pub enum CompilerOption {
     NoGc,
+    NoOverflowChecks,
+    Debug,
+    Release,
 }
 
 /*
@@ -93,13 +98,16 @@ impl Constraint {
             Constraint::None => true,
             Constraint::CompilerOption(opt) => match opt {
                 CompilerOption::NoGc => arg.no_gc.get(),
+                CompilerOption::NoOverflowChecks => arg.no_overflow_checks.get(),
+                CompilerOption::Debug => !arg.release,
+                CompilerOption::Release => arg.release,
             },
             // TODO: above constraints
             _ => true,
         }
     }
 
-    pub fn parse(&self, s: &str) -> Result<Self, String> {
+    pub fn parse(s: &str) -> Result<Self, String> {
         parse(s)
     }
 }

@@ -58,7 +58,6 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
         features: ["hosted".to_string(), "alloc".into(), "io".into()].into(),
         no_default_features: true,
         args: Default::default(),
-        no_std: false,
     };
 
     let (code, _, diag) = Compiler::new().parse(path, input)?.typecheck(None).build();

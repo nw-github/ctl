@@ -253,7 +253,14 @@ fn load_packages(proj: package::Project) -> Result<(HashMap<PathBuf, Package>, C
 
     Ok((
         packages,
-        Configuration { build: proj.build, libs: proj.libs, name, is_library, test_args: None },
+        Configuration {
+            build: proj.build,
+            libs: proj.libs,
+            args: proj.args,
+            name,
+            is_library,
+            test_args: None,
+        },
     ))
 }
 

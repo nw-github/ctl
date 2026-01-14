@@ -399,9 +399,9 @@ fn main() -> Result<()> {
         no_default_features: false,
         args: ctl::package::ConstraintArgs {
             release: false,
+            no_std: args.no_std,
             ..Default::default()
         },
-        no_std: args.no_std,
     };
 
     let path = path.as_deref().unwrap_or(Path::new("."));

@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub use constraint::ConstraintArgs;
+pub use constraint::{Constraint, ConstraintArgs};
 use parse::Config;
 pub use parse::{Build, Module};
 
@@ -22,7 +22,6 @@ pub struct Input {
     pub features: HashSet<String>,
     pub no_default_features: bool,
     pub args: ConstraintArgs,
-    pub no_std: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -36,6 +35,7 @@ pub struct Project {
     pub build: Build,
     pub libs: HashSet<Lib>,
     pub mods: Vec<Module>,
+    pub args: ConstraintArgs,
 }
 
 impl Project {
@@ -67,7 +67,7 @@ impl Project {
             }
         });
 
-        Ok(Self { build: build.unwrap(), libs, mods })
+        Ok(Self { build: build.unwrap(), libs, mods, args: input.args })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -83,6 +83,16 @@ impl Project {
         parent: Option<&Path>,
     ) -> Result<Option<Build>> {
         let (config, build) = if main && path.file_name().is_some_and(|p| p != "ctl.toml") {
+            let mut deps = vec![];
+            if !args.no_std {
+                deps.push(Dependency {
+                    path: Config::default_std_location()?,
+                    features: std::mem::take(&mut features),
+                    no_default: std::mem::take(&mut no_default),
+                    requires: HashSet::default(),
+                });
+            }
+
             let config = loaded.entry(path.clone()).or_insert(Config {
                 module: Module {
                     name: Self::default_package_name(&path)?,
@@ -91,12 +101,7 @@ impl Project {
                     features: HashMap::new(),
                 },
                 libs: vec![],
-                deps: vec![Dependency {
-                    path: Config::default_std_location()?,
-                    features: std::mem::take(&mut features),
-                    no_default: std::mem::take(&mut no_default),
-                    requires: HashSet::default(),
-                }],
+                deps,
             });
 
             (
@@ -110,10 +115,6 @@ impl Project {
                     let data = std::fs::read_to_string(&path)?;
                     let (config, build) = Config::parse(path.parent().unwrap(), &data, args)?;
                     let config = loaded.entry(path.clone()).or_insert(config);
-                    if main {
-                        args.no_gc.set(build.no_gc);
-                    }
-
                     if no_default {
                         for feat in config.module.features.values_mut() {
                             feat.enabled = false;
@@ -124,6 +125,13 @@ impl Project {
                 }
             }
         };
+
+        if let Some(build) = &build
+            && main
+        {
+            args.no_gc.set(build.no_gc);
+            args.no_overflow_checks.set(!build.overflow_checks);
+        }
 
         let deps = match graph.remove(&path) {
             Some(Dependencies::Resolved(deps)) => deps,
