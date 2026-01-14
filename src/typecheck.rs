@@ -3,9 +3,9 @@ use std::marker::PhantomData;
 use enum_as_inner::EnumAsInner;
 
 use crate::{
-    Warning,
+    FeatureSet, Warning,
     ast::{
-        Attributes, BinaryOp, UnaryOp,
+        Attribute, Attributes, BinaryOp, UnaryOp,
         checked::{
             ArrayPattern, Block, Expr as CExpr, ExprArena, ExprData as CExprData,
             FormatOpts as CFormatSpec, Pattern as CPattern, PatternData, RestPattern,
@@ -18,10 +18,10 @@ use crate::{
         },
     },
     ds::{ComptimeInt, Dependencies, HashMap, HashSet, IndexMap},
-    error::{Diagnostics, Error},
+    error::Error,
     intern::{StrId, Strings, THIS_TYPE},
     lexer::{Located, Span},
-    project::{Configuration, Project},
+    project::Project,
     sym::*,
     typeid::{
         BitSizeResult, CInt, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType,
@@ -323,21 +323,21 @@ pub struct TypeChecker<'a> {
     arena: ExprArena,
     parsed: PExprArena,
     _none: PhantomData<&'a ()>,
+    feature_set: FeatureSet,
 }
 
 impl<'a> TypeChecker<'a> {
     pub fn check(
         project: Vec<PStmt>,
-        diag: Diagnostics,
+        feature_sets: Vec<FeatureSet>,
+        proj: Project,
         lsp: Option<LspInput>,
-        conf: Configuration,
         arena: PExprArena,
-        strings: Strings,
     ) -> (Project, ExprArena) {
         let mut this = Self {
             safety: Safety::Safe,
             current: ScopeId::ROOT,
-            proj: Project::new(conf, diag, strings, lsp.is_some()),
+            proj,
             lsp_input: lsp.unwrap_or_default(),
             listening_vars: None,
             current_static: None,
@@ -346,12 +346,14 @@ impl<'a> TypeChecker<'a> {
             arena: ExprArena::with_capacity(arena.len()),
             parsed: arena,
             _none: Default::default(),
+            feature_set: FeatureSet::new(),
         };
 
         let mut autouse = vec![];
         let mut last_file_id = None;
         let mut last_scope = ScopeId::ROOT;
-        for module in project {
+        for (module, feat) in project.into_iter().zip(feature_sets.into_iter()) {
+            this.feature_set = feat;
             last_file_id = Some(module.data.span.file);
 
             let stmt = this.declare_stmt(&mut autouse, &module);
@@ -382,7 +384,7 @@ impl<'a> TypeChecker<'a> {
             .get(&Strings::FN_MAIN)
             .and_then(|id| id.as_fn())
             .copied();
-        if !this.proj.conf.flags.lib && !this.proj.conf.has_feature(Strings::FEAT_TEST) {
+        if !this.proj.conf.is_library && !this.proj.conf.in_test_mode() {
             if let Some(id) = this.proj.main {
                 let func = this.proj.scopes.get(id);
                 if !func.params.is_empty() {
@@ -423,7 +425,7 @@ impl<'a> TypeChecker<'a> {
             ));
         }
 
-        if this.proj.test_runner.is_none() && this.proj.conf.has_feature(Strings::FEAT_TEST) {
+        if this.proj.test_runner.is_none() && this.proj.conf.in_test_mode() {
             this.proj.diag.report(Error::new(
                 "missing test runner function",
                 Span { file: last_file_id.unwrap_or_default(), pos: 0, len: 0 },
@@ -1564,7 +1566,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn check_disabled(&mut self, attrs: &Attributes, span: Span) -> bool {
-        if self.proj.conf.is_disabled_by_attrs(attrs) {
+        if self.is_disabled_by_attrs(attrs) {
             self.proj.diag.add_inactive(span);
             return true;
         }
@@ -8246,6 +8248,30 @@ impl TypeChecker<'_> {
             UnaryOp::PostIncrement => Some((LangType::OpInc, self.proj.strings.get("inc")?)),
             UnaryOp::PreIncrement => Some((LangType::OpInc, self.proj.strings.get("inc")?)),
             _ => None,
+        }
+    }
+}
+
+impl TypeChecker<'_> {
+    pub fn is_disabled_by_attrs(&self, attrs: &Attributes) -> bool {
+        attrs
+            .iter()
+            .filter(|f| f.name.data.is_str_eq(Strings::ATTR_FEATURE))
+            .any(|v| v.props.iter().any(|v| !self.has_attr_features(v)))
+    }
+
+    pub fn has_feature(&self, feat: StrId) -> bool {
+        self.feature_set.get(self.proj.str(feat)).is_some_and(|v| *v)
+    }
+
+    pub fn has_attr_features(&self, attr: &Attribute) -> bool {
+        if !attr.name.data.is_str_eq(Strings::ATTR_NOT) || attr.props.is_empty() {
+            let Some(name) = attr.name.data.as_str() else {
+                return false;
+            };
+            self.has_feature(*name)
+        } else {
+            !attr.props.iter().flat_map(|v| v.name.data.as_str()).any(|v| self.has_feature(*v))
         }
     }
 }

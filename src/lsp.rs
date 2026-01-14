@@ -8,7 +8,6 @@ use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use crate::Configuration;
 use crate::sym::VariableKind;
 use crate::typeid::BitSizeResult;
 use crate::{
@@ -545,16 +544,16 @@ impl LspBackend {
             debug!(self, " -> Checking file in submodule of previous project, using prev data");
         }
 
-        let root = root.to_owned();
-        let mut conf = Configuration::default();
-        // Always show tests in the LSP
-        conf.set_feature(Strings::FEAT_TEST);
-
         self.documents.clear();
+
+        let root = root.to_owned();
         let parsed = match Compiler::with_provider(LspFileProvider::new(&self.open_files))
-            .parse(&root, conf)
+            .parse(&root, Default::default())
         {
-            Ok(parsed) => parsed,
+            Ok(parsed) => parsed.modify_conf(|conf| {
+                // Always show tests in the LSP
+                conf.test_args = Some(crate::TestArgs { test: None, modules: None })
+            }),
             Err(err) => {
                 error!(self, "{err}");
                 return Err(Error::internal_error());

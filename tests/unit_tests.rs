@@ -9,18 +9,21 @@ use anyhow::Context;
 use tempfile::NamedTempFile;
 use wait_timeout::ChildExt as _;
 
-use ctl::{Compiler, Configuration, TestArgs, intern::Strings};
+use ctl::{Compiler, TestArgs};
 
 #[test]
 fn run_unit_tests() -> anyhow::Result<()> {
-    let mut conf = Configuration::default();
-    conf.remove_feature(Strings::FEAT_BACKTRACE);
-    conf.remove_feature(Strings::FEAT_BOEHM);
-    conf.set_feature(Strings::FEAT_TEST);
-    conf.test_args =
-        Some(TestArgs { test: None, modules: Some(vec!["std".into(), "unit_tests".into()]) });
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("unit_tests");
-    let (code, _, _) = Compiler::new().parse(&path, conf)?.typecheck(None).build();
+    let (code, _, _) = Compiler::new()
+        .parse(&path, Default::default())?
+        .modify_conf(|conf| {
+            conf.test_args = Some(TestArgs {
+                test: None,
+                modules: Some(vec!["std".into(), "unit_tests".into()]),
+            })
+        })
+        .typecheck(None)
+        .build();
     let Some(code) = code else {
         anyhow::bail!("build failed");
     };

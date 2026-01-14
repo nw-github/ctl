@@ -8,22 +8,24 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use constraint::ConstraintArgs;
-pub use parse::Module;
-use parse::{Build, Config};
+pub use constraint::ConstraintArgs;
+use parse::Config;
+pub use parse::{Build, Module};
 
 use crate::{
     ds::{Dependencies, DependencyGraph},
     package::parse::Dependency,
 };
 
+#[derive(Default)]
 pub struct Input {
     pub features: HashSet<String>,
     pub no_default_features: bool,
     pub args: ConstraintArgs,
+    pub no_std: bool,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Lib {
     Name(String),
     Path(PathBuf),
@@ -80,18 +82,11 @@ impl Project {
         main: bool,
         parent: Option<&Path>,
     ) -> Result<Option<Build>> {
-        let dir = path.parent().unwrap();
         let (config, build) = if main && path.file_name().is_some_and(|p| p != "ctl.toml") {
             let config = loaded.entry(path.clone()).or_insert(Config {
                 module: Module {
-                    name: dir
-                        .file_stem()
-                        .with_context(|| {
-                            format!("trying to derive module name for {}", dir.display())
-                        })?
-                        .to_string_lossy()
-                        .into_owned(),
-                    root: dir.to_path_buf(),
+                    name: Self::default_package_name(&path)?,
+                    root: path.clone(),
                     lib: false,
                     features: HashMap::new(),
                 },
@@ -113,7 +108,7 @@ impl Project {
                 Some(config) => (config, None),
                 None => {
                     let data = std::fs::read_to_string(&path)?;
-                    let (config, build) = Config::parse(dir, &data, args)?;
+                    let (config, build) = Config::parse(path.parent().unwrap(), &data, args)?;
                     let config = loaded.entry(path.clone()).or_insert(config);
                     if main {
                         args.no_gc.set(build.no_gc);
@@ -135,7 +130,7 @@ impl Project {
             Some(_) => {
                 anyhow::bail!(
                     "dependency cycle trying to load '{}' (dependency of '{}')",
-                    dir.display(),
+                    path.display(),
                     parent.unwrap().display()
                 );
             }
@@ -197,5 +192,13 @@ impl Project {
         *graph.get_mut(&path).unwrap() = Dependencies::Resolved(Vec::from_iter(deps));
 
         Ok(build)
+    }
+
+    pub fn default_package_name(path: &Path) -> Result<String> {
+        let base = if path.is_file() { path.file_stem() } else { path.file_name() };
+        Ok(base
+            .with_context(|| format!("trying to derive module name for {}", path.display()))?
+            .to_string_lossy()
+            .into_owned())
     }
 }

@@ -20,7 +20,7 @@ pub struct Dependency {
     pub no_default: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Build {
     pub overflow_checks: bool,
     pub dir: PathBuf,
@@ -28,6 +28,8 @@ pub struct Build {
     pub debug_info: bool,
     pub no_gc: bool,
     pub no_bit_int: bool,
+    // Not exposed in config
+    pub minify: bool,
 }
 
 impl Build {
@@ -39,6 +41,7 @@ impl Build {
             debug_info: true,
             no_gc: false,
             no_bit_int: false,
+            minify: false,
         }
     }
 
@@ -50,6 +53,7 @@ impl Build {
             debug_info: false,
             no_gc: false,
             no_bit_int: false,
+            minify: false,
         }
     }
 }
@@ -113,12 +117,15 @@ impl Config {
         let mut libs = Vec::with_capacity(config.link_libs.len());
         let mut deps = Vec::with_capacity(config.dependencies.len());
         for (name, feat) in config.features {
-            module.features.insert(name, Feature {
-                available: feat.constraint.is_none_or(|c| c.applies(args)),
-                enabled: feat.default,
-                default: feat.default,
-                deps: feat.requires,
-            });
+            module.features.insert(
+                name,
+                Feature {
+                    available: feat.constraint.is_none_or(|c| c.applies(args)),
+                    enabled: feat.default,
+                    default: feat.default,
+                    deps: feat.requires,
+                },
+            );
         }
 
         Self::check_features(&module)?;
@@ -196,16 +203,12 @@ impl Config {
         let build = if args.release {
             Build {
                 overflow_checks: build_prop!(config, release, overflow_checks, true),
-                dir: dir_relative(build_prop!(
-                    config,
-                    release,
-                    dir,
-                    PathBuf::from("./build/release")
-                )),
+                dir: dir_relative(build_prop!(config, release, dir, PathBuf::from("./build"))),
                 opt_level: build_prop!(config, release, opt_level, 3),
                 debug_info: build_prop!(config, release, debug_info, false),
                 no_gc: build_prop!(config, release, no_gc, false),
                 no_bit_int: build_prop!(config, release, no_bit_int, false),
+                minify: false,
             }
         } else {
             Build {
@@ -215,6 +218,7 @@ impl Config {
                 debug_info: build_prop!(config, debug, debug_info, true),
                 no_gc: build_prop!(config, debug, no_gc, false),
                 no_bit_int: build_prop!(config, debug, no_bit_int, false),
+                minify: false,
             }
         };
 

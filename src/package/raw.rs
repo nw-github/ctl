@@ -14,6 +14,7 @@ pub struct Package {
     pub root: Option<PathBuf>,
     #[serde(default)]
     pub no_std: bool,
+    #[serde(default)]
     pub lib: bool,
     pub version: Option<String>, /* semver */
 }
