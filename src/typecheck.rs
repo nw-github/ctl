@@ -328,7 +328,7 @@ pub struct TypeChecker<'a> {
 
 impl<'a> TypeChecker<'a> {
     pub fn check(
-        project: Vec<PStmt>,
+        modules: Vec<PStmt>,
         feature_sets: Vec<FeatureSet>,
         proj: Project,
         lsp: Option<LspInput>,
@@ -352,7 +352,7 @@ impl<'a> TypeChecker<'a> {
         let mut autouse = vec![];
         let mut last_file_id = None;
         let mut last_scope = ScopeId::ROOT;
-        for (module, feat) in project.into_iter().zip(feature_sets.into_iter()) {
+        for (module, feat) in modules.into_iter().zip(feature_sets.into_iter()) {
             this.feature_set = feat;
             last_file_id = Some(module.data.span.file);
 

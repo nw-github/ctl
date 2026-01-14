@@ -88,8 +88,8 @@ pub struct Config {
 }
 
 macro_rules! build_prop {
-    ($cfg: expr, $v: ident, $property: ident, $default: expr) => {
-        $cfg.build.$v.$property.or($cfg.build.default.$property.clone()).unwrap_or($default)
+    ($cfg: expr, $v: ident, $default: expr, $property: ident) => {
+        $v.$property.or($cfg.build.default.$property.clone()).unwrap_or($default.$property)
     };
 }
 
@@ -200,26 +200,19 @@ impl Config {
             });
         }
 
-        let build = if args.release {
-            Build {
-                overflow_checks: build_prop!(config, release, overflow_checks, true),
-                dir: dir_relative(build_prop!(config, release, dir, PathBuf::from("./build"))),
-                opt_level: build_prop!(config, release, opt_level, 3),
-                debug_info: build_prop!(config, release, debug_info, false),
-                no_gc: build_prop!(config, release, no_gc, false),
-                no_bit_int: build_prop!(config, release, no_bit_int, false),
-                minify: false,
-            }
+        let (base, fallback) = if args.release {
+            (config.build.release, Build::default_release())
         } else {
-            Build {
-                overflow_checks: build_prop!(config, debug, overflow_checks, true),
-                dir: dir_relative(build_prop!(config, debug, dir, PathBuf::from("./build"))),
-                opt_level: build_prop!(config, debug, opt_level, 0),
-                debug_info: build_prop!(config, debug, debug_info, true),
-                no_gc: build_prop!(config, debug, no_gc, false),
-                no_bit_int: build_prop!(config, debug, no_bit_int, false),
-                minify: false,
-            }
+            (config.build.debug, Build::default_debug())
+        };
+        let build = Build {
+            overflow_checks: build_prop!(config, base, fallback, overflow_checks),
+            dir: dir_relative(build_prop!(config, base, fallback, dir)),
+            opt_level: build_prop!(config, base, fallback, opt_level),
+            debug_info: build_prop!(config, base, fallback, debug_info),
+            no_gc: build_prop!(config, base, fallback, no_gc),
+            no_bit_int: build_prop!(config, base, fallback, no_bit_int),
+            minify: false,
         };
 
         Ok((Self { module, libs, deps }, build))

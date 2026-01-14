@@ -67,6 +67,7 @@ impl Project {
             }
         });
 
+        // No canonicalize on the build dir, it might not even exist yet
         Ok(Self { build: build.unwrap(), libs, mods, args: input.args })
     }
 
@@ -115,6 +116,7 @@ impl Project {
                     let data = std::fs::read_to_string(&path)?;
                     let (config, build) = Config::parse(path.parent().unwrap(), &data, args)?;
                     let config = loaded.entry(path.clone()).or_insert(config);
+                    config.module.path = config.module.path.canonicalize()?;
                     if no_default {
                         for feat in config.module.features.values_mut() {
                             feat.enabled = false;
@@ -167,7 +169,11 @@ impl Project {
 
         for lib in config.libs.iter() {
             if lib.features.iter().all(|v| config.module.features[v].is_enabled()) {
-                libs.insert(lib.path.clone().map(Lib::Path).unwrap_or(Lib::Name(lib.name.clone())));
+                if let Some(path) = &lib.path {
+                    libs.insert(Lib::Path(path.canonicalize()?));
+                } else {
+                    libs.insert(Lib::Name(lib.name.clone()));
+                }
             }
         }
 
