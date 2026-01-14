@@ -48,7 +48,7 @@ pub extension IntegralImpl<T: Integral> for T {
 
     pub fn +(this, rhs: T): T {
         let (val, _overflow) = this.overflowing_add(rhs);
-        $[feature(overflow_checks)]
+        $[cfg("!ctl:no-overflow-checks")]
         if _overflow {
             panic("integer overflow adding values {val} and {rhs}");
         }
@@ -57,7 +57,7 @@ pub extension IntegralImpl<T: Integral> for T {
 
     pub fn -(this, rhs: T): T {
         let (val, _overflow) = this.overflowing_sub(rhs);
-        $[feature(overflow_checks)]
+        $[cfg("!ctl:no-overflow-checks")]
         if _overflow {
             panic("integer overflow subtracting values {val} and {rhs}");
         }
@@ -66,7 +66,7 @@ pub extension IntegralImpl<T: Integral> for T {
 
     pub fn *(this, rhs: T): T {
         let (val, _overflow) = this.overflowing_mul(rhs);
-        $[feature(overflow_checks)]
+        $[cfg("!ctl:no-overflow-checks")]
         if _overflow {
             panic("integer overflow multiplying values {val} and {rhs}");
         }
@@ -75,7 +75,7 @@ pub extension IntegralImpl<T: Integral> for T {
 
     pub fn /(this, rhs: T): T {
         let (val, _overflow) = this.overflowing_div(rhs);
-        $[feature(overflow_checks)]
+        $[cfg("!ctl:no-overflow-checks")]
         if _overflow {
             panic("integer overflow dividing values {val} and {rhs}");
         }

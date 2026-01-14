@@ -5,7 +5,7 @@ pub static mut DWFL: ?*mut Dwfl = null;
 
 $[export, link_name("$ctl_stdlib_init")]
 extern fn init() {
-    $[feature(boehm)]
+    $[cfg("!ctl:no-gc")]
     unsafe libgc::GC_init();
 
     $[feature(backtrace)]
@@ -14,7 +14,7 @@ extern fn init() {
 
 $[export, link_name("$ctl_stdlib_deinit")]
 extern fn deinit() {
-    $[feature(boehm)]
+    $[cfg("!ctl:no-gc")]
     unsafe libgc::GC_deinit();
 
     $[feature(backtrace)]

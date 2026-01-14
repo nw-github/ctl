@@ -63,7 +63,7 @@ pub fn debug_assert(
     _msg: ?Arguments = null,
     _loc: SourceLocation = SourceLocation::here(),
 ) {
-    $[feature(debug)]
+    $[cfg("ctl:debug")]
     assert(_cond, _msg, _loc);
 }
 
