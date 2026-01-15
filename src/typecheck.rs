@@ -2884,8 +2884,12 @@ impl TypeChecker<'_> {
                     }
                     UnaryOp::Try => self.check_try(expr, span, target),
                     UnaryOp::Option => {
-                        let expr = self
-                            .check_expr(expr, target.and_then(|t| t.as_option_inner(&self.proj)));
+                        let target = target.and_then(|t| t.as_option_inner(&self.proj));
+                        let mut expr = self.check_expr(expr, target);
+                        if let Some(target) = target {
+                            expr = self.try_coerce(expr, target);
+                        }
+
                         let ty = self.make_lang_type_by_name(LangType::Option, [expr.ty], span);
                         (ty, self.try_coerce(expr, ty))
                     }
@@ -5229,7 +5233,12 @@ impl TypeChecker<'_> {
         failed
     }
 
-    fn check_member_dep(&mut self, mut this: TypeId, ut: TypeId, deps: &mut HashSet<TypeId>) -> bool {
+    fn check_member_dep(
+        &mut self,
+        mut this: TypeId,
+        ut: TypeId,
+        deps: &mut HashSet<TypeId>,
+    ) -> bool {
         while let &Type::Array(inner, _) = &self.proj.types[this] {
             this = inner;
         }
