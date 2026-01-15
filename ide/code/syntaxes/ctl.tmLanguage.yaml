@@ -291,7 +291,7 @@ repository:
       -
         comment: storage keywords
         name: keyword.other.ctl storage.type.ctl
-        match: \b(import|export|extern|let|mod)\b
+        match: \b(extern|let|mod)\b
       -
         comment: const keyword
         name: storage.modifier.ctl
