@@ -73,11 +73,15 @@ struct BuildArgs {
         default_missing_value = "3",
         value_parser = clap::value_parser!(i32).range(0..=3),
     )]
-    opt_level: Option<i32>,
+    opt_level: Option<usize>,
+
+    /// Compile using the release profile
+    #[clap(action, short, long)]
+    release: bool,
 
     /// Include debug info and assertions
     #[clap(action, short, long)]
-    debug: bool,
+    debug_info: Option<bool>,
 
     /// The output path for the compiled artifacts.
     #[clap(long)]
@@ -216,7 +220,7 @@ fn compile_results(
     let mut cc = Command::new(build.cc)
         .args(include_str!("../compile_flags.txt").split("\n").filter(|f| !f.is_empty()))
         .args(build.ccargs.unwrap_or_default().split(' ').filter(|f| !f.is_empty()))
-        .arg(format!("-O{}", build.opt_level.unwrap_or_default()))
+        .arg(format!("-O{}", conf.build.opt_level))
         .args(conf.build.debug_info.then_some(debug_flags).into_iter().flatten())
         .args(conf.libs.into_iter().map(|lib| match lib {
             ctl::package::Lib::Name(name) => OsString::from(format!("-l{name}")),
@@ -397,7 +401,7 @@ fn main() -> Result<()> {
         features: Default::default(),
         no_default_features: false,
         args: ctl::package::ConstraintArgs {
-            release: false,
+            release: args.command.as_build_args().is_some_and(|b| b.release),
             no_std: args.no_std,
             ..Default::default()
         },
@@ -419,7 +423,8 @@ fn main() -> Result<()> {
         }
 
         if let Some(args) = args.command.as_build_args() {
-            conf.build.debug_info = args.debug || args.opt_level.is_none_or(|l| l == 0);
+            conf.build.debug_info = args.debug_info.unwrap_or(conf.build.debug_info);
+            conf.build.opt_level = args.opt_level.unwrap_or(conf.build.opt_level);
             for lib in args.libs.iter() {
                 conf.libs.insert(ctl::package::Lib::Name(lib.clone()));
             }
