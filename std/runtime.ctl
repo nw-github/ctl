@@ -13,7 +13,11 @@ extern fn init(argc: c_int, argv: ?^mut ^mut c_char) {
         libgc::GC_init();
 
         $[feature(backtrace)]
-        DWFL = init_dwfl();
+        {
+            DWFL = init_dwfl();
+
+            install_fault_handler();
+        }
 
         CTL_ARGC = argc;
         CTL_ARGV = argv;
@@ -52,5 +56,62 @@ fn init_dwfl(): ?*mut Dwfl {
         }
 
         dwfl
+    }
+}
+
+$[feature(backtrace)]
+fn install_fault_handler() {
+    use libc::{posix::*, linux};
+
+    unsafe {
+        mut sa: sigaction = std::mem::zeroed();
+        sa.sa_flags = SA_SIGINFO;
+        sa.__sigaction_handler.sa_sigaction = ?|| (sig, info, ctx) => unsafe {
+            let name = sig == SIGSEGV then "SIGSEGV"
+                else sig == SIGFPE then "SIGFPE"
+                else sig == SIGILL then "SIGILL"
+                else sig == SIGBUS then "SIGBUS";
+            let fault_addr = info is ?info then (*info)._sifields._sigfault.si_addr else null;
+            let fault_addr: uint = std::mem::bit_cast(fault_addr);
+
+            // Unlocked write to Stderr uses only the write() syscall
+            writeln(
+                &mut std::io::Stderr(),
+                "Received signal {sig} ({name ?? "??"}), fault address: {fault_addr:#x}",
+            );
+
+            // The unw_* calls are not (necessarily?) signal safe, and the dwfl calls definitely
+            // arent. Fork and print the symbolicated backtrace in a child.
+            let pid = fork();
+            if pid != 0 {
+                if pid > 0 {
+                    waitpid(pid, null, 0);
+                }
+                std::proc::exit(128u32.wrapping_add(sig.cast()));
+            }
+
+            if ctx is ?ctx {
+                let regs = &(ctx as *linux::ucontext_t).uc_mcontext.gregs;
+                let pc: uint = std::mem::bit_cast(regs[linux::REG_RIP as c_int]);
+                let bp: uint = std::mem::bit_cast(regs[linux::REG_RBP as c_int]);
+                let sp: uint = std::mem::bit_cast(regs[linux::REG_RSP as c_int]);
+                let ctx = std::bt::Context(pc:, bp:, sp:, signal: true);
+                std::bt::backtrace(ctx:, |mut i = 0u,| (pc) {
+                    std::panic::print_bt_line(i++, std::bt::Call(addr: pc));
+                    true
+                });
+            }
+
+            std::proc::exit(0);
+        };
+
+        sigemptyset(&mut sa.sa_mask);
+        if sigaction_(SIGSEGV, &sa, null) == -1
+            or sigaction_(SIGBUS, &sa, null) == -1
+            or sigaction_(SIGILL, &sa, null) == -1
+            or sigaction_(SIGFPE, &sa, null) == -1
+        {
+            perror("sigaction\0".as_raw().cast());
+        }
     }
 }

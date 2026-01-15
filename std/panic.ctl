@@ -107,19 +107,14 @@ fn panic_handler(info: *PanicInfo): never {
     }
 
     eprintln(info);
-
-    $[feature(backtrace)]
-    {
-        let bt = std::bt::Backtrace::capture();
-        for (i, addr) in bt.iter().enumerate() {
-            if addr.symbolicate() is ?{func, file, line, col, offs} {
-                let func = func ?? std::bt::MaybeMangledName::new("??");
-                eprintln("{i:>5}: {func} + {offs:#x} [{addr.addr():#x}]\n{"":<8}at {file ?? "??"}:{line}:{col}");
-            } else {
-                eprintln("{i:>5}: ?? [{addr.addr():#x}]");
-            }
+    unsafe std::bt::backtrace(|mut i = 0u,| (pc) {
+        if i != 0 {
+            print_bt_line(i, std::bt::Call(addr: pc));
         }
-    }
+
+        i++;
+        true
+    });
 
     unsafe libc::abort();
 }
@@ -142,4 +137,14 @@ pub fn catch_panic<F: Fn() => R, R>(func: F): Result<R, str> {
     }
 
     res
+}
+
+// TODO: this should be package-public
+pub fn print_bt_line(i: uint, addr: std::bt::Call) {
+    if addr.symbolicate() is ?{func, file, line, col, offs} {
+        let func = func ?? std::bt::MaybeMangledName::from_str("??");
+        eprintln("{i:>5}: {func} + {offs:#x} [{addr.addr():#x}]\n{"":<8}at {file ?? "??"}:{line}:{col}");
+    } else {
+        eprintln("{i:>5}: ?? [{addr.addr():#x}]");
+    }
 }

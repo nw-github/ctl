@@ -1,7 +1,5 @@
-use std::hash::*;
-use std::ops::*;
-use std::fmt::*;
-use std::reflect::*;
+use std::fmt::{Debug, Format, Formatter};
+use std::reflect::{Integral, Signed, Unsigned};
 use super::ByteSpanExt;
 
 pub extension U8Impl for u8 {
@@ -44,7 +42,7 @@ mod gcc_intrin {
 }
 
 pub extension IntegralImpl<T: Integral> for T {
-    impl TotallyOrdered { }
+    impl std::ops::TotallyOrdered { }
 
     pub fn +(this, rhs: T): T {
         let (val, _overflow) = this.overflowing_add(rhs);
@@ -243,7 +241,7 @@ pub extension IntegralImpl<T: Integral> for T {
         this
     }
 
-    fn from_str_radix_common(chars: std::string::Chars, radix: u32): ?T {
+    fn from_str_radix_common(chars: std::str::Chars, radix: u32): ?T {
         mut value: ?T = null;
         for ch in chars {
             let digit = ch.to_digit(radix)?.try_cast::<T>()?;

@@ -17,7 +17,7 @@ mod ryu;
 $[autouse]
 mod prelude {
     pub use super::panic::{panic, unreachable, assert, assert_eq, assert_ne, debug_assert};
-    pub use super::string::str;
+    pub use super::str::str;
     pub use super::span::{Span, SpanMut};
     pub use super::opt::Option::{null, Some};
     pub use super::err::{Result, Result::{Ok, Err}};

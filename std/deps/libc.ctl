@@ -27,7 +27,6 @@ pub const CLOCK_MONOTONIC: c_int = 1;
 pub extern fn clock_gettime(clockid: c_int, tp: *mut Timespec): c_int;
 pub extern fn nanosleep(time: *Timespec, remaining: ?*mut Timespec): c_int;
 pub extern fn getpid(): c_int /* pid_t */;
-pub extern fn backtrace(buffer: ^mut ?^mut void, size: c_int): c_int;
 
 pub extern fn memmem(kw haystack: ^void, kw hlen: uint, kw needle: ^void, kw nlen: uint): ?^void;
 
@@ -101,4 +100,221 @@ pub mod math {
     pub extern fn tanf(n: f32): f32;
     pub extern fn floorf(n: f32): f32;
     pub extern fn ceilf(n: f32): f32;
+}
+
+pub mod posix {
+    use super::*;
+
+    $[layout(C)]
+    pub struct sigset_t {
+        pub __val: [c_ulong; 16], // 1024 / (8 * std::mem::size_of::<c_ulong>())
+    }
+
+    $[layout(C)]
+    pub struct sigaction {
+        pub __sigaction_handler: __sigaction_handler,
+        pub sa_mask: sigset_t,
+        pub sa_flags: c_int,
+        pub sa_restorer: ?extern unsafe fn(),
+    }
+
+    $[layout(C)]
+    unsafe union __sigaction_handler {
+        sa_handler: ?extern unsafe fn(c_int),
+        sa_sigaction: ?extern unsafe fn(c_int, ?^mut siginfo_t, ?^mut void),
+    }
+
+    $[layout(C)]
+    pub struct siginfo_t {
+        pub si_signo: c_int,
+        pub si_errno: c_int,
+        pub si_code: c_int,
+        __pad0: c_int,
+        pub _sifields: _sifields,
+    }
+
+    $[layout(C)]
+    struct _sifields_kill {
+        pub si_pid: c_int /* pid_t */,
+        pub si_uid: c_uint /* uid_t */,
+    }
+
+    $[layout(C)]
+    struct _sifields_timer {
+        pub si_tid: c_int,
+        pub si_overrun: c_int,
+        pub si_sigval: __sigval_t,
+    }
+
+    $[layout(C)]
+    struct _sifields_rt {
+        pub si_pid: c_int /* pid_t */,
+        pub si_uid: c_uint /* uid_t */,
+        pub si_sigval: __sigval_t,
+    }
+
+    $[layout(C)]
+    struct _sifields_sigchld {
+        pub si_pid: c_int /* pid_t */,
+        pub si_uid: c_uint /* uid_t */,
+        pub si_status: c_int,
+        pub si_utime: c_long /* __clock_t */,
+        pub si_stime: c_long /* __clock_t */,
+    }
+
+    $[layout(C)]
+    struct _sifields_sigfault {
+        pub si_addr: ?^mut void,
+        pub si_addr_lsb: c_short,
+        _pad: [uint; 2],
+        /*
+        union {
+            struct {
+                void *_lower;
+                void *_upper;
+            } _addr_bnd;
+            uint32_t _pkey;
+        } _bounds;
+         */
+    }
+
+    $[layout(C)]
+    struct _sifields_sigpoll {
+        pub si_band: c_long /* __SI_BAND_TYPE */,
+        pub si_fd: c_int,
+    }
+
+    $[layout(C)]
+    struct _sifields_sigsys {
+        pub _call_addr: ?^mut void,
+        pub _syscall: c_int,
+        pub _arch: c_uint,
+    }
+
+    $[layout(C)]
+    pub unsafe union __sigval_t {
+        __sival_int: c_int,
+        __sival_ptr: ?^mut void,
+    }
+
+    $[layout(C)]
+    unsafe union _sifields {
+        _pad: [c_int; 28],
+	    /// kill().
+        _kill: _sifields_kill,
+	    /// POSIX.1b timers.
+        _timer: _sifields_timer,
+	    /// POSIX.1b signals.
+        _rt: _sifields_rt,
+	    /// SIGCHLD.
+        _sigchld: _sifields_sigchld,
+        /// SIGILL, SIGFPE, SIGSEGV, SIGBUS.
+        _sigfault: _sifields_sigfault,
+        /// SIGPOLL
+        _sigpoll: _sifields_sigpoll,
+        /// SIGSYS
+        _sigsys: _sifields_sigsys,
+    }
+
+    pub const SA_SIGINFO: c_int = 4;
+
+    pub const SIGILL: c_int = 4;
+    pub const SIGBUS: c_int = 7;
+    pub const SIGFPE: c_int = 8;
+    pub const SIGSEGV: c_int = 11;
+
+    pub extern fn sigemptyset(set: ^mut sigset_t): c_int;
+
+    // XXX: Link name is set to avoid the conflict with our constructor for the sigaction type.
+    $[link_name("sigaction")]
+    /// set and old_act are restrict (may not overlap)
+    pub extern fn sigaction_(sig: c_int, set: ?^sigaction, old_act: ?^mut sigaction): c_int;
+    pub extern fn perror(msg: ^c_char);
+
+    pub extern fn fork(): c_int /* pid_t */;
+    pub extern fn waitpid(pid: c_int /* pid_t */, wstatus: ?^mut c_int, options: c_int): c_int;
+}
+
+pub mod linux {
+    use super::*;
+
+    $[layout(C)]
+    pub struct stack_t {
+        pub ss_sp: ?^mut void,
+        pub ss_flags: c_int,
+        pub ss_size: uint, /* size_t */
+    }
+
+    $[layout(C)]
+    pub struct ucontext_t {
+        pub uc_flags: c_ulong,
+        pub uc_link: ?^mut ucontext_t,
+        pub uc_stack: stack_t,
+        pub uc_mcontext: mcontext_t,
+        pub uc_sigmask: posix::sigset_t,
+        pub __fpregs_mem: _libc_fpstate,
+        pub __ssp: [c_ulonglong; 4],
+    }
+
+    $[layout(C)]
+    pub struct mcontext_t {
+        pub gregs: [c_longlong; 23],
+        pub fpregs: ?^mut _libc_fpstate,
+        pub __reserved1: [c_ulonglong; 8],
+    }
+
+    $[layout(C)]
+    pub struct _libc_fpstate {
+        pub cwd: u16,
+        pub swd: u16,
+        pub ftw: u16,
+        pub fop: u16,
+        pub rip: u64,
+        pub rdp: u64,
+        pub mxcsr: u32,
+        pub mxcr_mask: u32,
+        pub _st: [_libc_fpxreg; 8],
+        pub _xmm: [_libc_xmmreg; 16],
+        pub __glibc_reserved1: [u32; 24],
+    }
+
+    $[layout(C)]
+    pub struct _libc_fpxreg {
+        pub significand: [c_ushort; 4],
+        pub exponent: c_ushort,
+        pub __glibc_reserved1: [c_ushort; 3],
+    }
+
+    $[layout(C)]
+    pub struct _libc_xmmreg {
+        pub element: [u32; 4],
+    }
+
+    union GpReg: c_int {
+        REG_R8,
+        REG_R9,
+        REG_R10,
+        REG_R11,
+        REG_R12,
+        REG_R13,
+        REG_R14,
+        REG_R15,
+        REG_RDI,
+        REG_RSI,
+        REG_RBP,
+        REG_RBX,
+        REG_RDX,
+        REG_RAX,
+        REG_RCX,
+        REG_RSP,
+        REG_RIP,
+        REG_EFL,
+        REG_CSGSFS,
+        REG_ERR,
+        REG_TRAPNO,
+        REG_OLDMASK,
+        REG_CR2,
+    }
+
+    pub use GpReg::*;
 }

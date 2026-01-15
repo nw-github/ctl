@@ -1,7 +1,7 @@
 use std::fmt;
 use std::deps::libc;
 
-struct Stdout {
+pub struct Stdout {
     impl fmt::Write {
         fn write_str(mut this, s: str) {
             if !s.is_empty() {
@@ -11,7 +11,7 @@ struct Stdout {
     }
 }
 
-struct Stderr {
+pub struct Stderr {
     impl fmt::Write {
         fn write_str(mut this, s: str) {
             if !s.is_empty() {
