@@ -1,4 +1,4 @@
-use std::deps::libc;
+use std::deps::{libc, libc::posix::*};
 
 const NS_PER_SEC: u64 = 1_000_000_000;
 
@@ -52,7 +52,7 @@ pub struct Instant {
 
     pub fn now(): This {
         mut tp = libc::Timespec(tv_sec: 0, tv_nsec: 0);
-        unsafe libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut tp);
+        unsafe clock_gettime(CLOCK_MONOTONIC, &mut tp);
         Instant(ns: tp.tv_nsec as! u64 + tp.tv_sec as! u64 * 1_000_000_000)
     }
 
@@ -82,6 +82,6 @@ pub struct Instant {
 
 pub fn sleep(dur: Duration) {
     mut spec = libc::Timespec(tv_sec: dur.secs as! c_long, tv_nsec: dur.nanos as! c_long);
-    while unsafe libc::nanosleep(&spec, &mut spec) != 0 {
+    while unsafe nanosleep(&spec, &mut spec) != 0 {
     }
 }

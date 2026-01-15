@@ -14,19 +14,11 @@ pub extern fn free(addr: ?^mut void);
 pub extern fn _setjmp(env: *mut JmpBuf): c_int;
 pub extern fn longjmp(env: *mut JmpBuf, val: c_int): never;
 
-pub extern fn write(fd: c_int, buf: ^void, count: uint): int;
-
 $[layout(C)]
 pub struct Timespec {
     pub tv_sec: c_long,
     pub tv_nsec: c_long,
 }
-
-pub const CLOCK_MONOTONIC: c_int = 1;
-
-pub extern fn clock_gettime(clockid: c_int, tp: *mut Timespec): c_int;
-pub extern fn nanosleep(time: *Timespec, remaining: ?*mut Timespec): c_int;
-pub extern fn getpid(): c_int /* pid_t */;
 
 pub extern fn memmem(kw haystack: ^void, kw hlen: uint, kw needle: ^void, kw nlen: uint): ?^void;
 
@@ -104,6 +96,13 @@ pub mod math {
 
 pub mod posix {
     use super::*;
+
+    pub const CLOCK_MONOTONIC: c_int = 1;
+
+    pub extern fn write(fd: c_int, buf: ^void, count: uint): int;
+    pub extern fn clock_gettime(clockid: c_int, tp: *mut Timespec): c_int;
+    pub extern fn nanosleep(time: *Timespec, remaining: ?*mut Timespec): c_int;
+    pub extern fn getpid(): c_int /* pid_t */;
 
     $[layout(C)]
     pub struct sigset_t {

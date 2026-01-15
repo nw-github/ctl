@@ -49,7 +49,7 @@ fn init_dwfl(): ?*mut Dwfl {
     unsafe {
         let dwfl = dwfl_begin(&CALLBACKS)?;
         dwfl_report_begin(dwfl);
-        dwfl_linux_proc_report(dwfl, libc::getpid());
+        dwfl_linux_proc_report(dwfl, libc::posix::getpid());
         guard dwfl_report_end(dwfl, null, null) == 0 else {
             dwfl_end(dwfl);
             return null;
