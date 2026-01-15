@@ -8224,56 +8224,56 @@ pub trait SharedStuff {
 }
 
 impl TypeChecker<'_> {
-    fn get_binary_op(&self, op: BinaryOp) -> Option<(LangType, StrId)> {
-        let strings = &self.proj.strings;
+    #[rustfmt::skip]
+    fn get_binary_op(&mut self, op: BinaryOp) -> Option<(LangType, StrId)> {
+        let strings = &mut self.proj.strings;
         match op {
-            BinaryOp::Cmp => Some((LangType::OpCmp, strings.get("cmp")?)),
-            BinaryOp::Gt => Some((LangType::OpCmp, strings.get("gt")?)),
-            BinaryOp::GtEqual => Some((LangType::OpCmp, strings.get("ge")?)),
-            BinaryOp::Lt => Some((LangType::OpCmp, strings.get("lt")?)),
-            BinaryOp::LtEqual => Some((LangType::OpCmp, strings.get("le")?)),
-            BinaryOp::Equal => Some((LangType::OpEq, strings.get("eq")?)),
-            BinaryOp::NotEqual => Some((LangType::OpEq, strings.get("ne")?)),
-            BinaryOp::Add => Some((LangType::OpAdd, strings.get("add")?)),
-            BinaryOp::Sub => Some((LangType::OpSub, strings.get("sub")?)),
-            BinaryOp::Mul => Some((LangType::OpMul, strings.get("mul")?)),
-            BinaryOp::Div => Some((LangType::OpDiv, strings.get("div")?)),
-            BinaryOp::Rem => Some((LangType::OpRem, strings.get("rem")?)),
-            BinaryOp::BitAnd => Some((LangType::OpAnd, strings.get("bit_and")?)),
-            BinaryOp::BitOr => Some((LangType::OpOr, strings.get("bit_or")?)),
-            BinaryOp::Xor => Some((LangType::OpXor, strings.get("xor")?)),
-            BinaryOp::Shl => Some((LangType::OpShl, strings.get("shl")?)),
-            BinaryOp::Shr => Some((LangType::OpShr, strings.get("shr")?)),
-            BinaryOp::AddAssign => Some((LangType::OpAddAssign, strings.get("add_assign")?)),
-            BinaryOp::SubAssign => Some((LangType::OpSubAssign, strings.get("sub_assign")?)),
-            BinaryOp::MulAssign => Some((LangType::OpMulAssign, strings.get("mul_assign")?)),
-            BinaryOp::DivAssign => Some((LangType::OpDivAssign, strings.get("div_assign")?)),
-            BinaryOp::RemAssign => Some((LangType::OpRemAssign, strings.get("rem_assign")?)),
-            BinaryOp::BitAndAssign => Some((LangType::OpAndAssign, strings.get("and_assign")?)),
-            BinaryOp::BitOrAssign => Some((LangType::OpOrAssign, strings.get("or_assign")?)),
-            BinaryOp::XorAssign => Some((LangType::OpXorAssign, strings.get("xor_assign")?)),
-            BinaryOp::ShlAssign => Some((LangType::OpShlAssign, strings.get("shl_assign")?)),
-            BinaryOp::ShrAssign => Some((LangType::OpShrAssign, strings.get("shr_assign")?)),
-            BinaryOp::Call => Some((LangType::OpFn, strings.get("invoke")?)),
+            BinaryOp::Cmp => Some((LangType::OpCmp, strings.get_or_intern_static("cmp"))),
+            BinaryOp::Gt => Some((LangType::OpCmp, strings.get_or_intern_static("gt"))),
+            BinaryOp::GtEqual => Some((LangType::OpCmp, strings.get_or_intern_static("ge"))),
+            BinaryOp::Lt => Some((LangType::OpCmp, strings.get_or_intern_static("lt"))),
+            BinaryOp::LtEqual => Some((LangType::OpCmp, strings.get_or_intern_static("le"))),
+            BinaryOp::Equal => Some((LangType::OpEq, strings.get_or_intern_static("eq"))),
+            BinaryOp::NotEqual => Some((LangType::OpEq, strings.get_or_intern_static("ne"))),
+            BinaryOp::Add => Some((LangType::OpAdd, strings.get_or_intern_static("add"))),
+            BinaryOp::Sub => Some((LangType::OpSub, strings.get_or_intern_static("sub"))),
+            BinaryOp::Mul => Some((LangType::OpMul, strings.get_or_intern_static("mul"))),
+            BinaryOp::Div => Some((LangType::OpDiv, strings.get_or_intern_static("div"))),
+            BinaryOp::Rem => Some((LangType::OpRem, strings.get_or_intern_static("rem"))),
+            BinaryOp::BitAnd => Some((LangType::OpAnd, strings.get_or_intern_static("bit_and"))),
+            BinaryOp::BitOr => Some((LangType::OpOr, strings.get_or_intern_static("bit_or"))),
+            BinaryOp::Xor => Some((LangType::OpXor, strings.get_or_intern_static("xor"))),
+            BinaryOp::Shl => Some((LangType::OpShl, strings.get_or_intern_static("shl"))),
+            BinaryOp::Shr => Some((LangType::OpShr, strings.get_or_intern_static("shr"))),
+            BinaryOp::AddAssign => Some((LangType::OpAddAssign, strings.get_or_intern_static("add_assign"))),
+            BinaryOp::SubAssign => Some((LangType::OpSubAssign, strings.get_or_intern_static("sub_assign"))),
+            BinaryOp::MulAssign => Some((LangType::OpMulAssign, strings.get_or_intern_static("mul_assign"))),
+            BinaryOp::DivAssign => Some((LangType::OpDivAssign, strings.get_or_intern_static("div_assign"))),
+            BinaryOp::RemAssign => Some((LangType::OpRemAssign, strings.get_or_intern_static("rem_assign"))),
+            BinaryOp::BitAndAssign => Some((LangType::OpAndAssign, strings.get_or_intern_static("and_assign"))),
+            BinaryOp::BitOrAssign => Some((LangType::OpOrAssign, strings.get_or_intern_static("or_assign"))),
+            BinaryOp::XorAssign => Some((LangType::OpXorAssign, strings.get_or_intern_static("xor_assign"))),
+            BinaryOp::ShlAssign => Some((LangType::OpShlAssign, strings.get_or_intern_static("shl_assign"))),
+            BinaryOp::ShrAssign => Some((LangType::OpShrAssign, strings.get_or_intern_static("shr_assign"))),
+            BinaryOp::Call => Some((LangType::OpFn, strings.get_or_intern_static("invoke"))),
             _ => None,
         }
     }
 
-    fn get_unary_op(&self, op: UnaryOp) -> Option<(LangType, StrId)> {
+    fn get_unary_op(&mut self, op: UnaryOp) -> Option<(LangType, StrId)> {
+        let strings = &mut self.proj.strings;
         match op {
-            UnaryOp::Neg => Some((LangType::OpNeg, self.proj.strings.get("neg")?)),
-            UnaryOp::Not => Some((LangType::OpNot, self.proj.strings.get("not")?)),
-            UnaryOp::Unwrap => Some((LangType::OpUnwrap, self.proj.strings.get("unwrap")?)),
-            UnaryOp::PostDecrement => Some((LangType::OpDec, self.proj.strings.get("dec")?)),
-            UnaryOp::PreDecrement => Some((LangType::OpDec, self.proj.strings.get("dec")?)),
-            UnaryOp::PostIncrement => Some((LangType::OpInc, self.proj.strings.get("inc")?)),
-            UnaryOp::PreIncrement => Some((LangType::OpInc, self.proj.strings.get("inc")?)),
+            UnaryOp::Neg => Some((LangType::OpNeg, strings.get_or_intern_static("neg"))),
+            UnaryOp::Not => Some((LangType::OpNot, strings.get_or_intern_static("not"))),
+            UnaryOp::Unwrap => Some((LangType::OpUnwrap, strings.get_or_intern_static("unwrap"))),
+            UnaryOp::PostDecrement => Some((LangType::OpDec, strings.get_or_intern_static("dec"))),
+            UnaryOp::PreDecrement => Some((LangType::OpDec, strings.get_or_intern_static("dec"))),
+            UnaryOp::PostIncrement => Some((LangType::OpInc, strings.get_or_intern_static("inc"))),
+            UnaryOp::PreIncrement => Some((LangType::OpInc, strings.get_or_intern_static("inc"))),
             _ => None,
         }
     }
-}
 
-impl TypeChecker<'_> {
     fn is_disabled_by_attrs(&mut self, attrs: &Attributes, check_attrs: bool) -> bool {
         use crate::package::Constraint;
 
@@ -8376,7 +8376,7 @@ impl TypeChecker<'_> {
 }
 
 fn nowhere<T>(name: StrId, cons: impl FnOnce(Path) -> T) -> Located<T> {
-    // uses default span so hover ignore it
+    // uses default span so hover ignores it
     Located::nowhere(cons(Path::from(Located::nowhere(name))))
 }
 
