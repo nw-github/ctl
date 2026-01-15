@@ -73,7 +73,7 @@ struct BuildArgs {
         default_missing_value = "3",
         value_parser = clap::value_parser!(i32).range(0..=3),
     )]
-    opt_level: Option<usize>,
+    opt_level: Option<i32>,
 
     /// Compile using the release profile
     #[clap(action, short, long)]
@@ -424,7 +424,8 @@ fn main() -> Result<()> {
 
         if let Some(args) = args.command.as_build_args() {
             conf.build.debug_info = args.debug_info.unwrap_or(conf.build.debug_info);
-            conf.build.opt_level = args.opt_level.unwrap_or(conf.build.opt_level);
+            conf.build.opt_level =
+                args.opt_level.map(|i| i as usize).unwrap_or(conf.build.opt_level);
             for lib in args.libs.iter() {
                 conf.libs.insert(ctl::package::Lib::Name(lib.clone()));
             }
