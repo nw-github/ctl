@@ -3171,7 +3171,10 @@ impl<'a> Codegen<'a> {
         if f.is_extern {
             write_de!(self.buffer, "extern ");
         } else {
-            write_de!(self.buffer, "static ");
+            if !f.attrs.export {
+                write_de!(self.buffer, "static ");
+            }
+
             // TODO: inline manually
             match f.attrs.inline {
                 Some(FunctionInline::Always) => write_de!(self.buffer, "CTL_FORCEINLINE "),
