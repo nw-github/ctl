@@ -686,45 +686,60 @@ impl<'a> Parser<'a> {
             Token::Loop => self.loop_expr(span, None),
             Token::For => self.for_expr(span, None),
             Token::Match => self.match_expr(span),
-            Token::LBrace => {
+            Token::LBrace => 'out: {
                 if let Some(rbrace) = self.next_if(Token::RBrace) {
-                    self.arena.expr(span.extended_to(rbrace.span), ExprData::Array(Vec::new()))
-                } else if self.next_if(Token::Colon).is_some() {
-                    let span = self.expect(Token::RBrace).span;
-                    self.arena.expr(span.extended_to(span), ExprData::Map(Vec::new()))
-                } else {
-                    let expr = self.expression();
-                    if self.next_if(Token::Colon).is_some() {
-                        let value = self.expression();
-                        self.csv_expr(
-                            vec![(expr, value)],
-                            Token::RBrace,
-                            span,
-                            |this| {
-                                let key = this.expression();
-                                this.expect(Token::Colon);
-                                (key, this.expression())
-                            },
-                            ExprData::Map,
-                        )
-                    } else if self.next_if(Token::Semicolon).is_some() {
-                        let count = self.expression();
-                        let rbrace = self.expect(Token::RBrace);
+                    break 'out self
+                        .arena
+                        .expr(span.extended_to(rbrace.span), ExprData::Array(Vec::new()));
+                }
+
+                let expr = if let Some(colon) = self.next_if(Token::Colon) {
+                    if let Some(ident) = self.next_if_ident() {
+                        let origin = PathOrigin::Infer(colon.span);
                         self.arena.expr(
-                            span.extended_to(rbrace.span),
-                            ExprData::ArrayWithInit { init: expr, count },
+                            colon.span.extended_to(ident.span),
+                            ExprData::Path(Path::new(origin, vec![(ident, Default::default())])),
                         )
-                    } else if let Some(rbrace) = self.next_if(Token::RBrace) {
-                        self.arena.expr(span.extended_to(rbrace.span), ExprData::Array(vec![expr]))
                     } else {
-                        self.csv_expr(
-                            vec![expr],
-                            Token::RBrace,
-                            span,
-                            Self::expression,
-                            ExprData::Array,
-                        )
+                        let end = self.expect(Token::RBrace).span;
+                        break 'out self
+                            .arena
+                            .expr(span.extended_to(end), ExprData::Map(Vec::new()));
                     }
+                } else {
+                    self.expression()
+                };
+
+                if self.next_if(Token::Colon).is_some() {
+                    let value = self.expression();
+                    self.csv_expr(
+                        vec![(expr, value)],
+                        Token::RBrace,
+                        span,
+                        |this| {
+                            let key = this.expression();
+                            this.expect(Token::Colon);
+                            (key, this.expression())
+                        },
+                        ExprData::Map,
+                    )
+                } else if self.next_if(Token::Semicolon).is_some() {
+                    let count = self.expression();
+                    let rbrace = self.expect(Token::RBrace);
+                    self.arena.expr(
+                        span.extended_to(rbrace.span),
+                        ExprData::ArrayWithInit { init: expr, count },
+                    )
+                } else if let Some(rbrace) = self.next_if(Token::RBrace) {
+                    self.arena.expr(span.extended_to(rbrace.span), ExprData::Array(vec![expr]))
+                } else {
+                    self.csv_expr(
+                        vec![expr],
+                        Token::RBrace,
+                        span,
+                        Self::expression,
+                        ExprData::Array,
+                    )
                 }
             }
             Token::AtLBrace => {
@@ -1529,11 +1544,7 @@ impl<'a> Parser<'a> {
                                 let ident = this.expect_ident("expected name");
                                 Some((true, ident))
                             } else {
-                                Some(false).zip(this.next_if_map(|this, t| {
-                                    t.data.as_ident().map(|&i| {
-                                        Located::new(t.span, this.strings.get_or_intern(i))
-                                    })
-                                }))
+                                Some(false).zip(this.next_if_ident())
                             };
 
                             Located::new(token.span, Pattern::Rest(pattern))
@@ -2569,6 +2580,12 @@ impl<'a> Parser<'a> {
             self.next();
         }
         outer
+    }
+
+    fn next_if_ident(&mut self) -> Option<Located<StrId>> {
+        self.next_if_map(|this, t| {
+            t.data.as_ident().map(|&i| Located::new(t.span, this.strings.get_or_intern(i)))
+        })
     }
 
     fn next_until(&mut self, token: Token, mut span: Span, mut f: impl FnMut(&mut Self)) -> Span {
