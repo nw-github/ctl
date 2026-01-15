@@ -144,17 +144,12 @@
 static void $ctl_static_init(void);
 static void $ctl_static_deinit(void);
 
-static void $ctl_stdlib_init(void);
-static void $ctl_stdlib_deinit(void);
-
 CTL_DEINIT($ctl_runtime_deinit) {
   $ctl_static_deinit();
-  $ctl_stdlib_deinit();
 }
 
 CTL_INIT($ctl_runtime_init) {
   $ctl_static_init();
-  $ctl_stdlib_init();
 
 #if defined(_MSC_VER)
   int __cdecl atexit(void(__cdecl *)(void));
@@ -194,11 +189,6 @@ typedef struct {
   void const *self;
   VirtualFn const *vtable;
 } DynPtr;
-
-#ifdef CTL_HOSTED
-static char **CTL_ARGV;
-static int CTL_ARGC;
-#endif
 
 #ifdef __clang__
 // These work at compile time, the type punning versions do not

@@ -17,15 +17,3 @@ io = { default = true, requires = ["hosted"] }
 c = { requires = ["hosted"] }
 dw = { requires = ["backtrace"], available = "os:linux+arch:x86-64" }
 gc = { available = "!ctl:no-gc" }
-
-# constraints
-#   arch:<arch>        ; x86,x86-64,arm,arm64,riscv,etc.
-#   os:<os>            ; linux,windows,android,ios,macos
-#   os-family:<family> ; unix
-#   cap:<cap>          ; arch-dependent CPU capability (arch-cap:AVX512  arch-cap:riscv-gc)
-#   ctl:<var>          ; some CTL config option (ctl:no-gc)
-
-#   arch:foo,arch:bar  ; A or B
-#   arch:foo+os:bar    ; A and B
-#   !arch:bar          ; NOT A
-#   (arch:bar)         ; grouping

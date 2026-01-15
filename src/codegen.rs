@@ -977,9 +977,6 @@ impl<'a> Codegen<'a> {
         if this.proj.conf.build.no_bit_int {
             this.buffer.emit("#define CTL_NOBITINT 1\n");
         }
-        // if this.proj.conf.has_feature(Strings::FEAT_HOSTED) {
-        this.buffer.emit("#define CTL_HOSTED 1\n");
-        // }
 
         this.buffer.emit("#ifdef __clang__\n");
         let warnings = include_str!("../compile_flags.txt");
@@ -1053,7 +1050,7 @@ impl<'a> Codegen<'a> {
     }
 
     fn gen_c_main(&mut self) -> Option<String> {
-        const MAIN: &str = "int main(int argc, char **argv){CTL_ARGV=argv;CTL_ARGC=argc;";
+        const MAIN: &str = "int main(int argc, char **argv){$ctl_stdlib_init(argc, argv);";
 
         if self.proj.conf.in_test_mode() {
             self.buffer.emit(MAIN);
@@ -1070,9 +1067,9 @@ impl<'a> Codegen<'a> {
         }
         self.buffer.emit_fn_name(&main.func);
         if returns {
-            self.buffer.emit("();}\n");
+            self.buffer.emit("();$ctl_stdlib_deinit();}\n");
         } else {
-            self.buffer.emit("();return 0;}\n");
+            self.buffer.emit("();$ctl_stdlib_deinit();return 0;}\n");
         }
         self.funcs.insert(main);
         Some(self.buffer.take().finish())
@@ -1158,7 +1155,10 @@ impl<'a> Codegen<'a> {
             self.buffer.emit_fn_name(&runner.func);
             write_de!(self.buffer, "(");
             self.emit_cast(self.proj.scopes.get(runner.func.id).params[0].ty);
-            writeln_de!(self.buffer, "{{.ptr=tests,.len={test_count}}});return 0;}}");
+            writeln_de!(
+                self.buffer,
+                "{{.ptr=tests,.len={test_count}}});$ctl_stdlib_deinit();return 0;}}"
+            );
             self.funcs.insert(runner);
         });
     }
