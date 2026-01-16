@@ -233,7 +233,7 @@ pub struct Backtrace {
     pub fn capture(): This {
         mut addrs: [Call] = @[];
         unsafe backtrace(|&mut addrs, mut i = 0,| (pc) {
-            if i++ > 2 {
+            if i++ >= 2 {
                 // TODO: allow this to fail
                 addrs.push(Call(addr: pc));
             }
