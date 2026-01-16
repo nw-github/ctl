@@ -4,7 +4,7 @@ use crate::{
         ComptimeInt,
         arena::{Arena, Id},
     },
-    intern::{StrId, THIS_TYPE},
+    intern::{ByteStrId, StrId, THIS_TYPE},
     lexer::{Located, Span},
 };
 
@@ -173,7 +173,7 @@ pub enum ExprData {
     Float(FloatPattern),
     String(StrId),
     Char(char),
-    ByteString(Vec<u8>),
+    ByteString(ByteStrId),
     ByteChar(u8),
     Path(Path),
     Void,

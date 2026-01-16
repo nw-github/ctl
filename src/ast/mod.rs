@@ -130,10 +130,10 @@ pub enum BinaryOp {
     Call,
 }
 
-impl TryFrom<Token<'_>> for BinaryOp {
+impl TryFrom<Token> for BinaryOp {
     type Error = ();
 
-    fn try_from(value: Token<'_>) -> Result<Self, Self::Error> {
+    fn try_from(value: Token) -> Result<Self, Self::Error> {
         match value {
             Token::Plus => Ok(BinaryOp::Add),
             Token::Minus => Ok(BinaryOp::Sub),
@@ -263,7 +263,7 @@ pub enum UnaryOp {
 }
 
 impl UnaryOp {
-    pub fn try_from_postfix(value: Token<'_>) -> Option<Self> {
+    pub fn try_from_postfix(value: Token) -> Option<Self> {
         match value {
             Token::Increment => Some(UnaryOp::PostIncrement),
             Token::Decrement => Some(UnaryOp::PostDecrement),
@@ -273,7 +273,7 @@ impl UnaryOp {
         }
     }
 
-    pub fn try_from_prefix(value: Token<'_>) -> Option<Self> {
+    pub fn try_from_prefix(value: Token) -> Option<Self> {
         match value {
             Token::Plus => Some(UnaryOp::Plus),
             Token::Minus => Some(UnaryOp::Neg),

@@ -1576,7 +1576,7 @@ impl<'a> Codegen<'a> {
                 write_de!(self.arrays, "static const ");
                 emit_type!(self, expr.ty.as_pointee(&self.proj.types).unwrap(), self.arrays);
                 write_de!(self.arrays, " $BSTR{}={{.{ARRAY_DATA_NAME}=\"", expr.data.as_raw());
-                for byte in value {
+                for byte in self.proj.strings.resolve_byte_str(*value) {
                     write_de!(self.arrays, "\\x{byte:x}");
                 }
                 write_de!(self.arrays, "\"}};");

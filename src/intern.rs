@@ -4,12 +4,18 @@ use lasso::Rodeo;
 
 pub type StrId = lasso::Spur;
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct ByteStrId(NonZeroU32, NonZeroU32);
+
 pub const THIS_PARAM: &str = "this";
 pub const THIS_TYPE: &str = "This";
 
 #[derive(Clone, derive_more::Deref, derive_more::DerefMut)]
 pub struct Strings {
+    #[deref]
+    #[deref_mut]
     rodeo: Rodeo,
+    byte_str_data: Vec<u8>,
 }
 
 impl Strings {
@@ -96,7 +102,24 @@ impl Strings {
         assert_eq!(Self::FN_CLOSURE_DO_INVOKE, rodeo.get_or_intern_static("do_invoke"));
         assert_eq!(Self::ATTR_EXPORT, rodeo.get_or_intern_static("export"));
         assert_eq!(Self::ATTR_CFG, rodeo.get_or_intern_static("cfg"));
-        Self { rodeo }
+        Self { rodeo, byte_str_data: vec![0] }
+    }
+
+    pub fn intern_byte_str(&mut self, str: impl AsRef<[u8]>) -> ByteStrId {
+        let str = str.as_ref();
+        let (begin, end) = unsafe {
+            (
+                NonZeroU32::new_unchecked(self.byte_str_data.len() as u32),
+                NonZeroU32::new_unchecked((self.byte_str_data.len() + str.len()) as u32),
+            )
+        };
+
+        self.byte_str_data.extend_from_slice(str);
+        ByteStrId(begin, end)
+    }
+
+    pub fn resolve_byte_str(&self, id: ByteStrId) -> &[u8] {
+        &self.byte_str_data[id.0.get() as usize..id.1.get() as usize]
     }
 }
 

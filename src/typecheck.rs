@@ -3237,10 +3237,10 @@ impl TypeChecker<'_> {
                     }),
                 )
             }
-            PExprData::ByteString(s) => {
-                let arr = self.proj.types.insert(Type::Array(TypeId::U8, s.len()));
-                self.arena
-                    .typed(self.proj.types.insert(Type::Ptr(arr)), CExprData::ByteString(s.clone()))
+            &PExprData::ByteString(s) => {
+                let data = self.proj.strings.resolve_byte_str(s);
+                let arr = self.proj.types.insert(Type::Array(TypeId::U8, data.len()));
+                self.arena.typed(self.proj.types.insert(Type::Ptr(arr)), CExprData::ByteString(s))
             }
             &PExprData::Char(s) => CExpr::from_char(s, &mut self.arena),
             &PExprData::ByteChar(c) => CExpr::from_int(TypeId::U8, c.into(), &mut self.arena),

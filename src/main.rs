@@ -345,8 +345,9 @@ fn dump_tokens(input: Option<&Path>) -> Result<()> {
     let source = std::fs::read_to_string(input.context("missing input file")?)?;
     let mut lexer = ctl::Lexer::new(&source, Default::default());
     let mut diag = ctl::Diagnostics::default();
+    let mut strings = ctl::Strings::new();
     loop {
-        let token = lexer.next(&mut diag);
+        let token = lexer.next(&mut diag, &mut strings);
         if token.data == ctl::Token::Eof {
             break Ok(());
         }

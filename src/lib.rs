@@ -18,6 +18,7 @@ mod typeid;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+pub use intern::Strings;
 pub use project::{Configuration, TestArgs};
 
 use crate::package::Input;
@@ -25,7 +26,6 @@ use crate::{
     ast::checked::ExprArena as CExprArena,
     ast::parsed::{ExprArena as PExprArena, Stmt, StmtData},
     codegen::Codegen,
-    intern::Strings,
     parser::{ModuleAttributes, Parser},
     project::Project,
     typecheck::{LspInput, TypeChecker},
@@ -300,7 +300,7 @@ fn safe_name(s: &str) -> String {
         r.push(if Lexer::is_identifier_char(ch) { ch } else { '_' });
     }
 
-    if !Lexer::make_ident(&r).is_ident() {
+    if Lexer::make_reserved_ident(&r).is_some() {
         r.insert(0, '_');
     }
 
