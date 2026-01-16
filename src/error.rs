@@ -5,7 +5,7 @@ use std::{
 
 use tower_lsp::lsp_types::{Position, Range};
 
-use crate::lexer::{Located, Span, Token};
+use crate::lexer::Span;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum OffsetMode {
@@ -172,8 +172,8 @@ impl Error {
         Self::new("invalid char escape (must be within the range 0..=0x7f)", span)
     }
 
-    pub fn not_valid_here(token: &Located<Token>) -> Self {
-        Self::new(format!("'{}' is not valid here", token.data), token.span)
+    pub fn not_valid_here(src: &str, token: Span) -> Self {
+        Self::new(format!("'{}' is not valid here", token.text(src)), token)
     }
 
     pub fn no_mut_ptr(span: Span) -> Self {
@@ -300,8 +300,8 @@ impl Warning {
         Error { message: message.into(), span: span.into(), severity: ErrorSeverity::Warning }
     }
 
-    pub fn redundant_token(token: &Located<Token>) -> Error {
-        Self::new(format!("redundant '{}'", token.data), token.span)
+    pub fn redundant_token(src: &str, span: Span) -> Error {
+        Self::new(format!("redundant '{}'", span.text(src)), span)
     }
 
     pub fn redundant_unsafe(span: Span) -> Error {

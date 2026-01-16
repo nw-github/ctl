@@ -261,6 +261,10 @@ impl Span {
         // when selecting
         pos >= self.pos && pos <= self.pos + self.len
     }
+
+    pub fn text<'a>(&self, src: &'a str) -> &'a str {
+        &src[self.pos as usize..][..self.len as usize]
+    }
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, derive_more::Constructor)]
@@ -600,6 +604,10 @@ impl<'a> Lexer<'a> {
 
     pub fn advance_to(&mut self, pos: Option<u32>) {
         self.pos = pos.map(|p| p as usize).unwrap_or(self.src.len());
+    }
+
+    pub fn source(&self) -> &'a str {
+        self.src
     }
 
     fn peek(&self) -> Option<char> {
