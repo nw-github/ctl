@@ -325,7 +325,7 @@ impl<'a> Parser<'a> {
                     let name = Located::new(name.span, self.strings.get_or_intern(data));
                     let test = self.strings.get_or_intern_static("test");
                     attrs.push(Attribute {
-                        name: Located::nowhere(AttrName::Str(Strings::ATTR_FEATURE)),
+                        name: Located::nowhere(AttrName::Str(Strings::ATTR_CFG)),
                         props: vec![Attribute {
                             name: Located::nowhere(AttrName::Str(test)),
                             props: vec![],
@@ -343,7 +343,7 @@ impl<'a> Parser<'a> {
                     data: Located::new(
                         earliest_span.extended_to(body.span),
                         StmtData::Fn(Fn {
-                            attrs,
+                            attrs: Default::default(),
                             public: false,
                             name,
                             is_extern: false,
@@ -357,7 +357,7 @@ impl<'a> Parser<'a> {
                             body: Some(body),
                         }),
                     ),
-                    attrs: Default::default(),
+                    attrs,
                 })
             }
             _ => {

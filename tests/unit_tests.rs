@@ -11,7 +11,7 @@ use ctl::{Compiler, TestArgs};
 #[test]
 fn run_unit_tests() -> anyhow::Result<()> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("unit_tests");
-    let (code, conf, _) = Compiler::new()
+    let (code, conf, diag) = Compiler::new()
         .parse(&path, Default::default())?
         .modify_conf(|conf| {
             conf.test_args = Some(TestArgs {
@@ -22,6 +22,12 @@ fn run_unit_tests() -> anyhow::Result<()> {
         .typecheck(None)
         .build();
     let Some(code) = code else {
+        for err in diag.diagnostics() {
+            if err.severity.is_error() {
+                eprintln!("{}", err.message);
+            }
+        }
+
         anyhow::bail!("build failed");
     };
 
