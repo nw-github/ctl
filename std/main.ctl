@@ -31,6 +31,7 @@ mod prelude {
     pub use super::fmt::ext::*;
     pub use super::fmt::{write, writeln};
     pub use super::ops::{Fn, ext::*};
+    pub use super::ffi::types::*;
 
     $[feature(alloc)]
     pub use super::alloc::collections::*;

@@ -28,8 +28,6 @@ impl std::fmt::Display for FmtTy<'_> {
             Type::Uint(bits) => write!(f, "u{bits}"),
             Type::Isize => write!(f, "int"),
             Type::Usize => write!(f, "uint"),
-            Type::CInt(ty) => write!(f, "c_{ty:#}"),
-            Type::CUint(ty) => write!(f, "c_u{ty:#}"),
             Type::F32 => write!(f, "f32"),
             Type::F64 => write!(f, "f64"),
             Type::Bool => write!(f, "bool"),

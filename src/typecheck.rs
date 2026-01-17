@@ -24,8 +24,8 @@ use crate::{
     project::Project,
     sym::*,
     typeid::{
-        BitSizeResult, CInt, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType,
-        Type, TypeArgs, TypeId, Types,
+        BitSizeResult, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType, Type,
+        TypeArgs, TypeId, Types,
     },
 };
 
@@ -248,16 +248,9 @@ impl Cast {
         match src {
             T::Usize | T::Isize => match dst {
                 T::Ptr(_) | T::MutPtr(_) | T::FnPtr(_) => Cast::Unsafe,
-                T::Uint(_) | T::Int(_) | T::CInt(_) | T::CUint(_) => Cast::Fallible,
+                T::Uint(_) | T::Int(_) => Cast::Fallible,
                 T::Usize | T::Isize => Cast::Fallible,
                 T::RawPtr(_) | T::RawMutPtr(_) | T::F32 | T::F64 => Cast::Infallible,
-                _ => Cast::None,
-            },
-            T::CInt(_) | T::CUint(_) => match dst {
-                T::Usize | T::Isize | T::Uint(_) | T::Int(_) | T::CInt(_) | T::CUint(_) => {
-                    Cast::Fallible
-                }
-                T::F32 | T::F64 => Cast::Infallible,
                 _ => Cast::None,
             },
             src if src.as_integral(true).is_some() => {
@@ -266,8 +259,6 @@ impl Cast {
                 match dst {
                     // we definitely don't support any targets with < 16 bit pointers
                     T::Usize | T::Isize if !src.is_bool() && a.bits > 16 => Cast::Fallible,
-                    // C types should never be < 8 bits? at least we won't support anything like that
-                    T::CInt(_) | T::CUint(_) if !src.is_bool() && a.bits > 8 => Cast::Fallible,
                     T::F32 | T::F64 => Cast::Infallible,
                     // d800-e000 is invalid for a char, u15::MAX is 0x7fff
                     T::Char if matches!(src, T::Uint(n) if *n <= 15) => Cast::Infallible,
@@ -287,8 +278,8 @@ impl Cast {
                 }
             }
             T::F32 | T::F64 => match dst {
-                T::Int(_) | T::CInt(_) | T::Isize | T::F32 | T::F64 => Cast::Infallible,
-                T::Uint(_) | T::CUint(_) | T::Usize => Cast::Fallible,
+                T::Int(_) | T::Isize | T::F32 | T::F64 => Cast::Infallible,
+                T::Uint(_) | T::Usize => Cast::Fallible,
                 _ => Cast::None,
             },
             T::Ptr(_) | T::MutPtr(_) | T::FnPtr(_) | T::RawPtr(_) | T::RawMutPtr(_) => {
@@ -402,8 +393,6 @@ impl<'a> TypeChecker<'a> {
                         | Type::Never
                         | Type::Int(_)
                         | Type::Uint(_)
-                        | Type::CInt(_)
-                        | Type::CUint(_)
                         | Type::Isize
                         | Type::Usize
                 ) {
@@ -727,10 +716,8 @@ impl TypeChecker<'_> {
 
         #[rustfmt::skip]
         let builtins = [
-            "void", "never", "f32", "f64", "bool", "char", "c_char",
-            "c_short", "c_int", "c_long", "c_longlong", "c_uchar", "c_ushort", "c_uint",
-            "c_ulong", "c_ulonglong", "int", "uint", "u8", "i8", "u16", "i16", "u32", "i32", "u64",
-            "i64", "u128", "i128",
+            "void", "never", "f32", "f64", "bool", "char", "int", "uint", "u8", "i8", "u16", "i16",
+            "u32", "i32", "u64", "i64", "u128", "i128",
         ];
         completions.extend(builtins.into_iter().map(LspItem::BuiltinType));
 
@@ -2840,12 +2827,7 @@ impl TypeChecker<'_> {
 
                 match (&self.proj.types[left.ty], op) {
                     (
-                        Type::Int(_)
-                        | Type::Uint(_)
-                        | Type::CInt(_)
-                        | Type::CUint(_)
-                        | Type::Isize
-                        | Type::Usize,
+                        Type::Int(_) | Type::Uint(_) | Type::Isize | Type::Usize,
                         BinaryOp::Shl | BinaryOp::Shr | BinaryOp::ShlAssign | BinaryOp::ShrAssign,
                     ) => {
                         let right = self.check_expr(right, Some(TypeId::U32));
@@ -7523,16 +7505,6 @@ impl TypeChecker<'_> {
             "f64" => Some(Type::F64),
             "bool" => Some(Type::Bool),
             "char" => Some(Type::Char),
-            "c_char" => Some(Type::CInt(CInt::Char)),
-            "c_short" => Some(Type::CInt(CInt::Short)),
-            "c_int" => Some(Type::CInt(CInt::Int)),
-            "c_long" => Some(Type::CInt(CInt::Long)),
-            "c_longlong" => Some(Type::CInt(CInt::LongLong)),
-            "c_uchar" => Some(Type::CUint(CInt::Char)),
-            "c_ushort" => Some(Type::CUint(CInt::Short)),
-            "c_uint" => Some(Type::CUint(CInt::Int)),
-            "c_ulong" => Some(Type::CUint(CInt::Long)),
-            "c_ulonglong" => Some(Type::CUint(CInt::LongLong)),
             name => Type::from_int_name(name, true),
         }
     }

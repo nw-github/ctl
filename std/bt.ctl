@@ -61,8 +61,6 @@ pub struct MaybeMangledName {
             'V' => write(f, "never"),
             'i' => write(f, "i{name}"),
             'u' => write(f, "u{name}"),
-            'c' => write(f, "c_{name}"),
-            'C' => write(f, "c_u{name}"),
             'I' => write(f, "int"),
             'U' => write(f, "uint"),
             'f' => write(f, "f32"),
@@ -197,7 +195,7 @@ pub struct Call {
     pub fn symbolicate(my this): ?SymbolInfo {
         let dwfl = unsafe DWFL?;
 
-        mut [lineno, colno] = [0ic; 2];
+        mut [lineno, colno] = [0 as c_int; 2];
         mut addr = this.addr;
         unsafe {
             let line = dwfl_getsrc(dwfl, addr)?;

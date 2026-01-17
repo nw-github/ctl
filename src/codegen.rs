@@ -10,7 +10,7 @@ use crate::{
     sym::*,
     typecheck::{ExtensionCache, MemberFn, MemberFnType, SharedStuff},
     typeid::{
-        BitSizeResult, CInt, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer,
+        BitSizeResult, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer,
         LayoutItemKind, Type, TypeArgs, TypeId, Types,
     },
     write_de, writeln_de,
@@ -435,8 +435,6 @@ impl<'a> Buffer<'a> {
             Type::Never => write_de!(self, "V"),
             Type::Int(bits) => write_de!(self, "i{bits}"),
             Type::Uint(bits) => write_de!(self, "u{bits}"),
-            Type::CInt(inner) => write_de!(self, "c{inner:#}"),
-            Type::CUint(inner) => write_de!(self, "C{inner:#}"),
             Type::Isize => write_de!(self, "I"),
             Type::Usize => write_de!(self, "U"),
             Type::F32 => write_de!(self, "f"),
@@ -500,8 +498,6 @@ impl<'a> Buffer<'a> {
             Type::Void | Type::Never => write_de!(self, "$void"),
             Type::Int(bits) => write_de!(self, "s{bits}"),
             Type::Uint(bits) => write_de!(self, "u{bits}"),
-            Type::CInt(inner) => write_de!(self, "{inner}"),
-            Type::CUint(inner) => write_de!(self, "unsigned {inner}"),
             Type::Isize => write_de!(self, "isize"),
             Type::Usize => write_de!(self, "usize"),
             Type::F32 => write_de!(self, "f32"),
@@ -3521,7 +3517,8 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_literal(&mut self, literal: ComptimeInt, ty: TypeId) {
-        let largest_type = Integer::from_cint(CInt::LongLong, false);
+        // TODO: size of largest c type
+        let largest_type = Integer { bits: 64, signed: false, char: false };
         let base = ty.as_integral(&self.proj.types, true).unwrap();
         if base.bits <= largest_type.bits {
             self.emit_cast(ty);
